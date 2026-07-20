@@ -8,17 +8,11 @@ from __future__ import annotations
 import pytest
 
 
-def _make_tool(tmp_path):
-    from aila.config import Settings
+async def test_upsert_creates_record_with_open_status(test_db):
     from aila.modules.vulnerability.tools.remediation import RemediationTool
 
-    settings = Settings(database_url=f"sqlite:///{(tmp_path / 'test.db').as_posix()}")
-    return RemediationTool(settings=settings)
-
-
-def test_upsert_creates_record_with_open_status(tmp_path):
-    tool = _make_tool(tmp_path)
-    result = tool.forward(
+    tool = RemediationTool()
+    result = await tool.forward(
         action="upsert",
         host="host-a",
         package_name="openssl",
@@ -33,16 +27,18 @@ def test_upsert_creates_record_with_open_status(tmp_path):
     assert record["cve_id"] == "CVE-2024-0001"
 
 
-def test_upsert_updates_status_to_remediated(tmp_path):
-    tool = _make_tool(tmp_path)
-    tool.forward(
+async def test_upsert_updates_status_to_remediated(test_db):
+    from aila.modules.vulnerability.tools.remediation import RemediationTool
+
+    tool = RemediationTool()
+    await tool.forward(
         action="upsert",
         host="host-a",
         package_name="openssl",
         cve_id="CVE-2024-0001",
         status="open",
     )
-    result = tool.forward(
+    result = await tool.forward(
         action="upsert",
         host="host-a",
         package_name="openssl",
@@ -56,10 +52,12 @@ def test_upsert_updates_status_to_remediated(tmp_path):
     assert record["notes"] == "Patched on 2024-01-10"
 
 
-def test_upsert_invalid_status_raises_value_error(tmp_path):
-    tool = _make_tool(tmp_path)
+async def test_upsert_invalid_status_raises_value_error(test_db):
+    from aila.modules.vulnerability.tools.remediation import RemediationTool
+
+    tool = RemediationTool()
     with pytest.raises(ValueError, match="status"):
-        tool.forward(
+        await tool.forward(
             action="upsert",
             host="host-a",
             package_name="openssl",
@@ -68,24 +66,28 @@ def test_upsert_invalid_status_raises_value_error(tmp_path):
         )
 
 
-def test_list_returns_all_records_for_host(tmp_path):
-    tool = _make_tool(tmp_path)
-    tool.forward(action="upsert", host="host-a", package_name="openssl", cve_id="CVE-2024-0001", status="open")
-    tool.forward(action="upsert", host="host-a", package_name="curl", cve_id="CVE-2024-0002", status="deferred")
-    tool.forward(action="upsert", host="host-b", package_name="zlib", cve_id="CVE-2024-0003", status="accepted")
+async def test_list_returns_all_records_for_host(test_db):
+    from aila.modules.vulnerability.tools.remediation import RemediationTool
 
-    result = tool.forward(action="list", host="host-a")
+    tool = RemediationTool()
+    await tool.forward(action="upsert", host="host-a", package_name="openssl", cve_id="CVE-2024-0001", status="open")
+    await tool.forward(action="upsert", host="host-a", package_name="curl", cve_id="CVE-2024-0002", status="deferred")
+    await tool.forward(action="upsert", host="host-b", package_name="zlib", cve_id="CVE-2024-0003", status="accepted")
+
+    result = await tool.forward(action="list", host="host-a")
     assert result["count"] == 2
     hosts = {r["host"] for r in result["records"]}
     assert hosts == {"host-a"}
 
 
-def test_get_returns_single_matching_record(tmp_path):
-    tool = _make_tool(tmp_path)
-    tool.forward(action="upsert", host="host-a", package_name="openssl", cve_id="CVE-2024-0001", status="open")
-    tool.forward(action="upsert", host="host-b", package_name="curl", cve_id="CVE-2024-0002", status="deferred")
+async def test_get_returns_single_matching_record(test_db):
+    from aila.modules.vulnerability.tools.remediation import RemediationTool
 
-    result = tool.forward(
+    tool = RemediationTool()
+    await tool.forward(action="upsert", host="host-a", package_name="openssl", cve_id="CVE-2024-0001", status="open")
+    await tool.forward(action="upsert", host="host-b", package_name="curl", cve_id="CVE-2024-0002", status="deferred")
+
+    result = await tool.forward(
         action="get",
         host="host-a",
         package_name="openssl",
@@ -98,9 +100,11 @@ def test_get_returns_single_matching_record(tmp_path):
     assert record["cve_id"] == "CVE-2024-0001"
 
 
-def test_get_returns_empty_when_not_found(tmp_path):
-    tool = _make_tool(tmp_path)
-    result = tool.forward(
+async def test_get_returns_empty_when_not_found(test_db):
+    from aila.modules.vulnerability.tools.remediation import RemediationTool
+
+    tool = RemediationTool()
+    result = await tool.forward(
         action="get",
         host="host-missing",
         package_name="libfoo",

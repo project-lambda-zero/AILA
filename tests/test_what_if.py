@@ -4,25 +4,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy.dialects.sqlite import insert as sa_insert
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_settings(tmp_path):
-    from aila.config import Settings
-    return Settings(database_url=f"sqlite:///{(tmp_path / 'test.db').as_posix()}")
-
-
-def _setup_db(settings):
-    from aila.storage.database import init_db
-    init_db(settings)
-
-
 def _insert_finding(
-    settings,
     *,
     host: str,
     package_name: str,
@@ -37,29 +25,26 @@ def _insert_finding(
     from aila.storage.database import session_scope
 
     now = datetime.now(UTC)
-    stmt = (
-        sa_insert(LatestFindingRecord)
-        .values(
-            host=host,
-            package_name=package_name,
-            cve_id=cve_id,
-            system_id=system_id,
-            system_name=host,
-            distribution=distribution,
-            criticality=criticality,
-            score=score,
-            rationale="test",
-            fixed_version=fixed_version,
-            nvd_url=f"https://nvd.nist.gov/vuln/detail/{cve_id}",
-            compliance_tags_json="[]",
-            details_json="{}",
-            last_scanned_at=now,
-            created_at=now,
+    with session_scope() as session:
+        session.add(
+            LatestFindingRecord(
+                host=host,
+                package_name=package_name,
+                cve_id=cve_id,
+                system_id=system_id,
+                system_name=host,
+                distribution=distribution,
+                criticality=criticality,
+                score=score,
+                rationale="test",
+                fixed_version=fixed_version,
+                nvd_url=f"https://nvd.nist.gov/vuln/detail/{cve_id}",
+                compliance_tags_json="[]",
+                details_json="{}",
+                last_scanned_at=now,
+                created_at=now,
+            )
         )
-        .prefix_with("OR REPLACE")
-    )
-    with session_scope(settings) as session:
-        session.exec(stmt)  # type: ignore[arg-type]
         session.commit()
 
 
@@ -68,14 +53,11 @@ def _insert_finding(
 # ---------------------------------------------------------------------------
 
 
-def test_empty_db_returns_unchanged(tmp_path):
+async def test_empty_db_returns_unchanged(test_db):
     """No findings -> current_score=0.0, simulated_score=0.0, delta=0.0, removed_finding_count=0."""
     from aila.modules.vulnerability.tools.what_if import what_if_patch
 
-    settings = _make_settings(tmp_path)
-    _setup_db(settings)
-
-    result = what_if_patch(package_name="openssl", settings=settings)
+    result = await what_if_patch(package_name="openssl")
 
     assert result["current_score"] == 0.0
     assert result["simulated_score"] == 0.0
@@ -83,121 +65,100 @@ def test_empty_db_returns_unchanged(tmp_path):
     assert result["removed_finding_count"] == 0
 
 
-def test_patch_reduces_score(tmp_path):
+async def test_patch_reduces_score(test_db):
     """Fleet has openssl findings plus curl findings; patching openssl lowers score."""
     from aila.modules.vulnerability.tools.what_if import what_if_patch
 
-    settings = _make_settings(tmp_path)
-    _setup_db(settings)
-
     # openssl findings with high criticality
-    _insert_finding(settings, host="host-a", package_name="openssl", cve_id="CVE-2024-0001",
+    _insert_finding(host="host-a", package_name="openssl", cve_id="CVE-2024-0001",
                     criticality="Immediate", score=9.0)
-    _insert_finding(settings, host="host-b", package_name="openssl", cve_id="CVE-2024-0002",
+    _insert_finding(host="host-b", package_name="openssl", cve_id="CVE-2024-0002",
                     criticality="Immediate", score=9.0)
     # curl findings with lower criticality
-    _insert_finding(settings, host="host-a", package_name="curl", cve_id="CVE-2024-0003",
+    _insert_finding(host="host-a", package_name="curl", cve_id="CVE-2024-0003",
                     criticality="Moderate", score=5.0)
 
-    result = what_if_patch(package_name="openssl", settings=settings)
+    result = await what_if_patch(package_name="openssl")
 
     assert result["simulated_score"] < result["current_score"]
     assert result["removed_finding_count"] > 0
     assert result["delta"] > 0.0
 
 
-def test_unrelated_package_no_change(tmp_path):
+async def test_unrelated_package_no_change(test_db):
     """Patching 'nonexistent-pkg' -> removed_finding_count=0, delta=0.0."""
     from aila.modules.vulnerability.tools.what_if import what_if_patch
 
-    settings = _make_settings(tmp_path)
-    _setup_db(settings)
-
-    _insert_finding(settings, host="host-a", package_name="openssl", cve_id="CVE-2024-0001",
+    _insert_finding(host="host-a", package_name="openssl", cve_id="CVE-2024-0001",
                     criticality="High", score=8.0)
 
-    result = what_if_patch(package_name="nonexistent-pkg", settings=settings)
+    result = await what_if_patch(package_name="nonexistent-pkg")
 
     assert result["removed_finding_count"] == 0
     assert result["delta"] == 0.0
     assert result["simulated_score"] == result["current_score"]
 
 
-def test_version_filter_applied(tmp_path):
+async def test_version_filter_applied(test_db):
     """Providing a version removes all findings for that package (LatestFindingRecord has no installed_version)."""
     from aila.modules.vulnerability.tools.what_if import what_if_patch
 
-    settings = _make_settings(tmp_path)
-    _setup_db(settings)
-
     # Two openssl findings
-    _insert_finding(settings, host="host-a", package_name="openssl", cve_id="CVE-2024-0001",
+    _insert_finding(host="host-a", package_name="openssl", cve_id="CVE-2024-0001",
                     criticality="High", score=8.0, fixed_version="3.0.14")
-    _insert_finding(settings, host="host-b", package_name="openssl", cve_id="CVE-2024-0002",
+    _insert_finding(host="host-b", package_name="openssl", cve_id="CVE-2024-0002",
                     criticality="Moderate", score=5.0, fixed_version="3.0.14")
 
     # When version is provided and no installed_version available, removes all matching package findings
-    result = what_if_patch(package_name="openssl", version="3.0.14", settings=settings)
+    result = await what_if_patch(package_name="openssl", version="3.0.14")
 
     # Both openssl findings should be removed
     assert result["removed_finding_count"] == 2
 
 
-def test_score_computation_matches_risk_posture(tmp_path):
+async def test_score_computation_matches_risk_posture(test_db):
     """current_score computed identically to risk_posture.py weighted formula."""
     from aila.modules.vulnerability.tools.what_if import what_if_patch
 
-    settings = _make_settings(tmp_path)
-    _setup_db(settings)
-
     # 2 Immediate (weight 4) + 1 Moderate (weight 2) = 10 / (3*4) * 100 = 83.3
-    _insert_finding(settings, host="host-a", package_name="pkg-a", cve_id="CVE-2024-0001",
+    _insert_finding(host="host-a", package_name="pkg-a", cve_id="CVE-2024-0001",
                     criticality="Immediate", score=9.0)
-    _insert_finding(settings, host="host-a", package_name="pkg-b", cve_id="CVE-2024-0002",
+    _insert_finding(host="host-a", package_name="pkg-b", cve_id="CVE-2024-0002",
                     criticality="Immediate", score=8.0)
-    _insert_finding(settings, host="host-a", package_name="pkg-c", cve_id="CVE-2024-0003",
+    _insert_finding(host="host-a", package_name="pkg-c", cve_id="CVE-2024-0003",
                     criticality="Moderate", score=5.0)
 
-    result = what_if_patch(package_name="nonexistent", settings=settings)
+    result = await what_if_patch(package_name="nonexistent")
 
     expected = round((4 + 4 + 2) / (3 * 4) * 100, 1)
     assert result["current_score"] == pytest.approx(expected, abs=0.1)
 
 
-def test_tool_forward_action_simulate(tmp_path):
+async def test_tool_forward_action_simulate(test_db):
     """WhatIfTool().forward(action='simulate', package_name='openssl') returns dict with required keys."""
     from aila.modules.vulnerability.tools.what_if import WhatIfTool
 
-    settings = _make_settings(tmp_path)
-    _setup_db(settings)
-
-    tool = WhatIfTool(settings=settings)
-    result = tool.forward(action="simulate", package_name="openssl")
+    tool = WhatIfTool()
+    result = await tool.forward(action="simulate", package_name="openssl")
 
     assert isinstance(result, dict)
     assert "current_score" in result
     assert "simulated_score" in result
 
 
-def test_tool_rejects_bad_action(tmp_path):
+async def test_tool_rejects_bad_action(test_db):
     """WhatIfTool().forward(action='bad') raises ValueError."""
     from aila.modules.vulnerability.tools.what_if import WhatIfTool
 
-    settings = _make_settings(tmp_path)
-    _setup_db(settings)
-
-    tool = WhatIfTool(settings=settings)
+    tool = WhatIfTool()
     with pytest.raises(ValueError):
-        tool.forward(action="bad", package_name="openssl")
+        await tool.forward(action="bad", package_name="openssl")
 
 
-def test_tool_requires_package_name(tmp_path):
+async def test_tool_requires_package_name(test_db):
     """WhatIfTool().forward(action='simulate', package_name='') raises ValueError."""
     from aila.modules.vulnerability.tools.what_if import WhatIfTool
 
-    settings = _make_settings(tmp_path)
-    _setup_db(settings)
-
-    tool = WhatIfTool(settings=settings)
+    tool = WhatIfTool()
     with pytest.raises(ValueError):
-        tool.forward(action="simulate", package_name="")
+        await tool.forward(action="simulate", package_name="")
