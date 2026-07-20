@@ -1160,7 +1160,10 @@ class PlatformJournalRecord(SQLModel, table=True):
     __table_args__ = (
         UniqueConstraint("journal_id", name="uq_platform_journal_journal_id"),
         CheckConstraint(
-            "char_length(row_hash) = 64 AND char_length(payload_hash) = 64",
+            # length() is portable (Postgres length(text) == char_length(text);
+            # SQLite has length() but not char_length), so create_all works on
+            # both the Postgres test DB and any SQLite-backed unit test.
+            "length(row_hash) = 64 AND length(payload_hash) = 64",
             name="ck_platform_journal_hash_len",
         ),
         CheckConstraint(

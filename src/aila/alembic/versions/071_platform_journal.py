@@ -62,7 +62,7 @@ CREATE TABLE platform_journal (
     PRIMARY KEY (chain_id, seq),
     CONSTRAINT uq_platform_journal_journal_id UNIQUE (journal_id),
     CONSTRAINT ck_platform_journal_hash_len
-        CHECK (char_length(row_hash) = 64 AND char_length(payload_hash) = 64),
+        CHECK (length(row_hash) = 64 AND length(payload_hash) = 64),
     CONSTRAINT ck_platform_journal_chain_id
         CHECK (chain_id LIKE 'team:%' OR chain_id = 'global')
 )
