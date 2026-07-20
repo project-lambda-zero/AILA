@@ -16,6 +16,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import update as sa_update
 from sqlmodel import select
 from starlette.requests import Request
 
@@ -323,10 +324,19 @@ async def revoke_api_key(
             record = await session.get(ApiKeyRecord, key_id)
             if record is None:
                 return "not_found"
-            if record.revoked_at is not None:
+            # Atomic conditional update: flip revoked_at only while it is still
+            # NULL and check the affected row count. Two concurrent revocations
+            # serialize on the row lock, so exactly one sees rowcount 1 (200) and
+            # the loser sees rowcount 0 (409). A read-then-check-then-write here
+            # was a TOCTOU race that let both duplicates commit 200.
+            result = await session.execute(
+                sa_update(ApiKeyRecord)
+                .where(ApiKeyRecord.id == key_id)
+                .where(ApiKeyRecord.revoked_at.is_(None))
+                .values(revoked_at=utc_now())
+            )
+            if result.rowcount == 0:
                 return "already_revoked"
-            record.revoked_at = utc_now()
-            session.add(record)
             await session.commit()
             record_audit_event(
                 session,
