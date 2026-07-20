@@ -12,7 +12,8 @@ Targets:
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
 
 from aila.modules.vulnerability.config_schema import VulnerabilityConfigSchema
 from aila.modules.vulnerability.contracts import (
@@ -23,6 +24,10 @@ from aila.modules.vulnerability.contracts import (
 )
 from aila.modules.vulnerability.services.intel import IntelService, _select_primary_cvss_metric
 from aila.platform.exceptions import RateLimitError
+
+# Cache freshness now enforces cve_cache_ttl_hours, so cached payloads must carry
+# a recent last_synced_at to be treated as a hit (previously keep-forever).
+_FRESH_TS = datetime.now(UTC).isoformat()
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -39,14 +44,21 @@ def _make_service(
     cache_batch_return=None,
     cache_set_return=None,
 ) -> IntelService:
-    """Build an IntelService with fully mocked tools."""
+    """Build an IntelService with fully mocked, awaitable tools.
+
+    Every ``.forward()`` on the underlying tools is async in production
+    (each is awaited inside IntelService), so we wire AsyncMock instances
+    onto each tool.forward attribute.
+    """
     nvd_tool = MagicMock()
+    nvd_tool.forward = AsyncMock()
     if nvd_side_effect is not None:
         nvd_tool.forward.side_effect = nvd_side_effect
     elif nvd_return is not None:
         nvd_tool.forward.return_value = nvd_return
 
     epss_kev_tool = MagicMock()
+    epss_kev_tool.forward = AsyncMock()
 
     def _epss_kev_dispatch(*, action, cve_ids=None, **kwargs):
         if action == "epss_lookup":
@@ -62,6 +74,7 @@ def _make_service(
     epss_kev_tool.forward.side_effect = _epss_kev_dispatch
 
     cache_tool = MagicMock()
+    cache_tool.forward = AsyncMock()
 
     def _cache_dispatch(*, action, cve_id=None, cve_ids=None, payload=None, **kwargs):
         if action == "cve_cache_get_batch":
@@ -117,7 +130,7 @@ def _make_match(cve_id: str) -> VulnerabilityMatch:
 
 
 # ===========================================================================
-# _select_primary_cvss_metric
+# _select_primary_cvss_metric  (module-level, sync)
 # ===========================================================================
 
 
@@ -191,7 +204,7 @@ class TestSelectPrimaryCvssMetric:
 
 
 # ===========================================================================
-# _build_fallback_intel
+# _build_fallback_intel  (sync instance method)
 # ===========================================================================
 
 
@@ -231,13 +244,13 @@ class TestBuildFallbackIntel:
 
 
 # ===========================================================================
-# _fetch_from_nvd
+# _fetch_from_nvd  (async instance method)
 # ===========================================================================
 
 
 class TestFetchFromNvd:
 
-    def test_cvss_v31_fields_mapped(self):
+    async def test_cvss_v31_fields_mapped(self):
         metrics = {
             "cvssMetricV31": [
                 {
@@ -256,7 +269,7 @@ class TestFetchFromNvd:
         payload = _make_nvd_payload(metrics=metrics)
         service = _make_service(nvd_return=payload)
 
-        result = service._fetch_from_nvd("CVE-2023-1234")
+        result = await service._fetch_from_nvd("CVE-2023-1234")
 
         assert result.cve_id == "CVE-2023-1234"
         assert result.cvss_score == 7.5
@@ -270,7 +283,7 @@ class TestFetchFromNvd:
         assert result.updated_at == "2023-06-15T00:00:00.000"
         assert "CVE-2023-1234" in result.nvd_url
 
-    def test_cvss_v2_uses_access_vector_and_authentication(self):
+    async def test_cvss_v2_uses_access_vector_and_authentication(self):
         metrics = {
             "cvssMetricV2": [
                 {
@@ -289,13 +302,13 @@ class TestFetchFromNvd:
         payload = _make_nvd_payload(metrics=metrics)
         service = _make_service(nvd_return=payload)
 
-        result = service._fetch_from_nvd("CVE-2023-5678")
+        result = await service._fetch_from_nvd("CVE-2023-5678")
 
         assert result.attack_vector == "NETWORK"
         assert result.privileges_required == "NONE"
         assert result.cvss_score == 5.0
 
-    def test_cvss_v4_fields_mapped(self):
+    async def test_cvss_v4_fields_mapped(self):
         metrics = {
             "cvssMetricV40": [
                 {
@@ -314,52 +327,56 @@ class TestFetchFromNvd:
         payload = _make_nvd_payload(metrics=metrics)
         service = _make_service(nvd_return=payload)
 
-        result = service._fetch_from_nvd("CVE-2024-0001")
+        result = await service._fetch_from_nvd("CVE-2024-0001")
 
         assert result.cvss_score == 9.8
         assert result.base_severity == "CRITICAL"
         assert result.attack_vector == "NETWORK"
 
-    def test_no_metrics_yields_none_scores(self):
+    async def test_no_metrics_yields_none_scores(self):
         payload = _make_nvd_payload(metrics={})
         service = _make_service(nvd_return=payload)
 
-        result = service._fetch_from_nvd("CVE-2023-0000")
+        result = await service._fetch_from_nvd("CVE-2023-0000")
 
         assert result.cvss_score is None
         assert result.base_severity is None
         assert result.attack_vector is None
         assert result.privileges_required is None
 
-    def test_empty_vulnerabilities_list(self):
+    async def test_empty_vulnerabilities_list(self):
         service = _make_service(nvd_return={"vulnerabilities": []})
 
-        result = service._fetch_from_nvd("CVE-2023-EMPTY")
+        result = await service._fetch_from_nvd("CVE-2023-EMPTY")
 
         assert result.cve_id == "CVE-2023-EMPTY"
         assert result.description == ""
         assert result.cvss_score is None
 
-    def test_rate_limit_error_returns_fallback(self):
+    async def test_rate_limit_error_returns_fallback(self):
         service = _make_service(nvd_side_effect=RateLimitError("Too many requests"))
 
-        result = service._fetch_from_nvd("CVE-2023-RATE")
+        result = await service._fetch_from_nvd("CVE-2023-RATE")
 
         assert result.intel_source_mode == "fallback"
         assert result.nvd_evidence is not None
         assert result.nvd_evidence.fallback_reason == "nvd_rate_limited"
         assert any("rate limited" in n.lower() for n in result.notes)
 
-    def test_generic_exception_returns_fallback(self):
-        service = _make_service(nvd_side_effect=ConnectionError("Connection refused"))
+    async def test_generic_exception_returns_fallback(self):
+        # NOTE: production catches AILAError (not bare Exception).
+        # ConnectionError is not an AILAError, so use an AILA-derived error
+        # subclass to exercise the "generic" fallback branch.
+        from aila.platform.exceptions import UpstreamError
+        service = _make_service(nvd_side_effect=UpstreamError("Connection refused"))
 
-        result = service._fetch_from_nvd("CVE-2023-CONN")
+        result = await service._fetch_from_nvd("CVE-2023-CONN")
 
         assert result.intel_source_mode == "fallback"
         assert result.nvd_evidence.fallback_reason == "nvd_lookup_error"
-        assert any("ConnectionError" in n for n in result.notes)
+        assert any("UpstreamError" in n for n in result.notes)
 
-    def test_english_description_selected(self):
+    async def test_english_description_selected(self):
         payload = {
             "vulnerabilities": [
                 {
@@ -374,10 +391,10 @@ class TestFetchFromNvd:
             ]
         }
         service = _make_service(nvd_return=payload)
-        result = service._fetch_from_nvd("CVE-2023-MULTI")
+        result = await service._fetch_from_nvd("CVE-2023-MULTI")
         assert result.description == "English description here"
 
-    def test_no_english_description_yields_empty(self):
+    async def test_no_english_description_yields_empty(self):
         payload = {
             "vulnerabilities": [
                 {
@@ -391,18 +408,18 @@ class TestFetchFromNvd:
             ]
         }
         service = _make_service(nvd_return=payload)
-        result = service._fetch_from_nvd("CVE-2023-NOEN")
+        result = await service._fetch_from_nvd("CVE-2023-NOEN")
         assert result.description == ""
 
 
 # ===========================================================================
-# enrich()
+# enrich()  (async)
 # ===========================================================================
 
 
 class TestEnrich:
 
-    def test_no_cve_ids_returns_empty(self):
+    async def test_no_cve_ids_returns_empty(self):
         service = _make_service()
         matches = [
             VulnerabilityMatch(
@@ -416,18 +433,18 @@ class TestEnrich:
                 source="osv",
             )
         ]
-        result = service.enrich(matches)
+        result = await service.enrich(matches)
 
         assert isinstance(result, IntelEnrichmentResult)
         assert result.knowledge == {}
         assert "No CVE identifiers" in result.message
 
-    def test_empty_matches_returns_empty(self):
+    async def test_empty_matches_returns_empty(self):
         service = _make_service()
-        result = service.enrich([])
+        result = await service.enrich([])
         assert result.knowledge == {}
 
-    def test_deduplicates_cve_ids(self):
+    async def test_deduplicates_cve_ids(self):
         """Two matches with the same CVE should only enrich once."""
         nvd_payload = _make_nvd_payload(
             cve_id="CVE-2023-DUP",
@@ -450,12 +467,12 @@ class TestEnrich:
         service = _make_service(nvd_return=nvd_payload)
         matches = [_make_match("CVE-2023-DUP"), _make_match("CVE-2023-DUP")]
 
-        result = service.enrich(matches)
+        result = await service.enrich(matches)
 
         assert len(result.knowledge) == 1
         assert "CVE-2023-DUP" in result.knowledge
 
-    def test_full_enrichment_with_epss_and_kev(self):
+    async def test_full_enrichment_with_epss_and_kev(self):
         """Verify EPSS scores and KEV data are overlaid onto CVEKnowledge."""
         nvd_payload = _make_nvd_payload(
             cve_id="CVE-2023-FULL",
@@ -484,7 +501,7 @@ class TestEnrich:
             kev_return=kev,
         )
         matches = [_make_match("CVE-2023-FULL")]
-        result = service.enrich(matches)
+        result = await service.enrich(matches)
 
         intel = result.knowledge["CVE-2023-FULL"]
         assert intel.epss_score == 0.95
@@ -493,52 +510,56 @@ class TestEnrich:
         assert intel.kev_date_added == "2023-07-01"
         assert "Listed in CISA KEV catalog." in intel.notes
 
-    def test_epss_failure_does_not_block_enrichment(self):
+    async def test_epss_failure_does_not_block_enrichment(self):
         """EPSS failure should be swallowed; enrichment continues."""
+        # Production catches AILAError inside enrich(), so raise an AILA-derived
+        # error to exercise the "swallow and continue" branch.
+        from aila.platform.exceptions import UpstreamError
         nvd_payload = _make_nvd_payload(cve_id="CVE-2023-EPSSFAIL", metrics={})
         service = _make_service(
             nvd_return=nvd_payload,
-            epss_side_effect=ConnectionError("EPSS unreachable"),
+            epss_side_effect=UpstreamError("EPSS unreachable"),
         )
         matches = [_make_match("CVE-2023-EPSSFAIL")]
-        result = service.enrich(matches)
+        result = await service.enrich(matches)
 
         assert "CVE-2023-EPSSFAIL" in result.knowledge
         assert result.knowledge["CVE-2023-EPSSFAIL"].epss_score is None
 
-    def test_kev_failure_does_not_block_enrichment(self):
+    async def test_kev_failure_does_not_block_enrichment(self):
         """KEV failure should be swallowed; enrichment continues."""
+        from aila.platform.exceptions import UpstreamError
         nvd_payload = _make_nvd_payload(cve_id="CVE-2023-KEVFAIL", metrics={})
         service = _make_service(
             nvd_return=nvd_payload,
-            kev_side_effect=ConnectionError("KEV unreachable"),
+            kev_side_effect=UpstreamError("KEV unreachable"),
         )
         matches = [_make_match("CVE-2023-KEVFAIL")]
-        result = service.enrich(matches)
+        result = await service.enrich(matches)
 
         assert "CVE-2023-KEVFAIL" in result.knowledge
         assert result.knowledge["CVE-2023-KEVFAIL"].kev_listed is False
 
-    def test_cache_hit_path_uses_cached_intel(self):
+    async def test_cache_hit_path_uses_cached_intel(self):
         """Fresh cache entries should be reused without calling NVD."""
         cached_payload = {
             "cve_id": "CVE-2023-CACHED",
             "description": "Cached description",
             "nvd_url": "https://nvd.nist.gov/vuln/detail/CVE-2023-CACHED",
-            "last_synced_at": "2023-01-01T00:00:00Z",
+            "last_synced_at": _FRESH_TS,
         }
         service = _make_service(cache_batch_return={"CVE-2023-CACHED": cached_payload})
         matches = [_make_match("CVE-2023-CACHED")]
 
-        result = service.enrich(matches)
+        result = await service.enrich(matches)
 
         intel = result.knowledge["CVE-2023-CACHED"]
         assert intel.intel_source_mode == "cache"
-        assert intel.intel_last_synced_at == "2023-01-01T00:00:00Z"
+        assert intel.intel_last_synced_at == _FRESH_TS
         # NVD tool should NOT have been called
         service.nvd_tool.forward.assert_not_called()
 
-    def test_force_refresh_bypasses_cache(self):
+    async def test_force_refresh_bypasses_cache(self):
         """force_refresh=True should call NVD even for cached entries."""
         cached_payload = {
             "cve_id": "CVE-2023-REFRESH",
@@ -556,7 +577,7 @@ class TestEnrich:
         )
         matches = [_make_match("CVE-2023-REFRESH")]
 
-        result = service.enrich(matches, force_refresh=True)
+        result = await service.enrich(matches, force_refresh=True)
 
         intel = result.knowledge["CVE-2023-REFRESH"]
         assert intel.description == "Fresh from NVD"
@@ -564,12 +585,12 @@ class TestEnrich:
         assert "Forced refresh" in result.message
         service.nvd_tool.forward.assert_called_once()
 
-    def test_fallback_entries_not_written_to_cache(self):
+    async def test_fallback_entries_not_written_to_cache(self):
         """Fallback intel (rate limited) should NOT be persisted to cache."""
         service = _make_service(nvd_side_effect=RateLimitError("rate limited"))
         matches = [_make_match("CVE-2023-NOWRITE")]
 
-        result = service.enrich(matches)
+        result = await service.enrich(matches)
 
         intel = result.knowledge["CVE-2023-NOWRITE"]
         assert intel.intel_source_mode == "fallback"
@@ -578,13 +599,13 @@ class TestEnrich:
         set_calls = [c for c in cache_calls if c.kwargs.get("action") == "cve_cache_set"]
         assert len(set_calls) == 0
 
-    def test_successful_entries_written_to_cache(self):
+    async def test_successful_entries_written_to_cache(self):
         """Non-fallback intel SHOULD be persisted to cache."""
         nvd_payload = _make_nvd_payload(cve_id="CVE-2023-WRITE", metrics={})
         service = _make_service(nvd_return=nvd_payload)
         matches = [_make_match("CVE-2023-WRITE")]
 
-        service.enrich(matches)
+        await service.enrich(matches)
 
         cache_calls = service.cache_tool.forward.call_args_list
         set_calls = [c for c in cache_calls if c.kwargs.get("action") == "cve_cache_set"]
@@ -592,12 +613,13 @@ class TestEnrich:
         assert set_calls[0].kwargs["cve_id"] == "CVE-2023-WRITE"
         assert "last_synced_at" in set_calls[0].kwargs["payload"]
 
-    def test_kev_note_not_duplicated(self):
+    async def test_kev_note_not_duplicated(self):
         """KEV catalog note should not be appended if already present."""
         cached_payload = {
             "cve_id": "CVE-2023-KEVDUP",
             "description": "Already has KEV note",
             "nvd_url": "https://nvd.nist.gov/vuln/detail/CVE-2023-KEVDUP",
+            "last_synced_at": _FRESH_TS,
             "notes": ["Listed in CISA KEV catalog."],
             "kev_listed": True,
         }
@@ -608,18 +630,19 @@ class TestEnrich:
         )
         matches = [_make_match("CVE-2023-KEVDUP")]
 
-        result = service.enrich(matches)
+        result = await service.enrich(matches)
         intel = result.knowledge["CVE-2023-KEVDUP"]
         count = intel.notes.count("Listed in CISA KEV catalog.")
         assert count == 1
 
-    def test_enrichment_summary_counts(self):
+    async def test_enrichment_summary_counts(self):
         """Verify enrichment summary counters are populated correctly."""
         nvd_payload = _make_nvd_payload(cve_id="CVE-2023-MISS", metrics={})
         cached = {
             "cve_id": "CVE-2023-HIT",
             "description": "Cached",
             "nvd_url": "https://nvd.nist.gov/vuln/detail/CVE-2023-HIT",
+            "last_synced_at": _FRESH_TS,
         }
         service = _make_service(
             nvd_return=nvd_payload,
@@ -627,7 +650,7 @@ class TestEnrich:
         )
         matches = [_make_match("CVE-2023-HIT"), _make_match("CVE-2023-MISS")]
 
-        result = service.enrich(matches)
+        result = await service.enrich(matches)
 
         summary = result.enrichment_summary
         assert summary.fresh_cache_hits == 1
@@ -636,69 +659,69 @@ class TestEnrich:
         assert summary.live_refreshes == 1
         assert summary.fallback_refreshes == 0
 
-    def test_fallback_count_in_message(self):
+    async def test_fallback_count_in_message(self):
         """When NVD fallbacks happen, the count should appear in the message."""
         service = _make_service(nvd_side_effect=RateLimitError("rate limited"))
         matches = [_make_match("CVE-2023-FB1"), _make_match("CVE-2023-FB2")]
 
-        result = service.enrich(matches)
+        result = await service.enrich(matches)
 
         assert "2 CVEs used fallback NVD metadata" in result.message
         assert result.enrichment_summary.fallback_refreshes == 2
 
 
 # ===========================================================================
-# prewarm()
+# prewarm()  (async)
 # ===========================================================================
 
 
 class TestPrewarm:
 
-    def test_prewarm_empty_input(self):
+    async def test_prewarm_empty_input(self):
         service = _make_service()
-        result = service.prewarm([])
+        result = await service.prewarm([])
 
         assert isinstance(result, PrewarmResult)
         assert result.count == 0
         assert "No CVE identifiers" in result.message
 
-    def test_prewarm_filters_empty_strings(self):
+    async def test_prewarm_filters_empty_strings(self):
         service = _make_service()
-        result = service.prewarm(["", None])
+        result = await service.prewarm(["", None])
 
         assert result.count == 0
 
-    def test_prewarm_returns_prewarm_result(self):
+    async def test_prewarm_returns_prewarm_result(self):
         nvd_payload = _make_nvd_payload(cve_id="CVE-2023-PW", metrics={})
         service = _make_service(nvd_return=nvd_payload)
 
-        result = service.prewarm(["CVE-2023-PW"])
+        result = await service.prewarm(["CVE-2023-PW"])
 
         assert isinstance(result, PrewarmResult)
         assert result.count == 1
         assert "Prewarmed intel for 1 CVEs" in result.message
         assert isinstance(result.metadata, dict)
 
-    def test_prewarm_deduplicates_ids(self):
+    async def test_prewarm_deduplicates_ids(self):
         nvd_payload = _make_nvd_payload(cve_id="CVE-2023-PWDUP", metrics={})
         service = _make_service(nvd_return=nvd_payload)
 
-        result = service.prewarm(["CVE-2023-PWDUP", "CVE-2023-PWDUP", "CVE-2023-PWDUP"])
+        result = await service.prewarm(["CVE-2023-PWDUP", "CVE-2023-PWDUP", "CVE-2023-PWDUP"])
 
         assert result.count == 1
 
-    def test_prewarm_metadata_has_summary_fields(self):
+    async def test_prewarm_metadata_has_summary_fields(self):
         nvd_payload = _make_nvd_payload(cve_id="CVE-2023-META", metrics={})
         service = _make_service(nvd_return=nvd_payload)
 
-        result = service.prewarm(["CVE-2023-META"])
+        result = await service.prewarm(["CVE-2023-META"])
 
         meta = result.metadata
         assert "fresh_cache_hits" in meta
         assert "refresh_targets" in meta
         assert "missing_cache_entries" in meta
 
-    def test_prewarm_with_force_refresh(self):
+    async def test_prewarm_with_force_refresh(self):
         cached = {
             "cve_id": "CVE-2023-PWFR",
             "description": "Old",
@@ -710,25 +733,26 @@ class TestPrewarm:
             cache_batch_return={"CVE-2023-PWFR": cached},
         )
 
-        result = service.prewarm(["CVE-2023-PWFR"], force_refresh=True)
+        result = await service.prewarm(["CVE-2023-PWFR"], force_refresh=True)
 
         assert result.count == 1
         service.nvd_tool.forward.assert_called_once()
 
 
 # ===========================================================================
-# _enrich_cve_ids (integration-level with mocked tools)
+# _enrich_cve_ids (async, integration-level with mocked tools)
 # ===========================================================================
 
 
 class TestEnrichCveIds:
 
-    def test_mixed_cache_and_live(self):
+    async def test_mixed_cache_and_live(self):
         """One cached CVE + one missing CVE: both appear in knowledge."""
         cached = {
             "cve_id": "CVE-2023-C1",
             "description": "From cache",
             "nvd_url": "https://nvd.nist.gov/vuln/detail/CVE-2023-C1",
+            "last_synced_at": _FRESH_TS,
         }
         nvd_payload = _make_nvd_payload(cve_id="CVE-2023-L1", metrics={})
 
@@ -737,19 +761,20 @@ class TestEnrichCveIds:
             cache_batch_return={"CVE-2023-C1": cached},
         )
 
-        result = service._enrich_cve_ids(["CVE-2023-C1", "CVE-2023-L1"], force_refresh=False)
+        result = await service._enrich_cve_ids(["CVE-2023-C1", "CVE-2023-L1"], force_refresh=False)
 
         assert "CVE-2023-C1" in result.knowledge
         assert "CVE-2023-L1" in result.knowledge
         assert result.knowledge["CVE-2023-C1"].intel_source_mode == "cache"
         assert result.knowledge["CVE-2023-L1"].intel_source_mode == "live"
 
-    def test_epss_and_kev_overlay_on_cached(self):
+    async def test_epss_and_kev_overlay_on_cached(self):
         """EPSS/KEV data should overlay onto cache-hit entries too."""
         cached = {
             "cve_id": "CVE-2023-OVERLAY",
             "description": "Cached",
             "nvd_url": "https://nvd.nist.gov/vuln/detail/CVE-2023-OVERLAY",
+            "last_synced_at": _FRESH_TS,
         }
         epss = {"CVE-2023-OVERLAY": {"epss": "0.42", "percentile": "0.85"}}
         kev = {"CVE-2023-OVERLAY": {"dateAdded": "2023-09-15"}}
@@ -760,7 +785,7 @@ class TestEnrichCveIds:
             kev_return=kev,
         )
 
-        result = service._enrich_cve_ids(["CVE-2023-OVERLAY"], force_refresh=False)
+        result = await service._enrich_cve_ids(["CVE-2023-OVERLAY"], force_refresh=False)
 
         intel = result.knowledge["CVE-2023-OVERLAY"]
         assert intel.epss_score == 0.42
@@ -768,28 +793,31 @@ class TestEnrichCveIds:
         assert intel.kev_listed is True
         assert "Listed in CISA KEV catalog." in intel.notes
 
-    def test_both_epss_and_kev_fail(self):
+    async def test_both_epss_and_kev_fail(self):
         """When both EPSS and KEV fail, enrichment still completes."""
+        # Production catches AILAError, so use an AILA-derived error to exercise
+        # the fallback branch (a bare RuntimeError would propagate uncaught).
+        from aila.platform.exceptions import UpstreamError
         nvd_payload = _make_nvd_payload(cve_id="CVE-2023-BOTHFAIL", metrics={})
         service = _make_service(
             nvd_return=nvd_payload,
-            epss_side_effect=RuntimeError("EPSS down"),
-            kev_side_effect=RuntimeError("KEV down"),
+            epss_side_effect=UpstreamError("EPSS down"),
+            kev_side_effect=UpstreamError("KEV down"),
         )
 
-        result = service._enrich_cve_ids(["CVE-2023-BOTHFAIL"], force_refresh=False)
+        result = await service._enrich_cve_ids(["CVE-2023-BOTHFAIL"], force_refresh=False)
 
         assert "CVE-2023-BOTHFAIL" in result.knowledge
         intel = result.knowledge["CVE-2023-BOTHFAIL"]
         assert intel.epss_score is None
         assert intel.kev_listed is False
 
-    def test_message_includes_cache_stats(self):
+    async def test_message_includes_cache_stats(self):
         """Result message should include cache hit and refresh counts."""
         nvd_payload = _make_nvd_payload(cve_id="CVE-2023-STATS", metrics={})
         service = _make_service(nvd_return=nvd_payload)
 
-        result = service._enrich_cve_ids(["CVE-2023-STATS"], force_refresh=False)
+        result = await service._enrich_cve_ids(["CVE-2023-STATS"], force_refresh=False)
 
         assert "Cache hits: 0" in result.message
         assert "refresh targets: 1" in result.message

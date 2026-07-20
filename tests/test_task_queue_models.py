@@ -17,10 +17,19 @@ import pytest
 class TestTaskStatus:
     """TaskStatus is a str enum with exactly 7 lifecycle values."""
 
-    def test_all_seven_status_values_exist(self) -> None:
+    def test_all_status_values_exist(self) -> None:
         from aila.platform.tasks import TaskStatus
 
-        expected = {"queued", "waiting", "running", "paused", "done", "failed", "cancelled"}
+        expected = {
+            "queued",
+            "waiting",
+            "running",
+            "paused",
+            "done",
+            "failed",
+            "cancelled",
+            "dead_letter",
+        }
         assert set(TaskStatus) == expected
 
     def test_task_status_is_str(self) -> None:
@@ -214,25 +223,10 @@ class TestTaskExecutionContext:
         assert ctx.settings is None
         assert ctx.is_cancelled is False
 
-    def test_checkpoint_method_calls_checkpoint_fn(self) -> None:
-        from aila.platform.tasks import TaskExecutionContext
-
-        received: list[dict] = []
-
-        ctx = TaskExecutionContext(
-            task_id="t-001",
-            session_factory=lambda: None,
-            _checkpoint_fn=received.append,
-        )
-        ctx.checkpoint({"step": 3, "data": "partial"})
-        assert received == [{"step": 3, "data": "partial"}]
-
-    def test_checkpoint_method_is_noop_when_fn_not_set(self) -> None:
-        from aila.platform.tasks import TaskExecutionContext
-
-        ctx = TaskExecutionContext(task_id="t-001", session_factory=lambda: None)
-        # Should not raise even with no _checkpoint_fn wired
-        ctx.checkpoint({"step": 1})
+    # Phase 179: ``checkpoint()`` and the ``_checkpoint_fn`` slot are removed
+    # from TaskExecutionContext (see aila/platform/tasks/models.py docstring).
+    # Callers that still need a per-run cursor use TaskContext from the
+    # Phase 178 engine. The old checkpoint-invocation tests are dropped.
 
     def test_is_cancelled_can_be_set(self) -> None:
         from aila.platform.tasks import TaskExecutionContext
