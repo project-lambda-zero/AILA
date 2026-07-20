@@ -1389,7 +1389,18 @@ def create_forensics_router() -> APIRouter:
         request: Request,
         project_id: str,
         auth: AuthContext = Depends(require_auth),
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=100, ge=1, le=500),
     ) -> DataEnvelope[list[EvidenceItem]]:
+        # SQL-level pagination (finding 59-3.4): the previous handler
+        # fetched every ProjectEvidenceRecord row for the project into
+        # memory. A project with thousands of evidence files blew both
+        # the response body size limit and the SQLModel row buffer at
+        # the same time. Applying LIMIT/OFFSET on a stable ORDER BY
+        # (created_at DESC, id ASC tiebreak) keeps the response bounded
+        # to page_size items while preserving the existing
+        # DataEnvelope[list[EvidenceItem]] envelope so callers do not
+        # need a schema migration.
         del request
 
         from aila.modules.forensics.db_models import ForensicsProjectRecord, ProjectEvidenceRecord
@@ -1403,7 +1414,14 @@ def create_forensics_router() -> APIRouter:
             _require_project_ownership(project, auth)
 
             rows = (await uow.session.exec(
-                select(ProjectEvidenceRecord).where(ProjectEvidenceRecord.project_id == project_id)
+                select(ProjectEvidenceRecord)
+                .where(ProjectEvidenceRecord.project_id == project_id)
+                .order_by(
+                    ProjectEvidenceRecord.created_at.desc(),  # type: ignore[union-attr]
+                    ProjectEvidenceRecord.id.asc(),  # type: ignore[union-attr]
+                )
+                .offset((page - 1) * page_size)
+                .limit(page_size)
             )).all()
 
         items = [
@@ -1428,10 +1446,24 @@ def create_forensics_router() -> APIRouter:
         request: Request,
         project_id: str,
         auth: AuthContext = Depends(require_auth),
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=100, ge=1, le=500),
     ) -> DataEnvelope[list[dict[str, Any]]]:
-        """Walk every artifact's ``records[]``, pull rows tagged
-        ``suspicious_reasons``, return them as a flat table the UI can render
-        as the auto-findings view."""
+        """Walk each artifact's ``records[]``, pull rows tagged
+        ``suspicious_reasons``, return them as a flat table.
+
+        SQL-level pagination (finding 59-3.4) is applied at the
+        ArtifactRecord layer: at most ``page_size`` artifacts are
+        deserialised per request, ordered by ``created_at DESC`` with an
+        id tiebreaker for stability. Because one artifact can yield
+        multiple record-level findings, the emitted findings count is not
+        bounded by ``page_size`` alone -- but the number of artifacts
+        scanned (the O(N) blow-up point) IS. Suppressions are queried
+        without a LIMIT because the fingerprint set is a project-scoped
+        allowlist and typically small.
+        """
+        del request
+
         from aila.modules.forensics.db_models import (
             ArtifactRecord,
             FindingSuppressionRecord,
@@ -1446,7 +1478,14 @@ def create_forensics_router() -> APIRouter:
                 raise HTTPException(status_code=404, detail=f"Project {project_id} not found.")
             _require_project_ownership(project, auth)
             arts = (await uow.session.exec(
-                select(ArtifactRecord).where(ArtifactRecord.project_id == project_id)
+                select(ArtifactRecord)
+                .where(ArtifactRecord.project_id == project_id)
+                .order_by(
+                    ArtifactRecord.created_at.desc(),  # type: ignore[union-attr]
+                    ArtifactRecord.id.asc(),  # type: ignore[union-attr]
+                )
+                .offset((page - 1) * page_size)
+                .limit(page_size)
             )).all()
             suppressed_fps = set((await uow.session.exec(
                 select(FindingSuppressionRecord.fingerprint).where(
@@ -1937,7 +1976,17 @@ def create_forensics_router() -> APIRouter:
         request: Request,
         project_id: str,
         auth: AuthContext = Depends(require_auth),
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=100, ge=1, le=500),
     ) -> DataEnvelope[list[InvestigationSummary]]:
+        # SQL-level pagination (finding 59-3.4): a long-running project can
+        # accrue hundreds of investigations (each rerun creates a new row).
+        # Fetching all rows plus per-row ``_zombie_reap_reason`` queries
+        # scaled linearly with project age and eventually timed out.
+        # LIMIT/OFFSET on the ``created_at DESC, id ASC`` ordering keeps
+        # the response bounded to ``page_size`` items and preserves the
+        # existing ``DataEnvelope[list[InvestigationSummary]]`` envelope
+        # so client callers keep working without a shape change.
         del request
 
         from aila.modules.forensics.db_models import ForensicsProjectRecord, InvestigationRunRecord
@@ -1953,7 +2002,12 @@ def create_forensics_router() -> APIRouter:
             rows = list((await uow.session.exec(
                 select(InvestigationRunRecord)
                 .where(InvestigationRunRecord.project_id == project_id)
-                .order_by(InvestigationRunRecord.created_at.desc())
+                .order_by(
+                    InvestigationRunRecord.created_at.desc(),  # type: ignore[union-attr]
+                    InvestigationRunRecord.id.asc(),  # type: ignore[union-attr]
+                )
+                .offset((page - 1) * page_size)
+                .limit(page_size)
             )).all())
 
             # fix §49 -- GET no longer mutates. Build per-row needs_reap

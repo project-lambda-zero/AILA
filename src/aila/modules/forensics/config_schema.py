@@ -53,6 +53,20 @@ class ForensicsConfigSchema(BaseModel):
         ge=60.0,
         description="Timeout for the full artifact collection pipeline.",
     )
+    freeflow_max_cost_usd: float = Field(
+        default=25.0,
+        ge=0.0,
+        description=(
+            "Hard per-investigation LLM spend ceiling in USD. When the sum "
+            "of ``LLMCostRecord.cost_usd`` rows for ``run_id == "
+            "investigation_id`` reaches this value the freeflow loop "
+            "terminates cleanly with status ``exhausted`` and a "
+            "``<budget_exhausted>`` final_answer marker. A value of 0.0 "
+            "disables the ceiling (only the ``_HARD_TURN_CAP`` safety net "
+            "remains). Freeflow_max_attempts and this ceiling are ANDed: "
+            "whichever fires first halts the run."
+        ),
+    )
 
 
 FORENSICS_DEFAULTS = ForensicsConfigSchema()
