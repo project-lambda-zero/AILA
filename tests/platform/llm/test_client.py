@@ -6,7 +6,9 @@ Integration tests with real OpenRouter are in test_integration.py (Plan 03).
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -14,6 +16,7 @@ import pytest
 from pydantic import BaseModel
 
 from aila.platform.llm.client import AilaLLMClient, LLMResponse, _extract_usage, _merge_usage
+from aila.platform.llm.config import LLMConfigProvider, LLMRouting
 from aila.platform.llm.errors import LLMError
 
 # ---------------------------------------------------------------------------
@@ -485,6 +488,66 @@ class TestToolCalling:
 
         assert response.content == "I wanted to call a tool but cannot"
 
+    @pytest.mark.asyncio
+    async def test_tool_executor_timeout_synthesises_result_and_continues(
+        self, client: AilaLLMClient
+    ) -> None:
+        """A tool exceeding routing.tool_timeout_s is surfaced to the model as a
+        tool_timeout result and the loop continues; the turn is not blocked and
+        the LLM call is not retried from scratch (#44)."""
+        routing = LLMRouting(
+            model_id="test-model",
+            base_url="http://test",
+            api_key="sk-test",
+            max_tokens=256,
+            temperature=0.0,
+            max_tool_steps=5,
+            task_type="scoring",
+            tool_timeout_s=0.1,
+        )
+        tc = _make_tool_call("tc-1", "slow_tool", {})
+        initial_choice = _make_completion(
+            content="", finish_reason="tool_calls", tool_calls=[tc]
+        ).choices[0]
+        final_response = _make_completion(content="done despite timeout")
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(return_value=final_response)
+
+        async def slow_executor(name: str, args: dict[str, Any]) -> str:
+            await asyncio.sleep(60)
+            return "never returned"
+
+        start = time.perf_counter()
+        response = await client._tool_loop(
+            client=mock_client,
+            routing=routing,
+            messages=[{"role": "user", "content": "go"}],
+            response_format=None,
+            tools=[
+                {
+                    "type": "function",
+                    "function": {"name": "slow_tool", "parameters": {}},
+                }
+            ],
+            tool_executor=slow_executor,
+            initial_choice=initial_choice,
+            initial_usage={},
+        )
+        elapsed = time.perf_counter() - start
+
+        assert response.content == "done despite timeout"
+        # wait_for cancelled the 60s sleep at the 0.1s bound.
+        assert elapsed < 5.0
+        # The synthesized timeout result was fed back to the model.
+        sent_messages = mock_client.chat.completions.create.call_args.kwargs[
+            "messages"
+        ]
+        tool_msgs = [m for m in sent_messages if m.get("role") == "tool"]
+        assert tool_msgs
+        assert "tool_timeout" in tool_msgs[-1]["content"]
+        assert "slow_tool" in tool_msgs[-1]["content"]
+
 
 # ---------------------------------------------------------------------------
 # Usage utilities
@@ -530,3 +593,46 @@ class TestLLMResponse:
         r = LLMResponse(content="hello")
         with pytest.raises(AttributeError):
             r.content = "world"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Tool-timeout config resolution (#44)
+# ---------------------------------------------------------------------------
+
+class _AsyncFakeRegistry:
+    def __init__(self, data: dict[str, object] | None = None) -> None:
+        self._data: dict[str, object] = data or {}
+
+    async def get(self, namespace: str, key: str) -> object:
+        return self._data.get(f"{namespace}.{key}")
+
+
+class TestToolTimeoutConfig:
+    """resolve_tool_timeout_s precedence: task-specific > global > 300s default."""
+
+    @pytest.mark.asyncio
+    async def test_default_is_300(self) -> None:
+        p = LLMConfigProvider(_AsyncFakeRegistry(), FakeSecretStore())  # type: ignore[arg-type]
+        assert await p.resolve_tool_timeout_s("scoring") == 300.0
+
+    @pytest.mark.asyncio
+    async def test_specific_wins_over_global(self) -> None:
+        p = LLMConfigProvider(  # type: ignore[arg-type]
+            _AsyncFakeRegistry(
+                {
+                    "platform.llm_tool_timeout_s": 120.0,
+                    "platform.llm_tool_timeout_s_scoring": 15.0,
+                }
+            ),
+            FakeSecretStore(),
+        )
+        assert await p.resolve_tool_timeout_s("scoring") == 15.0
+        assert await p.resolve_tool_timeout_s("other") == 120.0
+
+    @pytest.mark.asyncio
+    async def test_non_numeric_falls_back(self) -> None:
+        p = LLMConfigProvider(  # type: ignore[arg-type]
+            _AsyncFakeRegistry({"platform.llm_tool_timeout_s": "not-a-number"}),
+            FakeSecretStore(),
+        )
+        assert await p.resolve_tool_timeout_s("scoring") == 300.0

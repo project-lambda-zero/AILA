@@ -1246,7 +1246,28 @@ class AilaLLMClient:
                     tc.function.name,
                     json.dumps(args, default=str)[:200],
                 )
-                result = await tool_executor(tc.function.name, args)
+                # #44: bound each tool execution so one hung tool (e.g. an
+                # audit-mcp cold build) cannot block the whole LLM turn. A
+                # timeout is surfaced to the model as a domain-level tool
+                # failure -- the loop continues so the model can react; the LLM
+                # call is NOT retried from scratch.
+                tool_timeout_s = getattr(routing, "tool_timeout_s", None) or 300.0
+                try:
+                    result = await asyncio.wait_for(
+                        tool_executor(tc.function.name, args),
+                        timeout=tool_timeout_s,
+                    )
+                except TimeoutError:
+                    logger.warning(
+                        "tool executor timeout: tool=%s timeout_s=%.1f",
+                        tc.function.name,
+                        tool_timeout_s,
+                    )
+                    result = json.dumps({
+                        "error": "tool_timeout",
+                        "tool": tc.function.name,
+                        "timeout_s": tool_timeout_s,
+                    })
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,

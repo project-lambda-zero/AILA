@@ -49,6 +49,7 @@ class LLMRouting:
         max_tokens: Maximum completion tokens for this task_type.
         temperature: Sampling temperature for this task_type.
         max_tool_steps: Maximum tool-calling loop iterations (per D-20).
+        tool_timeout_s: Per-tool-call executor timeout in seconds (#44).
     """
 
     model_id: str
@@ -58,6 +59,7 @@ class LLMRouting:
     temperature: float
     max_tool_steps: int
     task_type: str = ""
+    tool_timeout_s: float = 300.0
 
 
 class LLMConfigProvider:
@@ -174,6 +176,22 @@ class LLMConfigProvider:
                 pass
         return 0
 
+    async def resolve_tool_timeout_s(self, task_type: str) -> float:
+        """Resolve the per-tool-call executor timeout (seconds) for a task_type.
+
+        Bounds a single tool execution so one hung tool (e.g. an audit-mcp
+        cold build) cannot block the whole LLM turn (#44). Task-specific key
+        wins over the global default; both fall back to 300s.
+        """
+        for key in (f"llm_tool_timeout_s_{task_type}", "llm_tool_timeout_s"):
+            val = await self._registry.get("platform", key)
+            if val is not None:
+                try:
+                    return float(val)
+                except (ValueError, TypeError):
+                    pass
+        return 300.0
+
     async def is_disabled(self) -> bool:
         """Check kill switch state.
 
@@ -218,6 +236,7 @@ class LLMConfigProvider:
             temperature=await self.resolve_temperature(task_type),
             max_tool_steps=await self.resolve_max_tool_steps(task_type),
             task_type=task_type,
+            tool_timeout_s=await self.resolve_tool_timeout_s(task_type),
         )
 
     async def is_step_enabled(self, step: str, task_type: str) -> bool:
