@@ -11,6 +11,7 @@ from __future__ import annotations
 
 __all__ = ["AutomationRunner"]
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime
@@ -28,6 +29,32 @@ from aila.storage.database import async_session_scope
 _log = logging.getLogger(__name__)
 
 
+# Finding 46-4: per-schedule isolation tuple. Mirrors the emitter's
+# _DESTINATION_ISOLATION_ERRORS (platform/events/emitter.py): any
+# subclass of Exception a schedule handler / submit path might
+# reasonably raise is caught so later schedules in the same tick are
+# still processed. BaseException-only subclasses (KeyboardInterrupt,
+# SystemExit, asyncio.CancelledError) intentionally propagate -- the
+# process is going down and the tick must not swallow that.
+_SCHEDULE_ISOLATION_ERRORS: tuple[type[BaseException], ...] = (
+    AILAError,
+    sqlalchemy.exc.SQLAlchemyError,
+    RuntimeError,
+    OSError,
+    TimeoutError,
+    ValueError,
+    TypeError,
+    AttributeError,
+    KeyError,
+    IndexError,
+    LookupError,
+    ArithmeticError,
+    ImportError,
+    AssertionError,
+    ReferenceError,
+)
+
+
 class AutomationRunner:
     """Evaluate enabled automation schedules and submit due jobs.
 
@@ -35,14 +62,54 @@ class AutomationRunner:
     database (AutomationScheduleRecord.last_run_at). This makes it safe
     to call tick() from multiple processes without double-firing, since
     TaskQueue dedup (SEC-07) catches identical submissions.
+
+    Finding 46-3 (overlap guard): concurrent tick() calls on the same
+    runner instance are serialized via an asyncio.Lock. A tick that finds
+    the lock already held returns 0 immediately rather than queueing --
+    the goal is to skip a redundant scan while an in-progress tick is
+    still walking the schedule list, not to block the caller (the
+    supervisor loop wakes on a fixed cadence; blocked ticks would just
+    stack up).
+
+    Finding 46-3 (ordering): last_run_at is now written BEFORE the
+    TaskQueue.submit() call. A crash between the claim and the submit
+    marks the schedule as fired for this cycle with last_run_result
+    "error"; the cron cadence resumes on the next tick. This trades
+    at-most-once semantics on submit failure for the previous
+    at-least-twice pathology (slow submit + next tick + same row still
+    marked not-yet-run -> two ARQ jobs for one intended fire).
     """
 
     def __init__(self, registry: AutomationRegistry, task_queue: TaskQueue) -> None:
         self._registry = registry
         self._queue = task_queue
+        # Guards concurrent tick() invocations on the same runner instance
+        # (finding 46-3). Created lazily so the runner can be constructed
+        # outside an event loop (asyncio.Lock binds to the running loop
+        # only when first acquired, so lazy construction avoids the
+        # "attached to a different loop" trap when tests instantiate a
+        # runner per test-loop).
+        self._tick_lock: asyncio.Lock | None = None
 
     async def tick(self) -> int:
-        """Evaluate all enabled schedules. Return count of jobs submitted."""
+        """Evaluate all enabled schedules. Return count of jobs submitted.
+
+        If a previous tick() on this runner is still executing, this call
+        returns 0 without touching the database (finding 46-3 overlap
+        guard).
+        """
+        if self._tick_lock is None:
+            self._tick_lock = asyncio.Lock()
+        if self._tick_lock.locked():
+            _log.info(
+                "automation tick already in progress; skipping overlapping invocation"
+            )
+            return 0
+        async with self._tick_lock:
+            return await self._tick_locked()
+
+    async def _tick_locked(self) -> int:
+        """Do the actual per-schedule evaluation under the tick lock."""
         now = datetime.now(UTC)
         submitted = 0
 
@@ -68,6 +135,19 @@ class AutomationRunner:
                 kwargs = json.loads(schedule.action_kwargs_json)
                 kwargs["target_name"] = schedule.target_name
 
+                # Finding 46-3 ordering: claim the schedule by writing
+                # last_run_at BEFORE submit. A crash / slow submit
+                # between here and the queue write no longer lets the
+                # next tick re-fire the same schedule. The result is
+                # written as "pending" first and rewritten to
+                # "submitted:<task_id>" after the submit returns.
+                await self._write_schedule_state(
+                    schedule.id,
+                    last_run_at=now,
+                    last_run_result="pending",
+                    updated_at=now,
+                )
+
                 handle = await self._queue.submit(
                     track=action.module_id,
                     fn=action.handler_fn,
@@ -76,36 +156,39 @@ class AutomationRunner:
                     team_id=schedule.team_id,
                 )
 
-                # Update last_run metadata
-                async with async_session_scope() as session:
-                    rec = (await session.exec(
-                        select(AutomationScheduleRecord)
-                        .where(AutomationScheduleRecord.id == schedule.id)
-                    )).one()
-                    rec.last_run_at = now
-                    rec.last_run_result = f"submitted:{handle.task_id}"
-                    rec.updated_at = now
-                    session.add(rec)
-                    await session.commit()
+                # Rewrite last_run_result now that the submit succeeded.
+                # last_run_at stays at the value written above (single
+                # timestamp per firing decision).
+                await self._write_schedule_state(
+                    schedule.id,
+                    last_run_at=now,
+                    last_run_result=f"submitted:{handle.task_id}",
+                    updated_at=now,
+                )
 
                 submitted += 1
                 _log.info(
                     "Automation fired: schedule=%s action=%s task=%s",
                     schedule.id, schedule.action_id, handle.task_id,
                 )
-            except (AILAError, sqlalchemy.exc.SQLAlchemyError):
-                _log.exception("Failed to submit automation schedule %s", schedule.id)
+            except _SCHEDULE_ISOLATION_ERRORS:
+                # Finding 46-4: isolate one schedule's failure so later
+                # schedules in the same tick are still processed. The
+                # isolation tuple mirrors the emitter destination
+                # isolation set; KeyboardInterrupt / SystemExit /
+                # asyncio.CancelledError propagate on purpose so the
+                # process still exits cleanly on shutdown.
+                _log.exception(
+                    "Failed to submit automation schedule %s -- continuing with next schedule",
+                    schedule.id,
+                )
                 try:
-                    async with async_session_scope() as session:
-                        rec = (await session.exec(
-                            select(AutomationScheduleRecord)
-                            .where(AutomationScheduleRecord.id == schedule.id)
-                        )).one()
-                        rec.last_run_at = now
-                        rec.last_run_result = "error"
-                        rec.updated_at = now
-                        session.add(rec)
-                        await session.commit()
+                    await self._write_schedule_state(
+                        schedule.id,
+                        last_run_at=now,
+                        last_run_result="error",
+                        updated_at=now,
+                    )
                 except sqlalchemy.exc.SQLAlchemyError:
                     _log.debug(
                         "Failed to update error status for schedule %s",
@@ -113,6 +196,33 @@ class AutomationRunner:
                     )
 
         return submitted
+
+    @staticmethod
+    async def _write_schedule_state(
+        schedule_id: str,
+        *,
+        last_run_at: datetime,
+        last_run_result: str,
+        updated_at: datetime,
+    ) -> None:
+        """Persist last_run_at / last_run_result / updated_at for one schedule.
+
+        Extracted so the claim (before submit) and the finalization (after
+        submit) share a single transaction shape. Raises SQLAlchemyError on
+        DB failure; callers decide whether to swallow (error-path best
+        effort) or propagate (claim-path is inside the try body so an
+        exception routes through the isolation guard).
+        """
+        async with async_session_scope() as session:
+            rec = (await session.exec(
+                select(AutomationScheduleRecord)
+                .where(AutomationScheduleRecord.id == schedule_id)
+            )).one()
+            rec.last_run_at = last_run_at
+            rec.last_run_result = last_run_result
+            rec.updated_at = updated_at
+            session.add(rec)
+            await session.commit()
 
     @staticmethod
     def _is_due(schedule: AutomationScheduleRecord, now: datetime) -> bool:
