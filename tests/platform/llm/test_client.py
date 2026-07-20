@@ -15,7 +15,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import BaseModel
 
-from aila.platform.llm.client import AilaLLMClient, LLMResponse, _extract_usage, _merge_usage
+from aila.platform.llm.client import (
+    AilaLLMClient,
+    LLMResponse,
+    _AsyncOpenAIPool,
+    _extract_usage,
+    _merge_usage,
+)
 from aila.platform.llm.config import LLMConfigProvider, LLMRouting
 from aila.platform.llm.errors import LLMError
 
@@ -636,3 +642,28 @@ class TestToolTimeoutConfig:
             FakeSecretStore(),
         )
         assert await p.resolve_tool_timeout_s("scoring") == 300.0
+
+
+# ---------------------------------------------------------------------------
+# AsyncOpenAI client pool (#44)
+# ---------------------------------------------------------------------------
+
+class TestAsyncOpenAIPool:
+    """The pool reuses one client per (api_key, base_url, timeout) so the LLM
+    call path stops creating (and leaking) a fresh AsyncOpenAI per request."""
+
+    def test_reuses_client_for_same_key(self) -> None:
+        pool = _AsyncOpenAIPool()
+        c1 = pool.get(api_key="sk-a", base_url="http://x", timeout_s=180.0)
+        c2 = pool.get(api_key="sk-a", base_url="http://x", timeout_s=180.0)
+        assert c1 is c2
+
+    def test_distinct_client_per_key(self) -> None:
+        pool = _AsyncOpenAIPool()
+        base = pool.get(api_key="sk-a", base_url="http://x", timeout_s=180.0)
+        rotated_key = pool.get(api_key="sk-b", base_url="http://x", timeout_s=180.0)
+        other_url = pool.get(api_key="sk-a", base_url="http://y", timeout_s=180.0)
+        other_timeout = pool.get(api_key="sk-a", base_url="http://x", timeout_s=60.0)
+        assert base is not rotated_key
+        assert base is not other_url
+        assert base is not other_timeout

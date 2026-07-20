@@ -20,6 +20,7 @@ Tool calling (per D-05-new):
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -359,6 +360,49 @@ def _is_retryable(exc: BaseException) -> bool:
     return True
 
 
+@dataclass(frozen=True, slots=True)
+class _ClientKey:
+    api_key_hash: str
+    base_url: str
+    timeout_s: float
+
+
+class _AsyncOpenAIPool:
+    """Process-local pool of AsyncOpenAI clients keyed by (api_key, base_url,
+    timeout).
+
+    Previously every LLM call built a fresh ``AsyncOpenAI`` -- each owning an
+    ``httpx.AsyncClient`` connection pool -- and ``_call_with_retry`` never
+    closed it, so the file-descriptor count grew unbounded under load (#44).
+    Routing is frozen per investigation, so a keyed pool converges to a tiny
+    number of long-lived clients whose connections are reused.
+
+    ``AsyncOpenAI`` construction is synchronous, so :meth:`get` has no await
+    point and is safe to call from concurrent coroutines on one event loop
+    without a lock.
+    """
+
+    def __init__(self) -> None:
+        self._pool: dict[_ClientKey, AsyncOpenAI] = {}
+
+    def get(self, *, api_key: str, base_url: str, timeout_s: float) -> AsyncOpenAI:
+        key = _ClientKey(
+            api_key_hash=hashlib.sha256(api_key.encode()).hexdigest()[:16],
+            base_url=base_url,
+            timeout_s=timeout_s,
+        )
+        client = self._pool.get(key)
+        if client is None:
+            client = AsyncOpenAI(
+                api_key=api_key,
+                base_url=base_url,
+                max_retries=0,  # retries handled in _call_with_retry
+                timeout=timeout_s,
+            )
+            self._pool[key] = client
+        return client
+
+
 class AilaLLMClient:
     """Async-first LLM client with config-based routing and operational controls.
 
@@ -376,6 +420,9 @@ class AilaLLMClient:
         self._pipeline = PipelineRunner(config_provider=self._config)
         self.cost_tracker: Any = None  # Set by builder.py to CostTracker instance
         self.bus: Any = None  # Optional EventBus; set by builder.py for domain events
+        # #44: reuse AsyncOpenAI clients across calls instead of building (and
+        # leaking) a fresh one per request.
+        self._client_pool = _AsyncOpenAIPool()
 
     @property
     def pipeline(self) -> PipelineRunner:
@@ -758,11 +805,10 @@ class AilaLLMClient:
             _timeout_s = float(_os.environ.get("AILA_LLM_TIMEOUT_SECONDS", "180"))
         except ValueError:
             _timeout_s = 180.0
-        client = AsyncOpenAI(
+        client = self._client_pool.get(
             api_key=routing.api_key,
             base_url=routing.base_url,
-            max_retries=0,  # we handle retries ourselves for logging
-            timeout=_timeout_s,
+            timeout_s=_timeout_s,
         )
 
         last_error: Exception | None = None
@@ -1023,77 +1069,70 @@ class AilaLLMClient:
             _timeout_s = float(os.environ.get("AILA_LLM_TIMEOUT_SECONDS", "180"))
         except ValueError:
             _timeout_s = 180.0
-        client = AsyncOpenAI(
+        client = self._client_pool.get(
             api_key=routing.api_key,
             base_url=routing.base_url,
-            max_retries=0,
-            timeout=_timeout_s,
+            timeout_s=_timeout_s,
         )
         _call_start = _time_mod.perf_counter()
+        response = await self._single_call(
+            client=client,
+            routing=routing,
+            messages=messages,
+            response_format=response_format,
+            tools=tools,
+            tool_executor=tool_executor,
+        )
+
+        # Cost recording -- same shape as :meth:`_call_with_retry` so
+        # consensus / verify tokens land in the same per-run budget
+        # and the operator's spend reports tell the truth (fix §100).
         try:
-            response = await self._single_call(
-                client=client,
-                routing=routing,
-                messages=messages,
-                response_format=response_format,
-                tools=tools,
-                tool_executor=tool_executor,
+            if self.cost_tracker is not None:
+                self.cost_tracker.record(run_id, response.usage)
+        except Exception as exc:
+            logger.debug("inner_call cost_tracker.record failed: %s", exc)
+
+        try:
+            from aila.platform.llm.cost import (
+                calculate_cost_usd,
+                persist_cost_record,
+            )
+            _prompt_tokens = response.usage.get("prompt_tokens", 0)
+            _completion_tokens = response.usage.get("completion_tokens", 0)
+            _cost_usd, _ = await calculate_cost_usd(
+                routing.model_id, _prompt_tokens, _completion_tokens,
+                self._config._registry,
+            )
+            _duration_ms = int(
+                (_time_mod.perf_counter() - _call_start) * 1000,
+            )
+            await persist_cost_record(
+                run_id=run_id,
+                model_id=routing.model_id,
+                task_type=routing.task_type,
+                team_id=team_id,
+                prompt_tokens=_prompt_tokens,
+                completion_tokens=_completion_tokens,
+                cost_usd=_cost_usd,
+                registry=self._config._registry,
+                prompt_preview=None,
+                response_preview=(
+                    response.content
+                    if isinstance(response.content, str) else None
+                ),
+                duration_ms=_duration_ms,
+                status="ok",
+            )
+        except (
+            ValueError, sqlalchemy.exc.SQLAlchemyError, AttributeError,
+        ) as exc:
+            logger.debug(
+                "inner_call cost persistence failed: %s",
+                exc,
             )
 
-            # Cost recording -- same shape as :meth:`_call_with_retry` so
-            # consensus / verify tokens land in the same per-run budget
-            # and the operator's spend reports tell the truth (fix §100).
-            try:
-                if self.cost_tracker is not None:
-                    self.cost_tracker.record(run_id, response.usage)
-            except Exception as exc:
-                logger.debug("inner_call cost_tracker.record failed: %s", exc)
-
-            try:
-                from aila.platform.llm.cost import (
-                    calculate_cost_usd,
-                    persist_cost_record,
-                )
-                _prompt_tokens = response.usage.get("prompt_tokens", 0)
-                _completion_tokens = response.usage.get("completion_tokens", 0)
-                _cost_usd, _ = await calculate_cost_usd(
-                    routing.model_id, _prompt_tokens, _completion_tokens,
-                    self._config._registry,
-                )
-                _duration_ms = int(
-                    (_time_mod.perf_counter() - _call_start) * 1000,
-                )
-                await persist_cost_record(
-                    run_id=run_id,
-                    model_id=routing.model_id,
-                    task_type=routing.task_type,
-                    team_id=team_id,
-                    prompt_tokens=_prompt_tokens,
-                    completion_tokens=_completion_tokens,
-                    cost_usd=_cost_usd,
-                    registry=self._config._registry,
-                    prompt_preview=None,
-                    response_preview=(
-                        response.content
-                        if isinstance(response.content, str) else None
-                    ),
-                    duration_ms=_duration_ms,
-                    status="ok",
-                )
-            except (
-                ValueError, sqlalchemy.exc.SQLAlchemyError, AttributeError,
-            ) as exc:
-                logger.debug(
-                    "inner_call cost persistence failed: %s",
-                    exc,
-                )
-
-            return response
-        finally:
-            try:
-                await client.close()
-            except Exception as exc:
-                logger.debug("inner_call client.close() failed: %s", exc)
+        return response
 
     async def _single_call(
         self,
