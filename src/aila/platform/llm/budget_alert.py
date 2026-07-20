@@ -110,5 +110,14 @@ async def check_monthly_budget(team_id: str | None, registry: ConfigRegistry) ->
                 total_usd=total_usd,
                 ceiling=ceiling,
             )
-    except sqlalchemy.exc.SQLAlchemyError:
-        _log.warning("budget_alert_check_failed", team_id=team_id)
+    except (
+        sqlalchemy.exc.SQLAlchemyError,
+        RuntimeError,
+        ValueError,
+        TypeError,
+        OSError,
+    ):
+        # Fire-and-forget contract (docstring): budget alerting must never fail
+        # cost recording, so the realistic leak set (DB, registry connection,
+        # arithmetic) is logged and swallowed rather than propagated.
+        _log.warning("budget_alert_check_failed", team_id=team_id, exc_info=True)
