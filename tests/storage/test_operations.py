@@ -3,9 +3,12 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-from sqlmodel import Field, Session, SQLModel, create_engine
+from sqlmodel import Field, SQLModel
 
-# --- Minimal in-memory model for testing ---
+from aila.storage.database import async_session_scope
+from aila.storage.operations import cached_fetch, db_delete, db_upsert
+
+# --- Minimal model for testing (created in the Postgres test DB by storage_db) ---
 
 class _FakeRecord(SQLModel, table=True):
     __tablename__ = "fake_records"
@@ -16,23 +19,24 @@ class _FakeRecord(SQLModel, table=True):
     value: str = Field(default="")
 
 
-@pytest.fixture(scope="function")
-def session():
-    engine = create_engine("sqlite:///:memory:")
-    SQLModel.metadata.create_all(engine)
-    with Session(engine) as s:
-        yield s
+@pytest.fixture()
+async def db_session(storage_db):
+    """AsyncSession against the Postgres test DB with the schema created.
+
+    db_upsert / db_delete are async and take an AsyncSession; they commit
+    immediately, and storage_db truncates fake_records after each test.
+    """
+    async with async_session_scope() as session:
+        yield session
 
 
 # ---------------------------------------------------------------------------
 # db_upsert
 # ---------------------------------------------------------------------------
 
-def test_db_upsert_creates_new_record(session):
-    from aila.storage.operations import db_upsert
-
-    record, created = db_upsert(
-        session,
+async def test_db_upsert_creates_new_record(db_session):
+    record, created = await db_upsert(
+        db_session,
         _FakeRecord,
         lookup_filter=_FakeRecord.key == "alpha",
         update_fields={"key": "alpha", "value": "v1"},
@@ -43,20 +47,18 @@ def test_db_upsert_creates_new_record(session):
     assert record.id is not None
 
 
-def test_db_upsert_updates_existing_record(session):
-    from aila.storage.operations import db_upsert
-
+async def test_db_upsert_updates_existing_record(db_session):
     # Insert first
-    db_upsert(
-        session,
+    await db_upsert(
+        db_session,
         _FakeRecord,
         lookup_filter=_FakeRecord.key == "beta",
         update_fields={"key": "beta", "value": "original"},
     )
 
     # Update
-    record, created = db_upsert(
-        session,
+    record, created = await db_upsert(
+        db_session,
         _FakeRecord,
         lookup_filter=_FakeRecord.key == "beta",
         update_fields={"key": "beta", "value": "updated"},
@@ -69,30 +71,26 @@ def test_db_upsert_updates_existing_record(session):
 # db_delete
 # ---------------------------------------------------------------------------
 
-def test_db_delete_removes_matching_records(session):
-    from aila.storage.operations import db_delete, db_upsert
+async def test_db_delete_removes_matching_records(db_session):
+    await db_upsert(
+        db_session, _FakeRecord, _FakeRecord.key == "gamma", {"key": "gamma", "value": "x"}
+    )
 
-    db_upsert(session, _FakeRecord, _FakeRecord.key == "gamma", {"key": "gamma", "value": "x"})
-
-    deleted = db_delete(session, _FakeRecord, _FakeRecord.key == "gamma")
+    deleted = await db_delete(db_session, _FakeRecord, _FakeRecord.key == "gamma")
     assert len(deleted) == 1
     assert deleted[0].key == "gamma"
 
 
-def test_db_delete_returns_empty_list_on_no_match(session):
-    from aila.storage.operations import db_delete
-
-    deleted = db_delete(session, _FakeRecord, _FakeRecord.key == "nonexistent")
+async def test_db_delete_returns_empty_list_on_no_match(db_session):
+    deleted = await db_delete(db_session, _FakeRecord, _FakeRecord.key == "nonexistent")
     assert deleted == []
 
 
 # ---------------------------------------------------------------------------
-# cached_fetch
+# cached_fetch (synchronous -- no DB, unchanged)
 # ---------------------------------------------------------------------------
 
 def test_cached_fetch_returns_cache_hit():
-    from aila.storage.operations import cached_fetch
-
     cached_payload = {"data": [1, 2, 3]}
     get_fn = MagicMock(return_value=cached_payload)
     fetch_fn = MagicMock()
@@ -107,8 +105,6 @@ def test_cached_fetch_returns_cache_hit():
 
 
 def test_cached_fetch_calls_fetch_on_miss():
-    from aila.storage.operations import cached_fetch
-
     get_fn = MagicMock(return_value=None)
     live_data = [4, 5, 6]
     fetch_fn = MagicMock(return_value=live_data)
@@ -123,8 +119,6 @@ def test_cached_fetch_calls_fetch_on_miss():
 
 
 def test_cached_fetch_force_refresh_bypasses_cache():
-    from aila.storage.operations import cached_fetch
-
     cached_payload = {"data": "old"}
     get_fn = MagicMock(return_value=cached_payload)
     live_data = {"data": "fresh"}

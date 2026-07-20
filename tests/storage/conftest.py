@@ -19,8 +19,18 @@ import os
 import subprocess
 
 import pytest
+from sqlmodel import SQLModel
 
-__all__ = ["pg_url", "pg_engine", "pg_session"]
+import aila.modules.vr.db_models  # noqa: F401  -- populate SQLModel.metadata
+import aila.modules.vulnerability.db_models  # noqa: F401
+import aila.storage.db_models  # noqa: F401
+from aila.storage.database import (
+    async_session_scope,
+    dispose_engine,
+    get_async_engine,
+)
+
+__all__ = ["pg_url", "pg_engine", "pg_session", "storage_db"]
 
 
 # Connection defaults for local PostgreSQL
@@ -100,26 +110,45 @@ def _dispose_engines_sync() -> None:
     Must be called from a sync context (fixture teardown).
     """
     try:
-        from aila.storage.database import dispose_engine
         loop = asyncio.new_event_loop()
         loop.run_until_complete(dispose_engine())
         loop.close()
-    except Exception:
-        pass  # Best-effort cleanup -- don't fail teardown
+    except Exception:  # noqa: BLE001 -- best-effort teardown cleanup
+        pass
 
 
 @pytest.fixture
 def pg_engine(pg_url):
     """Return an async engine pointed at the test PostgreSQL."""
-    from aila.storage.database import get_async_engine
-
     return get_async_engine()
 
 
 @pytest.fixture
 async def pg_session(pg_url):
     """Yield an AsyncSession from async_session_scope."""
-    from aila.storage.database import async_session_scope
-
     async with async_session_scope() as session:
         yield session
+
+
+@pytest.fixture
+async def storage_db(pg_url):
+    """Postgres test DB with the full schema created, truncated per test.
+
+    The storage layer (ConfigRegistry.register/set/get, etc.) is async and runs
+    against ``async_session_scope`` bound to ``AILA_DATABASE_URL`` (set to the
+    test DB by ``pg_url``). This fixture guarantees the schema exists and
+    isolates each test by truncating every table on teardown -- the Postgres
+    analogue of the api-suite ``test_db`` fixture (D-48/D-49: no SQLite).
+    """
+    engine = get_async_engine()
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+
+    yield
+
+    async with engine.begin() as conn:
+        for table in reversed(SQLModel.metadata.sorted_tables):
+            try:
+                await conn.execute(table.delete())
+            except Exception:  # noqa: BLE001 -- best-effort per-test cleanup
+                pass
