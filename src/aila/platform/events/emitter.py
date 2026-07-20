@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import queue
 import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import sqlalchemy.exc
+
+from aila.platform.exceptions import AILAError
 
 from .event import PlatformEvent
 
@@ -15,9 +18,36 @@ if TYPE_CHECKING:
     from aila.platform.contracts.runtime import RunState
 
 
+_log = logging.getLogger(__name__)
+
+
 # A destination is any callable that accepts a PlatformEvent and keyword context.
 # Context kwargs are optional -- destinations may ignore what they don't need.
 DestinationFn = Callable[..., None]
+
+
+# Comprehensive tuple used to isolate destination failures at fan-out time.
+# Any exception a destination might reasonably raise (I/O, coercion, missing
+# key, config bug, platform error) is caught, logged, and counted so the
+# next destination in the registration list still receives the event.
+# BaseException-only subclasses (KeyboardInterrupt, SystemExit) intentionally
+# propagate -- the interpreter is going down and drain must not swallow that.
+_DESTINATION_ISOLATION_ERRORS: tuple[type[BaseException], ...] = (
+    RuntimeError,
+    OSError,
+    TimeoutError,
+    ValueError,
+    TypeError,
+    AttributeError,
+    KeyError,
+    IndexError,
+    LookupError,
+    ArithmeticError,
+    ImportError,
+    AssertionError,
+    ReferenceError,
+    AILAError,
+)
 
 
 class EventEmitter:
@@ -29,6 +59,9 @@ class EventEmitter:
 
     def __init__(self) -> None:
         self._destinations: list[tuple[str, DestinationFn]] = []
+        # Per-destination running failure count. Public read via
+        # destination_failure_count(name); test/telemetry hook.
+        self._destination_failures: dict[str, int] = {}
 
     def register_destination(self, name: str, fn: DestinationFn) -> None:
         """Add a named destination callable to the fan-out list.
@@ -41,9 +74,48 @@ class EventEmitter:
         self._destinations.append((name, fn))
 
     def emit(self, event: PlatformEvent) -> None:
-        """Deliver the event to all registered destinations in registration order."""
-        for _name, fn in self._destinations:
+        """Deliver the event to all registered destinations in registration order.
+
+        A failure in one destination is isolated: the remaining destinations
+        still receive the event, the exception is logged with full traceback,
+        and destination_failure_count(name) increments. This matches issue #60-1:
+        the previous unisolated for-loop silently dropped every downstream
+        destination when an earlier one raised.
+        """
+        for name, fn in self._destinations:
+            self._dispatch(name, fn, event)
+
+    def _dispatch(self, name: str, fn: DestinationFn, event: PlatformEvent) -> None:
+        """Call one destination under the isolation guard.
+
+        Kept as a hook so ThreadSafeEventEmitter reuses the identical
+        per-destination policy from inside its drain loop.
+        """
+        try:
             fn(event)
+        except _DESTINATION_ISOLATION_ERRORS as exc:
+            _log.exception(
+                "emitter destination %r raised on event %s/%s: %s",
+                name,
+                event.stage,
+                event.action,
+                exc.__class__.__name__,
+            )
+            self._destination_failures[name] = (
+                self._destination_failures.get(name, 0) + 1
+            )
+
+    def get_destination_failures(self) -> dict[str, int]:
+        """Return a snapshot of per-destination failure counts.
+
+        The returned mapping is a defensive copy: mutating it does not
+        affect the emitter, and reads on a live emitter under concurrent
+        emit() are safe because dict.copy() is atomic under CPython. A
+        destination that has never failed (or never been registered) is
+        absent from the mapping; treat missing keys as zero. Test and
+        telemetry hook -- production code should not branch on this value.
+        """
+        return dict(self._destination_failures)
 
 
 class ThreadSafeEventEmitter(EventEmitter):
@@ -77,7 +149,9 @@ class ThreadSafeEventEmitter(EventEmitter):
 
         Non-blocking lock acquisition means concurrent emit() callers skip the
         drain and return immediately. The current drain owner processes all
-        enqueued events before releasing, so no events are lost.
+        enqueued events before releasing, so no events are lost. Each
+        destination call is isolated via _dispatch so one broken destination
+        cannot starve the rest.
         """
         if not self._lock.acquire(blocking=False):
             return
@@ -87,8 +161,8 @@ class ThreadSafeEventEmitter(EventEmitter):
                     event = self._queue.get_nowait()
                 except queue.Empty:
                     break
-                for _name, fn in self._destinations:
-                    fn(event)
+                for name, fn in self._destinations:
+                    self._dispatch(name, fn, event)
         finally:
             self._lock.release()
 
@@ -122,10 +196,16 @@ def build_emitter(
                 details=event.details or {},
             )
         except sqlalchemy.exc.SQLAlchemyError:
-            # Session may be in a failed transaction state -- don't let audit
-            # event failure cascade and kill the entire scan
-            import logging as _logging
-            _logging.getLogger(__name__).debug("audit_db emit failed (session may be in failed state)", exc_info=True)
+            # Session may be in a failed transaction state. Log with traceback
+            # so the failure is visible; the outer drain isolation also counts
+            # this destination via its own metric if we re-raised, but here we
+            # keep the local specific catch because an in-flight failed
+            # transaction is expected on some upstream errors and must not
+            # feed the isolation counter (which is for infra failures).
+            _log.debug(
+                "audit_db emit failed (session may be in failed state)",
+                exc_info=True,
+            )
 
     def _run_history(event: PlatformEvent) -> None:
         append_run_event(run_state, event.key, event.message)
@@ -147,27 +227,30 @@ def build_emitter(
 
         Uses a sync Redis client to avoid event loop blocking issues
         (async create_task gets starved when sync HTTP calls block the loop).
+        Redis-side failures propagate to the drain isolation guard as
+        RuntimeError so the failure is logged, counted, and does not starve
+        subsequent destinations (issue #60-1 / #60-2).
         """
         task_id = event.run_id
         if not task_id:
             return
+        import os
+
+        import redis
+
+        from aila.platform.contracts._common import utc_now
+
+        redis_url = os.environ.get("AILA_PLATFORM_REDIS_URL")
+        if not redis_url:
+            return
+
+        percent = 0
+        if event.total and event.total > 0 and event.current is not None:
+            percent = int((event.current / event.total) * 100)
+
+        key = f"task:{task_id}:progress"
+        client = redis.from_url(redis_url, decode_responses=True)
         try:
-            import os
-
-            import redis
-
-            from aila.platform.contracts._common import utc_now
-
-            redis_url = os.environ.get("AILA_PLATFORM_REDIS_URL")
-            if not redis_url:
-                return
-
-            percent = 0
-            if event.total and event.total > 0 and event.current is not None:
-                percent = int((event.current / event.total) * 100)
-
-            key = f"task:{task_id}:progress"
-            client = redis.from_url(redis_url, decode_responses=True)
             try:
                 client.xadd(
                     key,
@@ -178,11 +261,17 @@ def build_emitter(
                         "timestamp": utc_now().isoformat(),
                     },
                     maxlen=1000,
+                    approximate=True,
                 )
-            finally:
-                client.close()
-        except redis.exceptions.RedisError:
-            pass  # Never let Redis failure break the scan
+            except redis.exceptions.RedisError as exc:
+                # Re-raise as RuntimeError so the drain isolation guard
+                # (which does not import redis) catches, logs, and counts
+                # the failure instead of the previous silent pass-swallow.
+                raise RuntimeError(
+                    f"redis stream publish failed: {exc.__class__.__name__}"
+                ) from exc
+        finally:
+            client.close()
 
     emitter.register_destination("audit_db", _audit_db)
     emitter.register_destination("run_history", _run_history)
