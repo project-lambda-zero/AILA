@@ -309,6 +309,55 @@ _MAX_RETRIES = max(1, int(os.environ.get("AILA_LLM_MAX_RETRIES", "3")))
 _RETRY_BASE_DELAY = max(0.1, float(os.environ.get("AILA_LLM_RETRY_BASE_DELAY_S", "1.0")))
 _RETRY_MAX_DELAY = max(_RETRY_BASE_DELAY, float(os.environ.get("AILA_LLM_RETRY_MAX_DELAY_S", "30.0")))
 
+# HTTP status codes that stay retryable even though they land in the 4xx
+# range: request-timeout (408), too-early (425), and rate-limit (429).
+# Everything else in 4xx (auth, permission, malformed request, not-found,
+# unprocessable) will keep failing on repeat and MUST fail fast so the
+# worker slot is not burned on doomed backoff sleeps.
+_RETRYABLE_4XX_STATUSES: frozenset[int] = frozenset({408, 425, 429})
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Classify a provider or client exception as retryable vs non-retryable.
+
+    Retryable: transient upstream failures where a repeat of the same request
+    has a realistic chance of succeeding -- HTTP 429 (rate limit), 5xx
+    (server errors), 408 (request timeout), 425 (too early), and network-
+    layer failures (connection reset, DNS, wall-clock timeout). Also:
+    LLMError instances that self-report as retryable.
+
+    Non-retryable: failures a retry cannot fix -- HTTP 4xx auth (401),
+    permission (403), malformed request (400), not-found (404),
+    unprocessable entity (422). Also: LLMError instances that self-report
+    as non-retryable (classification blocks, schema violations, kill switch).
+
+    Unknown exception types default to retryable so a transient failure from
+    an unfamiliar provider client does not silently regress the historical
+    retry-everything behaviour. Only recognised non-retryable classes and
+    explicit non-retryable HTTP statuses fail fast.
+    """
+    if isinstance(exc, LLMError):
+        return exc.retryable
+    # Transport-level provider failures the openai client raises. Listed
+    # explicitly so a future release that changes their status_code
+    # surface still classifies correctly.
+    if isinstance(exc, (APIConnectionError, APITimeoutError, RateLimitError)):
+        return True
+    # Status-code driven classification. Covers openai.APIStatusError
+    # subclasses (AuthenticationError, PermissionDeniedError,
+    # BadRequestError, NotFoundError, UnprocessableEntityError,
+    # InternalServerError) and any provider client that exposes an
+    # HTTP status through the same attribute name.
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        if status_code in _RETRYABLE_4XX_STATUSES:
+            return True
+        if 500 <= status_code < 600:
+            return True
+        if 400 <= status_code < 500:
+            return False
+    return True
+
 
 class AilaLLMClient:
     """Async-first LLM client with config-based routing and operational controls.
@@ -891,18 +940,32 @@ class AilaLLMClient:
                     # Non-retryable LLM errors (ClassificationBlockedError, etc.)
                     raise
             except Exception as exc:
-                # ALL provider errors are transient -- 500, 502, 503,
-                # connection reset, timeout, DNS failure, etc. The only
-                # non-retryable errors are LLMError(retryable=False)
-                # which are caught above (classification blocks, schema
-                # violations). Everything else gets retried.
+                # Two-branch classification (issue #44 -- retry reliability):
+                # non-retryable provider errors (HTTP 4xx auth/malformed:
+                # 400/401/403/404/422) fail fast so a doomed request does not
+                # burn the retry budget or block the worker on backoff sleeps.
+                # Retryable failures (429, 5xx, connection reset, timeout,
+                # DNS) keep the historical retry+backoff behaviour.
                 _record_llm_error()
-                last_error = exc
-                delay = min(_RETRY_BASE_DELAY * (2 ** attempt), _RETRY_MAX_DELAY)
                 # Deferred import: aila.platform.services.__init__ pulls in
                 # ServiceFactory, which imports back into aila.platform.llm.
                 # Loading redact_secrets at runtime sidesteps the cycle.
                 from ..services.log_redact import redact_secrets
+                if not _is_retryable(exc):
+                    status = getattr(exc, "status_code", None)
+                    logger.warning(
+                        "LLM non-retryable provider error: %s (status=%s): %s -- failing fast",
+                        type(exc).__name__,
+                        status,
+                        redact_secrets(str(exc))[:200],
+                    )
+                    raise LLMError(
+                        f"LLM non-retryable provider error: {type(exc).__name__}: "
+                        f"{redact_secrets(str(exc))}",
+                        retryable=False,
+                    ) from exc
+                last_error = exc
+                delay = min(_RETRY_BASE_DELAY * (2 ** attempt), _RETRY_MAX_DELAY)
                 logger.warning(
                     "LLM provider error (attempt %d/%d): %s: %s -- retrying in %.1fs",
                     attempt + 1,
