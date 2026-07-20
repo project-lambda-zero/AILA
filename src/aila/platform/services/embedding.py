@@ -10,6 +10,13 @@ class EmbeddingProvider(Protocol):
 
     Implementations produce dense float vectors from text.
     The dimension property must match the pgvector column width.
+
+    The Protocol exposes both a sync (:meth:`encode`) and an async
+    (:meth:`encode_async`) surface: sync callers stay on the existing path,
+    async callers use :meth:`encode_async` which offloads the blocking
+    ``model.encode(...)`` call to a worker thread via
+    :func:`aila.platform.services.runtime.run_blocking_io` so the event
+    loop is never stalled by CPU-bound embedding work (design #64-3.1b).
     """
 
     @property
@@ -24,6 +31,10 @@ class EmbeddingProvider(Protocol):
 
     def encode(self, text: str) -> list[float]:
         """Encode text to a dense float vector. Synchronous -- called outside DB transactions."""
+        ...
+
+    async def encode_async(self, text: str) -> list[float]:
+        """Async companion to :meth:`encode`; offloads the sync encode via ``run_blocking_io``."""
         ...
 
 
@@ -48,6 +59,18 @@ class BGEProvider:
     def encode(self, text: str) -> list[float]:
         model = self._ensure_model()
         return model.encode(text).tolist()
+
+    async def encode_async(self, text: str) -> list[float]:
+        """Async encode: offloads the CPU-bound ``SentenceTransformer.encode``
+        call to a platform-owned worker thread so the event loop stays
+        responsive (design #64-3.1b, matches the ``run_blocking_io`` pattern
+        already used by :mod:`aila.platform.tools.knowledge`).
+        """
+        # Deferred import: services.runtime imports back into this package via
+        # __init__ during startup; loading run_blocking_io at call time avoids
+        # the bootstrap cycle without forcing an eager top-level dependency.
+        from aila.platform.services.runtime import run_blocking_io
+        return await run_blocking_io(self.encode, text)
 
     def _ensure_model(self) -> object:
         if BGEProvider._model is None:
@@ -81,6 +104,14 @@ class MiniLMProvider:
     def encode(self, text: str) -> list[float]:
         model = self._ensure_model()
         return model.encode(text).tolist()
+
+    async def encode_async(self, text: str) -> list[float]:
+        """Async encode: offloads the CPU-bound ``SentenceTransformer.encode``
+        call to a platform-owned worker thread so the event loop stays
+        responsive (design #64-3.1b).
+        """
+        from aila.platform.services.runtime import run_blocking_io
+        return await run_blocking_io(self.encode, text)
 
     def _ensure_model(self) -> object:
         if MiniLMProvider._model is None:

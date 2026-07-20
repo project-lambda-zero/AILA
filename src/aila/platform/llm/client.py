@@ -1080,6 +1080,17 @@ class AilaLLMClient:
         :meth:`_single_call` directly instead of routing through
         :class:`PipelineRunner`.
         """
+        # #38-3.2: budget check BEFORE the provider call, mirroring the
+        # pre-flight in :meth:`_call_with_retry` above (see :~810). Consensus
+        # (gate.py) and verify (verify.py) retries route their token spend
+        # through this method; without the seed, a run that already exceeded
+        # its ceiling still spent on every retry because the check only ran
+        # once on the primary path. check_budget_async seeds the in-memory
+        # totals from the durable ledger and raises BudgetExceededError when
+        # the per-run token ceiling is already crossed -- fail fast, no spend.
+        if self.cost_tracker is not None and run_id is not None:
+            await self.cost_tracker.check_budget_async(run_id, routing.task_type)
+
         try:
             _timeout_s = float(os.environ.get("AILA_LLM_TIMEOUT_SECONDS", "180"))
         except ValueError:
