@@ -26,6 +26,7 @@ import structlog
 from pydantic import BaseModel
 
 from ..exceptions import AILAError
+from .errors import LLMError
 
 if TYPE_CHECKING:
     from ...storage.registry import ConfigRegistry
@@ -184,7 +185,12 @@ async def estimate_human_cost(
         )
         return estimate
 
-    except (AILAError, pydantic.ValidationError, sqlalchemy.exc.SQLAlchemyError):
+    except (
+        AILAError,
+        LLMError,
+        pydantic.ValidationError,
+        sqlalchemy.exc.SQLAlchemyError,
+    ):
         _log.warning(
             "human_cost_estimation_failed",
             team_id=team_id,
