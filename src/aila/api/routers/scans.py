@@ -251,38 +251,48 @@ async def stream_scan_events(
             yield f"event: done\ndata: {json.dumps({'status': status})}\n\n"
             return
 
-        async for event in stream.stream_events(run_id, resume_from):
-            if event.get("type") == "ping":
-                # Failsafe: on every ping, synthesise a heartbeat event with
-                # the DB-recorded status + age so the frontend never thinks a
-                # long-running stage has silently died. Stages such as advisory
-                # and intel enrichment can run for minutes without emitting
-                # progress; this keeps the UI honest.
-                status, hb = await _fetch_task_state(run_id)
-                if status in _terminal_statuses:
-                    yield f"event: done\ndata: {json.dumps({'status': status})}\n\n"
-                    return
-                hb_age_s: float | None = None
-                if hb is not None:
-                    now = _dt.now(tz=UTC)
-                    hb_for_calc = hb if hb.tzinfo is not None else hb.replace(tzinfo=UTC)
-                    hb_age_s = max(0.0, (now - hb_for_calc).total_seconds())
-                hb_payload = {
-                    "stage": "heartbeat",
-                    "message": f"Scan still running (stage={latest_stage}, last worker beat {int(hb_age_s)}s ago)"
-                    if hb_age_s is not None
-                    else f"Scan still running (stage={latest_stage})",
-                    "percent": None,
-                    "task_status": status,
-                    "heartbeat_age_s": round(hb_age_s, 1) if hb_age_s is not None else None,
-                }
-                yield f"data: {json.dumps(hb_payload)}\n\n"
-                continue
+        # Wrap the live stream so a mid-stream backend error (e.g. a Redis blip)
+        # closes the SSE connection with a done sentinel instead of crashing the
+        # response, mirroring the catchup block above.
+        try:
+            async for event in stream.stream_events(run_id, resume_from):
+                if event.get("type") == "ping":
+                    # Failsafe: on every ping, synthesise a heartbeat event with
+                    # the DB-recorded status + age so the frontend never thinks a
+                    # long-running stage has silently died. Stages such as advisory
+                    # and intel enrichment can run for minutes without emitting
+                    # progress; this keeps the UI honest.
+                    status, hb = await _fetch_task_state(run_id)
+                    if status in _terminal_statuses:
+                        yield f"event: done\ndata: {json.dumps({'status': status})}\n\n"
+                        return
+                    hb_age_s: float | None = None
+                    if hb is not None:
+                        now = _dt.now(tz=UTC)
+                        hb_for_calc = hb if hb.tzinfo is not None else hb.replace(tzinfo=UTC)
+                        hb_age_s = max(0.0, (now - hb_for_calc).total_seconds())
+                    hb_payload = {
+                        "stage": "heartbeat",
+                        "message": f"Scan still running (stage={latest_stage}, last worker beat {int(hb_age_s)}s ago)"
+                        if hb_age_s is not None
+                        else f"Scan still running (stage={latest_stage})",
+                        "percent": None,
+                        "task_status": status,
+                        "heartbeat_age_s": round(hb_age_s, 1) if hb_age_s is not None else None,
+                    }
+                    yield f"data: {json.dumps(hb_payload)}\n\n"
+                    continue
 
-            yield f"data: {json.dumps(event)}\n\n"
-            stage = event.get("stage")
-            if stage:
-                latest_stage = stage
+                yield f"data: {json.dumps(event)}\n\n"
+                stage = event.get("stage")
+                if stage:
+                    latest_stage = stage
+        except Exception as exc:
+            # End the generator quietly so the StreamingResponse completes with
+            # 200 instead of surfacing a 500 mid-stream. No done sentinel is
+            # emitted -- the client's EventSource then auto-reconnects, which is
+            # the right behaviour for a transient backend error.
+            _log.warning("Scan SSE live stream failed for %s: %s", run_id, exc)
 
     return StreamingResponse(
         _sse_generator(),
