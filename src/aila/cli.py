@@ -65,7 +65,7 @@ from .platform.modules import load_builtin_modules
 from .platform.routing import get_agent_stats, get_registered_schemas
 from .platform.runtime import AILAPlatform
 from .platform.runtime.tools import ToolRegistry
-from .platform.services.audit import record_audit_event
+from .platform.services.audit import record_audit_event_sync
 from .platform.services.ssh import SSHService
 from .platform.tools import (
     ArtifactSearchTool,
@@ -784,7 +784,7 @@ def tool_invoke(
     with session_scope() as session:
         try:
             result = tool.forward(**kwargs)
-            record_audit_event(
+            record_audit_event_sync(
                 session,
                 run_id=run_id,
                 stage="direct_tool",
@@ -795,7 +795,7 @@ def tool_invoke(
             )
             session.commit()
         except AILAError as exc:
-            record_audit_event(
+            record_audit_event_sync(
                 session,
                 run_id=run_id,
                 stage="direct_tool",
@@ -1607,7 +1607,7 @@ def create_api_key(
         session.commit()
         session.refresh(record)
         key_id = record.id  # snapshot before session closes
-        record_audit_event(
+        record_audit_event_sync(
             session,
             run_id=key_id,
             stage="auth",

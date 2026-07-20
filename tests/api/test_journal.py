@@ -11,14 +11,17 @@ from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
+from sqlmodel import select as sm_select
 
+from aila.platform.services.audit import record_audit_event_sync
 from aila.platform.services.journal import (
     JournalEntry,
     JournalWriteError,
     append,
+    append_sync,
     verify_chain,
 )
-from aila.storage.database import async_session_scope
+from aila.storage.database import async_session_scope, session_scope
 from aila.storage.db_models import PlatformJournalRecord
 
 
@@ -132,3 +135,69 @@ async def test_append_rejects_unknown_kind(test_db) -> None:
                 entry=JournalEntry(kind="bogus", source="t", action="x"),
                 team_id="t-x",
             )
+
+
+async def test_append_sync_chains(test_db) -> None:
+    """The sync append path (worker-thread emitter / CLI) chains identically to
+    the async path and passes the async chain verifier."""
+    team = f"t-{uuid4().hex[:8]}"
+    chain = f"team:{team}"
+    with session_scope() as s:
+        r0 = append_sync(s, entry=_entry("a"), team_id=team)
+        r1 = append_sync(s, entry=_entry("b"), team_id=team)
+        s.commit()
+
+    assert (r0.seq, r1.seq) == (0, 1)
+    assert r0.chain_id == chain
+    assert len(r0.row_hash) == 64
+
+    with session_scope() as s:
+        rows = list(
+            s.exec(
+                sm_select(PlatformJournalRecord)
+                .where(PlatformJournalRecord.chain_id == chain)
+                .order_by(PlatformJournalRecord.seq.asc())
+            ).all()
+        )
+    assert rows[0].prev_hash is None  # genesis
+    assert rows[1].prev_hash == rows[0].row_hash
+
+    # Cross-verify with the async verifier: the sync path shares _build_row, so
+    # a sync-written chain must recompute clean.
+    async with async_session_scope() as session:
+        result = await verify_chain(session, chain_id=chain)
+    assert result.ok is True
+    assert result.checked == 2
+
+
+async def test_record_audit_event_sync_writes_journal(test_db) -> None:
+    """The migrated CLI audit path writes a tamper-evident journal row (#52)
+    rather than the legacy AuditEventRecord table."""
+    run_id = f"r-{uuid4().hex[:8]}"
+    with session_scope() as s:
+        record_audit_event_sync(
+            s,
+            run_id=run_id,
+            stage="auth",
+            action="create_api_key",
+            status="completed",
+            target="ak_abc",
+            user_id="cli",
+            details={"role": "admin"},
+        )
+        s.commit()
+
+    with session_scope() as s:
+        row = s.exec(
+            sm_select(PlatformJournalRecord).where(
+                PlatformJournalRecord.run_id == run_id
+            )
+        ).first()
+    assert row is not None
+    assert row.kind == "audit"
+    assert row.action == "create_api_key"
+    assert row.actor_id == "cli"
+    assert row.actor_kind == "user"
+    assert row.source == "audit.auth"
+    assert row.payload_json["target"] == "ak_abc"
+    assert row.payload_json["details"] == {"role": "admin"}

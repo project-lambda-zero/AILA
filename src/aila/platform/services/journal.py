@@ -30,7 +30,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-from sqlmodel import select
+from sqlmodel import Session, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from aila.platform.contracts._common import utc_now
@@ -48,6 +48,7 @@ __all__ = [
     "JournalWriteError",
     "append",
     "append_or_deadletter",
+    "append_sync",
     "verify_chain",
 ]
 
@@ -178,7 +179,7 @@ def _redact_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     return out, changed
 
 
-def _resolve_team_id(session: AsyncSession, team_id: str | None) -> str | None:
+def _resolve_team_id(session: Any, team_id: str | None) -> str | None:
     if team_id is not None:
         return team_id
     ctx = session.info.get("team_context")
@@ -187,19 +188,18 @@ def _resolve_team_id(session: AsyncSession, team_id: str | None) -> str | None:
     return None
 
 
-async def append(
-    session: AsyncSession,
-    *,
-    entry: JournalEntry,
-    team_id: str | None = None,
-) -> JournalAppendResult:
-    """Append one row inside the caller's transaction. Fail-closed (C2 0.5)."""
+def _prepare(
+    session: Any, entry: JournalEntry, team_id: str | None
+) -> tuple[str, str | None, dict[str, Any], bool, str, str, str]:
+    """Shared append preamble: validate kind, resolve chain, redact, hash.
+
+    Returns (chain_id, resolved_team, payload, contains_secret, payload_hash,
+    journal_id, correlation_id).
+    """
     if entry.kind not in JOURNAL_KINDS:
         raise JournalWriteError(f"unknown journal kind: {entry.kind!r}")
-
     resolved_team = _resolve_team_id(session, team_id)
     chain_id = f"team:{resolved_team}" if resolved_team else "global"
-
     payload, redacted = _redact_payload(entry.payload)
     contains_secret = entry.contains_secret or redacted
     payload_hash = _payload_hash(payload)
@@ -210,6 +210,85 @@ async def append(
         or entry.run_id
         or journal_id
     )
+    return (
+        chain_id,
+        resolved_team,
+        payload,
+        contains_secret,
+        payload_hash,
+        journal_id,
+        correlation_id,
+    )
+
+
+def _build_row(
+    *,
+    chain_id: str,
+    seq: int,
+    prev_hash: str | None,
+    journal_id: str,
+    resolved_team: str | None,
+    entry: JournalEntry,
+    correlation_id: str,
+    payload: dict[str, Any],
+    payload_hash: str,
+    contains_secret: bool,
+) -> tuple[PlatformJournalRecord, str]:
+    envelope = _envelope(
+        chain_id=chain_id,
+        seq=seq,
+        journal_id=journal_id,
+        team_id=resolved_team,
+        entry=entry,
+        correlation_id=correlation_id,
+        payload_hash=payload_hash,
+        contains_secret=contains_secret,
+    )
+    row_hash = _row_hash(prev_hash, envelope)
+    row = PlatformJournalRecord(
+        chain_id=chain_id,
+        seq=seq,
+        journal_id=journal_id,
+        team_id=resolved_team,
+        prev_hash=prev_hash,
+        row_hash=row_hash,
+        payload_hash=payload_hash,
+        kind=entry.kind,
+        source=entry.source,
+        actor_kind=entry.actor_kind,
+        actor_id=entry.actor_id,
+        action=entry.action,
+        status=entry.status,
+        run_id=entry.run_id,
+        investigation_id=entry.investigation_id,
+        branch_id=entry.branch_id,
+        turn_number=entry.turn_number,
+        correlation_id=correlation_id,
+        parent_journal_id=entry.parent_journal_id,
+        payload_json=payload,
+        contains_secret=contains_secret,
+        schema_version=entry.schema_version,
+        occurred_at=entry.occurred_at,
+    )
+    return row, row_hash
+
+
+async def append(
+    session: AsyncSession,
+    *,
+    entry: JournalEntry,
+    team_id: str | None = None,
+) -> JournalAppendResult:
+    """Append one row inside the caller's transaction. Fail-closed (C2 0.5)."""
+    (
+        chain_id,
+        resolved_team,
+        payload,
+        contains_secret,
+        payload_hash,
+        journal_id,
+        correlation_id,
+    ) = _prepare(session, entry, team_id)
 
     last_exc: Exception | None = None
     for _ in range(_MAX_SEQ_RETRIES):
@@ -233,45 +312,19 @@ async def append(
                     seq = int(head[0]) + 1
                     prev_hash = head[1]
 
-                envelope = _envelope(
+                row, row_hash = _build_row(
                     chain_id=chain_id,
                     seq=seq,
+                    prev_hash=prev_hash,
                     journal_id=journal_id,
-                    team_id=resolved_team,
+                    resolved_team=resolved_team,
                     entry=entry,
                     correlation_id=correlation_id,
+                    payload=payload,
                     payload_hash=payload_hash,
                     contains_secret=contains_secret,
                 )
-                row_hash = _row_hash(prev_hash, envelope)
-
-                session.add(
-                    PlatformJournalRecord(
-                        chain_id=chain_id,
-                        seq=seq,
-                        journal_id=journal_id,
-                        team_id=resolved_team,
-                        prev_hash=prev_hash,
-                        row_hash=row_hash,
-                        payload_hash=payload_hash,
-                        kind=entry.kind,
-                        source=entry.source,
-                        actor_kind=entry.actor_kind,
-                        actor_id=entry.actor_id,
-                        action=entry.action,
-                        status=entry.status,
-                        run_id=entry.run_id,
-                        investigation_id=entry.investigation_id,
-                        branch_id=entry.branch_id,
-                        turn_number=entry.turn_number,
-                        correlation_id=correlation_id,
-                        parent_journal_id=entry.parent_journal_id,
-                        payload_json=payload,
-                        contains_secret=contains_secret,
-                        schema_version=entry.schema_version,
-                        occurred_at=entry.occurred_at,
-                    )
-                )
+                session.add(row)
                 await session.flush()
             return JournalAppendResult(
                 journal_id=journal_id,
@@ -332,6 +385,74 @@ async def append_or_deadletter(
             failure_kind,
         )
         return None
+
+
+def append_sync(
+    session: Session,
+    *,
+    entry: JournalEntry,
+    team_id: str | None = None,
+) -> JournalAppendResult:
+    """Synchronous :func:`append` for sync-session callers (worker-thread event
+    emitter, CLI). Same fail-closed hash-chain semantics; shares the caller's
+    sync transaction and never commits."""
+    (
+        chain_id,
+        resolved_team,
+        payload,
+        contains_secret,
+        payload_hash,
+        journal_id,
+        correlation_id,
+    ) = _prepare(session, entry, team_id)
+
+    last_exc: Exception | None = None
+    for _ in range(_MAX_SEQ_RETRIES):
+        try:
+            with session.begin_nested():
+                head = session.exec(
+                    select(
+                        PlatformJournalRecord.seq,
+                        PlatformJournalRecord.row_hash,
+                    )
+                    .where(PlatformJournalRecord.chain_id == chain_id)
+                    .order_by(PlatformJournalRecord.seq.desc())
+                    .limit(1)
+                ).first()
+                if head is None:
+                    seq = 0
+                    prev_hash: str | None = None
+                else:
+                    seq = int(head[0]) + 1
+                    prev_hash = head[1]
+
+                row, row_hash = _build_row(
+                    chain_id=chain_id,
+                    seq=seq,
+                    prev_hash=prev_hash,
+                    journal_id=journal_id,
+                    resolved_team=resolved_team,
+                    entry=entry,
+                    correlation_id=correlation_id,
+                    payload=payload,
+                    payload_hash=payload_hash,
+                    contains_secret=contains_secret,
+                )
+                session.add(row)
+                session.flush()
+            return JournalAppendResult(
+                journal_id=journal_id,
+                seq=seq,
+                chain_id=chain_id,
+                row_hash=row_hash,
+            )
+        except IntegrityError as exc:
+            last_exc = exc
+            continue
+
+    raise JournalWriteError(
+        f"journal append to {chain_id} failed after {_MAX_SEQ_RETRIES} seq retries"
+    ) from last_exc
 
 
 async def verify_chain(
