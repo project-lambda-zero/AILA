@@ -17,6 +17,37 @@ from ..exceptions import AuthenticationError, TimeoutError, UpstreamError, Valid
 from .log_redact import redact_command_line
 
 
+def _reject_unsafe_path(path: object, *, kind: str) -> None:
+    """Reject empty or ``..``-traversal SFTP paths before any network call.
+
+    Guards both remote and local endpoints on the SFTP surface. A ``..``
+    segment can escape the intended target directory on either end -- the
+    server side on upload, the local file system on download -- so the SFTP
+    entry points refuse to open a connection for paths that contain one.
+    Splits on POSIX and Windows separators so the check cannot be sidestepped
+    by choosing the other style.
+
+    Args:
+        path: The user-supplied path string to validate.
+        kind: A short label (``"remote"`` or ``"local"``) used in the error
+            message so the caller can tell which side of the transfer was
+            rejected.
+
+    Raises:
+        ValueError: If ``path`` is not a non-empty string, or contains a
+            ``..`` path segment.
+    """
+    if not isinstance(path, str) or not path.strip():
+        raise ValueError(f"SFTP {kind} path must be a non-empty string.")
+    # Normalize Windows separators so ``..\\foo`` collapses into the same
+    # segment view as ``../foo`` before the traversal check runs.
+    segments = path.replace("\\", "/").split("/")
+    if any(segment == ".." for segment in segments):
+        raise ValueError(
+            f"SFTP {kind} path {path!r} contains a '..' traversal segment."
+        )
+
+
 class SSHConnectionPool:
     """Reusable SSH connections keyed by (host, port, username) for one scan's lifetime."""
 
@@ -247,6 +278,7 @@ class SSHService:
         Uses the same credential resolution and host-key verification as
         ``run_command``.  Blocking paramiko I/O runs in a thread.
         """
+        _reject_unsafe_path(remote_path, kind="remote")
         local_path = Path(local_path)
         if not local_path.is_file():
             raise ValidationError(f"Local file does not exist: {local_path}")
@@ -337,6 +369,8 @@ class SSHService:
         redirect to a remote temp file and download it here instead of
         streaming stdout through the deadlock-prone channel path.
         """
+        _reject_unsafe_path(remote_path, kind="remote")
+        _reject_unsafe_path(str(local_path), kind="local")
         if isinstance(integration, dict):
             payload = self._to_ssh_integration(RegisteredSystem.model_validate(integration))
         elif isinstance(integration, RegisteredSystem):
