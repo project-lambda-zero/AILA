@@ -222,8 +222,16 @@ async def create_api_key(
     async def _persist() -> tuple[str, str, str, datetime]:
         async with async_session_scope() as session:
             session.add(record)
-            await session.commit()
-            await session.refresh(record)
+            # #52-3.2: stage the audit row inside the SAME transaction as
+            # the record insert. The previous flow (`commit(); audit;
+            # commit()`) opened a crash window where the key was already
+            # persisted but the audit trail row was lost. ApiKeyRecord.id
+            # and .created_at are populated by default_factory at object
+            # construction, so both the audit payload and the return
+            # snapshot are safe to read before commit -- no refresh
+            # needed. record_audit_event only stages an INSERT on the
+            # session; the single commit below persists both writes or
+            # neither.
             rec_id: str = record.id
             rec_role: str = record.role
             rec_label: str = record.label

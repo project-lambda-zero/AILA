@@ -3,21 +3,28 @@
 Design ref: ``.run/designs/DESIGN_audit_journal.md`` sec 3.2.
 
 Proves the audit row and the business change share the same
-transaction at the systems.py delete_system site. Two scenarios:
+transaction at each site that used to split them across two commits.
+Two scenarios per site:
 
-1. Happy path -- after DELETE /systems/{id} both the business row is
-   gone AND an AuditEventRecord row exists. Post-#52-3.2 both writes
-   commit in a single transaction.
+1. Happy path -- after the request handler runs, the business row
+   is in its post-change state AND an AuditEventRecord row exists.
+   Post-#52-3.2 both writes commit in a single transaction.
 2. Failure path -- patch record_audit_event in the router module to
-   raise BEFORE the commit; the pre-staged session.delete MUST roll
-   back with it. The pre-fix flow committed the delete first and the
-   audit row second, so this rollback was impossible; the test now
-   guards against regression to that split.
+   raise BEFORE the commit; the pre-staged business write MUST roll
+   back with it. The pre-fix flow committed the business change
+   first and the audit row second, so this rollback was impossible;
+   the test now guards against regression to that split.
 
-The systems delete site was picked for the acceptance test because
-it is the shortest handler with an in-scope audit-after-commit
-finding, and its 204-No-Content contract makes the row-present /
-row-absent assertions unambiguous.
+Sites covered:
+  * ``systems.delete_system`` -- shortest handler with an in-scope
+    finding; its 204-No-Content contract makes row-present /
+    row-absent assertions unambiguous.
+  * ``auth.create_api_key`` -- extends coverage to the follow-up
+    site fixed alongside ``update_system``/``delete_system``/
+    ``_add_user_msg``. ApiKeyRecord.id is populated at construction
+    (uuid default_factory) so the audit payload can reference it
+    before commit -- no flush needed there, unlike the sequence-PK
+    ManagedSystemRecord path in ``create_system``.
 """
 
 from __future__ import annotations
@@ -29,10 +36,19 @@ import pytest
 from sqlmodel import select
 
 from aila.api.auth import AuthContext
-from aila.api.constants import AUDIT_ACTION_SYSTEM_DELETE
+from aila.api.constants import (
+    AUDIT_ACTION_CREATE_API_KEY,
+    AUDIT_ACTION_SYSTEM_DELETE,
+)
+from aila.api.routers.auth import router as auth_router
 from aila.api.routers.systems import router as systems_router
+from aila.api.schemas.auth import ApiKeyCreateRequest
 from aila.storage.database import async_session_scope
-from aila.storage.db_models import AuditEventRecord, ManagedSystemRecord
+from aila.storage.db_models import (
+    ApiKeyRecord,
+    AuditEventRecord,
+    ManagedSystemRecord,
+)
 
 __all__: list[str] = []
 
@@ -167,4 +183,118 @@ async def test_delete_system_audit_failure_rolls_back_row(
     assert events == [], (
         "no audit row must survive a rolled-back delete -- "
         f"found {len(events)} for target {system_name!r}"
+    )
+
+
+# --------------------------------------------------------------------------
+# auth.create_api_key -- follow-up site for #52-3.2. Same commit/audit/
+# commit anti-pattern as revoke_api_key; a crash between the two commits
+# used to persist the key with no audit trail. Post-fix both writes share
+# one transaction.
+# --------------------------------------------------------------------------
+
+
+def _admin(team_id: str | None = None) -> AuthContext:
+    """Build an AuthContext for the admin role. create_api_key requires
+    admin+ per D-09; the require_role dependency is not resolved on
+    direct endpoint invocation, so the AuthContext is passed explicitly.
+    team_id defaults to None (admin/god-tier, TEAM-06)."""
+    return AuthContext(
+        user_id="u-admin-" + uuid4().hex[:8],
+        role="admin",
+        auth_type="user",
+        team_id=team_id,
+    )
+
+
+async def _audit_events_for_create_target(target: str) -> list[AuditEventRecord]:
+    """Return every ``create_api_key`` audit row whose target is ``target``."""
+    async with async_session_scope() as session:
+        stmt = select(AuditEventRecord).where(
+            AuditEventRecord.action == AUDIT_ACTION_CREATE_API_KEY,
+            AuditEventRecord.target == target,
+        )
+        return list((await session.exec(stmt)).all())
+
+
+async def test_create_api_key_audit_and_row_share_transaction(test_db) -> None:
+    """Happy path: after POST /auth/keys the ApiKeyRecord is persisted
+    AND a matching create_api_key audit row exists. Post-#52-3.2 both
+    writes commit atomically in a single transaction."""
+    admin = _admin()
+    create_api_key = _endpoint(auth_router, "/auth/keys", "POST")
+    body = ApiKeyCreateRequest(role="reader", label="atomic-happy")
+
+    response = await create_api_key(request=_req(), body=body, admin=admin)
+
+    assert response.key_id
+    assert response.raw_key.startswith("aila_sk_")
+
+    async with async_session_scope() as session:
+        row = await session.get(ApiKeyRecord, response.key_id)
+    assert row is not None, "create_api_key must have persisted the row"
+    assert row.role == "reader"
+    assert row.label == "atomic-happy"
+
+    events = await _audit_events_for_create_target(response.key_prefix)
+    assert len(events) == 1, (
+        "create_api_key must record exactly one create_api_key audit "
+        f"event; got {len(events)}"
+    )
+    ev = events[0]
+    assert ev.stage == "auth"
+    assert ev.action == AUDIT_ACTION_CREATE_API_KEY
+    assert ev.target == response.key_prefix
+    assert ev.run_id == response.key_id
+    assert ev.user_id == admin.user_id
+
+
+async def test_create_api_key_audit_failure_rolls_back_row(
+    test_db, monkeypatch
+) -> None:
+    """Failure path: if record_audit_event raises inside the handler,
+    the pre-staged ApiKeyRecord insert MUST roll back with it.
+
+    Pre-#52-3.2 the handler committed the record insert BEFORE
+    record_audit_event ran; a raise there could not touch the
+    already-committed row, so the key was persisted with no audit
+    trail. Post-fix the audit call runs inside the same transaction
+    as the record insert, so any raise before the single commit
+    rolls both back together.
+
+    The patch swaps record_audit_event at its import site inside the
+    auth router module; the same-name symbol in
+    ``aila.platform.services.audit`` is untouched, so unrelated
+    callers still see the real writer.
+    """
+    admin = _admin()
+    create_api_key = _endpoint(auth_router, "/auth/keys", "POST")
+    body = ApiKeyCreateRequest(role="reader", label="atomic-fail")
+
+    def _raise(*_args, **_kwargs) -> None:
+        raise RuntimeError("simulated audit-write failure (#52-3.2 test)")
+
+    monkeypatch.setattr("aila.api.routers.auth.record_audit_event", _raise)
+
+    with pytest.raises(RuntimeError, match="simulated audit-write failure"):
+        await create_api_key(request=_req(), body=body, admin=admin)
+
+    async with async_session_scope() as session:
+        stmt = select(ApiKeyRecord).where(ApiKeyRecord.label == "atomic-fail")
+        rows = list((await session.exec(stmt)).all())
+    assert rows == [], (
+        "create_api_key must NOT have persisted the row when the audit "
+        "write raised inside the same transaction -- #52-3.2 atomicity "
+        f"broken (found {len(rows)} row(s) with label 'atomic-fail')"
+    )
+
+    async with async_session_scope() as session:
+        stmt = select(AuditEventRecord).where(
+            AuditEventRecord.action == AUDIT_ACTION_CREATE_API_KEY,
+            AuditEventRecord.details_json.contains('"atomic-fail"'),
+        )
+        events = list((await session.exec(stmt)).all())
+    assert events == [], (
+        "no audit row must survive a rolled-back create -- "
+        f"found {len(events)} with label 'atomic-fail'"
     )

@@ -303,8 +303,16 @@ async def _sync_message(
                 run_id=response_run_id,  # TASK-06: inline scan run_id if triggered
             )
             db.add(asst_msg)
-            await db.commit()
-            await db.refresh(asst_msg)
+            # #52-3.2: flush populates the PK so the audit payload can
+            # reference asst_msg.id, then stage the audit row and commit
+            # both in the same transaction. The previous flow
+            # (`commit(); refresh; audit; commit()`) left a crash window
+            # where the assistant message was persisted but the audit
+            # trail row was lost. expire_on_commit=False on the session
+            # factory keeps the cached scalar attributes readable after
+            # the single commit, so _message_to_response can serialize
+            # the record without another refresh.
+            await db.flush()
             record_audit_event(
                 db,
                 run_id=session_id,
@@ -316,7 +324,6 @@ async def _sync_message(
                 details={"message_id": asst_msg.id},
             )
             await db.commit()
-            await db.refresh(asst_msg)
             return asst_msg
 
     asst_msg = await _handle()

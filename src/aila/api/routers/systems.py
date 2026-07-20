@@ -812,15 +812,21 @@ async def create_system(
                 password_secret_id=password_secret_id,
             )
             session.add(record)
+            # #52-3.2: flush to populate the DB-generated PK and surface
+            # the unique-name constraint here, then stage the audit row
+            # and commit both in a single transaction. The previous flow
+            # (`commit(); refresh; audit; commit()`) opened a crash
+            # window where the system row was persisted but the audit
+            # trail row was lost. A duplicate-name 409 short-circuits
+            # before any audit row is staged -- no change, no audit.
             try:
-                await session.commit()
+                await session.flush()
             except IntegrityError:
                 await session.rollback()
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=f"System name '{req.name}' already exists -- choose a different name or update the existing system via PUT /systems/{{id}}",
                 )
-            await session.refresh(record)
             record_audit_event(
                 session,
                 run_id=str(record.id),
