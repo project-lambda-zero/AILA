@@ -449,8 +449,13 @@ async def test_dispatch_variant_hunt_order_enqueues_child(
     def fake_default_task_queue() -> FakeQueue:
         return FakeQueue()
 
+    # outcome_dispatcher.py does `from aila.modules.vr._task_queue import
+    # default_task_queue` at module load and calls `default_task_queue()`
+    # via the local binding. Patching the source module is a no-op for
+    # that call site; the patch must target the imported name inside
+    # outcome_dispatcher instead.
     monkeypatch.setattr(
-        "aila.modules.vr._task_queue.default_task_queue",
+        "aila.modules.vr.agents.outcome_dispatcher.default_task_queue",
         fake_default_task_queue,
     )
 

@@ -145,7 +145,11 @@ async def test_parent_with_all_created_children_stays_created(
     )
 
     counters = await sweep_masvs_audit_parents()
-    assert counters == {"started": 0, "completed": 0}
+    # sweep_masvs_audit_parents also returns "refilled" (APK batch fan-out
+    # tracker added in 0025b93). This test only cares about the transition
+    # counters; the refill step is exercised elsewhere.
+    assert counters["started"] == 0
+    assert counters["completed"] == 0
 
     parent = await _read_parent(parent_id)
     assert parent.status == InvestigationStatus.CREATED.value
@@ -171,7 +175,8 @@ async def test_parent_flips_to_running_when_first_child_starts(
     )
 
     counters = await sweep_masvs_audit_parents()
-    assert counters == {"started": 1, "completed": 0}
+    assert counters["started"] == 1
+    assert counters["completed"] == 0
 
     parent = await _read_parent(parent_id)
     assert parent.status == InvestigationStatus.RUNNING.value
@@ -197,7 +202,8 @@ async def test_paused_child_keeps_parent_running(test_db: None) -> None:
     )
 
     counters = await sweep_masvs_audit_parents()
-    assert counters == {"started": 1, "completed": 0}
+    assert counters["started"] == 1
+    assert counters["completed"] == 0
 
     parent = await _read_parent(parent_id)
     assert parent.status == InvestigationStatus.RUNNING.value
@@ -221,7 +227,8 @@ async def test_parent_flips_to_completed_when_all_children_terminal(
     )
 
     counters = await sweep_masvs_audit_parents()
-    assert counters == {"started": 0, "completed": 1}
+    assert counters["started"] == 0
+    assert counters["completed"] == 1
 
     parent = await _read_parent(parent_id)
     assert parent.status == InvestigationStatus.COMPLETED.value
@@ -250,7 +257,8 @@ async def test_failed_and_abandoned_children_count_as_terminal(
     )
 
     counters = await sweep_masvs_audit_parents()
-    assert counters == {"started": 0, "completed": 1}
+    assert counters["started"] == 0
+    assert counters["completed"] == 1
 
     parent = await _read_parent(parent_id)
     assert parent.status == InvestigationStatus.COMPLETED.value
@@ -274,7 +282,8 @@ async def test_parent_with_mixed_terminal_and_running_stays_running(
     )
 
     counters = await sweep_masvs_audit_parents()
-    assert counters == {"started": 0, "completed": 0}
+    assert counters["started"] == 0
+    assert counters["completed"] == 0
 
     parent = await _read_parent(parent_id)
     assert parent.status == InvestigationStatus.RUNNING.value
@@ -297,7 +306,8 @@ async def test_paused_parent_excluded_from_reconciliation(
     )
 
     counters = await sweep_masvs_audit_parents()
-    assert counters == {"started": 0, "completed": 0}
+    assert counters["started"] == 0
+    assert counters["completed"] == 0
 
     parent = await _read_parent(parent_id)
     assert parent.status == InvestigationStatus.PAUSED.value
@@ -318,7 +328,8 @@ async def test_terminal_parent_is_not_touched(test_db: None) -> None:
     )
 
     counters = await sweep_masvs_audit_parents()
-    assert counters == {"started": 0, "completed": 0}
+    assert counters["started"] == 0
+    assert counters["completed"] == 0
 
     parent = await _read_parent(parent_id)
     assert parent.status == InvestigationStatus.COMPLETED.value
@@ -340,7 +351,8 @@ async def test_only_masvs_audit_kind_considered(test_db: None) -> None:
     )
 
     counters = await sweep_masvs_audit_parents()
-    assert counters == {"started": 0, "completed": 0}
+    assert counters["started"] == 0
+    assert counters["completed"] == 0
 
     parent = await _read_parent(parent_id)
     assert parent.status == InvestigationStatus.CREATED.value
@@ -358,7 +370,8 @@ async def test_zero_child_parent_left_alone(test_db: None) -> None:
     )
 
     counters = await sweep_masvs_audit_parents()
-    assert counters == {"started": 0, "completed": 0}
+    assert counters["started"] == 0
+    assert counters["completed"] == 0
 
     parent = await _read_parent(parent_id)
     assert parent.status == InvestigationStatus.CREATED.value
@@ -391,7 +404,8 @@ async def test_multiple_active_batches_reconcile_in_one_sweep(
     )
 
     counters = await sweep_masvs_audit_parents()
-    assert counters == {"started": 1, "completed": 1}
+    assert counters["started"] == 1
+    assert counters["completed"] == 1
 
     assert (await _read_parent(parent_a)).status == (
         InvestigationStatus.RUNNING.value

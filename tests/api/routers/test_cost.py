@@ -46,6 +46,14 @@ async def _seed_cost_records(records: list[dict]) -> None:
         await session.commit()
 
 
+# POST /cost/estimate refuses tokens without a team_id (source:
+# src/aila/api/routers/cost.py:268-278 -- "Team context required for cost
+# estimation" 403 when auth.team_id is None). Tests that exercise
+# /cost/estimate therefore need a team-scoped principal; the admin token
+# from conftest.py has team_id=None and is intentionally rejected.
+ESTIMATE_TEAM_ID: str = "team-cost-estimate"
+
+
 # ---------------------------------------------------------------------------
 # Fixture: async client with stub platform + config registry
 # ---------------------------------------------------------------------------
@@ -83,6 +91,47 @@ async def cost_client(test_db):
         base_url="http://testserver",
     ) as client:
         yield client
+
+
+# ---------------------------------------------------------------------------
+# Fixtures: team-scoped API key + JWT for /cost/estimate tests.
+# The cost router requires a non-null auth.team_id (source:
+# src/aila/api/routers/cost.py:268-278). Use an operator role scoped to
+# ESTIMATE_TEAM_ID so the team-history query in cost.py:253-267 finds the
+# seeded records.
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture(scope="function")
+async def estimate_team_key_record(test_db):
+    """Insert an ApiKeyRecord with team_id=ESTIMATE_TEAM_ID and return it."""
+    from aila.api.auth import generate_api_key, hash_api_key
+    from aila.storage.db_models import ApiKeyRecord
+
+    raw_key = generate_api_key()
+    record = ApiKeyRecord(
+        hashed_key=hash_api_key(raw_key),
+        key_prefix=raw_key[:12],
+        role="operator",
+        label="test-cost-estimate",
+        created_by="test-fixture",
+        created_at=_utc_now(),
+        team_id=ESTIMATE_TEAM_ID,
+    )
+    async with async_session_scope() as session:
+        session.add(record)
+        await session.commit()
+        await session.refresh(record)
+    return record
+
+
+@pytest.fixture(scope="function")
+def estimate_team_token(estimate_team_key_record) -> str:
+    """JWT Bearer token whose team_id matches ESTIMATE_TEAM_ID."""
+    from aila.api.auth import issue_jwt_token
+
+    token, _ = issue_jwt_token(estimate_team_key_record)
+    return token
 
 
 # ---------------------------------------------------------------------------
@@ -251,9 +300,14 @@ async def test_history_respects_team_scoping(cost_client, admin_token):
 
 
 @pytest.mark.asyncio
-async def test_estimate_returns_estimated_cost_with_history(cost_client, admin_token):
-    """POST /cost/estimate returns estimated cost when team history exists."""
-    # Seed historical cost records
+async def test_estimate_returns_estimated_cost_with_history(cost_client, estimate_team_token):
+    """POST /cost/estimate returns estimated cost when team history exists.
+
+    Uses a team-scoped principal because cost.py:253-267 filters history by
+    auth.team_id when it is set; the seeded records carry the same team_id
+    so they surface in the estimator's historical-average path.
+    """
+    # Seed historical cost records scoped to the estimator team_id
     await _seed_cost_records([
         {
             "run_id": "run-est-001",
@@ -262,6 +316,7 @@ async def test_estimate_returns_estimated_cost_with_history(cost_client, admin_t
             "prompt_tokens": 200,
             "completion_tokens": 100,
             "cost_usd": 0.01,
+            "team_id": ESTIMATE_TEAM_ID,
             "created_at": _utc_now(),
         },
         {
@@ -271,13 +326,14 @@ async def test_estimate_returns_estimated_cost_with_history(cost_client, admin_t
             "prompt_tokens": 200,
             "completion_tokens": 100,
             "cost_usd": 0.02,
+            "team_id": ESTIMATE_TEAM_ID,
             "created_at": _utc_now(),
         },
     ])
 
     resp = await cost_client.post(
         "/cost/estimate",
-        headers={"Authorization": f"Bearer {admin_token}"},
+        headers={"Authorization": f"Bearer {estimate_team_token}"},
         json={"target_count": 10, "task_types": ["scoring"]},
     )
     assert resp.status_code == 200, resp.text
@@ -300,11 +356,15 @@ async def test_estimate_returns_estimated_cost_with_history(cost_client, admin_t
 
 
 @pytest.mark.asyncio
-async def test_estimate_returns_worst_case_when_no_history(cost_client, admin_token):
-    """POST /cost/estimate returns worst_case confidence when no history exists."""
+async def test_estimate_returns_worst_case_when_no_history(cost_client, estimate_team_token):
+    """POST /cost/estimate returns worst_case confidence when no history exists.
+
+    Uses a team-scoped principal per cost.py:268-278 (admin token with
+    team_id=None is refused with 403 by design).
+    """
     resp = await cost_client.post(
         "/cost/estimate",
-        headers={"Authorization": f"Bearer {admin_token}"},
+        headers={"Authorization": f"Bearer {estimate_team_token}"},
         json={"target_count": 5, "task_types": ["new_task_type_never_seen"]},
     )
     assert resp.status_code == 200, resp.text
@@ -320,11 +380,12 @@ async def test_estimate_returns_worst_case_when_no_history(cost_client, admin_to
 
 
 @pytest.mark.asyncio
-async def test_estimate_worst_case_uses_config_registry(cost_client, admin_token):
+async def test_estimate_worst_case_uses_config_registry(cost_client, estimate_team_token):
     """POST /cost/estimate worst-case fallback uses ConfigRegistry, not hardcoded values.
 
     We verify that the endpoint calls registry.get() by patching the registry
     and confirming the estimated value matches the patched fallback values.
+    Team-scoped principal is required per cost.py:268-278.
     """
     from aila.storage.registry import ConfigRegistry
 
@@ -344,7 +405,7 @@ async def test_estimate_worst_case_uses_config_registry(cost_client, admin_token
     with patch.object(ConfigRegistry, "get", _patched_get):
         resp = await cost_client.post(
             "/cost/estimate",
-            headers={"Authorization": f"Bearer {admin_token}"},
+            headers={"Authorization": f"Bearer {estimate_team_token}"},
             json={"target_count": 2, "task_types": ["patched_task_type"]},
         )
 
