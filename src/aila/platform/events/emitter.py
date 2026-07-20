@@ -21,6 +21,30 @@ if TYPE_CHECKING:
 _log = logging.getLogger(__name__)
 
 
+# Cached sync Redis clients keyed by URL (#60-2). The redis_stream destination
+# runs in the drain thread and previously opened + closed a fresh connection per
+# event, so a scan emitting hundreds of stage events paid hundreds of TCP
+# handshakes. A redis-py client owns an internal, thread-safe connection pool,
+# so one cached client per URL is reused across events and drains.
+_SYNC_REDIS_CLIENTS: dict[str, object] = {}
+_SYNC_REDIS_LOCK = threading.Lock()
+
+
+def _get_sync_redis_client(redis_url: str):
+    """Return a process-cached sync Redis client for ``redis_url``."""
+    client = _SYNC_REDIS_CLIENTS.get(redis_url)
+    if client is not None:
+        return client
+    import redis
+
+    with _SYNC_REDIS_LOCK:
+        client = _SYNC_REDIS_CLIENTS.get(redis_url)
+        if client is None:
+            client = redis.from_url(redis_url, decode_responses=True)
+            _SYNC_REDIS_CLIENTS[redis_url] = client
+        return client
+
+
 # A destination is any callable that accepts a PlatformEvent and keyword context.
 # Context kwargs are optional -- destinations may ignore what they don't need.
 DestinationFn = Callable[..., None]
@@ -251,29 +275,28 @@ def build_emitter(
             percent = int((event.current / event.total) * 100)
 
         key = f"task:{task_id}:progress"
-        client = redis.from_url(redis_url, decode_responses=True)
+        # Reuse the process-cached pooled client (#60-2) instead of opening and
+        # closing a connection per event.
+        client = _get_sync_redis_client(redis_url)
         try:
-            try:
-                client.xadd(
-                    key,
-                    {
-                        "stage": event.stage,
-                        "message": event.progress_message or event.message,
-                        "percent": str(percent),
-                        "timestamp": utc_now().isoformat(),
-                    },
-                    maxlen=1000,
-                    approximate=True,
-                )
-            except redis.exceptions.RedisError as exc:
-                # Re-raise as RuntimeError so the drain isolation guard
-                # (which does not import redis) catches, logs, and counts
-                # the failure instead of the previous silent pass-swallow.
-                raise RuntimeError(
-                    f"redis stream publish failed: {exc.__class__.__name__}"
-                ) from exc
-        finally:
-            client.close()
+            client.xadd(
+                key,
+                {
+                    "stage": event.stage,
+                    "message": event.progress_message or event.message,
+                    "percent": str(percent),
+                    "timestamp": utc_now().isoformat(),
+                },
+                maxlen=1000,
+                approximate=True,
+            )
+        except redis.exceptions.RedisError as exc:
+            # Re-raise as RuntimeError so the drain isolation guard (which does
+            # not import redis) catches, logs, and counts the failure instead
+            # of the previous silent pass-swallow.
+            raise RuntimeError(
+                f"redis stream publish failed: {exc.__class__.__name__}"
+            ) from exc
 
     emitter.register_destination("audit_db", _audit_db)
     emitter.register_destination("run_history", _run_history)

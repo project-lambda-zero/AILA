@@ -78,3 +78,27 @@ class TestThreadSafeEventEmitter:
     def test_no_destinations_safe(self):
         emitter = ThreadSafeEventEmitter()
         emitter.emit(_make_event())  # must not raise
+
+
+class TestSyncRedisClientCache:
+    """#60-2: the redis_stream destination reuses one pooled client per URL."""
+
+    def test_client_is_created_once_and_reused(self):
+        import pytest
+        pytest.importorskip("redis")
+        from unittest.mock import MagicMock, patch
+
+        from aila.platform.events import emitter as emitter_mod
+
+        url = "redis://localhost:6379/7"
+        emitter_mod._SYNC_REDIS_CLIENTS.pop(url, None)
+        sentinel = MagicMock(name="redis-client")
+        try:
+            with patch("redis.from_url", return_value=sentinel) as from_url:
+                first = emitter_mod._get_sync_redis_client(url)
+                second = emitter_mod._get_sync_redis_client(url)
+            assert first is sentinel
+            assert second is sentinel
+            assert from_url.call_count == 1  # not re-created per call
+        finally:
+            emitter_mod._SYNC_REDIS_CLIENTS.pop(url, None)
