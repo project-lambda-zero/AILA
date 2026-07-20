@@ -56,14 +56,22 @@ class TestInvestigationEnums:
 
 class TestBranchEnums:
     def test_status_values(self) -> None:
+        # BranchStatus gained `completed` after the original M3.R-5 set:
+        # a branch that finished cleanly (not merged / promoted /
+        # abandoned) closes as COMPLETED.
         assert {m.value for m in BranchStatus} == {
             "active", "paused", "merged", "promoted", "abandoned",
+            "completed",
         }
 
-    def test_six_personas(self) -> None:
-        # D-39: six persona voices
+    def test_persona_voices(self) -> None:
+        # D-39 defined six agent-facing voices. Phase E §177/§178/§180
+        # added three synthetic markers (`unspecified`, `merge_result`,
+        # `fork_unnamed`) that branch_manager writes when no agent
+        # persona is meaningful; alembic 064 backfilled + set NOT NULL.
         assert {m.value for m in PersonaVoice} == {
             "halvar", "maddie", "yuki", "renzo", "noor", "wei",
+            "unspecified", "merge_result", "fork_unnamed",
         }
 
     def test_branch_operations(self) -> None:
@@ -76,14 +84,22 @@ class TestBranchEnums:
 
 class TestMessageEnums:
     def test_sender_kinds(self) -> None:
-        assert {m.value for m in SenderKind} == {"engine", "operator"}
+        # SenderKind gained `system` (fix \u00a7250) for system-authored
+        # steering / notice messages that need to be distinguishable
+        # from human OPERATOR messages by sender_kind alone.
+        assert {m.value for m in SenderKind} == {
+            "engine", "operator", "system",
+        }
 
     def test_payload_kinds_match_d44(self) -> None:
-        # D-44 lists 10 typed engine payload kinds
+        # D-44 initially listed 10 typed payloads; the draft-outcome
+        # workflow added `outcome_review` and `outcome_edit` for
+        # sibling-review + operator-edit message payloads.
         assert {m.value for m in PayloadKind} == {
             "text", "tool_call", "code_pointer", "graph_view",
             "taint_flow", "xref_view", "patch_diff",
             "decompiled_function", "hypothesis_update", "outcome_pending",
+            "outcome_review", "outcome_edit",
         }
 
     def test_operator_intents_match_d43_ga30(self) -> None:
@@ -135,7 +151,10 @@ class TestInvestigationCreate:
         assert inv.kind == InvestigationKind.DISCOVERY
         assert inv.auto_pilot is True
         assert inv.cost_budget_usd == 50.0
-        assert inv.strategy_family == "vulnerability_research.discovery_research"
+        # `strategy_family` is now optional on Create; the server derives
+        # it from `kind` via _KIND_DEFAULT_STRATEGY when omitted. See
+        # aila.modules.vr.contracts.investigation.VRInvestigationCreate.
+        assert inv.strategy_family is None
 
     def test_title_min_length(self) -> None:
         with pytest.raises(ValidationError):
