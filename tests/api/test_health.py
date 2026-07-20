@@ -5,11 +5,13 @@ Covers: HEALTH-01, HEALTH-02, FILE-04
 from __future__ import annotations
 
 import time
-from unittest.mock import MagicMock
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from aila.api.schemas.comprehensive_health import SubsystemHealth
 from aila.platform.modules.protocol import ModuleHealthResult
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -41,7 +43,13 @@ def _make_stub_module(
 
 @pytest_asyncio.fixture(scope="function")
 async def async_client_with_modules(test_db):
-    """Async client with a stub platform whose module_registry has configurable modules."""
+    """Async client with a stub platform + healthy Redis / ARQ worker probes.
+
+    D-14 critical infrastructure checks (Redis and ARQ workers) are patched
+    to healthy/running so tests can isolate module-check and DB aggregation
+    behavior without a live Redis or worker in the test env. Individual tests
+    override the module_registry via ``client._stub_registry.modules``.
+    """
     from aila.api.app import create_app
 
     test_app = create_app()
@@ -59,13 +67,38 @@ async def async_client_with_modules(test_db):
     test_app.state.platform = stub_platform
     test_app.state.start_time = time.monotonic()
 
-    async with AsyncClient(
-        transport=ASGITransport(app=test_app),
-        base_url="http://testserver",
-    ) as client:
-        # Expose the registry for test manipulation
-        client._stub_registry = stub_registry  # type: ignore[attr-defined]
-        yield client
+    _now = datetime.now(UTC)
+    healthy_redis = SubsystemHealth(
+        name="redis",
+        status="healthy",
+        latency_ms=1.0,
+        last_checked_at=_now,
+        message="PING ok",
+    )
+    running_worker = SubsystemHealth(
+        name="arq_worker",
+        status="running",
+        last_checked_at=_now,
+        message="worker heartbeat live",
+    )
+
+    with (
+        patch(
+            "aila.platform.services.health_probes.probe_redis",
+            new=AsyncMock(return_value=healthy_redis),
+        ),
+        patch(
+            "aila.platform.services.health_probes.probe_arq_worker",
+            new=AsyncMock(return_value=running_worker),
+        ),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=test_app),
+            base_url="http://testserver",
+        ) as client:
+            # Expose the registry for test manipulation
+            client._stub_registry = stub_registry  # type: ignore[attr-defined]
+            yield client
 
 
 # ─── Existing tests ──────────────────────────────────────────────────────────
@@ -189,7 +222,12 @@ async def test_health_aggregation_module_down_db_up(async_client_with_modules):
 
 
 async def test_health_module_health_checks_raises(async_client_with_modules):
-    """Module.health_checks() raises -> '{module_id}_health' entry with status=down (FILE-04)."""
+    """Module.health_checks() raises -> '{module_id}_health' entry with status=down (FILE-04).
+
+    T-138-12 (routers/health.py::_collect_module_health_checks): the exception
+    is logged server-side but the client-facing message is deliberately None so
+    module error details never leak to health consumers.
+    """
     stub_mod = _make_stub_module(
         "broken",
         health_checks_raises=RuntimeError("module broke"),
@@ -202,11 +240,17 @@ async def test_health_module_health_checks_raises(async_client_with_modules):
     assert "broken_health" in body["checks"]
     check = body["checks"]["broken_health"]
     assert check["status"] == "down"
-    assert "module broke" in check["message"]
+    # T-138-12: exception detail elided; client message is None
+    assert check.get("message") is None
 
 
 async def test_health_check_callable_raises(async_client_with_modules):
-    """Individual check callable raises -> entry with status=down and error message (FILE-04)."""
+    """Individual check callable raises -> entry with status=down (FILE-04).
+
+    T-138-12 (routers/health.py::_run_single_health_check): the exception is
+    logged server-side but the client-facing message is None so check-callable
+    failure details never leak.
+    """
     def _exploding_check():
         raise ConnectionError("socket timeout")
 
@@ -222,7 +266,8 @@ async def test_health_check_callable_raises(async_client_with_modules):
     assert "netmod_ssh" in body["checks"]
     check = body["checks"]["netmod_ssh"]
     assert check["status"] == "down"
-    assert "socket timeout" in check["message"]
+    # T-138-12: exception detail elided; client message is None
+    assert check.get("message") is None
 
 
 async def test_health_check_not_callable(async_client_with_modules):
@@ -262,14 +307,25 @@ async def test_health_check_latency_preserved(async_client_with_modules):
 
 
 async def test_health_platform_none(async_client):
-    """Platform=None -> 200, has database check, no module checks, no 500 (FILE-04)."""
+    """Platform=None -> 200, has core checks, no module checks, no 500 (FILE-04).
+
+    D-14 (routers/health.py::get_health): database, redis, and workers are
+    ALWAYS probed regardless of platform. When platform is None,
+    _collect_module_health_checks returns {} instead of raising, so no
+    module-prefixed keys appear.
+    D-15: HTTP is always 200; the body status is a valid literal.
+    """
     response = await async_client.get("/health")
     assert response.status_code == 200
     body = response.json()
-    # Database check always present
-    assert "database" in body["checks"]
+    # D-14 core critical checks always present, regardless of platform
+    for core_name in ("database", "redis", "workers"):
+        assert core_name in body["checks"], f"Missing core check {core_name!r}"
     # No module checks when platform is None
-    non_db_checks = {k: v for k, v in body["checks"].items() if k != "database"}
-    assert len(non_db_checks) == 0, f"Unexpected module checks with None platform: {non_db_checks}"
-    # Top-level status is valid
+    core_checks = {"database", "redis", "workers"}
+    module_checks = {k: v for k, v in body["checks"].items() if k not in core_checks}
+    assert len(module_checks) == 0, (
+        f"Unexpected module checks with None platform: {module_checks}"
+    )
+    # D-15: top-level status is a valid literal
     assert body["status"] in ("healthy", "degraded", "unhealthy")

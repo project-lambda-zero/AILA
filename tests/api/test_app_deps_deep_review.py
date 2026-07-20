@@ -330,14 +330,25 @@ class TestCorsConfiguration:
         pytest.fail("CORSMiddleware not found in middleware stack")
         return []  # unreachable, satisfies type checker
 
-    def test_default_origin_is_localhost_3000(self, monkeypatch) -> None:
-        """Default AILA_CORS_ORIGINS should be http://localhost:3000."""
+    def test_default_origins_cover_vite_dev_ports(self, monkeypatch) -> None:
+        """Default AILA_CORS_ORIGINS covers Vite dev/preview/default ports on localhost and 127.0.0.1.
+
+        See src/aila/api/app.py:386-391 for the canonical default list --
+        6 origins spanning Vite ports 3000, 4173, and 5173 on both hostnames.
+        """
         monkeypatch.delenv("AILA_CORS_ORIGINS", raising=False)
         from aila.api.app import create_app
 
         application = create_app()
         origins = self._get_cors_origins(application)
-        assert origins == ["http://localhost:3000"]
+        assert origins == [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:4173",
+            "http://127.0.0.1:4173",
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ]
 
     def test_comma_separated_origins_parsed(self, monkeypatch) -> None:
         monkeypatch.setenv("AILA_CORS_ORIGINS", "http://a.com,http://b.com")
