@@ -135,6 +135,12 @@ Security and tenant isolation:
   handlers stamp the request team; worker and workflow events inherit
   the running task's team; pre-authentication login failures stay
   team-less. (#36)
+- API keys are team-scoped: create stamps the creating admin's team,
+  and list and revoke filter by team so a team-scoped admin can neither
+  see nor revoke another team's keys; a god-tier admin (team_id=None)
+  still manages every team's keys. Previously keys were written
+  team-less and the key list was unfiltered, exposing every team's key
+  metadata to any admin. (#36)
 
 LLM and cost:
 

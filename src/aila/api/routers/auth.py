@@ -218,6 +218,9 @@ async def create_api_key(
         role=body.role,
         label=body.label,
         created_by=admin.user_id,
+        # #36: a team-scoped admin's key belongs to that team; a god-tier
+        # admin (team_id=None) mints a team-less (god-tier) key.
+        team_id=admin.team_id,
         created_at=now,
     )
 
@@ -267,7 +270,7 @@ async def create_api_key(
 @protected_router.get("/keys", response_model=ApiKeyListResponse)
 async def list_api_keys(
     active_only: bool = Query(False),
-    _admin: AuthContext = Depends(require_role(ROLE_ADMIN)),
+    admin: AuthContext = Depends(require_role(ROLE_ADMIN)),
 ) -> ApiKeyListResponse:
     """List API keys. Pass active_only=true to exclude revoked keys.
 
@@ -275,7 +278,7 @@ async def list_api_keys(
 
     Args:
         active_only: When True, exclude keys with revoked_at set.
-        _admin: Injected by require_role("admin").
+        admin: Injected by require_role("admin").
 
     Returns:
         List of ApiKeyListItem records.
@@ -285,6 +288,10 @@ async def list_api_keys(
             stmt = select(ApiKeyRecord)
             if active_only:
                 stmt = stmt.where(ApiKeyRecord.revoked_at.is_(None))  # type: ignore[union-attr]
+            # #36: a team-scoped admin sees only its own team's keys; a
+            # god-tier admin (team_id=None) sees every team's keys.
+            if admin.team_id is not None:
+                stmt = stmt.where(ApiKeyRecord.team_id == admin.team_id)
             return list((await session.exec(stmt)).all())
 
     records = await _query()
@@ -334,6 +341,11 @@ async def revoke_api_key(
         async with async_session_scope() as session:
             record = await session.get(ApiKeyRecord, key_id)
             if record is None:
+                return "not_found"
+            # #36: a team-scoped admin may only revoke its own team's key;
+            # god-tier (team_id=None) may revoke any. Returning "not_found"
+            # (404, not 403) avoids a cross-team existence oracle.
+            if admin.team_id is not None and getattr(record, "team_id", None) != admin.team_id:
                 return "not_found"
             # Atomic conditional update: flip revoked_at only while it is still
             # NULL and check the affected row count. Two concurrent revocations
