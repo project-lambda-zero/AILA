@@ -18,20 +18,26 @@ __all__ = [
     "KnowledgeStoreTool",
 ]
 
-# Module-level lazy singleton -- never loaded unless a knowledge tool is actually used (per D-08).
-_EMBEDDING_MODEL = None
-_EMBEDDING_LOCK = threading.Lock()
+# Module-level lazy singleton (per D-08): constructed only when a knowledge
+# tool is first used. #37: the store/retrieve tools MUST embed with the same
+# provider as KnowledgeService (the service store/retrieve path), or vectors
+# written by one path and queried by the other land in incompatible embedding
+# spaces and retrieval returns garbage. Both paths now go through
+# KnowledgeService.embed (canonical resolve_provider selection + the shared
+# 384-dim truncation), so a single cached service is reused here.
+_KNOWLEDGE_SERVICE = None
+_SERVICE_LOCK = threading.Lock()
 
 
-def _get_embedding_model() -> object:
-    """Return the cached SentenceTransformer, loading on first call."""
-    global _EMBEDDING_MODEL
-    if _EMBEDDING_MODEL is None:
-        with _EMBEDDING_LOCK:
-            if _EMBEDDING_MODEL is None:
-                from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped]
-                _EMBEDDING_MODEL = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-    return _EMBEDDING_MODEL
+def _knowledge_service() -> object:
+    """Return the cached KnowledgeService, constructing it on first call."""
+    global _KNOWLEDGE_SERVICE
+    if _KNOWLEDGE_SERVICE is None:
+        with _SERVICE_LOCK:
+            if _KNOWLEDGE_SERVICE is None:
+                from ..services.knowledge import KnowledgeService
+                _KNOWLEDGE_SERVICE = KnowledgeService()
+    return _KNOWLEDGE_SERVICE
 
 
 class KnowledgeStoreTool(Tool):
@@ -72,10 +78,11 @@ class KnowledgeStoreTool(Tool):
         # Extract dedup sentinel before storing -- do not persist _dedup_key inside entry_metadata (per D-06)
         dedup_key: str | None = meta.pop("_dedup_key", None)
 
-        model = _get_embedding_model()
-        # Embedding computed outside transaction -- keep write lock short (per research pitfall 2)
-        # pgvector accepts list[float], not raw bytes (Pitfall 3)
-        embedding_list = (await run_blocking_io(model.encode, content)).tolist()
+        # Embedding computed outside transaction -- keep write lock short.
+        # #37: embed via KnowledgeService so the store path shares the service
+        # provider + 384-dim truncation (embed already returns list[float],
+        # which pgvector accepts directly).
+        embedding_list = await run_blocking_io(_knowledge_service().embed, content)
         meta_json = json.dumps(meta)
 
         async with async_session_scope(self.settings) as session:
@@ -166,9 +173,9 @@ class KnowledgeRetrieveTool(Tool):
     async def forward(self, query: str, limit: int | None = None) -> dict:
         query = require_text(query, tool_name="KnowledgeRetrieveTool", field_name="query")
         limit = normalize_limit(limit, default=10, maximum=50)
-        model = _get_embedding_model()
-        # pgvector accepts list[float], not raw bytes (Pitfall 3)
-        query_embedding = (await run_blocking_io(model.encode, query)).tolist()
+        # #37: embed the query via KnowledgeService so the retrieve path uses
+        # the same provider + 384-dim space as the stored vectors.
+        query_embedding = await run_blocking_io(_knowledge_service().embed, query)
         candidate_limit = limit * 10
 
         async with async_session_scope(self.settings) as session:
