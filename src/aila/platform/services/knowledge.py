@@ -63,6 +63,67 @@ def make_platform_namespace(category: str) -> str:
     return f"{NAMESPACE_PLATFORM_PREFIX}{category}"
 
 
+def _merge_and_rank(
+    vec_map: dict[int, dict],
+    fts_map: dict[int, float],
+    fts_content_map: dict[int, dict],
+    limit: int,
+    min_score: float,
+) -> list[dict]:
+    """Merge the vector and FTS legs into one ranked, floored result list.
+
+    combined = 0.6*vec_score + 0.4*fts_score, where vec_score = 1 - distance/2
+    and fts_score = min(rank, 1). Candidates scoring below min_score are dropped
+    (the relevance floor, #37). Pure function -- no DB or embedding work -- so
+    the ranking and floor are unit-testable without a live model.
+    """
+    all_ids = set(vec_map) | set(fts_map)
+    merged: list[dict] = []
+    for entry_id in all_ids:
+        vec_info = vec_map.get(entry_id)
+        fts_rank = fts_map.get(entry_id)
+
+        vec_score = 1.0 - (vec_info["distance"] / 2.0) if vec_info is not None else 0.0
+        fts_score = min(float(fts_rank), 1.0) if fts_rank is not None else 0.0
+        combined = 0.6 * vec_score + 0.4 * fts_score
+        if combined < min_score:
+            continue
+
+        if vec_info is not None and fts_rank is not None:
+            source = "hybrid"
+        elif vec_info is not None:
+            source = "vec_only"
+        else:
+            source = "fts_only"
+
+        if vec_info is not None:
+            content = vec_info["content"]
+            entry_metadata = vec_info["entry_metadata"]
+            ns = vec_info["namespace"]
+        elif entry_id in fts_content_map:
+            content = fts_content_map[entry_id]["content"]
+            entry_metadata = fts_content_map[entry_id]["entry_metadata"]
+            ns = fts_content_map[entry_id]["namespace"]
+        else:
+            content = ""
+            entry_metadata = "{}"
+            ns = ""
+
+        merged.append({
+            "id": entry_id,
+            "content": content,
+            "metadata": json.loads(entry_metadata or "{}"),
+            "score": round(combined, 6),
+            "vec_score": round(vec_score, 6),
+            "fts_score": round(fts_score, 6),
+            "source": source,
+            "namespace": ns,
+        })
+
+    merged.sort(key=lambda r: r["score"], reverse=True)
+    return merged[:limit]
+
+
 class KnowledgeService:
     """Agent knowledge store, RAG retrieval, memory operations per D-02.
 
@@ -200,6 +261,7 @@ class KnowledgeService:
         namespaces: list[str] | None = None,
         namespace_patterns: list[str] | None = None,
         limit: int = 10,
+        min_score: float = 0.0,
         session: AsyncSession | None = None,
     ) -> list[dict]:
         """Retrieve knowledge entries by hybrid pgvector + tsvector search per D-09.
@@ -213,6 +275,12 @@ class KnowledgeService:
             namespace_patterns: Namespace prefix patterns (e.g. "agent:*").
                 Patterns ending in "*" match via LIKE 'prefix%'.
             limit: Maximum results to return (default 10).
+            min_score: Relevance floor (#37). Results whose combined
+                0.6*vec + 0.4*fts score is below this value are dropped. The
+                default 0.0 keeps every candidate (backward-compatible); raise
+                it to filter weakly-related hits, since the hybrid search would
+                otherwise return the top-k by score even when every candidate
+                is only loosely related.
             session: Optional external session.
 
         Returns:
@@ -284,50 +352,8 @@ class KnowledgeService:
                     for r in content_rows
                 }
 
-        # Merge by record ID (outside transaction)
-        all_ids = set(vec_map) | set(fts_map)
-        merged: list[dict] = []
-        for entry_id in all_ids:
-            vec_info = vec_map.get(entry_id)
-            fts_rank = fts_map.get(entry_id)
-
-            vec_score = 1.0 - (vec_info["distance"] / 2.0) if vec_info is not None else 0.0
-            fts_score = min(float(fts_rank), 1.0) if fts_rank is not None else 0.0
-            combined = 0.6 * vec_score + 0.4 * fts_score
-
-            if vec_info is not None and fts_rank is not None:
-                source = "hybrid"
-            elif vec_info is not None:
-                source = "vec_only"
-            else:
-                source = "fts_only"
-
-            if vec_info is not None:
-                content = vec_info["content"]
-                entry_metadata = vec_info["entry_metadata"]
-                ns = vec_info["namespace"]
-            elif entry_id in fts_content_map:
-                content = fts_content_map[entry_id]["content"]
-                entry_metadata = fts_content_map[entry_id]["entry_metadata"]
-                ns = fts_content_map[entry_id]["namespace"]
-            else:
-                content = ""
-                entry_metadata = "{}"
-                ns = ""
-
-            merged.append({
-                "id": entry_id,
-                "content": content,
-                "metadata": json.loads(entry_metadata or "{}"),
-                "score": round(combined, 6),
-                "vec_score": round(vec_score, 6),
-                "fts_score": round(fts_score, 6),
-                "source": source,
-                "namespace": ns,
-            })
-
-        merged.sort(key=lambda r: r["score"], reverse=True)
-        return merged[:limit]
+        # Merge, floor, and rank outside the transaction (pure, unit-testable).
+        return _merge_and_rank(vec_map, fts_map, fts_content_map, limit, min_score)
 
     async def delete(
         self,
