@@ -16,16 +16,19 @@ All tests run against PostgreSQL via AILA_TEST_DATABASE_URL (D-48/D-49).
 from __future__ import annotations
 
 import os
-from unittest.mock import MagicMock, patch
+from dataclasses import replace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlmodel import select
 
+from aila.api.app import _cors_allow_credentials
 from aila.api.auth import hash_user_password, issue_user_jwt
+from aila.config import get_settings
 from aila.storage.database import async_session_scope, session_scope
-from aila.storage.db_models import AuditEventRecord, UserRecord
+from aila.storage.db_models import AuditEventRecord, OIDCProviderRecord, UserRecord
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -411,6 +414,133 @@ async def test_oidc_authorize_returns_url(auth_client, test_db):
     body = resp.json()
     assert "data" in body
     assert "authorization_url" in body["data"]
+
+
+def _extract_oidc_state_cookie(resp) -> str:
+    """Return the raw Set-Cookie value for the oidc_state cookie or fail hard."""
+    set_cookies = resp.headers.get_list("set-cookie")
+    match = next((c for c in set_cookies if c.startswith("oidc_state=")), None)
+    assert match is not None, f"oidc_state cookie missing; got: {set_cookies}"
+    return match
+
+
+@pytest.mark.asyncio
+async def test_oidc_authorize_cookie_secure_default_true(auth_client, test_db):
+    """GET /auth/oidc/authorize sets the oidc_state cookie with Secure by default.
+
+    Mirrors ``test_oidc_authorize_returns_url``: seeds a microsoft provider,
+    stubs ``msal.ConfidentialClientApplication`` + ``_decrypt_client_secret``,
+    then asserts the resulting ``Set-Cookie`` for ``oidc_state`` carries the
+    ``Secure`` attribute -- the production default from Settings.oidc_cookie_secure.
+    """
+    with session_scope() as s:
+        provider = OIDCProviderRecord(
+            provider_name="microsoft",
+            tenant_id="test-tenant-id",
+            client_id="test-client-id",
+            client_secret_encrypted="test-secret",
+            is_enabled=True,
+        )
+        s.add(provider)
+        s.commit()
+
+    mock_app = MagicMock()
+    mock_app.get_authorization_request_url.return_value = (
+        "https://login.microsoftonline.com/authorize?code=test"
+    )
+
+    fake_settings = replace(get_settings(), oidc_cookie_secure=True)
+
+    with patch("msal.ConfidentialClientApplication", return_value=mock_app), patch(
+        "aila.api.routers.oidc._decrypt_client_secret",
+        new=AsyncMock(return_value="decrypted-test-secret"),
+    ), patch("aila.api.routers.oidc.get_settings", return_value=fake_settings):
+        resp = await auth_client.get(
+            "/auth/oidc/authorize",
+            params={"redirect_uri": "http://localhost:3000/auth/callback"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    oidc_cookie = _extract_oidc_state_cookie(resp)
+    attrs = {a.strip().lower() for a in oidc_cookie.split(";")}
+    assert "secure" in attrs, f"Secure attribute missing: {oidc_cookie!r}"
+
+
+@pytest.mark.asyncio
+async def test_oidc_authorize_cookie_secure_disabled_via_settings(auth_client, test_db):
+    """When Settings.oidc_cookie_secure=False the cookie drops the Secure attribute.
+
+    Patches ``aila.api.routers.oidc.get_settings`` to return a Settings replaced
+    with ``oidc_cookie_secure=False`` (using ``dataclasses.replace`` on the real
+    singleton so every other field stays valid) and asserts the ``oidc_state``
+    Set-Cookie header no longer carries ``Secure``.  This is the local-dev
+    posture behind plain HTTP where browsers refuse Secure cookies.
+    """
+    with session_scope() as s:
+        provider = OIDCProviderRecord(
+            provider_name="microsoft",
+            tenant_id="test-tenant-id",
+            client_id="test-client-id",
+            client_secret_encrypted="test-secret",
+            is_enabled=True,
+        )
+        s.add(provider)
+        s.commit()
+
+    mock_app = MagicMock()
+    mock_app.get_authorization_request_url.return_value = (
+        "https://login.microsoftonline.com/authorize?code=test"
+    )
+
+    fake_settings = replace(get_settings(), oidc_cookie_secure=False)
+
+    with patch("msal.ConfidentialClientApplication", return_value=mock_app), patch(
+        "aila.api.routers.oidc._decrypt_client_secret",
+        new=AsyncMock(return_value="decrypted-test-secret"),
+    ), patch("aila.api.routers.oidc.get_settings", return_value=fake_settings):
+        resp = await auth_client.get(
+            "/auth/oidc/authorize",
+            params={"redirect_uri": "http://localhost:3000/auth/callback"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    oidc_cookie = _extract_oidc_state_cookie(resp)
+    attrs = {a.strip().lower() for a in oidc_cookie.split(";")}
+    assert "secure" not in attrs, (
+        f"Secure attribute must be dropped when oidc_cookie_secure=False: {oidc_cookie!r}"
+    )
+
+
+def test_cors_allow_credentials_wildcard_only_disables():
+    """Wildcard-only origin list yields allow_credentials=False.
+
+    ``allow_origins=['*']`` combined with ``allow_credentials=True`` reflects
+    ``Access-Control-Allow-Origin: *`` alongside a credentialed request; every
+    current browser rejects that pair.  The predicate must refuse it.
+    """
+    assert _cors_allow_credentials(["*"]) is False
+
+
+def test_cors_allow_credentials_wildcard_mixed_disables():
+    """A wildcard entry alongside concrete origins also disables credentials.
+
+    Starlette's CORS middleware treats any ``"*"`` in ``allow_origins`` as the
+    wildcard mode, so a mixed list is functionally identical to ``["*"]`` from
+    a browser's perspective -- credentials still must be off.
+    """
+    assert _cors_allow_credentials(["http://localhost:3000", "*"]) is False
+    assert _cors_allow_credentials(["*", "http://localhost:3000"]) is False
+
+
+def test_cors_allow_credentials_concrete_allowlist_enables():
+    """A concrete origin allowlist enables credentialed CORS."""
+    assert _cors_allow_credentials(["http://localhost:3000"]) is True
+    assert (
+        _cors_allow_credentials(
+            ["http://localhost:3000", "http://127.0.0.1:3000"]
+        )
+        is True
+    )
 
 
 @pytest.mark.asyncio

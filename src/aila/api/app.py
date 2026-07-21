@@ -358,6 +358,23 @@ async def _http_exception_handler(
     )
 
 
+def _cors_allow_credentials(origins: list[str]) -> bool:
+    """Decide whether the CORS middleware should send credentials.
+
+    A wildcard entry in ``allow_origins`` combined with ``allow_credentials=True``
+    reflects ``Access-Control-Allow-Origin: *`` alongside credentialed cookies,
+    which every current browser refuses and which is a live security misconfiguration
+    against a background of tenant-scoped auth cookies.  This predicate returns
+    ``True`` only when the allowlist is a concrete set of origins (no ``"*"``
+    entry, and the list itself is not literally ``["*"]``).
+    """
+    if origins == ["*"]:
+        return False
+    if "*" in origins:
+        return False
+    return True
+
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -390,6 +407,7 @@ def create_app() -> FastAPI:
         "http://localhost:5173,http://127.0.0.1:5173",
     )
     cors_origins = [o.strip() for o in cors_origins_raw.split(",") if o.strip()]
+    cors_credentials = _cors_allow_credentials(cors_origins)
 
     # Correlation ID middleware: bind correlation_id/path/method to structlog contextvars
     from aila.api.middleware import CorrelationIdMiddleware
@@ -408,7 +426,7 @@ def create_app() -> FastAPI:
     application.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
-        allow_credentials=True,
+        allow_credentials=cors_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )

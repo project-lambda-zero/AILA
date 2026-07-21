@@ -470,11 +470,12 @@ async def oidc_authorize(
         }
         auth_url = f"{auth_endpoint}?{urlencode(params)}"
 
+    settings = get_settings()
     response.set_cookie(
         key="oidc_state",
         value=state_token,
         httponly=True,
-        secure=False,  # Flip to True behind HTTPS in production
+        secure=settings.oidc_cookie_secure,
         samesite="lax",
         max_age=_STATE_JWT_EXPIRY,
     )

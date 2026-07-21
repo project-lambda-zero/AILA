@@ -104,5 +104,7 @@ def test_settings_fields_intact() -> None:
         "jwt_secret_key",
         "api_host",
         "api_port",
+        # Added for OIDC cookie hardening (#36-3c)
+        "oidc_cookie_secure",
     }
     assert fields == expected, f"Settings fields mismatch: {fields}"

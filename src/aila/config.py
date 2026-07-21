@@ -119,6 +119,11 @@ class Settings:
             is set).  Operators MUST set this env var in production.
         api_host: Host to bind uvicorn to.  Defaults to 127.0.0.1 or AILA_API_HOST.
         api_port: Port to bind uvicorn to.  Defaults to 8000 or AILA_API_PORT.
+        oidc_cookie_secure: Whether the OIDC state cookie is set with the Secure
+            attribute.  Defaults to True (production posture).  Local dev over
+            plain HTTP can set AILA_OIDC_COOKIE_SECURE=false so browsers accept
+            the cookie without HTTPS.  Any value in ("0", "false", "no", "off")
+            (case-insensitive) is treated as False; every other value is True.
 
     Do not add module-specific config fields here.  Use ConfigRegistry instead.
     """
@@ -140,6 +145,10 @@ class Settings:
     )
     api_host: str = field(default_factory=lambda: os.getenv("AILA_API_HOST", "127.0.0.1"))
     api_port: int = field(default_factory=lambda: int(os.getenv("AILA_API_PORT", "8000")))
+    oidc_cookie_secure: bool = field(
+        default_factory=lambda: os.getenv("AILA_OIDC_COOKIE_SECURE", "true").strip().lower()
+        not in ("0", "false", "no", "off")
+    )
 
 
 # For test isolation: call _build_settings.cache_clear() then set AILA_DATABASE_URL before importing.

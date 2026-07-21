@@ -43,12 +43,12 @@ runner = CliRunner()
 # ---------------------------------------------------------------------------
 
 class TestSettingsFields:
-    """Verify Settings has exactly 8 fields and each is documented."""
+    """Verify Settings has exactly 9 fields and each is documented."""
 
-    def test_settings_has_exactly_8_fields(self):
+    def test_settings_has_exactly_9_fields(self):
         fields = dataclasses.fields(Settings)
         field_names = [f.name for f in fields]
-        assert len(fields) == 8, f"Expected 8 fields, got {len(fields)}: {field_names}"
+        assert len(fields) == 9, f"Expected 9 fields, got {len(fields)}: {field_names}"
 
     def test_settings_field_names(self):
         field_names = {f.name for f in dataclasses.fields(Settings)}
@@ -61,6 +61,7 @@ class TestSettingsFields:
             "jwt_secret_key",
             "api_host",
             "api_port",
+            "oidc_cookie_secure",
         }
         assert field_names == expected
 
