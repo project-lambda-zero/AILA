@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import AsyncGenerator
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
@@ -74,12 +74,10 @@ def _parse_sse_events(raw_text: str) -> list[dict]:
 async def async_client_with_platform(
     test_db,
 ) -> AsyncGenerator[tuple[AsyncClient, MagicMock], None]:
-    """Async HTTP client with a stub platform that supports handle().
+    """Async HTTP client with a stub platform whose async handle() resolves.
 
-    The stub platform.handle() raises TypeError when called with
-    ``token_callback`` kwarg (simulating a platform that does not support
-    streaming callbacks), then succeeds on the fallback call without
-    ``token_callback``.  This exercises the SSE buffered-fallback path.
+    handle() is awaited by the router and returns a result carrying a summary
+    and run_id; both the SSE and JSON paths consume that summary.
     """
     from aila.api.app import create_app
 
@@ -89,14 +87,7 @@ async def async_client_with_platform(
     result_obj.summary = "test response from platform"
     result_obj.run_id = "run-test-001"
 
-    def _handle_side_effect(**kwargs):  # noqa: ANN003
-        if "token_callback" in kwargs:
-            raise TypeError(
-                "handle() got an unexpected keyword argument 'token_callback'"
-            )
-        return result_obj
-
-    stub_platform.handle = MagicMock(side_effect=_handle_side_effect)
+    stub_platform.handle = AsyncMock(return_value=result_obj)
 
     app = create_app()
     app.state.platform = stub_platform

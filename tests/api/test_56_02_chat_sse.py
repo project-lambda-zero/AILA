@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
@@ -33,28 +33,26 @@ def _seed_session(key: ApiKeyRecord, session_id: str = "sess-test-001") -> Sessi
 
 
 def _make_stub_platform(tokens: list[str], run_id: str | None = None) -> MagicMock:
-    """Return a stub platform whose handle() calls token_callback for each token.
+    """Return a stub platform whose async handle() resolves to a summary result.
 
-    Falls back gracefully if token_callback not accepted (raises TypeError).
+    handle() is awaited by the router, so the mock is an AsyncMock. The summary
+    is the joined tokens; the router streams it as a single token event.
     """
     stub = MagicMock()
 
-    def _fake_handle(query: str, token_callback=None, **kwargs):  # noqa: ARG001
-        if token_callback is not None:
-            for t in tokens:
-                token_callback(t)
+    def _fake_handle(query: str, **kwargs):  # noqa: ARG001
         result = MagicMock()
         result.summary = "".join(tokens)
         result.run_id = run_id
         return result
 
-    stub.handle.side_effect = _fake_handle
+    stub.handle = AsyncMock(side_effect=_fake_handle)
     return stub
 
 
 @pytest_asyncio.fixture
 async def client_with_platform(test_db, admin_key_record):
-    """AsyncClient with a stub platform that supports token_callback."""
+    """AsyncClient with a stub platform whose async handle resolves to a summary."""
     from aila.api.app import create_app
 
     stub_platform = _make_stub_platform(["Hello", " ", "world"], run_id=None)

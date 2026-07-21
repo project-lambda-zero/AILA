@@ -95,23 +95,20 @@ def _make_platform_stub_with_redis() -> MagicMock:
 
 
 def _make_platform_stub_with_handle(tokens: list[str], run_id: str | None = None) -> MagicMock:
-    """Create a stub platform whose handle() calls token_callback with the given tokens.
+    """Create a stub platform whose async handle() resolves to a summary result.
 
-    Simulates a platform that streams tokens through the callback, then returns
-    a result object with a summary and optional run_id.
+    handle() is awaited by the router and exposes no token-level callback, so
+    the router streams the joined summary as a single token event.
     """
     stub = MagicMock()
 
-    def _handle(query: str, token_callback=None, **kwargs):
-        if token_callback is not None:
-            for token in tokens:
-                token_callback(token)
+    def _handle(query: str, **kwargs):
         result = MagicMock()
         result.summary = "".join(tokens)
         result.run_id = run_id
         return result
 
-    stub.handle.side_effect = _handle
+    stub.handle = AsyncMock(side_effect=_handle)
     stub.runtime.config_registry.get.return_value = "redis://localhost:6379"
     return stub
 
@@ -407,12 +404,12 @@ class TestScanSSEDisconnectCleanup:
 # ===========================================================================
 
 
-class TestChatSSETokenStreaming:
-    """XCUT-05.1: Token streaming via SSE."""
+class TestChatSSESummaryStreaming:
+    """XCUT-05.1: Resolved summary streamed as a single SSE token event."""
 
     @pytest.mark.asyncio
-    async def test_tokens_streamed_individually(self, chat_sse_client) -> None:
-        """POST with Accept: text/event-stream yields individual token events."""
+    async def test_summary_streamed_as_single_token(self, chat_sse_client) -> None:
+        """POST with Accept: text/event-stream yields one token event with the summary."""
         client, key = chat_sse_client
         token, _ = issue_jwt_token(key)
         _seed_session(key.id, "sess-tokens-001")
@@ -430,13 +427,11 @@ class TestChatSSETokenStreaming:
         assert "text/event-stream" in resp.headers.get("content-type", "")
         events = _parse_sse_data_lines(resp.text)
 
-        # Should have token events + done sentinel
+        # handle() exposes no token-level callback, so the joined summary is
+        # emitted as one token event ahead of the done sentinel.
         token_events = [e for e in events if e.get("type") == "token"]
-        assert len(token_events) == 6, f"Expected 6 token events, got {len(token_events)}: {token_events}"
-        # Verify each token content
-        expected_tokens = ["Hello", " there", ", how", " can", " I", " help?"]
-        actual_tokens = [e["token"] for e in token_events]
-        assert actual_tokens == expected_tokens
+        assert len(token_events) == 1, f"Expected 1 token event, got {len(token_events)}: {token_events}"
+        assert token_events[0]["token"] == "Hello there, how can I help?"
 
 
 class TestChatSSEDoneSentinel:

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -100,7 +100,7 @@ async def audit_client(test_db, admin_key_record) -> AsyncClient:
 
     stub_platform = MagicMock()
     stub_platform.runtime = stub_runtime
-    stub_platform.handle = MagicMock(return_value=MagicMock(summary="test response", run_id=None))
+    stub_platform.handle = AsyncMock(return_value=MagicMock(summary="test response", run_id=None))
 
     # Mock task_queue.submit for POST /task
     mock_handle = MagicMock()
