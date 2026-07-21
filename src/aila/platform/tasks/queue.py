@@ -34,6 +34,7 @@ from datetime import UTC, datetime, timedelta
 from graphlib import CycleError, TopologicalSorter
 
 from arq.connections import RedisSettings, create_pool
+from redis import asyncio as aioredis
 from sqlalchemy import delete as _delete
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import func, select
@@ -41,6 +42,7 @@ from sqlmodel import func, select
 from aila.api.constants import MODULE_ID_PLATFORM
 from aila.platform.exceptions import WorkerUnreachableError
 from aila.platform.tasks.constants import (
+    ARQ_IN_PROGRESS_PREFIX,
     ARQ_QUEUE_KEY_TEMPLATE,
     CONFIG_KEY_REDIS_URL,
     CONFIG_NS_PLATFORM,
@@ -52,6 +54,104 @@ from aila.storage.db_models import WorkflowStateCursor
 __all__ = ["TaskQueue"]
 
 _log = logging.getLogger(__name__)
+
+
+def _env_redis_url() -> str | None:
+    """Return ``AILA_PLATFORM_REDIS_URL`` from the environment (None when unset).
+
+    Non-``TaskQueue`` call sites (e.g. :class:`aila.platform.tasks.storage.TaskRepository`
+    status-transition helpers) reach the same Redis broker as ``TaskQueue.submit``
+    but do not carry a ``ConfigRegistry`` reference. Mirrors the env-only
+    lookup used by ``worker._reconcile_orphan_arq_locks`` /
+    ``worker._sweep_orphan_running_tasks`` so all three code paths agree on
+    which Redis they talk to when only the env is present.
+    """
+    import os
+
+    url = os.environ.get("AILA_PLATFORM_REDIS_URL", "").strip()
+    return url or None
+
+
+async def _enqueue_arq_job(
+    track: str,
+    task_id: str,
+    fn_short: str,
+    kwargs: dict[str, object],
+    redis_url: str,
+    defer_seconds: float = 0.0,
+) -> bool:
+    """Enqueue an ARQ job using the same conventions as ``TaskQueue.submit``.
+
+    ``fn_short`` is the last segment of the fully-qualified ``fn_path`` --
+    ARQ resolves function names by ``__qualname__`` (see the @platform_task
+    wrapper). ``kwargs`` are forwarded verbatim; ``defer_seconds`` mirrors
+    the ``_defer_by`` scheduling argument. Returns True on success, False
+    when Redis is unreachable or the enqueue raises.
+
+    Shared by:
+    - :meth:`TaskQueue._arq_enqueue_async` (initial submit path).
+    - :meth:`TaskQueue.requeue_failed` (post-failure re-enqueue).
+    - :meth:`aila.platform.tasks.storage.TaskRepository.set_queued_from_paused`
+      (resume-from-pause re-enqueue).
+    All three must go through one code path so future changes to the
+    enqueue convention (queue key template, defer semantics, job-id shape)
+    only need one edit.
+    """
+    pool = None
+    try:
+        settings = RedisSettings.from_dsn(redis_url)
+        pool = await create_pool(settings)
+        queue_key = ARQ_QUEUE_KEY_TEMPLATE.format(track=track)
+        enqueue_kwargs: dict = {
+            "_queue_name": queue_key,
+            "_job_id": task_id,
+            **kwargs,
+        }
+        if defer_seconds > 0:
+            enqueue_kwargs["_defer_by"] = timedelta(seconds=defer_seconds)
+        await pool.enqueue_job(fn_short, **enqueue_kwargs)
+        return True
+    except Exception as exc:
+        # Redis / arq errors surface heterogeneously (RedisError, OSError,
+        # ValueError from DSN parsing, TimeoutError). Callers translate a
+        # False return into WorkerUnreachableError / a leave-status action.
+        _log.error(
+            "Redis unavailable (url=%s): %s -- async enqueue rejected.",
+            redis_url, exc,
+        )
+        return False
+    finally:
+        if pool is not None:
+            await pool.aclose()
+
+
+async def _drop_arq_in_progress_key(task_id: str, redis_url: str) -> bool:
+    """Best-effort delete of ``arq:in-progress:<task_id>`` from Redis.
+
+    Mirrors ``worker._sweep_orphan_running_tasks`` which deletes the same
+    key when a task is force-cancelled. A failed delete does NOT reverse
+    the caller's DB-side transition -- the cron reaper reconciles orphan
+    keys on the next sweep. Returns True on a clean delete, False on
+    failure.
+    """
+    client = aioredis.Redis.from_url(redis_url, socket_connect_timeout=2.0)
+    try:
+        await client.delete(f"{ARQ_IN_PROGRESS_PREFIX}{task_id}")
+        return True
+    except (OSError, TimeoutError, RuntimeError) as exc:
+        _log.warning(
+            "queue._drop_arq_in_progress_key(%s) failed: %s -- reaper "
+            "will reconcile on the next sweep", task_id, exc,
+        )
+        return False
+    finally:
+        try:
+            await client.aclose()
+        except (OSError, RuntimeError) as close_exc:
+            _log.debug(
+                "queue._drop_arq_in_progress_key(%s) client.aclose() failed: %s",
+                task_id, close_exc,
+            )
 
 
 class TaskQueue:
@@ -351,15 +451,34 @@ class TaskQueue:
     async def requeue_failed(self, max_age_hours: int = 24) -> int:
         """Requeue recently failed tasks.
 
-        Transitions tasks with status 'failed' and updated_at within
-        max_age_hours back to 'queued' status. Clears the error field.
+        For each row whose ``status='failed'`` and ``updated_at >= cutoff``,
+        enqueue a fresh ARQ job with the row's ``fn_path`` / ``kwargs_json`` /
+        ``track`` (mirroring :meth:`submit`'s enqueue path via
+        :func:`_enqueue_arq_job`), THEN flip the status back to 'queued'
+        and clear the error field. Enqueue-first ordering preserves the
+        invariant that every ``status='queued'`` row is backed by a live
+        ARQ job -- the previous code committed the DB flip without ever
+        enqueueing (issue #40-1), leaving the task queued forever.
+
+        If enqueue fails for a given row (Redis unreachable, malformed
+        ``kwargs_json``, empty ``fn_path``), that row is skipped and
+        stays 'failed' so a later call can retry it.
 
         Args:
             max_age_hours: Only requeue tasks that failed within this many hours.
 
         Returns:
-            Number of tasks requeued.
+            Number of tasks that were successfully re-enqueued AND flipped to 'queued'.
+
+        Raises:
+            WorkerUnreachableError: When the Redis URL is not configured -- no
+                DB flips are performed, matching :meth:`submit`'s fail-fast policy.
         """
+        redis_url = self._get_redis_url()
+        if not redis_url:
+            raise WorkerUnreachableError(
+                "Task queue Redis URL is not configured -- requeue rejected."
+            )
         cutoff = datetime.now(UTC) - timedelta(hours=max_age_hours)
         async with async_session_scope() as session:
             failed = (await session.exec(
@@ -369,6 +488,34 @@ class TaskQueue:
             )).all()
             count = 0
             for task in failed:
+                try:
+                    task_kwargs = json.loads(task.kwargs_json) if task.kwargs_json else {}
+                except (TypeError, ValueError) as exc:
+                    _log.warning(
+                        "requeue_failed: task %s kwargs_json malformed (%s) -- "
+                        "leaving status=failed", task.id, exc,
+                    )
+                    continue
+                fn_short = task.fn_path.rsplit(".", 1)[-1] if task.fn_path else ""
+                if not fn_short or not task.track:
+                    _log.warning(
+                        "requeue_failed: task %s missing fn_path / track -- "
+                        "leaving status=failed", task.id,
+                    )
+                    continue
+                enqueued = await _enqueue_arq_job(
+                    track=task.track,
+                    task_id=task.id,
+                    fn_short=fn_short,
+                    kwargs=task_kwargs,
+                    redis_url=redis_url,
+                )
+                if not enqueued:
+                    _log.warning(
+                        "requeue_failed: enqueue failed for %s -- leaving status=failed",
+                        task.id,
+                    )
+                    continue
                 task.status = "queued"
                 task.error = None
                 session.add(task)
@@ -463,6 +610,8 @@ class TaskQueue:
         env_url = os.environ.get("AILA_PLATFORM_REDIS_URL", "").strip()
         if env_url:
             return env_url
+        if self._config_registry is None:
+            return None
         try:
             # get_sync is the sync read path (C3); the async .get() returned a
             # coroutine that this sync method could never await, so the URL was
@@ -579,32 +728,13 @@ class TaskQueue:
         seconds in the future. Used by the per-investigation backpressure
         gate to avoid one investigation monopolising the worker pool.
         """
-        pool = None
-        try:
-            settings = RedisSettings.from_dsn(redis_url)
-            pool = await create_pool(settings)
-            queue_key = ARQ_QUEUE_KEY_TEMPLATE.format(track=track)
-            arq_fn_name = fn_path.rsplit(".", 1)[-1]
-            enqueue_kwargs: dict = {
-                "_queue_name": queue_key,
-                "_job_id": task_id,
-                **kwargs,
-            }
-            if defer_seconds > 0:
-                enqueue_kwargs["_defer_by"] = timedelta(seconds=defer_seconds)
-            await pool.enqueue_job(
-                arq_fn_name,
-                **enqueue_kwargs,
-            )
-            _ = fn_module, user_id  # retained in signature for callers
-            return True
-        except Exception as exc:
-            _log.error(
-                "Redis unavailable (url=%s): %s -- async submission rejected.",
-                redis_url,
-                exc,
-            )
-            return False
-        finally:
-            if pool is not None:
-                await pool.aclose()
+        _ = fn_module, user_id  # retained in signature for callers
+        arq_fn_name = fn_path.rsplit(".", 1)[-1]
+        return await _enqueue_arq_job(
+            track=track,
+            task_id=task_id,
+            fn_short=arq_fn_name,
+            kwargs=kwargs,
+            redis_url=redis_url,
+            defer_seconds=defer_seconds,
+        )
