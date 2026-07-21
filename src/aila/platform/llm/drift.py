@@ -32,6 +32,17 @@ _MIN_SAMPLES = 5
 _VOLATILE_THRESHOLD = 0.2
 _DEGRADING_THRESHOLD = 0.1
 
+# Retention window for ConfidenceDriftRecord rows. Every drift check inserts a
+# new row (drift.py::record_and_check), so the table grows unbounded without
+# a periodic sweep. 90 days matches the operator-visible reporting horizon
+# for drift trending. Note on config pattern: seal.py resolves a per-request
+# retention via ConfigRegistry (platform.llm_seal_retention_days) because its
+# purge runs in the request path where a config_provider is in scope. This
+# purge runs from the reaper cron with no config_provider (mirroring
+# idempotency_cache.run_purge_expired_cron), so a module constant is the
+# right fit; the cron caller has no natural injection point.
+_DEFAULT_RETENTION_DAYS = 90
+
 
 @dataclass(frozen=True)
 class DriftResult:
@@ -174,3 +185,61 @@ class ConfidenceDriftTracker:
             sample_count=len(scores),
             alert_fired=alert,
         )
+
+
+async def purge_old_records(
+    session: object,
+    retention_days: int = _DEFAULT_RETENTION_DAYS,
+) -> int:
+    """Delete ConfidenceDriftRecord rows older than the retention window.
+
+    Every call to :meth:`ConfidenceDriftTracker.record_and_check` inserts a
+    fresh row (no upsert, no windowed table), so the table grows without
+    bound. This sweep is wired into the platform reaper cron alongside
+    :func:`aila.platform.llm.idempotency_cache.purge_expired` so the table
+    stays bounded to ``retention_days`` of history.
+
+    Bounded single DELETE with WHERE computed_at < cutoff. Idempotent: a
+    second call in the same tick with no rows past the cutoff returns 0
+    without side effects. Best-effort: transport errors are logged at
+    WARNING and swallowed so the cron continues.
+
+    Returns the count of rows deleted, or 0 on transport error.
+    """
+    from datetime import timedelta
+
+    from sqlalchemy.exc import DBAPIError, SQLAlchemyError
+    from sqlmodel import delete
+
+    from aila.platform.contracts._common import utc_now
+    from aila.storage.db_models import ConfidenceDriftRecord
+
+    cutoff = utc_now() - timedelta(days=retention_days)
+    try:
+        result = await session.execute(
+            delete(ConfidenceDriftRecord).where(
+                ConfidenceDriftRecord.computed_at < cutoff,
+            )
+        )
+        await session.commit()
+        # Some drivers report rowcount=-1 when the row count is unknown;
+        # clamp at zero to keep the cron log line non-negative (mirrors
+        # idempotency_cache.purge_expired).
+        rc = int(getattr(result, "rowcount", 0) or 0)
+        return rc if rc >= 0 else 0
+    except (SQLAlchemyError, DBAPIError) as exc:
+        _log.warning("confidence drift retention purge failed: %s", exc)
+        return 0
+
+
+async def run_purge_old_records_cron() -> int:
+    """Open a session and call :func:`purge_old_records`.
+
+    Wired into ``platform/tasks/worker.py:reaper`` next to the idempotency
+    cache purge. Standalone helper so the cron import surface stays narrow
+    -- the reaper does not need to know about session scopes.
+    """
+    from aila.storage.database import async_session_scope
+
+    async with async_session_scope() as session:
+        return await purge_old_records(session)

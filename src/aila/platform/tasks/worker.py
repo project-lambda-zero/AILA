@@ -15,6 +15,7 @@ from sqlmodel import select
 
 from aila.api.metrics import TASK_ZOMBIES_REAPED_TOTAL
 from aila.platform.contracts._common import utc_now
+from aila.platform.llm.drift import run_purge_old_records_cron as _drift_purge_cron
 from aila.platform.llm.idempotency_cache import run_purge_expired_cron
 from aila.platform.modules import load_builtin_modules
 from aila.platform.tasks.constants import (
@@ -325,6 +326,20 @@ async def reaper(ctx: dict[str, object]) -> None:
     except Exception as exc:
         _log.warning(
             "reaper: idempotency cache purge failed: %s", exc, exc_info=True,
+        )
+    # fix #45-5 -- confidence-drift retention sweep. record_and_check inserts
+    # one row per drift check with no upsert, so the table grew unbounded.
+    # Same shape as the idempotency_cache purge above: best-effort, logged,
+    # never crashes the cron tick.
+    try:
+        purged = await _drift_purge_cron()
+        if purged:
+            _log.info(
+                "reaper.confidence_drift: purged %d old rows", purged,
+            )
+    except Exception as exc:
+        _log.warning(
+            "reaper: confidence drift purge failed: %s", exc, exc_info=True,
         )
 
 
