@@ -33,6 +33,12 @@ from openai import (
 )
 
 from aila.platform.llm import client as client_mod
+from aila.platform.llm.cancellation import (
+    LLMCancelledError,
+    cancel_for_investigation,
+    clear_for_investigation,
+    get_cancellation_token,
+)
 from aila.platform.llm.client import AilaLLMClient, _AsyncOpenAIPool, _is_retryable
 from aila.platform.llm.errors import LLMError
 
@@ -376,6 +382,131 @@ class TestCallWithRetryLoop:
         assert exc_info.value.retryable is False
         # The original LLMError propagates unchanged -- no fail-fast wrap.
         assert exc_info.value is exc
+
+
+class _CancelOnFirstCallPipeline:
+    """Fake pipeline that cancels a run's token, then raises a retryable error.
+
+    Simulates a pause landing WHILE the provider call on attempt 1 is in
+    flight: attempt 1 raises a retryable error and flips the token; the
+    retry loop's pre-attempt cancellation check on attempt 2 must then
+    abort with ``LLMCancelledError`` before entering the pipeline again.
+    """
+
+    def __init__(self, run_id: str) -> None:
+        self._run_id = run_id
+        self.calls = 0
+
+    async def run(self, **_kwargs: Any) -> Any:
+        self.calls += 1
+        cancel_for_investigation(self._run_id)
+        raise _AnyStatusError(503, "upstream down")
+
+
+class TestCallWithRetryCancellation:
+    """#44: the retry loop aborts promptly when the run's token is cancelled.
+
+    The cancellation token is process-local and keyed on ``run_id``
+    (== investigation_id for investigation turns). The loop peeks it
+    before every attempt via ``is_run_cancelled`` (a no-create peek), so a
+    pause during a long provider backoff aborts within one attempt instead
+    of waiting out the whole retry schedule.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clean_registry(self) -> Any:
+        # Each test owns a unique run_id, but clear defensively so a token
+        # left by one test never leaks a cancelled state into another.
+        yield
+        clear_for_investigation("inv-cancel-preempt")
+        clear_for_investigation("inv-cancel-midretry")
+        clear_for_investigation("inv-no-token")
+
+    @pytest.mark.asyncio
+    async def test_already_cancelled_token_aborts_before_first_call(
+        self, no_sleep: None,
+    ) -> None:
+        """A token cancelled before the call raises without touching the pipeline."""
+        run_id = "inv-cancel-preempt"
+        get_cancellation_token(run_id).cancel()
+        pipeline = _CountingPipeline(_AnyStatusError(503, "unused"))
+        client = _make_stub_client(pipeline)
+
+        with pytest.raises(LLMCancelledError) as exc_info:
+            await client._call_with_retry(
+                routing=_FakeRouting(),
+                messages=[{"role": "user", "content": "hello"}],
+                response_format=None,
+                tools=None,
+                tool_executor=None,
+                run_id=run_id,
+                team_id=None,
+            )
+
+        assert pipeline.calls == 0, (
+            "a cancelled token must abort before the pipeline is entered, "
+            f"saw {pipeline.calls} calls"
+        )
+        assert run_id in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_cancel_mid_retry_aborts_on_next_attempt(
+        self, no_sleep: None,
+    ) -> None:
+        """A pause during attempt 1's backoff aborts attempt 2, not the full schedule."""
+        run_id = "inv-cancel-midretry"
+        # Token exists (created at the turn-boundary check) but is not
+        # cancelled yet -- the pipeline flips it on the first call.
+        get_cancellation_token(run_id)
+        pipeline = _CancelOnFirstCallPipeline(run_id)
+        client = _make_stub_client(pipeline)
+
+        with pytest.raises(LLMCancelledError):
+            await client._call_with_retry(
+                routing=_FakeRouting(),
+                messages=[{"role": "user", "content": "hello"}],
+                response_format=None,
+                tools=None,
+                tool_executor=None,
+                run_id=run_id,
+                team_id=None,
+            )
+
+        assert pipeline.calls == 1, (
+            "the loop must enter the pipeline exactly once (attempt 1), then "
+            f"abort on the cancelled token before attempt 2, saw {pipeline.calls}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_run_id_without_token_is_not_pre_aborted(
+        self, no_sleep: None,
+    ) -> None:
+        """A run_id with no token in the registry never triggers a cancel abort.
+
+        Non-investigation calls pass a run_id that has no token; the
+        no-create peek must return False and let the loop run normally
+        (here: enter the pipeline and surface the provider error).
+        """
+        run_id = "inv-no-token"
+        exc = _make_api_status_exc(BadRequestError, 400)
+        pipeline = _CountingPipeline(exc)
+        client = _make_stub_client(pipeline)
+
+        with pytest.raises(LLMError) as exc_info:
+            await client._call_with_retry(
+                routing=_FakeRouting(),
+                messages=[{"role": "user", "content": "hello"}],
+                response_format=None,
+                tools=None,
+                tool_executor=None,
+                run_id=run_id,
+                team_id=None,
+            )
+
+        assert pipeline.calls == 1, (
+            "no token means no pre-abort -- the pipeline must be entered"
+        )
+        assert not isinstance(exc_info.value, LLMCancelledError)
 
 
 # --------------------------------------------------------------------

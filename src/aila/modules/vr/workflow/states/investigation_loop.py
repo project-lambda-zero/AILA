@@ -31,7 +31,10 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
 )
 from aila.modules.vr.services.mcp_call_logger import record_call
-from aila.platform.llm.cancellation import get_cancellation_token
+from aila.platform.llm.cancellation import (
+    LLMCancelledError,
+    get_cancellation_token,
+)
 from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
 from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
 from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
@@ -242,6 +245,18 @@ async def state_investigation_loop(input: dict[str, Any], services: Any) -> Stat
 
         try:
             result = await researcher.run_turn()
+        except LLMCancelledError:
+            # #44: the run was cancelled mid-LLM-retry (a pause landed while
+            # the provider call was backing off). Route to the same clean
+            # exit as the turn-boundary poll below rather than letting the
+            # exception escape and finalise the workflow as FAILED.
+            exit_reason = "cancellation_token_set"
+            _log.info(
+                "investigation_loop EXIT investigation_id=%s branch_id=%s "
+                "reason=%s after_turn=%d cancelled_mid_retry=1",
+                investigation_id, branch_id, exit_reason, last_turn_idx,
+            )
+            break
         except VulnResearcherError as exc:
             tag = "researcher_error_retryable" if getattr(exc, "retryable", False) else "researcher_error"
             exit_reason = f"{tag}:{exc}"

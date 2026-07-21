@@ -48,6 +48,7 @@ __all__ = [
     "cancel_for_investigation",
     "clear_for_investigation",
     "get_cancellation_token",
+    "is_run_cancelled",
     "token_registry_snapshot",
 ]
 
@@ -136,6 +137,20 @@ def get_cancellation_token(investigation_id: str) -> CancellationToken:
         token = CancellationToken(investigation_id)
         _TOKENS[investigation_id] = token
     return token
+
+
+def is_run_cancelled(run_id: str) -> bool:
+    """Peek whether ``run_id`` has a cancelled token, without creating one.
+
+    Returns True only when a token already exists for ``run_id`` AND it is
+    cancelled. Unlike :func:`get_cancellation_token`, this never inserts a
+    token, so hot-path callers (the LLM retry loop) that pass a non-
+    investigation run_id do not pollute the registry. Investigation turns
+    always create their token at the turn-boundary check before the LLM
+    call runs, so the token exists by the time the retry loop peeks.
+    """
+    token = _TOKENS.get(run_id)
+    return token is not None and token.is_cancelled()
 
 
 def cancel_for_investigation(investigation_id: str) -> bool:

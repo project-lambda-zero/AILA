@@ -578,3 +578,72 @@ async def test_branch_summary_carries_none_when_no_cursor() -> None:
     summary = _branch_summary(branch)
     assert summary.cursor_state is None
     assert summary.cursor_archived_state is None
+
+
+# ----------------------------------------------------------------------
+# #44 -- investigation loop routes a mid-LLM-retry cancellation to a
+# clean exit_reason instead of letting LLMCancelledError escape and
+# finalise the workflow as FAILED.
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_investigation_loop_llm_cancel_is_clean_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``LLMCancelledError`` from ``run_turn`` exits with cancellation_token_set.
+
+    The retry loop raises ``LLMCancelledError`` when a pause flips the
+    run's token during a provider backoff. That exception is NOT in the
+    researcher's narrow decide-block tuple, so it propagates out of
+    ``run_turn`` uncaught. The investigation loop must catch it as a
+    clean cancel (same exit as the turn-boundary poll) rather than
+    letting it escape and mark the run FAILED.
+    """
+    from types import SimpleNamespace  # noqa: PLC0415
+    from unittest.mock import MagicMock  # noqa: PLC0415
+
+    from aila.modules.vr.agents import HonestVulnResearcher  # noqa: PLC0415
+    from aila.modules.vr.workflow.states import (  # noqa: PLC0415
+        investigation_loop as loop_mod,
+    )
+    from aila.platform.llm.cancellation import (  # noqa: PLC0415
+        LLMCancelledError,
+        clear_for_investigation,
+    )
+
+    target_id = await _seed_target("cancel1")
+    inv_id = await _seed_inv(target_id)
+    branch_id = await _seed_branch(inv_id)
+    # Cursor keyed on branch_id in the investigation_loop state -- matches
+    # the SSOT the loop's alive-check reads.
+    await _seed_cursor(branch_id, current_state="investigation_loop")
+    # A fresh (non-cancelled) token so the turn-boundary alive-check
+    # passes; the raise comes from the patched run_turn, not the poll.
+    clear_for_investigation(inv_id)
+
+    async def _raise_cancel(_self: Any) -> Any:
+        raise LLMCancelledError(f"run {inv_id} cancelled during LLM retry")
+
+    monkeypatch.setattr(HonestVulnResearcher, "run_turn", _raise_cancel)
+    # Executor is never used (run_turn raises before any tool_run), but the
+    # loop builds it up front; stub the singleton getter to avoid bridge/
+    # config construction in the test.
+    monkeypatch.setattr(loop_mod, "_get_executor", lambda: MagicMock())
+
+    services = SimpleNamespace(llm_client=MagicMock())
+    result = await loop_mod.state_investigation_loop(
+        {
+            "investigation_id": inv_id,
+            "branch_id": branch_id,
+            "max_turns": 3,
+        },
+        services,
+    )
+
+    # Clean exit -- no exception escaped, routed to the same terminal
+    # emit state as any other loop completion.
+    assert result.next_state == "investigation_emit"
+    assert result.output["exit_reason"] == "cancellation_token_set"
+    # Cleanup the process-local token created by the alive-check.
+    clear_for_investigation(inv_id)

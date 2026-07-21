@@ -35,6 +35,7 @@ from openai import APIConnectionError, APITimeoutError, AsyncOpenAI, RateLimitEr
 from pydantic import BaseModel, ValidationError
 
 from ..exceptions import AILAError
+from .cancellation import LLMCancelledError, is_run_cancelled
 from .config import LLMConfigProvider
 from .errors import LLMError
 from .pipeline import PipelineRunner
@@ -830,6 +831,18 @@ class AilaLLMClient:
         last_error: Exception | None = None
 
         for attempt in range(_MAX_RETRIES):
+            # #44: abort promptly if the run was cancelled mid-retry. An
+            # investigation keys its cancellation token on run_id
+            # (== investigation_id) and creates it at the turn-boundary check
+            # before this call runs, so the peek sees it here. Non-
+            # investigation run_ids have no token, so this is a no-op for them
+            # and does not fabricate one. Without this, a pause during a long
+            # provider-outage backoff waits out the full retry schedule before
+            # the next turn-boundary poll notices the cancellation.
+            if run_id is not None and is_run_cancelled(run_id):
+                raise LLMCancelledError(
+                    f"run {run_id} cancelled during LLM retry (attempt {attempt + 1})"
+                )
             try:
                 response, ctx = await self._pipeline.run(
                     task_type=routing.task_type,
