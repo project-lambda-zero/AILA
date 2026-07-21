@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 __all__ = [
     "ReasoningAction",
@@ -23,6 +29,7 @@ __all__ = [
     "ReasoningTurnDecision",
     "EvidenceProvenance",
     "Hypothesis",
+    "ObservablesDict",
     "RejectedHypothesis",
 ]
 
@@ -176,6 +183,32 @@ def _require_json_serializable(value: dict[str, Any]) -> dict[str, Any]:
     return value
 
 
+def _validate_json_serializable(v: dict[str, Any]) -> dict[str, Any]:
+    """Reject non-JSON observables at construction time (#61-2).
+
+    Observables are persisted as ``case_state_json`` and forwarded as
+    task kwargs, both of which require JSON encoding; a ``datetime`` /
+    ``bytes`` / ``set`` slipping in passes Pydantic construction, survives
+    every in-process mutation, and only crashes later at ``model_dump
+    (mode='json')`` / ``task_queue.submit`` -- far from the code that
+    introduced it. One ``json.dumps`` here proves every key and value has
+    a JSON encoding and surfaces the offender at the source.
+    """
+    try:
+        json.dumps(v, sort_keys=True)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"observables must be JSON-serializable: {exc}",
+        ) from exc
+    return v
+
+
+ObservablesDict = Annotated[
+    dict[str, Any],
+    AfterValidator(_validate_json_serializable),
+]
+
+
 class ReasoningCaseState(BaseModel):
     """Normalized reasoning state carried across investigation turns."""
 
@@ -183,7 +216,7 @@ class ReasoningCaseState(BaseModel):
     hypotheses: list[Hypothesis] = Field(default_factory=list)
     rejected: list[RejectedHypothesis] = Field(default_factory=list)
     resolved: list[ResolvedHypothesis] = Field(default_factory=list)
-    observables: dict[str, Any] = Field(default_factory=dict)
+    observables: ObservablesDict = Field(default_factory=dict)
     # Most recent turn number this state was absorbed at. Used by
     # ``render_case_model`` to compute hypothesis age (current_turn -
     # hypothesis.opened_at_turn). 0 means "never absorbed with a turn
@@ -242,7 +275,7 @@ class ReasoningTurnDecision(BaseModel):
     contract: ReasoningContract | None = None
     hypotheses: list[Hypothesis] = Field(default_factory=list)
     rejected: list[RejectedHypothesis] = Field(default_factory=list)
-    observables: dict[str, Any] = Field(default_factory=dict)
+    observables: ObservablesDict = Field(default_factory=dict)
     script_content: str | None = None
     command: str | None = None
     # Names observable keys the engine MUST pull into the next turn's

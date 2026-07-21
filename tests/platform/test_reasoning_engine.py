@@ -371,3 +371,55 @@ def test_build_evidence_graph_links_contract_evidence_and_answer() -> None:
     assert "answer" in node_ids
     assert ("hyp:H1", "contract", "depends_on") in edge_kinds
     assert ("evidence:artifact-123", "answer", "answered_by") in edge_kinds
+
+
+# ----------------------------------------------------------------------
+# #61-2 -- observables must be JSON-serializable at construction time.
+# A datetime/bytes slipping into observables used to pass Pydantic
+# construction and only crash later at model_dump(mode='json') /
+# task_queue.submit. The AfterValidator surfaces it at the source.
+# ----------------------------------------------------------------------
+
+
+def test_case_state_rejects_non_json_observable() -> None:
+    from datetime import datetime
+
+    from pydantic import ValidationError as PydanticValidationError
+
+    with pytest.raises(PydanticValidationError, match="JSON-serializable"):
+        ReasoningCaseState(observables={"ts": datetime(2026, 7, 20)})
+
+
+def test_case_state_rejects_bytes_observable() -> None:
+    from pydantic import ValidationError as PydanticValidationError
+
+    with pytest.raises(PydanticValidationError, match="JSON-serializable"):
+        ReasoningCaseState(observables={"blob": b"\x00\x01"})
+
+
+def test_turn_decision_rejects_non_json_observable() -> None:
+    from datetime import datetime
+
+    from pydantic import ValidationError as PydanticValidationError
+
+    with pytest.raises(PydanticValidationError, match="JSON-serializable"):
+        ReasoningTurnDecision(
+            reasoning="x",
+            action="reasoning",
+            observables={"ts": datetime(2026, 7, 20)},
+        )
+
+
+def test_json_safe_observables_pass() -> None:
+    # The shapes the reasoning loop actually stores: strings, ints,
+    # nested json-dicts, and lists all round-trip cleanly.
+    state = ReasoningCaseState(
+        observables={
+            "_directive.note": "steering text",
+            "_reject_count": 3,
+            "_pending": {"answer": "a", "blocked_at_turn": 2},
+            "_recall.pinned": ["artifact-1", "artifact-2"],
+        },
+    )
+    assert state.observables["_reject_count"] == 3
+    assert state.observables["_pending"]["blocked_at_turn"] == 2
