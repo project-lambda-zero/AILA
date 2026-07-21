@@ -22,11 +22,13 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
-from aila.api.auth import AuthContext, require_user_or_api_key
+from aila.api.auth import AuthContext, TeamContext, require_user_or_api_key
+from aila.api.deps import owned_or_404
 from aila.api.limiter import limiter
 from aila.api.schemas.endpoints import ExecutiveHealthResponse
 from aila.api.schemas.envelope import DataEnvelope
 from aila.storage.database import async_session_scope
+from aila.storage.db_models import ManagedSystemRecord
 
 __all__ = ["router"]
 
@@ -282,15 +284,29 @@ def _build_finding_rows_html(findings: list[dict]) -> str:
     return "\n".join(rows) if rows else "    <tr><td colspan='7'>No findings available.</td></tr>"
 
 
-async def _fetch_all_findings(module: object) -> list[dict]:
-    """Fetch all latest vulnerability findings via the module boundary."""
-    async with async_session_scope() as session:
+async def _fetch_all_findings(module: object, auth: AuthContext) -> list[dict]:
+    """Fetch all latest vulnerability findings via the module boundary.
+
+    #36: binds the caller's TeamContext to the session so the do_orm_execute
+    listener filters the plain LatestFindingRecord select inside
+    ``module.latest_findings``. A god-tier admin (team_id=None, TEAM-06) bypasses
+    the filter and sees every team's findings.
+    """
+    async with async_session_scope(team_context=TeamContext.from_auth(auth)) as session:
         return await module.latest_findings(session)
 
 
-async def _fetch_system_findings(module: object, system_id: int) -> list[dict]:
-    """Fetch latest vulnerability findings for one system via the module boundary."""
-    async with async_session_scope() as session:
+async def _fetch_system_findings(
+    module: object, system_id: int, auth: AuthContext
+) -> list[dict]:
+    """Fetch latest vulnerability findings for one system via the module boundary.
+
+    #36: binds the caller's TeamContext so the listener filters the plain
+    LatestFindingRecord select; combined with the caller-supplied system_id
+    predicate this returns rows only when the system itself is owned by the
+    caller's team (god-tier sees any system).
+    """
+    async with async_session_scope(team_context=TeamContext.from_auth(auth)) as session:
         return await module.latest_findings(session, system_id=system_id)
 
 
@@ -340,7 +356,7 @@ async def executive_health(
     without requiring a full PDF download.
     """
     module = request.app.state.platform.runtime.module_registry.require("vulnerability")
-    findings = await _fetch_all_findings(module)
+    findings = await _fetch_all_findings(module, auth)
     breakdown = _build_severity_breakdown(findings)
 
     # Determine last_scanned_at from the maximum last_scanned_at across all findings
@@ -388,7 +404,7 @@ async def download_risk_summary_pdf(
     Requires: weasyprint (aila[pdf] extras).
     """
     module = request.app.state.platform.runtime.module_registry.require("vulnerability")
-    findings = await _fetch_all_findings(module)
+    findings = await _fetch_all_findings(module, auth)
 
     try:
         pdf_bytes = await asyncio.to_thread(_generate_risk_pdf_bytes, module, findings)
@@ -442,7 +458,21 @@ async def download_evidence_package(
     Returns 404 if no findings exist for the given system_id.
     """
     module = request.app.state.platform.runtime.module_registry.require("vulnerability")
-    findings = await _fetch_system_findings(module, system_id)
+
+    # #36: gate the entire package by team ownership of the ManagedSystemRecord.
+    # owned_or_404 goes through session.exec(select(...)) rather than
+    # session.get() so the do_orm_execute listener applies -- the identity-map
+    # fast path of session.get would bypass the team filter (#57 IDOR class).
+    # A god-tier admin (team_id=None, TEAM-06) sees any system.
+    async with async_session_scope(team_context=TeamContext.from_auth(auth)) as session:
+        await owned_or_404(
+            session,
+            ManagedSystemRecord,
+            system_id,
+            detail=f"System '{system_id}' not found.",
+        )
+
+    findings = await _fetch_system_findings(module, system_id, auth)
     if not findings:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
