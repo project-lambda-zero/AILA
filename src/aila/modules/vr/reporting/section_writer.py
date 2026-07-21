@@ -313,7 +313,10 @@ def is_cache_fresh(
     except (ValueError, TypeError):
         return False
     if outcome_updated_at is None:
-        return True
+        # A NULL updated_at signals an under-populated outcome row, not
+        # freshness (#48-8): regenerate rather than serve a possibly stale
+        # cached section.
+        return False
     if cached_at.tzinfo is None and outcome_updated_at.tzinfo is not None:
         cached_at = cached_at.replace(tzinfo=outcome_updated_at.tzinfo)
     return cached_at >= outcome_updated_at
