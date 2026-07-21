@@ -150,3 +150,19 @@ class PlatformConfigSchema(BaseModel):
     # Operator sets their market rate; USD conversion = estimated_hours * rate.
     llm_human_consultant_hourly_rate: float = 150.0
 
+    # SMTP delivery for scheduled reports (#45 -- ghost config keys).
+    # report_tasks.py reads these through ConfigRegistry, but they were never
+    # declared here, so the registry never seeded them and
+    # PUT /config/platform/smtp_* was rejected as an unknown key -- email was
+    # configurable only through env vars while the config API pretended it was
+    # not. An empty smtp_host means delivery is skipped. smtp_password matches
+    # the is_secret_config_key "password" token, so it is redacted for
+    # non-admin readers (C6).
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_from: str = "aila@localhost"
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_ca_bundle_path: str = ""
+    smtp_use_implicit_tls: bool = False
+

@@ -142,6 +142,12 @@ Platform, async, and correctness:
 - `RegisteredSystem` tolerates extra DB columns; observables guarded
   against non-JSON values at construction. (#61)
 - Journal hash-length check uses a portable `length()` constraint. (C2)
+- SMTP scheduled-report config keys (`smtp_host`, `smtp_port`,
+  `smtp_from`, `smtp_username`, `smtp_password`, `smtp_ca_bundle_path`,
+  `smtp_use_implicit_tls`) are declared in the platform config schema,
+  so operators can set them through `PUT /config/platform/*`; report
+  delivery read them but the config API previously rejected them as
+  unknown keys. `smtp_password` redacts for non-admin readers. (#45)
 
 ### Removed
 

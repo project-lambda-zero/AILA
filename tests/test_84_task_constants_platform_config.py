@@ -212,3 +212,41 @@ class TestPackageExports:
             "CONFIG_KEY_REDIS_URL",
         }
         assert set(const_all) == expected
+
+
+# ---------------------------------------------------------------------------
+# #45: SMTP ghost config keys -- report_tasks.py reads these via ConfigRegistry
+# but they were undeclared, so the registry never seeded them and the config
+# API rejected them. The schema must declare every key report_tasks reads.
+# ---------------------------------------------------------------------------
+
+
+class TestSmtpConfigSchema:
+    """PlatformConfigSchema declares every SMTP key report_tasks.py reads (#45)."""
+
+    # (field, expected_default) mirroring the documented defaults in
+    # platform/tasks/report_tasks.py.
+    SMTP_FIELDS: list[tuple[str, object]] = [
+        ("smtp_host", ""),
+        ("smtp_port", 587),
+        ("smtp_from", "aila@localhost"),
+        ("smtp_username", ""),
+        ("smtp_password", ""),
+        ("smtp_ca_bundle_path", ""),
+        ("smtp_use_implicit_tls", False),
+    ]
+
+    @pytest.mark.parametrize("field,expected", SMTP_FIELDS)
+    def test_schema_declares_smtp_field(self, field: str, expected: object) -> None:
+        assert field in PlatformConfigSchema.model_fields, (
+            f"PlatformConfigSchema missing '{field}' -- report_tasks.py reads it "
+            f"via ConfigRegistry, so an undeclared key makes PUT /config reject it"
+        )
+        assert getattr(PlatformConfigSchema(), field) == expected
+
+    def test_smtp_password_is_secret_classed(self) -> None:
+        """smtp_password must redact for non-admin readers (C6); smtp_host must not."""
+        from aila.storage.registry import is_secret_config_key
+
+        assert is_secret_config_key("smtp_password") is True
+        assert is_secret_config_key("smtp_host") is False
