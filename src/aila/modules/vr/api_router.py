@@ -3518,8 +3518,8 @@ def create_vr_router() -> APIRouter:
           ``GET /investigations/{id}/report.pdf`` route.
 
         The PDF is rendered synchronously via ReportLab; the render is
-        pushed onto a worker thread via :func:`asyncio.to_thread` so a
-        large aggregate (~46 L1 controls plus subsections) doesn't
+        pushed onto a platform worker thread via :func:`run_blocking_io`
+        so a large aggregate (~46 L1 controls plus subsections) doesn't
         block the event loop while reportlab walks the flow.
         """
         del request
@@ -3528,6 +3528,7 @@ def create_vr_router() -> APIRouter:
             build_pdf,
             collect_findings,
         )
+        from aila.platform.services.runtime import run_blocking_io
 
         from .db_models import VRInvestigationRecord, VRTargetRecord
 
@@ -3607,12 +3608,14 @@ def create_vr_router() -> APIRouter:
         # the workflow lifecycle, NOT inline here). When no cached
         # section is present, the renderer falls back to the raw
         # agent_summary. The PDF endpoint never makes LLM calls.
-        # build_pdf is sync (CPU-bound ReportLab render). The
-        # investigation-report endpoint follows the same pattern --
-        # render directly on the event loop. The aggregate is bounded
-        # (≤53 L1 verdicts), so the render stays well inside ASGI
-        # request-budget territory.
-        pdf_bytes = build_pdf(aggregate, target_summary, handles=handles_dict)
+        # build_pdf is sync (CPU-bound ReportLab render); offload it to
+        # the platform worker pool via run_blocking_io so a large
+        # aggregate does not stall the event loop for other requests on
+        # this worker. Matches the investigation-report endpoint, which
+        # offloads its render inside render_investigation_pdf.
+        pdf_bytes = await run_blocking_io(
+            build_pdf, aggregate, target_summary, handles=handles_dict,
+        )
 
         filename = _masvs_report_filename(
             target_summary,
