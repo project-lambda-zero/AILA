@@ -134,6 +134,7 @@ async def login(request: Request, body: TokenRequest) -> TokenResponse:
                 status=AUDIT_STATUS_COMPLETED,
                 target=matched.key_prefix,
                 user_id=matched.id,
+                team_id=matched.team_id,
                 details={"role": matched.role},
             )
             await session.commit()
@@ -178,6 +179,7 @@ async def refresh_token(request: Request, body: RefreshRequest) -> RefreshRespon
                 status=AUDIT_STATUS_COMPLETED,
                 target=key_record.key_prefix,
                 user_id=key_record.id,
+                team_id=key_record.team_id,
                 details={"role": key_record.role},
             )
             await session.commit()
@@ -244,6 +246,7 @@ async def create_api_key(
                 status=AUDIT_STATUS_COMPLETED,
                 target=key_prefix,
                 user_id=admin.user_id,
+                team_id=admin.team_id,
                 details={"role": rec_role, "label": rec_label},
             )
             await session.commit()
@@ -361,6 +364,7 @@ async def revoke_api_key(
                 status=AUDIT_STATUS_COMPLETED,
                 target=record.key_prefix,
                 user_id=admin.user_id,
+                team_id=admin.team_id,
                 details={"role": record.role},
             )
             await session.commit()

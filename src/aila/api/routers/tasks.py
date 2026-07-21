@@ -285,6 +285,7 @@ async def cancel_task(
                 status=AUDIT_STATUS_COMPLETED,
                 target=task_id,
                 user_id=auth.user_id,
+                team_id=auth.team_id,
             )
             await session.commit()
 
@@ -341,6 +342,7 @@ async def resume_task(
                 status=AUDIT_STATUS_COMPLETED,
                 target=task_id,
                 user_id=auth.user_id,
+                team_id=auth.team_id,
             )
             await session.commit()
 
@@ -571,6 +573,7 @@ async def submit_task(
                 status=AUDIT_STATUS_COMPLETED,
                 target=task_id,
                 user_id=auth.user_id,
+                team_id=auth.team_id,
                 details={"query": req.query_text[:200]},
             )
             await session.commit()

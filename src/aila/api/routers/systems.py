@@ -748,6 +748,7 @@ async def import_systems_csv(
                 status=AUDIT_STATUS_COMPLETED,
                 target="csv-batch-import",
                 user_id=auth.user_id,
+                team_id=auth.team_id,
                 details={
                     "created_count": len(created),
                     "error_count": len(errors),
@@ -835,6 +836,7 @@ async def create_system(
                 status=AUDIT_STATUS_COMPLETED,
                 target=record.name,
                 user_id=auth.user_id,
+                team_id=auth.team_id,
                 details={"host": record.host, "name": record.name},
             )
             await session.commit()
@@ -922,6 +924,7 @@ async def update_system(
                 status=AUDIT_STATUS_COMPLETED,
                 target=record.name,
                 user_id=auth.user_id,
+                team_id=auth.team_id,
                 details={"fields": audited_fields},
             )
             try:
@@ -974,6 +977,7 @@ async def delete_system(
                 status=AUDIT_STATUS_COMPLETED,
                 target=system_name,
                 user_id=auth.user_id,
+                team_id=auth.team_id,
                 details={"system_id": system_id},
             )
             await session.commit()

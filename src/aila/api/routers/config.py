@@ -177,6 +177,7 @@ async def update_config_value(
                     status=AUDIT_STATUS_COMPLETED,
                     target=f"{namespace}/{key}",
                     user_id=admin.user_id,
+                    team_id=admin.team_id,
                     details={
                         "namespace": namespace,
                         "key": key,

@@ -183,6 +183,7 @@ async def create_session(
                 status=AUDIT_STATUS_COMPLETED,
                 target=record.id,
                 user_id=auth.user_id,
+                team_id=auth.team_id,
                 details={"title": record.title},
             )
             await db.commit()
@@ -318,6 +319,7 @@ async def _sync_message(
                 status=AUDIT_STATUS_COMPLETED,
                 target=session_id,
                 user_id=auth.user_id,
+                team_id=auth.team_id,
                 details={"message_id": asst_msg.id},
             )
             await db.commit()
@@ -373,6 +375,7 @@ async def _stream_message(
                 status=AUDIT_STATUS_COMPLETED,
                 target=session_id,
                 user_id=auth.user_id,
+                team_id=auth.team_id,
                 details={"streaming": True},
             )
             await db.commit()

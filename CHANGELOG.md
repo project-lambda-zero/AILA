@@ -130,6 +130,11 @@ Security and tenant isolation:
   with the calling team, matching the REST create path, so team-scoped
   reads surface them; the tool path previously wrote them team-less.
   (#36)
+- Audit events are stamped with the acting team, so a team-scoped audit
+  read surfaces a team's own events instead of an empty trail. Request
+  handlers stamp the request team; worker and workflow events inherit
+  the running task's team; pre-authentication login failures stay
+  team-less. (#36)
 
 LLM and cost:
 

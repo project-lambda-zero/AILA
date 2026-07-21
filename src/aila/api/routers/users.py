@@ -228,6 +228,7 @@ async def login(request: Request, body: LoginRequest) -> DataEnvelope[TokenRespo
             status=AUDIT_STATUS_COMPLETED,
             target=body.username,
             user_id=user.id,
+            team_id=user.team_id,
             details={"role": user.role},
         )
         await session.commit()
@@ -498,6 +499,7 @@ async def create_user(
             status=AUDIT_STATUS_COMPLETED,
             target=body.username,
             user_id=caller.user_id,
+            team_id=new_team_id,
             details={"role": body.role, "group_id": body.group_id, "team_id": new_team_id},
         )
         await session.commit()
@@ -587,6 +589,7 @@ async def update_user(
                 status=AUDIT_STATUS_COMPLETED,
                 target=user_id,
                 user_id=caller.user_id,
+                team_id=user.team_id,
                 details=changes,
             )
         await session.commit()
