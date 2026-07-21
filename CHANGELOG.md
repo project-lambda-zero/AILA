@@ -47,6 +47,11 @@ credential defaults changed and may require caller action.
   index. (#61)
 - Per-tool-execution LLM timeout and pooled AsyncOpenAI clients that
   stop a per-call file-descriptor leak. (#44)
+- Supervised automation tick loop: a malformed schedule row can no
+  longer kill the loop and silently halt automation. Faults are caught,
+  counted on `aila_automation_tick_failures_total`, and backed off
+  exponentially (60s base, 300s cap) with a reset on the next success.
+  (#46)
 
 ### Changed
 

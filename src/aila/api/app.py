@@ -225,33 +225,33 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.automation_registry = None
         app.state.automation_runner = None
 
-    # Start background automation tick loop (60s interval).
-    # Wires the fully-implemented AutomationRunner that was previously
-    # instantiated but never invoked (AUDIT-01 fix).
+    # Start the supervised background automation tick loop (60s base interval,
+    # exponential backoff on repeated failure). Wires the AutomationRunner that
+    # was previously instantiated but never invoked (AUDIT-01 fix). The
+    # supervisor catches every realistic tick fault so a malformed schedule row
+    # can no longer kill the loop and silently halt automation (#46).
     _automation_tick_task: asyncio.Task[None] | None = None
+    _automation_stop: asyncio.Event | None = None
     if app.state.automation_runner is not None:
-        _runner = app.state.automation_runner
+        from aila.platform.automation.supervisor import run_tick_supervisor
 
-        async def _tick_loop() -> None:
-            import sqlalchemy.exc as _sa_exc
-
-            from aila.platform.exceptions import AILAError as _AILAError
-            while True:
-                try:
-                    await _runner.tick()
-                except asyncio.CancelledError:
-                    raise
-                except (_AILAError, _sa_exc.SQLAlchemyError, ValueError, OSError):
-                    _log.warning("Automation tick failed", exc_info=True)
-                await asyncio.sleep(60)
-
-        _automation_tick_task = asyncio.create_task(_tick_loop(), name="automation-tick")
-        _log.info("Automation tick loop started (60s interval)")
+        _automation_stop = asyncio.Event()
+        _automation_tick_task = asyncio.create_task(
+            run_tick_supervisor(
+                app.state.automation_runner, stop_event=_automation_stop,
+            ),
+            name="automation-tick",
+        )
+        _log.info(
+            "Automation tick supervisor started (60s base interval, exponential backoff)",
+        )
 
     yield
 
-    # Cancel automation tick loop before other shutdown.
+    # Signal the supervisor to stop, then cancel as a backstop.
     if _automation_tick_task is not None:
+        if _automation_stop is not None:
+            _automation_stop.set()
         _automation_tick_task.cancel()
         try:
             await _automation_tick_task

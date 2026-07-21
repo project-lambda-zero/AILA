@@ -356,6 +356,7 @@ ignore = [
 "src/aila/modules/vulnerability/workflow/states/reporting.py" = ["ARG001"]
 "src/aila/modules/vulnerability/workflow/utils/row_helpers.py" = ["PLC0415"]
 "src/aila/platform/automation/runner.py" = ["E712"]
+"src/aila/platform/automation/supervisor.py" = ["PLC0415"]
 "src/aila/platform/contracts/persist.py" = ["PLC0415"]
 "src/aila/platform/contracts/reasoning.py" = ["PLC0415"]
 "src/aila/platform/events/emitter.py" = ["PLC0415"]

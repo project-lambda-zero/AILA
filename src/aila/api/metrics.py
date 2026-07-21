@@ -26,6 +26,7 @@ __all__ = [
     "TASK_CHECKPOINT_CORRUPT_TOTAL",
     "TASK_ORPHANED_DEPENDENT_SWEPT_TOTAL",
     "TASK_CHECKPOINT_WRITES_TOTAL",
+    "AUTOMATION_TICK_FAILURES_TOTAL",
 ]
 
 from prometheus_client import Counter, Gauge, Histogram, Info
@@ -168,6 +169,15 @@ TASK_ORPHANED_DEPENDENT_SWEPT_TOTAL = Counter(
     "Number of WAITING tasks reconciled after their parents terminated",
     labelnames=("outcome",),
 )
+# Automation tick supervisor failures (#46), labelled by the exception type a
+# supervised tick raised, so a persistently broken schedule row surfaces as a
+# dominant label instead of a silent halt.
+AUTOMATION_TICK_FAILURES_TOTAL = Counter(
+    "aila_automation_tick_failures_total",
+    "Automation tick loop failures, labelled by exception class",
+    ["exception"],
+)
+
 # Phase 178b: checkpoint write volume. Useful for spotting stuck stages and
 # confirms that in-flight tasks are actually persisting progress.
 TASK_CHECKPOINT_WRITES_TOTAL = Counter(
