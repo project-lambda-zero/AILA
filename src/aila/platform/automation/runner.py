@@ -15,16 +15,33 @@ import asyncio
 import json
 import logging
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import sqlalchemy.exc
-from croniter import croniter
+from croniter import CroniterError, croniter
 from sqlmodel import select
+from sqlmodel.sql.expression import SelectOfScalar
 
 from aila.platform.automation.models import AutomationScheduleRecord
 from aila.platform.automation.registry import AutomationRegistry
 from aila.platform.exceptions import AILAError
 from aila.platform.tasks.queue import TaskQueue
 from aila.storage.database import async_session_scope
+
+_DEFAULT_TIMEZONE_NAME = "UTC"
+_UTC_ZONE = ZoneInfo(_DEFAULT_TIMEZONE_NAME)
+_DISABLE_REASON_MAX = 512  # keep disable_reason short so it fits any operator-facing display
+
+# Exception types that indicate a schedule cannot be parsed and MUST be
+# auto-disabled (#46-4b) rather than raised on every tick. CroniterError is
+# already a ValueError, but we list it explicitly so a reader can see the
+# intent; ZoneInfoNotFoundError is a KeyError, listed for the same reason.
+_SCHEDULE_PARSE_ERRORS: tuple[type[BaseException], ...] = (
+    CroniterError,
+    ZoneInfoNotFoundError,
+    ValueError,
+    KeyError,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -114,12 +131,29 @@ class AutomationRunner:
         submitted = 0
 
         async with async_session_scope() as session:
-            schedules = (await session.exec(
-                select(AutomationScheduleRecord)
-                .where(AutomationScheduleRecord.enabled == True)
-            )).all()
+            schedules = (await session.exec(self._due_schedules_stmt())).all()
 
         for schedule in schedules:
+            # Finding 46-4b: catch unparseable cron / bad timezone up front
+            # and disable the row so the next tick does not raise on the
+            # same bad data. The disable is best-effort: if the DB write
+            # itself fails we log and skip so one broken row cannot stop
+            # the tick from processing the rest.
+            disable_reason = self._classify_parse_failure(schedule)
+            if disable_reason is not None:
+                _log.warning(
+                    "Auto-disabling automation schedule %s: %s",
+                    schedule.id, disable_reason,
+                )
+                try:
+                    await self._disable_schedule(schedule.id, disable_reason, now)
+                except sqlalchemy.exc.SQLAlchemyError:
+                    _log.exception(
+                        "Failed to persist auto-disable for schedule %s",
+                        schedule.id,
+                    )
+                continue
+
             if not self._is_due(schedule, now):
                 continue
 
@@ -225,15 +259,134 @@ class AutomationRunner:
             await session.commit()
 
     @staticmethod
+    def _due_schedules_stmt() -> SelectOfScalar[AutomationScheduleRecord]:
+        """Build the SELECT that claims due schedules for this tick.
+
+        Finding 46-6: adds ``FOR UPDATE SKIP LOCKED`` so two runner
+        processes ticking at the same instant cannot double-fire the
+        same row. Rows a peer runner already holds a row lock on are
+        silently skipped for the duration of that peer's transaction;
+        TaskQueue dedup (SEC-07) is the final backstop.
+        """
+        return (
+            select(AutomationScheduleRecord)
+            .where(AutomationScheduleRecord.enabled == True)
+            .with_for_update(skip_locked=True)
+        )
+
+    @staticmethod
+    def _resolve_timezone(name: str | None) -> ZoneInfo:
+        """Return the ZoneInfo for ``name``, falling back to UTC on null / bad input.
+
+        Finding 46-2 defensive fallback: an unrecognized IANA name (data
+        drift, typo, missing tzdata) becomes UTC here so ``_is_due``
+        stays total. The tick loop's ``_classify_parse_failure`` catches
+        the same condition earlier and disables the row (#46-4b); this
+        method is the belt inside the suspenders.
+        """
+        if not name:
+            return _UTC_ZONE
+        try:
+            return ZoneInfo(name)
+        except (ZoneInfoNotFoundError, ValueError):
+            return _UTC_ZONE
+
+    @staticmethod
+    def _classify_parse_failure(schedule: AutomationScheduleRecord) -> str | None:
+        """Return a short disable reason when the schedule cannot be parsed.
+
+        Finding 46-4b: instead of letting a malformed schedule raise on
+        every tick forever, the runner disables the row and records the
+        cause. Two conditions trigger a disable:
+
+        1. ``cron_timezone`` is a non-empty string that is not a
+           recognized IANA zone (ZoneInfo lookup raises).
+        2. ``cron_expression`` does not parse under croniter against
+           the (validated) timezone.
+
+        Returns None when both fields parse cleanly. The returned string
+        is length-capped so the column stays readable in operator UIs.
+        """
+        tz_name = schedule.cron_timezone
+        if tz_name:
+            try:
+                tz = ZoneInfo(tz_name)
+            except _SCHEDULE_PARSE_ERRORS as exc:
+                return AutomationRunner._short_reason(
+                    f"invalid cron_timezone {tz_name!r}: {exc}"
+                )
+        else:
+            tz = _UTC_ZONE
+
+        reference = schedule.last_run_at or datetime.now(tz)
+        if reference.tzinfo is None:
+            reference = reference.replace(tzinfo=tz)
+        else:
+            reference = reference.astimezone(tz)
+
+        try:
+            croniter(schedule.cron_expression, reference)
+        except _SCHEDULE_PARSE_ERRORS as exc:
+            return AutomationRunner._short_reason(
+                f"invalid cron_expression {schedule.cron_expression!r}: {exc}"
+            )
+        return None
+
+    @staticmethod
+    def _short_reason(text: str) -> str:
+        """Truncate a disable reason to _DISABLE_REASON_MAX so the row stays readable."""
+        if len(text) <= _DISABLE_REASON_MAX:
+            return text
+        return text[: _DISABLE_REASON_MAX - 3] + "..."
+
+    @staticmethod
+    async def _disable_schedule(
+        schedule_id: str,
+        reason: str,
+        now: datetime,
+    ) -> None:
+        """Persist enabled=False + disable_reason for a malformed schedule (#46-4b).
+
+        Kept parallel to ``_write_schedule_state`` so the two DB write
+        paths in this file share the same session shape. Raises
+        SQLAlchemyError on failure; the tick loop catches it and moves
+        on to the next schedule.
+        """
+        async with async_session_scope() as session:
+            rec = (await session.exec(
+                select(AutomationScheduleRecord)
+                .where(AutomationScheduleRecord.id == schedule_id)
+            )).one()
+            rec.enabled = False
+            rec.disable_reason = reason
+            rec.updated_at = now
+            session.add(rec)
+            await session.commit()
+
+    @staticmethod
     def _is_due(schedule: AutomationScheduleRecord, now: datetime) -> bool:
         """Check whether a schedule should fire based on its cron expression.
 
-        A schedule with no last_run_at is always due (first run). Otherwise,
-        croniter computes the next fire time after last_run_at and compares
-        against now.
+        A schedule with no last_run_at is always due (first run).
+        Otherwise, the cron expression is evaluated against the
+        schedule's ``cron_timezone`` (defaulting to UTC when null /
+        unrecognized -- see ``_resolve_timezone``): croniter computes
+        the next fire time after ``last_run_at`` in that zone and the
+        result is compared against ``now`` converted to the same zone.
+
+        Finding 46-2: interpreting the cron expression against a
+        wall-clock timezone lets ``0 9 * * *`` mean 9 AM local rather
+        than 9 AM UTC. Assumes the schedule has already passed
+        ``_classify_parse_failure``; callers outside the tick loop that
+        might hand a malformed row still get UTC + a croniter raise
+        rather than silent misfires.
         """
         if schedule.last_run_at is None:
             return True
-        cron = croniter(schedule.cron_expression, schedule.last_run_at)
+        tz = AutomationRunner._resolve_timezone(schedule.cron_timezone)
+        last_run_local = schedule.last_run_at.astimezone(tz)
+        cron = croniter(schedule.cron_expression, last_run_local)
         next_fire = cron.get_next(datetime)
-        return next_fire <= now
+        if next_fire.tzinfo is None:
+            next_fire = next_fire.replace(tzinfo=tz)
+        return next_fire <= now.astimezone(tz)
