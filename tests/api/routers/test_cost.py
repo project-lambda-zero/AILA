@@ -586,3 +586,30 @@ async def test_roi_reads_human_cost_from_original_records(cost_client, admin_tok
             select(LLMCostRecord).where(LLMCostRecord.run_id == "_human_estimate")
         )).first()
     assert sentinel is None, "No sentinel records should exist -- human cost stored on original records"
+
+
+# ---------------------------------------------------------------------------
+# Test 12: POST /cost/estimate refuses admin (team_id=None) with task_types (403)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_estimate_requires_team_context_for_admin_token(cost_client, admin_token):
+    """POST /cost/estimate returns 403 when auth.team_id is None and task_types is non-empty.
+
+    Guards the team-context requirement in the second branch of the estimator
+    (elif task_types and auth.team_id is None). The admin token from conftest
+    has team_id=None; the handler must reject cross-tenant estimation queries
+    with 'Team context required for cost estimation'. Regression coverage for
+    finding #57-3f: the always-true getattr(auth, 'is_admin', False) wrapper
+    was removed, so the 403 must still fire unconditionally on this branch.
+    """
+    resp = await cost_client.post(
+        "/cost/estimate",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"target_count": 3, "task_types": ["scoring"]},
+    )
+    assert resp.status_code == 403, resp.text
+    body = resp.json()
+    # ErrorResponse envelope: {"detail": str, "code": None, "errors": None} (app.py:_http_exception_handler)
+    assert body["detail"] == "Team context required for cost estimation", body

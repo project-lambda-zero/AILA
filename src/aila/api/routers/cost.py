@@ -268,26 +268,13 @@ async def estimate_scan_cost(
             entry["total_cost"] += rec.cost_usd
             entry["count"] += 1
     elif task_types and auth.team_id is None:
-        # No team context -- require admin role for cross-tenant queries
-        if not getattr(auth, "is_admin", False):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Team context required for cost estimation",
-            )
-        async with async_session_scope() as session:
-            stmt = (
-                select(LLMCostRecord)
-                .where(LLMCostRecord.task_type.in_(task_types))  # type: ignore[union-attr]
-                .where(LLMCostRecord.task_type != _COST_ESTIMATION_TASK_TYPE)
-            )
-            records = (await session.exec(stmt)).all()
-
-        for rec in records:
-            entry = task_type_stats.setdefault(
-                rec.task_type, {"total_cost": 0.0, "count": 0}
-            )
-            entry["total_cost"] += rec.cost_usd
-            entry["count"] += 1
+        # No team context -- refuse cross-tenant estimation queries. There is
+        # deliberately no fallback query here: a team-less principal cannot run
+        # an unscoped cross-tenant cost aggregation.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Team context required for cost estimation",
+        )
 
     # Fetch fallback config values from ConfigRegistry (not hardcoded -- T-175-13)
     fallback_max_tokens_raw = await registry.get(

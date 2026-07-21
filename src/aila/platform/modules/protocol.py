@@ -454,16 +454,6 @@ class ModuleProtocol(Protocol):
         """
         return {}
 
-    def notification_types(self) -> list[str]:
-        """Return notification type identifiers this module can emit (D-37/D-32).
-
-        OPTIONAL -- platform checks hasattr() before calling.
-
-        Returns:
-            List of notification type strings, e.g.: ['scan_complete', 'kev_added']
-        """
-        return []
-
     async def fleet_severity_summary(self, system_ids: list[int], session: Any) -> dict[int, str]:
         """Return top severity per system_id for the given fleet slice (optional, D-20).
 
