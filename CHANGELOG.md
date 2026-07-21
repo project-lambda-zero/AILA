@@ -156,6 +156,16 @@ Platform, async, and correctness:
   caller passed ARQ's 1-based attempt counter to `default_backoff`
   instead of the completed-retry count, so the first retry deferred in
   [2.0, 3.0)s; it now defers in [1.0, 2.0)s. (#40)
+- Investigation LLM spend is attributed to the investigation.
+  `decide_next_turn` threads the investigation_id as the LLM run_id, so
+  `LLMCostRecord.run_id` is populated for every reasoning turn. The
+  per-investigation cost display now reads real spend (was $0.00), and
+  the VR live-cost aggregator sums directly on `run_id` instead of
+  joining through TaskRecord. **Behavior change:** the forensics
+  freeflow cost ceiling (`forensics.freeflow_max_cost_usd`, default
+  $25) was previously inert because those cost rows were never
+  attributed; it now sums real spend and cancels a freeflow run once
+  the cap is crossed. (#39/#59)
 
 ### Removed
 

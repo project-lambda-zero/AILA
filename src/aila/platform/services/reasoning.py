@@ -192,6 +192,8 @@ class CyberReasoningEngine:
         task_type: str,
         system_prompt: str,
         user_prompt: str,
+        run_id: str | None = None,
+        team_id: str | None = None,
     ) -> ReasoningTurnDecision:
         """Return the next reasoning turn as a validated decision model.
 
@@ -200,6 +202,14 @@ class CyberReasoningEngine:
         model supports strict mode. Falls back to client-side parsing
         when the model emits something close-but-not-exact (handled
         below by the normalizer + extractor).
+
+        ``run_id`` is forwarded to the LLM client so per-run cost records,
+        budget checks, and cost aggregation attribute this turn's spend to
+        the caller's run. Investigation callers pass their investigation_id;
+        this is what makes the forensics freeflow cost ceiling and the
+        per-investigation cost display functional (#59/#39). A None run_id
+        keeps the old behaviour: the call is recorded under the standalone
+        sentinel and never budget-checked.
         """
         response = await self._llm_client.chat_structured(
             task_type=task_type,
@@ -208,6 +218,8 @@ class CyberReasoningEngine:
                 {"role": "user", "content": user_prompt},
             ],
             model_class=ReasoningTurnDecision,
+            run_id=run_id,
+            team_id=team_id,
         )
         if response.disabled:
             raise RuntimeError("LLM kill-switch active")

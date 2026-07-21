@@ -1923,6 +1923,7 @@ class HonestInvestigator:
             task_type=domain_profile.task_type,
             system_prompt=system_prompt,
             user_prompt=prompt,
+            run_id=self.investigation_id,
         )
         elapsed = time.monotonic() - t0
         case_state = self.reasoning_engine.absorb(case_state, decision)

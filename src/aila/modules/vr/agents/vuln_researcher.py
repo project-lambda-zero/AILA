@@ -384,6 +384,7 @@ class HonestVulnResearcher:
                     task_type=task_type,
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
+                    run_id=self.investigation_id,
                 )
             except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError) as exc:
                 # must surface as VulnResearcherError so the loop catches

@@ -757,26 +757,19 @@ def _investigation_summary(
 async def _compute_live_investigation_cost(
     uow: Any, investigation_id: str,
 ) -> float:
-    """Aggregate LLMCostRecord.cost_usd over all task runs for this
-    investigation. Joins via TaskRecord.kwargs_json containing the
-    investigation_id since LLMCostRecord.run_id == TaskRecord.id.
+    """Aggregate LLMCostRecord.cost_usd for this investigation.
 
-    Returns 0.0 on any error (best-effort -- budget gauge degrades to
+    Investigation LLM calls are recorded with ``run_id == investigation_id``
+    (the reasoning engine threads it through ``decide_next_turn``), so the
+    sum is a direct filter on run_id. Before that threading landed run_id
+    was empty for these calls and this read always returned 0.0.
+
+    Returns 0.0 on any error (best-effort -- the budget gauge degrades to
     the stored zero rather than crashing the read path).
     """
     try:
-
-
-        # Find all run_ids belonging to this investigation
-        task_ids_q = select(TaskRecord.id).where(
-            TaskRecord.fn_path.like("%run_vr_investigate%"),
-            TaskRecord.kwargs_json.like(f'%"{investigation_id}"%'),
-        )
-        task_ids = [r for r in (await uow.session.exec(task_ids_q)).all()]
-        if not task_ids:
-            return 0.0
         sum_q = select(sa_func.coalesce(sa_func.sum(LLMCostRecord.cost_usd), 0.0)).where(
-            LLMCostRecord.run_id.in_(task_ids),
+            LLMCostRecord.run_id == investigation_id,
         )
         total = (await uow.session.exec(sum_q)).one()
         return float(total)

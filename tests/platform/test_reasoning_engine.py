@@ -37,8 +37,15 @@ class _FakeLLMClient:
         task_type: str,
         messages: list[dict[str, str]],
         model_class: object,
+        run_id: str | None = None,
+        team_id: str | None = None,
     ) -> _FakeResponse:
-        self.calls.append({"task_type": task_type, "messages": messages})
+        self.calls.append({
+            "task_type": task_type,
+            "messages": messages,
+            "run_id": run_id,
+            "team_id": team_id,
+        })
         return self._response
 
 
@@ -67,6 +74,31 @@ async def test_decide_next_turn_parses_valid_json() -> None:
     assert decision.hypotheses[0].id == "H1"
     assert decision.observables["surface"] == "mobile"
     assert client.calls[0]["task_type"] == "mobile_research"
+
+
+@pytest.mark.asyncio
+async def test_decide_next_turn_forwards_run_id() -> None:
+    """run_id threads to chat_structured so per-run cost records, budget
+    checks, and the forensics freeflow ceiling attribute this turn's spend
+    to the caller's investigation (#59/#39). A None run_id stays None."""
+    client = _FakeLLMClient(
+        _FakeResponse(
+            '{"reasoning":"r","action":"tool_run",'
+            '"command":"{\\"tool\\": \\"x\\", \\"args\\": {}}",'
+            '"hypotheses":[],"observables":{}}'
+        )
+    )
+    engine = CyberReasoningEngine(client)  # type: ignore[arg-type]
+
+    await engine.decide_next_turn(
+        task_type="mobile_research",
+        system_prompt="s",
+        user_prompt="u",
+        run_id="inv-abc123",
+    )
+
+    assert client.calls[0]["run_id"] == "inv-abc123"
+    assert client.calls[0]["team_id"] is None
 
 
 @pytest.mark.asyncio
