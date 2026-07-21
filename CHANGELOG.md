@@ -96,6 +96,12 @@ Security and tenant isolation:
 - OIDC callback validates the state against the signed cookie; every
   callback previously failed against a nonce field the state JWT never
   emitted. (#36)
+- Refresh-token issuance no longer crashes on Alembic-migrated
+  databases: `refresh_token_records` gains the `ip_address` and
+  `user_agent` columns the model and login path already write but
+  migration 002 never created. Fresh installs (schema built from the
+  model via create_all) were unaffected; migrated databases raised a
+  500 on every login. (#36)
 - IDOR closed across malware investigation, observation, and
   subresource routes; team ownership enforced on target, systems, and
   tags routers. (#57, #36)
