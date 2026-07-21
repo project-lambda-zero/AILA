@@ -79,6 +79,43 @@ async def test_dedup_key_not_in_stored_metadata(test_db):
     assert meta.get("tag") == "advisory", f"tag missing from metadata: {meta}"
 
 
+async def test_upsert_race_resolves_to_update(test_db, monkeypatch):
+    """A losing INSERT race on (namespace, dedup_key) resolves to an update (#37).
+
+    Simulates the TOCTOU window: the pre-insert lookup misses the row a
+    concurrent writer already committed, so forward() falls into the INSERT
+    branch and the unique constraint rejects it. The tool must catch the
+    IntegrityError and overwrite the winner row instead of surfacing a 500.
+    """
+    from aila.config import get_settings
+    from aila.platform.tools.knowledge import KnowledgeStoreTool
+
+    tool = KnowledgeStoreTool(namespace="RaceNS", settings=get_settings())
+    winner = await tool.forward("original content", {"_dedup_key": "race-key"})
+    assert winner["operation"] == "inserted", f"winner should insert, got {winner}"
+
+    real_find = KnowledgeStoreTool._find_entry_id
+    calls = {"n": 0}
+
+    async def stale_then_real(session, namespace, dedup_key):
+        calls["n"] += 1
+        # First lookup returns None so forward() attempts the INSERT and hits
+        # the live constraint; subsequent lookups delegate to the real query.
+        if calls["n"] == 1:
+            return None
+        return await real_find(session, namespace, dedup_key)
+
+    monkeypatch.setattr(
+        KnowledgeStoreTool, "_find_entry_id", staticmethod(stale_then_real)
+    )
+
+    loser = await tool.forward("loser content", {"_dedup_key": "race-key"})
+    assert loser["operation"] == "updated", f"race should resolve to update, got {loser}"
+    assert loser["entry_id"] == winner["entry_id"], (
+        f"race update must target the winner row, got {loser['entry_id']} vs {winner['entry_id']}"
+    )
+
+
 async def test_namespace_isolation_dedup(test_db):
     """Two agents with the same dedup_key produce independent rows."""
     from aila.config import get_settings

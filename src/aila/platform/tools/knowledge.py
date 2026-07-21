@@ -4,6 +4,7 @@ import json
 import threading
 
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import select, update
 
 from ...platform.contracts._common import utc_now
@@ -72,6 +73,42 @@ class KnowledgeStoreTool(Tool):
         self.namespace = require_text(namespace, tool_name="KnowledgeStoreTool", field_name="namespace")
         self.settings = settings
 
+    @staticmethod
+    async def _find_entry_id(session: object, namespace: str, dedup_key: str) -> int | None:
+        """Return the id of the (namespace, dedup_key) entry, or None."""
+        stmt = select(KnowledgeEntryRecord.id).where(
+            KnowledgeEntryRecord.namespace == namespace,
+            KnowledgeEntryRecord.dedup_key == dedup_key,
+        )
+        # exec() of a single-column select yields the scalar id, not a Row.
+        row = (await session.exec(stmt)).first()
+        if row is None:
+            return None
+        return row[0] if isinstance(row, tuple) else row
+
+    @staticmethod
+    async def _overwrite_entry(
+        session: object,
+        entry_id: int,
+        content: str,
+        embedding_list: list[float],
+        meta_json: str,
+        dedup_key: str | None,
+    ) -> None:
+        """Overwrite an entry's content, embedding, and metadata in place."""
+        stmt = (
+            update(KnowledgeEntryRecord)
+            .where(KnowledgeEntryRecord.id == entry_id)
+            .values(
+                content=content,
+                embedding=embedding_list,
+                entry_metadata=meta_json,
+                dedup_key=dedup_key,
+            )
+        )
+        # search_vector is auto-maintained by the PostgreSQL generated column.
+        await session.exec(stmt)
+
     async def forward(self, content: str, metadata: dict | None = None) -> dict:
         content = require_text(content, tool_name="KnowledgeStoreTool", field_name="content")
         meta = dict(metadata or {})
@@ -88,46 +125,54 @@ class KnowledgeStoreTool(Tool):
         async with async_session_scope(self.settings) as session:
             existing_id: int | None = None
             if dedup_key is not None:
-                stmt = select(KnowledgeEntryRecord.id).where(
-                    KnowledgeEntryRecord.namespace == self.namespace,
-                    KnowledgeEntryRecord.dedup_key == dedup_key,
-                )
-                # exec() of a single-column select yields the scalar id, not a Row
-                row = (await session.exec(stmt)).first()
-                if row is not None:
-                    existing_id = row
+                existing_id = await self._find_entry_id(session, self.namespace, dedup_key)
 
             if existing_id is not None:
-                # UPDATE path -- search_vector auto-maintained by PostgreSQL generated column
-                update_stmt = (
-                    update(KnowledgeEntryRecord)
-                    .where(KnowledgeEntryRecord.id == existing_id)
-                    .values(
-                        content=content,
-                        embedding=embedding_list,
-                        entry_metadata=meta_json,
-                        dedup_key=dedup_key,
-                    )
+                await self._overwrite_entry(
+                    session, existing_id, content, embedding_list, meta_json, dedup_key
                 )
-                await session.exec(update_stmt)
                 await session.commit()
                 entry_id = existing_id
                 operation = "updated"
             else:
-                # INSERT path (dedup_key may be None for unconstrained inserts)
-                record = KnowledgeEntryRecord(
-                    namespace=self.namespace,
-                    content=content,
-                    embedding=embedding_list,
-                    entry_metadata=meta_json,
-                    dedup_key=dedup_key,
-                    created_at=utc_now(),
-                )
-                session.add(record)
-                await session.commit()
-                await session.refresh(record)
-                entry_id = record.id
-                operation = "inserted"
+                try:
+                    record = KnowledgeEntryRecord(
+                        namespace=self.namespace,
+                        content=content,
+                        embedding=embedding_list,
+                        entry_metadata=meta_json,
+                        dedup_key=dedup_key,
+                        created_at=utc_now(),
+                    )
+                    session.add(record)
+                    await session.commit()
+                    await session.refresh(record)
+                    entry_id = record.id
+                    operation = "inserted"
+                except IntegrityError:
+                    # A concurrent knowledge_store with the same (namespace,
+                    # dedup_key) won the INSERT race; the
+                    # uq_knowledgeentryrecord_namespace_dedup_key constraint
+                    # rejected this one. Resolve idempotently as an overwrite
+                    # so the agent receives a clean result rather than a 500
+                    # (#37). KnowledgeService.store deliberately does NOT
+                    # swallow this -- its pattern_store caller pairs the mirror
+                    # INSERT with a pattern row and relies on the raise to roll
+                    # the pair back together.
+                    await session.rollback()
+                    winner_id = (
+                        await self._find_entry_id(session, self.namespace, dedup_key)
+                        if dedup_key is not None
+                        else None
+                    )
+                    if winner_id is None:
+                        raise
+                    await self._overwrite_entry(
+                        session, winner_id, content, embedding_list, meta_json, dedup_key
+                    )
+                    await session.commit()
+                    entry_id = winner_id
+                    operation = "updated"
 
         return {
             "status": "stored",
