@@ -7,7 +7,11 @@ on the cache are guarded by _ENGINE_LOCK (RLock for re-entrant callers such
 as test teardown).
 
 Connection pool defaults: pool_size=10, max_overflow=10, pool_timeout=30,
-pool_recycle=1800, pool_pre_ping=True.
+pool_recycle=1800, pool_pre_ping=True. Each sizing value is overridable via an
+env var (AILA_DB_POOL_SIZE / _MAX_OVERFLOW / _POOL_TIMEOUT / _POOL_RECYCLE) so a
+deployment can scale the pool without a code change (#45). Env-only, not
+ConfigRegistry, because the engine is built before the registry exists on some
+paths (test fixtures, early bootstrap).
 
 Platform tables (storage/db_models.py) are always created via SQLModel.metadata.
 Module-owned tables are registered with SchemaRegistry and created only when
@@ -17,6 +21,7 @@ a SchemaRegistry is passed to init_db().
 from __future__ import annotations
 
 import asyncio
+import os
 import subprocess
 import threading
 from contextlib import asynccontextmanager, contextmanager
@@ -46,6 +51,31 @@ _ENGINE_LOCK = threading.RLock()
 _INITIALIZED_URLS: set[str] = set()
 _SESSION_FACTORIES: dict[str, async_sessionmaker] = {}
 _SYNC_SESSION_FACTORIES: dict[str, _sync_sessionmaker] = {}  # type: ignore[type-arg]
+
+
+def _resolve_pool_config() -> dict[str, int]:
+    """Resolve asyncpg pool sizing from env vars, falling back to defaults.
+
+    Env-only (not ConfigRegistry) because get_async_engine runs before the
+    registry exists on some paths (test fixtures, early bootstrap). A missing
+    or non-integer value keeps the previous hardcoded default, so behaviour is
+    identical to before unless an operator sets the var (#45).
+    """
+    def _read(env_name: str, default: int) -> int:
+        raw = os.environ.get(env_name)
+        if raw is None:
+            return default
+        try:
+            return int(raw)
+        except ValueError:
+            return default
+
+    return {
+        "pool_size": _read("AILA_DB_POOL_SIZE", 10),
+        "max_overflow": _read("AILA_DB_MAX_OVERFLOW", 10),
+        "pool_timeout": _read("AILA_DB_POOL_TIMEOUT", 30),
+        "pool_recycle": _read("AILA_DB_POOL_RECYCLE", 1800),
+    }
 
 
 class DatabaseSettings(Protocol):
@@ -85,13 +115,14 @@ def get_async_engine(settings: DatabaseSettings | None = None):
             _connect_args: dict[str, object] = {}
             if "localhost" in url or "127.0.0.1" in url:
                 _connect_args["ssl"] = False
+            _pool = _resolve_pool_config()
             engine = create_async_engine(
                 url,
                 echo=False,
-                pool_size=10,
-                max_overflow=10,
-                pool_timeout=30,
-                pool_recycle=1800,
+                pool_size=_pool["pool_size"],
+                max_overflow=_pool["max_overflow"],
+                pool_timeout=_pool["pool_timeout"],
+                pool_recycle=_pool["pool_recycle"],
                 pool_pre_ping=True,
                 connect_args=_connect_args,
             )

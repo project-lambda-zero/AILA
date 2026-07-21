@@ -52,6 +52,10 @@ credential defaults changed and may require caller action.
   counted on `aila_automation_tick_failures_total`, and backed off
   exponentially (60s base, 300s cap) with a reset on the next success.
   (#46)
+- Database connection pool sizing is tunable via env vars
+  (`AILA_DB_POOL_SIZE`, `AILA_DB_MAX_OVERFLOW`, `AILA_DB_POOL_TIMEOUT`,
+  `AILA_DB_POOL_RECYCLE`); the defaults match the previous hardcoded
+  values, so nothing changes unless an operator opts in. (#45)
 
 ### Changed
 
