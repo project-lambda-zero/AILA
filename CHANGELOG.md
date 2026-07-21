@@ -114,6 +114,11 @@ Security and tenant isolation:
   executive, search, audit-event, vulnerability-findings, and
   scheduled-report reads; team and dead-letter administration
   restricted to god-tier callers. (#36, #48)
+- Workflow runs are stamped with the submitting team at creation, so a
+  team's own scan reports and module health summaries surface for that
+  team instead of staying hidden behind the team-scoped read filter;
+  queued scans, the dispatcher engine path, and interactive session
+  dispatch all carry the team through. (#36)
 
 LLM and cost:
 

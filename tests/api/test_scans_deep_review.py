@@ -205,7 +205,7 @@ async def test_run_platform_handle_handle_failure() -> None:
 
 @pytest.mark.asyncio
 async def test_run_platform_handle_happy_path() -> None:
-    """Inner run_platform_handle forwards query/module_payload/options and stamps run_id from ctx."""
+    """Inner run_platform_handle forwards query/module_payload/options, stamps run_id, and threads team_id from ctx."""
     from aila.api.routers.scans import run_platform_handle
     from aila.platform.tasks.context import TaskContext
 
@@ -228,12 +228,14 @@ async def test_run_platform_handle_happy_path() -> None:
         )
 
     assert result == {"response": {"summary": "ok"}}
-    # The entrypoint stamps run_id from ctx.task_id and defaults options to {}.
+    # The entrypoint stamps run_id from ctx.task_id, threads ctx.team_id, and
+    # defaults options to {}.
     mock_platform.handle.assert_called_once_with(
         query="scan web01",
         module_payload={"target_names": ["web01"]},
         module_options={},
         run_id="task-happy-001",
+        team_id=None,
     )
     mock_response.model_dump.assert_called_once_with(mode="json")
 

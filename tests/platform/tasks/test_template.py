@@ -362,3 +362,83 @@ async def test_conflict_retry_backoff_uses_job_try_minus_one(
         "first attempt (job_try=1) must back off on 0 completed retries; "
         f"got {captured}"
     )
+
+
+# --- WorkflowRunRecord team stamping (#36) ---------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("test_db")
+async def test_ensure_run_record_stamps_team_from_contextvar() -> None:
+    """_ensure_run_record stamps the running task's team from the context var (#36)."""
+    from sqlmodel import select
+
+    from aila.platform.tasks import queue as queue_mod
+    from aila.platform.tasks.template import _ensure_run_record
+
+    token = queue_mod._current_task_team_id.set("team-run")
+    try:
+        await _ensure_run_record("run-team-stamp", "q")
+    finally:
+        queue_mod._current_task_team_id.reset(token)
+
+    async with async_session_scope() as session:
+        rec = (
+            await session.exec(
+                select(WorkflowRunRecord).where(WorkflowRunRecord.id == "run-team-stamp")
+            )
+        ).first()
+    assert rec is not None
+    assert rec.team_id == "team-run"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("test_db")
+async def test_ensure_run_record_unscoped_outside_task() -> None:
+    """Outside a task the context var default leaves team_id None (#36)."""
+    from sqlmodel import select
+
+    from aila.platform.tasks.template import _ensure_run_record
+
+    await _ensure_run_record("run-no-team", "q")
+    async with async_session_scope() as session:
+        rec = (
+            await session.exec(
+                select(WorkflowRunRecord).where(WorkflowRunRecord.id == "run-no-team")
+            )
+        ).first()
+    assert rec is not None
+    assert rec.team_id is None
+
+
+@pytest.mark.asyncio
+async def test_run_platform_handle_forwards_team_id(monkeypatch) -> None:
+    """run_platform_handle threads ctx.team_id into platform.handle (#36).
+
+    This is the queued-scan path: scans.py submits with team_id=auth.team_id,
+    the task wrapper carries it on TaskContext, and handle() stamps the
+    WorkflowRunRecord that report.py reads back team-scoped.
+    """
+    from aila.platform.tasks import entrypoints
+
+    captured: dict[str, Any] = {}
+
+    class _FakeResp:
+        def model_dump(self, mode: str | None = None) -> dict:
+            return {}
+
+    class _FakePlatform:
+        async def handle(self, **kwargs: Any) -> _FakeResp:
+            captured.update(kwargs)
+            return _FakeResp()
+
+    async def _fake_get_worker_platform() -> _FakePlatform:
+        return _FakePlatform()
+
+    monkeypatch.setattr(entrypoints, "get_worker_platform", _fake_get_worker_platform)
+
+    ctx = TaskContext(task_id="task-scan-1", job_try=1, user_id="u", team_id="team-scan")
+    await entrypoints.run_platform_handle.__wrapped__(ctx, query="analyze fleet")
+
+    assert captured["team_id"] == "team-scan"
+    assert captured["run_id"] == "task-scan-1"

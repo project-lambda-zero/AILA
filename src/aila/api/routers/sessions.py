@@ -289,7 +289,7 @@ async def _sync_message(
         # result was previously an un-awaited coroutine, so the reply echoed the
         # user's own text) and keeps a pooled connection off the long run (#63).
         try:
-            platform_response = await platform.handle(query=req.content)
+            platform_response = await platform.handle(query=req.content, team_id=auth.team_id)
             response_text = str(getattr(platform_response, "summary", "") or req.content)
             response_run_id = getattr(platform_response, "run_id", None)
         except Exception:
@@ -388,7 +388,7 @@ async def _stream_message(
         # progress_callback is a separate enhancement.
         run_id_val: str | None = None
         try:
-            resp = await platform.handle(query=req.content)
+            resp = await platform.handle(query=req.content, team_id=auth.team_id)
             full_text = str(getattr(resp, "summary", "") or "")
             run_id_val = getattr(resp, "run_id", None)
         except Exception:

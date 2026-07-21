@@ -157,14 +157,18 @@ async def _ensure_run_record(run_id: str, query_text: str) -> None:
     record is absent. This helper ensures the record exists before the engine
     starts. Concurrent retries are safe -- INSERT ON CONFLICT DO NOTHING.
     """
+    from aila.platform.tasks.queue import _current_task_team_id
     from aila.storage.database import async_session_scope
     from aila.storage.db_models import WorkflowRunRecord
 
+    # Stamp the running task's team so team-scoped readers surface this run;
+    # outside a task the context var default (None) leaves it unscoped (#36).
+    team_id = _current_task_team_id.get()
     tbl = WorkflowRunRecord.__table__  # type: ignore[attr-defined]
     async with async_session_scope() as session:
         await session.execute(
             pg_insert(tbl)
-            .values(id=run_id, query_text=query_text, status="running")
+            .values(id=run_id, query_text=query_text, status="running", team_id=team_id)
             .on_conflict_do_nothing(index_elements=["id"])
         )
         await session.commit()
