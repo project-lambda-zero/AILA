@@ -5,7 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [0.3.0] - 2026-07-20 -- Security, correctness, and reliability hardening
+## [0.3.0] - 2026-07-21 -- Security, correctness, and reliability hardening
 
 A broad hardening pass across authentication and tenant isolation,
 secret handling, LLM cost and resilience, audit integrity, and
@@ -56,6 +56,14 @@ credential defaults changed and may require caller action.
   (`AILA_DB_POOL_SIZE`, `AILA_DB_MAX_OVERFLOW`, `AILA_DB_POOL_TIMEOUT`,
   `AILA_DB_POOL_RECYCLE`); the defaults match the previous hardcoded
   values, so nothing changes unless an operator opts in. (#45)
+- Task-engine team propagation: a task inherits the submitting caller's
+  team through a context var set by the task wrapper, so worker and
+  agent follow-up submits carry it without per-site changes; task list
+  and read queries are team-scoped for non-god-tier callers. (#53, #36)
+- Confidence-drift retention sweep prunes drift records past their
+  configured window. (#45)
+- Hot-column indexes on the workflow-run, audit-event, and
+  report-artifact query columns. (#45)
 
 ### Changed
 
@@ -102,6 +110,10 @@ Security and tenant isolation:
 - API key revocation made atomic to close a duplicate-revoke race;
   audit rows committed inside the business transaction and failing
   loud on drop. (#52)
+- Team ownership extended to the topology, user-management, dashboard,
+  executive, search, audit-event, vulnerability-findings, and
+  scheduled-report reads; team and dead-letter administration
+  restricted to god-tier callers. (#36, #48)
 
 LLM and cost:
 
@@ -112,6 +124,15 @@ LLM and cost:
   longer fail the LLM call; budget alerting never raises spuriously;
   the per-run token budget is enforced via the sync config read. (#44,
   #38)
+- LLM retry backoff aborts on the cancellation token, so a cancelled
+  run stops deferring instead of sleeping out its remaining attempts.
+  (#44)
+- Knowledge store and retrieve tools embed through the canonical
+  provider, so vectors written by one path and queried by the other no
+  longer land in incompatible embedding spaces; hybrid retrieve applies
+  a relevance floor; and the knowledge_store dedup INSERT resolves a
+  concurrent (namespace, dedup_key) race idempotently rather than
+  surfacing an error. (#37)
 
 Modules:
 
@@ -166,6 +187,16 @@ Platform, async, and correctness:
   $25) was previously inert because those cost rows were never
   attributed; it now sums real spend and cancels a freeflow run once
   the cap is crossed. (#39/#59)
+- Task requeue, resume, and cancel perform their ARQ side-effects
+  (abort or re-enqueue) instead of only rewriting DB state; the
+  Redis-URL lookup is guarded against a missing configuration. Workflow
+  cursor recreation preserves its version chain. (#40)
+- Automation cron is evaluated in the schedule's timezone; a schedule
+  that fails to parse auto-disables instead of erroring on every tick;
+  the concurrent runner claims due schedules with SKIP LOCKED; and
+  platform health checks run real dependency probes. (#46)
+- Malware observation dict-value payloads are size-capped on persist.
+  (#61)
 
 ### Removed
 
