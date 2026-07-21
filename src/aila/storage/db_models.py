@@ -876,12 +876,18 @@ class SavedFilterRecord(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
 
-class ScheduledReportRecord(SQLModel, table=True):
+class ScheduledReportRecord(TeamScopedMixin, SQLModel, table=True):
     """Scheduled report configuration with cron expression.
 
     cron_expression is validated via croniter before storage (T-138-20).
     Written by: POST /scheduled-reports (admin only).
     Consumed by: GET /scheduled-reports, arq scheduler (BE-10).
+
+    Team-scoped (#48-6): ``team_id`` is stamped from the creating
+    principal. God-tier admins (team_id=NULL, TEAM-06) own NULL-team rows
+    and see every row; a team-scoped admin sees and mutates only rows
+    carrying its own team_id. The CRUD handlers resolve single resources
+    by a team predicate, not a bare primary key.
     """
 
     __tablename__ = "scheduled_report_records"

@@ -47,6 +47,21 @@ def _require_admin(auth: AuthContext = Depends(require_user_or_api_key)) -> Auth
     return auth
 
 
+def _assert_team_visible(record: ScheduledReportRecord, auth: AuthContext) -> None:
+    """Raise 404 when a team-scoped caller addresses another team's row (#48-6).
+
+    God-tier admins (``team_id`` is None, TEAM-06) skip the check and see
+    every row. A team-scoped admin may only reach rows stamped with its own
+    team; a mismatch returns 404 (not 403) so the row's existence does not
+    leak across the team boundary.
+    """
+    if auth.team_id is not None and record.team_id != auth.team_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Scheduled report not found",
+        )
+
+
 def _validate_cron(expression: str) -> None:
     """Validate cron expression via croniter (T-138-20).
 
@@ -95,6 +110,10 @@ async def list_scheduled_reports(
     """List all scheduled reports. Admin only."""
     async with async_session_scope() as session:
         stmt = select(ScheduledReportRecord).order_by(ScheduledReportRecord.created_at.desc())  # type: ignore[attr-defined]
+        # #48-6: team-scoped admins see only their team; god-tier (team_id
+        # None) sees all.
+        if auth.team_id is not None:
+            stmt = stmt.where(ScheduledReportRecord.team_id == auth.team_id)
         all_rows = (await session.exec(stmt)).all()
 
     total = len(all_rows)
@@ -130,6 +149,7 @@ async def create_scheduled_report(
             config_json=body.config_json,
             is_active=body.is_active,
             created_by=auth.user_id,
+            team_id=auth.team_id,
         )
         session.add(record)
         await session.commit()
@@ -161,6 +181,7 @@ async def update_scheduled_report(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Scheduled report '{report_id}' not found",
             )
+        _assert_team_visible(record, auth)
 
         if body.name is not None:
             record.name = body.name
@@ -200,6 +221,7 @@ async def delete_scheduled_report(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Scheduled report '{report_id}' not found",
             )
+        _assert_team_visible(record, auth)
         await session.delete(record)
         await session.commit()
 
@@ -227,6 +249,7 @@ async def trigger_scheduled_report(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Scheduled report '{report_id}' not found",
             )
+        _assert_team_visible(record, auth)
         if not record.is_active:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
