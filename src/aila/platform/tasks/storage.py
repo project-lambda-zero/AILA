@@ -52,6 +52,10 @@ class TaskRepository:
         stmt = select(TaskRecord)
         if auth.role != ROLE_ADMIN:
             stmt = stmt.where(TaskRecord.group_id == auth.role)
+        # #53/#36: team-scoped callers see only their team's tasks; a god-tier
+        # admin (team_id=None, TEAM-06) is not filtered and sees every team.
+        if auth.team_id is not None:
+            stmt = stmt.where(TaskRecord.team_id == auth.team_id)
         if track:
             stmt = stmt.where(TaskRecord.track == track)
         if status:
@@ -72,6 +76,10 @@ class TaskRepository:
         stmt = select(TaskRecord).where(TaskRecord.id == task_id)
         if auth.role != ROLE_ADMIN:
             stmt = stmt.where(TaskRecord.group_id == auth.role)
+        # #53/#36: a team-scoped caller cannot read/transition another team's
+        # task; a god-tier admin (team_id=None) is unfiltered.
+        if auth.team_id is not None:
+            stmt = stmt.where(TaskRecord.team_id == auth.team_id)
         result = await session.exec(stmt)
         return result.first()
 

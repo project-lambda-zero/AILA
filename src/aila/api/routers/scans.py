@@ -87,6 +87,7 @@ async def submit_scan(
             },
             user_id=auth.user_id,
             group_id=auth.role,
+            team_id=auth.team_id,
         )
         return handle.task_id
 

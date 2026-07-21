@@ -555,6 +555,7 @@ async def submit_task(
             kwargs={"query": req.query_text},
             user_id=auth.user_id,
             group_id=auth.role,
+            team_id=auth.team_id,
         )
         return str(handle.task_id)
 

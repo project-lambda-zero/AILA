@@ -430,6 +430,7 @@ def platform_task(
             # worker.py at boot, so a top-level import would form a cycle
             # during `aila.platform.tasks` package init.
             from aila.platform.tasks.hooks import _JobOutcome, _stash_outcome
+            from aila.platform.tasks.queue import _current_task_team_id
 
             job_id = str(ctx.get("job_id", ""))
             job_try = int(ctx.get("job_try", 1))
@@ -441,6 +442,12 @@ def platform_task(
                 user_id=user_id,
                 team_id=team_id,
             )
+
+            # #53: expose this task's team_id so a follow-up submitted from the
+            # body (or a nested agent) inherits it without threading team_id
+            # through every worker submit site. Reset in finally so a worker
+            # that runs many jobs never leaks one job's team into the next.
+            _team_token = _current_task_team_id.set(team_id)
 
             try:
                 if definition is not None:
@@ -555,6 +562,8 @@ def platform_task(
                     ),
                 )
                 raise
+            finally:
+                _current_task_team_id.reset(_team_token)
 
         # Ensure ARQ's function-name resolution (ARQ builds a name->func map
         # keyed by ``func.__qualname__``/``func.__name__``) points at the

@@ -24,6 +24,7 @@ Decision references:
 
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import inspect
 import json
@@ -54,6 +55,16 @@ from aila.storage.db_models import WorkflowStateCursor
 __all__ = ["TaskQueue"]
 
 _log = logging.getLogger(__name__)
+
+# #53: team_id of the currently-running task. The @platform_task wrapper sets
+# this from the running TaskRecord before invoking the body; submit() reads it
+# so a follow-up task spawned inside a worker inherits its parent's team_id
+# without every worker/agent submit site threading it explicitly. It is None
+# outside any task execution (request handlers, cron), so root submits still
+# pass team_id explicitly.
+_current_task_team_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "aila_current_task_team_id", default=None,
+)
 
 
 def _env_redis_url() -> str | None:
@@ -225,6 +236,13 @@ class TaskQueue:
         """
         if self._draining:
             raise RuntimeError("Queue is draining; new submissions rejected")
+
+        # #53: inherit the running task's team_id for a follow-up that does not
+        # pass one explicitly. Root submits (request handlers) pass
+        # team_id=auth.team_id; system/cron submits run outside any task, so
+        # the ContextVar default (None) leaves them unscoped.
+        if team_id is None:
+            team_id = _current_task_team_id.get()
 
         fn_path = self._get_fn_path(fn)
         fn_module = self._extract_module_id(fn_path)
