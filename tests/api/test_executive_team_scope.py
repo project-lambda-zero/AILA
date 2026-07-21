@@ -212,3 +212,26 @@ async def test_risk_summary_pdf_scoped_to_team_when_pdf_extra_missing() -> None:
         assert resp.media_type == "application/pdf"
     except HTTPException as exc:
         assert exc.status_code == 503
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_latest_findings_team_id_filter() -> None:
+    """latest_findings(team_id=...) scopes to one team on a session with no
+    TeamContext (the scheduled-report worker path); team_id=None returns every
+    team's findings for a god-tier report (#36)."""
+    module = VulnerabilityModule()
+    suffix = uuid4().hex[:6]
+    sys_a = await _seed_system("team-a", suffix)
+    sys_b = await _seed_system("team-b", suffix)
+    await _seed_finding("team-a", f"CVE-A-{suffix}", sys_a)
+    await _seed_finding("team-b", f"CVE-B-{suffix}", sys_b)
+
+    async with async_session_scope() as session:
+        team_a = await module.latest_findings(session, team_id="team-a")
+        god = await module.latest_findings(session, team_id=None)
+
+    a_cves = {f["cve_id"] for f in team_a}
+    all_cves = {f["cve_id"] for f in god}
+    assert f"CVE-A-{suffix}" in a_cves
+    assert f"CVE-B-{suffix}" not in a_cves, "team-a query must not see team-b findings"
+    assert {f"CVE-A-{suffix}", f"CVE-B-{suffix}"} <= all_cves, "god-tier report sees all teams"

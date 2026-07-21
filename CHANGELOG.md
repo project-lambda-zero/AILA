@@ -119,6 +119,13 @@ Security and tenant isolation:
   team instead of staying hidden behind the team-scoped read filter;
   queued scans, the dispatcher engine path, and interactive session
   dispatch all carry the team through. (#36)
+- Vulnerability findings are stamped with the scan's owning team on
+  persist, so team users see their own findings across the findings
+  list, executive, search, and dashboard reads; previously findings
+  were written team-less and the team-scoped read filters hid all of
+  them from non-god-tier users. Scheduled report PDFs are scoped to the
+  report owner's team, so a team's report no longer includes another
+  team's findings. (#36)
 
 LLM and cost:
 
