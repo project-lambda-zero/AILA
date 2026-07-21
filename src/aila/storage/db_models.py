@@ -141,7 +141,7 @@ class WorkflowRunRecord(TeamScopedMixin, SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     query_text: str
     action_id: str = Field(default="", sa_column=Column("intent", Text))
-    module_id: str = Field(default="", sa_column=Column("module_id", Text, server_default=""))
+    module_id: str = Field(default="", sa_column=Column("module_id", Text, server_default="", index=True))
     status: str = Field(default="running")
     route_json: str = Field(default="{}", sa_column=Column(Text))
     short_memory_json: str = Field(default="{}", sa_column=Column(Text))
@@ -368,7 +368,9 @@ class ArtifactRecord(TeamScopedMixin, SQLModel, table=True):
     content_type: str = Field(default="text/plain")
     body: str = Field(default="", sa_column=Column(Text))
     metadata_json: str = Field(default="{}", sa_column=Column(Text))
-    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+    created_at: datetime = Field(
+        default_factory=utc_now, sa_type=DateTime(timezone=True), index=True,
+    )
     updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
 
@@ -395,7 +397,9 @@ class AuditEventRecord(TeamScopedMixin, SQLModel, table=True):
         sa_column=Column("user_id", Text, server_default="system", index=True),
     )
     details_json: str = Field(default="{}", sa_column=Column(Text))
-    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+    created_at: datetime = Field(
+        default_factory=utc_now, sa_type=DateTime(timezone=True), index=True,
+    )
 
 
 class AuditSealRecord(SQLModel, table=True):
