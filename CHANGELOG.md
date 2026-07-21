@@ -5,6 +5,146 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.3.0] - 2026-07-20 -- Security, correctness, and reliability hardening
+
+A broad hardening pass across authentication and tenant isolation,
+secret handling, LLM cost and resilience, audit integrity, and
+per-module correctness, plus a migration of the test suite onto
+PostgreSQL. Read the Changed section first: the CORS and OIDC
+credential defaults changed and may require caller action.
+
+### Added
+
+- Append-only, hash-chained platform journal for tamper-evident audit;
+  the CLI audit trail now writes to it. (C2)
+- Evidence packs sealed with a merkle digest so later tampering is
+  detectable.
+- Per-run LLM token budget with a hard stop and a pre-call check;
+  embedding computation offloaded off the event loop. (#38, #64)
+- Team-scope request resolver and an `owned_or_404` helper for
+  single-resource authorization. (C1, #36, #57)
+- Secret redaction at the log boundary and for non-admin config reads.
+  (C6, #50)
+- Optional `page` and `page_size` params on the forensics list
+  endpoints (evidence, findings, investigations); the response stays a
+  `DataEnvelope` list. (#59)
+- Workflow-transition validation on findings bulk-update: an off-graph
+  transition is now rejected with 422. (#55)
+- Per-call LLM cost ceiling and output-size bound for forensics
+  writeups. (#48)
+- Freeflow investigation cost ceiling
+  (`forensics.freeflow_max_cost_usd`, default 25.0) with a monitor that
+  cancels a run once its cost crosses the ceiling. Known limitation: it
+  is inert in production until the reasoning engine threads the
+  investigation run_id into its LLM cost records; the mechanism and
+  termination path are unit-tested with seeded cost rows. (#59)
+- TLS hardening for report email: admin CA bundle, implicit TLS, and
+  certificate verification. (#48)
+- `ConfigRegistry.get_sync` for synchronous call sites. (C3)
+- Eval metric functions: expected calibration error, precision,
+  recall, determinism, faithfulness. (C7)
+- Deduplication of malware observation writes via a partial unique
+  index. (#61)
+- Per-tool-execution LLM timeout and pooled AsyncOpenAI clients that
+  stop a per-call file-descriptor leak. (#44)
+
+### Changed
+
+- The vulnerability findings list pushes its pagination, ordering, and
+  count into SQL instead of slicing in Python. The response envelope
+  (`total`, `items`, `page`, `page_size`) is unchanged. (#55)
+- Behavior: CORS credentials are disabled when origins are wildcarded,
+  and OIDC cookies are marked `secure` by default. A client that relied
+  on credentials with a wildcard origin must now configure explicit
+  origins. (#36)
+- `POST /sessions/{id}/messages` awaits the platform and returns a real
+  assistant response on both the JSON and SSE paths; it previously
+  discarded the un-awaited coroutine and echoed the request text.
+- The event emitter reuses a pooled synchronous Redis client, and SSE
+  streams are bounded by a lifetime cap with disconnect detection and
+  an active-connection gauge. (#60)
+- `upsert_many` batches its writes; observation reads are bounded and
+  keyset-paginated. (#61)
+- Legacy `AILAError` subclasses map to their real HTTP status codes.
+- The test suite runs against PostgreSQL with async fixtures instead of
+  SQLite. (#62)
+
+### Fixed
+
+Security and tenant isolation:
+
+- OIDC callback validates the state against the signed cookie; every
+  callback previously failed against a nonce field the state JWT never
+  emitted. (#36)
+- IDOR closed across malware investigation, observation, and
+  subresource routes; team ownership enforced on target, systems, and
+  tags routers. (#57, #36)
+- Untrusted tool output and report facts fenced against prompt
+  injection; markdown link schemes guarded in the forensics writeup
+  viewer; vulnerability and synchronous PDF render environments
+  hardened with autoescape and URL-scheme guards. (#43)
+- SSRF policy re-validated on every redirect hop; secrets redacted from
+  surfaced httpx and provider errors. (#42, #44)
+- SFTP path traversal rejected on upload and download; playbook step
+  dispatch gated behind a tool allowlist; pulled evidence re-hashed
+  locally instead of trusting the analyzer; non-zero script exit
+  surfaced instead of reported as success. (#58)
+- Crash discovery rejects symlinks and oversized files. (#51)
+- API key revocation made atomic to close a duplicate-revoke race;
+  audit rows committed inside the business transaction and failing
+  loud on drop. (#52)
+
+LLM and cost:
+
+- `LLMResponse` declares its pipeline metadata fields (populating them
+  previously raised `TypeError`); temperature-reject markers match on
+  token boundaries; the dead health lock removed. (#44)
+- Non-retryable provider errors fail fast; cost-telemetry failures no
+  longer fail the LLM call; budget alerting never raises spuriously;
+  the per-run token budget is enforced via the sync config read. (#44,
+  #38)
+
+Modules:
+
+- Vulnerability: GHSA matches gated by version, cve TTL honored, the
+  NVD limiter moved off the event loop; criticality vocabulary and
+  fallback scoring corrected; proxy resolved via the sync read;
+  `weekly_digest` made async; `list_system_tags` returns full rows.
+  (#55)
+- Forensics: deep-analysis SSH runs off the DB connection; readiness
+  enqueue moved outside the DB session; child tables purged on project
+  delete; real `ArtifactRecord` fields read in the writeup builder.
+  (#59, #63)
+- Malware: investigation narrative sanitized on persist; deterministic
+  token-boundary family match; workspace and tag-index constraint
+  names module-prefixed to match their migrations.
+- VR: finding evidence refs schema-validated at write time; a null
+  outcome timestamp treated as never-fresh in the section cache. (#48)
+
+Platform, async, and correctness:
+
+- Blocking calls offloaded off the event loop; two discarded-coroutine
+  config reads resolved. (#64, #65)
+- Module seeding isolated per module with the malware seed version
+  stamped; each module constructed once during discovery; periodic
+  sweep re-registration made idempotent. (#45, #41, #46)
+- Automation gains an overlap guard, claim-before-submit ordering,
+  per-schedule isolation, and a registry lock. (#46)
+- `UnitOfWork` fails loud on uncommitted writes. (#63)
+- Scan SSE stream closes cleanly on a mid-stream backend error; binary
+  response content declared for file-download routes.
+- Knowledge dedup update uses the correct scalar-id subscript.
+- `RegisteredSystem` tolerates extra DB columns; observables guarded
+  against non-JSON values at construction. (#61)
+- Journal hash-length check uses a portable `length()` constraint. (C2)
+
+### Removed
+
+- Dead `notification_types` and an unreachable unscoped cross-tenant
+  cost query. (#41, #57)
+
+---
+
 ## [0.2.1] - 2026-07-12 -- Reconciler no longer fabricates completions
 
 ### Fixed
