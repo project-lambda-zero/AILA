@@ -126,6 +126,10 @@ Security and tenant isolation:
   them from non-god-tier users. Scheduled report PDFs are scoped to the
   report owner's team, so a team's report no longer includes another
   team's findings. (#36)
+- Systems registered through the agent system_registry tool are stamped
+  with the calling team, matching the REST create path, so team-scoped
+  reads surface them; the tool path previously wrote them team-less.
+  (#36)
 
 LLM and cost:
 
