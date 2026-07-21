@@ -41,3 +41,17 @@ class MachineReadinessResult(BaseModel):
     analyzer_os: str = "linux"
     tools: list[ToolCheckResult] = Field(default_factory=list)
     message: str = ""
+    already_queued: bool = Field(
+        default=False,
+        description=(
+            "True when a full-analysis task for this project was already "
+            "active, so this readiness-check did NOT enqueue a second one."
+        ),
+    )
+    existing_task_id: str | None = Field(
+        default=None,
+        description=(
+            "Id of the already-active analysis task when already_queued is "
+            "True; None otherwise."
+        ),
+    )

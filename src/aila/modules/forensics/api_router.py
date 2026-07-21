@@ -80,6 +80,31 @@ def _finding_fingerprint(f: dict[str, Any]) -> str:
     return _hashlib.sha256(payload).hexdigest()
 
 
+async def _active_analysis_task_id(session: Any, project_id: str) -> str | None:
+    """Return the id of an active ``run_forensics_analysis`` task for this
+    project, or None (fix #59-3).
+
+    Readiness auto-enqueue used to transition CREATED -> READY and submit a
+    full-analysis task without checking whether one was already in flight.
+    Two rapid readiness-checks could open two full pipelines racing on
+    ArtifactRecord inserts. This detects an existing active task so the
+    caller can skip the second submit. The fn_path is derived from the
+    task callable the same way ``TaskQueue.submit`` stores it, so a future
+    module move does not silently break the match.
+    """
+    from aila.modules.forensics.workflow.task import run_forensics_analysis
+    from aila.platform.tasks.models import TaskRecord
+
+    fn_path = f"{run_forensics_analysis.__module__}.{run_forensics_analysis.__qualname__}"
+    return (await session.exec(
+        select(TaskRecord.id).where(
+            TaskRecord.fn_path == fn_path,
+            TaskRecord.status.in_(["queued", "running", "waiting"]),  # type: ignore[union-attr]
+            TaskRecord.kwargs_json.like(f'%"project_id": "{project_id}"%'),
+        ).limit(1)
+    )).first()
+
+
 def _agent_step_from_record(s: Any) -> AgentStep:
     """Project a persisted ``AgentStepRecord`` to the API contract.
 
@@ -1211,16 +1236,27 @@ def create_forensics_router() -> APIRouter:
         if result.ready:
             enqueue_mode: str | None = None
             async with UnitOfWork() as uow:
-                proj = (await uow.session.exec(
-                    select(ForensicsProjectRecord).where(ForensicsProjectRecord.id == project_id)
-                )).first()
-                if proj and proj.status == ProjectStatus.CREATED.value:
-                    proj.status = ProjectStatus.READY.value
-                    uow.session.add(proj)
-                    await uow.session.commit()
-                    enqueue_mode = (
-                        "raw_directory" if project.project_kind == "raw_directory" else "full_analysis"
-                    )
+                # fix #59-3: a full-analysis task may already be active for
+                # this project (double-click, or a prior submit still in
+                # flight). Detect it and skip re-enqueue so two pipelines do
+                # not race on ArtifactRecord inserts.
+                existing_task_id = await _active_analysis_task_id(
+                    uow.session, project_id,
+                )
+                if existing_task_id is not None:
+                    result.already_queued = True
+                    result.existing_task_id = existing_task_id
+                else:
+                    proj = (await uow.session.exec(
+                        select(ForensicsProjectRecord).where(ForensicsProjectRecord.id == project_id)
+                    )).first()
+                    if proj and proj.status == ProjectStatus.CREATED.value:
+                        proj.status = ProjectStatus.READY.value
+                        uow.session.add(proj)
+                        await uow.session.commit()
+                        enqueue_mode = (
+                            "raw_directory" if project.project_kind == "raw_directory" else "full_analysis"
+                        )
 
             # Enqueue OUTSIDE the DB session (#63): the ARQ/Redis submit is a
             # network await and must not pin the pooled DB connection. The
@@ -1326,11 +1362,22 @@ def create_forensics_router() -> APIRouter:
             if result.ready:
                 task_queue = get_task_queue("forensics", request)
                 async with UnitOfWork() as _uow:
-                    proj = (await _uow.session.exec(
-                        select(ForensicsProjectRecord).where(
-                            ForensicsProjectRecord.id == project_id
-                        )
-                    )).first()
+                    # fix #59-3: skip enqueue if a full-analysis task is
+                    # already active for this project (double-click / prior
+                    # submit still in flight).
+                    existing_task_id = await _active_analysis_task_id(
+                        _uow.session, project_id,
+                    )
+                    proj = None
+                    if existing_task_id is not None:
+                        result.already_queued = True
+                        result.existing_task_id = existing_task_id
+                    else:
+                        proj = (await _uow.session.exec(
+                            select(ForensicsProjectRecord).where(
+                                ForensicsProjectRecord.id == project_id
+                            )
+                        )).first()
                     if proj and proj.status == ProjectStatus.CREATED.value:
                         proj.status = ProjectStatus.READY.value
                         _uow.session.add(proj)
@@ -1361,6 +1408,8 @@ def create_forensics_router() -> APIRouter:
             await progress_cb({
                 "stage": "done",
                 "ready": result.ready,
+                "already_queued": result.already_queued,
+                "existing_task_id": result.existing_task_id,
                 "installed_count": sum(1 for t in result.tools if t.status == "installed"),
                 "missing_count": sum(1 for t in result.tools if t.status == "missing"),
                 "total": len(result.tools),
