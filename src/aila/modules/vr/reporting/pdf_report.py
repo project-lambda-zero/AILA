@@ -74,6 +74,7 @@ from aila.modules.vr.reporting.poc_writer import PocWriter
 from aila.modules.vr.reporting.writer_agent import ReportContent, ReportWriter
 from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
+from aila.platform.services.runtime import run_blocking_io
 from aila.platform.uow import UnitOfWork
 
 __all__ = ["render_investigation_pdf"]
@@ -121,7 +122,10 @@ async def render_investigation_pdf(investigation_id: str) -> bytes:
     writer = ReportWriter()
     content = await writer.write(facts)
 
-    return _render_pdf(facts=facts, content=content)
+    # ReportLab is CPU-bound and synchronous; running it inline stalls the
+    # event loop for the whole render. Offload to the platform worker pool
+    # so a large report does not block other requests on the same worker.
+    return await run_blocking_io(_render_pdf, facts=facts, content=content)
 
 
 def _extract_poc_draft_meta(evidence_refs_json: str | None) -> dict[str, Any]:
@@ -424,6 +428,12 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
             "created_at": o.created_at.isoformat() if o.created_at else None,
         })
 
+    # _resolve_audit_metadata shells out to git (subprocess) and opens a
+    # sync psycopg connection; both block the event loop. Offload to the
+    # platform worker pool. It takes already-loaded plain data (inv record
+    # + descriptor dict), so it is safe to run off-thread.
+    audit_metadata = await run_blocking_io(_resolve_audit_metadata, inv, descriptor)
+
     facts: dict[str, Any] = {
         "investigation_id": investigation_id,
         "investigation_title": inv.title,
@@ -447,7 +457,7 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
         "variants_hunted": variants,
         "panel_verdicts": panel_verdicts,
         "poc_drafts": poc_drafts,
-        "audit_metadata": _resolve_audit_metadata(inv, descriptor),
+        "audit_metadata": audit_metadata,
         "vulnerable_code_excerpts": await _resolve_code_excerpts(
             descriptor=descriptor,
             affected_components=(
