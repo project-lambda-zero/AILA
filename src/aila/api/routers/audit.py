@@ -17,7 +17,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 from sqlmodel import select
 
-from aila.api.auth import require_role, require_user_or_api_key
+from aila.api.auth import AuthContext, require_role, require_user_or_api_key
 from aila.api.schemas.audit import (
     AuditEventResponse,
     AuditListResponse,
@@ -71,11 +71,15 @@ async def list_audit_events(
     until: datetime | None = Query(default=None, description="Latest created_at (ISO 8601)"),
     page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(default=50, ge=1, le=250, description="Items per page (max 250)"),
+    auth: AuthContext = Depends(require_user_or_api_key),
 ) -> AuditListResponse:
     """Query audit events with structured filtering.
 
     Supports AND-across-fields, comma-OR-within-fields filtering.
     Date ranges via since/until (ISO 8601 datetime strings).
+
+    Team-scoped (#36): a team-scoped caller sees only its team's audit
+    events; a god-tier admin (team_id=None, TEAM-06) sees all.
     """
     stage_values = _parse_comma_list(stage)
     action_values = _parse_comma_list(action)
@@ -85,6 +89,8 @@ async def list_audit_events(
     async def _query() -> list[AuditEventRecord]:
         async with async_session_scope() as session:
             stmt = select(AuditEventRecord)
+            if auth.team_id is not None:
+                stmt = stmt.where(AuditEventRecord.team_id == auth.team_id)
             if run_id:
                 stmt = stmt.where(AuditEventRecord.run_id == run_id)
             if stage_values:
@@ -119,11 +125,16 @@ async def list_audit_events(
 @router.get("/events/{run_id}", response_model=AuditListResponse, summary="Get audit trail for one run")
 async def get_run_audit_events(
     run_id: str,
+    auth: AuthContext = Depends(require_user_or_api_key),
 ) -> AuditListResponse:
     """Return all audit events for a specific workflow run.
 
     Returns all events without additional pagination -- use GET /audit/events
     with run_id query param for paginated access to large runs.
+
+    Team-scoped (#36): a team-scoped caller reading another team's run_id
+    receives an empty trail rather than that team's audit events; a
+    god-tier admin (team_id=None) sees all.
     """
 
     async def _query() -> list[AuditEventRecord]:
@@ -133,6 +144,8 @@ async def get_run_audit_events(
                 .where(AuditEventRecord.run_id == run_id)
                 .order_by(AuditEventRecord.created_at.asc())  # type: ignore[attr-defined]  # SQLModel column expression
             )
+            if auth.team_id is not None:
+                stmt = stmt.where(AuditEventRecord.team_id == auth.team_id)
             return list((await session.exec(stmt)).all())
 
     rows = await _query()
