@@ -9,6 +9,7 @@ import httpx
 
 from ..config import PlatformSettings
 from ..services.http import build_http_client
+from ..services.log_redact import redact_secrets
 from ._common import Tool, require_text
 
 _BLOCKED_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
@@ -190,32 +191,42 @@ class HTTPFetchTool(Tool):
             # Follow redirects manually so every hop is re-validated against
             # the SSRF policy before its socket is opened. httpx's built-in
             # follow_redirects would jump straight to the redirect target.
-            for _hop in range(_MAX_REDIRECT_HOPS + 1):
-                _check_url(current_url)
-                response = client.request(
-                    normalized_method,
-                    current_url,
-                    params=request_params,
-                    headers=headers,
-                    json=json_body,
-                    content=body.encode("utf-8") if body is not None else None,
-                    timeout=request_timeout,
-                    follow_redirects=False,
-                )
-                if response.status_code in _REDIRECT_CODES:
-                    location = response.headers.get("location")
-                    if not location:
-                        break
-                    current_url = urljoin(current_url, location)
-                    request_params = None  # params apply to the first hop only
-                    continue
-                break
-            else:
-                raise SSRFBlockedError("http.fetch blocked: exceeded redirect limit")
-            if response is None:  # defensive: the loop always assigns response
-                raise ValueError("http.fetch produced no response.")
-            if normalized_raise_for_status:
-                response.raise_for_status()
+            try:
+                for _hop in range(_MAX_REDIRECT_HOPS + 1):
+                    _check_url(current_url)
+                    response = client.request(
+                        normalized_method,
+                        current_url,
+                        params=request_params,
+                        headers=headers,
+                        json=json_body,
+                        content=body.encode("utf-8") if body is not None else None,
+                        timeout=request_timeout,
+                        follow_redirects=False,
+                    )
+                    if response.status_code in _REDIRECT_CODES:
+                        location = response.headers.get("location")
+                        if not location:
+                            break
+                        current_url = urljoin(current_url, location)
+                        request_params = None  # params apply to the first hop only
+                        continue
+                    break
+                else:
+                    raise SSRFBlockedError("http.fetch blocked: exceeded redirect limit")
+                if response is None:  # defensive: the loop always assigns response
+                    raise ValueError("http.fetch produced no response.")
+                if normalized_raise_for_status:
+                    response.raise_for_status()
+            except httpx.HTTPError as exc:
+                # Redact before surfacing: an httpx error string can carry the
+                # request URL (query-string tokens) or an Authorization header
+                # repr. SSRFBlockedError / ValueError raised above are policy
+                # errors, not httpx.HTTPError, so they propagate unredacted.
+                raise ValueError(
+                    f"http.fetch upstream error: {exc.__class__.__name__}: "
+                    f"{redact_secrets(str(exc))}"
+                ) from exc
         text = response.text
         truncated = False
         if normalized_max_text_chars is not None and len(text) > normalized_max_text_chars:

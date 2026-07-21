@@ -116,6 +116,40 @@ def test_fetch_blocks_direct_imds_before_request(monkeypatch) -> None:
     assert calls == []  # blocked before any socket was opened
 
 
+def test_fetch_redacts_bearer_token_in_upstream_error(monkeypatch) -> None:
+    # An httpx error string can echo an Authorization header; it must not reach
+    # the caller unredacted (#42-3.7).
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(
+            "connect failed: Authorization: Bearer sk-supersecrettoken123"
+        )
+
+    _install_mock(monkeypatch, handler)
+    tool = HTTPFetchTool(_settings())
+    with pytest.raises(ValueError) as ei:
+        tool.forward("GET", "http://1.1.1.1/")
+    msg = str(ei.value)
+    assert "sk-supersecrettoken123" not in msg
+    assert "[REDACTED]" in msg
+    assert "http.fetch upstream error" in msg
+    assert "ConnectError" in msg
+
+
+def test_fetch_redacts_query_token_in_upstream_error(monkeypatch) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(
+            "timeout for url http://1.1.1.1/?token=secretvalue999"
+        )
+
+    _install_mock(monkeypatch, handler)
+    tool = HTTPFetchTool(_settings())
+    with pytest.raises(ValueError) as ei:
+        tool.forward("GET", "http://1.1.1.1/")
+    msg = str(ei.value)
+    assert "secretvalue999" not in msg
+    assert "[REDACTED]" in msg
+
+
 def test_fetch_refuses_redirect_loop(monkeypatch) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         # Always redirect to another allowed public host -> exceeds hop limit.
