@@ -129,9 +129,20 @@ async def get_topology(
 
     Per T-138-25: operator+ role enforced; 30/minute rate limit.
     Per T-138-31: response limited to registered systems only (bounded set).
+
+    Team-scoped (#36): a team-scoped caller sees only its team's systems and
+    the ports, services, edges, and subnet groupings derived from them. The
+    child records (SystemPortRecord, SystemServiceRecord, SystemConnectionRecord,
+    SystemMetadataRecord) are not team-scoped themselves; filtering at the
+    ManagedSystemRecord parent is sufficient because each child is only
+    reachable through the already-filtered system_ids set. A god-tier admin
+    (team_id=None, TEAM-06) sees all teams' systems.
     """
     async with async_session_scope() as session:
-        systems = list((await session.exec(select(ManagedSystemRecord))).all())
+        stmt = select(ManagedSystemRecord)
+        if auth.team_id is not None:
+            stmt = stmt.where(ManagedSystemRecord.team_id == auth.team_id)
+        systems = list((await session.exec(stmt)).all())
 
     if not systems:
         return DataEnvelope(
@@ -310,9 +321,15 @@ async def get_topology_subnets(
 
     Lightweight alternative to GET /topology for subnet-based filtering.
     Per T-138-25: operator+ role required.
+
+    Team-scoped (#36): a team-scoped caller sees only its team's systems in
+    the subnet groupings; a god-tier admin (team_id=None, TEAM-06) sees all.
     """
     async with async_session_scope() as session:
-        systems = list((await session.exec(select(ManagedSystemRecord))).all())
+        stmt = select(ManagedSystemRecord)
+        if auth.team_id is not None:
+            stmt = stmt.where(ManagedSystemRecord.team_id == auth.team_id)
+        systems = list((await session.exec(stmt)).all())
 
     subnet_map = detect_subnets(systems)
     subnets = [
