@@ -3,11 +3,11 @@ KnowledgeService.
 
 The prior bug: KnowledgeStoreTool / KnowledgeRetrieveTool hardcoded
 all-MiniLM-L6-v2 (384-dim) while KnowledgeService used the canonical
-resolve_provider() (BGE-M3, truncated to 384). Both wrote the same 384-dim
-column, but in different embedding spaces, so a vector stored via the tool and
-queried via the service (or vice versa) had meaningless cosine distances and
-retrieval returned garbage. Both paths now embed through KnowledgeService, so
-they share one provider and one space.
+resolve_provider() (BGE-M3, 1024-dim). Both wrote the same column, but in
+different embedding spaces, so a vector stored via the tool and queried via the
+service (or vice versa) had meaningless cosine distances and retrieval returned
+garbage. Both paths now embed through KnowledgeService, so they share one
+provider and one 1024-dim space.
 
 Provider construction is lazy (the SentenceTransformer model loads only on the
 first encode), so these assertions are cheap and need no model download.

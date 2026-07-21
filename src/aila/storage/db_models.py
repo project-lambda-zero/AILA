@@ -552,9 +552,9 @@ class KnowledgeEntryRecord(SQLModel, table=True):
     Consumed by: agent knowledge retrieval (pgvector cosine similarity + tsvector FTS).
 
     namespace is the agent class name (e.g. "ScoringAgent") per D-04.
-    embedding is a 384-dimensional vector stored as pgvector Vector(384)
+    embedding is a 1024-dimensional vector stored as pgvector Vector(1024)
     and queried via cosine distance with HNSW index. Dimension matches
-    the embedding model available via OmniRoute (MiniLM/all-MiniLM-L6-v2).
+    the default embedding model BGE-M3 (BAAI/bge-m3).
     search_vector is a PostgreSQL tsvector generated column for full-text search,
     auto-maintained by PostgreSQL on INSERT/UPDATE.
     dedup_key prevents duplicate seeding of identical knowledge entries across
@@ -577,7 +577,7 @@ class KnowledgeEntryRecord(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     namespace: str = Field(index=True)
     content: str = Field(sa_column=Column(Text))
-    embedding: Any = Field(sa_column=Column("embedding", Vector(384)))
+    embedding: Any = Field(sa_column=Column("embedding", Vector(1024)))
     search_vector: Any = Field(
         sa_column=Column(
             "search_vector",

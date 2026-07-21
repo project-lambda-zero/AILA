@@ -168,6 +168,14 @@ LLM and cost:
   a relevance floor; and the knowledge_store dedup INSERT resolves a
   concurrent (namespace, dedup_key) race idempotently rather than
   surfacing an error. (#37)
+- Knowledge base embeddings store at full 1024 dimensions. The pgvector
+  column widened from `Vector(384)` to `Vector(1024)` to match the
+  default BGE-M3 provider, ending the truncation that discarded 640 of
+  every vector's dimensions on store and query and degraded retrieval to
+  a sub-MiniLM signal. Migration `077` clears the prior truncated
+  vectors and `scripts/reembed_knowledge.py` re-embeds every row from its
+  stored content; the hybrid retrieve vector leg skips null-embedding
+  rows so retrieval stays available during the backfill. (#49)
 
 Modules:
 

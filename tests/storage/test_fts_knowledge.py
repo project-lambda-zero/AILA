@@ -50,7 +50,7 @@ async def test_tsvector_fts_query(pg_session):
     record = KnowledgeEntryRecord(
         namespace="test",
         content="PostgreSQL database migration with asyncpg driver",
-        embedding=[0.0] * 384,
+        embedding=[0.0] * 1024,
         entry_metadata="{}",
     )
     pg_session.add(record)

@@ -149,17 +149,19 @@ class KnowledgeService:
         """Current embedding provider."""
         return self._provider
 
-    # DB column dimension (KnowledgeEntryRecord.embedding is Vector(384)).
-    # Set explicitly so embed() truncates from BGE-M3's 1024 down to fit
-    # without requiring a DB introspection round-trip per service init.
-    _db_dim: int | None = 384
+    # DB column dimension (KnowledgeEntryRecord.embedding is Vector(1024)).
+    # BGE-M3 (the default provider) emits 1024-dim vectors that pass through
+    # unchanged; the 384-dim MiniLM fallback is zero-padded up to 1024 so both
+    # providers write the same column width.
+    _db_dim: int | None = 1024
 
     def embed(self, text: str) -> list[float]:
         """Generate embedding vector using the configured provider.
 
-        Adapts to whatever dimension the provider returns. If the DB column
-        has a different dimension, pads or truncates to match. Reads the
-        target dimension from the DB on first call.
+        Returns the provider's native vector. When it is shorter than the DB
+        column width (:data:`_db_dim`) the vector is zero-padded; a longer
+        vector is truncated. BGE-M3 at 1024 dims matches the column exactly, so
+        no adjustment happens on the default path.
         """
         vec = self._provider.encode(text)
         if KnowledgeService._db_dim is not None and len(vec) != KnowledgeService._db_dim:
@@ -302,6 +304,7 @@ class KnowledgeService:
                     KnowledgeEntryRecord.namespace,
                     KnowledgeEntryRecord.embedding.cosine_distance(query_embedding).label("distance"),
                 )
+                .where(KnowledgeEntryRecord.embedding.is_not(None))
                 .order_by(KnowledgeEntryRecord.embedding.cosine_distance(query_embedding))
                 .limit(candidate_limit)
             )
