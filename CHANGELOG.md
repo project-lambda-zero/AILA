@@ -64,6 +64,9 @@ credential defaults changed and may require caller action.
   configured window. (#45)
 - Hot-column indexes on the workflow-run, audit-event, and
   report-artifact query columns. (#45)
+- Composite index on notification reads (`user_id`, `created_at`) so the
+  per-user notifications list and unread queries stop scanning
+  sequentially. (#45)
 
 ### Changed
 

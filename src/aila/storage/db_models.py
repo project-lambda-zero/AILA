@@ -832,6 +832,9 @@ class NotificationRecord(SQLModel, table=True):
     """
 
     __tablename__ = "notification_records"
+    __table_args__ = (
+        Index("ix_notification_user_created", "user_id", "created_at"),
+    )
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     user_id: str = Field(index=True)
