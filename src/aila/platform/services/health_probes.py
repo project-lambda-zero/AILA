@@ -34,6 +34,7 @@ from aila.api.schemas.comprehensive_health import (
     SshReachabilityResult,
     SubsystemHealth,
 )
+from aila.platform.services.ssrf import SSRFValidatingAsyncTransport
 
 __all__ = [
     "HTTP_PROBE_TIMEOUT_S",
@@ -302,7 +303,14 @@ async def _probe_http_head(name: str, url: str) -> SubsystemHealth:
     """Shared HEAD-probe helper used by external service probes."""
     started = time.monotonic()
     try:
-        async with httpx.AsyncClient(timeout=HTTP_PROBE_TIMEOUT_S, follow_redirects=True) as client:
+        # follow_redirects is on, so each redirect hop is re-validated against
+        # the SSRF egress policy before its socket opens (issue #42): a probe
+        # target that 3xx-redirects into a private/link-local address is
+        # refused instead of followed.
+        transport = SSRFValidatingAsyncTransport(httpx.AsyncHTTPTransport())
+        async with httpx.AsyncClient(
+            timeout=HTTP_PROBE_TIMEOUT_S, follow_redirects=True, transport=transport,
+        ) as client:
             response = await client.head(url)
         latency_ms = (time.monotonic() - started) * 1000.0
         if response.status_code == 429:
