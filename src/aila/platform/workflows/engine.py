@@ -987,9 +987,17 @@ class DurableStateMachine:
                 # the defensive backstop for any future cursor-delete
                 # path that races commit.
                 #
-                # Recovery: INSERT the cursor with the new state +
-                # version 1, commit, continue as if nothing happened.
-                # The transition audit still lands (write_exited runs
+                # Recovery: INSERT the cursor with the new state and
+                # keep the optimistic-lock version chain going
+                # (loaded_state.version + 1, matching new_state.version).
+                # Resetting to 1 desyncs the in-memory State that the
+                # engine loop is about to feed into the next
+                # _commit_transition against what the DB row actually
+                # holds; the following FOR UPDATE then sees a
+                # stale-version mismatch and burns a WorkflowConflictError
+                # retry for no reason. Preserving the chain keeps the
+                # very next commit's version check satisfied. The
+                # transition audit still lands (write_exited runs
                 # below) so the state machine's log is intact. The
                 # advance proceeds and AUTO_CONTINUE fires from the
                 # caller as designed.
@@ -1005,7 +1013,7 @@ class DurableStateMachine:
                     state_input=new_state.input,
                     retries_in_state=new_state.retries_in_state,
                     definition_id=definition.definition_id,
-                    version=1,
+                    version=loaded_state.version + 1,
                 )
                 session.add(new_row)
                 # Skip the version check + UPDATE below; we just
