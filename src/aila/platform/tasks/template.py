@@ -501,7 +501,11 @@ def platform_task(
                         exception_class=type(conflict).__name__,
                     ),
                 )
-                raise Retry(defer=default_backoff(job_try)) from conflict
+                # job_try is ARQ's 1-based attempt counter, so during the first
+                # attempt (job_try=1) zero retries have completed and the defer
+                # must be default_backoff(0) in [1.0, 2.0). Passing job_try
+                # directly made every retry one exponent too high (#40).
+                raise Retry(defer=default_backoff(job_try - 1)) from conflict
 
             except Retry as retry_exc:
                 # The handler (or a nested wrapper) already chose to retry.

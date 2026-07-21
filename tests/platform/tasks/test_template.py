@@ -322,3 +322,43 @@ async def test_wrapper_converts_workflow_conflict_to_arq_retry(
     outcome = _pop_outcome(seeded_task, 2)
     assert outcome is not None
     assert outcome.kind == "retry_signalled"
+
+
+@pytest.mark.asyncio
+async def test_conflict_retry_backoff_uses_job_try_minus_one(
+    seeded_task: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The conflict retry defers by default_backoff(job_try - 1) (#40).
+
+    job_try is ARQ's 1-based attempt counter, so during the first attempt
+    (job_try=1) zero retries have completed and the backoff argument must be 0,
+    not 1. The pre-fix code passed job_try directly, making every retry one
+    exponent too high.
+    """
+    from arq.worker import Retry
+
+    from aila.platform.workflows import WorkflowConflictError
+
+    captured: list[int] = []
+
+    def _fake_backoff(retries: int) -> float:
+        captured.append(retries)
+        return 1.5
+
+    monkeypatch.setattr(
+        "aila.platform.tasks.template.default_backoff", _fake_backoff,
+    )
+
+    @platform_task(track="vulnerability", module_id="vulnerability")
+    async def conflict_task_backoff(ctx: TaskContext, **kwargs: Any) -> dict[str, Any]:
+        raise WorkflowConflictError("cursor moved under us")
+
+    arq_ctx = {"job_id": seeded_task, "job_try": 1}
+    with pytest.raises(Retry):
+        await conflict_task_backoff(arq_ctx)  # type: ignore[arg-type]
+
+    assert captured == [0], (
+        "first attempt (job_try=1) must back off on 0 completed retries; "
+        f"got {captured}"
+    )

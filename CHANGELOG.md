@@ -152,6 +152,10 @@ Platform, async, and correctness:
   so operators can set them through `PUT /config/platform/*`; report
   delivery read them but the config API previously rejected them as
   unknown keys. `smtp_password` redacts for non-admin readers. (#45)
+- Workflow retry backoff no longer starts one exponent too high. The
+  caller passed ARQ's 1-based attempt counter to `default_backoff`
+  instead of the completed-retry count, so the first retry deferred in
+  [2.0, 3.0)s; it now defers in [1.0, 2.0)s. (#40)
 
 ### Removed
 
