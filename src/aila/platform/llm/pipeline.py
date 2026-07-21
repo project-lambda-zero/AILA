@@ -1,6 +1,6 @@
 """Fixed-order middleware pipeline for LLM calls.
 
-Step order is hardcoded: classify -> call -> validate -> gate -> seal.
+Step order is hardcoded: classify -> call -> validate -> gate -> verify -> seal.
 "call" is the existing _single_call logic -- not a registered step.
 Pre-call steps run before the API call; post-call steps run after.
 
@@ -46,7 +46,7 @@ class PipelineRunner:
         """Register a step function for a named pipeline slot.
 
         Args:
-            name: One of the known step names (classify, validate, gate, seal).
+            name: One of the known step names (classify, validate, gate, verify, seal).
             step_fn: Async callable that receives (ctx, messages, routing).
 
         Raises:

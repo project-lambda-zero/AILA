@@ -1,8 +1,8 @@
 """LLM configuration provider -- routing, key resolution, kill switch.
 
 Reads all configuration from ConfigRegistry (namespace "platform") and
-SecretStore.  Zero caching -- every call reads current state so runtime
-changes via PUT /config take effect immediately.
+SecretStore.  ConfigRegistry caches resolved values for up to 60 seconds,
+so a change via PUT /config takes effect within that window.
 
 API key resolution order (per D-05):
   1. SecretStore("provider", "openai_api_key")
@@ -93,7 +93,7 @@ class LLMConfigProvider:
 
         Lookup: llm_model_{task_type} in ConfigRegistry.
         Fallback: llm_default_model in ConfigRegistry.
-        Final fallback: "openai/gpt-4o-mini" (safe default).
+        Final fallback: "antigravity/claude-opus-4-6-thinking".
 
         Args:
             task_type: The task type string (e.g. "scoring", "synthesis").
