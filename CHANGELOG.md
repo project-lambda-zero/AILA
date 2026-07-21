@@ -141,6 +141,14 @@ Security and tenant isolation:
   still manages every team's keys. Previously keys were written
   team-less and the key list was unfiltered, exposing every team's key
   metadata to any admin. (#36)
+- OIDC login no longer silently grants god-tier access. The issued
+  access and refresh JWTs now carry the user's team; previously the
+  team claim was omitted, so a team-assigned OIDC user was treated as
+  god-tier (TEAM-06) for the token lifetime. An OIDC provider can be
+  bound to a `default_team_id` (create/update) so auto-provisioned
+  users are scoped on first login; a user left without a team still
+  gets god-tier but the grant is now logged. Adds the
+  `oidc_provider_records.default_team_id` column (migration 076). (#36)
 
 LLM and cost:
 

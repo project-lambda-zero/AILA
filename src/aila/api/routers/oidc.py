@@ -105,6 +105,7 @@ class OIDCProviderCreateRequest(BaseModel):
     client_secret: str = Field(..., min_length=1)
     scopes: list[str] | None = Field(default=None)
     is_enabled: bool = True
+    default_team_id: str | None = Field(default=None, max_length=64)
 
 
 class OIDCProviderUpdateRequest(BaseModel):
@@ -119,6 +120,7 @@ class OIDCProviderUpdateRequest(BaseModel):
     client_secret: str | None = None
     scopes: list[str] | None = None
     is_enabled: bool | None = None
+    default_team_id: str | None = Field(default=None, max_length=64)
 
 
 class OIDCProviderResponse(BaseModel):
@@ -136,6 +138,7 @@ class OIDCProviderResponse(BaseModel):
     client_id: str
     scopes: list[str]
     is_enabled: bool
+    default_team_id: str | None
     created_at: datetime
 
 
@@ -303,6 +306,7 @@ def _provider_to_response(p: OIDCProviderRecord) -> OIDCProviderResponse:
         client_id=p.client_id,
         scopes=_parse_scopes(getattr(p, "scopes_json", None)),
         is_enabled=p.is_enabled,
+        default_team_id=getattr(p, "default_team_id", None),
         created_at=p.created_at,
     )
 
@@ -691,6 +695,10 @@ async def oidc_callback(
                 email=email,
                 oidc_sub=oidc_sub,
                 role="operator",
+                # #36: bind the auto-provisioned user to the provider's
+                # configured team so it is scoped on first login. None keeps
+                # the prior behavior (god-tier, TEAM-06) but now explicitly.
+                team_id=provider.default_team_id,
                 is_active=True,
                 created_at=now,
                 updated_at=now,
@@ -706,9 +714,22 @@ async def oidc_callback(
 
         user_id = user.id
         role = user.role
+        user_team_id = getattr(user, "team_id", None)
 
-    access_token, expires_in = issue_user_jwt(user_id, role)
-    refresh_token = await issue_user_refresh_token(user_id, role)
+    # #36: the issued JWT must carry the user's team. Previously the team
+    # claim was omitted, so a team-assigned OIDC login received a god-tier
+    # (TEAM-06) token for its whole lifetime. With no team the token stays
+    # god-tier; log it so the grant does not pass silently.
+    if user_team_id is None:
+        _log.warning(
+            "OIDC user %s has no team -- token grants god-tier access "
+            "(TEAM-06). Set the provider default_team_id or assign a team "
+            "via user management to scope this account.",
+            user_id,
+        )
+
+    access_token, expires_in = issue_user_jwt(user_id, role, team_id=user_team_id)
+    refresh_token = await issue_user_refresh_token(user_id, role, team_id=user_team_id)
 
     return DataEnvelope(
         data=TokenResponse(
@@ -785,6 +806,7 @@ async def create_provider(
         client_secret_encrypted="",  # Filled after secret persisted
         scopes_json=scopes_json,
         is_enabled=body.is_enabled,
+        default_team_id=body.default_team_id,
         created_at=utc_now(),
     )
 
@@ -842,6 +864,8 @@ async def update_provider(
             provider.scopes_json = json.dumps(body.scopes)
         if body.is_enabled is not None:
             provider.is_enabled = body.is_enabled
+        if body.default_team_id is not None:
+            provider.default_team_id = body.default_team_id
 
         session.add(provider)
         await session.commit()

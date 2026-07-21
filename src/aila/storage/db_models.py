@@ -679,6 +679,7 @@ class OIDCProviderRecord(SQLModel, table=True):
         sa_column=Column(Text, server_default='["openid","email","profile"]', nullable=False),
     )
     is_enabled: bool = Field(default=True)
+    default_team_id: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
 
