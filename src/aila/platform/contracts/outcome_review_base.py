@@ -26,7 +26,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 from pydantic import Field as PField
-from sqlalchemy import Column, DateTime, Text
+from sqlalchemy import DateTime, Text
 from sqlmodel import Field, SQLModel
 
 from ._common import utc_now
@@ -66,8 +66,8 @@ class OutcomeReviewRecordBase(TableDerivedConstraintsMixin, SQLModel):
 
     # 'approve' | 'reject' | 'request_edit' | 'abstain'
     vote: str = Field(max_length=16, index=True)
-    comment: str = Field(default="", sa_column=Column(Text))
-    suggested_edits_json: str = Field(default="{}", sa_column=Column(Text))
+    comment: str = Field(default="", sa_type=Text, sa_column_kwargs={"nullable": True})
+    suggested_edits_json: str = Field(default="{}", sa_type=Text, sa_column_kwargs={"nullable": True})
 
     created_at: datetime = Field(
         default_factory=utc_now, sa_type=DateTime(timezone=True),

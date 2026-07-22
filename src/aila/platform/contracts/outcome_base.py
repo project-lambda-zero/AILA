@@ -25,7 +25,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 from pydantic import Field as PField
-from sqlalchemy import Column, DateTime, Text
+from sqlalchemy import DateTime, Text
 from sqlmodel import Field, SQLModel
 
 from ._common import utc_now
@@ -58,9 +58,9 @@ class OutcomeRecordBase(TableDerivedConstraintsMixin, SQLModel):
     branch_id: str = Field(index=True)
 
     outcome_kind: str = Field(max_length=32, index=True)
-    payload_json: str = Field(default="{}", sa_column=Column(Text))
+    payload_json: str = Field(default="{}", sa_type=Text, sa_column_kwargs={"nullable": True})
     confidence: str = Field(max_length=16)
-    evidence_refs_json: str = Field(default="[]", sa_column=Column(Text))
+    evidence_refs_json: str = Field(default="[]", sa_type=Text, sa_column_kwargs={"nullable": True})
 
     accepted_by_operator: bool = Field(default=False)
     accepted_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))

@@ -29,7 +29,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import Column, DateTime, Text
+from sqlalchemy import DateTime, Text
 from sqlmodel import Field, SQLModel
 
 from ._common import utc_now
@@ -52,7 +52,7 @@ class McpCallLogRecordBase(TableDerivedConstraintsMixin, SQLModel):
     status: str = Field(max_length=16)
     http_status: int | None = Field(default=None)
     latency_ms: int | None = Field(default=None)
-    error_excerpt: str | None = Field(default=None, sa_column=Column(Text))
+    error_excerpt: str | None = Field(default=None, sa_type=Text, sa_column_kwargs={"nullable": True})
     target_id: str | None = Field(default=None, max_length=36, index=True)
     team_id: str | None = Field(default=None, max_length=36)
     called_at: datetime = Field(

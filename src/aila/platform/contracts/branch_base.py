@@ -19,7 +19,7 @@ from typing import ClassVar
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import Column, DateTime, Text
+from sqlalchemy import DateTime, Text
 from sqlmodel import Field, SQLModel
 
 from ._common import utc_now
@@ -54,14 +54,14 @@ class BranchRecordBase(TableDerivedConstraintsMixin, SQLModel):
     # writers always supply a real value.
     persona_voice: str = Field(default="unspecified", max_length=32, nullable=False)
     strategy_family: str | None = Field(default=None, max_length=128, index=True)
-    fork_reason: str = Field(default="", sa_column=Column(Text))
+    fork_reason: str = Field(default="", sa_type=Text, sa_column_kwargs={"nullable": True})
     fork_at_turn: int | None = Field(default=None)
 
-    case_state_json: str = Field(default="{}", sa_column=Column(Text))
+    case_state_json: str = Field(default="{}", sa_type=Text, sa_column_kwargs={"nullable": True})
     branch_cost_usd: float = Field(default=0.0)
     turn_count: int = Field(default=0)
 
-    closed_reason: str = Field(default="", sa_column=Column(Text))
+    closed_reason: str = Field(default="", sa_type=Text, sa_column_kwargs={"nullable": True})
     promoted: bool = Field(default=False)
     closed_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
 

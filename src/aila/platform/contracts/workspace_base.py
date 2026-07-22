@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 from pydantic import Field as PField
-from sqlalchemy import Column, DateTime, Text
+from sqlalchemy import DateTime, Text
 from sqlmodel import Field, SQLModel
 
 from aila.storage.mixins import TeamScopedMixin
@@ -44,7 +44,7 @@ class WorkspaceRecordBase(TableDerivedConstraintsMixin, TeamScopedMixin, SQLMode
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     name: str = Field(index=True, max_length=255)
     slug: str = Field(index=True, max_length=128)
-    description: str = Field(default="", sa_column=Column(Text))
+    description: str = Field(default="", sa_type=Text, sa_column_kwargs={"nullable": True})
     theme: str = Field(default="custom", max_length=64)
     status: str = Field(default="active", index=True, max_length=32)
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))

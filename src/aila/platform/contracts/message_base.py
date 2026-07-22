@@ -35,7 +35,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 from pydantic import Field as PField
-from sqlalchemy import Column, DateTime, Text
+from sqlalchemy import DateTime, Text
 from sqlmodel import Field, SQLModel
 
 from ._common import utc_now
@@ -71,10 +71,10 @@ class MessageRecordBase(TableDerivedConstraintsMixin, SQLModel):
     sender_kind: str = Field(max_length=16)  # engine|operator|system
     sender_id: str | None = Field(default=None, max_length=64)
     payload_kind: str = Field(max_length=32, index=True)
-    payload_json: str = Field(default="{}", sa_column=Column(Text))
+    payload_json: str = Field(default="{}", sa_type=Text, sa_column_kwargs={"nullable": True})
     operator_intent: str | None = Field(default=None, max_length=32)
     at_turn: int | None = Field(default=None)
-    evidence_refs_json: str = Field(default="[]", sa_column=Column(Text))
+    evidence_refs_json: str = Field(default="[]", sa_type=Text, sa_column_kwargs={"nullable": True})
     # Exact-key dedup for auto_steering rows. Index shape differs per module
     # (vr = composite (investigation_id, auto_steering_key); malware =
     # full-column index). The subclass carries the module-specific Index in

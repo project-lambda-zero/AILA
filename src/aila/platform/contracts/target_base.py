@@ -26,7 +26,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 from pydantic import Field as PField
-from sqlalchemy import Column, DateTime, Text
+from sqlalchemy import DateTime, Text
 from sqlmodel import Field, SQLModel
 
 from aila.storage.mixins import TeamScopedMixin
@@ -64,21 +64,22 @@ class TargetRecordBase(TableDerivedConstraintsMixin, TeamScopedMixin, SQLModel):
     workspace_id: str = Field(index=True)
     display_name: str = Field(max_length=255)
     kind: str = Field(max_length=64, index=True)
-    descriptor_json: str = Field(default="{}", sa_column=Column(Text))
+    descriptor_json: str = Field(default="{}", sa_type=Text, sa_column_kwargs={"nullable": True})
     primary_language: str | None = Field(default=None, max_length=32)
-    secondary_languages_json: str = Field(default="[]", sa_column=Column(Text))
+    secondary_languages_json: str = Field(default="[]", sa_type=Text, sa_column_kwargs={"nullable": True})
     status: str = Field(default="active", index=True, max_length=32)
-    capability_profile_json: str = Field(default="{}", sa_column=Column(Text))
-    tags_json: str = Field(default="[]", sa_column=Column(Text))
+    capability_profile_json: str = Field(default="{}", sa_type=Text, sa_column_kwargs={"nullable": True})
+    tags_json: str = Field(default="[]", sa_type=Text, sa_column_kwargs={"nullable": True})
     analysis_state: str = Field(default="pending", index=True, max_length=24)
-    analysis_state_message: str | None = Field(default=None, sa_column=Column(Text))
+    analysis_state_message: str | None = Field(default=None, sa_type=Text, sa_column_kwargs={"nullable": True})
     analysis_started_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     analysis_completed_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     # Backend-only: audit_mcp index_id, ida binary_id, etc. Underscore
     # prefix marks 'internal -- never exposed in contracts or UI'.
     mcp_handles_json: str = Field(
         default="{}",
-        sa_column=Column("_mcp_handles_json", Text, nullable=False, server_default="{}"),
+        sa_type=Text,
+        sa_column_kwargs={"name": "_mcp_handles_json", "nullable": False, "server_default": "{}"},
     )
     # Per-stage analysis status (migration 060). Replaces the single
     # ``analysis_state`` enum (kept as a roll-up). One JSON object with
@@ -89,7 +90,8 @@ class TargetRecordBase(TableDerivedConstraintsMixin, TeamScopedMixin, SQLModel):
     # commits. See contracts/target_stages.py.
     analysis_stages_json: str = Field(
         default="{}",
-        sa_column=Column("analysis_stages_json", Text, nullable=False, server_default="{}"),
+        sa_type=Text,
+        sa_column_kwargs={"nullable": False, "server_default": "{}"},
     )
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
     updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))

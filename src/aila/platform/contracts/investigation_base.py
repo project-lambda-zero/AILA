@@ -38,7 +38,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 from pydantic import Field as PField
-from sqlalchemy import Column, DateTime, Text
+from sqlalchemy import DateTime, Text
 from sqlmodel import Field, SQLModel
 
 from aila.storage.mixins import TeamScopedMixin
@@ -72,11 +72,11 @@ class InvestigationRecordBase(TableDerivedConstraintsMixin, TeamScopedMixin, SQL
     project_id: str | None = Field(default=None, max_length=64, index=True)
     parent_investigation_id: str | None = Field(default=None, index=True)
     target_id: str = Field(index=True)
-    secondary_target_refs_json: str = Field(default="[]", sa_column=Column(Text))
+    secondary_target_refs_json: str = Field(default="[]", sa_type=Text, sa_column_kwargs={"nullable": True})
 
     kind: str = Field(default="discovery", index=True, max_length=32)
     title: str = Field(max_length=255)
-    initial_question: str = Field(default="", sa_column=Column(Text))
+    initial_question: str = Field(default="", sa_type=Text, sa_column_kwargs={"nullable": True})
     status: str = Field(default="created", index=True, max_length=32)
     pause_reason: str | None = Field(default=None, max_length=32)
     auto_pilot: bool = Field(default=True)
@@ -88,7 +88,7 @@ class InvestigationRecordBase(TableDerivedConstraintsMixin, TeamScopedMixin, SQL
     strategy_family: str = Field(
         default="vulnerability_research.discovery_research", max_length=64,
     )
-    persona_dispatch_json: str = Field(default="{}", sa_column=Column(Text))
+    persona_dispatch_json: str = Field(default="{}", sa_type=Text, sa_column_kwargs={"nullable": True})
 
     cost_budget_usd: float = Field(default=50.0)
     cost_actual_usd: float = Field(default=0.0)
@@ -97,8 +97,8 @@ class InvestigationRecordBase(TableDerivedConstraintsMixin, TeamScopedMixin, SQL
     fuzz_infra_cost_usd: float = Field(default=0.0)
 
     primary_outcome_id: str | None = Field(default=None, max_length=64)
-    linked_campaign_ids_json: str = Field(default="[]", sa_column=Column(Text))
-    linked_finding_ids_json: str = Field(default="[]", sa_column=Column(Text))
+    linked_campaign_ids_json: str = Field(default="[]", sa_type=Text, sa_column_kwargs={"nullable": True})
+    linked_finding_ids_json: str = Field(default="[]", sa_type=Text, sa_column_kwargs={"nullable": True})
 
     started_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     stopped_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))

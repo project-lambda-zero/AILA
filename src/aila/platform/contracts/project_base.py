@@ -18,7 +18,7 @@ from typing import ClassVar
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import Column, DateTime, Text
+from sqlalchemy import DateTime, Text
 from sqlmodel import Field, SQLModel
 
 from aila.storage.mixins import TeamScopedMixin
@@ -53,11 +53,11 @@ class ProjectRecordBase(TableDerivedConstraintsMixin, TeamScopedMixin, SQLModel)
 
     analysis_system_id: int | None = Field(default=None)
 
-    context_notes: str = Field(default="", sa_column=Column(Text))
+    context_notes: str = Field(default="", sa_type=Text, sa_column_kwargs={"nullable": True})
     status: str = Field(default="created", index=True, max_length=32)
     created_by: str | None = Field(default=None, index=True, max_length=64)
-    budget_json: str = Field(default="{}", sa_column=Column(Text))
-    obligations_json: str = Field(default="{}", sa_column=Column(Text))
+    budget_json: str = Field(default="{}", sa_type=Text, sa_column_kwargs={"nullable": True})
+    obligations_json: str = Field(default="{}", sa_type=Text, sa_column_kwargs={"nullable": True})
 
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
     updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))

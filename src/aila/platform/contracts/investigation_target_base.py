@@ -25,7 +25,7 @@ from datetime import datetime
 from typing import ClassVar
 from uuid import uuid4
 
-from sqlalchemy import Column, DateTime, Text
+from sqlalchemy import DateTime, Text
 from sqlmodel import Field, SQLModel
 
 from aila.storage.mixins import TeamScopedMixin
@@ -58,7 +58,7 @@ class InvestigationTargetRecordBase(
     investigation_id: str = Field(index=True)
     target_id: str = Field(index=True)
     role: str = Field(default="comparison", max_length=32, index=True)
-    rationale: str = Field(default="", sa_column=Column(Text))
+    rationale: str = Field(default="", sa_type=Text, sa_column_kwargs={"nullable": True})
 
     attached_at: datetime = Field(
         default_factory=utc_now,
