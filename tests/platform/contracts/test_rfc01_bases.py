@@ -54,3 +54,54 @@ def test_record_bases_register_no_table() -> None:
     tables = set(SQLModel.metadata.tables)
     assert "workspacerecordbase" not in tables
     assert "branchrecordbase" not in tables
+
+
+# --- Residue-aware parity for the remaining record bases -------------------
+# The base carries the vr ∩ malware shared columns. Where the vr concrete has
+# module-specific residue columns, the base is that residue smaller.
+
+def _import_remaining():
+    from aila.modules.vr.db_models.investigation import VRInvestigationRecord
+    from aila.modules.vr.db_models.investigation_target import (
+        VRInvestigationTargetRecord,
+    )
+    from aila.modules.vr.db_models.mcp_call_log import VRMcpCallLogRecord
+    from aila.modules.vr.db_models.message import VRInvestigationMessageRecord
+    from aila.modules.vr.db_models.outcome import VRInvestigationOutcomeRecord
+    from aila.modules.vr.db_models.outcome_review import (
+        VRInvestigationOutcomeReviewRecord,
+    )
+    from aila.modules.vr.db_models.pattern import VRPatternRecord
+    from aila.modules.vr.db_models.project import VRProjectRecord
+    from aila.modules.vr.db_models.target import VRTargetRecord
+    from aila.platform.contracts.investigation_base import InvestigationRecordBase
+    from aila.platform.contracts.investigation_target_base import (
+        InvestigationTargetRecordBase,
+    )
+    from aila.platform.contracts.mcp_call_log_base import McpCallLogRecordBase
+    from aila.platform.contracts.message_base import MessageRecordBase
+    from aila.platform.contracts.outcome_base import OutcomeRecordBase
+    from aila.platform.contracts.outcome_review_base import OutcomeReviewRecordBase
+    from aila.platform.contracts.pattern_base import PatternRecordBase
+    from aila.platform.contracts.project_base import ProjectRecordBase
+    from aila.platform.contracts.target_base import TargetRecordBase
+    return [
+        (TargetRecordBase, VRTargetRecord, set()),
+        (InvestigationRecordBase, VRInvestigationRecord, set()),
+        (MessageRecordBase, VRInvestigationMessageRecord, set()),
+        (PatternRecordBase, VRPatternRecord, set()),
+        (
+            ProjectRecordBase,
+            VRProjectRecord,
+            {"cve_id", "patched_target_id", "poc_system_id"},
+        ),
+        (OutcomeRecordBase, VRInvestigationOutcomeRecord, set()),
+        (OutcomeReviewRecordBase, VRInvestigationOutcomeReviewRecord, set()),
+        (McpCallLogRecordBase, VRMcpCallLogRecord, {"investigation_id", "branch_id", "turn_number"}),
+        (InvestigationTargetRecordBase, VRInvestigationTargetRecord, set()),
+    ]
+
+
+def test_remaining_record_bases_match_vr_minus_residue() -> None:
+    for base, concrete, vr_residue in _import_remaining():
+        assert _fields(base) == _fields(concrete) - vr_residue, base.__name__

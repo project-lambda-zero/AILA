@@ -49,19 +49,24 @@ class TabledFk:
     the parent table name; when it is None the foreign key is self-referential
     (targets the subclass's own ``__tablename__``). ``refcolumns`` are the
     referenced columns on the parent (the primary key ``id`` by default).
+    ``ondelete`` maps to the SQL ``ON DELETE`` action (e.g. ``"CASCADE"``) so a
+    base preserves a concrete's cascade behavior; None means no ON DELETE
+    clause.
     """
 
-    __slots__ = ("columns", "target_attr", "refcolumns")
+    __slots__ = ("columns", "target_attr", "refcolumns", "ondelete")
 
     def __init__(
         self,
         *columns: str,
         target_attr: str | None = None,
         refcolumns: tuple[str, ...] = ("id",),
+        ondelete: str | None = None,
     ) -> None:
         self.columns = columns
         self.target_attr = target_attr
         self.refcolumns = refcolumns
+        self.ondelete = ondelete
 
 
 class TableDerivedConstraintsMixin:
@@ -91,6 +96,7 @@ class TableDerivedConstraintsMixin:
                     ForeignKeyConstraint(
                         list(entry.columns),
                         [f"{target}.{ref}" for ref in entry.refcolumns],
+                        ondelete=entry.ondelete,
                     ),
                 )
             else:
