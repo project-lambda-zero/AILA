@@ -30,7 +30,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aila.modules.vr.contracts.target_stages import StageName
-from aila.modules.vr.services.stage_tracker import _DEFAULT_TIMEOUTS
+from aila.platform.services.stage_tracker import _DEFAULT_TIMEOUTS
 from aila.modules.vr.services.target_analysis import (
     _ANDROID_STAGES,
     TargetAnalysisError,
