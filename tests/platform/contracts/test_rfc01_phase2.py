@@ -155,3 +155,52 @@ def test_malware_target_residue() -> None:
     assert {"parent_target_id", "sha256"} <= mw_cols
     vr_cols = set(VRTargetRecord.model_fields)
     assert not ({"parent_target_id", "sha256"} & vr_cols)
+
+
+def test_concrete_mro_preserves_team_scoped_order() -> None:
+    """RFC-01 risk mitigation: every concrete record keeps TeamScopedMixin ahead
+    of SQLModel in its MRO (the pre-RFC order) and resolves its platform base.
+    """
+    from sqlmodel import SQLModel
+
+    from aila.modules.malware.db_models.branch import MalwareInvestigationBranchRecord
+    from aila.modules.malware.db_models.outcome import MalwareInvestigationOutcomeRecord
+    from aila.modules.malware.db_models.outcome_review import (
+        MalwareInvestigationOutcomeReviewRecord,
+    )
+    from aila.storage.mixins import TeamScopedMixin
+
+    pairs: list[tuple[type, type]] = [
+        (VRWorkspaceRecord, WorkspaceRecordBase),
+        (MalwareWorkspaceRecord, WorkspaceRecordBase),
+        (VRTargetRecord, TargetRecordBase),
+        (MalwareTargetRecord, TargetRecordBase),
+        (VRTargetTagIndexRecord, TargetTagIndexBase),
+        (MalwareTargetTagIndexRecord, TargetTagIndexBase),
+        (VRInvestigationRecord, InvestigationRecordBase),
+        (MalwareInvestigationRecord, InvestigationRecordBase),
+        (VRInvestigationMessageRecord, MessageRecordBase),
+        (MalwareInvestigationMessageRecord, MessageRecordBase),
+        (VRInvestigationBranchRecord, BranchRecordBase),
+        (MalwareInvestigationBranchRecord, BranchRecordBase),
+        (VRInvestigationOutcomeRecord, OutcomeRecordBase),
+        (MalwareInvestigationOutcomeRecord, OutcomeRecordBase),
+        (VRInvestigationOutcomeReviewRecord, OutcomeReviewRecordBase),
+        (MalwareInvestigationOutcomeReviewRecord, OutcomeReviewRecordBase),
+        (VRMcpCallLogRecord, McpCallLogRecordBase),
+        (MalwareMcpCallLogRecord, McpCallLogRecordBase),
+        (VRInvestigationTargetRecord, InvestigationTargetRecordBase),
+        (MalwareInvestigationTargetRecord, InvestigationTargetRecordBase),
+        (VRPatternRecord, PatternRecordBase),
+        (MalwarePatternRecord, PatternRecordBase),
+        (VRProjectRecord, ProjectRecordBase),
+        (MalwareProjectRecord, ProjectRecordBase),
+    ]
+    for concrete, base in pairs:
+        mro = concrete.__mro__
+        assert base in mro, f"{concrete.__name__} must subclass {base.__name__}"
+        assert SQLModel in mro
+        if TeamScopedMixin in mro:
+            assert mro.index(TeamScopedMixin) < mro.index(SQLModel), (
+                f"{concrete.__name__}: TeamScopedMixin must precede SQLModel in MRO"
+            )
