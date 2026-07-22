@@ -41,7 +41,6 @@ from aila.modules.vr.db_models import (
     VRInvestigationOutcomeRecord,
     VRInvestigationRecord,
 )
-from aila.modules.vr.services.arq_purge import purge_arq_jobs_for_investigation
 from aila.modules.vr.services.branch_cleanup import close_orphan_branches_on_terminal
 from aila.modules.vr.services.outcome_review import (
     OUTCOME_STATE_APPROVED,
@@ -52,6 +51,7 @@ from aila.modules.vr.services.pattern_store import PatternStore
 from aila.modules.vr.workflow.finalize import finalize_investigation
 from aila.platform.contracts import utc_now
 from aila.platform.services.factory import ServiceFactory
+from aila.platform.tasks.arq_purge import purge_arq_jobs_for_investigation
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import RESERVED_FAILED, RESERVED_SUCCEEDED, StateResult
 

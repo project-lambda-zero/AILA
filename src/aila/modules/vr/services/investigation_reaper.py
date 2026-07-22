@@ -75,7 +75,7 @@ async def _purge_arq_for_completed(completed_ids: list[str]) -> None:
     if not completed_ids:
         return
     try:
-        from .arq_purge import (
+        from aila.platform.tasks.arq_purge import (
             purge_arq_jobs_for_investigation,
         )
     except ImportError as exc:

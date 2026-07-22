@@ -1,36 +1,26 @@
-"""Centralised ARQ purge for investigations transitioning to a terminal
-state (fix §27).
+"""Centralised ARQ purge for investigations transitioning to a terminal state.
 
-:func:`purge_arq_jobs_for_investigation` is the SINGLE platform entry
-point for clearing queued ARQ jobs that target a specific investigation.
-Four call sites historically existed:
+:func:`purge_arq_jobs_for_investigation` is the single platform entry point for
+clearing queued ARQ jobs that target a specific investigation. Every module
+routes its terminal-state / pause / cap-sweep purge through this function with
+its own ARQ track name; none re-implements the purge primitive.
 
-  * ``POST /malware/investigations/{id}/pause`` (api_router -- Phase B owns)
-  * ``investigation_emit`` cap-exceeded sweep (Phase C deletes the block)
-  * ``OutcomeDispatcher._update_outcome_status`` sibling halt (W2 E1)
-  * ``investigation_reaper`` cap sweep (Phase C deletes the file)
-
-All four route through this function -- none re-implements the purge
-primitive. :func:`purge_for_investigation` is a thin alias kept for
-future-callers that prefer the shorter name.
-
-Layout knowledge (ARQ + AILA platform/tasks/constants.py):
+Layout knowledge (ARQ + platform/tasks/constants.py):
   * ``arq:queue:<track>`` is a zset, member=job_id, score=enqueue_ms
-  * ``arq:job:<job_id>`` is a pickled dict with key ``k`` holding
-    the kwargs (including ``investigation_id``)
-  * ``arq:in-progress:<job_id>`` is the per-job worker lock; held
-    only while a worker is executing the job
+  * ``arq:job:<job_id>`` is a pickled dict with key ``k`` holding the kwargs
+    (including ``investigation_id``)
+  * ``arq:in-progress:<job_id>`` is the per-job worker lock; held only while a
+    worker is executing the job
 
-We never delete in-progress locks here (the worker handles those on
-exit). We only purge queued jobs that have not yet been dequeued.
+In-progress locks are never deleted here (the worker clears those on exit).
+Only queued jobs that have not yet been dequeued are purged.
 
-Race window: between the zrem and the delete of the job blob, a worker
-that already dequeued the job (BEFORE the zrem fired) still has the
-job_id in memory and will fetch the (not-yet-deleted) blob and run the
-job. The ``investigation_setup`` STATUS_LOCKED guard catches that
-execution and exits cleanly -- the dequeued worker's run becomes a
-no-op. See §60 for the full race analysis; the comment at the
-zrem/delete pair below is the canonical mitigation reference.
+Race window: between the zrem and the delete of the job blob, a worker that
+already dequeued the job (before the zrem fired) still has the job_id in memory
+and will fetch the not-yet-deleted blob and run the job. The workflow setup
+STATUS_LOCKED guard catches that execution and exits cleanly, so the dequeued
+worker's run becomes a no-op. The zrem-then-delete order below is the canonical
+mitigation reference.
 """
 from __future__ import annotations
 
@@ -57,15 +47,16 @@ __all__ = [
 async def purge_arq_jobs_for_investigation(
     investigation_id: str,
     *,
-    track: str = "malware",
+    track: str,
     redis_url: str | None = None,
 ) -> dict[str, int]:
     """Drop queued ARQ jobs whose ``kwargs.investigation_id`` matches.
 
-    Returns a count summary so callers can log how much was reclaimed.
-    Best-effort: any Redis / unpickle error is logged and skipped -- the
-    investigation_setup STATUS_LOCKED guard still catches anything we
-    miss here, so a partial purge is safe.
+    ``track`` is the ARQ queue name (the caller's module supplies it); this
+    function never names a module. Returns a count summary so callers can log
+    how much was reclaimed. Best-effort: any Redis / unpickle error is logged
+    and skipped -- the workflow setup STATUS_LOCKED guard still catches
+    anything missed here, so a partial purge is safe.
     """
     if redis_url is None:
         redis_url = os.environ.get("AILA_PLATFORM_REDIS_URL", "").strip()
@@ -115,15 +106,14 @@ async def purge_arq_jobs_for_investigation(
                 if kwargs.get("investigation_id") != investigation_id:
                     continue
                 matched += 1
-                # fix §60 -- dequeue-then-delete window (worker that
-                # already dequeued before zrem will still find the blob
-                # and execute it) is mitigated by investigation_setup's
-                # STATUS_LOCKED guard at the start of the workflow turn,
-                # NOT by this code. The order below (zrem THEN delete)
-                # is the correct one: a future worker zpop after zrem
-                # returns nothing, so the blob deletion is unobservable
-                # to anyone except a worker that already had the id in
-                # memory.
+                # The dequeue-then-delete window (a worker that already
+                # dequeued before zrem will still find the blob and execute
+                # it) is mitigated by the workflow setup STATUS_LOCKED guard
+                # at the start of the turn, NOT by this code. The order below
+                # (zrem THEN delete) is the correct one: a future worker zpop
+                # after zrem returns nothing, so the blob deletion is
+                # unobservable to anyone except a worker that already had the
+                # id in memory.
                 removed = await client.zrem(queue_key, job_id)
                 if removed:
                     await client.delete(job_key)
@@ -137,11 +127,10 @@ async def purge_arq_jobs_for_investigation(
                 AttributeError,
                 ValueError,
             ) as exc:
-                # fix §59 -- broaden the pickle catch. Old ARQ versions
-                # pickled classes that no longer exist (ImportError),
-                # truncated blobs raise EOFError, AttributeError fires
-                # when ``obj.get`` is missing because the unpickle
-                # produced a non-dict, and ValueError covers malformed
+                # Broad pickle catch: old ARQ versions pickled classes that no
+                # longer exist (ImportError), truncated blobs raise EOFError,
+                # AttributeError fires when ``obj.get`` is missing because the
+                # unpickle produced a non-dict, and ValueError covers malformed
                 # length bytes. All of these are "skip this job, keep
                 # iterating", never "crash the whole purge".
                 _log.debug(
@@ -164,8 +153,7 @@ async def purge_arq_jobs_for_investigation(
     return {"scanned": scanned, "matched": matched, "purged_jobs": purged_jobs}
 
 
-# fix §27 -- alias under the shorter name from the cutover spec so
-# future callers can converge on a single shape. Both names point at
-# the same primitive; the centralisation claim is that NO other module
-# implements ARQ purge logic -- they all go through here.
+# Alias under the shorter name so callers can converge on a single shape. Both
+# names point at the same primitive; no module implements ARQ purge logic --
+# they all go through here.
 purge_for_investigation = purge_arq_jobs_for_investigation

@@ -58,7 +58,6 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
     VRTargetRecord,
 )
-from aila.modules.vr.services.arq_purge import purge_arq_jobs_for_investigation
 from aila.modules.vr.services.branch_cleanup import close_orphan_branches_on_terminal
 from aila.modules.vr.services.outcome_review import (
     OUTCOME_STATE_APPROVED,
@@ -69,6 +68,7 @@ from aila.modules.vr.services.outcome_review import (
 )
 from aila.platform.contracts import utc_now
 from aila.platform.services.knowledge import KnowledgeService
+from aila.platform.tasks.arq_purge import purge_arq_jobs_for_investigation
 from aila.platform.uow import UnitOfWork
 
 __all__ = [
