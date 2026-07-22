@@ -443,3 +443,178 @@ class TestNoqaInline:
         )
         findings = _audit(src, whitelist_path=wl_path)
         assert not any(f.rule == "noqa_inline" for f in findings)
+
+
+# ---------------------------------------------------------------------------
+# Rule 34 -- hoisted_enum_redeclared (RFC-01)
+# ---------------------------------------------------------------------------
+
+
+class TestHoistedEnumRedeclared:
+    """Rule 34: a unified vr/malware module redeclares a hoisted platform enum."""
+
+    def test_vr_redeclaring_hoisted_enum_flagged(self, tmp_path: Path) -> None:
+        """A vr contracts file declaring class InvestigationStatus(StrEnum) fires."""
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/contracts/status.py",
+            'from enum import StrEnum\n\n\nclass InvestigationStatus(StrEnum):\n    CREATED = "created"\n',
+        )
+        findings = _audit(src)
+        assert "hoisted_enum_redeclared" in _rules(findings)
+
+    def test_forensics_same_name_enum_not_flagged(self, tmp_path: Path) -> None:
+        """forensics is not a unified module -- its own InvestigationStatus is silent."""
+        src = _write(
+            tmp_path,
+            "aila/modules/forensics/contracts/status.py",
+            'from enum import StrEnum\n\n\nclass InvestigationStatus(StrEnum):\n    PENDING = "pending"\n',
+        )
+        findings = _audit(src)
+        assert "hoisted_enum_redeclared" not in _rules(findings)
+
+    def test_module_owned_enum_not_flagged(self, tmp_path: Path) -> None:
+        """A vr enum whose name is not hoisted (WorkspaceTheme) is silent."""
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/contracts/theme.py",
+            'from enum import StrEnum\n\n\nclass WorkspaceTheme(StrEnum):\n    CUSTOM = "custom"\n',
+        )
+        findings = _audit(src)
+        assert "hoisted_enum_redeclared" not in _rules(findings)
+
+    def test_reexport_import_not_flagged(self, tmp_path: Path) -> None:
+        """Importing the hoisted enum (the correct pattern) is silent."""
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/contracts/status.py",
+            "from aila.platform.contracts.enums import InvestigationStatus\n\n__all__ = [\"InvestigationStatus\"]\n",
+        )
+        findings = _audit(src)
+        assert "hoisted_enum_redeclared" not in _rules(findings)
+
+
+# ---------------------------------------------------------------------------
+# Rule 35 -- unnamed_derived_constraint (RFC-01)
+# ---------------------------------------------------------------------------
+
+
+class TestUnnamedDerivedConstraint:
+    """Rule 35: a unified table hard-codes a UQ name that is not the derived form."""
+
+    def test_nonconforming_uq_flagged(self, tmp_path: Path) -> None:
+        """A vr unified table with uq_vr_workspace_team_slug (pre-derived) fires."""
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/db_models/workspace.py",
+            "from sqlalchemy import UniqueConstraint\n"
+            "from sqlmodel import Field, SQLModel\n\n\n"
+            "class VRWorkspaceRecord(SQLModel, table=True):\n"
+            '    __tablename__ = "vr_workspaces"\n'
+            "    __table_args__ = (\n"
+            '        UniqueConstraint("team_id", "slug", name="uq_vr_workspace_team_slug"),\n'
+            "    )\n"
+            "    id: str = Field(primary_key=True)\n",
+        )
+        findings = _audit(src)
+        assert "unnamed_derived_constraint" in _rules(findings)
+
+    def test_derived_uq_name_not_flagged(self, tmp_path: Path) -> None:
+        """The derived name uq_vr_workspaces_team_slug is silent."""
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/db_models/workspace.py",
+            "from sqlalchemy import UniqueConstraint\n"
+            "from sqlmodel import Field, SQLModel\n\n\n"
+            "class VRWorkspaceRecord(SQLModel, table=True):\n"
+            '    __tablename__ = "vr_workspaces"\n'
+            "    __table_args__ = (\n"
+            '        UniqueConstraint("team_id", "slug", name="uq_vr_workspaces_team_slug"),\n'
+            "    )\n"
+            "    id: str = Field(primary_key=True)\n",
+        )
+        findings = _audit(src)
+        assert "unnamed_derived_constraint" not in _rules(findings)
+
+    def test_nonunified_module_uq_not_flagged(self, tmp_path: Path) -> None:
+        """A vulnerability table with a short hand-name is out of scope, silent."""
+        src = _write(
+            tmp_path,
+            "aila/modules/vulnerability/db_models/findings.py",
+            "from sqlalchemy import UniqueConstraint\n"
+            "from sqlmodel import Field, SQLModel\n\n\n"
+            "class LatestFindingRecord(SQLModel, table=True):\n"
+            '    __tablename__ = "latest_finding_records"\n'
+            "    __table_args__ = (\n"
+            '        UniqueConstraint("host", name="uq_latestfinding_target"),\n'
+            "    )\n"
+            "    id: str = Field(primary_key=True)\n",
+        )
+        findings = _audit(src)
+        assert "unnamed_derived_constraint" not in _rules(findings)
+
+
+# ---------------------------------------------------------------------------
+# Rule 36 -- shadowed_platform_base (RFC-01)
+# ---------------------------------------------------------------------------
+
+
+_WORKSPACE_BASE_SRC = (
+    "from sqlmodel import Field, SQLModel\n\n\n"
+    "class WorkspaceRecordBase(SQLModel):\n"
+    "    id: str = Field(primary_key=True)\n"
+    "    name: str = Field()\n"
+    "    slug: str = Field()\n"
+    "    status: str = Field()\n"
+)
+
+
+class TestShadowedPlatformBase:
+    """Rule 36: a unified table recreates a platform base's columns."""
+
+    def test_shadowing_table_flagged(self, tmp_path: Path) -> None:
+        """A vr_workspaces table that redeclares base columns without subclassing fires."""
+        _write(tmp_path, "aila/platform/contracts/workspace_base.py", _WORKSPACE_BASE_SRC)
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/db_models/workspace.py",
+            "from sqlmodel import Field, SQLModel\n\n\n"
+            "class VRWorkspaceRecord(SQLModel, table=True):\n"
+            '    __tablename__ = "vr_workspaces"\n'
+            "    id: str = Field(primary_key=True)\n"
+            "    name: str = Field()\n"
+            "    slug: str = Field()\n"
+            "    status: str = Field()\n",
+        )
+        findings = _audit(src)
+        assert "shadowed_platform_base" in _rules(findings)
+
+    def test_correct_subclass_not_flagged(self, tmp_path: Path) -> None:
+        """A vr_workspaces table that subclasses the base is silent."""
+        _write(tmp_path, "aila/platform/contracts/workspace_base.py", _WORKSPACE_BASE_SRC)
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/db_models/workspace.py",
+            "from aila.platform.contracts.workspace_base import WorkspaceRecordBase\n\n\n"
+            "class VRWorkspaceRecord(WorkspaceRecordBase, table=True):\n"
+            '    __tablename__ = "vr_workspaces"\n',
+        )
+        findings = _audit(src)
+        assert "shadowed_platform_base" not in _rules(findings)
+
+    def test_nonunified_module_not_flagged(self, tmp_path: Path) -> None:
+        """forensics is out of scope even if a table name matches a role."""
+        _write(tmp_path, "aila/platform/contracts/workspace_base.py", _WORKSPACE_BASE_SRC)
+        src = _write(
+            tmp_path,
+            "aila/modules/forensics/db_models/workspace.py",
+            "from sqlmodel import Field, SQLModel\n\n\n"
+            "class ForensicsWorkspaceRecord(SQLModel, table=True):\n"
+            '    __tablename__ = "forensics_workspaces"\n'
+            "    id: str = Field(primary_key=True)\n"
+            "    name: str = Field()\n"
+            "    slug: str = Field()\n"
+            "    status: str = Field()\n",
+        )
+        findings = _audit(src)
+        assert "shadowed_platform_base" not in _rules(findings)

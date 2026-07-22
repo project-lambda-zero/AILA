@@ -1,6 +1,6 @@
 """honesty_audit -- AST-based structural honesty checker for Python code.
 
-Detects thirty-three categories of structural dishonesty:
+Detects thirty-six categories of structural dishonesty:
 
 1. unused_parameter    -- function parameter accepted but never referenced in body.
 2. misleading_name     -- function name implies intelligence but body only forwards.
@@ -35,6 +35,9 @@ Detects thirty-three categories of structural dishonesty:
 31. placeholder_return  -- function body is only a docstring + return {} or return []; no real logic.
 32. log_format_concat   -- logging call uses string concatenation/f-string instead of %-formatting.
 33. broad_exception_catch -- except Exception without a justifying comment (catches everything indiscriminately).
+34. hoisted_enum_redeclared -- a unified vr/malware module redeclares a StrEnum owned by platform.contracts.enums (RFC-01).
+35. unnamed_derived_constraint -- a unified vr/malware table hard-codes a UQ name instead of deriving via TabledUq.
+36. shadowed_platform_base -- a unified vr/malware table recreates a platform base's columns instead of subclassing it.
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -567,6 +570,172 @@ def _body_has_cache_impl(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     """Return True if the body contains any identifier associated with caching."""
     body_ids = _collect_body_identifiers(func)
     return bool(body_ids & _CACHE_IMPL_IDENTIFIERS)
+
+
+# ---------------------------------------------------------------------------
+# RFC-01 re-duplication guardrails (rules 34-36)
+# ---------------------------------------------------------------------------
+
+# The enums hoisted to aila.platform.contracts.enums. A module must import
+# these rather than redeclare them. Module-owned enums (WorkspaceTheme,
+# TargetKind, etc.) are deliberately absent from this set.
+_HOISTED_ENUM_NAMES: frozenset[str] = frozenset({
+    "WorkspaceStatus", "TargetStatus", "AnalysisState", "TargetTagSource",
+    "BranchStatus", "PersonaVoice", "BranchOperation", "InvestigationStatus",
+    "InvestigationPauseReason", "OutcomeConfidence", "OutcomeDispatchStatus",
+    "SenderKind", "OperatorIntent", "PatternStatus", "PatternScope",
+    "PatternConfidence", "HypothesisState", "StageState", "StageName",
+})
+
+# Modules whose investigation-engine tables RFC-01 unified onto the platform
+# record bases. Other modules (forensics, vulnerability) keep independent
+# table shapes and are outside the scope of the derived-name + subclass rules.
+_RFC01_UNIFIED_MODULES: frozenset[str] = frozenset({"vr", "malware"})
+
+# Unified table role (tablename with the module prefix removed) mapped to the
+# platform base class the concrete must subclass.
+_UNIFIED_ROLE_BASES: dict[str, str] = {
+    "workspaces": "WorkspaceRecordBase",
+    "targets": "TargetRecordBase",
+    "target_tag_index": "TargetTagIndexBase",
+    "investigations": "InvestigationRecordBase",
+    "investigation_messages": "MessageRecordBase",
+    "investigation_branches": "BranchRecordBase",
+    "investigation_outcomes": "OutcomeRecordBase",
+    "outcome_reviews": "OutcomeReviewRecordBase",
+    "mcp_call_log": "McpCallLogRecordBase",
+    "investigation_targets": "InvestigationTargetRecordBase",
+    "patterns": "PatternRecordBase",
+    "projects": "ProjectRecordBase",
+}
+
+# Platform base class mapped to the *_base.py file under platform/contracts/
+# that defines it (two share target_base.py).
+_BASE_FILE_BY_CLASS: dict[str, str] = {
+    "WorkspaceRecordBase": "workspace_base.py",
+    "TargetRecordBase": "target_base.py",
+    "TargetTagIndexBase": "target_base.py",
+    "InvestigationRecordBase": "investigation_base.py",
+    "MessageRecordBase": "message_base.py",
+    "BranchRecordBase": "branch_base.py",
+    "OutcomeRecordBase": "outcome_base.py",
+    "OutcomeReviewRecordBase": "outcome_review_base.py",
+    "McpCallLogRecordBase": "mcp_call_log_base.py",
+    "InvestigationTargetRecordBase": "investigation_target_base.py",
+    "PatternRecordBase": "pattern_base.py",
+    "ProjectRecordBase": "project_base.py",
+}
+
+# Cache of platform base field-name sets, keyed by (base_file_path, class_name).
+_BASE_FIELD_CACHE: dict[tuple[str, str], frozenset[str]] = {}
+
+_CONTRACTS_DIR_PATTERN = _re.compile(r"^(.*/aila)/modules/")
+
+
+def _classdef_is_table(node: ast.ClassDef) -> bool:
+    """Return True when a class is declared with the SQLModel table=True flag."""
+    for kw in node.keywords:
+        if kw.arg == "table" and isinstance(kw.value, ast.Constant) and kw.value.value is True:
+            return True
+    return False
+
+
+def _classdef_tablename(node: ast.ClassDef) -> str | None:
+    """Return the literal __tablename__ string assigned in a class body, or None."""
+    for stmt in node.body:
+        if not isinstance(stmt, ast.Assign):
+            continue
+        value = stmt.value
+        if not (isinstance(value, ast.Constant) and isinstance(value.value, str)):
+            continue
+        for target in stmt.targets:
+            if isinstance(target, ast.Name) and target.id == "__tablename__":
+                return value.value
+    return None
+
+
+def _classdef_base_names(node: ast.ClassDef) -> set[str]:
+    """Return the simple names of a class's declared bases."""
+    names: set[str] = set()
+    for base in node.bases:
+        if isinstance(base, ast.Name):
+            names.add(base.id)
+        elif isinstance(base, ast.Attribute):
+            names.add(base.attr)
+    return names
+
+
+def _sqlmodel_field_names(node: ast.ClassDef) -> set[str]:
+    """Return the annotated (non-dunder) field names declared directly on a class."""
+    names: set[str] = set()
+    for stmt in node.body:
+        if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+            field = stmt.target.id
+            if not field.startswith("__"):
+                names.add(field)
+    return names
+
+
+def _unique_constraint_literal_names(node: ast.ClassDef):
+    """Yield (literal_name, lineno) for each UniqueConstraint(name=<str>) in the class body."""
+    for stmt in node.body:
+        if not (isinstance(stmt, ast.Assign) and _assigns_table_args(stmt)):
+            continue
+        for call in ast.walk(stmt.value):
+            if not isinstance(call, ast.Call):
+                continue
+            callee = call.func
+            is_uq = (isinstance(callee, ast.Name) and callee.id == "UniqueConstraint") or (
+                isinstance(callee, ast.Attribute) and callee.attr == "UniqueConstraint"
+            )
+            if not is_uq:
+                continue
+            for kw in call.keywords:
+                if kw.arg == "name" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                    yield kw.value.value, call.lineno
+
+
+def _assigns_table_args(stmt: ast.Assign) -> bool:
+    """Return True when an assignment targets __table_args__."""
+    return any(isinstance(t, ast.Name) and t.id == "__table_args__" for t in stmt.targets)
+
+
+def _strip_module_prefix(tablename: str, module_id: str) -> str:
+    """Return the table role: the tablename with a leading '<module_id>_' removed."""
+    prefix = f"{module_id}_"
+    return tablename[len(prefix):] if tablename.startswith(prefix) else tablename
+
+
+def _platform_contracts_dir(filepath: str) -> Path | None:
+    """Resolve the platform/contracts directory from a module file path, or None."""
+    match = _CONTRACTS_DIR_PATTERN.search(filepath.replace("\\", "/"))
+    if match is None:
+        return None
+    return Path(match.group(1)) / "platform" / "contracts"
+
+
+def _platform_base_field_names(base_file: Path, base_class: str) -> frozenset[str]:
+    """Return the field-name set of a platform base class, read via AST and cached.
+
+    Returns an empty set when the file or class cannot be resolved so the caller
+    skips defensively rather than raising inside the gate.
+    """
+    cache_key = (str(base_file), base_class)
+    cached = _BASE_FIELD_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    result: frozenset[str] = frozenset()
+    try:
+        tree = ast.parse(base_file.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        _BASE_FIELD_CACHE[cache_key] = result
+        return result
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == base_class:
+            result = frozenset(_sqlmodel_field_names(node))
+            break
+    _BASE_FIELD_CACHE[cache_key] = result
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1680,6 +1849,93 @@ class _HonestyVisitor(ast.NodeVisitor):
                     f"use honesty_whitelist.py with a documented justification instead",
                 )
 
+    def _check_hoisted_enum_redeclared(self, tree: ast.Module, module_id: str) -> None:
+        """Rule 34: hoisted_enum_redeclared -- a unified module redeclares a platform enum.
+
+        The enums in _HOISTED_ENUM_NAMES are owned by
+        aila.platform.contracts.enums. A vr/malware contracts file must import
+        them, never declare its own StrEnum of the same name. Scoped to the
+        unified modules: forensics and vulnerability keep independent enums that
+        happen to share a class name (e.g. their own InvestigationStatus).
+        """
+        if module_id not in _RFC01_UNIFIED_MODULES:
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef) or node.name not in _HOISTED_ENUM_NAMES:
+                continue
+            if "StrEnum" not in _classdef_base_names(node):
+                continue
+            self._emit(
+                node.lineno,
+                "hoisted_enum_redeclared",
+                f"hoisted_enum_redeclared: enum '{node.name}' is owned by "
+                f"platform.contracts.enums -- import it instead of redeclaring",
+            )
+
+    def _check_unnamed_derived_constraint(self, tree: ast.Module, module_id: str) -> None:
+        """Rule 35: unnamed_derived_constraint -- a unified table hand-names a UQ.
+
+        A vr/malware investigation-engine table must derive its unique-constraint
+        name from the tablename via TabledUq, not hard-code a literal. Scoped to
+        the unified tables so other modules keep their own constraint names.
+        """
+        if module_id not in _RFC01_UNIFIED_MODULES:
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef) or not _classdef_is_table(node):
+                continue
+            tablename = _classdef_tablename(node)
+            if tablename is None:
+                continue
+            if _strip_module_prefix(tablename, module_id) not in _UNIFIED_ROLE_BASES:
+                continue
+            derived_prefix = f"uq_{tablename}_"
+            for literal, lineno in _unique_constraint_literal_names(node):
+                if not literal.startswith(derived_prefix):
+                    self._emit(
+                        lineno,
+                        "unnamed_derived_constraint",
+                        f"unnamed_derived_constraint: table '{tablename}' hard-codes "
+                        f"constraint name '{literal}' -- derive it via TabledUq "
+                        f"({derived_prefix}...)",
+                    )
+
+    def _check_shadowed_platform_base(self, tree: ast.Module, module_id: str) -> None:
+        """Rule 36: shadowed_platform_base -- a unified table recreates base columns.
+
+        A vr/malware investigation-engine table whose role maps to a platform
+        base must subclass that base, not redeclare its columns. Fires when the
+        class does not subclass the base yet redeclares four or more of its
+        fields. The base field set is read from platform/contracts via AST.
+        """
+        if module_id not in _RFC01_UNIFIED_MODULES:
+            return
+        contracts_dir = _platform_contracts_dir(self.filename)
+        if contracts_dir is None:
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef) or not _classdef_is_table(node):
+                continue
+            tablename = _classdef_tablename(node)
+            if tablename is None:
+                continue
+            base_class = _UNIFIED_ROLE_BASES.get(_strip_module_prefix(tablename, module_id))
+            if base_class is None or base_class in _classdef_base_names(node):
+                continue
+            base_file = contracts_dir / _BASE_FILE_BY_CLASS[base_class]
+            base_fields = _platform_base_field_names(base_file, base_class)
+            if not base_fields:
+                continue
+            overlap = _sqlmodel_field_names(node) & base_fields
+            if len(overlap) >= 4:
+                self._emit(
+                    node.lineno,
+                    "shadowed_platform_base",
+                    f"shadowed_platform_base: table '{tablename}' recreates "
+                    f"{len(overlap)} columns of {base_class} -- subclass "
+                    f"{base_class} instead",
+                )
+
 
 class HonestyAuditor:
     """Audit one or more Python source files for structural dishonesty.
@@ -1726,6 +1982,9 @@ class HonestyAuditor:
         module_id = _owning_module_id(str(path))
         if module_id is not None:
             visitor._check_import_boundary(tree, module_id)
+            visitor._check_hoisted_enum_redeclared(tree, module_id)
+            visitor._check_unnamed_derived_constraint(tree, module_id)
+            visitor._check_shadowed_platform_base(tree, module_id)
         if _is_boundary_guarded_file(str(path)):
             visitor._check_api_imports_modules(tree)
         if _is_module_file(str(path)):
