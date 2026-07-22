@@ -1,8 +1,11 @@
-"""Machine readiness checker for malware analyzer workstations.
+"""Machine readiness checker for analyzer workstations.
 
-Verifies IDA Headless MCP reachability and probes research tooling
-(gcc, gdb, pwntools, ...) over SSH. v0.1 reports only -- no auto-install.
-``integration=None`` skips SSH and checks MCP only (local workstation).
+Verifies IDA Headless MCP reachability and probes research tooling (gcc, gdb,
+pwntools, ...) over SSH. Reports only -- no auto-install. ``integration=None``
+skips SSH and checks MCP only (local workstation).
+
+Generic over the module: the caller supplies the path to its own
+``tool_requirements.json`` at construction; this service never names a module.
 """
 from __future__ import annotations
 
@@ -18,9 +21,8 @@ from aila.platform.exceptions import AILAError
 from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 from aila.platform.services import SSHService
 
-__all__ = ["ToolCheckResult", "MalwareMachineReadinessService", "MalwareReadinessResult"]
+__all__ = ["MachineReadinessService", "ReadinessResult", "ToolCheckResult"]
 
-_REQUIREMENTS_PATH = Path(__file__).parent.parent / "data" / "tool_requirements.json"
 _OS_PROBE_TIMEOUT = 10.0
 _TOOL_CHECK_TIMEOUT = 30.0
 _OUTPUT_TRUNCATE = 300
@@ -34,40 +36,46 @@ class ToolCheckResult(BaseModel):
     check_output: str = ""
 
 
-class MalwareReadinessResult(BaseModel):
+class ReadinessResult(BaseModel):
     all_required_ok: bool
     ida_mcp_reachable: bool
     tools: list[ToolCheckResult] = Field(default_factory=list)
 
 
-def _load_requirements() -> dict[str, list[dict[str, Any]]]:
-    return json.loads(_REQUIREMENTS_PATH.read_text(encoding="utf-8"))
+class MachineReadinessService:
+    """Verify IDA MCP + research tooling for an analyzer workstation."""
 
-
-class MalwareMachineReadinessService:
-    """Verify IDA MCP + research tooling for the active malware workstation."""
-
-    def __init__(self, ida_bridge: IDABridgeTool, settings: Settings) -> None:
+    def __init__(
+        self,
+        ida_bridge: IDABridgeTool,
+        settings: Settings,
+        *,
+        requirements_path: Path,
+    ) -> None:
         self._ida_bridge = ida_bridge
         self._settings = settings
+        self._requirements_path = requirements_path
 
-    async def check(self, integration: dict | None = None) -> MalwareReadinessResult:
+    def _load_requirements(self) -> dict[str, list[dict[str, Any]]]:
+        return json.loads(self._requirements_path.read_text(encoding="utf-8"))
+
+    async def check(self, integration: dict | None = None) -> ReadinessResult:
         mcp_ok = await self._check_mcp()
         if not integration:
-            return MalwareReadinessResult(
+            return ReadinessResult(
                 all_required_ok=mcp_ok, ida_mcp_reachable=mcp_ok, tools=[]
             )
 
         ssh = SSHService(build_platform_settings(self._settings))
         analyzer_os = await self._detect_os(ssh, integration)
-        requirements = _load_requirements()
+        requirements = self._load_requirements()
         tool_defs = requirements.get(analyzer_os) or requirements.get("linux", [])
 
         tool_results = [
             await self._check_tool(ssh, integration, td) for td in tool_defs
         ]
         required_ok = all(t.available for t in tool_results if t.required)
-        return MalwareReadinessResult(
+        return ReadinessResult(
             all_required_ok=mcp_ok and required_ok,
             ida_mcp_reachable=mcp_ok,
             tools=tool_results,
