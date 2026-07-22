@@ -30,7 +30,13 @@ class VRFindingRecord(SQLModel, table=True):
     __tablename__ = "vr_findings"
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    project_id: str | None = Field(default=None, index=True, max_length=64)
+    # Migration 040 created project_id as sa.Text() (unbounded); the
+    # 64-char cap on the model side drifted from production. Column is
+    # Text with no length so create_all matches the migration.
+    project_id: str | None = Field(
+        default=None,
+        sa_column=Column("project_id", Text, nullable=True, index=True),
+    )
     target_id: str | None = Field(
         default=None,
         sa_column=Column(

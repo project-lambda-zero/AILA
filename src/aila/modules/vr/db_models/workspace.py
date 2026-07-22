@@ -28,7 +28,7 @@ class VRWorkspaceRecord(TeamScopedMixin, SQLModel, table=True):
 
     __tablename__ = "vr_workspaces"
     __table_args__ = (
-        UniqueConstraint("team_id", "slug", name="uq_workspace_team_slug"),
+        UniqueConstraint("team_id", "slug", name="uq_vr_workspace_team_slug"),
     )
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)

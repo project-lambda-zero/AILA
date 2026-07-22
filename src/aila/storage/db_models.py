@@ -1171,6 +1171,14 @@ class PlatformJournalRecord(SQLModel, table=True):
     """
 
     __tablename__ = "platform_journal"
+    # Composite time-ordered indexes below (ix_pj_kind_written,
+    # ix_pj_team_kind_written, and the partial ix_pj_investigation /
+    # ix_pj_run built in migration 071) are declared DESC on ``written_at``
+    # / ``seq`` in the Alembic DDL; the Python-level Index entries here
+    # cover the same column pairs ASC so SQLModel.metadata.create_all
+    # (used by the test fixture) still builds a usable index. The ASC/DESC
+    # divergence is benign and intentional -- mirrors the D-43 note on
+    # WorkflowStateTransition.
     __table_args__ = (
         UniqueConstraint("journal_id", name="uq_platform_journal_journal_id"),
         CheckConstraint(
@@ -1205,23 +1213,23 @@ class PlatformJournalRecord(SQLModel, table=True):
     prev_hash: str | None = Field(default=None, sa_column=Column(String(64), nullable=True))
     row_hash: str = Field(sa_column=Column(String(64), nullable=False))
     payload_hash: str = Field(sa_column=Column(String(64), nullable=False))
-    kind: str = Field(sa_column=Column(String(48), nullable=False, index=True))
-    source: str = Field(sa_column=Column(String(128), nullable=False, index=True))
+    kind: str = Field(sa_column=Column(String(48), nullable=False))
+    source: str = Field(sa_column=Column(String(128), nullable=False))
     actor_kind: str = Field(default="system", sa_column=Column(String(16), nullable=False))
     actor_id: str = Field(default="system", sa_column=Column(String(128), nullable=False))
     action: str = Field(sa_column=Column(String(128), nullable=False))
     status: str = Field(default="ok", sa_column=Column(String(16), nullable=False))
     run_id: str | None = Field(
-        default=None, sa_column=Column(String(36), nullable=True, index=True)
+        default=None, sa_column=Column(String(36), nullable=True)
     )
     investigation_id: str | None = Field(
-        default=None, sa_column=Column(String(36), nullable=True, index=True)
+        default=None, sa_column=Column(String(36), nullable=True)
     )
     branch_id: str | None = Field(
-        default=None, sa_column=Column(String(36), nullable=True, index=True)
+        default=None, sa_column=Column(String(36), nullable=True)
     )
     turn_number: int | None = Field(default=None, sa_column=Column(Integer, nullable=True))
-    correlation_id: str = Field(sa_column=Column(String(64), nullable=False, index=True))
+    correlation_id: str = Field(sa_column=Column(String(64), nullable=False))
     parent_journal_id: str | None = Field(
         default=None, sa_column=Column(String(36), nullable=True)
     )

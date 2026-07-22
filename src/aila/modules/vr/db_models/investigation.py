@@ -16,7 +16,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import Column, DateTime, ForeignKey, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Text, text
 from sqlmodel import Field, SQLModel
 
 from aila.platform.contracts._common import utc_now
@@ -29,6 +29,17 @@ class VRInvestigationRecord(TeamScopedMixin, SQLModel, table=True):
     """One operator-initiated reasoning session (D-43, D-50)."""
 
     __tablename__ = "vr_investigations"
+    # Migration 058 built a PARTIAL index on is_favorite (WHERE
+    # is_favorite = true) rather than a full-table index. Declare it
+    # here so create_all (tests, fresh installs) matches the migrated
+    # production shape.
+    __table_args__ = (
+        Index(
+            "ix_vr_investigations_is_favorite_true",
+            "is_favorite",
+            postgresql_where=text("is_favorite = true"),
+        ),
+    )
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     project_id: str | None = Field(default=None, max_length=64, index=True)
@@ -57,7 +68,8 @@ class VRInvestigationRecord(TeamScopedMixin, SQLModel, table=True):
     status: str = Field(default="created", index=True, max_length=32)
     pause_reason: str | None = Field(default=None, max_length=32)
     auto_pilot: bool = Field(default=True)
-    is_favorite: bool = Field(default=False, index=True)
+    # Partial index built in migration 058 (see __table_args__).
+    is_favorite: bool = Field(default=False)
 
     strategy_family: str = Field(
         default="vulnerability_research.discovery_research", max_length=64,

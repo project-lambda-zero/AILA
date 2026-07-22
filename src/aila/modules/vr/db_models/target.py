@@ -87,7 +87,7 @@ class VRTargetTagIndexRecord(SQLModel, table=True):
 
     __tablename__ = "vr_target_tag_index"
     __table_args__ = (
-        UniqueConstraint("target_id", "tag", "tag_source", name="uq_target_tag_source"),
+        UniqueConstraint("target_id", "tag", "tag_source", name="uq_vr_target_tag_source"),
     )
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)

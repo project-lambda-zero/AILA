@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import Column, DateTime, ForeignKey, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Text
 from sqlmodel import Field, SQLModel
 
 from aila.platform.contracts._common import utc_now
@@ -22,6 +22,19 @@ class VRInvestigationMessageRecord(SQLModel, table=True):
     """One message in an investigation conversation."""
 
     __tablename__ = "vr_investigation_messages"
+    # Migration 063 built a composite index on (investigation_id,
+    # auto_steering_key) for the dedup lookup, not a single-column index
+    # on auto_steering_key. Declare it here so create_all (tests, fresh
+    # installs) matches the migrated production shape. The partial
+    # UNIQUE constraint from 063 is not modelled on the SQLModel side
+    # (partial unique is enforced only in migrations).
+    __table_args__ = (
+        Index(
+            "ix_vr_investigation_messages_auto_steering_key",
+            "investigation_id",
+            "auto_steering_key",
+        ),
+    )
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     investigation_id: str = Field(
@@ -49,10 +62,10 @@ class VRInvestigationMessageRecord(SQLModel, table=True):
     at_turn: int | None = Field(default=None)
     evidence_refs_json: str = Field(default="[]", sa_column=Column(Text))
     # Exact-key dedup for auto_steering rows (§331/§332/§338). NULL on
-    # every non-auto_steering message. Indexed + partial-UNIQUE in
-    # migration 063.
+    # every non-auto_steering message. Composite index +
+    # partial-UNIQUE built in migration 063 (see __table_args__).
     auto_steering_key: str | None = Field(
-        default=None, max_length=128, index=True,
+        default=None, max_length=128,
     )
 
     created_at: datetime = Field(

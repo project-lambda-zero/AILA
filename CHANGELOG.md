@@ -246,6 +246,18 @@ Platform, async, and correctness:
   defaults; and the forensics SSH, script, and collection timeouts, the
   freeflow attempt cap, and the forensics LLM model. Defaults are
   unchanged, so behavior only differs when an operator sets an override. (#45)
+- Model and migration schema converged where they had drifted so fresh
+  installs (create_all) and migrated databases match: the
+  `scheduled_report_records.team_id`, `reasoning_graph_snapshots`
+  identifier columns, and `automation_schedule_records.cron_timezone`
+  widths reconcile to the models' TEXT; `team_records` gains the named
+  unique constraint the model declares; the VR workspace and tag-index
+  unique constraints are module-prefixed (matching malware, avoiding a
+  cross-module name collision); and the VR message, investigation, and
+  finding index shapes and `project_id` type align to what the
+  migrations already built. Migrations 080 and 081 converge existing
+  databases; the redundant standalone per-column indexes create_all
+  built on `platform_journal` are dropped from the model. (#45)
 - Workflow retry backoff no longer starts one exponent too high. The
   caller passed ARQ's 1-based attempt counter to `default_backoff`
   instead of the completed-retry count, so the first retry deferred in
