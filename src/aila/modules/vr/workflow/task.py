@@ -43,7 +43,7 @@ from aila.modules.vr.reporting.poc_writer import PocWriter
 from aila.modules.vr.services import TargetAnalysisService
 from aila.modules.vr.services.fuzz_service import FuzzCampaignService
 from aila.modules.vr.workflow.definitions import VR_INVESTIGATE_V1, VR_NDAY_V1
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.tasks.context import TaskContext
 from aila.platform.tasks.template import platform_task

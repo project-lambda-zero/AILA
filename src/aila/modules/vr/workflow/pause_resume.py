@@ -55,7 +55,7 @@ from aila.modules.vr.db_models import (
 )
 from aila.modules.vr.services.arq_purge import purge_arq_jobs_for_investigation
 from aila.modules.vr.workflow.task import run_vr_investigate
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.llm.cancellation import (
     cancel_for_investigation,
     clear_for_investigation,

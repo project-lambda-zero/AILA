@@ -47,7 +47,7 @@ from datetime import datetime
 
 from sqlalchemy import text as _sql_text
 
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.uow import UnitOfWork
 
 _log = logging.getLogger(__name__)

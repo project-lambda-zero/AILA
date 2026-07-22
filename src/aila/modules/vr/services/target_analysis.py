@@ -50,7 +50,7 @@ from aila.modules.vr.services.stage_tracker import (
     load_target_stages,
     save_target_stages,
 )
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
 from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
 from aila.platform.mcp.bridges.ida_headless import IDABridgeTool

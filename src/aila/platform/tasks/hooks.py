@@ -34,7 +34,7 @@ from sqlalchemy import update as sa_update
 from sqlmodel import select
 
 from aila.api.metrics import TASK_DEAD_LETTER_TOTAL
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.runtime.shared import get_shared_run_memory
 from aila.platform.tasks.constants import ARQ_QUEUE_KEY_TEMPLATE
 from aila.platform.tasks.models import TaskRecord, TaskStatus

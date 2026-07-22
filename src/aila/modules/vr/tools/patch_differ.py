@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
-from aila.platform.tools._common import Tool
+from aila.platform.tools import Tool
 
 __all__ = ["PatchDifferTool"]
 

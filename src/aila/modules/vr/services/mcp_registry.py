@@ -24,7 +24,7 @@ from typing import Any
 
 import httpx
 
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.storage.registry import ConfigRegistry
 
 __all__ = ["MCP_SERVERS", "McpRegistryService"]

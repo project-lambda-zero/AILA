@@ -38,7 +38,7 @@ from aila.modules.vr.contracts.pattern import (
     VRPatternSummary,
 )
 from aila.modules.vr.db_models import VRPatternRecord
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.services.knowledge import KnowledgeService
 from aila.platform.uow import UnitOfWork
 

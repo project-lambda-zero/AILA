@@ -14,7 +14,7 @@ from redis import asyncio as aioredis
 from sqlmodel import select
 
 from aila.api.metrics import TASK_ZOMBIES_REAPED_TOTAL
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.llm.drift import run_purge_old_records_cron as _drift_purge_cron
 from aila.platform.llm.idempotency_cache import run_purge_expired_cron
 from aila.platform.modules import load_builtin_modules

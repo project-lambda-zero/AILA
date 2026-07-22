@@ -44,7 +44,7 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
 )
 from aila.modules.vr.services.config_helpers import get_int
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.contracts.reasoning import (
     Hypothesis,
     ReasoningCaseState,

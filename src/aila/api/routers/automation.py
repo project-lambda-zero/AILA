@@ -28,7 +28,7 @@ from aila.api.schemas.automation import (
 from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
 from aila.platform.automation.models import AutomationScheduleRecord
 from aila.platform.automation.registry import AutomationRegistry
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.storage.database import async_session_scope
 
 __all__ = ["router"]

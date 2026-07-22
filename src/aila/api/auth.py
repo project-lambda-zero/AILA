@@ -523,7 +523,7 @@ async def issue_user_refresh_token(
     Returns:
         Encoded refresh token string (JWT).
     """
-    from aila.platform.contracts._common import utc_now
+    from aila.platform.contracts import utc_now
     from aila.storage.db_models import RefreshTokenRecord
 
     settings = get_settings()

@@ -70,7 +70,7 @@ from aila.modules.vr.services.investigation_finalizers import (
 from aila.modules.vr.services.investigation_reaper import (
     evaluate_cap_for_investigation,
 )
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.uow import UnitOfWork
 
 _log = logging.getLogger(__name__)

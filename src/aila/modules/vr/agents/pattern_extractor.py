@@ -41,7 +41,7 @@ from aila.modules.vr.db_models import (
     VRTargetRecord,
 )
 from aila.modules.vr.services.pattern_store import PatternStore
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.uow import UnitOfWork
 
 __all__ = [

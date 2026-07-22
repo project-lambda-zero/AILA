@@ -31,7 +31,7 @@ from aila.modules.vr.services.cve_intel_resolver import (
     resolve_cve_intel,
 )
 from aila.modules.vr.services.pattern_store import PatternStore
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.exceptions import WorkerUnreachableError
 from aila.platform.services.knowledge import KnowledgeService
 from aila.platform.uow import UnitOfWork

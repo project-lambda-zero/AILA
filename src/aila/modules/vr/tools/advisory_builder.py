@@ -12,7 +12,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from aila.platform.tools._common import Tool
+from aila.platform.tools import Tool
 
 __all__ = ["AdvisoryBuilderTool"]
 

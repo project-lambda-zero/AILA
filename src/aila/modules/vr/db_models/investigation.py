@@ -19,7 +19,7 @@ from uuid import uuid4
 from sqlalchemy import Column, DateTime, ForeignKey, Index, Text, text
 from sqlmodel import Field, SQLModel
 
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.storage.mixins import TeamScopedMixin
 
 __all__ = ["VRInvestigationRecord"]

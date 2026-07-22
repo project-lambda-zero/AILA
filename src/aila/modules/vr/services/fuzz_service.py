@@ -52,7 +52,7 @@ from aila.modules.vr.services.fuzz_launcher import (
     serialize_for_log,
 )
 from aila.platform.config import build_platform_settings
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.services.ssh import SSHService
 from aila.platform.uow import UnitOfWork
 from aila.storage.db_models import ManagedSystemRecord

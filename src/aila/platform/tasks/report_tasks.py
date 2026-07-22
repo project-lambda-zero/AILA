@@ -227,7 +227,7 @@ async def _update_last_run_at(report_id: str) -> None:
     """Update ScheduledReportRecord.last_run_at to utc_now()."""
     from sqlmodel import select
 
-    from aila.platform.contracts._common import utc_now
+    from aila.platform.contracts import utc_now
     from aila.storage.database import async_session_scope
     from aila.storage.db_models import ScheduledReportRecord
 

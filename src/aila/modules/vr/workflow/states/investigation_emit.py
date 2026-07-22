@@ -50,7 +50,7 @@ from aila.modules.vr.services.outcome_review import (
 )
 from aila.modules.vr.services.pattern_store import PatternStore
 from aila.modules.vr.workflow.finalize import finalize_investigation
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import RESERVED_FAILED, RESERVED_SUCCEEDED, StateResult

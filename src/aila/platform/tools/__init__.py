@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from ._common import Tool
 from .artifacts import ArtifactSearchTool, ArtifactStoreTool
 from .audit import AuditLogTool
 from .cache import DecisionCacheTool
@@ -26,4 +27,5 @@ __all__ = [
     "SSHCommandTool",
     "SystemRegistryTool",
     "TargetReportArtifactInput",
+    "Tool",
 ]

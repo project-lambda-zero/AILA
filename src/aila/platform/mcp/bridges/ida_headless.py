@@ -28,7 +28,7 @@ from typing import Any
 import httpx
 from sqlalchemy.exc import SQLAlchemyError
 
-from aila.platform.tools._common import Tool
+from aila.platform.tools import Tool
 from aila.storage.registry import ConfigRegistry
 
 from ._kwarg_alias import (

@@ -49,7 +49,7 @@ from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
     VRInvestigationMessageRecord,
 )
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.uow import UnitOfWork
 
 __all__ = ["maybe_post_auto_steering"]

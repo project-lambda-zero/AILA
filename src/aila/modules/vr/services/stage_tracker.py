@@ -66,7 +66,7 @@ from aila.modules.vr.contracts.target_stages import (
     roll_up_overall_state,
 )
 from aila.modules.vr.db_models import VRTargetRecord
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.uow import UnitOfWork
 
 __all__ = [

@@ -3553,7 +3553,7 @@ def create_forensics_router() -> APIRouter:
             if record is None:
                 raise HTTPException(status_code=404, detail=f"Directive {directive_id} not found.")
             record.active = False
-            from aila.platform.contracts._common import utc_now
+            from aila.platform.contracts import utc_now
             record.resolved_at = utc_now()
             uow.session.add(record)
             await uow.commit()
@@ -4169,7 +4169,7 @@ def create_forensics_router() -> APIRouter:
             ForensicsProjectRecord,
             SolidEvidenceRecord,
         )
-        from aila.platform.contracts._common import utc_now
+        from aila.platform.contracts import utc_now
 
         async with UnitOfWork() as uow:
             project = (await uow.session.exec(
@@ -4417,7 +4417,7 @@ def create_forensics_router() -> APIRouter:
             FindingSuppressionRecord,
             ForensicsProjectRecord,
         )
-        from aila.platform.contracts._common import utc_now
+        from aila.platform.contracts import utc_now
 
         async with UnitOfWork() as uow:
             project = (await uow.session.exec(

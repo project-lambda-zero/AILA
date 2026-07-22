@@ -50,7 +50,7 @@ from aila.api.schemas.endpoints import OIDCAuthorizeResponse
 from aila.api.schemas.envelope import DataEnvelope
 from aila.api.schemas.users import TokenResponse
 from aila.config import get_settings
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import OIDCProviderRecord, SecretRecord, UserRecord
 from aila.storage.secrets import SecretStore

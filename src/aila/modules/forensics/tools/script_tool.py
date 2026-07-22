@@ -7,7 +7,7 @@ import tempfile
 
 from aila.config import Settings
 from aila.platform.exceptions import AILAError
-from aila.platform.tools._common import Tool
+from aila.platform.tools import Tool
 
 TOOL_ALIAS = "script_executor"
 CAPABILITY = "Upload and execute agent-generated Python scripts on the analyzer machine via SSH."

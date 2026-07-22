@@ -30,7 +30,7 @@ from aila.modules.vr.db_models import (
     VRInvestigationOutcomeRecord,
     VRInvestigationRecord,
 )
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.llm.errors import BudgetExceededError, LLMError
 from aila.platform.llm.sanitize import sanitize_input
 from aila.platform.services.factory import ServiceFactory

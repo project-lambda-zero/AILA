@@ -65,7 +65,7 @@ from aila.modules.vr.db_models import (
     VRInvestigationOutcomeRecord,
     VRInvestigationOutcomeReviewRecord,
 )
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.services.audit import record_audit_event
 from aila.platform.uow import UnitOfWork
 

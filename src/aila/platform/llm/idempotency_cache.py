@@ -32,7 +32,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 from sqlmodel import Field, SQLModel, delete, select
 
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 
 __all__ = [
     "LLMIdempotencyCache",

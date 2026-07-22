@@ -25,7 +25,7 @@ from aila.api.schemas.endpoints import (
     ScheduledReportUpdate,
 )
 from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import ScheduledReportRecord
 

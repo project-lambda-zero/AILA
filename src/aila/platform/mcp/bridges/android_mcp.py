@@ -37,7 +37,7 @@ from typing import Any
 
 import httpx
 
-from aila.platform.tools._common import Tool
+from aila.platform.tools import Tool
 from aila.storage.registry import ConfigRegistry
 
 from ._recorder import BridgeRecorder, noop_recorder

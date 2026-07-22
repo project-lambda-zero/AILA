@@ -40,7 +40,7 @@ from aila.modules.vr.services.stage_tracker import (
     StageInFlightError,
     StageTracker,
 )
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.uow import UnitOfWork
 
 __all__ = [

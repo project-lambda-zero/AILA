@@ -211,7 +211,7 @@ async def purge_old_records(
     from sqlalchemy.exc import DBAPIError, SQLAlchemyError
     from sqlmodel import delete
 
-    from aila.platform.contracts._common import utc_now
+    from aila.platform.contracts import utc_now
     from aila.storage.db_models import ConfidenceDriftRecord
 
     cutoff = utc_now() - timedelta(days=retention_days)

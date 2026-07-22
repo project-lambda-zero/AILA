@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 from aila.config import Settings
 from aila.modules.vr.services.mcp_call_logger import record_call
-from aila.platform.contracts._common import JsonObject
+from aila.platform.contracts import JsonObject
 from aila.platform.modules import (
     ModuleCapabilityProfile,
     ModuleContext,
@@ -173,7 +173,7 @@ class VRModule(ModuleProtocol):
         """
         from sqlmodel import select
 
-        from aila.platform.contracts._common import utc_now
+        from aila.platform.contracts import utc_now
         from aila.storage.db_models import SeedVersionRecord
 
         existing = (await session.exec(

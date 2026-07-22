@@ -67,7 +67,7 @@ from aila.modules.vr.services.outcome_review import (
     OUTCOME_STATE_REJECTED,
     set_outcome_state,
 )
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.services.knowledge import KnowledgeService
 from aila.platform.uow import UnitOfWork
 

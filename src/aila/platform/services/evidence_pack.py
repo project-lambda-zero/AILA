@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 
 from .journal import JournalEntry, append
 

@@ -45,7 +45,7 @@ from aila.api.schemas.systems import (
     SystemResponse,
     SystemUpdateRequest,
 )
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.services.audit import record_audit_event
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import ManagedSystemRecord, SystemPortRecord, WorkflowRunRecord

@@ -37,7 +37,7 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
     VRTargetRecord,
 )
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.mcp.adapters import (
     AdapterContext,
     get_adapter,

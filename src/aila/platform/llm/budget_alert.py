@@ -25,7 +25,7 @@ import structlog
 from sqlalchemy import func, text
 from sqlmodel import select
 
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.llm.cost_record import LLMCostRecord
 from aila.platform.llm.errors import BudgetExceededError
 from aila.storage.database import async_session_scope

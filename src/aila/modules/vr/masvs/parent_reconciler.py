@@ -89,7 +89,7 @@ from aila.modules.vr.services.investigation_finalizers import (
 )
 from aila.modules.vr.services.outcome_review import evaluate_quorum
 from aila.modules.vr.workflow.task import run_vr_investigate
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.tasks.models import TaskRecord
 from aila.platform.uow import UnitOfWork
 

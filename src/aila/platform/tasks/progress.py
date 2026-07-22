@@ -21,7 +21,7 @@ import logging
 import time
 from collections.abc import AsyncGenerator
 
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.services.redis_pool import get_redis
 from aila.platform.tasks.constants import (
     PROGRESS_STREAM_MAXLEN,

@@ -6,7 +6,7 @@ Replace TemplateSampleTool with your real tool implementation.
 from __future__ import annotations
 
 from aila.config import Settings, get_settings
-from aila.platform.tools._common import Tool
+from aila.platform.tools import Tool
 
 __all__ = ["TemplateSampleTool"]
 

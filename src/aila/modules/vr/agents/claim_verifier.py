@@ -66,7 +66,7 @@ from aila.modules.vr.db_models import (
 from aila.modules.vr.services.config_helpers import get_float
 from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.modules.vr.services.outcome_review import OUTCOME_STATE_APPROVED
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.uow import UnitOfWork

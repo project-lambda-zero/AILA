@@ -264,7 +264,7 @@ def build_emitter(
 
         import redis
 
-        from aila.platform.contracts._common import utc_now
+        from aila.platform.contracts import utc_now
 
         redis_url = os.environ.get("AILA_PLATFORM_REDIS_URL")
         if not redis_url:

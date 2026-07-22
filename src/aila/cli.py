@@ -1585,7 +1585,7 @@ def create_api_key(
         aila create-api-key --label production-admin
     """
     from aila.api.auth import generate_api_key, hash_api_key
-    from aila.platform.contracts._common import utc_now
+    from aila.platform.contracts import utc_now
     from aila.storage.db_models import ApiKeyRecord
 
     raw_key = generate_api_key()

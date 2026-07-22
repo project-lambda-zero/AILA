@@ -31,7 +31,7 @@ from aila.api.deps import get_task_queue
 from aila.api.limiter import limiter
 from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
 from aila.modules.vr.services.mcp_call_logger import record_call
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.contracts.auth import AuthContext, require_auth
 from aila.platform.llm.cost_record import LLMCostRecord
 from aila.platform.services.factory import ServiceFactory
@@ -1756,7 +1756,7 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRFinding]:
         del request
-        from aila.platform.contracts._common import utc_now
+        from aila.platform.contracts import utc_now
 
         from .db_models import VRFindingRecord, VRProjectRecord
 
@@ -1941,7 +1941,7 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRWorkspaceSummary]:
         del request
-        from aila.platform.contracts._common import utc_now
+        from aila.platform.contracts import utc_now
 
         from .db_models import VRWorkspaceRecord
 
@@ -2207,7 +2207,7 @@ def create_vr_router() -> APIRouter:
         del request
         import json as _json
 
-        from aila.platform.contracts._common import utc_now
+        from aila.platform.contracts import utc_now
 
         from .contracts.target import TargetTag, TargetTagSource
         from .db_models import VRTargetRecord
@@ -4839,7 +4839,7 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRInvestigationSummary]:
         from aila.api.deps import get_task_queue
-        from aila.platform.contracts._common import utc_now
+        from aila.platform.contracts import utc_now
 
         from .db_models import VRInvestigationRecord
         from .workflow.task import run_vr_investigate
