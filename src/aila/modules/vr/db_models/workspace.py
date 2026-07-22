@@ -8,34 +8,18 @@ level.
 Written by: POST /api/vr/workspaces.
 Consumed by: workspace dashboard, target list per workspace, cross-target
 pattern surfacing, investigation creation flow.
+
+The shared columns live on the platform base (RFC-01); this module only
+sets the concrete table name. VR carries no workspace residue.
 """
 from __future__ import annotations
 
-from datetime import datetime
-from uuid import uuid4
-
-from sqlalchemy import Column, DateTime, Text, UniqueConstraint
-from sqlmodel import Field, SQLModel
-
-from aila.platform.contracts import utc_now
-from aila.storage.mixins import TeamScopedMixin
+from aila.platform.contracts.workspace_base import WorkspaceRecordBase
 
 __all__ = ["VRWorkspaceRecord"]
 
 
-class VRWorkspaceRecord(TeamScopedMixin, SQLModel, table=True):
+class VRWorkspaceRecord(WorkspaceRecordBase, table=True):
     """A thematic project grouping related VR targets (D-49)."""
 
     __tablename__ = "vr_workspaces"
-    __table_args__ = (
-        UniqueConstraint("team_id", "slug", name="uq_vr_workspace_team_slug"),
-    )
-
-    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    name: str = Field(index=True, max_length=255)
-    slug: str = Field(index=True, max_length=128)
-    description: str = Field(default="", sa_column=Column(Text))
-    theme: str = Field(default="custom", max_length=64)
-    status: str = Field(default="active", index=True, max_length=32)
-    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
-    updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
