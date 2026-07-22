@@ -418,6 +418,10 @@ HONESTY_WHITELIST = [
     # the typing contract.
     ("malware/contracts/target_stages.py", "get", "consider inlining"),
     ("vr/contracts/target_stages.py", "get", "consider inlining"),
+    # RFC-01: hoisted platform copy of the same typed getattr facade; the
+    # vr/malware entries above are removed when those files are deleted in
+    # RFC-01 Phase 3.
+    ("platform/contracts/target_stages.py", "get", "consider inlining"),
     # personas.role_notes_for: registry-style lookup facade, two-call
     # path lets the role_notes_for caller stay agnostic of the backing
     # registry shape.
