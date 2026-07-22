@@ -17,6 +17,7 @@ from sqlmodel import select
 
 from aila.api.auth import AuthContext, require_user_or_api_key
 from aila.api.constants import ROLE_ADMIN
+from aila.api.deps import get_config_registry
 from aila.api.limiter import limiter
 from aila.api.schemas.endpoints import (
     ScheduledReportCreate,
@@ -263,9 +264,7 @@ async def trigger_scheduled_report(
     try:
         import arq
 
-        from aila.storage.registry import ConfigRegistry
-
-        registry = ConfigRegistry()
+        registry = get_config_registry(request)
         redis_url_raw = await registry.get("platform", "redis_url")
         redis_url = str(redis_url_raw) if redis_url_raw else "redis://localhost:6379"
 
