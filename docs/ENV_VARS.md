@@ -152,9 +152,10 @@ through PowerShell.
 
 ### AILA_PLATFORM_LLM_DEFAULT_MODEL / _BASE_URL / _DEFAULT_MAX_TOKENS
 
+- **Defaults:** `antigravity/claude-opus-4-6-thinking`, `https://openrouter.ai/api/v1`, `4096` (from `PlatformConfigSchema`).
 - **Used in:** `src/aila/platform/llm/config.py` (`LLMConfigResolver`)
-- **Resolution:** ConfigRegistry env-var override path. These keys live under the `platform` namespace but are NOT in `PlatformConfigSchema` -- the env var sets the value, the DB row carries persistent overrides, and the resolver bakes in its own fallbacks (`openai/gpt-4o-mini`, `https://openrouter.ai/api/v1`, `4096`) when nothing matches.
-- **Production guidance:** Set per deployment to pin the default model/provider for every task type. Per-task-type overrides land under `AILA_PLATFORM_LLM_MODEL_<TASK_TYPE>` and `AILA_PLATFORM_LLM_MAX_TOKENS_<TASK_TYPE>`.
+- **Resolution:** Declared as static fields on `PlatformConfigSchema` under the `platform` namespace. Reads go through the standard ConfigRegistry chain (env var, then in-memory cache, then the persisted DB row, then the schema default). The env var wins over the DB, so setting `AILA_PLATFORM_LLM_DEFAULT_MODEL` overrides any value stored through `PUT /config/platform/llm_default_model`.
+- **Production guidance:** Set per deployment to pin the default model, provider base URL, and completion ceiling for every task type. Runtime edits without a restart go through `PUT /config/platform/llm_default_model` (and its `_base_url` / `_default_max_tokens` siblings). Per-task-type overrides land under `AILA_PLATFORM_LLM_MODEL_<TASK_TYPE>` and `AILA_PLATFORM_LLM_MAX_TOKENS_<TASK_TYPE>`, or via the same `PUT /config` endpoint against the matching dynamic-key family.
 
 ### AILA_LLM_TIMEOUT_SECONDS
 
