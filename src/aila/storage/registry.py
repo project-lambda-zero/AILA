@@ -32,7 +32,7 @@ from ..platform.contracts._common import utc_now
 from .database import async_session_scope, session_scope
 from .db_models import ConfigEntryRecord
 
-__all__ = ["ConfigRegistry", "SchemaRegistry", "is_secret_config_key"]
+__all__ = ["ConfigRegistry", "DynamicKeyFamily", "SchemaRegistry", "is_secret_config_key"]
 
 _log = logging.getLogger(__name__)
 
@@ -43,6 +43,39 @@ class _CacheEntry:
 
     value: Any
     expires_at: float
+
+
+@_dc_dataclass(frozen=True)
+class DynamicKeyFamily:
+    """A typed family of config keys sharing a prefix.
+
+    Extends a namespace's schema contract to an open key space: any key of the
+    form ``{prefix}{suffix}`` -- for example the per-task-type override
+    ``llm_model_{task_type}`` -- is a valid, settable, type-cast config key that
+    resolves through the same env > cache > DB > default chain as a static
+    field. ``value_type`` drives set()-time validation and get()-time casting;
+    ``default`` is returned when no env/DB value exists. A schema declares its
+    families in a ``__dynamic_families__`` class attribute; the longest matching
+    prefix wins when families overlap.
+    """
+
+    prefix: str
+    value_type: type = str
+    default: Any = None
+    description: str = ""
+
+    def matches(self, key: str) -> bool:
+        return len(key) > len(self.prefix) and key.startswith(self.prefix)
+
+
+@_dc_dataclass(frozen=True)
+class _ResolvedField:
+    """Minimal field descriptor for a dynamic-key family match, exposing the
+    same ``annotation``/``default`` surface that casting and the default
+    resolution read off a Pydantic ``FieldInfo``."""
+
+    annotation: type
+    default: Any
 
 
 # Security-relevant config key prefixes that trigger audit logging on change (D-11).
@@ -111,6 +144,28 @@ class ConfigRegistry:
             return True
         return "_fail_mode_" in key
 
+    def _resolve_field(self, namespace: str, key: str) -> Any:
+        """Resolve a key to a field descriptor for casting/validation.
+
+        Returns the static schema ``FieldInfo`` when the key is a declared
+        field, else the longest-matching dynamic-key family's descriptor, else
+        None. None means the key is unknown to the namespace -- ``set`` rejects
+        it and ``get`` yields no schema default.
+        """
+        schema = self._schemas.get(namespace)
+        if schema is None:
+            return None
+        field_info = schema.model_fields.get(key)
+        if field_info is not None:
+            return field_info
+        best: DynamicKeyFamily | None = None
+        for family in getattr(schema, "__dynamic_families__", ()):
+            if family.matches(key) and (best is None or len(family.prefix) > len(best.prefix)):
+                best = family
+        if best is None:
+            return None
+        return _ResolvedField(annotation=best.value_type, default=best.default)
+
     async def register(self, namespace: str, schema_class: type[BaseModel]) -> None:
         """Register a Pydantic schema for namespace. Persists defaults to DB on
         first registration -- existing DB rows are left unchanged (user overrides
@@ -145,8 +200,7 @@ class ConfigRegistry:
         env_name = f"AILA_{namespace.upper()}_{key.upper()}"
         env_val = os.environ.get(env_name)
 
-        schema = self._schemas.get(namespace)
-        field_info = schema.model_fields.get(key) if schema else None
+        field_info = self._resolve_field(namespace, key)
 
         if env_val is not None:
             return _cast_value(env_val, field_info)
@@ -176,8 +230,8 @@ class ConfigRegistry:
                     )
                 return value
 
-        if schema and field_info is not None:
-            default_val = schema().model_fields[key].default
+        if field_info is not None:
+            default_val = field_info.default
             # Cache the default too
             async with self._cache_lock:
                 self._cache[cache_key] = _CacheEntry(
@@ -207,8 +261,7 @@ class ConfigRegistry:
         env_name = f"AILA_{namespace.upper()}_{key.upper()}"
         env_val = os.environ.get(env_name)
 
-        schema = self._schemas.get(namespace)
-        field_info = schema.model_fields.get(key) if schema else None
+        field_info = self._resolve_field(namespace, key)
 
         if env_val is not None:
             return _cast_value(env_val, field_info)
@@ -233,7 +286,7 @@ class ConfigRegistry:
                 )
                 return value
 
-        if schema and field_info is not None:
+        if field_info is not None:
             default_val = field_info.default
             self._cache[cache_key] = _CacheEntry(
                 value=default_val,
@@ -253,7 +306,7 @@ class ConfigRegistry:
         schema = self._schemas.get(namespace)
         if schema is None:
             raise ValueError(f"No schema registered for namespace '{namespace}'.")
-        field_info = schema.model_fields.get(key)
+        field_info = self._resolve_field(namespace, key)
         if field_info is None:
             raise ValueError(f"Key '{key}' not found in schema for namespace '{namespace}'.")
 

@@ -67,6 +67,16 @@ credential defaults changed and may require caller action.
 - Composite index on notification reads (`user_id`, `created_at`) so the
   per-user notifications list and unread queries stop scanning
   sequentially. (#45)
+- Platform LLM config keys that were read but never declared -- the
+  routing defaults (`llm_default_model`, `llm_base_url`,
+  `llm_default_max_tokens`, `llm_default_temperature`,
+  `llm_tool_timeout_s`) and `llm_kill_switch` -- are now schema fields,
+  so `PUT /config` sets them instead of rejecting them as unknown; the
+  defaults match the prior hardcoded fallbacks. Per-task-type and
+  per-team keys (`llm_model_{task_type}`, `llm_monthly_budget_usd_{team_id}`,
+  the pipeline gate and verify overrides, ...) are declared as typed
+  dynamic-key families, so an open key space stays settable and cast on
+  read through the same contract as static fields. (#45)
 
 ### Changed
 

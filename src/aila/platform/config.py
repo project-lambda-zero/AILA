@@ -3,9 +3,11 @@ from __future__ import annotations
 import importlib.metadata as _importlib_metadata
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import ClassVar, Protocol, runtime_checkable
 
 from pydantic import BaseModel
+
+from ..storage.registry import DynamicKeyFamily
 
 _AILA_VERSION: str = _importlib_metadata.version("aila")
 
@@ -84,8 +86,45 @@ def build_platform_settings(
     )
 
 
+_PLATFORM_DYNAMIC_FAMILIES: tuple[DynamicKeyFamily, ...] = (
+    # Per-task-type routing overrides (fall back to the llm_default_* statics).
+    DynamicKeyFamily("llm_model_", str, description="Per-task-type model id."),
+    DynamicKeyFamily("llm_max_tokens_", int, description="Per-task-type max output tokens."),
+    DynamicKeyFamily("llm_temperature_", float, description="Per-task-type sampling temperature."),
+    DynamicKeyFamily("llm_max_tool_steps_", int, description="Per-task-type tool-call loop cap."),
+    DynamicKeyFamily("llm_tool_timeout_s_", float, description="Per-task-type per-tool timeout (s)."),
+    DynamicKeyFamily("llm_data_direction_", str, description="Per-task-type data-direction constraint."),
+    DynamicKeyFamily("llm_budget_max_total_tokens_", int, description="Per-task-type token budget ceiling."),
+    # Per-team monthly budget ceiling (USD).
+    DynamicKeyFamily("llm_monthly_budget_usd_", float, description="Per-team monthly budget ceiling (USD)."),
+    # Pipeline gate thresholds and consensus (per task type).
+    DynamicKeyFamily("llm_pipeline_gate_high_threshold_", float),
+    DynamicKeyFamily("llm_pipeline_gate_medium_threshold_", float),
+    DynamicKeyFamily("llm_pipeline_gate_reject_threshold_", float),
+    DynamicKeyFamily("llm_pipeline_gate_consensus_strategy_", str),
+    DynamicKeyFamily("llm_pipeline_gate_consensus_model_", str),
+    DynamicKeyFamily("llm_pipeline_gate_consensus_retries_", int),
+    # Pipeline verify (per task type).
+    DynamicKeyFamily("llm_pipeline_verify_threshold_", float),
+    DynamicKeyFamily("llm_pipeline_verify_model_", str),
+    # Pipeline step-order overrides (comma-separated step lists).
+    DynamicKeyFamily("llm_pipeline_pre_call_steps_", str),
+    DynamicKeyFamily("llm_pipeline_post_call_steps_", str),
+    # Generic pipeline step enable and fail-mode (bool or open/closed; callers coerce).
+    DynamicKeyFamily("llm_pipeline_", str, description="Pipeline step enable or fail-mode override."),
+)
+
+
 class PlatformConfigSchema(BaseModel):
-    """Runtime-editable platform settings -- registered under 'platform' namespace."""
+    """Runtime-editable platform settings -- registered under 'platform' namespace.
+
+    Static fields below are the fixed platform keys. Per-task-type and per-team
+    keys (llm_model_{task_type}, llm_monthly_budget_usd_{team_id}, ...) are
+    declared as typed dynamic-key families so they are settable via PUT /config
+    and cast on read, instead of being unvalidated free-form keys.
+    """
+
+    __dynamic_families__: ClassVar[tuple[DynamicKeyFamily, ...]] = _PLATFORM_DYNAMIC_FAMILIES
 
     request_timeout_seconds: float = 20.0
     user_agent: str = f"AILA/{_AILA_VERSION}"
@@ -113,6 +152,16 @@ class PlatformConfigSchema(BaseModel):
     arq_max_tries: int = 3
     arq_keep_result_s: int = 3600
     progress_stream_maxlen: int = 1000
+
+    # LLM routing global defaults (previously env-only ghost keys -- #45).
+    # Declared so PUT /config can set them; defaults match the prior hardcoded
+    # fallbacks in llm/config.py, so resolution behavior is unchanged.
+    llm_default_model: str = "antigravity/claude-opus-4-6-thinking"
+    llm_base_url: str = "https://openrouter.ai/api/v1"
+    llm_default_max_tokens: int = 4096
+    llm_default_temperature: float = 0.0
+    llm_tool_timeout_s: float = 300.0
+    llm_kill_switch: bool = False
 
     # LLM Pipeline step defaults (Phase 116)
     # Per-task-type overrides via PUT /config at runtime:
