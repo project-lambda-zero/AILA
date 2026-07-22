@@ -269,10 +269,14 @@ def make_verify_step(
             )
 
         except Exception:
-            logger.exception(
-                "Verification failed for %s, continuing without verification",
-                task_type,
-            )
+            # Fail closed (#31): do not swallow. Verify is a security-critical
+            # pipeline step whose fail_mode defaults to "closed" in
+            # resolve_fail_mode; re-raising lets PipelineRunner block the call
+            # instead of silently passing an unverified response. Swallowing
+            # here defeated that gate -- verification_status has no consumer,
+            # so setting "error" and continuing changed nothing.
+            logger.exception("Verification failed for %s (failing closed)", task_type)
             ctx["verification_status"] = "error"
+            raise
 
     return _verify_step

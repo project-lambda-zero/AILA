@@ -283,6 +283,19 @@ Platform, async, and correctness:
 - Malware observation dict-value payloads are size-capped on persist.
   (#61)
 
+- Recovery paths that failed open now fail closed (#31):
+  - The investigation rate limiter defers by a bounded step when it
+    cannot read in-flight task load, instead of returning a zero defer
+    that floods the queue under database pressure.
+  - The second-model verification step propagates an internal failure
+    instead of swallowing it, so the pipeline blocks an unverified
+    response rather than passing it (verification is a security-critical
+    pipeline step and defaults to fail-closed).
+  - Malware's no-finding reconciler skips synthesizing an outcome while
+    the LLM is recently unhealthy, matching the guard already present in
+    the vulnerability-research finalizer, so an outage is not recorded
+    as a clean "no finding" audit.
+
 ### Removed
 
 - Dead `notification_types` and an unreachable unscoped cross-tenant

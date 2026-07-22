@@ -14,11 +14,38 @@ from __future__ import annotations
 
 import pytest
 
+from aila.api.constants import MODULE_ID_PLATFORM
 from aila.platform.exceptions import WorkerUnreachableError
 from aila.platform.tasks.models import TaskRecord, TaskStatus
 from aila.platform.tasks.queue import TaskQueue
 
 from .conftest import sqlite_db_env
+
+
+@pytest.mark.asyncio
+async def test_investigation_defer_fails_closed_on_db_error(monkeypatch) -> None:
+    """#31: a DB error while counting in-flight tasks must defer conservatively.
+
+    Returning 0.0 on error (the old behavior) floods the queue under DB
+    pressure and deepens the spiral. The fail-closed path returns a bounded,
+    non-zero back-off that clears on the next healthy read.
+    """
+    import contextlib
+
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from aila.platform.tasks import queue as queue_mod
+
+    @contextlib.asynccontextmanager
+    async def _boom_scope():
+        raise SQLAlchemyError("db unavailable")
+        yield  # pragma: no cover -- unreachable
+
+    monkeypatch.setattr(queue_mod, "async_session_scope", _boom_scope)
+    tq = queue_mod.TaskQueue(config_registry=None, module_id=MODULE_ID_PLATFORM)
+    deferred = await tq._compute_investigation_defer({"investigation_id": "inv-x"})
+    assert deferred == tq.INVESTIGATION_DEFER_STEP_S
+    assert deferred > 0.0
 
 
 def _module_fn():

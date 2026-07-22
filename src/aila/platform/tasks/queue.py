@@ -37,7 +37,7 @@ from graphlib import CycleError, TopologicalSorter
 from arq.connections import RedisSettings, create_pool
 from redis import asyncio as aioredis
 from sqlalchemy import delete as _delete
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlmodel import func, select
 
 from aila.api.constants import MODULE_ID_PLATFORM
@@ -439,9 +439,16 @@ class TaskQueue:
                         TaskRecord.kwargs_json.like(f'%"{inv_id}"%'),
                     )
                 )).one()
-        except Exception as exc:
-            _log.debug("investigation defer count failed: %s", exc)
-            return 0.0
+        except (SQLAlchemyError, OSError, TimeoutError, RuntimeError) as exc:
+            # Fail closed (#31): a DB error makes in-flight load unmeasurable,
+            # so assume the queue is under pressure and back off by one bounded
+            # step rather than returning 0.0 -- returning 0.0 floods the queue
+            # under DB pressure and deepens the spiral. The defer is bounded
+            # and clears on the next healthy read.
+            _log.warning(
+                "investigation defer count failed, deferring conservatively: %s", exc,
+            )
+            return self.INVESTIGATION_DEFER_STEP_S
         excess = max(0, int(count) - self.INVESTIGATION_INFLIGHT_CAP)
         return excess * self.INVESTIGATION_DEFER_STEP_S
 
