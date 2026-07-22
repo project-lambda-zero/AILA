@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from aila.modules.vr.db_models import VRMcpCallLogRecord
+from aila.platform.llm.correlation import current_join_keys
 from aila.platform.uow import UnitOfWork
 
 __all__ = ["record_call"]
@@ -86,6 +87,7 @@ async def _write_record(
     team_id: str | None,
 ) -> None:
     """Persist one log row. Swallowed errors only -- never crash the caller."""
+    _inv, _branch, _turn = current_join_keys()
     with contextlib.suppress(Exception):
         async with UnitOfWork() as uow:
             row = VRMcpCallLogRecord(
@@ -98,6 +100,9 @@ async def _write_record(
                 error_excerpt=error_excerpt,
                 target_id=target_id,
                 team_id=team_id,
+                investigation_id=_inv,
+                branch_id=_branch,
+                turn_number=_turn,
             )
             uow.session.add(row)
             await uow.session.commit()

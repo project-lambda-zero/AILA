@@ -47,6 +47,12 @@ class LLMCostRecord(TeamScopedMixin, SQLModel, table=True):
         primary_key=True,
     )
     run_id: str = Field(default="_no_run", index=True)
+    # #39 observability join keys: correlate a cost record back to the
+    # investigation, branch, and turn that produced it. Nullable -- calls
+    # outside an agent turn (scoring, report generation) leave them unset.
+    investigation_id: str | None = Field(default=None, index=True)
+    branch_id: str | None = Field(default=None, index=True)
+    turn_number: int | None = Field(default=None)
     model_id: str = Field(index=True)
     task_type: str = Field(default="", index=True)
     prompt_tokens: int = Field(default=0)

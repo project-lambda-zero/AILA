@@ -36,6 +36,11 @@ class VRMcpCallLogRecord(SQLModel, table=True):
     error_excerpt: str | None = Field(default=None, sa_column=Column(Text))
     target_id: str | None = Field(default=None, max_length=36, index=True)
     team_id: str | None = Field(default=None, max_length=36)
+    # #39 observability join keys: correlate a tool call back to the
+    # investigation, branch, and turn that requested it.
+    investigation_id: str | None = Field(default=None, max_length=36, index=True)
+    branch_id: str | None = Field(default=None, max_length=36, index=True)
+    turn_number: int | None = Field(default=None)
     called_at: datetime = Field(
         default_factory=utc_now,
         sa_type=DateTime(timezone=True),

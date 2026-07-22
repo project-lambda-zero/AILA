@@ -15,6 +15,15 @@ credential defaults changed and may require caller action.
 
 ### Added
 
+- Observability join keys on cost and MCP-call records (#39):
+  `llm_cost_records` and `vr_mcp_call_log` gain nullable
+  `investigation_id`, `branch_id`, and `turn_number` columns. The agent
+  turn loop sets an ambient correlation (a ContextVar) before it drives
+  the LLM and MCP calls, and the cost-record writer and VR MCP-call
+  logger stamp it, so a cost row or a tool-call row can be joined back to
+  the investigation, branch, and turn that produced it. Calls outside a
+  turn (scoring, report generation) leave the columns null. Migration
+  082 adds the columns and their indexes.
 - Append-only, hash-chained platform journal for tamper-evident audit;
   the CLI audit trail now writes to it. (C2)
 - Evidence packs sealed with a merkle digest so later tampering is

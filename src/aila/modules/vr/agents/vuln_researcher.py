@@ -72,6 +72,7 @@ from aila.platform.contracts.reasoning import (
     ReasoningTurnDecision,
     ResolvedHypothesis,
 )
+from aila.platform.llm.correlation import correlation_scope
 from aila.platform.llm.idempotency_cache import (
     lookup_cached_response,
     make_request_key,
@@ -380,12 +381,17 @@ class HonestVulnResearcher:
 
         if decision is None:
             try:
-                decision = await self._engine.decide_next_turn(
-                    task_type=task_type,
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    run_id=self.investigation_id,
-                )
+                with correlation_scope(
+                    investigation_id=self.investigation_id,
+                    branch_id=self.branch_id,
+                    turn_number=turn_number,
+                ):
+                    decision = await self._engine.decide_next_turn(
+                        task_type=task_type,
+                        system_prompt=system_prompt,
+                        user_prompt=user_prompt,
+                        run_id=self.investigation_id,
+                    )
             except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError) as exc:
                 # must surface as VulnResearcherError so the loop catches
                 # it, marks exit_reason='researcher_error:<msg>', and

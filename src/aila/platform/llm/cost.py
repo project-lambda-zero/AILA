@@ -277,9 +277,11 @@ async def persist_cost_record(
             after the cost record is committed.
     """
     try:
+        from aila.platform.llm.correlation import current_join_keys
         from aila.platform.llm.cost_record import LLMCostRecord
         from aila.storage.database import async_session_scope
 
+        _inv, _branch, _turn = current_join_keys()
         record = LLMCostRecord(
             run_id=run_id or "_no_run",
             model_id=model_id,
@@ -292,6 +294,9 @@ async def persist_cost_record(
             response_preview=_make_preview(response_preview),
             duration_ms=duration_ms,
             status=status or "ok",
+            investigation_id=_inv,
+            branch_id=_branch,
+            turn_number=_turn,
         )
 
         async with async_session_scope() as session:
