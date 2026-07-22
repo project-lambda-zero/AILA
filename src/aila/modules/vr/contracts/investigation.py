@@ -20,6 +20,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from aila.platform.contracts.enums import InvestigationPauseReason, InvestigationStatus
+
 __all__ = [
     "InvestigationKind",
     "InvestigationPauseReason",
@@ -47,32 +49,6 @@ class InvestigationKind(StrEnum):
     N_DAY = "n_day"
     AUDIT = "audit"
     MASVS_AUDIT = "masvs_audit"
-
-
-class InvestigationStatus(StrEnum):
-    """Lifecycle states for an investigation."""
-
-    CREATED = "created"
-    RUNNING = "running"
-    PAUSED = "paused"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    ABANDONED = "abandoned"
-
-
-class InvestigationPauseReason(StrEnum):
-    """Why an investigation entered the PAUSED state.
-
-    Used by the resumer worker (M3.R-6) to decide whether to auto-resume
-    (e.g. awaiting_campaign once the campaign finishes) or wait for
-    operator action.
-    """
-
-    OPERATOR = "operator"
-    LOW_CONFIDENCE = "low_confidence"
-    COST_BUDGET = "cost_budget"
-    AWAITING_CAMPAIGN = "awaiting_campaign"
-    AWAITING_MCP = "awaiting_mcp"
 
 
 class VRInvestigationCreate(BaseModel):

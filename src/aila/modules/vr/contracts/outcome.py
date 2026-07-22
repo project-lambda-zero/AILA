@@ -27,6 +27,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from aila.platform.contracts.enums import OutcomeConfidence, OutcomeDispatchStatus
+
 __all__ = [
     "OutcomeConfidence",
     "OutcomeDispatchStatus",
@@ -50,25 +52,6 @@ class OutcomeKind(StrEnum):
     CRASH_TRIAGE_REPORT = "crash_triage_report"
     CAMPAIGN_LAUNCH = "campaign_launch"
     SUB_INVESTIGATION = "sub_investigation"
-
-
-class OutcomeConfidence(StrEnum):
-    """Engine's confidence in the outcome (matches ReasoningConfidence)."""
-
-    EXACT = "exact"
-    STRONG = "strong"
-    MEDIUM = "medium"
-    CAVEATED = "caveated"
-    UNKNOWN = "unknown"
-
-
-class OutcomeDispatchStatus(StrEnum):
-    """State of downstream dispatch after the outcome is accepted."""
-
-    PENDING = "pending"
-    DISPATCHED = "dispatched"
-    FAILED = "failed"
-    SKIPPED = "skipped"
 
 
 class VROutcomeCreate(BaseModel):

@@ -8,48 +8,14 @@ ephemeral cards).
 """
 from __future__ import annotations
 
-from typing import Any
-
-from pydantic import BaseModel, ConfigDict, Field
+from aila.platform.contracts.evidence_graph import (
+    EvidenceGraphEdge,
+    EvidenceGraphNode,
+    EvidenceGraphSnapshot,
+)
 
 __all__ = [
     "EvidenceGraphEdge",
     "EvidenceGraphNode",
     "EvidenceGraphSnapshot",
 ]
-
-
-class EvidenceGraphNode(BaseModel):
-    """One node in an evidence graph snapshot."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    id: str
-    kind: str  # "investigation" | "branch" | "outcome" | "hypothesis" | …
-    label: str
-    state: str = ""
-    x: float
-    y: float
-    attributes: dict[str, Any] = Field(default_factory=dict)
-
-
-class EvidenceGraphEdge(BaseModel):
-    """One directed edge between graph nodes."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    source: str
-    target: str
-    kind: str  # "spawned" | "produced" | "rejects" | "supports" | …
-    attributes: dict[str, Any] = Field(default_factory=dict)
-
-
-class EvidenceGraphSnapshot(BaseModel):
-    """Layout-resolved evidence graph for one investigation."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    investigation_id: str
-    layout: str = "concentric"  # "concentric" | "radial" | "grid"
-    nodes: list[EvidenceGraphNode] = Field(default_factory=list)
-    edges: list[EvidenceGraphEdge] = Field(default_factory=list)
