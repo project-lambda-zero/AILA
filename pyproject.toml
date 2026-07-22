@@ -266,10 +266,10 @@ ignore = [
 # queue, NOT from untrusted input. Replacing pickle would mean
 # re-encoding every queued job during a long deploy.
 "src/aila/platform/tasks/arq_purge.py" = ["PLC0415", "S301"]
-# malware/services/branch_reaper.py: N806 for SQLAlchemy ORM uppercase
+# platform/services/branch_reaper.py: N806 for SQLAlchemy ORM uppercase
 # aliases (BR, INV) following the standard convention used across
 # every sweep helper.
-"src/aila/modules/malware/services/branch_reaper.py" = ["N806"]
+"src/aila/platform/services/branch_reaper.py" = ["N806"]
 # malware/services/config_helpers.py: PLW0603 for the lazy registry
 # singleton (one instance per worker; constructed once on first read).
 "src/aila/modules/malware/services/config_helpers.py" = ["PLW0603"]
@@ -300,7 +300,6 @@ ignore = [
 "src/aila/modules/vr/reporting/pdf_report.py" = ["N802", "S603", "S607"]
 "src/aila/modules/vr/reporting/writer_agent.py" = ["PLC0415"]
 "src/aila/modules/vr/runtime.py" = ["PLC0415"]
-"src/aila/modules/vr/services/branch_reaper.py" = ["N806"]
 "src/aila/modules/vr/services/cve_intel_resolver.py" = ["PLC0415"]
 "src/aila/modules/vr/services/investigation_finalizers.py" = ["PLC0415"]
 "src/aila/modules/vr/services/investigation_reaper.py" = ["N806", "PLC0415"]
