@@ -136,8 +136,9 @@ def resolve_provider(model_name: str | None = None) -> BGEProvider | MiniLMProvi
     """Resolve an EmbeddingProvider by config key value.
 
     Args:
-        model_name: Value from ConfigRegistry key ``knowledge.embedding_model``.
-            None or unrecognized values fall back to DEFAULT_EMBEDDING_MODEL.
+        model_name: Value from the platform config key
+            ``knowledge_embedding_model``. None or unrecognized values fall
+            back to DEFAULT_EMBEDDING_MODEL.
 
     Returns:
         An instantiated provider satisfying EmbeddingProvider protocol.

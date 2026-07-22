@@ -25,7 +25,7 @@ __all__ = [
 # written by one path and queried by the other land in incompatible embedding
 # spaces and retrieval returns garbage. Both paths now go through
 # KnowledgeService.embed (canonical resolve_provider selection + the shared
-# 384-dim truncation), so a single cached service is reused here.
+# 1024-dim BGE-M3 space), so a single cached service is reused here.
 _KNOWLEDGE_SERVICE = None
 _SERVICE_LOCK = threading.Lock()
 
@@ -219,7 +219,7 @@ class KnowledgeRetrieveTool(Tool):
         query = require_text(query, tool_name="KnowledgeRetrieveTool", field_name="query")
         limit = normalize_limit(limit, default=10, maximum=50)
         # #37: embed the query via KnowledgeService so the retrieve path uses
-        # the same provider + 384-dim space as the stored vectors.
+        # the same provider + 1024-dim space as the stored vectors.
         query_embedding = await run_blocking_io(_knowledge_service().embed, query)
         candidate_limit = limit * 10
 

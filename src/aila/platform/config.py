@@ -199,6 +199,13 @@ class PlatformConfigSchema(BaseModel):
     # Operator sets their market rate; USD conversion = estimated_hours * rate.
     llm_human_consultant_hourly_rate: float = 150.0
 
+    # Knowledge base embedding provider (#49). Selects the EmbeddingProvider
+    # resolved by KnowledgeService: "bge-m3" (1024-dim, default) or
+    # "all-MiniLM-L6-v2" (384-dim, zero-padded to the 1024 column). Read once
+    # per process at service construction; a change needs a re-embed and a
+    # worker/service restart to take effect.
+    knowledge_embedding_model: str = "bge-m3"
+
     # SMTP delivery for scheduled reports (#45 -- ghost config keys).
     # report_tasks.py reads these through ConfigRegistry, but they were never
     # declared here, so the registry never seeded them and

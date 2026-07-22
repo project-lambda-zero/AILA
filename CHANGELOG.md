@@ -77,6 +77,9 @@ credential defaults changed and may require caller action.
   the pipeline gate and verify overrides, ...) are declared as typed
   dynamic-key families, so an open key space stays settable and cast on
   read through the same contract as static fields. (#45)
+- The knowledge base embedding provider is selected by the platform
+  config key `knowledge_embedding_model` (default `bge-m3`), read once
+  when a KnowledgeService is constructed. (#49)
 
 ### Changed
 

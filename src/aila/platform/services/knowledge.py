@@ -1,7 +1,8 @@
 """KnowledgeService -- agent knowledge store, RAG retrieval, memory operations per D-02.
 
 Per D-08: embed() delegates to a swappable EmbeddingProvider. Default is
-BGE-M3 (1024-dim). Config key: knowledge.embedding_model.
+BGE-M3 (1024-dim), selected by the platform config key
+``knowledge_embedding_model`` (read once per process at construction).
 
 Per D-09: supports three namespace categories:
   - agent:{name} -- auto-populated by agents (existing)
@@ -28,7 +29,31 @@ from sqlmodel import select, update
 from ...platform.contracts._common import utc_now
 from ...storage.database import async_session_scope
 from ...storage.db_models import KnowledgeEntryRecord
+from ...storage.registry import ConfigRegistry
 from .embedding import EmbeddingProvider, resolve_provider
+
+_UNSET = object()
+_configured_model_cache: object = _UNSET
+
+
+def _configured_embedding_model() -> str | None:
+    """Return the operator-configured embedding model name (platform config key
+    ``knowledge_embedding_model``), or None to use the provider default.
+
+    Memoized process-wide: the config is read once, so per-access service
+    construction pays no repeated DB cost and a change takes effect on the next
+    worker/service restart (an embedding-model change requires a re-embed
+    anyway).
+    """
+    global _configured_model_cache
+    if _configured_model_cache is _UNSET:
+        try:
+            _configured_model_cache = ConfigRegistry().get_sync(
+                "platform", "knowledge_embedding_model"
+            )
+        except (OSError, RuntimeError, ValueError):
+            _configured_model_cache = None
+    return _configured_model_cache  # type: ignore[return-value]
 
 
 @asynccontextmanager
@@ -128,7 +153,8 @@ class KnowledgeService:
     """Agent knowledge store, RAG retrieval, memory operations per D-02.
 
     Per D-08: embed() delegates to a swappable EmbeddingProvider. Default is
-    BGE-M3 (1024-dim). Config key: knowledge.embedding_model.
+    BGE-M3 (1024-dim), selected by the platform config key
+    ``knowledge_embedding_model``.
 
     Per D-09: supports three namespace categories:
       - agent:{name} -- auto-populated by agents (existing)
@@ -142,7 +168,7 @@ class KnowledgeService:
         self,
         provider: EmbeddingProvider | None = None,
     ) -> None:
-        self._provider = provider or resolve_provider()
+        self._provider = provider or resolve_provider(_configured_embedding_model())
 
     @property
     def provider(self) -> EmbeddingProvider:
