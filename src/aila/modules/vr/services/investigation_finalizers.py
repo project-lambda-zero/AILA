@@ -190,11 +190,12 @@ async def synthesize_no_finding_outcomes(
                         updated_at=now,
                     ),
                 )
-                from aila.modules.vr.services.branch_cleanup import (
+                from aila.platform.services.branch_cleanup import (
                     close_orphan_branches_on_terminal,
                 )
                 await close_orphan_branches_on_terminal(
-                    uow, inv_id, reason="investigation_completed", now=now,
+                    uow, inv_id, branch_table="vr_investigation_branches",
+                    reason="investigation_completed", now=now,
                 )
                 synthesized += 1
             except (SQLAlchemyError, ImportError, RuntimeError) as exc:
@@ -243,11 +244,12 @@ async def synthesize_no_finding_outcomes(
                         updated_at=now,
                     ),
                 )
-                from aila.modules.vr.services.branch_cleanup import (
+                from aila.platform.services.branch_cleanup import (
                     close_orphan_branches_on_terminal,
                 )
                 await close_orphan_branches_on_terminal(
-                    uow, inv_id, reason="zero_turn_no_progress", now=now,
+                    uow, inv_id, branch_table="vr_investigation_branches",
+                    reason="zero_turn_no_progress", now=now,
                 )
                 synthesized += 1
                 _log.info(
@@ -327,11 +329,12 @@ async def synthesize_no_finding_outcomes(
                     updated_at=now,
                 ),
             )
-            from aila.modules.vr.services.branch_cleanup import (
+            from aila.platform.services.branch_cleanup import (
                 close_orphan_branches_on_terminal,
             )
             await close_orphan_branches_on_terminal(
-                uow, inv_id, reason="investigation_completed", now=now,
+                uow, inv_id, branch_table="vr_investigation_branches",
+                reason="investigation_completed", now=now,
             )
             synthesized += 1
         except (SQLAlchemyError, ImportError, RuntimeError) as exc:

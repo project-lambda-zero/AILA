@@ -69,7 +69,6 @@ from aila.modules.vr.db_models import (
     VRTargetRecord,
 )
 from aila.modules.vr.db_models.outcome_review import VRInvestigationOutcomeReviewRecord
-from aila.modules.vr.services.branch_cleanup import close_orphan_branches_on_terminal
 from aila.modules.vr.services.config_helpers import get_int
 
 # Phase C moved the implementations of these helpers out of this
@@ -90,6 +89,7 @@ from aila.modules.vr.services.investigation_finalizers import (
 from aila.modules.vr.services.outcome_review import evaluate_quorum
 from aila.modules.vr.workflow.task import run_vr_investigate
 from aila.platform.contracts import utc_now
+from aila.platform.services.branch_cleanup import close_orphan_branches_on_terminal
 from aila.platform.tasks.models import TaskRecord
 from aila.platform.uow import UnitOfWork
 
@@ -542,7 +542,8 @@ async def _enforce_total_turn_cap(uow: UnitOfWork) -> int:
             target_inv.updated_at = now
             uow.session.add(target_inv)
             await close_orphan_branches_on_terminal(
-                uow, inv_id, reason="investigation_completed", now=now,
+                uow, inv_id, branch_table="vr_investigation_branches",
+                reason="investigation_completed", now=now,
             )
 
         force_closed += 1
@@ -1287,6 +1288,7 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
                     # BLOCK-state cleanup bug this guards against.
                     await close_orphan_branches_on_terminal(
                         uow, parent_id,
+                        branch_table="vr_investigation_branches",
                         reason="investigation_completed",
                         now=now,
                     )

@@ -58,7 +58,6 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
     VRTargetRecord,
 )
-from aila.modules.vr.services.branch_cleanup import close_orphan_branches_on_terminal
 from aila.modules.vr.services.outcome_review import (
     OUTCOME_STATE_APPROVED,
     OUTCOME_STATE_DISPATCHED,
@@ -67,6 +66,7 @@ from aila.modules.vr.services.outcome_review import (
     set_outcome_state,
 )
 from aila.platform.contracts import utc_now
+from aila.platform.services.branch_cleanup import close_orphan_branches_on_terminal
 from aila.platform.services.knowledge import KnowledgeService
 from aila.platform.tasks.arq_purge import purge_arq_jobs_for_investigation
 from aila.platform.uow import UnitOfWork
@@ -1425,9 +1425,10 @@ class OutcomeDispatcher:
         uow.session.add(inv)
         # Phase C surgical (BLOCK fix): keep branches projection in
         # lockstep with the inv terminal flip. See
-        # services/branch_cleanup.py.
+        # aila.platform.services.branch_cleanup.
         await close_orphan_branches_on_terminal(
-            uow, inv.id, reason="investigation_completed", now=now,
+            uow, inv.id, branch_table="vr_investigation_branches",
+            reason="investigation_completed", now=now,
         )
 
     async def _purge_arq_with_retry(

@@ -41,7 +41,6 @@ from aila.modules.vr.db_models import (
     VRInvestigationOutcomeRecord,
     VRInvestigationRecord,
 )
-from aila.modules.vr.services.branch_cleanup import close_orphan_branches_on_terminal
 from aila.modules.vr.services.outcome_review import (
     OUTCOME_STATE_APPROVED,
     evaluate_quorum,
@@ -50,6 +49,7 @@ from aila.modules.vr.services.outcome_review import (
 from aila.modules.vr.services.pattern_store import PatternStore
 from aila.modules.vr.workflow.finalize import finalize_investigation
 from aila.platform.contracts import utc_now
+from aila.platform.services.branch_cleanup import close_orphan_branches_on_terminal
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.tasks.arq_purge import purge_arq_jobs_for_investigation
 from aila.platform.uow import UnitOfWork
@@ -530,7 +530,7 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                 # land a terminal inv.status, close any orphan
                 # ``active`` branches in the same UoW so the operator
                 # never sees a completed investigation with a branch
-                # chip still pulsing. See services/branch_cleanup.py
+                # chip still pulsing. See aila.platform.services.branch_cleanup
                 # describing the rationale and the reported bug
                 # (inv <inv-uuid> / wei branch).
                 if inv.status in (
@@ -545,6 +545,7 @@ async def state_investigation_emit(input: dict[str, Any], services: Any) -> Stat
                     }
                     await close_orphan_branches_on_terminal(
                         uow, investigation_id,
+                        branch_table="vr_investigation_branches",
                         reason=_reason_map[inv.status],
                         now=now,
                     )

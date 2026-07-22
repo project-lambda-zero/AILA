@@ -379,6 +379,10 @@ ignore = [
 "src/aila/platform/modules/registry.py" = ["PLC0415"]
 "src/aila/platform/routing/router.py" = ["PLC0415", "BLE001"]
 "src/aila/platform/runtime/builder.py" = ["PLC0415"]
+# branch_cleanup.py: S608 because the branch table name is interpolated into
+# the UPDATE. It is a trusted module constant (a table identifier cannot be a
+# bind parameter), never user input.
+"src/aila/platform/services/branch_cleanup.py" = ["S608"]
 "src/aila/platform/services/embedding.py" = ["PLC0415"]
 "src/aila/platform/services/health_probes.py" = ["PLC0415", "BLE001"]
 "src/aila/platform/services/knowledge.py" = ["PLC0415"]
