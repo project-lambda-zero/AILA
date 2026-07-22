@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -53,7 +53,7 @@ class VulnFindingsPayload(BaseModel):
 class VulnAnalysisPayload(BaseModel):
     """module_payload when action ran a live fleet analysis."""
 
-    query_mode: Literal["report_analyze"] | None = None
+    query_mode: Literal["report_analyze"] = "report_analyze"
     summary: JsonObject = Field(default_factory=dict)
     analysis: JsonObject = Field(default_factory=dict)
     notes: list[str] = Field(default_factory=list)
@@ -82,12 +82,14 @@ class VulnExplainPayload(BaseModel):
 class PlatformRegistryPayload(BaseModel):
     """module_payload for platform SSH integration actions."""
 
+    query_mode: Literal["ssh_registry"] = "ssh_registry"
     registry: JsonObject = Field(default_factory=dict)
 
 
 class PlatformCommandPayload(BaseModel):
     """module_payload for remote command execution results."""
 
+    query_mode: Literal["remote_command"] = "remote_command"
     command: str = ""
     requested_targets: list[str] = Field(default_factory=list)
     run_all_targets: bool = False
@@ -100,9 +102,20 @@ class PlatformCommandPayload(BaseModel):
 # Discriminated union
 # ---------------------------------------------------------------------------
 
-# Pydantic v2 tries each member in order; query_mode-bearing members come
-# first so they discriminate before the catch-all registry/command models.
-ModulePayload = (
+class UnroutablePayload(BaseModel):
+    """module_payload when the router could not confidently route the query."""
+
+    query_mode: Literal["unroutable"] = "unroutable"
+    supported_actions: list[str] = Field(default_factory=list)
+
+
+# Real Pydantic v2 discriminated union keyed on ``query_mode``: the tag selects
+# exactly one member instead of first-match guessing, so a dict can no longer
+# silently satisfy the wrong model (#61). Free-form module payloads (forensics,
+# hello_world, and _template dump arbitrary result dicts) carry no query_mode
+# and fall through to the ``dict[str, Any]`` arm on PlatformResponse rather than
+# being coerced into an unrelated member.
+ModulePayload = Annotated[
     VulnSummaryPayload
     | VulnCountPayload
     | VulnFindingsPayload
@@ -111,7 +124,9 @@ ModulePayload = (
     | VulnExplainPayload
     | PlatformRegistryPayload
     | PlatformCommandPayload
-)
+    | UnroutablePayload,
+    Field(discriminator="query_mode"),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -158,9 +173,13 @@ class PlatformResponse(BaseModel):
         default=None,
         description="Routing decision that selected the module and action.",
     )
-    module_payload: ModulePayload | None = Field(
+    module_payload: ModulePayload | dict[str, Any] | None = Field(
         default=None,
-        description="Typed action-specific payload. Shape depends on action_id.",
+        description=(
+            "Action-specific payload. A dict carrying a known query_mode is "
+            "validated as the matching discriminated member; a free-form module "
+            "result dict passes through untyped. Shape depends on action_id."
+        ),
     )
     artifacts: dict[str, str] = Field(
         default_factory=dict,
@@ -185,6 +204,7 @@ __all__ = [
     "PlatformRegistryPayload",
     "PlatformResponse",
     "RunState",
+    "UnroutablePayload",
     "VulnAnalysisPayload",
     "VulnCountPayload",
     "VulnExplainPayload",

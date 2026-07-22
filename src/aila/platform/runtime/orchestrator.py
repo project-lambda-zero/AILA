@@ -262,7 +262,7 @@ def _build_unknown_response(
         action_id=UNROUTABLE_ACTION_ID,
         message=message,
         route=run_state.route,
-        module_payload={"supported_actions": supported_actions},
+        module_payload={"query_mode": "unroutable", "supported_actions": supported_actions},
         state_history=run_state.events,
     )
 

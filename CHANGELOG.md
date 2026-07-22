@@ -283,6 +283,14 @@ Platform, async, and correctness:
 - Malware observation dict-value payloads are size-capped on persist.
   (#61)
 
+- `PlatformResponse.module_payload` is a real Pydantic discriminated
+  union keyed on `query_mode`, so a response dict validates as exactly
+  the member its tag names instead of silently matching the first
+  structurally-compatible model (#61). A free-form module result dict
+  (forensics, hello_world, and the module template return arbitrary
+  shapes with no `query_mode`) now passes through untyped rather than
+  being coerced into an unrelated member and losing its data; the
+  unroutable response gained a dedicated typed member.
 - Recovery paths that failed open now fail closed (#31):
   - The investigation rate limiter defers by a bounded step when it
     cannot read in-flight task load, instead of returning a zero defer
