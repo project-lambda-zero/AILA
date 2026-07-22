@@ -243,7 +243,12 @@ class LLMConfigProvider:
         """Check if a pipeline step is enabled for a task_type.
 
         Reads key ``llm_pipeline_{step}_{task_type}`` from ConfigRegistry.
-        Missing key (None) means enabled (True).
+        When that per-task-type key is unset, falls back to the declared
+        static key ``llm_pipeline_{step}_default`` (classify/validate/gate/
+        seal=True, verify=False -- see PlatformConfigSchema) so operator
+        overrides via PUT /config take effect without requiring a per-task-
+        type write. Steps without a declared ``_default`` (e.g. sanitize)
+        resolve None again and keep the fail-open True below.
 
         Args:
             step: Pipeline step name (e.g. "classify").
@@ -253,6 +258,8 @@ class LLMConfigProvider:
             True if the step should run, False if disabled.
         """
         val = await self._registry.get("platform", f"llm_pipeline_{step}_{task_type}")
+        if val is None:
+            val = await self._registry.get("platform", f"llm_pipeline_{step}_default")
         if val is None:
             return True
         if isinstance(val, bool):

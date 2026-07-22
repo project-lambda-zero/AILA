@@ -143,13 +143,19 @@ class CostTracker:
         """Read budget ceiling from ConfigRegistry.
 
         Looks up ``llm_budget_max_total_tokens_{task_type}`` in the
-        ``platform`` namespace.  Returns 0 (unlimited) if the key is
-        missing or cannot be converted to int.
+        ``platform`` namespace. When that per-task-type key is unset,
+        falls back to the declared static key
+        ``llm_budget_max_total_tokens_default`` (schema default 0 =
+        unlimited) so an operator can set a global cap without writing
+        one row per task_type. Returns 0 (unlimited) when neither key
+        resolves or the value cannot be converted to int.
         """
         # Use get_sync here (sync method): the async get produced an un-awaited
         # coroutine that was not None and failed conversion, so the budget
         # ceiling silently resolved to 0 -- dead code (issue #38).
         raw = self._registry.get_sync("platform", f"llm_budget_max_total_tokens_{task_type}")
+        if raw is None:
+            raw = self._registry.get_sync("platform", "llm_budget_max_total_tokens_default")
         if raw is None:
             return 0
         try:

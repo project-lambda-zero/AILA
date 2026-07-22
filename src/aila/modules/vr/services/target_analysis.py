@@ -41,6 +41,7 @@ from aila.modules.vr.contracts.target_stages import (
     StageStatus,
 )
 from aila.modules.vr.db_models import VRTargetRecord
+from aila.modules.vr.services.config_helpers import get_float
 from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.modules.vr.services.stage_tracker import (
     StageAlreadyDoneError,
@@ -67,34 +68,14 @@ __all__ = [
 _log = logging.getLogger(__name__)
 
 _POLL_INTERVAL_SECONDS = 3.0
-# fix §241 -- operator-overridable poll timeout. Default 14400 (4h)
+# fix \u00a7241 -- operator-overridable poll timeout. Default 14400 (4h)
 # fits the chromium / firefox / android-mcp ingestion envelope; large
 # monorepos (chromium ~30min observed, mainline kernel possibly more)
-# benefit from an extension knob. Read once at module load -- workers
-# pick up changes on restart, which matches the rest of the VR env
-# surface (VR_*_TIMEOUT_S constants).
-def _read_poll_timeout_env() -> float:
-    raw = os.environ.get("VR_INGESTION_POLL_TIMEOUT_S")
-    if not raw:
-        return 14400.0
-    try:
-        value = float(raw)
-    except ValueError:
-        _log.warning(
-            "VR_INGESTION_POLL_TIMEOUT_S=%r is not a number -- using default 14400s",
-            raw,
-        )
-        return 14400.0
-    if value <= 0:
-        _log.warning(
-            "VR_INGESTION_POLL_TIMEOUT_S=%r is non-positive -- using default 14400s",
-            raw,
-        )
-        return 14400.0
-    return value
-
-
-_POLL_TIMEOUT_SECONDS = _read_poll_timeout_env()
+# benefit from an extension knob. Resolved at USE site via
+# ConfigRegistry (namespace=vr, key=ingestion_poll_timeout_s); the
+# schema field enforces ge=60.0 so a bad override cannot fall to 0.
+# PUT /config or the AILA_VR_INGESTION_POLL_TIMEOUT_S env var picks
+# up on the next call without a worker restart.
 
 
 # fix §268, §269 -- artifact-file storage for the heavy android-mcp
@@ -663,11 +644,12 @@ class TargetAnalysisService:
             return
 
         # Legacy INGESTION flow -- source_repo / binary kinds / CVE etc.
+        poll_timeout_s = await get_float("ingestion_poll_timeout_s")
         try:
             async with StageTracker(
                 target_id,
                 StageName.INGESTION,
-                stage_timeout_s=_POLL_TIMEOUT_SECONDS,
+                stage_timeout_s=poll_timeout_s,
             ) as tracker:
                 # Re-read inside the tracker -- the row may have changed
                 # between the dispatch-time load above and the tracker
@@ -1181,10 +1163,11 @@ class TargetAnalysisService:
                 f"audit_mcp.index_codebase returned no index_id: {kickoff!r}",
             )
 
-        # fix §270 -- long-tail audit-mcp indexing on a unified Java +
-        # React tree can run for hours, bounded by _POLL_TIMEOUT_SECONDS
-        # (default 4h, operator-overridable via VR_INGESTION_POLL_TIMEOUT_S).
-        # Inline poll at 60s intervals -- see prior §270 fallback note.
+        # fix \u00a7270 -- long-tail audit-mcp indexing on a unified Java +
+        # React tree can run for hours, bounded by the ingestion poll
+        # timeout (schema default 4h, operator-tunable via
+        # ConfigRegistry vr/ingestion_poll_timeout_s). Inline poll at
+        # 60s intervals -- see prior \u00a7270 fallback note.
         await self._poll_audit_mcp(index_id, interval_s=60.0)
 
         await self._merge_handles_locked(target_id, {
@@ -1524,7 +1507,8 @@ class TargetAnalysisService:
     # ─── polling ────────────────────────────────────────────────────────
 
     async def _poll_ida(self, binary_id: str) -> None:
-        deadline = utc_now().timestamp() + _POLL_TIMEOUT_SECONDS
+        poll_timeout_s = await get_float("ingestion_poll_timeout_s")
+        deadline = utc_now().timestamp() + poll_timeout_s
         while utc_now().timestamp() < deadline:
             resp = await self._ida.forward(
                 action="poll_analysis", binary_id=binary_id,
@@ -1538,7 +1522,7 @@ class TargetAnalysisService:
                 )
             await asyncio.sleep(_POLL_INTERVAL_SECONDS)
         raise TargetAnalysisError(
-            f"ida analysis timed out after {_POLL_TIMEOUT_SECONDS:.0f}s",
+            f"ida analysis timed out after {poll_timeout_s:.0f}s",
         )
 
     async def _poll_audit_mcp(
@@ -1547,16 +1531,18 @@ class TargetAnalysisService:
         """Poll ``audit_mcp.poll_index`` until READY / FAILED / timeout.
 
         ``interval_s`` overrides the default ``_POLL_INTERVAL_SECONDS``
-        (3.0). The override exists for §270 -- long-tail audit-mcp
+        (3.0). The override exists for \u00a7270 -- long-tail audit-mcp
         indexing (decompiled APK Java trees in particular: trailmark +
         semble cold-build on a ~100k-class jadx output can run for
-        hours) is still bound by ``_POLL_TIMEOUT_SECONDS`` (default 4h)
-        but doesn't need a 3-second poll cadence the entire way. A 60s
+        hours) is still bound by the ingestion poll timeout (schema
+        default 4h, ConfigRegistry vr/ingestion_poll_timeout_s) but
+        doesn't need a 3-second poll cadence the entire way. A 60s
         cadence cuts the per-call HTTP traffic to audit-mcp by 20x and
         keeps log noise proportional to the wait.
         """
         sleep_for = interval_s if interval_s is not None else _POLL_INTERVAL_SECONDS
-        deadline = utc_now().timestamp() + _POLL_TIMEOUT_SECONDS
+        poll_timeout_s = await get_float("ingestion_poll_timeout_s")
+        deadline = utc_now().timestamp() + poll_timeout_s
         while utc_now().timestamp() < deadline:
             resp = await self._audit_mcp.forward(
                 action="poll_index", index_id=index_id,
@@ -1570,7 +1556,7 @@ class TargetAnalysisService:
                 )
             await asyncio.sleep(sleep_for)
         raise TargetAnalysisError(
-            f"audit_mcp index timed out after {_POLL_TIMEOUT_SECONDS:.0f}s",
+            f"audit_mcp index timed out after {poll_timeout_s:.0f}s",
         )
 
     # ─── DB transitions ─────────────────────────────────────────────────

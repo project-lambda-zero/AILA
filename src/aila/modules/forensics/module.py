@@ -128,15 +128,22 @@ class ForensicsModule(ModuleProtocol):
             )
 
         if registry is not None:
-            from aila.modules.forensics.config_schema import FORENSICS_LLM_MODEL, ForensicsConfigSchema
+            from aila.modules.forensics.config_schema import ForensicsConfigSchema
             await registry.register(self.module_id, ForensicsConfigSchema)
 
+            # Resolve forensics.llm_model via ConfigRegistry so an operator
+            # override persisted before worker startup wins over the schema
+            # default. An empty-string value opts out (schema doc: falls back
+            # to the platform default) so we skip seeding the env in that case.
             import os
-            for task_type in ("forensics_freeflow", "forensics_resolver", "forensics_writeup"):
-                env_key = f"AILA_PLATFORM_LLM_MODEL_{task_type.upper()}"
-                if not os.environ.get(env_key):
-                    os.environ[env_key] = FORENSICS_LLM_MODEL
-                    _log.info("Seeded %s=%s for forensics LLM routing", env_key, FORENSICS_LLM_MODEL)
+            llm_model_value = await registry.get(self.module_id, "llm_model")
+            llm_model_str = str(llm_model_value) if llm_model_value is not None else ""
+            if llm_model_str:
+                for task_type in ("forensics_freeflow", "forensics_resolver", "forensics_writeup"):
+                    env_key = f"AILA_PLATFORM_LLM_MODEL_{task_type.upper()}"
+                    if not os.environ.get(env_key):
+                        os.environ[env_key] = llm_model_str
+                        _log.info("Seeded %s=%s for forensics LLM routing", env_key, llm_model_str)
 
         for spec in iter_tool_specs():
             tool_registry.register(spec.key(), spec.factory(settings))

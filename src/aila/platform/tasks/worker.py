@@ -18,6 +18,7 @@ from aila.platform.contracts._common import utc_now
 from aila.platform.llm.drift import run_purge_old_records_cron as _drift_purge_cron
 from aila.platform.llm.idempotency_cache import run_purge_expired_cron
 from aila.platform.modules import load_builtin_modules
+from aila.platform.tasks import get_task_tuning
 from aila.platform.tasks.constants import (
     ARQ_DEAD_LETTER_KEY_TEMPLATE,
     ARQ_IN_PROGRESS_PREFIX,
@@ -366,8 +367,23 @@ async def _reconcile_orphan_arq_locks() -> None:
         if not lock_keys:
             return
         now = utc_now()
-        fresh_cutoff = now - timedelta(seconds=REAPER_ZOMBIE_THRESHOLD_S)
-        heartbeat_cutoff = now - timedelta(seconds=REAPER_HEARTBEAT_THRESHOLD_S)
+        # Read live via get_task_tuning (see aila.platform.tasks.__init__:
+        # get_sync -> sync engine, fresh registry per call so an operator PUT
+        # /config/platform/{key} takes effect on the next cron tick). The
+        # compiled constants remain the fallback when the DB is unreachable
+        # or the value is unset. Schema defaults match the constants
+        # (reaper_zombie_threshold_s=3300, reaper_heartbeat_threshold_s=86400)
+        # so behavior is unchanged unless an operator wrote an override.
+        fresh_cutoff = now - timedelta(
+            seconds=get_task_tuning(
+                "reaper_zombie_threshold_s", REAPER_ZOMBIE_THRESHOLD_S,
+            ),
+        )
+        heartbeat_cutoff = now - timedelta(
+            seconds=get_task_tuning(
+                "reaper_heartbeat_threshold_s", REAPER_HEARTBEAT_THRESHOLD_S,
+            ),
+        )
         lock_jobs = {k: k[len(ARQ_IN_PROGRESS_PREFIX):] for k in lock_keys}
         job_ids = list(lock_jobs.values())
 

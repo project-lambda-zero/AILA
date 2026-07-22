@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -44,6 +43,7 @@ from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
     VRInvestigationRecord,
 )
+from aila.modules.vr.services.config_helpers import get_int
 from aila.platform.contracts._common import utc_now
 from aila.platform.contracts.reasoning import (
     Hypothesis,
@@ -65,22 +65,18 @@ _log = logging.getLogger(__name__)
 # generations, comfortable headroom for legitimate operator branching
 # without permitting runaway fork-bombs (each fork enqueues one ARQ
 # task; uncapped fork cycles can exhaust the worker pool). Operator-
-# tunable via VR_MAX_BRANCHES_PER_INVESTIGATION at process start.
-_DEFAULT_MAX_BRANCHES_PER_INVESTIGATION = 24
+# tunable via ConfigRegistry (namespace=vr,
+# key=max_branches_per_investigation) or the AILA_VR_MAX_BRANCHES_PER_
+# INVESTIGATION env var. Schema default is 24; the field's ge=1
+# validator guarantees a positive cap so a typo cannot brick forking.
 
 
-def _max_branches_per_investigation() -> int:
-    raw = os.environ.get("VR_MAX_BRANCHES_PER_INVESTIGATION")
-    if not raw:
-        return _DEFAULT_MAX_BRANCHES_PER_INVESTIGATION
-    try:
-        parsed = int(raw)
-    except ValueError:
-        return _DEFAULT_MAX_BRANCHES_PER_INVESTIGATION
-    # Floor at 1 so a typo doesn't disable forking entirely; the cap
-    # itself is operator policy, but a 0/negative cap is almost
-    # certainly a config mistake (and would brick auto_deliberation).
-    return max(1, parsed)
+async def _max_branches_per_investigation() -> int:
+    # Floor at 1 so a config typo doesn't disable forking entirely;
+    # the cap itself is operator policy, but a 0/negative override
+    # (env var bypasses schema ge=1 validation) would brick auto
+    # deliberation.
+    return max(1, await get_int("max_branches_per_investigation"))
 
 
 @dataclass(slots=True)
@@ -137,7 +133,7 @@ class BranchManager:
             # first commit. Without it, an operator (or runaway agent)
             # could fork-bomb one investigation into hundreds of
             # branches, each consuming an ARQ task slot.
-            cap = _max_branches_per_investigation()
+            cap = await _max_branches_per_investigation()
             active_rows = (await uow.session.exec(
                 _select(VRInvestigationBranchRecord).where(
                     VRInvestigationBranchRecord.investigation_id
@@ -150,7 +146,7 @@ class BranchManager:
                 raise BranchManagerError(
                     f"branch count cap exceeded: {cap} active branches "
                     f"on investigation {self.investigation_id} "
-                    f"(tune via VR_MAX_BRANCHES_PER_INVESTIGATION)",
+                    f"(tune via PUT /config/vr/max_branches_per_investigation)",
                 )
 
             parent = await self._load_branch(uow, parent_branch_id, for_update=True)

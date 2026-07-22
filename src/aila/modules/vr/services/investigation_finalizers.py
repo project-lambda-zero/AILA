@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import json as _json
 import logging
-import os
 import uuid as _uuid
 from datetime import timedelta
 
@@ -51,6 +50,7 @@ from aila.modules.vr.db_models import (
 from aila.modules.vr.db_models.outcome_review import (
     VRInvestigationOutcomeReviewRecord,
 )
+from aila.modules.vr.services.config_helpers import get_int
 from aila.platform.contracts._common import utc_now
 from aila.platform.llm.client import is_llm_recently_unhealthy
 from aila.platform.uow import UnitOfWork
@@ -476,10 +476,10 @@ async def abandon_stale_branches_impl(uow: UnitOfWork) -> int:
          orphan, OmniRoute crash). The branch sits ``status=active`` so
          it blocks the parent investigation from auto-completing.
 
-    Thresholds (tunable via env):
-      ``VR_STALE_BRANCH_FROZEN_MIN`` (default 30): minutes of inactivity
+    Thresholds (tunable via ConfigRegistry namespace=vr):
+      ``stale_branch_frozen_min`` (default 30): minutes of inactivity
         before a branch with ``turn_count < 5`` is abandoned.
-      ``VR_STALE_BRANCH_HALTED_MIN`` (default 120): minutes of
+      ``stale_branch_halted_min`` (default 120): minutes of
         inactivity before a branch with ``turn_count >= 5`` is
         abandoned.
 
@@ -499,8 +499,8 @@ async def abandon_stale_branches_impl(uow: UnitOfWork) -> int:
             "stalled)",
         )
         return 0
-    frozen_min = int(os.environ.get("VR_STALE_BRANCH_FROZEN_MIN", "30"))
-    halted_min = int(os.environ.get("VR_STALE_BRANCH_HALTED_MIN", "120"))
+    frozen_min = await get_int("stale_branch_frozen_min")
+    halted_min = await get_int("stale_branch_halted_min")
     branch = VRInvestigationBranchRecord
     now = utc_now()
     frozen_cutoff = now - timedelta(minutes=frozen_min)

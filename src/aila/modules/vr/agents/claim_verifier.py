@@ -48,7 +48,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from typing import Any
 from uuid import uuid4
 
@@ -64,6 +63,7 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
     VRTargetRecord,
 )
+from aila.modules.vr.services.config_helpers import get_float
 from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.modules.vr.services.outcome_review import OUTCOME_STATE_APPROVED
 from aila.platform.contracts._common import utc_now
@@ -104,27 +104,14 @@ _NEGATIVE_ANSWER_SUBSTRINGS = (
     "PATCH IS IN PLACE",
 )
 
-# fix §345 -- env override for the auto-promote confidence floor.
-# 0.70 is the tuned default (matches the synthesis pipeline's
+# fix \u00a7345 -- operator override for the auto-promote confidence
+# floor. 0.70 is the tuned default (matches the synthesis pipeline's
 # medium/high threshold). Operators can bump it (e.g. 0.85) during
-# noisy investigation campaigns where verifier confirmation is
-# cheap but a false promote ships a wrong DIRECT_FINDING downstream.
-# Read at module load -- acceptable for a tuning knob; changing it
-# requires a worker restart, same as every other tunable in this file.
-_AUTO_PROMOTE_MIN_CONFIDENCE_DEFAULT = 0.70
-
-
-def _read_auto_promote_floor() -> float:
-    raw = os.environ.get("VR_CLAIM_VERIFIER_AUTO_PROMOTE_FLOOR")
-    if not raw:
-        return _AUTO_PROMOTE_MIN_CONFIDENCE_DEFAULT
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        return _AUTO_PROMOTE_MIN_CONFIDENCE_DEFAULT
-
-
-_AUTO_PROMOTE_MIN_CONFIDENCE = _read_auto_promote_floor()
+# noisy investigation campaigns where verifier confirmation is cheap
+# but a false promote ships a wrong DIRECT_FINDING downstream. Read
+# at USE site through ConfigRegistry (namespace=vr,
+# key=claim_verifier_auto_promote_floor) so PUT /config overrides
+# take effect on the next verifier run without a worker restart.
 
 
 def is_negative_finding_claim(answer: str) -> bool:
@@ -804,8 +791,9 @@ class ClaimVerifierAgent:
         if not isinstance(confidence, (int, float)):
             return {"status": "skipped", "reason": "no_numeric_confidence"}
         conf = float(confidence)
-        if conf < _AUTO_PROMOTE_MIN_CONFIDENCE:
-            return {"status": "skipped", "reason": f"confidence_below_floor:{conf:.2f}<{_AUTO_PROMOTE_MIN_CONFIDENCE}"}
+        floor = await get_float("claim_verifier_auto_promote_floor")
+        if conf < floor:
+            return {"status": "skipped", "reason": f"confidence_below_floor:{conf:.2f}<{floor}"}
 
         new_outcome_id = str(uuid4())
         async with UnitOfWork() as uow:

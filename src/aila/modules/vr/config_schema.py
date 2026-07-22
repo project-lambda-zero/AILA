@@ -101,5 +101,89 @@ class VRConfigSchema(BaseModel):
         ),
     )
 
+    # Investigation lifecycle caps (operator-tunable). Previously read
+    # via VR_* env vars scattered across branch_manager / claim_verifier /
+    # parent_reconciler / investigation_finalizers / target_analysis /
+    # investigation_loop; those reads ignored PUT /config overrides.
+    max_branches_per_investigation: int = Field(
+        default=24,
+        ge=1,
+        le=256,
+        description=(
+            "Per-investigation ACTIVE-branch cap. Enforced inside the fork "
+            "UoW so concurrent forks racing on the same investigation see "
+            "each other's inserts. 24 = 6 personas * 4 fork generations."
+        ),
+    )
+    claim_verifier_auto_promote_floor: float = Field(
+        default=0.70,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Confidence floor for auto-promoting a verifier-confirmed "
+            "ASSESSMENT_REPORT to DIRECT_FINDING. 0.70 matches the "
+            "synthesis pipeline's medium/high threshold."
+        ),
+    )
+    investigation_total_turn_cap: int = Field(
+        default=200,
+        ge=50,
+        description=(
+            "Total turn cap per audit child investigation (sum across "
+            "branches). Children whose sum exceeds this are force-closed "
+            "by the parent reconciler."
+        ),
+    )
+    zombie_task_heartbeat_min: int = Field(
+        default=10,
+        ge=1,
+        description=(
+            "Minutes of missed heartbeat before a running vr-track task is "
+            "reaped as a zombie by parent_reconciler."
+        ),
+    )
+    cursor_cleanup_batch: int = Field(
+        default=5000,
+        ge=1,
+        description=(
+            "Max workflow_state_cursor rows deleted per reaper tick "
+            "(parent_reconciler cleanup batch cap)."
+        ),
+    )
+    stale_branch_frozen_min: int = Field(
+        default=30,
+        ge=1,
+        description=(
+            "Minutes of inactivity before an ACTIVE branch with "
+            "turn_count < 5 is abandoned as dead-from-birth."
+        ),
+    )
+    stale_branch_halted_min: int = Field(
+        default=120,
+        ge=1,
+        description=(
+            "Minutes of inactivity before an ACTIVE branch with "
+            "turn_count >= 5 is abandoned as halted mid-run."
+        ),
+    )
+    ingestion_poll_timeout_s: float = Field(
+        default=14400.0,
+        ge=60.0,
+        description=(
+            "Wall-clock timeout for ingestion polling (IDA analysis + "
+            "audit_mcp index build). Default 4h fits chromium / firefox / "
+            "large monorepos; smaller targets finish long before."
+        ),
+    )
+    max_turns_per_task: int = Field(
+        default=70,
+        ge=1,
+        description=(
+            "Per-ARQ-task turn budget for state_investigation_loop. Loop "
+            "returns on this cap; investigation_emit re-enqueues another "
+            "task until the investigation-level turn cap is reached."
+        ),
+    )
+
 
 VR_DEFAULTS = VRConfigSchema()

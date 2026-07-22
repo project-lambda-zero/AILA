@@ -70,6 +70,7 @@ from aila.modules.vr.db_models import (
 )
 from aila.modules.vr.db_models.outcome_review import VRInvestigationOutcomeReviewRecord
 from aila.modules.vr.services.branch_cleanup import close_orphan_branches_on_terminal
+from aila.modules.vr.services.config_helpers import get_int
 
 # Phase C moved the implementations of these helpers out of this
 # MASVS-specific module into the canonical
@@ -439,11 +440,10 @@ async def _enforce_total_turn_cap(uow: UnitOfWork) -> int:
 
     Returns the count of investigations force-closed this tick.
     """
-    try:
-        cap = int(os.environ.get("VR_INVESTIGATION_TOTAL_TURN_CAP", "200"))
-    except ValueError:
-        cap = 200
-    cap = max(50, cap)  # floor so a typo doesn't kill everything
+    # ConfigRegistry (namespace=vr, key=investigation_total_turn_cap).
+    # Schema field enforces ge=50 so a typo cannot fall below the floor.
+    cap = await get_int("investigation_total_turn_cap")
+    cap = max(50, cap)
 
     inv = VRInvestigationRecord
 
@@ -930,8 +930,8 @@ async def _reap_zombie_tasks_and_cursors(uow: UnitOfWork) -> dict[str, int]:
             "transaction so step 3's JOIN observes step 1's UPDATE",
         )
 
-    heartbeat_min = int(os.environ.get("VR_ZOMBIE_TASK_HEARTBEAT_MIN", "10"))
-    batch_cap = int(os.environ.get("VR_CURSOR_CLEANUP_BATCH", "5000"))
+    heartbeat_min = await get_int("zombie_task_heartbeat_min")
+    batch_cap = await get_int("cursor_cleanup_batch")
 
     # 1. Cancel zombie tasks: vr-track, status=running, heartbeat
     #    older than threshold (also catches the case where

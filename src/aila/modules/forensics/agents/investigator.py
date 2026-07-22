@@ -36,6 +36,7 @@ import time
 from typing import Any
 
 from aila.config import Settings
+from aila.modules.forensics.config_schema import ForensicsConfigSchema
 from aila.platform.contracts.reasoning import (
     Hypothesis,
     ReasoningCaseState,
@@ -47,10 +48,33 @@ from aila.platform.contracts.reasoning import (
 from aila.platform.exceptions import AILAError
 from aila.platform.services.reasoning import CyberReasoningEngine
 from aila.platform.services.reasoning_graphs import ReasoningGraphService
+from aila.storage.registry import ConfigRegistry
 
 __all__ = ["HonestInvestigator"]
 
 _log = logging.getLogger(__name__)
+
+
+async def _read_float_config(key: str) -> float:
+    """Resolve a forensics float-typed config value via ConfigRegistry.
+
+    Falls back to the ForensicsConfigSchema field default on registry
+    read failure or non-numeric value so a transient DB blip never
+    replaces a bounded timeout with 0 (which would fire instantly).
+    """
+    default = float(ForensicsConfigSchema.model_fields[key].default)
+    try:
+        raw = await ConfigRegistry().get("forensics", key)
+    except (OSError, RuntimeError, AILAError) as exc:
+        _log.warning("forensics.%s registry read failed (%s); using default %.2f", key, exc, default)
+        return default
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        _log.warning("forensics.%s config value %r not coercible to float; using default %.2f", key, raw, default)
+        return default
 
 
 # ---------------------------------------------------------------------------
@@ -2229,7 +2253,6 @@ class HonestInvestigator:
                 _log.warning('script API lint for investigation %s: %s', self.investigation_id, msg)
                 return {'stdout': '', 'stderr': msg, 'exit_code': 1}
 
-        from aila.modules.forensics.config_schema import FORENSICS_DEFAULTS
         from aila.modules.forensics.tools.script_tool import ScriptExecutorTool
 
         tool = ScriptExecutorTool(self.settings)
@@ -2237,7 +2260,7 @@ class HonestInvestigator:
             script_content=script_content,
             integration=self.integration,
             analyzer_os=self.analyzer_os,
-            timeout_seconds=FORENSICS_DEFAULTS.script_execution_timeout_seconds,
+            timeout_seconds=await _read_float_config("script_execution_timeout_seconds"),
         )
         stdout = _sanitize_for_postgres_text(
             (result.get("stdout") or "")[:_STDOUT_KEEP_BYTES]
@@ -2262,14 +2285,13 @@ class HonestInvestigator:
             _log.warning("command blocked for investigation %s: %s", self.investigation_id, rejection)
             return {"stdout": "", "stderr": rejection, "exit_code": 1}
 
-        from aila.modules.forensics.config_schema import FORENSICS_DEFAULTS
         from aila.modules.forensics.tools._ssh_helper import get_ssh_service
 
         ssh = await get_ssh_service(self.settings)
         try:
             stdout = await ssh.run_command(
                 self.integration, command,
-                timeout_seconds=FORENSICS_DEFAULTS.ssh_command_timeout_seconds,
+                timeout_seconds=await _read_float_config("ssh_command_timeout_seconds"),
             )
             return {
                 "stdout": _sanitize_for_postgres_text((stdout or "")[:_STDOUT_KEEP_BYTES]),

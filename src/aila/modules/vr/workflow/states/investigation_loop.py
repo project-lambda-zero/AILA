@@ -14,7 +14,6 @@ investigation COMPLETED -- that's emit's job.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from sqlmodel import select as _select
@@ -30,6 +29,7 @@ from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
     VRInvestigationRecord,
 )
+from aila.modules.vr.services.config_helpers import get_int
 from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.platform.llm.cancellation import (
     LLMCancelledError,
@@ -54,10 +54,10 @@ _log = logging.getLogger(__name__)
 # Per-task turn budget. Loop returns on submit, status flip, researcher
 # error, or when this cap hits -- at which point investigation_emit
 # auto-re-enqueues another task (status stays RUNNING) until the
-# overall branch.turn_count hits _OVERALL_TURN_CAP. Configurable via
-# env so an operator running a deep variant chase can extend without
-# a code change.
-_DEFAULT_MAX_TURNS = int(os.environ.get("VR_MAX_TURNS_PER_TASK", "70"))
+# overall branch.turn_count hits _OVERALL_TURN_CAP. Read at USE site
+# via ConfigRegistry (namespace=vr, key=max_turns_per_task) so an
+# operator running a deep variant chase can extend the budget via
+# PUT /config without a worker restart.
 
 # fix §286 -- module-level executor + bridges singleton, lazily built
 # on first task wakeup of each worker process.
@@ -187,7 +187,7 @@ async def state_investigation_loop(input: dict[str, Any], services: Any) -> Stat
     if not investigation_id or not branch_id:
         raise ValueError("investigation_loop: missing investigation_id or branch_id")
 
-    max_turns = int(input.get("max_turns") or _DEFAULT_MAX_TURNS)
+    max_turns = int(input.get("max_turns") or await get_int("max_turns_per_task"))
 
     # fix §289 -- strict input validation. cve_intel + applicable_patterns
     # flow through state input dicts and the workflow engine persists

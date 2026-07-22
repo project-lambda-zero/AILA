@@ -26,10 +26,13 @@ from sqlmodel import select
 
 from aila.api.schemas.common import PaginatedResponse
 from aila.api.schemas.envelope import DataEnvelope
+from aila.modules.forensics.config_schema import ForensicsConfigSchema
 from aila.platform.contracts.auth import AuthContext, require_auth
+from aila.platform.exceptions import AILAError
 from aila.platform.services.redis_pool import pool_available
 from aila.platform.tasks.progress import ProgressStream
 from aila.platform.uow import UnitOfWork
+from aila.storage.registry import ConfigRegistry
 
 from .contracts import (
     AnswerCandidate,
@@ -55,6 +58,29 @@ _log = logging.getLogger(__name__)
 limiter = Limiter(key_func=get_remote_address)
 
 __all__ = ["create_forensics_router"]
+
+
+async def _read_freeflow_max_attempts() -> int:
+    """Resolve forensics.freeflow_max_attempts via ConfigRegistry.
+
+    Called only when the API request omits max_attempts. Falls back to
+    the ForensicsConfigSchema field default (10) on registry read
+    failure or non-numeric value so a transient DB blip never yields a
+    zero attempt cap (which would refuse to run any turns).
+    """
+    default = int(ForensicsConfigSchema.model_fields["freeflow_max_attempts"].default)
+    try:
+        raw = await ConfigRegistry().get("forensics", "freeflow_max_attempts")
+    except (OSError, RuntimeError, AILAError) as exc:
+        _log.warning("forensics.freeflow_max_attempts registry read failed (%s); using default %d", exc, default)
+        return default
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        _log.warning("forensics.freeflow_max_attempts config value %r not coercible to int; using default %d", raw, default)
+        return default
 
 
 def _finding_fingerprint(f: dict[str, Any]) -> str:
@@ -1797,11 +1823,21 @@ def create_forensics_router() -> APIRouter:
                     detail=f"Analyzer system {project.system_id} no longer exists.",
                 )
 
+            # Only honor an operator-supplied max_attempts when the caller
+            # explicitly sent the field. When omitted, resolve via
+            # ConfigRegistry so an operator override of
+            # forensics.freeflow_max_attempts wins over the API contract's
+            # own Pydantic default (which is only a fallback for the fallback).
+            if "max_attempts" in body.model_fields_set:
+                resolved_max_attempts = body.max_attempts
+            else:
+                resolved_max_attempts = await _read_freeflow_max_attempts()
+
             record = InvestigationRunRecord(
                 project_id=project_id,
                 question=body.question,
                 status="pending",
-                max_attempts=body.max_attempts,
+                max_attempts=resolved_max_attempts,
             )
             uow.session.add(record)
             await uow.session.commit()
@@ -1826,7 +1862,7 @@ def create_forensics_router() -> APIRouter:
                     "investigation_id": record.id,
                     "project_id": project_id,
                     "question": body.question,
-                    "max_attempts": body.max_attempts,
+                    "max_attempts": resolved_max_attempts,
                     "integration": integration,
                     "analyzer_os": project.analyzer_os,
                     "evidence_directory": project.evidence_directory,
