@@ -88,6 +88,19 @@ class InvestigationStateBindings:
     executor_factory: Callable[[], Any] | None = None
     max_turns_reader: Callable[[], Awaitable[int]] | None = None
     researcher_error: type[BaseException] | None = None
+    # emit-state (Phase 4c) inputs -- optional until the emit binds them.
+    synthesis_task_fn: Callable[..., Awaitable[Any]] | None = None
+    verifier_task_fn: Callable[..., Awaitable[Any]] | None = None
+    task_queue_factory: Callable[[], Any] | None = None
+    get_int: Callable[[str], Awaitable[int]] | None = None
+    get_float: Callable[[str], Awaitable[float]] | None = None
+    outcome_dispatcher_cls: type[Any] | None = None
+    pattern_extractor_cls: type[Any] | None = None
+    approved_state: str | None = None
+    evaluate_quorum: Callable[..., Awaitable[Any]] | None = None
+    post_draft_review_request: Callable[..., Awaitable[Any]] | None = None
+    finalize: Callable[..., Awaitable[Any]] | None = None
+    branch_table: str | None = None
 
 
 @dataclass(frozen=True)

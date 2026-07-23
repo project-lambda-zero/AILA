@@ -191,6 +191,18 @@ class VRConfigSchema(ModuleConfigBase):
     # on the next tick without a worker restart). The prior code read raw
     # VR_* env vars and ignored operator overrides; those names are
     # retired, replaced by the standard AILA_VR_<KEY> env form.
+    overall_turn_cap: int = Field(
+        default=500,
+        ge=10,
+        le=10000,
+        description=(
+            "Per-branch cap on cumulative turns across task boundaries. "
+            "The emit auto-continue stops re-enqueuing a branch once its "
+            "turn_count reaches this. Read live via ConfigRegistry "
+            "(env AILA_VR_OVERALL_TURN_CAP -> DB -> this default), "
+            "replacing the retired module-load VR_OVERALL_TURN_CAP env."
+        ),
+    )
     investigation_turn_cap: int = Field(
         default=300,
         ge=10,
