@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import text as _sql_text
@@ -55,10 +56,30 @@ __all__ = [
     "PauseInvestigationError",
     "ReenqueueInvestigationError",
     "ResumeInvestigationError",
+    "mark_investigation_completed",
     "pause_investigation",
     "reenqueue_investigation",
     "resume_investigation",
 ]
+
+
+def mark_investigation_completed(
+    inv_row: Any, *, now: datetime | None = None,
+) -> None:
+    """Flip an investigation row to COMPLETED in one place.
+
+    Sets ``status`` / ``stopped_at`` / ``updated_at`` the same way for
+    every terminal writer so synthesis, the emit finalizer, and any
+    future terminal path agree on the three fields. Generic over the
+    module: any investigation record carrying those three columns. The
+    caller stages the row (``session.add``) and commits -- this helper
+    only mutates the in-memory row. Pass ``now`` to share one timestamp
+    across a batch of terminal writes; it defaults to ``utc_now()``.
+    """
+    stamp = now or utc_now()
+    inv_row.status = InvestigationStatus.COMPLETED.value
+    inv_row.stopped_at = stamp
+    inv_row.updated_at = stamp
 
 
 class PauseInvestigationError(RuntimeError):

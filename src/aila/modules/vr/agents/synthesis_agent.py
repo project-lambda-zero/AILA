@@ -34,6 +34,9 @@ from aila.platform.contracts import utc_now
 from aila.platform.llm.errors import BudgetExceededError, LLMError
 from aila.platform.llm.sanitize import sanitize_input
 from aila.platform.services.factory import ServiceFactory
+from aila.platform.services.investigation_lifecycle import (
+    mark_investigation_completed,
+)
 from aila.platform.uow import UnitOfWork
 
 __all__ = ["SynthesisAgent", "SynthesisResponse"]
@@ -308,7 +311,7 @@ class SynthesisAgent:
 
             # Flip investigation status to COMPLETED + record stopped_at
             # via the shared helper (fix §162).
-            _mark_investigation_completed(inv_row)
+            mark_investigation_completed(inv_row)
             uow.session.add(inv_row)
             # Phase C surgical (BLOCK fix): close orphan active branches
             # so the projection stays in lockstep with inv.status. See
@@ -372,21 +375,6 @@ def _synthesis_confidence(panel: list[dict[str, Any]]) -> OutcomeConfidence:
     if disagreement:
         median = min(median + disagreement, 4)
     return rank_to_conf.get(median, OutcomeConfidence.MEDIUM)
-
-
-def _mark_investigation_completed(inv_row: VRInvestigationRecord) -> None:
-    """Set ``inv`` to COMPLETED + stopped_at/updated_at in a single helper
-    so every synthesis writer flips the same three fields the same way.
-
-    fix §162 -- replaces inline ``inv.status = COMPLETED.value`` writes
-    with a shared helper. When E1 ships its sibling ``_mark_investigation_completed``
-    at the outcome_dispatcher layer (§22), this local helper can be
-    swapped out for the shared one without touching call sites.
-    """
-    now = utc_now()
-    inv_row.status = InvestigationStatus.COMPLETED.value
-    inv_row.stopped_at = now
-    inv_row.updated_at = now
 
 
 def _render_panel(panel: list[dict[str, Any]]) -> str:
