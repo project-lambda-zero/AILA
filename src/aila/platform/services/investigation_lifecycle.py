@@ -58,9 +58,43 @@ __all__ = [
     "ResumeInvestigationError",
     "mark_investigation_completed",
     "pause_investigation",
+    "purge_investigation_cursors",
     "reenqueue_investigation",
     "resume_investigation",
 ]
+
+
+async def purge_investigation_cursors(
+    session: Any, investigation_id: str, *, only_crashed: bool = False,
+) -> int:
+    """Delete workflow_state_cursor rows for an investigation.
+
+    The cursor table is platform-owned; modules call this rather than
+    issuing raw SQL against it. Runs inside the caller's transaction (pass
+    the active session) so the delete commits atomically with the
+    surrounding lifecycle mutation. When ``only_crashed`` is set, only the
+    ``__crashed__`` sentinel rows are removed (the re-enqueue path);
+    otherwise every cursor for the investigation is wiped (the full-reset
+    path). Cursor rows link to the investigation through the
+    ``investigation_id`` embedded in each ``taskrecord.kwargs_json``.
+    Returns the number of rows deleted.
+    """
+    inv_pat = f'%"{investigation_id}"%'
+    if only_crashed:
+        stmt = _sql_text(
+            "DELETE FROM workflow_state_cursor "
+            "WHERE current_state = '__crashed__' "
+            "  AND run_id IN (SELECT id FROM taskrecord "
+            "WHERE kwargs_json LIKE :inv_pat)"
+        ).bindparams(inv_pat=inv_pat)
+    else:
+        stmt = _sql_text(
+            "DELETE FROM workflow_state_cursor "
+            "WHERE run_id IN (SELECT id FROM taskrecord "
+            "WHERE kwargs_json LIKE :inv_pat)"
+        ).bindparams(inv_pat=inv_pat)
+    result = await session.exec(stmt)
+    return result.rowcount or 0
 
 
 def mark_investigation_completed(
@@ -641,14 +675,9 @@ async def reenqueue_investigation(
 
         # Wipe __crashed__ cursors for this investigation so the workflow
         # engine starts fresh on the next dispatch.
-        wipe_stmt = _sql_text(
-            "DELETE FROM workflow_state_cursor "
-            "WHERE current_state = '__crashed__' "
-            "  AND run_id IN (SELECT id FROM taskrecord "
-            "WHERE kwargs_json LIKE :inv_pat)"
-        ).bindparams(inv_pat=f'%"{investigation_id}"%')
-        wipe_result = await uow.session.exec(wipe_stmt)
-        summary["wiped_crashed_cursors"] = wipe_result.rowcount or 0
+        summary["wiped_crashed_cursors"] = await purge_investigation_cursors(
+            uow.session, investigation_id, only_crashed=True,
+        )
 
         await uow.session.commit()
 

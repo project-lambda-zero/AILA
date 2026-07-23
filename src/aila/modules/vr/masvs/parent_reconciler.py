@@ -49,7 +49,7 @@ import json as _json_local
 import logging
 import os
 
-from sqlalchemy import cast, func, select, text, update
+from sqlalchemy import cast, func, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql.functions import coalesce
@@ -856,194 +856,6 @@ async def _wake_stale_branches(uow: UnitOfWork) -> int:
 # keep working without source changes.
 
 
-async def _reap_zombie_tasks_and_cursors(uow: UnitOfWork) -> dict[str, int]:
-    """Reap zombie tasks and stale workflow_state_cursor rows.
-
-    Two coupled failure modes leave the queue silently jammed (D-283):
-
-    1. Zombie task: ``taskrecord.status='running'`` with
-       ``heartbeat_at`` older than ``VR_ZOMBIE_TASK_HEARTBEAT_MIN``
-       (default 10 min). Caused by worker crash mid-task,
-       OmniRoute retry-loop wedging the worker for hours, or any
-       hang the worker can't recover from. The TaskRecord row
-       stays at ``running`` indefinitely, and dedup at
-       queue.py:132-140 then refuses to re-enqueue the same
-       investigation+branch payload because there's still an
-       "in-flight" task -- but no worker is actually working it.
-
-    2. Stale workflow_state_cursor: rows persist after the owning
-       task terminates abnormally. When a fresh task for the same
-       run_id starts, the workflow engine sees a stale cursor in
-       a transient state (``investigation_loop`` etc.) and
-       silently blocks. Observed live: 19 fresh tasks at 01:35:01
-       all stuck at first heartbeat for 10+ min because of 169
-       leftover cursors from a prior crash window.
-
-    This sweep:
-      (a) marks any vr-track task at ``status=running`` with
-          stale heartbeat as ``cancelled`` (frees dedup slot),
-      (b) deletes orphan cursors (no matching TaskRecord at all),
-      (c) deletes cursors whose TaskRecord is already terminal
-          (cancelled / done / failed / dead_letter),
-      (d) deletes cursors at the success terminal state
-          ``__succeeded__`` regardless of TaskRecord linkage
-          (the workflow engine itself never reads these again).
-
-    Active in-flight tasks (status IN queued/running/waiting with
-    fresh heartbeat) are left strictly alone. Only the explicitly
-    dead state gets reaped.
-
-    Returns ``{zombies_cancelled, cursors_purged}``.
-
-    fix §42 -- Single-session-scope assumption.
-    --------------------------------------------------
-    The function issues four UPDATE/DELETE statements:
-      (1) UPDATE taskrecord SET status='cancelled' WHERE stale heartbeat
-      (2) DELETE workflow_state_cursor WHERE no matching taskrecord
-      (3) DELETE workflow_state_cursor WHERE taskrecord is terminal
-      (4) DELETE workflow_state_cursor WHERE current_state='__succeeded__'
-
-    Steps 1 → 3 are intentionally ordered so step 3 sees the rows step 1
-    just marked ``cancelled`` (the cancelled rows then become eligible
-    for cursor deletion in the same tick). This is correct ONLY when
-    all four statements run inside the SAME session/transaction, so
-    step 3's ``JOIN taskrecord`` sees step 1's uncommitted update --
-    Postgres' default READ COMMITTED visibility for statements within a
-    single transaction makes this work. If the caller ever split this
-    helper across two sessions, step 3 would miss the just-cancelled
-    rows and they'd survive until the next tick.
-
-    The assertion below enforces the assumption at function entry: the
-    caller MUST hand us a session that is already in a transaction.
-    Documentation-only change otherwise -- no statement reordering, no
-    new commits.
-    """
-
-    # fix §42 -- single-session-scope invariant. The caller's UnitOfWork
-    # implicitly begins a transaction on first session use; a stand-
-    # alone session that has not yet executed any statement raises
-    # here and surfaces the misuse loudly rather than silently
-    # losing the step-1→step-3 visibility chain. Explicit raise (not
-    # assert) so the invariant holds under ``python -O``.
-    if not uow.session.in_transaction():
-        raise RuntimeError(
-            "_reap_zombie_tasks_and_cursors must run inside a single "
-            "transaction so step 3's JOIN observes step 1's UPDATE",
-        )
-
-    heartbeat_min = await get_int("zombie_task_heartbeat_min")
-    batch_cap = await get_int("cursor_cleanup_batch")
-
-    # 1. Cancel zombie tasks: vr-track, status=running, heartbeat
-    #    older than threshold (also catches the case where
-    #    heartbeat is NULL but started_at is old -- both indicate
-    #    a worker that never reported life).
-    zombie_sql = text(
-        """
-        UPDATE taskrecord
-        SET status = 'cancelled',
-            completed_at = NOW(),
-            updated_at = NOW(),
-            error = COALESCE(error, '') || ' [reaped by parent_reconciler: stale heartbeat]'
-        WHERE track = 'vr'
-          AND status = 'running'
-          AND COALESCE(heartbeat_at, started_at) < NOW() - (:mins || ' minutes')::interval
-        """,
-    )
-    zombie_result = await uow.session.exec(zombie_sql, params={"mins": str(heartbeat_min)})
-    zombies_cancelled = getattr(zombie_result, "rowcount", 0) or 0
-
-    # 2. Purge orphan cursors (no matching TaskRecord row at all).
-    #    Use NOT EXISTS to dodge a self-join cost on huge tables.
-    orphan_sql = text(
-        """
-        DELETE FROM workflow_state_cursor
-        WHERE run_id IN (
-            SELECT c.run_id FROM workflow_state_cursor c
-            WHERE NOT EXISTS (
-                SELECT 1 FROM taskrecord t WHERE t.id::text = c.run_id::text
-            )
-            LIMIT :cap
-        )
-        """,
-    )
-    orphan_result = await uow.session.exec(orphan_sql, params={"cap": batch_cap})
-    orphan_purged = getattr(orphan_result, "rowcount", 0) or 0
-
-    # 3. Purge cursors whose TaskRecord is terminal AND whose cursor
-    #    state is also a reserved terminal.
-    #
-    #    Earlier this clause deleted any cursor whose TaskRecord was
-    #    cancelled/done/failed/dead_letter regardless of cursor state.
-    #    That fires a race with ARQ retry: when a task's first
-    #    attempt fails (e.g. LLM parse failure), ARQ flips its
-    #    TaskRecord to 'failed' and schedules a retry. If this sweep
-    #    runs between attempts, it deletes the cursor while the
-    #    workflow row is still mid-state. The retry then hits
-    #    cursor_missing_during_commit in the engine's _commit_and_
-    #    advance lock probe, raises WorkflowConflictError, and the
-    #    job expires after exhausting retries -- AUTO_CONTINUE never
-    #    fires, investigation stalls.
-    #
-    #    Aligning this step with cursor_reaper.sweep_orphan_crashed_
-    #    cursors: ONLY delete cursors whose state is one of the four
-    #    reserved workflow terminals. Cursors mid-state stay, ARQ
-    #    retry sees them, the workflow recovers.
-    #
-    #    Diagnosed on inv <inv-uuid-a> / <inv-uuid-b>, 2026-06-12.
-    terminal_sql = text(
-        """
-        DELETE FROM workflow_state_cursor
-        WHERE run_id IN (
-            SELECT c.run_id FROM workflow_state_cursor c
-            JOIN taskrecord t ON t.id::text = c.run_id::text
-            WHERE t.status IN ('cancelled', 'done', 'failed', 'dead_letter')
-              AND c.current_state IN (
-                  '__crashed__', '__failed__',
-                  '__cancelled__', '__succeeded__'
-              )
-            LIMIT :cap
-        )
-        """,
-    )
-    terminal_result = await uow.session.exec(terminal_sql, params={"cap": batch_cap})
-    terminal_purged = getattr(terminal_result, "rowcount", 0) or 0
-
-    # 4. Purge __succeeded__ cursors -- terminal in the workflow engine,
-    #    never re-read, just accumulate.
-    succeeded_sql = text(
-        """
-        DELETE FROM workflow_state_cursor
-        WHERE run_id IN (
-            SELECT run_id FROM workflow_state_cursor
-            WHERE current_state = '__succeeded__'
-            LIMIT :cap
-        )
-        """,
-    )
-    succeeded_result = await uow.session.exec(succeeded_sql, params={"cap": batch_cap})
-    succeeded_purged = getattr(succeeded_result, "rowcount", 0) or 0
-
-    cursors_purged = orphan_purged + terminal_purged + succeeded_purged
-
-    if zombies_cancelled or cursors_purged:
-        await uow.commit()
-        _log.info(
-            "zombie_reaper zombies=%d cursors_purged=%d "
-            "(orphan=%d terminal=%d succeeded=%d)",
-            zombies_cancelled, cursors_purged,
-            orphan_purged, terminal_purged, succeeded_purged,
-        )
-
-    return {
-        "zombies_cancelled": zombies_cancelled,
-        "cursors_purged": cursors_purged,
-    }
-
-
-
-
-
 async def _cascade_terminal_to_deferred_children(
     uow: UnitOfWork,
 ) -> int:
@@ -1130,8 +942,6 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
          making progress.
       6. ``_synthesize_no_finding_outcomes`` -- fill in audit_memo
          outcomes for any investigation that orphaned at step 5.
-      7. ``_reap_zombie_tasks_and_cursors`` -- cancel stale ``running``
-         taskrecords and purge dead workflow_state_cursors.
       8. Parent ``CREATED/RUNNING → COMPLETED`` rollup (inline below).
       8.5. ``_cascade_terminal_to_deferred_children`` -- flip deferred
          ``CREATED`` children whose parent is already terminal
@@ -1182,12 +992,6 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
         await _run_sweep_step(
             "synthesize_no_finding_outcomes",
             _synthesize_no_finding_outcomes, uow, default=0,
-        )
-        # 7. Reap zombie tasks + stale workflow_state_cursors (D-283).
-        await _run_sweep_step(
-            "reap_zombie_tasks_and_cursors",
-            _reap_zombie_tasks_and_cursors, uow,
-            default={"zombies_cancelled": 0, "cursors_purged": 0},
         )
         # Candidate parents: kind=masvs_audit, parent_investigation_id
         # IS NULL (true batch root), status in {CREATED, RUNNING}. PAUSED

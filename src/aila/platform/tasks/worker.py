@@ -29,7 +29,10 @@ from aila.platform.tasks.constants import (
     REAPER_HEARTBEAT_THRESHOLD_S,
     REAPER_ZOMBIE_THRESHOLD_S,
 )
-from aila.platform.tasks.cursor_reaper import sweep_orphan_crashed_cursors
+from aila.platform.tasks.cursor_reaper import (
+    reap_zombie_tasks_and_cursors,
+    sweep_orphan_crashed_cursors,
+)
 from aila.platform.tasks.hooks import _on_job_end, _on_job_start
 from aila.platform.tasks.models import TaskRecord, TaskStatus
 from aila.platform.tasks.sweeps import all_periodic_sweeps
@@ -57,6 +60,23 @@ try:
     )
 except ValueError:
     _REAPER_CRON_GRACE_S = 600
+
+# fix RFC-05 -- zombie-task + cursor reaping is platform-owned and sweeps
+# every track in the platform reaper cron (no module owns a private
+# reaper). Thresholds are env-driven with the historical vr defaults
+# (10 min stale-heartbeat, 5000 cursor rows per tick).
+try:
+    _REAPER_ZOMBIE_HEARTBEAT_MIN: int = int(
+        os.environ.get("PLATFORM_REAPER_ZOMBIE_HEARTBEAT_MIN", "10"),
+    )
+except ValueError:
+    _REAPER_ZOMBIE_HEARTBEAT_MIN = 10
+try:
+    _REAPER_CURSOR_BATCH_CAP: int = int(
+        os.environ.get("PLATFORM_REAPER_CURSOR_BATCH_CAP", "5000"),
+    )
+except ValueError:
+    _REAPER_CURSOR_BATCH_CAP = 5000
 
 # ``_persist_dead_letter`` is sibling-internal: imported by
 # ``aila.platform.tasks.hooks._on_job_end`` to record terminal failures.
@@ -315,6 +335,24 @@ async def reaper(ctx: dict[str, object]) -> None:
             _log.info("reaper: cleared %d orphan terminal cursors", cleared)
     except Exception as exc:
         _log.warning("reaper: cursor cleanup failed: %s", exc, exc_info=True)
+    try:
+        # RFC-05 -- platform-owned zombie-task + cursor reaping across every
+        # track. Replaces the vr module's private reaper step; a
+        # stale-running task is a zombie regardless of which track owns it.
+        reaped = await reap_zombie_tasks_and_cursors(
+            heartbeat_min=_REAPER_ZOMBIE_HEARTBEAT_MIN,
+            batch_cap=_REAPER_CURSOR_BATCH_CAP,
+        )
+        if reaped["zombies_cancelled"] or reaped["cursors_purged"]:
+            _log.info(
+                "reaper: cancelled %d zombie tasks, purged %d cursors "
+                "(orphan=%d terminal=%d succeeded=%d)",
+                reaped["zombies_cancelled"], reaped["cursors_purged"],
+                reaped["orphan_purged"], reaped["terminal_purged"],
+                reaped["succeeded_purged"],
+            )
+    except Exception as exc:
+        _log.warning("reaper: zombie/cursor reap failed: %s", exc, exc_info=True)
     # fix §123 -- idempotency-cache expired-row purge wired into the same
     # cron loop so the table doesn't accumulate stale rows forever. The
     # purge is best-effort and never crashes the cron tick.

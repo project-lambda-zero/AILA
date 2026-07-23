@@ -48,6 +48,7 @@ Detects thirty-six categories of structural dishonesty:
 44. private_platform_import -- a module imports a platform-private submodule symbol (tools._common, mcp.adapters._shared) that the public package already re-exports; import from the public path instead (RFC-05 concern f).
 45. module_prefix_in_platform_tool_name -- a platform MCP bridge hard-codes a module-prefixed tool name literal (name = "vr.audit_mcp_bridge"); derive the name from a constructor module_id instead (RFC-05 concern b).
 46. platform_owns_event_vocabulary -- an event class under platform/events/ carries module-domain vocabulary (scan/finding/investigation or a module id) in its class name or event_type; the platform owns only generic infrastructure events (RFC-05 concern c).
+47. raw_sql_platform_tables -- a module file issues raw SQL against a platform-owned task table (taskrecord, workflow_state_cursor); route through a platform lifecycle / TaskQueue service instead (RFC-05 Phase 6).
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -283,6 +284,17 @@ _EVENTS_FILE_PATTERN = _re.compile(r"[/\\]aila[/\\]platform[/\\]events[/\\]")
 _EVENT_DOMAIN_TOKENS: frozenset[str] = frozenset({
     "scan", "finding", "investigation", "malware", "vulnerability", "forensics",
 })
+
+
+# Rule 47 -- raw_sql_platform_tables. Modules must not issue raw SQL against
+# platform-owned task tables; route through a platform lifecycle / TaskQueue
+# service. Matches a FROM|INTO|UPDATE|JOIN <table> clause shape inside any
+# string constant so the call wrapper (text / sa_text / execute) is
+# irrelevant, while SQL-ish prose without the clause shape is not flagged.
+_RAW_SQL_PLATFORM_TABLE_RE = _re.compile(
+    r"\b(from|into|update|join)\s+(taskrecord|workflow_state_cursor)\b",
+    _re.IGNORECASE,
+)
 
 
 def _event_type_string_literal(stmt: ast.stmt) -> str | None:
@@ -1649,6 +1661,33 @@ class _HonestyVisitor(ast.NodeVisitor):
             f"from a constructor module_id instead",
         )
 
+    def _check_raw_sql_platform_tables(self, tree: ast.Module) -> None:
+        """Rule 47: raw_sql_platform_tables -- module file issues raw SQL
+        against a platform-owned task table.
+
+        ``taskrecord`` and ``workflow_state_cursor`` are platform-owned. A
+        module that writes raw SQL against them (a DELETE / SELECT / UPDATE
+        string literal with a ``FROM|INTO|UPDATE|JOIN <table>`` clause)
+        bypasses the platform's ownership of the task lifecycle. Route
+        through a platform service instead
+        (investigation_lifecycle.purge_investigation_cursors, TaskQueue).
+        The match is on the clause shape inside any string constant, so the
+        call wrapper (text / sa_text / session.execute) is irrelevant and
+        SQL-ish prose without the clause shape is left alone.
+        """
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            match = _RAW_SQL_PLATFORM_TABLE_RE.search(node.value)
+            if match is not None:
+                self._emit(
+                    node.lineno,
+                    "raw_sql_platform_tables",
+                    f"raw_sql_platform_tables: raw SQL against platform table "
+                    f"{match.group(2)!r} -- route through a platform lifecycle "
+                    f"/ TaskQueue service, never raw SQL from a module",
+                )
+
     def _check_private_platform_import(self, tree: ast.Module) -> None:
         """Rule 44: private_platform_import -- module reaches into a platform
         private submodule for a publicly re-exported symbol.
@@ -2667,6 +2706,7 @@ class HonestyAuditor:
             visitor._check_http_client_in_module(tree)
             visitor._check_direct_db_in_module(tree)
             visitor._check_private_platform_import(tree)
+            visitor._check_raw_sql_platform_tables(tree)
         # Rules 19 and 20 apply to all router files (api/ and module routers alike)
         visitor._check_response_model_dict(tree)
         visitor._check_bare_dict_return_endpoint(tree)

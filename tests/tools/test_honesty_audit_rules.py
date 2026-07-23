@@ -1281,3 +1281,64 @@ class TestPlatformOwnsEventVocabulary:
             "class ScanStarted:\n    pass\n",
         )
         assert "platform_owns_event_vocabulary" not in _rules(_audit(src))
+
+
+class TestRawSqlPlatformTables:
+    """Rule 47: modules must not issue raw SQL against platform-owned task
+    tables (taskrecord, workflow_state_cursor)."""
+
+    def test_delete_cursor_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/malware/api_router.py",
+            "def f(session):\n"
+            '    return session.execute("DELETE FROM workflow_state_cursor WHERE run_id = 1")\n',
+        )
+        assert "raw_sql_platform_tables" in _rules(_audit(src))
+
+    def test_select_taskrecord_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/svc.py",
+            "def f():\n"
+            '    return sa_text("SELECT id FROM taskrecord WHERE kwargs_json LIKE :p")\n',
+        )
+        assert "raw_sql_platform_tables" in _rules(_audit(src))
+
+    def test_concatenated_sql_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/malware/api_router.py",
+            "def f():\n"
+            '    return text(\n'
+            '        "DELETE FROM workflow_state_cursor "\n'
+            '        "WHERE run_id IN (SELECT id FROM taskrecord)"\n'
+            "    )\n",
+        )
+        assert "raw_sql_platform_tables" in _rules(_audit(src))
+
+    def test_module_owned_table_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/malware/api_router.py",
+            "def f(session):\n"
+            '    return session.execute("DELETE FROM malware_observations WHERE investigation_id = :i")\n',
+        )
+        assert "raw_sql_platform_tables" not in _rules(_audit(src))
+
+    def test_prose_mentioning_table_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/svc.py",
+            'def f():\n    """This helper will delete the taskrecord row later."""\n    return 1\n',
+        )
+        assert "raw_sql_platform_tables" not in _rules(_audit(src))
+
+    def test_platform_file_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/services/investigation_lifecycle.py",
+            "def f(session):\n"
+            '    return session.exec("DELETE FROM workflow_state_cursor WHERE run_id = 1")\n',
+        )
+        assert "raw_sql_platform_tables" not in _rules(_audit(src))

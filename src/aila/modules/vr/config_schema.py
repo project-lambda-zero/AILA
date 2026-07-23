@@ -134,22 +134,6 @@ class VRConfigSchema(ModuleConfigBase):
             "by the parent reconciler."
         ),
     )
-    zombie_task_heartbeat_min: int = Field(
-        default=10,
-        ge=1,
-        description=(
-            "Minutes of missed heartbeat before a running vr-track task is "
-            "reaped as a zombie by parent_reconciler."
-        ),
-    )
-    cursor_cleanup_batch: int = Field(
-        default=5000,
-        ge=1,
-        description=(
-            "Max workflow_state_cursor rows deleted per reaper tick "
-            "(parent_reconciler cleanup batch cap)."
-        ),
-    )
     stale_branch_frozen_min: int = Field(
         default=30,
         ge=1,
