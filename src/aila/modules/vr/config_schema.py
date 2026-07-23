@@ -11,7 +11,9 @@ workflows; only new workflow runs pick up updated values.
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
+
+from aila.platform.config_base import ModuleConfigBase
 
 __all__ = ["VRConfigSchema", "VR_DEFAULTS"]
 
@@ -19,10 +21,8 @@ __all__ = ["VRConfigSchema", "VR_DEFAULTS"]
 VR_LLM_MODEL = "antigravity/claude-opus-4-6-thinking"
 
 
-class VRConfigSchema(BaseModel):
+class VRConfigSchema(ModuleConfigBase):
     """Operator-tunable settings for the VR module."""
-
-    model_config = ConfigDict(extra="forbid")
 
     llm_model: str = Field(
         default=VR_LLM_MODEL,

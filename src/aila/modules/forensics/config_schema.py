@@ -12,7 +12,9 @@ workflows, only new workflow runs pick up updated values.
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
+
+from aila.platform.config_base import ModuleConfigBase
 
 __all__ = ["ForensicsConfigSchema", "FORENSICS_DEFAULTS"]
 
@@ -20,10 +22,8 @@ __all__ = ["ForensicsConfigSchema", "FORENSICS_DEFAULTS"]
 FORENSICS_LLM_MODEL = "antigravity/claude-opus-4-6-thinking"
 
 
-class ForensicsConfigSchema(BaseModel):
+class ForensicsConfigSchema(ModuleConfigBase):
     """Operator-tunable settings for the forensics module."""
-
-    model_config = ConfigDict(extra="forbid")
 
     llm_model: str = Field(
         default=FORENSICS_LLM_MODEL,

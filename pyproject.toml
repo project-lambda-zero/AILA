@@ -273,9 +273,6 @@ ignore = [
 # platform/services/investigation_reaper.py: N806 for SQLAlchemy ORM
 # uppercase aliases (BR, INV, MSG) in the shared cap-sweep helpers.
 "src/aila/platform/services/investigation_reaper.py" = ["N806"]
-# malware/services/config_helpers.py: PLW0603 for the lazy registry
-# singleton (one instance per worker; constructed once on first read).
-"src/aila/modules/malware/services/config_helpers.py" = ["PLW0603"]
 # platform/mcp/call_logger.py: BLE001 because record_call catches
 # BaseException only to enrich the log record then re-raise it; the broad
 # catch is an explicit observation point.
