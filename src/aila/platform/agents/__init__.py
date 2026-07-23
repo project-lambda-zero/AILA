@@ -17,13 +17,21 @@ from aila.platform.agents.branch_pool import (
 from aila.platform.agents.idempotent_llm import idempotent_llm_call
 from aila.platform.agents.intent_classifier import classify_intent
 from aila.platform.agents.sibling_consensus import inject_sibling_consensus
+from aila.platform.agents.tool_execution import (
+    ToolExecutionResult,
+    classify_contract_error,
+    parse_command,
+)
 
 __all__ = [
     "BranchManagerError",
     "BranchOpResult",
     "BranchPool",
+    "ToolExecutionResult",
+    "classify_contract_error",
     "classify_intent",
     "idempotent_llm_call",
     "inject_sibling_consensus",
     "maybe_post_auto_steering",
+    "parse_command",
 ]
