@@ -11,10 +11,6 @@ import os
 from typing import Any
 
 from aila.modules.vr._task_queue import default_task_queue
-from aila.modules.vr.agents.branch_manager import (
-    _strip_directives_from_state,
-    _strip_rejected_from_state,
-)
 from aila.modules.vr.contracts.branch import PersonaVoice
 from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
@@ -26,6 +22,10 @@ from aila.modules.vr.services.cve_intel_resolver import (
     resolve_cve_intel,
 )
 from aila.modules.vr.services.pattern_store import PatternStore
+from aila.platform.agents.branch_pool import (
+    _strip_directives_from_state,
+    _strip_rejected_from_state,
+)
 from aila.platform.services.knowledge import KnowledgeService
 from aila.platform.workflows.investigation_setup_base import (
     InvestigationStateBindings,
