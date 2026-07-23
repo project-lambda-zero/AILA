@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from aila.modules.vr.agents.intent_classifier import classify_intent
-from aila.modules.vr.contracts import OperatorIntent
+from aila.platform.agents.intent_classifier import classify_intent
+from aila.platform.contracts.enums import OperatorIntent
 
 
 class TestBranchCommands:

@@ -29,7 +29,6 @@ import httpx
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
-from aila.modules.vr.agents.auto_steering import maybe_post_auto_steering
 from aila.modules.vr.contracts import PayloadKind, SenderKind
 from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
@@ -37,6 +36,7 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
     VRTargetRecord,
 )
+from aila.platform.agents.auto_steering import maybe_post_auto_steering
 from aila.platform.contracts import utc_now
 from aila.platform.mcp.adapters import (
     AdapterContext,
@@ -618,6 +618,8 @@ class ToolExecutor:
                     args=args,
                     raw_result=raw if isinstance(raw, dict) else {},
                     bridge_base_url=bridge_base_url,
+                    message_model=VRInvestigationMessageRecord,
+                    branch_model=VRInvestigationBranchRecord,
                 )
                 if posted_id:
                     _log.info(

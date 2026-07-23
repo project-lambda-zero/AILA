@@ -40,6 +40,10 @@ Detects thirty-six categories of structural dishonesty:
 36. shadowed_platform_base -- a unified vr/malware table recreates a platform base's columns instead of subclassing it.
 37. module_config_schema_base -- a module config schema subclasses bare BaseModel instead of ModuleConfigBase (loses extra=forbid).
 38. service_copy_of_platform -- a vr/malware service file is a full copy of a platform service instead of a thin binding.
+39. cost_read_stored_actual -- a vr/malware lifecycle api_router reads the dead cost_actual_usd column in a response instead of aggregating live cost.
+40. lifecycle_handler_bypass_service -- a pause/resume/re-enqueue route handler writes investigation .status directly instead of calling the platform lifecycle service.
+41. workflow_state_copy_of_platform -- a vr/malware investigation state file duplicates a platform workflow-state base instead of binding the factory.
+42. agent_primitive_reimplementation -- a module agents/ file defines a platform-owned agent primitive (auto-steering injector / intent classifier) at top level instead of importing it.
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -712,6 +716,18 @@ _WORKFLOW_STATE_SCOPE_PATTERN = _re.compile(
     r"investigation_(?:setup|loop|emit)\.py$"
 )
 _WORKFLOW_BASE_CORPUS_CACHE: dict[str, dict[str, str]] = {}
+
+# Rule 42 -- module agents/ files must not re-implement a platform agent
+# primitive. RFC-03 Phase 1 lifted the operator-intent classifier and the
+# auto-steering injector to platform/agents/; modules import them. A
+# top-level def of a lifted primitive is a copy that drifted back in.
+_AGENTS_SCOPE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]modules[/\\][^/\\]+[/\\]agents[/\\]"
+)
+_LIFTED_AGENT_PRIMITIVES: frozenset[str] = frozenset({
+    "maybe_post_auto_steering",
+    "classify_intent",
+})
 
 
 def _workflow_base_corpus(filepath: str) -> dict[str, str]:
@@ -2169,6 +2185,30 @@ class _HonestyVisitor(ast.NodeVisitor):
                 "platform state factory instead of copying it",
             )
 
+    def _check_agent_primitive_reimplementation(self, tree: ast.Module) -> None:
+        """Rule 42: agent_primitive_reimplementation -- a module agents/ file
+        defines a platform-owned agent primitive at top level.
+
+        RFC-03 Phase 1 extracted the operator-intent classifier and the
+        auto-steering injector to platform/agents/. Modules import them; a
+        top-level (re)definition is a copy that drifts from the platform
+        version. Import re-exports are statements, not defs, so they never
+        trip this.
+        """
+        if not _AGENTS_SCOPE_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        for node in tree.body:
+            is_def = isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef),
+            )
+            if is_def and node.name in _LIFTED_AGENT_PRIMITIVES:
+                self._emit(
+                    node.lineno,
+                    "agent_primitive_reimplementation",
+                    f"agent_primitive_reimplementation: '{node.name}' is owned "
+                    "by platform/agents/; import it instead of redefining it",
+                )
+
     def _check_cost_read_stored_actual(
         self, tree: ast.Module, module_id: str,
     ) -> None:
@@ -2314,6 +2354,7 @@ class HonestyAuditor:
             visitor._check_workflow_state_copy_of_platform(tree)
             visitor._check_cost_read_stored_actual(tree, module_id)
             visitor._check_lifecycle_handler_bypass(tree, module_id)
+            visitor._check_agent_primitive_reimplementation(tree)
         if _is_boundary_guarded_file(str(path)):
             visitor._check_api_imports_modules(tree)
         if _is_module_file(str(path)):

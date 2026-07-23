@@ -40,7 +40,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
 from aila.modules.vr._task_queue import default_task_queue
-from aila.modules.vr.agents.auto_steering import _normalize_acked_observable
 from aila.modules.vr.agents.persona_router import resolve_task_type
 from aila.modules.vr.contracts import (
     OutcomeConfidence,
@@ -65,6 +64,7 @@ from aila.modules.vr.services.outcome_review import (
     evaluate_quorum,
     upsert_review,
 )
+from aila.platform.agents.auto_steering import _normalize_acked_observable
 from aila.platform.contracts import utc_now
 from aila.platform.contracts.reasoning import (
     ReasoningCaseState,

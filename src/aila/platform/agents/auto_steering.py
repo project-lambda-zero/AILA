@@ -24,7 +24,7 @@ Each rule has three parts:
   real location). Returns the steering text, or None if no
   correction can be derived.
 * posting is shared: write a row to
-  ``malware_investigation_messages`` with ``sender_kind='operator'``,
+  the module investigation-messages table with ``sender_kind='operator'``,
   ``sender_id='auto_steering'``, ``operator_intent='steering'``.
 
 Each rule is keyed so duplicate corrections within the same
@@ -35,21 +35,15 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 
 import httpx
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlmodel import select as _select
 
-from aila.modules.malware.contracts import (
-    OperatorIntent,
-    PayloadKind,
-    SenderKind,
-)
-from aila.modules.malware.db_models import (
-    MalwareInvestigationBranchRecord,
-    MalwareInvestigationMessageRecord,
-)
 from aila.platform.contracts import utc_now
+from aila.platform.contracts.enums import OperatorIntent, SenderKind
+from aila.platform.contracts.mcp_payload import PayloadKind
 from aila.platform.uow import UnitOfWork
 
 __all__ = ["maybe_post_auto_steering"]
@@ -422,7 +416,7 @@ async def _derive_kwarg_rejected_correction(
 
 
 async def _recent_semantic_queries(
-    branch_id: str, limit: int = 6,
+    branch_id: str, message_model: Any, limit: int = 6,
 ) -> list[str]:
     """Pull the most recent semantic_search queries this branch ran.
     Used to derive the agent's current search intent for the EOF
@@ -430,10 +424,10 @@ async def _recent_semantic_queries(
     queries: list[str] = []
     async with UnitOfWork() as uow:
         rows = (await uow.session.exec(
-            _select(MalwareInvestigationMessageRecord)
-            .where(MalwareInvestigationMessageRecord.branch_id == branch_id)
-            .where(MalwareInvestigationMessageRecord.payload_kind == PayloadKind.TOOL_CALL.value)
-            .order_by(MalwareInvestigationMessageRecord.created_at.desc())
+            _select(message_model)
+            .where(message_model.branch_id == branch_id)
+            .where(message_model.payload_kind == PayloadKind.TOOL_CALL.value)
+            .order_by(message_model.created_at.desc())
             .limit(limit)
         )).all()
     for row in rows:
@@ -453,6 +447,7 @@ async def _recent_semantic_queries(
 
 async def _already_posted(
     investigation_id: str, auto_steering_key: str,
+    *, message_model: Any, branch_model: Any,
 ) -> bool:
     """De-dupe: skip when an auto-steering with the same key already
     exists for this investigation AND has not yet been acknowledged.
@@ -474,9 +469,9 @@ async def _already_posted(
     """
     async with UnitOfWork() as uow:
         rows = (await uow.session.exec(
-            _select(MalwareInvestigationMessageRecord)
-            .where(MalwareInvestigationMessageRecord.investigation_id == investigation_id)
-            .where(MalwareInvestigationMessageRecord.auto_steering_key == auto_steering_key)
+            _select(message_model)
+            .where(message_model.investigation_id == investigation_id)
+            .where(message_model.auto_steering_key == auto_steering_key)
         )).all()
         if not rows:
             return False
@@ -487,11 +482,11 @@ async def _already_posted(
         # check; this caps it at 50 which still covers every live persona
         # plus a wide margin for ACK propagation latency.
         branches = (await uow.session.exec(
-            _select(MalwareInvestigationBranchRecord)
+            _select(branch_model)
             .where(
-                MalwareInvestigationBranchRecord.investigation_id == investigation_id,
+                branch_model.investigation_id == investigation_id,
             )
-            .order_by(MalwareInvestigationBranchRecord.created_at.desc())
+            .order_by(branch_model.created_at.desc())
             .limit(50)
         )).all()
         all_acks: set[str] = set()
@@ -514,6 +509,7 @@ async def _already_posted(
 async def _post(
     investigation_id: str, branch_id: str | None,
     text: str, auto_steering_key: str,
+    *, message_model: Any, branch_model: Any,
 ) -> str | None:
     """Write the auto-steering as an operator-kind message. Same shape
     the UI's chat composer produces (sender_kind='operator', payload
@@ -540,9 +536,9 @@ async def _post(
     async with UnitOfWork() as uow:
         # Resolve primary branch for broadcast
         primary_id = (await uow.session.exec(
-            _select(MalwareInvestigationBranchRecord.id)
-            .where(MalwareInvestigationBranchRecord.investigation_id == investigation_id)
-            .where(MalwareInvestigationBranchRecord.parent_branch_id.is_(None))
+            _select(branch_model.id)
+            .where(branch_model.investigation_id == investigation_id)
+            .where(branch_model.parent_branch_id.is_(None))
             .limit(1)
         )).first()
         addressed_branch = primary_id or branch_id
@@ -550,7 +546,7 @@ async def _post(
             "text": text,
             "auto_steering_key": auto_steering_key,
         }
-        msg = MalwareInvestigationMessageRecord(
+        msg = message_model(
             investigation_id=investigation_id,
             branch_id=addressed_branch,
             sender_kind=SenderKind.OPERATOR.value,
@@ -591,6 +587,8 @@ async def _evaluate_rules(
     args: dict,
     raw_result: dict,
     bridge_base_url: str,
+    message_model: Any,
+    branch_model: Any,
 ) -> str | None:
     """Run every rule against ``raw_result`` and post the first match.
 
@@ -607,15 +605,18 @@ async def _evaluate_rules(
         requested_end = int(args.get("end") or 0)
         index_id = str(args.get("index_id") or "")
         key = f"read_lines_past_eof:{file_path}:{requested_end}"
-        if await _already_posted(investigation_id, key):
+        if await _already_posted(investigation_id, key,
+                                     message_model=message_model,
+                                     branch_model=branch_model):
             return None
-        queries = await _recent_semantic_queries(branch_id)
+        queries = await _recent_semantic_queries(branch_id, message_model=message_model)
         correction = await _derive_eof_correction(
             bridge_base_url, index_id, file_path, total, queries,
         )
         if not correction:
             return None
-        return await _post(investigation_id, branch_id, correction, key)
+        return await _post(investigation_id, branch_id, correction, key,
+                           message_model=message_model, branch_model=branch_model)
 
     # Rule 2: read_function returned file header (indexer fault)
     if _detect_read_function_returned_file_header(server_id, tool_name, args, raw_result):
@@ -623,29 +624,35 @@ async def _evaluate_rules(
         fn_name = str(args.get("name") or "")
         index_id = str(args.get("index_id") or "")
         key = f"read_function_indexer_fault:{file_path}:{fn_name}"
-        if await _already_posted(investigation_id, key):
+        if await _already_posted(investigation_id, key,
+                                     message_model=message_model,
+                                     branch_model=branch_model):
             return None
         correction = await _derive_file_header_correction(
             bridge_base_url, index_id, file_path, fn_name,
         )
         if not correction:
             return None
-        return await _post(investigation_id, branch_id, correction, key)
+        return await _post(investigation_id, branch_id, correction, key,
+                           message_model=message_model, branch_model=branch_model)
 
     # Rule 3: read_lines returned file-not-found error
     if _detect_read_lines_file_not_found(server_id, tool_name, args, raw_result):
         file_path = str(args.get("file_path") or "")
         index_id = str(args.get("index_id") or "")
         key = f"read_lines_file_not_found:{index_id}:{file_path}"
-        if await _already_posted(investigation_id, key):
+        if await _already_posted(investigation_id, key,
+                                     message_model=message_model,
+                                     branch_model=branch_model):
             return None
-        queries = await _recent_semantic_queries(branch_id)
+        queries = await _recent_semantic_queries(branch_id, message_model=message_model)
         correction = await _derive_file_not_found_correction(
             bridge_base_url, index_id, file_path, queries,
         )
         if not correction:
             return None
-        return await _post(investigation_id, branch_id, correction, key)
+        return await _post(investigation_id, branch_id, correction, key,
+                           message_model=message_model, branch_model=branch_model)
 
     # Rule 4: bridge rejected kwarg shape
     if _detect_tool_kwarg_rejected(server_id, tool_name, args, raw_result):
@@ -658,12 +665,15 @@ async def _evaluate_rules(
         # arg names) gets a different key and re-posts.
         arg_keys = ",".join(sorted(str(k) for k in (args or {}).keys()))
         key = f"kwarg_rejected:{tool_name}:{arg_keys}"
-        if await _already_posted(investigation_id, key):
+        if await _already_posted(investigation_id, key,
+                                     message_model=message_model,
+                                     branch_model=branch_model):
             return None
         correction = await _derive_kwarg_rejected_correction(
             f"{server_id}.{tool_name}", raw_err, args,
         )
-        return await _post(investigation_id, branch_id, correction, key)
+        return await _post(investigation_id, branch_id, correction, key,
+                           message_model=message_model, branch_model=branch_model)
 
     return None
 
@@ -677,6 +687,8 @@ async def maybe_post_auto_steering(
     args: dict,
     raw_result: dict,
     bridge_base_url: str,
+    message_model: Any,
+    branch_model: Any,
 ) -> str | None:
     """Examine ``raw_result`` against all rules. If one fires AND
     a correction can be derived AND the same auto-steering hasn't
@@ -707,6 +719,8 @@ async def maybe_post_auto_steering(
             args=args,
             raw_result=raw_result,
             bridge_base_url=bridge_base_url,
+            message_model=message_model,
+            branch_model=branch_model,
         )
     except (
         OSError, RuntimeError, ValueError, TypeError, AttributeError,

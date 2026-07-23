@@ -939,3 +939,48 @@ class TestWorkflowStateCopyOfPlatform:
         )
         findings = _audit(src)
         assert "workflow_state_copy_of_platform" not in _rules(findings)
+
+
+# ---------------------------------------------------------------------------
+# Rule 42 -- agent_primitive_reimplementation
+# ---------------------------------------------------------------------------
+
+
+class TestAgentPrimitiveReimplementation:
+    """Rule 42: modules must import the platform agent primitives, not
+    redefine them (RFC-03 Phase 1)."""
+
+    def test_classify_intent_def_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/agents/intent_classifier.py",
+            "def classify_intent(text):\n    return 'x'\n",
+        )
+        assert "agent_primitive_reimplementation" in _rules(_audit(src))
+
+    def test_maybe_post_auto_steering_def_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/malware/agents/auto_steering.py",
+            "async def maybe_post_auto_steering(**kw):\n    return None\n",
+        )
+        assert "agent_primitive_reimplementation" in _rules(_audit(src))
+
+    def test_reexport_import_not_flagged(self, tmp_path: Path) -> None:
+        """An import re-export is a statement, not a def -- never fires."""
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/agents/wiring.py",
+            "from aila.platform.agents import classify_intent\n"
+            "__all__ = ['classify_intent']\n",
+        )
+        assert "agent_primitive_reimplementation" not in _rules(_audit(src))
+
+    def test_platform_definition_not_flagged(self, tmp_path: Path) -> None:
+        """The platform's own definition is out of scope."""
+        src = _write(
+            tmp_path,
+            "aila/platform/agents/intent_classifier.py",
+            "def classify_intent(text):\n    return 'x'\n",
+        )
+        assert "agent_primitive_reimplementation" not in _rules(_audit(src))

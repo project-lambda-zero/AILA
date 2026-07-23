@@ -4866,7 +4866,8 @@ def create_vr_router() -> APIRouter:
         del request
         import json as _json
 
-        from .agents.intent_classifier import classify_intent
+        from aila.platform.agents.intent_classifier import classify_intent
+
         from .db_models import (
             VRInvestigationBranchRecord,
             VRInvestigationMessageRecord,

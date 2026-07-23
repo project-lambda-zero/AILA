@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import re
 
-from aila.modules.malware.contracts import OperatorIntent
+from aila.platform.contracts.enums import OperatorIntent
 
 __all__ = ["classify_intent"]
 
