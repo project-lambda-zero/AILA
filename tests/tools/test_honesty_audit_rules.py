@@ -1013,13 +1013,32 @@ class TestAgentLlmChatBypass:
         )
         assert "agent_llm_chat_bypass" not in _rules(_audit(src))
 
-    def test_chat_json_not_flagged_this_phase(self, tmp_path: Path) -> None:
+    def test_chat_json_flagged(self, tmp_path: Path) -> None:
         src = _write(
             tmp_path,
             "aila/modules/vr/agents/pattern_extractor.py",
             "async def f(c):\n    return await c.llm_client.chat_json('x', [], {})\n",
         )
-        assert "agent_llm_chat_bypass" not in _rules(_audit(src))
+        assert "agent_llm_chat_bypass" in _rules(_audit(src))
+
+    def test_self_llm_chat_json_flagged(self, tmp_path: Path) -> None:
+        """pattern_extractor uses self._llm, not services.llm_client."""
+        src = _write(
+            tmp_path,
+            "aila/modules/malware/agents/pattern_extractor.py",
+            "class E:\n    async def f(self):\n"
+            "        return await self._llm.chat_json('x', [], {})\n",
+        )
+        assert "agent_llm_chat_bypass" in _rules(_audit(src))
+
+    def test_chat_structured_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/agents/synthesis_agent.py",
+            "async def f(services):\n"
+            "    return await services.llm_client.chat_structured('x', [], M)\n",
+        )
+        assert "agent_llm_chat_bypass" in _rules(_audit(src))
 
     def test_platform_chat_not_flagged(self, tmp_path: Path) -> None:
         src = _write(

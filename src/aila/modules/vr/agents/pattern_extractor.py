@@ -41,6 +41,7 @@ from aila.modules.vr.db_models import (
     VRTargetRecord,
 )
 from aila.modules.vr.services.pattern_store import PatternStore
+from aila.platform.agents.idempotent_llm import idempotent_llm_call
 from aila.platform.contracts import utc_now
 from aila.platform.uow import UnitOfWork
 
@@ -149,13 +150,17 @@ class PatternExtractor:
 
         prompt = _build_prompt(outcome, transcript)
         try:
-            response = await self._llm.chat_json(
+            response, _ = await idempotent_llm_call(
+                self._llm,
+                method="chat_json",
                 task_type="vulnerability_research.pattern_extraction",
                 messages=[
                     {"role": "system", "content": "Extract reusable patterns from a security investigation."},
                     {"role": "user", "content": prompt},
                 ],
                 schema=_EXTRACTION_SCHEMA,
+                investigation_id=investigation.id,
+                team_id=team_id,
             )
         except (httpx.HTTPError, OSError, RuntimeError, ValueError, TypeError) as exc:
             # Broaden the narrow ``(OSError, TimeoutError, RuntimeError)``

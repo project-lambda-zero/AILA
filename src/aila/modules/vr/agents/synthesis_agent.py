@@ -30,6 +30,7 @@ from aila.modules.vr.db_models import (
     VRInvestigationOutcomeRecord,
     VRInvestigationRecord,
 )
+from aila.platform.agents.idempotent_llm import idempotent_llm_call
 from aila.platform.contracts import utc_now
 from aila.platform.llm.errors import BudgetExceededError, LLMError
 from aila.platform.llm.sanitize import sanitize_input
@@ -201,13 +202,16 @@ class SynthesisAgent:
         # halt for what it is (NOT an LLM failure).
         services = ServiceFactory()
         try:
-            response = await services.llm_client.chat_structured(
+            response, _ = await idempotent_llm_call(
+                services.llm_client,
+                method="chat_structured",
                 task_type=self._TASK_TYPE,
                 messages=[
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user", "content": _render_panel(panel)},
                 ],
                 model_class=SynthesisResponse,
+                investigation_id=self.investigation_id,
             )
         except BudgetExceededError:
             raise

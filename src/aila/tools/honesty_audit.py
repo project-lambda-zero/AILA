@@ -44,7 +44,7 @@ Detects thirty-six categories of structural dishonesty:
 40. lifecycle_handler_bypass_service -- a pause/resume/re-enqueue route handler writes investigation .status directly instead of calling the platform lifecycle service.
 41. workflow_state_copy_of_platform -- a vr/malware investigation state file duplicates a platform workflow-state base instead of binding the factory.
 42. agent_primitive_reimplementation -- a module agents/ file defines a platform-owned agent primitive (auto-steering injector / intent classifier) at top level instead of importing it.
-43. agent_llm_chat_bypass -- a module agents/ file calls llm_client.chat() directly instead of routing through platform idempotent_llm_call (double-pays the model on retry).
+43. agent_llm_chat_bypass -- a module agents/ file calls llm_client.chat/chat_json/chat_structured directly instead of routing through platform idempotent_llm_call (double-pays the model on retry).
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -2190,27 +2190,29 @@ class _HonestyVisitor(ast.NodeVisitor):
         """Rule 43: agent_llm_chat_bypass -- a module agents/ file calls the
         raw llm_client.chat() instead of the idempotent wrapper.
 
-        RFC-03 Phase 2 routes the module agent chat calls through
+        RFC-03 Phase 2 routes the module agent LLM calls through
         platform.agents.idempotent_llm_call so a retried worker replays the
         cached response instead of paying the model API a second time. A
-        direct ``<x>.llm_client.chat(...)`` in a module agents/ file is a
-        bypass that reintroduces the double-pay. (chat_json / chat_structured
-        adoption lands in a later phase.)
+        direct ``<x>.llm_client.chat(...)`` / ``.chat_json(...)`` /
+        ``.chat_structured(...)`` (or the same on ``self._llm``) in a module
+        agents/ file is a bypass that reintroduces the double-pay.
         """
         if not _AGENTS_SCOPE_PATTERN.search(self.filename.replace("\\", "/")):
             return
+        _methods = ("chat", "chat_json", "chat_structured")
+        _receivers = ("llm_client", "_llm")
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
             fn = node.func
-            if not (isinstance(fn, ast.Attribute) and fn.attr == "chat"):
+            if not (isinstance(fn, ast.Attribute) and fn.attr in _methods):
                 continue
             recv = fn.value
-            if isinstance(recv, ast.Attribute) and recv.attr == "llm_client":
+            if isinstance(recv, ast.Attribute) and recv.attr in _receivers:
                 self._emit(
                     node.lineno,
                     "agent_llm_chat_bypass",
-                    "agent_llm_chat_bypass: route llm_client.chat() through "
+                    "agent_llm_chat_bypass: route this LLM call through "
                     "platform.agents.idempotent_llm_call for retry safety",
                 )
 
