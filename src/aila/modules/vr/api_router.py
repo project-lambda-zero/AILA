@@ -33,8 +33,10 @@ from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
 from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.platform.contracts import utc_now
 from aila.platform.contracts.auth import AuthContext, require_auth
-from aila.platform.llm.cost_record import LLMCostRecord
 from aila.platform.services.factory import ServiceFactory
+from aila.platform.services.investigation_cost import (
+    compute_live_investigation_cost,
+)
 from aila.platform.uow import UnitOfWork
 from aila.storage.db_models import WorkflowStateCursor
 
@@ -751,30 +753,6 @@ def _investigation_summary(
         created_at=record.created_at,
         updated_at=record.updated_at,
     )
-
-
-async def _compute_live_investigation_cost(
-    uow: Any, investigation_id: str,
-) -> float:
-    """Aggregate LLMCostRecord.cost_usd for this investigation.
-
-    Investigation LLM calls are recorded with ``run_id == investigation_id``
-    (the reasoning engine threads it through ``decide_next_turn``), so the
-    sum is a direct filter on run_id. Before that threading landed run_id
-    was empty for these calls and this read always returned 0.0.
-
-    Returns 0.0 on any error (best-effort -- the budget gauge degrades to
-    the stored zero rather than crashing the read path).
-    """
-    try:
-        sum_q = select(sa_func.coalesce(sa_func.sum(LLMCostRecord.cost_usd), 0.0)).where(
-            LLMCostRecord.run_id == investigation_id,
-        )
-        total = (await uow.session.exec(sum_q)).one()
-        return float(total)
-    except (AttributeError, ImportError, ValueError) as exc:
-        _log.warning("_compute_live_investigation_cost failed reason=%s", exc)
-        return 0.0
 
 
 def _branch_summary(
@@ -4066,12 +4044,15 @@ def create_vr_router() -> APIRouter:
                         if isinstance(vc, (int, float)):
                             verifier_confidence = float(vc)
 
-        # Live cost -- aggregate LLMCostRecord by run_id matching this
-        # investigation's TaskRecord ids. The stored cost_actual_usd has
-        # no writers so without this override every read returned $0
-        # regardless of actual spend, making the budget gauge decorative.
+        # Live cost -- sum LLMCostRecord by run_id (which the reasoning
+        # engine threads as the investigation id). The stored
+        # cost_actual_usd has no writers so without this override every
+        # read returned $0 regardless of actual spend, making the budget
+        # gauge decorative.
         async with UnitOfWork() as uow_cost:
-            live_cost = await _compute_live_investigation_cost(uow_cost, investigation_id)
+            live_cost = await compute_live_investigation_cost(
+                uow_cost, investigation_id,
+            )
         return DataEnvelope(data=_investigation_summary(
             inv,
             branch_count=int(branch_count),
