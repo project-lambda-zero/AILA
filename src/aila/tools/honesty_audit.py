@@ -49,6 +49,7 @@ Detects thirty-six categories of structural dishonesty:
 45. module_prefix_in_platform_tool_name -- a platform MCP bridge hard-codes a module-prefixed tool name literal (name = "vr.audit_mcp_bridge"); derive the name from a constructor module_id instead (RFC-05 concern b).
 46. platform_owns_event_vocabulary -- an event class under platform/events/ carries module-domain vocabulary (scan/finding/investigation or a module id) in its class name or event_type; the platform owns only generic infrastructure events (RFC-05 concern c).
 47. raw_sql_platform_tables -- a module file issues raw SQL against a platform-owned task table (taskrecord, workflow_state_cursor); route through a platform lifecycle / TaskQueue service instead (RFC-05 Phase 6).
+48. platform_names_module -- a boundary-guarded file (api/, platform/, storage/) resolves a specific feature module by naming its id in a .require("vulnerability") / .require_module("forensics") call; resolve domain data by capability via ModuleRegistry.first_with/all_with instead (RFC-05 concerns a/g).
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -294,6 +295,13 @@ _EVENT_DOMAIN_TOKENS: frozenset[str] = frozenset({
 _RAW_SQL_PLATFORM_TABLE_RE = _re.compile(
     r"\b(from|into|update|join)\s+(taskrecord|workflow_state_cursor)\b",
     _re.IGNORECASE,
+)
+
+# Rule 48 -- platform_names_module. Feature module ids a boundary-guarded file
+# must never name in a registry require(...) call. The platform resolves domain
+# data by capability (ModuleRegistry.first_with/all_with), never by module id.
+_DOMAIN_MODULE_IDS = frozenset(
+    {"vulnerability", "forensics", "malware", "vr", "hello_world"}
 )
 
 
@@ -1500,6 +1508,34 @@ class _HonestyVisitor(ast.NodeVisitor):
                         f"{layer} file imports from '{node.module}' -- use module contracts, registry lookups, or injected adapters instead",
                     )
 
+    def _check_platform_names_module(self, tree: ast.Module) -> None:
+        """Rule 48: platform_names_module -- a boundary-guarded file resolves a
+        specific feature module by naming its id.
+
+        A ``.require("vulnerability")`` / ``.require_module("forensics")`` call
+        welds the platform or API layer to one module. Resolve domain data by
+        capability instead (ModuleRegistry.first_with / all_with) so the layer
+        names no module. Dynamic (variable) arguments are not flagged.
+        """
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not isinstance(func, ast.Attribute) or func.attr not in ("require", "require_module"):
+                continue
+            if not node.args or not isinstance(node.args[0], ast.Constant):
+                continue
+            value = node.args[0].value
+            if not isinstance(value, str) or value not in _DOMAIN_MODULE_IDS:
+                continue
+            self._emit(
+                node.lineno,
+                "platform_names_module",
+                f"platform_names_module: .{func.attr}({value!r}) names a feature "
+                f"module -- resolve by capability via "
+                f"ModuleRegistry.first_with/all_with instead",
+            )
+
     def _check_import_boundary(self, tree: ast.Module, module_id: str) -> None:
         """Rule: import_boundary.
 
@@ -2700,6 +2736,7 @@ class HonestyAuditor:
             visitor._check_agent_llm_chat_bypass(tree)
         if _is_boundary_guarded_file(str(path)):
             visitor._check_api_imports_modules(tree)
+            visitor._check_platform_names_module(tree)
         if _is_module_file(str(path)):
             visitor._check_module_session_scope_import(tree)
             visitor._check_asyncio_in_module(tree)

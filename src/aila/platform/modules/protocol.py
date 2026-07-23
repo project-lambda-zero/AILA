@@ -496,3 +496,12 @@ class ModuleProtocol(Protocol):
         defaults to none.
         """
         return []
+
+    def scan_submission_track(self) -> str | None:
+        """Return the ARQ track a scan submitted via POST /analyze runs on.
+
+        The shared scan-submission endpoint resolves the track from whichever
+        registered module declares one, so the API layer never names a track.
+        OPTIONAL -- a module that accepts no scan submissions returns None.
+        """
+        return None

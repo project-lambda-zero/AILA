@@ -24,14 +24,13 @@ from aila.api.auth import AuthContext, require_user_or_api_key
 from aila.api.constants import ROLE_OPERATOR
 from aila.api.limiter import limiter
 from aila.api.schemas.endpoints import (
-    ALL_STATES,
-    VALID_TRANSITIONS,
     FindingTransitionRequest,
     FindingWorkflowHistoryResponse,
     FindingWorkflowStateResponse,
     WorkflowStateDefinition,
 )
 from aila.api.schemas.envelope import DataEnvelope
+from aila.platform.contracts.finding_states import FINDING_STATE_TRANSITIONS
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import FindingWorkflowRecord
 
@@ -51,6 +50,39 @@ def _require_operator(auth: AuthContext = Depends(require_user_or_api_key)) -> A
             detail=f"Finding workflow requires '{ROLE_OPERATOR}' role or higher; current role: '{auth.role}'",
         )
     return auth
+
+
+def _resolve_finding_state_machine(
+    platform: object,
+) -> tuple[list[str], dict[str, list[str]]]:
+    """Resolve the finding state machine: platform base plus module extensions.
+
+    The base transition map is the platform-owned generic finding lifecycle
+    (FINDING_STATE_TRANSITIONS); each registered module's workflow_definitions()
+    are merged on top. The API layer names no finding vocabulary of its own.
+    """
+    transitions: dict[str, list[str]] = {
+        state: list(targets) for state, targets in FINDING_STATE_TRANSITIONS.items()
+    }
+    states: list[str] = list(transitions)
+    if platform is None:
+        return states, transitions
+    try:
+        for module in platform.runtime.module_registry.modules:
+            if not hasattr(module, "workflow_definitions"):
+                continue
+            for _wf_id, wf_def in module.workflow_definitions().items():
+                for s in wf_def.get("states", []):
+                    if s not in states:
+                        states.append(s)
+                for from_state, to_states in wf_def.get("transitions", {}).items():
+                    transitions.setdefault(from_state, [])
+                    for ts in to_states:
+                        if ts not in transitions[from_state]:
+                            transitions[from_state].append(ts)
+    except Exception:
+        _log.debug("Module workflow_definitions collection failed", exc_info=True)
+    return states, transitions
 
 
 def _record_to_response(r: FindingWorkflowRecord) -> FindingWorkflowHistoryResponse:
@@ -81,27 +113,8 @@ async def get_workflow_states(
     Also merges module-contributed workflow definitions if any modules
     implement workflow_definitions().
     """
-    merged_states = list(ALL_STATES)
-    merged_transitions = dict(VALID_TRANSITIONS)
-
     platform = getattr(request.app.state, "platform", None)
-    if platform is not None:
-        try:
-            for module in platform.runtime.module_registry.modules:
-                if not hasattr(module, "workflow_definitions"):
-                    continue
-                for _wf_id, wf_def in module.workflow_definitions().items():
-                    for s in wf_def.get("states", []):
-                        if s not in merged_states:
-                            merged_states.append(s)
-                    for from_state, to_states in wf_def.get("transitions", {}).items():
-                        if from_state not in merged_transitions:
-                            merged_transitions[from_state] = []
-                        for ts in to_states:
-                            if ts not in merged_transitions[from_state]:
-                                merged_transitions[from_state].append(ts)
-        except Exception:
-            _log.debug("Module workflow_definitions collection failed", exc_info=True)
+    merged_states, merged_transitions = _resolve_finding_state_machine(platform)
 
     return DataEnvelope(
         data=WorkflowStateDefinition(
@@ -171,6 +184,14 @@ async def transition_finding(
     - Invalid transitions return 422 Unprocessable Entity.
     - Records previous_state and transitioned_by for audit trail.
     """
+    platform = getattr(request.app.state, "platform", None)
+    valid_states, transitions = _resolve_finding_state_machine(platform)
+    if body.target_state not in valid_states:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown state '{body.target_state}'. Valid: {valid_states}",
+        )
+
     async with async_session_scope() as session:
         # Get the most recent workflow record for this finding
         stmt = (
@@ -183,7 +204,7 @@ async def transition_finding(
         current_state = latest.current_state if latest else "new"
 
         # Validate transition (T-138-22: server-side enforcement)
-        allowed = VALID_TRANSITIONS.get(current_state, [])
+        allowed = transitions.get(current_state, [])
         if body.target_state not in allowed:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -298,7 +319,12 @@ async def get_evidence_chain(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Platform not initialized -- vulnerability module unavailable.",
         )
-    module = platform.runtime.module_registry.require("vulnerability")
+    module = platform.runtime.module_registry.first_with("evidence_chain")
+    if module is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Evidence chains unavailable -- no registered module provides them.",
+        )
 
     async with async_session_scope() as session:
         chain = await module.evidence_chain(finding_id, session)

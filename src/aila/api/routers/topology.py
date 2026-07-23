@@ -80,7 +80,9 @@ async def _load_severity_counts(system_ids: list[int], platform: object) -> dict
     if platform is None or not system_ids:
         return {}
     try:
-        module = platform.runtime.module_registry.require("vulnerability")  # type: ignore[attr-defined]
+        module = platform.runtime.module_registry.first_with("fleet_severity_summary")
+        if module is None:
+            return {}
         labels = await module.fleet_severity_summary(system_ids, None)
     except Exception:
         _log.debug("severity overlay unavailable", exc_info=True)
@@ -196,12 +198,13 @@ async def get_topology(
     platform = getattr(request.app.state, "platform", None)
     if platform is not None:
         try:
-            module = platform.runtime.module_registry.require("vulnerability")
-            tag_map = await module.system_tags_map(system_ids, None)
-            for sid, tags in tag_map.items():
-                for tag in tags:
-                    if tag.get("tag_key") == "group":
-                        system_group_tags[sid].append(str(tag.get("tag_value") or ""))
+            module = platform.runtime.module_registry.first_with("system_tags_map")
+            if module is not None:
+                tag_map = await module.system_tags_map(system_ids, None)
+                for sid, tags in tag_map.items():
+                    for tag in tags:
+                        if tag.get("tag_key") == "group":
+                            system_group_tags[sid].append(str(tag.get("tag_value") or ""))
         except Exception:
             _log.debug("group tags unavailable", exc_info=True)
 

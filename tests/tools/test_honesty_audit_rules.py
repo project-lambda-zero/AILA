@@ -1342,3 +1342,76 @@ class TestRawSqlPlatformTables:
             '    return session.exec("DELETE FROM workflow_state_cursor WHERE run_id = 1")\n',
         )
         assert "raw_sql_platform_tables" not in _rules(_audit(src))
+
+
+class TestPlatformNamesModule:
+    """Rule 48: a boundary-guarded file (api/, platform/, storage/) must not
+    resolve a specific feature module by naming its id in a registry
+    require(...) call (RFC-05 concerns a/g)."""
+
+    def test_api_require_literal_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/api/routers/dashboard.py",
+            "def f(registry):\n"
+            '    return registry.require("vulnerability")\n',
+        )
+        assert "platform_names_module" in _rules(_audit(src))
+
+    def test_platform_require_module_literal_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/tasks/report_tasks.py",
+            "def f(runtime):\n"
+            '    return runtime.require_module("forensics")\n',
+        )
+        assert "platform_names_module" in _rules(_audit(src))
+
+    def test_storage_require_literal_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/storage/thing.py",
+            "def f(registry):\n"
+            '    return registry.require("malware")\n',
+        )
+        assert "platform_names_module" in _rules(_audit(src))
+
+    def test_first_with_not_flagged(self, tmp_path: Path) -> None:
+        """Capability resolution (the correct pattern) never fires."""
+        src = _write(
+            tmp_path,
+            "aila/api/routers/dashboard.py",
+            "def f(registry):\n"
+            '    return registry.first_with("report_count")\n',
+        )
+        assert "platform_names_module" not in _rules(_audit(src))
+
+    def test_dynamic_arg_not_flagged(self, tmp_path: Path) -> None:
+        """A variable module id (dynamic require) is not flagged."""
+        src = _write(
+            tmp_path,
+            "aila/api/routers/dashboard.py",
+            "def f(registry, module_id):\n"
+            "    return registry.require(module_id)\n",
+        )
+        assert "platform_names_module" not in _rules(_audit(src))
+
+    def test_non_module_string_not_flagged(self, tmp_path: Path) -> None:
+        """A string that is not a domain module id is not flagged."""
+        src = _write(
+            tmp_path,
+            "aila/api/routers/dashboard.py",
+            "def f(registry):\n"
+            '    return registry.require("platform")\n',
+        )
+        assert "platform_names_module" not in _rules(_audit(src))
+
+    def test_module_file_not_flagged(self, tmp_path: Path) -> None:
+        """A module file is out of scope -- rule 48 runs on boundary layers only."""
+        src = _write(
+            tmp_path,
+            "aila/modules/vulnerability/module.py",
+            "def f(registry):\n"
+            '    return registry.require("vulnerability")\n',
+        )
+        assert "platform_names_module" not in _rules(_audit(src))

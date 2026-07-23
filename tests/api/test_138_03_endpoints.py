@@ -135,6 +135,9 @@ async def test_search_finds_findings(test_db, admin_token, seeded_findings):
     stub_registry = MagicMock()
     stub_registry.require.return_value = vuln_module
     stub_registry.modules = [vuln_module]
+    stub_registry.first_with.side_effect = (
+        lambda cap: vuln_module if callable(getattr(vuln_module, cap, None)) else None
+    )
     stub_runtime = MagicMock()
     stub_runtime.module_registry = stub_registry
     stub_platform = MagicMock()
@@ -278,6 +281,9 @@ async def test_tag_assignment_full_cycle(test_db, admin_token, seeded_system):
     stub_registry = MagicMock()
     stub_registry.require.return_value = vuln_module
     stub_registry.modules = [vuln_module]
+    stub_registry.first_with.side_effect = (
+        lambda cap: vuln_module if callable(getattr(vuln_module, cap, None)) else None
+    )
     stub_runtime = MagicMock()
     stub_runtime.module_registry = stub_registry
     stub_platform = MagicMock()

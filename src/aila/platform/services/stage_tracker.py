@@ -9,7 +9,7 @@ logic and never names a module.
 Usage (from a module binding):
 
     from aila.platform.contracts.target_stages import StageName
-    from aila.modules.vr.services.stage_tracker import (
+    from aila.platform.services.stage_tracker import (
         StageTracker, StageAlreadyDoneError,
     )
 

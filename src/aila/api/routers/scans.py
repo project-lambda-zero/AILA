@@ -27,7 +27,6 @@ from aila.api.constants import (
     MEDIA_TYPE_SSE,
     MODULE_ID_PLATFORM,
     ROLE_OPERATOR,
-    TRACK_VULNERABILITY,
 )
 from aila.api.limiter import limiter
 from aila.api.metrics import ACTIVE_SSE
@@ -78,8 +77,15 @@ async def submit_scan(
             config_registry=getattr(getattr(platform, "runtime", None), "config_registry", None),
             module_id=MODULE_ID_PLATFORM,
         )
+        scan_module = platform.runtime.module_registry.first_with("scan_submission_track")
+        track = scan_module.scan_submission_track() if scan_module is not None else None
+        if track is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="No registered module accepts scan submissions.",
+            )
         handle = await task_queue.submit(
-            track=TRACK_VULNERABILITY,
+            track=track,
             fn=run_platform_handle,
             kwargs={
                 "query": req.query_text,

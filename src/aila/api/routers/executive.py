@@ -355,7 +355,12 @@ async def executive_health(
     Used by the frontend executive dashboard to populate severity summary cards
     without requiring a full PDF download.
     """
-    module = request.app.state.platform.runtime.module_registry.require("vulnerability")
+    module = request.app.state.platform.runtime.module_registry.first_with("latest_findings")
+    if module is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Executive reporting unavailable -- no registered module provides findings.",
+        )
     findings = await _fetch_all_findings(module, auth)
     breakdown = _build_severity_breakdown(findings)
 
@@ -403,7 +408,12 @@ async def download_risk_summary_pdf(
     Filename: aila-risk-summary-YYYYMMDD.pdf
     Requires: weasyprint (aila[pdf] extras).
     """
-    module = request.app.state.platform.runtime.module_registry.require("vulnerability")
+    module = request.app.state.platform.runtime.module_registry.first_with("build_risk_pdf_bytes")
+    if module is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Risk summary PDF unavailable -- no registered module provides it.",
+        )
     findings = await _fetch_all_findings(module, auth)
 
     try:
@@ -457,7 +467,12 @@ async def download_evidence_package(
 
     Returns 404 if no findings exist for the given system_id.
     """
-    module = request.app.state.platform.runtime.module_registry.require("vulnerability")
+    module = request.app.state.platform.runtime.module_registry.first_with("build_evidence_zip")
+    if module is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Evidence packages unavailable -- no registered module provides them.",
+        )
 
     # #36: gate the entire package by team ownership of the ManagedSystemRecord.
     # owned_or_404 goes through session.exec(select(...)) rather than

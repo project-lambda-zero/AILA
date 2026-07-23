@@ -44,6 +44,10 @@ class _StubRegistry:
     def require(self, name: str) -> object:
         return _StubModule()
 
+    def first_with(self, capability: str) -> object | None:
+        module = _StubModule()
+        return module if callable(getattr(module, capability, None)) else None
+
 
 def _req_with_platform() -> object:
     """Request whose platform is present so the tags handler reaches the

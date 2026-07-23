@@ -78,13 +78,14 @@ async def get_dashboard(
         platform = getattr(request.app.state, "platform", None)
         if platform is not None:
             try:
-                module = platform.runtime.module_registry.require("vulnerability")
-                counts = await module.report_count("", session, team_id=auth.team_id)
-                total_findings = int(counts.get("total_findings", 0))
-                critical = int(counts.get("critical", 0))
-                high = int(counts.get("high", 0))
-                medium = int(counts.get("medium", 0))
-                low = int(counts.get("low", 0))
+                module = platform.runtime.module_registry.first_with("report_count")
+                if module is not None:
+                    counts = await module.report_count("", session, team_id=auth.team_id)
+                    total_findings = int(counts.get("total_findings", 0))
+                    critical = int(counts.get("critical", 0))
+                    high = int(counts.get("high", 0))
+                    medium = int(counts.get("medium", 0))
+                    low = int(counts.get("low", 0))
             except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError):
                 _log.debug("vulnerability report_count unavailable; finding counts will be 0", exc_info=True)
 

@@ -121,8 +121,8 @@ async def global_search(
             platform = getattr(request.app.state, "platform", None)
             if platform is not None:
                 try:
-                    module = platform.runtime.module_registry.require("vulnerability")
-                    if hasattr(module, "latest_findings"):
+                    module = platform.runtime.module_registry.first_with("latest_findings")
+                    if module is not None:
                         findings = await module.latest_findings(
                             session, search_term=q, limit=_MAX_PER_TYPE
                         )

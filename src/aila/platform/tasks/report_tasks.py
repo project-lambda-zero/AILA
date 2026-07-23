@@ -217,7 +217,9 @@ async def _generate_risk_summary_pdf(team_id: str | None) -> bytes:
     never includes another team's findings; None is a god-tier report (#36).
     """
     platform = await get_worker_platform()
-    module = platform.runtime.module_registry.require("vulnerability")
+    module = platform.runtime.module_registry.first_with("build_risk_pdf_bytes")
+    if module is None:
+        raise RuntimeError("No registered module provides risk summary PDFs.")
     async with async_session_scope() as session:
         findings = await module.latest_findings(session, team_id=team_id)
     return await asyncio.to_thread(module.build_risk_pdf_bytes, findings)

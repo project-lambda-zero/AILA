@@ -47,6 +47,32 @@ class ModuleRegistry:
             raise KeyError(f"Module {module_id!r} is not registered. Available: {available}.")
         return self._modules[module_id]
 
+    def first_with(self, capability: str) -> ModuleProtocol | None:
+        """Return the first registered module exposing a callable named ``capability``.
+
+        Shared API surfaces resolve domain data by capability rather than by
+        naming a module. Registration order decides precedence when more than
+        one module answers. Returns None when no registered module implements
+        the capability, so callers degrade instead of raising.
+        """
+        for module in self.modules:
+            candidate = getattr(module, capability, None)
+            if callable(candidate):
+                return module
+        return None
+
+    def all_with(self, capability: str) -> list[ModuleProtocol]:
+        """Return every registered module exposing a callable named ``capability``.
+
+        Used by surfaces that aggregate across modules (dashboards, search)
+        rather than reading a single answer.
+        """
+        return [
+            module
+            for module in self.modules
+            if callable(getattr(module, capability, None))
+        ]
+
     def capability_profiles(self) -> list[ModuleCapabilityProfile]:
         """Return capability profiles for all registered modules in registration order.
 

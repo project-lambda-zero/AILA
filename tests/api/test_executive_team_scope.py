@@ -56,6 +56,10 @@ class _Registry:
             raise KeyError(name)
         return self._module
 
+    def first_with(self, capability: str) -> object | None:
+        candidate = getattr(self._module, capability, None)
+        return self._module if callable(candidate) else None
+
 
 def _req(module: object) -> object:
     platform = types.SimpleNamespace(

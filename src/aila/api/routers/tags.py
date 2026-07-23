@@ -176,7 +176,12 @@ async def list_system_tags(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Platform not initialized -- vulnerability module unavailable",
         )
-    module = platform.runtime.module_registry.require("vulnerability")
+    module = platform.runtime.module_registry.first_with("list_system_tags")
+    if module is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="System tags unavailable -- no registered module provides them.",
+        )
     async with async_session_scope(team_context=TeamContext.from_auth(auth)) as session:
         sys_record = (await session.exec(
             select(ManagedSystemRecord).where(ManagedSystemRecord.id == system_id)
@@ -238,7 +243,12 @@ async def assign_system_tag(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Platform not initialized -- vulnerability module unavailable",
             )
-        module = platform.runtime.module_registry.require("vulnerability")
+        module = platform.runtime.module_registry.first_with("assign_system_tag")
+        if module is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="System tags unavailable -- no registered module provides them.",
+            )
         try:
             row = await module.assign_system_tag(system_id, body.tag_key, body.tag_value, session)
         except IntegrityError:
@@ -278,7 +288,12 @@ async def delete_system_tag(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Platform not initialized -- vulnerability module unavailable",
         )
-    module = platform.runtime.module_registry.require("vulnerability")
+    module = platform.runtime.module_registry.first_with("delete_system_tag")
+    if module is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="System tags unavailable -- no registered module provides them.",
+        )
     async with async_session_scope() as session:
         deleted = await module.delete_system_tag(system_id, tag_id, session)
     if not deleted:

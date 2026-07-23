@@ -139,7 +139,9 @@ async def _build_tags_map(session: object, system_ids: list[int], platform: obje
     if platform is None or not system_ids:
         return {}
     try:
-        module = platform.runtime.module_registry.require("vulnerability")  # type: ignore[attr-defined]
+        module = platform.runtime.module_registry.first_with("system_tags_map")
+        if module is None:
+            return {}
         return await module.system_tags_map(system_ids, session)
     except Exception:
         _log.debug("tags_map query failed", exc_info=True)
