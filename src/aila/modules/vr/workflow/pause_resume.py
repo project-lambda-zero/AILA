@@ -20,10 +20,14 @@ from aila.modules.vr.db_models import (
 from aila.modules.vr.workflow.task import run_vr_investigate
 from aila.platform.services.investigation_lifecycle import (
     PauseInvestigationError,
+    ReenqueueInvestigationError,
     ResumeInvestigationError,
 )
 from aila.platform.services.investigation_lifecycle import (
     pause_investigation as _platform_pause,
+)
+from aila.platform.services.investigation_lifecycle import (
+    reenqueue_investigation as _platform_reenqueue,
 )
 from aila.platform.services.investigation_lifecycle import (
     resume_investigation as _platform_resume,
@@ -31,8 +35,10 @@ from aila.platform.services.investigation_lifecycle import (
 
 __all__ = [
     "PauseInvestigationError",
+    "ReenqueueInvestigationError",
     "ResumeInvestigationError",
     "pause_investigation_atomic",
+    "reenqueue_investigation_atomic",
     "resume_investigation_atomic",
 ]
 
@@ -93,4 +99,30 @@ async def resume_investigation_atomic(
         auth_user_id=auth_user_id,
         auth_role=auth_role,
         auth_team_id=auth_team_id,
+    )
+
+
+async def reenqueue_investigation_atomic(
+    investigation_id: str,
+    *,
+    new_kind: str | None = None,
+    new_strategy: str | None = None,
+    task_queue: Any = None,
+    user_id: str | None = None,
+    group_id: str | None = None,
+    team_id: str | None = None,
+) -> dict[str, Any]:
+    """Reset + re-submit ``investigation_id`` (VR binding)."""
+    return await _platform_reenqueue(
+        investigation_id,
+        inv_model=VRInvestigationRecord,
+        track="vr",
+        task_fn=run_vr_investigate,
+        fn_path_pattern="%run_vr_investigate%",
+        task_queue=task_queue,
+        new_kind=new_kind,
+        new_strategy=new_strategy,
+        user_id=user_id,
+        group_id=group_id,
+        team_id=team_id,
     )

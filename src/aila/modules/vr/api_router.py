@@ -35,7 +35,6 @@ from aila.platform.contracts import utc_now
 from aila.platform.contracts.auth import AuthContext, require_auth
 from aila.platform.llm.cost_record import LLMCostRecord
 from aila.platform.services.factory import ServiceFactory
-from aila.platform.tasks.models import TaskRecord, TaskStatus
 from aila.platform.uow import UnitOfWork
 from aila.storage.db_models import WorkflowStateCursor
 
@@ -4839,11 +4838,15 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRInvestigationSummary]:
         from aila.api.deps import get_task_queue
-        from aila.platform.contracts import utc_now
 
         from .db_models import VRInvestigationRecord
-        from .workflow.task import run_vr_investigate
+        from .workflow.pause_resume import reenqueue_investigation_atomic
 
+        # Auth visibility check: confirm the caller can see this row
+        # before mutating it. The platform reenqueue service owns the
+        # atomic reset (status to CREATED, stale-task cancel, crashed
+        # cursor wipe, commit before submit) across the four sources of
+        # truth; the handler keeps the team filter and the summary.
         async with UnitOfWork() as uow:
             inv = (await uow.session.exec(
                 _team_filter(
@@ -4858,80 +4861,36 @@ def create_vr_router() -> APIRouter:
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Investigation {investigation_id} not found.",
                 )
-            # Always sync strategy_family to kind's default when the
-            # operator re-enqueues with an explicit kind -- covers both
-            # 'change the kind' and 'fix a mismatch where the strategy
-            # was stuck on the wrong default from earlier create-time
-            # bug'. Without this, an investigation created with
-            # kind=variant_hunt but strategy_family=discovery_research
-            # (the pre-006047d default-fallback bug) couldn't be
-            # repaired without a direct DB edit.
-            if body and body.kind is not None:
-                inv.kind = body.kind.value
-                inv.strategy_family = _KIND_DEFAULT_STRATEGY[body.kind]
-            inv.status = InvestigationStatus.CREATED.value
-            inv.pause_reason = None
-            inv.updated_at = utc_now()
-            uow.session.add(inv)
 
-            # Cancel any stale run_vr_investigate TaskRecord still in
-            # queued/running/waiting for THIS investigation. Without
-            # this, TaskQueue.submit() (SEC-07 dedup, queue.py L128)
-            # returns the existing handle when input_hash matches --
-            # and the matching hash is exactly (fn=run_vr_investigate,
-            # kwargs={investigation_id: <id>}). When a previous worker
-            # crashed leaving its TaskRecord in 'running' without a
-            # live arq job, every re-enqueue silently no-op'd. Operator
-            # sees status=created, clicks 'Start', nothing happens.
+        # Resolve the kind change + its strategy default here (the
+        # kind-to-strategy map is VR policy); the service applies them.
+        new_kind: str | None = None
+        new_strategy: str | None = None
+        if body and body.kind is not None:
+            new_kind = body.kind.value
+            new_strategy = _KIND_DEFAULT_STRATEGY[body.kind]
 
-            stale_q = select(TaskRecord).where(
-                TaskRecord.fn_path.like("%run_vr_investigate%"),
-                TaskRecord.status.in_(["queued", "running", "waiting"]),
-                TaskRecord.kwargs_json.like(f'%"{investigation_id}"%'),
-            )
-            stale_rows = (await uow.session.exec(stale_q)).all()
-            for row in stale_rows:
-                row.status = TaskStatus.CANCELLED.value
-                uow.session.add(row)
-
-            # Branch cleanup is handled by investigation_setup's
-            # _spawn_persona_siblings_and_enqueue which now searches ALL
-            # branches by persona (not just current primary's children),
-            # reuses the best branch per persona, and abandons duplicates.
-            # Also wipe __crashed__ cursors for this investigation so the
-            # workflow engine starts fresh on next dispatch. Without this,
-            # crashed cursors persist forever and re-enqueue fires a new
-            # TaskRecord but the engine refuses to resume cleanly. I had
-            # to manually DELETE 219 such orphan crashed cursors today.
-            try:
-                await uow.session.exec(  # type: ignore[call-arg]
-                    sa_text(
-                        "DELETE FROM workflow_state_cursor "
-                        "WHERE current_state = '__crashed__' "
-                        "AND run_id IN (SELECT id FROM taskrecord "
-                        "WHERE kwargs_json LIKE :pat)"
-                    ).bindparams(pat=f'%"{investigation_id}"%')
-                )
-            except (SQLAlchemyError, OSError, RuntimeError) as exc:
-                logging.getLogger(__name__).warning(
-                    "re-enqueue: cursor cleanup failed: %s", exc,
-                    exc_info=True,
-                )
-            await uow.session.commit()
-            await uow.session.refresh(inv)
-        # (committed before submit so the next submit() sees a clean
-        # dedup table -- same UoW would race with the dedup_session
-        # opened inside TaskQueue.submit.)
-
-        task_queue = get_task_queue("vr", request)
-        await task_queue.submit(
-            track="vr",
-            fn=run_vr_investigate,
-            kwargs={"investigation_id": investigation_id},
+        await reenqueue_investigation_atomic(
+            investigation_id,
+            new_kind=new_kind,
+            new_strategy=new_strategy,
+            task_queue=get_task_queue("vr", request),
             user_id=auth.user_id,
             group_id=auth.role,
             team_id=auth.team_id,
         )
+
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                select(VRInvestigationRecord).where(
+                    VRInvestigationRecord.id == investigation_id,
+                ),
+            )).first()
+        if inv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Investigation {investigation_id} not found.",
+            )
         return DataEnvelope(data=_investigation_summary(inv))
 
     @router.post(

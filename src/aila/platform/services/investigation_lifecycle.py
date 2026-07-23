@@ -53,8 +53,10 @@ _log = logging.getLogger(__name__)
 
 __all__ = [
     "PauseInvestigationError",
+    "ReenqueueInvestigationError",
     "ResumeInvestigationError",
     "pause_investigation",
+    "reenqueue_investigation",
     "resume_investigation",
 ]
 
@@ -65,6 +67,10 @@ class PauseInvestigationError(RuntimeError):
 
 class ResumeInvestigationError(RuntimeError):
     """Resume refused because there are no paused cursors to restore."""
+
+
+class ReenqueueInvestigationError(RuntimeError):
+    """Re-enqueue refused because the investigation could not be loaded."""
 
 
 async def pause_investigation(
@@ -480,4 +486,120 @@ async def resume_investigation(
                 )
 
     summary["submitted_tasks"] = submitted
+    return summary
+
+
+async def reenqueue_investigation(
+    investigation_id: str,
+    *,
+    inv_model: type[Any],
+    track: str,
+    task_fn: Callable[..., Awaitable[Any]],
+    fn_path_pattern: str,
+    task_queue: Any = None,
+    new_kind: str | None = None,
+    new_strategy: str | None = None,
+    user_id: str | None = None,
+    group_id: str | None = None,
+    team_id: str | None = None,
+) -> dict[str, Any]:
+    """Reset an investigation to CREATED and submit a fresh task.
+
+    Returns::
+
+        {"submitted": 1, "cancelled_stale_tasks": N,
+         "wiped_crashed_cursors": N, "investigation_id": "<id>"}
+
+    Cancels every stale taskrecord matching ``fn_path_pattern`` and this
+    investigation (this is what stops ``TaskQueue.submit``'s input-hash
+    dedup from returning the pre-existing handle) and wipes every
+    ``__crashed__`` workflow_state_cursor tied to the investigation
+    (without which the engine refuses to resume cleanly). The commit
+    precedes the submit; the same UoW would race with the dedup session
+    opened inside ``TaskQueue.submit``. ``new_kind`` / ``new_strategy``
+    update ``inv.kind`` / ``inv.strategy_family`` when supplied; the
+    caller resolves the module's kind-to-strategy default map.
+    """
+    if task_queue is None:
+        raise ReenqueueInvestigationError(
+            "task_queue argument required (auth-bound for safety)",
+        )
+    summary: dict[str, Any] = {
+        "submitted": 0,
+        "cancelled_stale_tasks": 0,
+        "wiped_crashed_cursors": 0,
+        "investigation_id": investigation_id,
+    }
+    now = utc_now()
+
+    async with UnitOfWork() as uow:
+        inv_stmt = (
+            select(inv_model)
+            .where(inv_model.id == investigation_id)
+            .with_for_update()
+        )
+        inv = (await uow.session.exec(inv_stmt)).first()
+        if inv is None:
+            raise ReenqueueInvestigationError(
+                f"Investigation {investigation_id!r} not found.",
+            )
+        # Sync strategy_family to the kind default when the caller passes
+        # an explicit kind. This covers both changing the kind and
+        # repairing a mismatch left by an earlier create-time default bug.
+        if new_kind is not None:
+            inv.kind = new_kind
+            if new_strategy is not None:
+                inv.strategy_family = new_strategy
+        inv.status = InvestigationStatus.CREATED.value
+        inv.pause_reason = None
+        inv.updated_at = now
+        uow.session.add(inv)
+
+        # Cancel any stale task still in queued/running/waiting for this
+        # investigation. Without this, TaskQueue.submit()'s input-hash
+        # dedup returns the pre-existing handle and the re-enqueue
+        # silently no-ops.
+        cancel_stmt = _sql_text(
+            "UPDATE taskrecord "
+            "SET status = :cancelled "
+            "WHERE fn_path LIKE :fn_pat "
+            "  AND status = ANY(:active_statuses) "
+            "  AND kwargs_json LIKE :inv_pat"
+        ).bindparams(
+            cancelled=TaskStatus.CANCELLED.value,
+            fn_pat=fn_path_pattern,
+            active_statuses=[
+                TaskStatus.QUEUED.value,
+                TaskStatus.RUNNING.value,
+                TaskStatus.WAITING.value,
+            ],
+            inv_pat=f'%"{investigation_id}"%',
+        )
+        cancel_result = await uow.session.exec(cancel_stmt)
+        summary["cancelled_stale_tasks"] = cancel_result.rowcount or 0
+
+        # Wipe __crashed__ cursors for this investigation so the workflow
+        # engine starts fresh on the next dispatch.
+        wipe_stmt = _sql_text(
+            "DELETE FROM workflow_state_cursor "
+            "WHERE current_state = '__crashed__' "
+            "  AND run_id IN (SELECT id FROM taskrecord "
+            "WHERE kwargs_json LIKE :inv_pat)"
+        ).bindparams(inv_pat=f'%"{investigation_id}"%')
+        wipe_result = await uow.session.exec(wipe_stmt)
+        summary["wiped_crashed_cursors"] = wipe_result.rowcount or 0
+
+        await uow.session.commit()
+
+    # Commit precedes submit: the same UoW would race with the dedup
+    # session opened inside TaskQueue.submit.
+    await task_queue.submit(
+        track=track,
+        fn=task_fn,
+        kwargs={"investigation_id": investigation_id},
+        user_id=user_id,
+        group_id=group_id,
+        team_id=team_id,
+    )
+    summary["submitted"] = 1
     return summary

@@ -9,6 +9,7 @@ zombie-investigation fix in outcome_dispatcher.
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -24,11 +25,14 @@ from aila.modules.vr.db_models import (
 )
 from aila.modules.vr.workflow.pause_resume import (
     PauseInvestigationError,
+    ReenqueueInvestigationError,
     ResumeInvestigationError,
     pause_investigation_atomic,
+    reenqueue_investigation_atomic,
     resume_investigation_atomic,
 )
 from aila.platform.contracts._common import utc_now
+from aila.platform.tasks.models import TaskRecord
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import RESERVED_PAUSED
 from aila.storage.db_models import WorkflowStateCursor
@@ -647,3 +651,112 @@ async def test_investigation_loop_llm_cancel_is_clean_exit(
     assert result.output["exit_reason"] == "cancellation_token_set"
     # Cleanup the process-local token created by the alive-check.
     clear_for_investigation(inv_id)
+
+
+# ----------------------------------------------------------------------
+# reenqueue_investigation_atomic
+# ----------------------------------------------------------------------
+
+
+async def _seed_taskrecord(
+    inv_id: str,
+    *,
+    status: str = "running",
+    run_id: str | None = None,
+) -> str:
+    """Seed a run_vr_investigate TaskRecord carrying inv_id in kwargs."""
+    tid = run_id or str(uuid.uuid4())
+    async with UnitOfWork() as uow:
+        tr = TaskRecord(
+            id=tid,
+            track="vr",
+            fn_path="aila.modules.vr.workflow.task.run_vr_investigate",
+            fn_module="aila.modules.vr.workflow.task",
+            status=status,
+            user_id="op",
+            group_id="operator",
+            team_id="admin",
+            kwargs_json=json.dumps({"investigation_id": inv_id}),
+        )
+        uow.session.add(tr)
+        await uow.session.commit()
+    return tid
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_reenqueue_resets_cancels_and_wipes() -> None:
+    """Re-enqueue resets to CREATED, cancels stale tasks, wipes __crashed__
+    cursors, and submits a fresh task."""
+    target_id = await _seed_target("re1")
+    inv_id = await _seed_inv(target_id, status=InvestigationStatus.RUNNING)
+    stale_tid = await _seed_taskrecord(inv_id, status="running")
+    # A crashed cursor whose run_id is a taskrecord referencing this inv.
+    crashed_run = await _seed_taskrecord(inv_id, status="failed")
+    await _seed_cursor(crashed_run, current_state="__crashed__")
+
+    mock_queue = AsyncMock()
+    mock_queue.submit = AsyncMock(return_value=None)
+    summary = await reenqueue_investigation_atomic(
+        inv_id, task_queue=mock_queue,
+        user_id="op", group_id="operator", team_id="admin",
+    )
+
+    async with UnitOfWork() as uow:
+        inv = (await uow.session.exec(
+            select(VRInvestigationRecord)
+            .where(VRInvestigationRecord.id == inv_id),
+        )).first()
+    assert inv.status == InvestigationStatus.CREATED.value
+    assert inv.pause_reason is None
+
+    async with UnitOfWork() as uow:
+        stale = (await uow.session.exec(
+            select(TaskRecord).where(TaskRecord.id == stale_tid),
+        )).first()
+    assert stale.status == "cancelled"
+
+    async with UnitOfWork() as uow:
+        cur = (await uow.session.exec(
+            select(WorkflowStateCursor)
+            .where(WorkflowStateCursor.run_id == crashed_run),
+        )).first()
+    assert cur is None
+
+    assert mock_queue.submit.await_count == 1
+    assert summary["cancelled_stale_tasks"] >= 1
+    assert summary["wiped_crashed_cursors"] == 1
+    assert summary["submitted"] == 1
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_reenqueue_missing_raises() -> None:
+    mock_queue = AsyncMock()
+    mock_queue.submit = AsyncMock(return_value=None)
+    with pytest.raises(ReenqueueInvestigationError, match="not found"):
+        await reenqueue_investigation_atomic(
+            "00000000-0000-0000-0000-000000000000",
+            task_queue=mock_queue,
+        )
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_reenqueue_updates_kind_and_strategy() -> None:
+    target_id = await _seed_target("re2")
+    inv_id = await _seed_inv(target_id, status=InvestigationStatus.RUNNING)
+    mock_queue = AsyncMock()
+    mock_queue.submit = AsyncMock(return_value=None)
+    await reenqueue_investigation_atomic(
+        inv_id,
+        new_kind="discovery",
+        new_strategy="vulnerability_research.discovery_research",
+        task_queue=mock_queue,
+        user_id="op", group_id="operator", team_id="admin",
+    )
+    async with UnitOfWork() as uow:
+        inv = (await uow.session.exec(
+            select(VRInvestigationRecord)
+            .where(VRInvestigationRecord.id == inv_id),
+        )).first()
+    assert inv.kind == "discovery"
+    assert inv.strategy_family == "vulnerability_research.discovery_research"
+    assert inv.status == InvestigationStatus.CREATED.value
