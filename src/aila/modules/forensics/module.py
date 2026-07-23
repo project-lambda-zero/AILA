@@ -14,6 +14,10 @@ if TYPE_CHECKING:
 
 from aila.config import Settings
 from aila.platform.contracts import JsonObject
+from aila.platform.contracts.reasoning import (
+    ReasoningDomainProfile,
+    ReasoningStrategyDeclaration,
+)
 from aila.platform.modules import (
     ModuleCapabilityProfile,
     ModuleContext,
@@ -61,6 +65,55 @@ class ForensicsModule(ModuleProtocol):
     module_id = MODULE_ID
     analyze_action_id = ANALYZE_ACTION_ID
     investigate_action_id = INVESTIGATE_ACTION_ID
+
+    def reasoning_strategies(self) -> list[ReasoningStrategyDeclaration]:
+        """Reasoning strategy families this module owns (RFC-05 d)."""
+        return [
+            ReasoningStrategyDeclaration(
+                family="filesystem_triage",
+                task_type="filesystem_triage",
+                description="Filesystem timeline and artifact triage.",
+            ),
+            ReasoningStrategyDeclaration(
+                family="persistence_hunt",
+                task_type="persistence_hunt",
+                description="Persistence-mechanism hunting.",
+            ),
+            ReasoningStrategyDeclaration(
+                family="memory_forensics",
+                task_type="memory_forensics",
+                description="Volatile-memory forensic analysis.",
+            ),
+            ReasoningStrategyDeclaration(
+                family="network_forensics",
+                task_type="network_forensics",
+                description="Network-capture and flow forensic analysis.",
+            ),
+            ReasoningStrategyDeclaration(
+                family="malware_static",
+                task_type="malware_static",
+                description="Static malware examination.",
+            ),
+        ]
+
+    def reasoning_domain_profiles(self) -> list[ReasoningDomainProfile]:
+        """Reasoning domain profiles this module owns (RFC-05 d)."""
+        return [
+            ReasoningDomainProfile(
+                domain_id="forensics",
+                task_type="forensics_freeflow",
+                description="Evidence-driven static forensic investigation.",
+                allowed_strategies=[
+                    "filesystem_triage",
+                    "persistence_hunt",
+                    "memory_forensics",
+                    "network_forensics",
+                    "malware_static",
+                    "generic",
+                ],
+                default_strategy="filesystem_triage",
+            ),
+        ]
 
     def capability_profiles(self) -> list[ModuleCapabilityProfile]:
         """Return capability profiles advertising this module to the routing agent."""

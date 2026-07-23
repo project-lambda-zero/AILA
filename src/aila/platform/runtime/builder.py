@@ -16,6 +16,11 @@ from ..llm.seal import make_seal_step
 from ..llm.validate import make_validate_step
 from ..llm.verify import make_verify_step
 from ..modules import ModuleContext, ModuleRegistry, register_builtin_modules
+from ..services.reasoning import (
+    register_reasoning_domain_profile,
+    register_reasoning_strategy,
+    reset_reasoning_registries,
+)
 from ..tools import (
     ArtifactSearchTool,
     ArtifactStoreTool,
@@ -223,6 +228,18 @@ async def build_platform_runtime(*, app_settings: ApplicationSettings, platform_
         _validators.extend(_module.evidence_validators(settings=app_settings))
     _validate_step = make_validate_step(validators=_validators, emitter=None)
     runtime_model.pipeline.register("validate", _validate_step)
+
+    # RFC-05 (d): populate the platform reasoning registries from each
+    # module's declarations. The platform seeds only the generic strategy;
+    # every domain-specific strategy family and domain profile is
+    # module-owned. The registries are reset first so a re-build (tests,
+    # multi-init) starts from the platform baseline rather than accumulating.
+    reset_reasoning_registries()
+    for _module in module_registry.modules:
+        for _strategy in _module.reasoning_strategies():
+            register_reasoning_strategy(_strategy)
+        for _profile in _module.reasoning_domain_profiles():
+            register_reasoning_domain_profile(_profile)
 
     from ...storage.database import async_session_scope, init_db
     await init_db(app_settings, schema_registry)

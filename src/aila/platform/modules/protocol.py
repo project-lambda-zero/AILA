@@ -16,6 +16,10 @@ if TYPE_CHECKING:
     from ...storage.memory import PermanentMemoryStore
     from ...storage.registry import ConfigRegistry, SchemaRegistry
     from ...storage.report_store import ReportArtifactStore
+    from ..contracts.reasoning import (
+        ReasoningDomainProfile,
+        ReasoningStrategyDeclaration,
+    )
     from ..events import EventEmitter
     from ..llm import AilaLLMClient
     from ..services.knowledge import KnowledgeService
@@ -472,3 +476,23 @@ class ModuleProtocol(Protocol):
             Omit a system_id if it has no findings. Return {} if the module has no data.
         """
         return {}
+
+    def reasoning_strategies(self) -> list[ReasoningStrategyDeclaration]:
+        """Return the reasoning strategy families this module publishes.
+
+        Collected by the platform builder at load into the platform
+        StrategyRegistry. The platform owns only the ``generic`` family;
+        every domain-specific family is module-declared. OPTIONAL --
+        defaults to none.
+        """
+        return []
+
+    def reasoning_domain_profiles(self) -> list[ReasoningDomainProfile]:
+        """Return the reasoning domain profiles this module publishes.
+
+        Collected by the platform builder at load into the platform
+        DomainProfileRegistry so the reasoning engine resolves a module's
+        domain profile without the platform naming the domain. OPTIONAL --
+        defaults to none.
+        """
+        return []

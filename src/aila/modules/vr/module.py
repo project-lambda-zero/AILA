@@ -20,6 +20,10 @@ if TYPE_CHECKING:
 from aila.config import Settings
 from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.platform.contracts import JsonObject
+from aila.platform.contracts.reasoning import (
+    ReasoningDomainProfile,
+    ReasoningStrategyDeclaration,
+)
 from aila.platform.modules import (
     ModuleCapabilityProfile,
     ModuleContext,
@@ -66,6 +70,52 @@ class VRModule(ModuleProtocol):
 
     module_id = MODULE_ID
     nday_action_id = NDAY_ACTION_ID
+
+    def reasoning_strategies(self) -> list[ReasoningStrategyDeclaration]:
+        """Reasoning strategy families this module owns (RFC-05 d)."""
+        return [
+            ReasoningStrategyDeclaration(
+                family="vulnerability_research",
+                task_type="vulnerability_research",
+                description="Exploitability, advisory, and remediation reasoning.",
+            ),
+            ReasoningStrategyDeclaration(
+                family="web_pentest",
+                task_type="web_pentest",
+                description="Web application attack-path reasoning.",
+            ),
+            ReasoningStrategyDeclaration(
+                family="mobile_reverse",
+                task_type="mobile_reverse",
+                description="Mobile app reverse-engineering and threat analysis.",
+            ),
+        ]
+
+    def reasoning_domain_profiles(self) -> list[ReasoningDomainProfile]:
+        """Reasoning domain profiles this module owns (RFC-05 d)."""
+        return [
+            ReasoningDomainProfile(
+                domain_id="vulnerability_research",
+                task_type="vulnerability_research",
+                description="Exploitability, advisories, versions, and remediation reasoning.",
+                allowed_strategies=["vulnerability_research", "generic"],
+                default_strategy="vulnerability_research",
+            ),
+            ReasoningDomainProfile(
+                domain_id="web_pentest",
+                task_type="web_pentest",
+                description="Attack-path and web application security reasoning.",
+                allowed_strategies=["web_pentest", "network_forensics", "generic"],
+                default_strategy="web_pentest",
+            ),
+            ReasoningDomainProfile(
+                domain_id="mobile_reverse",
+                task_type="mobile_reverse",
+                description="APK/IPA reverse engineering and mobile app threat analysis.",
+                allowed_strategies=["mobile_reverse", "malware_static", "generic"],
+                default_strategy="mobile_reverse",
+            ),
+        ]
 
     def capability_profiles(self) -> list[ModuleCapabilityProfile]:
         """Return capability profiles advertising this module to the routing agent."""

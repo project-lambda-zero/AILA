@@ -25,6 +25,7 @@ __all__ = [
     "ReasoningGraphNodeKind",
     "ReasoningOperatorSteering",
     "ReasoningPromptContext",
+    "ReasoningStrategyDeclaration",
     "ReasoningStrategyFamily",
     "ReasoningTurnDecision",
     "EvidenceProvenance",
@@ -43,17 +44,11 @@ ReasoningAction = Literal[
     "edit_outcome",
 ]
 ReasoningConfidence = Literal["exact", "strong", "medium", "caveated", "unknown"]
-ReasoningStrategyFamily = Literal[
-    "filesystem_triage",
-    "persistence_hunt",
-    "memory_forensics",
-    "network_forensics",
-    "malware_static",
-    "vulnerability_research",
-    "web_pentest",
-    "mobile_reverse",
-    "generic",
-]
+# Strategy families are runtime-validated by the platform StrategyRegistry
+# (populated from each module's reasoning_strategies() at load), not a
+# closed Literal -- the platform no longer names module-domain strategies.
+# ``"generic"`` is the one family the platform itself owns.
+ReasoningStrategyFamily = str
 ReasoningGraphNodeKind = Literal[
     "contract",
     "hypothesis",
@@ -237,6 +232,20 @@ class ReasoningOperatorSteering(BaseModel):
     guidance: list[str] = Field(default_factory=list)
     pinned_strategy_family: ReasoningStrategyFamily | None = None
     required_artifacts: list[str] = Field(default_factory=list)
+
+
+class ReasoningStrategyDeclaration(BaseModel):
+    """A reasoning strategy family published by a module.
+
+    Modules declare their strategy families through
+    ``ModuleProtocol.reasoning_strategies()``; the platform collects them
+    into the StrategyRegistry at load. The platform itself owns only the
+    ``generic`` family.
+    """
+
+    family: str
+    task_type: str
+    description: str = ""
 
 
 class ReasoningDomainProfile(BaseModel):

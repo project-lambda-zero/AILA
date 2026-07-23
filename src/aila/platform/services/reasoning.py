@@ -13,6 +13,7 @@ from aila.platform.contracts.reasoning import (
     ReasoningGraphNode,
     ReasoningOperatorSteering,
     ReasoningPromptContext,
+    ReasoningStrategyDeclaration,
     ReasoningStrategyFamily,
     ReasoningTurnDecision,
 )
@@ -22,7 +23,15 @@ from aila.platform.llm.client import AilaLLMClient
 # fix §132 -- imports first, then module-level statements (PEP 8 / E402).
 _log = logging.getLogger(__name__)
 
-__all__ = ["CyberReasoningEngine"]
+__all__ = [
+    "CyberReasoningEngine",
+    "DomainProfileRegistry",
+    "StrategyRegistry",
+    "UnknownStrategyError",
+    "register_reasoning_domain_profile",
+    "register_reasoning_strategy",
+    "reset_reasoning_registries",
+]
 
 
 # Namespace prefixes the agent must not write to. Tool / directive /
@@ -50,48 +59,98 @@ _TOOL_PREFIXES: tuple[str, ...] = (
 # render ceiling.
 _MAX_AGENT_KEYS_TOTAL: int = 150
 
-# fix §131 -- DEFAULT profile table. Operators add new domains without a
-# code deploy by writing the profile JSON to ConfigRegistry under the key
-# ``reasoning_domain_profile_{domain_id}`` (a JSON object with the same
-# field shape as ReasoningDomainProfile). The engine loads overrides
-# lazily on first resolve via :meth:`_load_profile_override`.
-_DOMAIN_PROFILES: dict[str, ReasoningDomainProfile] = {
-    "forensics": ReasoningDomainProfile(
-        domain_id="forensics",
-        task_type="forensics_freeflow",
-        description="Evidence-driven static forensic investigation.",
-        allowed_strategies=[
-            "filesystem_triage",
-            "persistence_hunt",
-            "memory_forensics",
-            "network_forensics",
-            "malware_static",
-            "generic",
-        ],
-        default_strategy="filesystem_triage",
-    ),
-    "vulnerability_research": ReasoningDomainProfile(
-        domain_id="vulnerability_research",
-        task_type="vulnerability_research",
-        description="Exploitability, advisories, versions, and remediation reasoning.",
-        allowed_strategies=["vulnerability_research", "generic"],
-        default_strategy="vulnerability_research",
-    ),
-    "web_pentest": ReasoningDomainProfile(
-        domain_id="web_pentest",
-        task_type="web_pentest",
-        description="Attack-path and web application security reasoning.",
-        allowed_strategies=["web_pentest", "network_forensics", "generic"],
-        default_strategy="web_pentest",
-    ),
-    "mobile_reverse": ReasoningDomainProfile(
-        domain_id="mobile_reverse",
-        task_type="mobile_reverse",
-        description="APK/IPA reverse engineering and mobile app threat analysis.",
-        allowed_strategies=["mobile_reverse", "malware_static", "generic"],
-        default_strategy="mobile_reverse",
-    ),
-}
+# Reasoning strategy families and domain profiles are module-owned: each
+# module publishes them through ModuleProtocol.reasoning_strategies() and
+# reasoning_domain_profiles(), and the platform builder registers them here
+# at load. The platform itself owns only the ``generic`` strategy. Operators
+# can still override a profile without a code deploy by writing the profile
+# JSON to ConfigRegistry under ``reasoning_domain_profile_{domain_id}``; the
+# engine loads that override lazily on first resolve.
+
+
+class UnknownStrategyError(ValueError):
+    """Raised when a reasoning strategy family is not registered."""
+
+
+class StrategyRegistry:
+    """Registry of reasoning strategy families, keyed by family name.
+
+    Seeded with the platform-owned ``generic`` family; module families are
+    added at load through :func:`register_reasoning_strategy`.
+    """
+
+    def __init__(self) -> None:
+        self._by_family: dict[str, ReasoningStrategyDeclaration] = {}
+        self.register(
+            ReasoningStrategyDeclaration(
+                family="generic",
+                task_type="generic",
+                description="Fallback for unclassified reasoning tasks.",
+            ),
+        )
+
+    def register(self, declaration: ReasoningStrategyDeclaration) -> None:
+        self._by_family[declaration.family] = declaration
+
+    def resolve(self, family: str) -> ReasoningStrategyDeclaration:
+        declaration = self._by_family.get(family)
+        if declaration is None:
+            raise UnknownStrategyError(family)
+        return declaration
+
+    def is_registered(self, family: str) -> bool:
+        return family in self._by_family
+
+    def clear(self) -> None:
+        """Reset to the platform baseline (``generic`` only)."""
+        self._by_family.clear()
+        self.register(
+            ReasoningStrategyDeclaration(
+                family="generic",
+                task_type="generic",
+                description="Fallback for unclassified reasoning tasks.",
+            ),
+        )
+
+
+class DomainProfileRegistry:
+    """Registry of reasoning domain profiles, keyed by domain_id."""
+
+    def __init__(self) -> None:
+        self._by_id: dict[str, ReasoningDomainProfile] = {}
+
+    def register(self, profile: ReasoningDomainProfile) -> None:
+        self._by_id[profile.domain_id] = profile
+
+    def resolve(self, domain_id: str) -> ReasoningDomainProfile | None:
+        if domain_id not in self._by_id:
+            return None
+        return self._by_id[domain_id]
+
+    def clear(self) -> None:
+        self._by_id.clear()
+
+
+# Process-wide registries populated by the platform builder at load. The
+# platform seeds only ``generic``; domains and families arrive from modules.
+_STRATEGY_REGISTRY = StrategyRegistry()
+_DOMAIN_PROFILE_REGISTRY = DomainProfileRegistry()
+
+
+def register_reasoning_strategy(declaration: ReasoningStrategyDeclaration) -> None:
+    """Register a module-declared strategy family into the platform registry."""
+    _STRATEGY_REGISTRY.register(declaration)
+
+
+def register_reasoning_domain_profile(profile: ReasoningDomainProfile) -> None:
+    """Register a module-declared domain profile into the platform registry."""
+    _DOMAIN_PROFILE_REGISTRY.register(profile)
+
+
+def reset_reasoning_registries() -> None:
+    """Reset both registries to their platform-seeded baseline (tests)."""
+    _STRATEGY_REGISTRY.clear()
+    _DOMAIN_PROFILE_REGISTRY.clear()
 
 
 class CyberReasoningEngine:
@@ -127,14 +186,14 @@ class CyberReasoningEngine:
 
         1. Operator-supplied override from ConfigRegistry under
            ``reasoning_domain_profile_{domain_id}`` (cached).
-        2. Hardcoded fallback in ``_DOMAIN_PROFILES``.
+        2. Module-registered profile from the DomainProfileRegistry.
         3. Generic single-strategy profile (final fallback for unknown
            domains).
         """
         override = self._load_profile_override(domain_id)
         if override is not None:
             return override
-        profile = _DOMAIN_PROFILES.get(domain_id)
+        profile = _DOMAIN_PROFILE_REGISTRY.resolve(domain_id)
         if profile is not None:
             return profile
         return ReasoningDomainProfile(
@@ -152,7 +211,7 @@ class CyberReasoningEngine:
 
         Returns ``None`` when no registry is wired, the key is absent, or
         the JSON shape doesn't match. Failures log at DEBUG and fall back
-        to ``_DOMAIN_PROFILES`` so a malformed override can't crash the
+        to the module-registered profile so a malformed override cannot crash the
         reasoning loop.
         """
         if self._config_registry is None:
