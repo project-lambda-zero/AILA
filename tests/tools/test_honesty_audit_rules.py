@@ -1048,3 +1048,14 @@ class TestAgentLlmChatBypass:
             "    return await services.llm_client.chat(task_type='x', messages=[])\n",
         )
         assert "agent_llm_chat_bypass" not in _rules(_audit(src))
+
+    def test_local_alias_receiver_flagged(self, tmp_path: Path) -> None:
+        """client = ServiceFactory().llm_client; client.chat(...) is a bypass."""
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/agents/nday_researcher.py",
+            "async def f():\n"
+            "    client = ServiceFactory().llm_client\n"
+            "    return await client.chat(task_type='x', messages=[])\n",
+        )
+        assert "agent_llm_chat_bypass" in _rules(_audit(src))

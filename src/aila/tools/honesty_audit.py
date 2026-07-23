@@ -2201,6 +2201,20 @@ class _HonestyVisitor(ast.NodeVisitor):
             return
         _methods = ("chat", "chat_json", "chat_structured")
         _receivers = ("llm_client", "_llm")
+        # Pass 1: local names aliased to an llm client, e.g.
+        # ``client = ServiceFactory().llm_client`` or ``c = services.llm_client``.
+        # A later ``client.chat(...)`` reaches the model through a Name
+        # receiver that the attribute check alone would miss.
+        aliases: set[str] = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            val = node.value
+            if isinstance(val, ast.Attribute) and val.attr in _receivers:
+                for tgt in node.targets:
+                    if isinstance(tgt, ast.Name):
+                        aliases.add(tgt.id)
+        # Pass 2: flag chat* calls on an llm-client attribute OR an alias.
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
@@ -2208,7 +2222,11 @@ class _HonestyVisitor(ast.NodeVisitor):
             if not (isinstance(fn, ast.Attribute) and fn.attr in _methods):
                 continue
             recv = fn.value
-            if isinstance(recv, ast.Attribute) and recv.attr in _receivers:
+            is_bypass = (
+                (isinstance(recv, ast.Attribute) and recv.attr in _receivers)
+                or (isinstance(recv, ast.Name) and recv.id in aliases)
+            )
+            if is_bypass:
                 self._emit(
                     node.lineno,
                     "agent_llm_chat_bypass",
