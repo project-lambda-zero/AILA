@@ -304,7 +304,11 @@ ignore = [
 "src/aila/modules/vr/services/investigation_finalizers.py" = ["PLC0415"]
 "src/aila/modules/vr/services/investigation_reaper.py" = ["N806", "PLC0415"]
 "src/aila/modules/vr/services/mcp_call_logger.py" = ["BLE001"]
-"src/aila/modules/vr/services/outcome_review.py" = ["PLC0415"]
+# outcome_review bindings: F401 because the thin module re-exports the
+# platform QuorumOutcome / EditOutcomeResult / EDIT_OUTCOME_PROTECTED_KEYS
+# for legacy callers + tests; the imports are intentional re-exports.
+"src/aila/modules/vr/services/outcome_review.py" = ["F401"]
+"src/aila/modules/malware/services/outcome_review.py" = ["F401"]
 "src/aila/modules/vr/services/stall_recovery.py" = ["PLC0415"]
 "src/aila/modules/vr/services/target_analysis.py" = ["PLC0415"]
 "src/aila/modules/vr/workflow/definitions.py" = ["PLC0415"]
