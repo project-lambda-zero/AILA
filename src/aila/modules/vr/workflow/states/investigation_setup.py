@@ -10,7 +10,6 @@ import logging
 import os
 from typing import Any
 
-from sqlalchemy import text as _sql_text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
@@ -32,9 +31,9 @@ from aila.modules.vr.services.cve_intel_resolver import (
 )
 from aila.modules.vr.services.pattern_store import PatternStore
 from aila.platform.contracts import utc_now
-from aila.platform.exceptions import WorkerUnreachableError
 from aila.platform.services.knowledge import KnowledgeService
 from aila.platform.uow import UnitOfWork
+from aila.platform.workflows.persona_spawn import spawn_persona_siblings
 from aila.platform.workflows.types import StateResult
 
 
@@ -563,253 +562,28 @@ async def _spawn_persona_siblings_and_enqueue(
     primary_branch_id: str,
     team_id: str | None,
 ) -> None:
-    """Fork one sibling branch per persona and enqueue tasks.
+    """Bind the shared platform persona spawn to VR models and helpers.
 
-    Searches ALL branches of the investigation by persona_voice -- not
-    just children of the current primary. This survives re-enqueue:
-
-    - Persona has a branch with turns → reuse it, enqueue task to continue
-    - Persona has abandoned/0-turn branch → reactivate it, enqueue task
-    - Persona has no branch at all → fork a new one
-
-    This prevents branch accumulation across re-enqueues (the bug where
-    each re-enqueue added 6 new branches because parent_branch_id changed).
-
-    Two-phase atomicity contract (fix §292):
-
-    * **Phase 1 (atomic UoW):** reactivate winners, abandon duplicates,
-      AND INSERT new branches for personas without an existing branch
-      -- all in ONE `async with UnitOfWork()` block, one commit. If any
-      step raises (cap check, integrity violation, parent load failure,
-      transient DB hiccup), the surrounding `with` block rolls back
-      every pending change. No half-spawned panel: either all 5
-      sibling branches resolve to a stable id, or none do.
-
-    * **Phase 2 (best-effort):** enqueue one ARQ task per resolved
-      sibling branch_id. Per-task try/except -- a single enqueue failure
-      logs + continues; the branch row already persists from phase 1,
-      so a reaper-on-cursor sweep can submit it later. Phase 2 NEVER
-      rolls back phase 1 (the branches are real even if their tasks
-      didn't land).
-
-    The prior implementation called `BranchManager.fork()` inside the
-    per-persona enqueue loop, after the phase-1 UoW had already
-    committed. Each fork opened its OWN UoW; partial failure left
-    some siblings born and some missing, with no way to roll back to
-    a consistent panel.
+    The two-phase atomic spawn body lives in
+    :func:`aila.platform.workflows.persona_spawn.spawn_persona_siblings`;
+    VR supplies its branch model, table names, persona tuple, task
+    function, ARQ track and group, and the case_state strip composition.
     """
     from aila.modules.vr.workflow.task import run_vr_investigate
 
-    # Phase 1 -- atomic dedup + reactivate + insert new branches.
-    # On any exception inside the `async with` block, the UoW rolls
-    # back: no branch INSERT survives, no status flip persists, and
-    # the operator's next /reopen retries cleanly.
-    sibling_branch_ids: dict[str, str] = {}  # persona_value -> branch_id
-    async with UnitOfWork() as uow:
-        # Serialize concurrent spawn calls per-investigation. Without
-        # this lock, when the primary task and N sibling tasks land in
-        # parallel workers (all pass through investigation_setup ->
-        # spawn), each one reads all_branches at the same moment, all
-        # see "noor missing", all INSERT a noor branch. The next spawn
-        # tick's group-by-persona logic abandons N-1 duplicates as
-        # "duplicate_persona_cleanup" but the write amplification is
-        # wasteful and confuses the operator. SELECT FOR UPDATE on the
-        # inv row gives spawn a per-investigation mutex.
-        await uow.session.execute(
-            _sql_text(
-                "SELECT id FROM vr_investigations WHERE id = :id FOR UPDATE"
-            ).bindparams(id=investigation_id),
-        )
-
-        all_branches = (await uow.session.exec(
-            _select(VRInvestigationBranchRecord).where(
-                VRInvestigationBranchRecord.investigation_id == investigation_id,
-            )
-        )).all()
-
-        # Group by persona -- pick the one the operator most recently
-        # asked to drive. An ``operator_reopen:<userid>`` branch ALWAYS
-        # wins regardless of turn_count: the operator explicitly created
-        # it via POST /investigations/{id}/reopen to drive a fresh pass,
-        # and abandoning it in favour of a higher-turn-count old branch
-        # silently undoes that intent. Falls back to the most-turns
-        # winner for the regular re-enqueue case where no operator
-        # reset has happened.
-        def _branch_priority(
-            b: VRInvestigationBranchRecord,
-        ) -> tuple[int, int, float]:
-            is_reopen = (b.fork_reason or "").startswith("operator_reopen:")
-            # `created_at` as tertiary tiebreaker: when two operator_reopen
-            # branches coexist with the same turn_count (operator pressed
-            # /reopen twice, OR a prior reopen branch was killed by the
-            # wall-clock reaper and a fresh /reopen spawned a new one),
-            # iteration-order fallback would silently pick the older row
-            # and abandon the new one as 'duplicate_persona_cleanup',
-            # undoing the most recent operator intent. The newest reopen
-            # always represents what the operator is currently waiting on.
-            created_ts = b.created_at.timestamp() if b.created_at else 0.0
-            return (1 if is_reopen else 0, b.turn_count, created_ts)
-
-        best_by_persona: dict[str, VRInvestigationBranchRecord] = {}
-        for b in all_branches:
-            if not b.persona_voice:
-                continue
-            existing = best_by_persona.get(b.persona_voice)
-            if existing is None or _branch_priority(b) > _branch_priority(existing):
-                best_by_persona[b.persona_voice] = b
-
-        # Reactivate best branch per persona, ABANDON duplicates
-        for b in all_branches:
-            if not b.persona_voice:
-                continue
-            best = best_by_persona.get(b.persona_voice)
-            if best is None:
-                continue
-            if b.id == best.id:
-                # This is the winner -- reactivate if needed AND reset
-                # the per-branch run state. Treating reactivation as
-                # "fresh start with this persona slot" instead of
-                # "resume yesterday's run" prevents three failure modes
-                # observed on PRIVACY-1 (5a358890):
-                #   (1) the historical turn_count accumulates against
-                #       _INVESTIGATION_TURN_CAP -- 6 personas restored
-                #       at 9/25/40/63/79/84 turns = 300 total trips the
-                #       cap immediately on the next emit pass.
-                #   (2) _directive.sibling_consensus_rejection +
-                #       _directive.terminal_submit + similar steering
-                #       directives from the prior round carry over;
-                #       the persona's first turn sees old verdicts and
-                #       converges to abandon without re-evaluating.
-                #   (3) rejected/resolved hypothesis lists from the
-                #       prior round carry over; sibling-consensus
-                #       rejection counts each prior reject toward the
-                #       new quorum (vuln_researcher), killing live
-                #       hypotheses the new run hasn't even seen yet.
-                # Mirror what _strip_rejected_from_state +
-                # _strip_directives_from_state do for FRESH siblings
-                # (line 701 below) so reactivated personas start from
-                # the same baseline as never-existed ones.
-                if b.status in ("abandoned", "completed"):
-                    b.status = "active"
-                    b.closed_reason = ""
-                    b.closed_at = None
-                    b.turn_count = 0
-                    b.case_state_json = _strip_rejected_from_state(
-                        _strip_directives_from_state(b.case_state_json or "{}"),
-                    )
-                    uow.session.add(b)
-                    # Also delete prior tool_call + error-text messages
-                    # out of this branch's history. Without this, the
-                    # tool_executor's repeat-failure circuit breaker
-                    # (_count_prior_failures, line 849 of tool_executor)
-                    # keeps counting yesterday's tool failures against
-                    # today's tries -- every reactivated branch is
-                    # already at 3+ failures for the bridge calls that
-                    # were broken in the prior round, so any retry of
-                    # those same calls returns HARD-BLOCKED before
-                    # ever reaching the bridge. Bridge-side fixes
-                    # (apk_path auto-resolver, etc.) then can't help
-                    # because the call short-circuits at the executor.
-                    # Reactivation = "fresh start with this persona
-                    # slot" -- the per-message round history goes with
-                    # it. Branch row stays (id, fork_reason,
-                    # created_at, parent_branch_id preserved) so the
-                    # audit trail of WHICH rounds this slot participated
-                    # in remains intact.
-                    await uow.session.execute(
-                        _sql_text(
-                            "DELETE FROM vr_investigation_messages "
-                            "WHERE branch_id = :bid"
-                        ).bindparams(bid=b.id),
-                    )
-                    _log.info(
-                        "auto_deliberation: reactivated %s branch %s "
-                        "(turn_count + case_state + breaker reset to fresh)",
-                        b.persona_voice, b.id,
-                    )
-            else:
-                # This is a duplicate -- abandon it
-                if b.status not in ("abandoned",):
-                    b.status = "abandoned"
-                    b.closed_reason = "duplicate_persona_cleanup"
-                    b.closed_at = utc_now()
-                    uow.session.add(b)
-                    _log.info(
-                        "auto_deliberation: abandoned duplicate %s branch %s (turns=%d, keeping %s)",
-                        b.persona_voice, b.id, b.turn_count, best.id,
-                    )
-
-        # Phase 1 -- INSERT new branches for personas without one. Done
-        # INSIDE this same UoW so the entire panel is all-or-nothing.
-        # Load the primary's case_state once for inheritance via the
-        # strip helpers (matches BranchManager.fork's behaviour).
-        parent = (await uow.session.exec(
-            _select(VRInvestigationBranchRecord).where(
-                VRInvestigationBranchRecord.id == primary_branch_id,
-            )
-        )).first()
-        parent_case_state = (parent.case_state_json or "{}") if parent is not None else "{}"
-        inherited_case_state = _strip_rejected_from_state(
-            _strip_directives_from_state(parent_case_state),
-        )
-
-        for persona in _DELIBERATION_SIBLINGS:
-            existing_branch = best_by_persona.get(persona.value)
-            if existing_branch is not None:
-                sibling_branch_ids[persona.value] = existing_branch.id
-                continue
-            child = VRInvestigationBranchRecord(
-                investigation_id=investigation_id,
-                parent_branch_id=primary_branch_id,
-                status=BranchStatus.ACTIVE.value,
-                persona_voice=persona.value,
-                fork_reason=f"auto_deliberation:{persona.value}",
-                fork_at_turn=0,
-                case_state_json=inherited_case_state,
-                turn_count=0,
-                branch_cost_usd=0.0,
-            )
-            uow.session.add(child)
-            await uow.session.flush()  # populate child.id within the UoW
-            sibling_branch_ids[persona.value] = child.id
-
-        await uow.commit()
-
-    # Phase 2 -- best-effort enqueue per resolved branch. A single
-    # enqueue failure logs + continues; the branch row persists from
-    # phase 1, so a future reaper-on-cursor sweep can pick it up.
-    task_queue = default_task_queue()
-    enqueued: list[str] = []
-    for persona in _DELIBERATION_SIBLINGS:
-        sibling_branch_id = sibling_branch_ids.get(persona.value)
-        if not sibling_branch_id:
-            continue
-        try:
-            await task_queue.submit(
-                track="vr",
-                fn=run_vr_investigate,
-                kwargs={
-                    "investigation_id": investigation_id,
-                    "branch_id": sibling_branch_id,
-                },
-                user_id="system",
-                group_id="vr_auto_deliberation",
-                team_id=team_id,
-            )
-            enqueued.append(f"{persona.value}={sibling_branch_id[:8]}")
-        except (WorkerUnreachableError, OSError, RuntimeError, ValueError, TypeError) as exc:
-            # fix §350 -- reaper-on-cursor can resubmit, but the stack
-            # here distinguishes a structural enqueue regression from a
-            # transient Redis blip.
-            _log.warning(
-                "auto_deliberation: enqueue failed persona=%s branch=%s "
-                "err=%s (branch row persists; reaper-on-cursor can resubmit)",
-                persona.value, sibling_branch_id, exc,
-                exc_info=True,
-            )
-
-    if enqueued:
-        _log.info(
-            "auto_deliberation: spawned siblings for %s: %s",
-            investigation_id, enqueued,
-        )
+    await spawn_persona_siblings(
+        investigation_id,
+        primary_branch_id,
+        team_id,
+        siblings=_DELIBERATION_SIBLINGS,
+        branch_model=VRInvestigationBranchRecord,
+        inv_table="vr_investigations",
+        message_table="vr_investigation_messages",
+        task_fn=run_vr_investigate,
+        track="vr",
+        group_id="vr_auto_deliberation",
+        task_queue=default_task_queue(),
+        strip_case_state=lambda raw: _strip_rejected_from_state(
+            _strip_directives_from_state(raw),
+        ),
+    )
