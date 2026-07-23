@@ -59,6 +59,25 @@ async def _seed_all_modules(session: Any, modules: Iterable[Any]) -> None:
             )
 
 
+def _collect_intel_service(module_runtimes: dict[str, Any]) -> Any | None:
+    """Return the CVE intel service published by a module runtime, or None.
+
+    The platform (which assembles every module runtime) is permitted to
+    introspect them; a peer module is not. Each runtime that owns a CVE
+    intel service exposes it through a ``provides_intel_service()`` method.
+    The first non-None result wins -- today only the vulnerability module
+    publishes one. Absence is normal (a worker started with --modules vr
+    only), so the caller degrades to no intel rather than raising.
+    """
+    for runtime in module_runtimes.values():
+        provider = getattr(runtime, "provides_intel_service", None)
+        if callable(provider):
+            candidate = provider()
+            if candidate is not None:
+                return candidate
+    return None
+
+
 PLATFORM_TOOL_KEYS: frozenset[str] = frozenset({
     "registry.systems",
     "memory.permanent",
@@ -234,4 +253,5 @@ async def build_platform_runtime(*, app_settings: ApplicationSettings, platform_
         tool_registry=tool_registry,
         runtime_model=runtime_model,
         config_registry=config_registry,
+        intel_service=_collect_intel_service(module_runtimes),
     )
