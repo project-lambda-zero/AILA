@@ -45,6 +45,7 @@ Detects thirty-six categories of structural dishonesty:
 41. workflow_state_copy_of_platform -- a vr/malware investigation state file duplicates a platform workflow-state base instead of binding the factory.
 42. agent_primitive_reimplementation -- a module agents/ file defines a platform-owned agent primitive (auto-steering injector / intent classifier) at top level instead of importing it.
 43. agent_llm_chat_bypass -- a module agents/ file calls llm_client.chat/chat_json/chat_structured directly instead of routing through platform idempotent_llm_call (double-pays the model on retry).
+44. private_platform_import -- a module imports a platform-private submodule symbol (tools._common, mcp.adapters._shared) that the public package already re-exports; import from the public path instead (RFC-05 concern f).
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -842,6 +843,62 @@ def _platform_contracts_dir(filepath: str) -> Path | None:
     return Path(match.group(1)) / "platform" / "contracts"
 
 
+# Rule 44 -- private_platform_import. Cache of a platform package's public
+# name set (its __init__.py __all__ members plus names bound by relative
+# re-export imports), keyed by the __init__.py path.
+_PLATFORM_PUBLIC_EXPORTS_CACHE: dict[str, frozenset[str]] = {}
+
+
+def _aila_root_from_module(filepath: str) -> Path | None:
+    """Resolve the aila package root from a module file path, or None."""
+    match = _CONTRACTS_DIR_PATTERN.search(filepath.replace("\\", "/"))
+    if match is None:
+        return None
+    return Path(match.group(1))
+
+
+def _platform_public_exports(init_path: Path) -> frozenset[str]:
+    """Return the public names published by a platform package.
+
+    A name is public when the package's ``__init__.py`` lists it in ``__all__``
+    or binds it via a relative re-export (``from ._x import Name``). Read via
+    AST and cached. Any read/parse failure yields an empty set so the caller
+    skips defensively rather than raising inside the gate.
+    """
+    key = str(init_path)
+    cached = _PLATFORM_PUBLIC_EXPORTS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    names: set[str] = set()
+    try:
+        tree = ast.parse(init_path.read_text(encoding="utf-8"), filename=key)
+    except (OSError, SyntaxError):
+        result = frozenset(names)
+        _PLATFORM_PUBLIC_EXPORTS_CACHE[key] = result
+        return result
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.level and node.names:
+            for alias in node.names:
+                if alias.name != "*":
+                    names.add(alias.asname or alias.name)
+            continue
+        targets: list[ast.expr] = []
+        if isinstance(node, ast.Assign):
+            targets = list(node.targets)
+        elif isinstance(node, ast.AugAssign):
+            targets = [node.target]
+        if not any(isinstance(t, ast.Name) and t.id == "__all__" for t in targets):
+            continue
+        value = node.value
+        if isinstance(value, (ast.List, ast.Tuple)):
+            for elt in value.elts:
+                if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                    names.add(elt.value)
+    result = frozenset(names)
+    _PLATFORM_PUBLIC_EXPORTS_CACHE[key] = result
+    return result
+
+
 def _platform_base_field_names(base_file: Path, base_class: str) -> frozenset[str]:
     """Return the field-name set of a platform base class, read via AST and cached.
 
@@ -1441,6 +1498,53 @@ class _HonestyVisitor(ast.NodeVisitor):
                                 f"'{alias.name}' from storage.database -- use "
                                 f"Platform Services (SDA-05)",
                             )
+
+    def _check_private_platform_import(self, tree: ast.Module) -> None:
+        """Rule 44: private_platform_import -- module reaches into a platform
+        private submodule for a publicly re-exported symbol.
+
+        A module file importing ``from aila.platform.<pkg>._<priv> import Name``
+        where ``Name`` is already published by ``aila.platform.<pkg>`` (its
+        ``__init__`` re-exports it or lists it in ``__all__``) is a finding: it
+        pins the module to an implementation path the platform is free to move.
+        Import from the public package instead. A private symbol with no public
+        counterpart is left alone -- the fence has no gate there.
+        """
+        aila_root = _aila_root_from_module(self.filename)
+        if aila_root is None:
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom) or node.module is None:
+                continue
+            mod = node.module
+            if not mod.startswith("aila.platform."):
+                continue
+            segs = mod.split(".")
+            priv_idx = next(
+                (i for i in range(2, len(segs)) if segs[i].startswith("_")),
+                None,
+            )
+            if priv_idx is None:
+                continue
+            public_segs = segs[:priv_idx]
+            init_path = aila_root.joinpath(
+                "platform", *public_segs[2:], "__init__.py",
+            )
+            public_names = _platform_public_exports(init_path)
+            if not public_names:
+                continue
+            public_pkg = ".".join(public_segs)
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                if alias.name in public_names:
+                    self._emit(
+                        node.lineno,
+                        "private_platform_import",
+                        f"private_platform_import: 'from {mod} import "
+                        f"{alias.name}' -- {alias.name} is publicly re-exported "
+                        f"from {public_pkg}; import from there",
+                    )
 
     def _check_asyncio_in_module(self, tree: ast.Module) -> None:
         """Rule 18: asyncio_in_module -- threading primitives banned from modules/.
@@ -2412,6 +2516,7 @@ class HonestyAuditor:
             visitor._check_asyncio_in_module(tree)
             visitor._check_http_client_in_module(tree)
             visitor._check_direct_db_in_module(tree)
+            visitor._check_private_platform_import(tree)
         # Rules 19 and 20 apply to all router files (api/ and module routers alike)
         visitor._check_response_model_dict(tree)
         visitor._check_bare_dict_return_endpoint(tree)

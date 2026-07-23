@@ -1059,3 +1059,117 @@ class TestAgentLlmChatBypass:
             "    return await client.chat(task_type='x', messages=[])\n",
         )
         assert "agent_llm_chat_bypass" in _rules(_audit(src))
+
+
+class TestPrivatePlatformImport:
+    """Rule 44: a module must import a platform symbol from the public
+    package, never from a private submodule when a public re-export exists
+    (RFC-05 concern f)."""
+
+    def test_reexport_binding_flagged(self, tmp_path: Path) -> None:
+        """Importing Tool from tools._common fires when tools re-exports it."""
+        _write(
+            tmp_path,
+            "aila/platform/tools/__init__.py",
+            'from ._common import Tool\n\n__all__ = ["Tool"]\n',
+        )
+        src = _write(
+            tmp_path,
+            "aila/modules/mymod/tools.py",
+            "from aila.platform.tools._common import Tool\n",
+        )
+        assert "private_platform_import" in _rules(_audit(src))
+
+    def test_all_member_flagged(self, tmp_path: Path) -> None:
+        """Importing utc_now from contracts._common fires when it is in __all__."""
+        _write(
+            tmp_path,
+            "aila/platform/contracts/__init__.py",
+            '__all__ = ["utc_now", "JsonObject"]\n',
+        )
+        src = _write(
+            tmp_path,
+            "aila/modules/mymod/svc.py",
+            "from aila.platform.contracts._common import utc_now\n",
+        )
+        assert "private_platform_import" in _rules(_audit(src))
+
+    def test_public_path_import_not_flagged(self, tmp_path: Path) -> None:
+        """Importing from the public package (no private segment) is silent."""
+        _write(
+            tmp_path,
+            "aila/platform/tools/__init__.py",
+            'from ._common import Tool\n\n__all__ = ["Tool"]\n',
+        )
+        src = _write(
+            tmp_path,
+            "aila/modules/mymod/tools.py",
+            "from aila.platform.tools import Tool\n",
+        )
+        assert "private_platform_import" not in _rules(_audit(src))
+
+    def test_private_symbol_without_public_counterpart_not_flagged(
+        self, tmp_path: Path
+    ) -> None:
+        """A private symbol the public package never re-exports has no gate."""
+        _write(
+            tmp_path,
+            "aila/platform/mcp/adapters/__init__.py",
+            '__all__ = ["other_fn"]\n',
+        )
+        src = _write(
+            tmp_path,
+            "aila/modules/mymod/exec.py",
+            "from aila.platform.mcp.adapters._shared import enrich_x\n",
+        )
+        assert "private_platform_import" not in _rules(_audit(src))
+
+    def test_platform_own_private_import_not_flagged(self, tmp_path: Path) -> None:
+        """A platform file importing its own private submodule is out of scope."""
+        _write(
+            tmp_path,
+            "aila/platform/tools/__init__.py",
+            'from ._common import Tool\n\n__all__ = ["Tool"]\n',
+        )
+        src = _write(
+            tmp_path,
+            "aila/platform/tools/registry.py",
+            "from aila.platform.tools._common import Tool\n",
+        )
+        assert "private_platform_import" not in _rules(_audit(src))
+
+    def test_missing_platform_init_not_flagged(self, tmp_path: Path) -> None:
+        """No resolvable public package means no counterpart, so no finding."""
+        src = _write(
+            tmp_path,
+            "aila/modules/mymod/svc.py",
+            "from aila.platform.absent._priv import Thing\n",
+        )
+        assert "private_platform_import" not in _rules(_audit(src))
+
+    def test_whitelist_suppresses_private_platform_import(
+        self, tmp_path: Path
+    ) -> None:
+        """A matching whitelist entry suppresses the finding."""
+        _write(
+            tmp_path,
+            "aila/platform/tools/__init__.py",
+            'from ._common import Tool\n\n__all__ = ["Tool"]\n',
+        )
+        src = _write(
+            tmp_path,
+            "aila/modules/mymod/tools.py",
+            "from aila.platform.tools._common import Tool\n",
+        )
+        wl_path = tmp_path / "honesty_whitelist.py"
+        wl_path.write_text(
+            "HONESTY_WHITELIST = [\n"
+            "    (\n"
+            '        "tools.py",\n'
+            '        "Tool",\n'
+            '        "private_platform_import",\n'
+            "    ),\n"
+            "]\n",
+            encoding="utf-8",
+        )
+        assert "private_platform_import" not in _rules(_audit(src, wl_path))
