@@ -427,9 +427,9 @@ HONESTY_WHITELIST = [
     # registry shape.
     ("malware/personas/role_notes.py", "role_notes_for", "consider inlining"),
     # mcp_registry.probe_all: tuple wrapper around the iterator return
-    # so callers get a stable list[ServerSummary] return type.
-    ("malware/services/mcp_registry.py", "probe_all", "consider inlining"),
-    ("vr/services/mcp_registry.py", "probe_all", "consider inlining"),
+    # so callers get a stable list[ServerSummary] return type. Lifted to
+    # the platform base in RFC-04 Phase 1; the module subclasses inherit it.
+    ("platform/mcp/registry.py", "probe_all", "consider inlining"),
     # disclosure.info: dataclass-like accessor returning the bound
     # DisclosureTrackInfo singleton.
     ("vr/disclosure/base.py", "info", "consider inlining"),
