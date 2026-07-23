@@ -739,3 +739,110 @@ class TestServiceCopyOfPlatform:
         src = _write(tmp_path, "aila/modules/forensics/services/thing.py", copy)
         findings = _audit(src)
         assert "service_copy_of_platform" not in _rules(findings)
+
+
+# ---------------------------------------------------------------------------
+# Rule 39 -- cost_read_stored_actual
+# ---------------------------------------------------------------------------
+
+
+class TestCostReadStoredActual:
+    """Rule 39: a vr/malware api_router must not read the dead
+    cost_actual_usd column in a response without aggregating live cost."""
+
+    def test_stored_read_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path, "aila/modules/vr/api_router.py",
+            '"""vr router."""\n'
+            "from __future__ import annotations\n\n\n"
+            "async def get_cost(record):\n"
+            '    return {"actual_usd": record.cost_actual_usd}\n',
+        )
+        findings = _audit(src)
+        assert "cost_read_stored_actual" in _rules(findings)
+
+    def test_read_with_aggregator_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path, "aila/modules/malware/api_router.py",
+            '"""malware router."""\n'
+            "from __future__ import annotations\n\n\n"
+            "async def get_cost(record, uow):\n"
+            "    live = await compute_live_investigation_cost(uow, record.id)\n"
+            "    stored = record.cost_actual_usd\n"
+            '    return {"actual_usd": live or stored}\n',
+        )
+        findings = _audit(src)
+        assert "cost_read_stored_actual" not in _rules(findings)
+
+    def test_create_kwarg_not_flagged(self, tmp_path: Path) -> None:
+        """cost_actual_usd=0.0 at row creation is an insert, not a read."""
+        src = _write(
+            tmp_path, "aila/modules/vr/api_router.py",
+            '"""vr router."""\n'
+            "from __future__ import annotations\n\n\n"
+            "def make(record_cls):\n"
+            "    return record_cls(cost_actual_usd=0.0)\n",
+        )
+        findings = _audit(src)
+        assert "cost_read_stored_actual" not in _rules(findings)
+
+    def test_forensics_out_of_scope(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path, "aila/modules/forensics/api_router.py",
+            '"""forensics router."""\n'
+            "from __future__ import annotations\n\n\n"
+            "async def get_cost(record):\n"
+            '    return {"actual_usd": record.cost_actual_usd}\n',
+        )
+        findings = _audit(src)
+        assert "cost_read_stored_actual" not in _rules(findings)
+
+
+# ---------------------------------------------------------------------------
+# Rule 40 -- lifecycle_handler_bypass_service
+# ---------------------------------------------------------------------------
+
+
+class TestLifecycleHandlerBypass:
+    """Rule 40: a pause/resume/re-enqueue route handler must not write
+    .status directly instead of routing through the lifecycle service."""
+
+    def test_pause_status_write_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path, "aila/modules/malware/api_router.py",
+            '"""malware router."""\n'
+            "from __future__ import annotations\n\n\n"
+            '@router.post("/investigations/{investigation_id}/pause")\n'
+            "async def pause_investigation(record):\n"
+            '    record.status = "paused"\n'
+            "    return record\n",
+        )
+        findings = _audit(src)
+        assert "lifecycle_handler_bypass_service" in _rules(findings)
+
+    def test_delegating_handler_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path, "aila/modules/malware/api_router.py",
+            '"""malware router."""\n'
+            "from __future__ import annotations\n\n\n"
+            '@router.post("/investigations/{investigation_id}/pause")\n'
+            "async def pause_investigation(record):\n"
+            "    result = await pause_investigation_atomic(record.id)\n"
+            "    return result\n",
+        )
+        findings = _audit(src)
+        assert "lifecycle_handler_bypass_service" not in _rules(findings)
+
+    def test_reset_handler_excluded(self, tmp_path: Path) -> None:
+        """reset is a full-wipe that legitimately resets status."""
+        src = _write(
+            tmp_path, "aila/modules/malware/api_router.py",
+            '"""malware router."""\n'
+            "from __future__ import annotations\n\n\n"
+            '@router.post("/investigations/{investigation_id}/reset")\n'
+            "async def reset_investigation(record):\n"
+            '    record.status = "created"\n'
+            "    return record\n",
+        )
+        findings = _audit(src)
+        assert "lifecycle_handler_bypass_service" not in _rules(findings)

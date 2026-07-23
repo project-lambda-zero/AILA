@@ -202,6 +202,28 @@ def _owning_module_id(filepath: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _endpoint_route_path(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> str | None:
+    """Return the route path from a ``@router.<verb>("...")`` decorator.
+
+    Returns the first positional string argument of the first router verb
+    decorator on *node*, or None when the function is not a route handler.
+    """
+    for dec in node.decorator_list:
+        if not isinstance(dec, ast.Call) or not isinstance(dec.func, ast.Attribute):
+            continue
+        if dec.func.attr not in {"get", "post", "put", "delete", "patch"}:
+            continue
+        if (
+            dec.args
+            and isinstance(dec.args[0], ast.Constant)
+            and isinstance(dec.args[0].value, str)
+        ):
+            return dec.args[0].value
+    return None
+
+
 _BOUNDARY_GUARDED_PATTERN = _re.compile(r"[/\\]aila[/\\](api|platform|storage)[/\\]")
 
 
@@ -2061,6 +2083,98 @@ class _HonestyVisitor(ast.NodeVisitor):
                 "platform and keep a thin binding here",
             )
 
+    def _check_cost_read_stored_actual(
+        self, tree: ast.Module, module_id: str,
+    ) -> None:
+        """Rule 39: cost_read_stored_actual -- a lifecycle api_router reads the
+        dead ``cost_actual_usd`` column in a response instead of aggregating
+        live cost.
+
+        The ``cost_actual_usd`` column has no writers, so any read of it in a
+        response body reports a permanent $0. The live gauge comes from
+        ``compute_live_investigation_cost`` (sum LLMCostRecord by run_id). A
+        handler that reads ``record.cost_actual_usd`` without an aggregator
+        call in the same function has drifted back to the broken read. Scoped
+        to the vr/malware api_router; the create-time ``cost_actual_usd=0.0``
+        keyword is an insert, not an attribute read, so it never trips.
+        """
+        if module_id not in _RFC01_UNIFIED_MODULES:
+            return
+        if not self.filename.replace("\\", "/").endswith("/api_router.py"):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            reads = [
+                n for n in ast.walk(node)
+                if isinstance(n, ast.Attribute)
+                and n.attr == "cost_actual_usd"
+                and isinstance(n.ctx, ast.Load)
+            ]
+            if not reads:
+                continue
+            has_aggregator = any(
+                isinstance(c, ast.Call)
+                and (
+                    (isinstance(c.func, ast.Name)
+                     and c.func.id == "compute_live_investigation_cost")
+                    or (isinstance(c.func, ast.Attribute)
+                        and c.func.attr == "compute_live_investigation_cost")
+                )
+                for c in ast.walk(node)
+            )
+            if has_aggregator:
+                continue
+            self._emit(
+                reads[0].lineno,
+                "cost_read_stored_actual",
+                f"cost_read_stored_actual: '{node.name}' reads "
+                "record.cost_actual_usd in a response; that column has no "
+                "writers (always $0). Aggregate live cost via "
+                "compute_live_investigation_cost instead",
+            )
+
+    def _check_lifecycle_handler_bypass(
+        self, tree: ast.Module, module_id: str,
+    ) -> None:
+        """Rule 40: lifecycle_handler_bypass_service -- a pause / resume /
+        re-enqueue route handler writes ``.status`` directly instead of
+        routing through the platform investigation lifecycle service.
+
+        The four-source-of-truth transition (inv row, cursor, taskrecord,
+        ARQ) is a platform property; a handler that assigns ``.status``
+        itself is the drift that left the malware lifecycle broken. Scoped to
+        the vr/malware api_router pause / resume / re-enqueue routes. ``reset``
+        is intentionally excluded: it is a full-wipe that legitimately resets
+        ``status`` to CREATED and does not go through the lifecycle service.
+        """
+        if module_id not in _RFC01_UNIFIED_MODULES:
+            return
+        if not self.filename.replace("\\", "/").endswith("/api_router.py"):
+            return
+        _lifecycle_suffixes = ("/pause", "/resume", "/re-enqueue")
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            route = _endpoint_route_path(node)
+            if route is None or not route.endswith(_lifecycle_suffixes):
+                continue
+            for sub in ast.walk(node):
+                if not isinstance(sub, ast.Assign):
+                    continue
+                if any(
+                    isinstance(tgt, ast.Attribute) and tgt.attr == "status"
+                    for tgt in sub.targets
+                ):
+                    self._emit(
+                        sub.lineno,
+                        "lifecycle_handler_bypass_service",
+                        f"lifecycle_handler_bypass_service: '{node.name}' writes "
+                        ".status directly; route pause / resume / re-enqueue "
+                        "through the platform investigation lifecycle service",
+                    )
+                    break
+
 
 class HonestyAuditor:
     """Audit one or more Python source files for structural dishonesty.
@@ -2111,6 +2225,8 @@ class HonestyAuditor:
             visitor._check_unnamed_derived_constraint(tree, module_id)
             visitor._check_shadowed_platform_base(tree, module_id)
             visitor._check_service_copy_of_platform(tree)
+            visitor._check_cost_read_stored_actual(tree, module_id)
+            visitor._check_lifecycle_handler_bypass(tree, module_id)
         if _is_boundary_guarded_file(str(path)):
             visitor._check_api_imports_modules(tree)
         if _is_module_file(str(path)):
