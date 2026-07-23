@@ -665,3 +665,77 @@ class TestModuleConfigSchemaBase:
         )
         findings = _audit(src)
         assert "module_config_schema_base" not in _rules(findings)
+
+
+# ---------------------------------------------------------------------------
+# Rule 38 -- service_copy_of_platform
+# ---------------------------------------------------------------------------
+
+
+_PLATFORM_SERVICE_SRC = '''\
+"""A platform service that does real work."""
+from __future__ import annotations
+
+import logging
+
+_log = logging.getLogger(__name__)
+
+
+class PlatformThingService:
+    """Does the thing for the platform module."""
+
+    def __init__(self, table_name: str) -> None:
+        self._table_name = table_name
+        self._counter = 0
+
+    def process(self, rows: list[dict]) -> int:
+        total = 0
+        for row in rows:
+            if row.get("active"):
+                total += 1
+                self._counter += 1
+        _log.info("processed %d rows from %s", total, self._table_name)
+        return total
+
+    def reset(self) -> None:
+        self._counter = 0
+        _log.info("counter reset for %s", self._table_name)
+
+    def summary(self) -> dict:
+        return {"table": self._table_name, "count": self._counter}
+'''
+
+
+class TestServiceCopyOfPlatform:
+    """Rule 38: a vr/malware service must not be a full copy of a platform service."""
+
+    def test_vr_service_copy_flagged(self, tmp_path: Path) -> None:
+        """A near-copy of a platform service under vr/services fires the rule."""
+        _write(tmp_path, "aila/platform/services/thing.py", _PLATFORM_SERVICE_SRC)
+        copy = _PLATFORM_SERVICE_SRC.replace("Platform", "VR").replace("platform", "vr")
+        src = _write(tmp_path, "aila/modules/vr/services/thing.py", copy)
+        findings = _audit(src)
+        assert "service_copy_of_platform" in _rules(findings)
+
+    def test_thin_binding_not_flagged(self, tmp_path: Path) -> None:
+        """A short thin binding stays under the length ceiling and is silent."""
+        _write(tmp_path, "aila/platform/services/thing.py", _PLATFORM_SERVICE_SRC)
+        binding = (
+            '"""VR thing -- thin binding of the platform service."""\n'
+            "from __future__ import annotations\n\n"
+            "from aila.platform.services.thing import PlatformThingService\n\n"
+            'vr_thing = PlatformThingService("vr_things")\n'
+        )
+        src = _write(tmp_path, "aila/modules/vr/services/thing.py", binding)
+        findings = _audit(src)
+        assert "service_copy_of_platform" not in _rules(findings)
+
+    def test_forensics_copy_not_flagged(self, tmp_path: Path) -> None:
+        """forensics is out of the copy-set scope even for a full copy."""
+        _write(tmp_path, "aila/platform/services/thing.py", _PLATFORM_SERVICE_SRC)
+        copy = _PLATFORM_SERVICE_SRC.replace("Platform", "Forensics").replace(
+            "platform", "forensics"
+        )
+        src = _write(tmp_path, "aila/modules/forensics/services/thing.py", copy)
+        findings = _audit(src)
+        assert "service_copy_of_platform" not in _rules(findings)

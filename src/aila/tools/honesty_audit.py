@@ -39,6 +39,7 @@ Detects thirty-six categories of structural dishonesty:
 35. unnamed_derived_constraint -- a unified vr/malware table hard-codes a UQ name instead of deriving via TabledUq.
 36. shadowed_platform_base -- a unified vr/malware table recreates a platform base's columns instead of subclassing it.
 37. module_config_schema_base -- a module config schema subclasses bare BaseModel instead of ModuleConfigBase (loses extra=forbid).
+38. service_copy_of_platform -- a vr/malware service file is a full copy of a platform service instead of a thin binding.
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -61,6 +62,7 @@ Design constraints (D-04):
 from __future__ import annotations
 
 import ast
+import difflib
 import logging
 import re as _re
 import sys
@@ -636,6 +638,47 @@ _BASE_FILE_BY_CLASS: dict[str, str] = {
 _BASE_FIELD_CACHE: dict[tuple[str, str], frozenset[str]] = {}
 
 _CONTRACTS_DIR_PATTERN = _re.compile(r"^(.*/aila)/modules/")
+
+# Rule 38 -- module service files must not be full copies of a platform
+# service. Scoped to the vr/malware copy set (forensics keeps an
+# independent machine_readiness variant, outside the check).
+_SERVICE_COPY_SCOPE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]modules[/\\](?:vr|malware)[/\\]services[/\\][^/\\]+\.py$"
+)
+_PLATFORM_SERVICE_SUBDIRS: tuple[str, ...] = ("services", "mcp", "tasks")
+_SERVICE_COPY_THRESHOLD: float = 0.75
+_SERVICE_CORPUS_CACHE: dict[str, dict[str, str]] = {}
+
+
+def _platform_service_corpus(filepath: str) -> dict[str, str]:
+    """Return {relpath: normalized_source} for every platform service file.
+
+    Reads platform/services, platform/mcp, and platform/tasks so a module
+    service copied from any of them is caught. Each source is normalized via
+    ast.unparse (comments and formatting removed); cached per aila root.
+    """
+    match = _CONTRACTS_DIR_PATTERN.search(filepath.replace("\\", "/"))
+    if match is None:
+        return {}
+    aila_root = match.group(1)
+    cached = _SERVICE_CORPUS_CACHE.get(aila_root)
+    if cached is not None:
+        return cached
+    corpus: dict[str, str] = {}
+    for subdir in _PLATFORM_SERVICE_SUBDIRS:
+        base = Path(aila_root) / "platform" / subdir
+        if not base.is_dir():
+            continue
+        for py in sorted(base.glob("*.py")):
+            if py.name == "__init__.py":
+                continue
+            try:
+                normalized = ast.unparse(ast.parse(py.read_text(encoding="utf-8")))
+            except (OSError, SyntaxError, ValueError, RecursionError):
+                continue
+            corpus[f"{subdir}/{py.name}"] = normalized
+    _SERVICE_CORPUS_CACHE[aila_root] = corpus
+    return corpus
 
 
 def _classdef_is_table(node: ast.ClassDef) -> bool:
@@ -1968,6 +2011,56 @@ class _HonestyVisitor(ast.NodeVisitor):
                 "bare BaseModel",
             )
 
+    def _check_service_copy_of_platform(self, tree: ast.Module) -> None:
+        """Rule 38: service_copy_of_platform -- a vr/malware service duplicates
+        a platform service.
+
+        A file under modules/vr/services or modules/malware/services whose
+        comment- and format-normalized body matches a platform service above
+        the similarity threshold is the copy-and-rename pattern RFC-04 lifted
+        out. After a service is lifted the module keeps only a thin binding, so
+        a high-similarity match means a full copy slipped back in. Length
+        asymmetry keeps thin bindings well under the threshold; only a
+        same-size copy trips it. Scoped to the vr/malware copy set; forensics
+        keeps an independent variant.
+        """
+        if not _SERVICE_COPY_SCOPE_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        try:
+            own = ast.unparse(tree)
+        except (ValueError, RecursionError):
+            return
+        if not own.strip():
+            return
+        best_name = ""
+        best_ratio = 0.0
+        own_len = len(own)
+        for name, platform_src in _platform_service_corpus(self.filename).items():
+            p_len = len(platform_src)
+            if p_len == 0:
+                continue
+            # Length ceiling: the best achievable ratio is 2*min/(sum). Below
+            # the threshold the pair cannot match, so skip the O(n*m) compare.
+            # This prunes every thin binding (short) against a full platform
+            # impl (long) in O(1).
+            if 2 * min(own_len, p_len) / (own_len + p_len) < _SERVICE_COPY_THRESHOLD:
+                continue
+            matcher = difflib.SequenceMatcher(None, own, platform_src)
+            if matcher.quick_ratio() < _SERVICE_COPY_THRESHOLD:
+                continue
+            ratio = matcher.ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_name = name
+        if best_ratio >= _SERVICE_COPY_THRESHOLD:
+            self._emit(
+                1,
+                "service_copy_of_platform",
+                f"service_copy_of_platform: normalized body is {best_ratio:.0%} "
+                f"similar to platform/{best_name}; lift the shared logic to the "
+                "platform and keep a thin binding here",
+            )
+
 
 class HonestyAuditor:
     """Audit one or more Python source files for structural dishonesty.
@@ -2017,6 +2110,7 @@ class HonestyAuditor:
             visitor._check_hoisted_enum_redeclared(tree, module_id)
             visitor._check_unnamed_derived_constraint(tree, module_id)
             visitor._check_shadowed_platform_base(tree, module_id)
+            visitor._check_service_copy_of_platform(tree)
         if _is_boundary_guarded_file(str(path)):
             visitor._check_api_imports_modules(tree)
         if _is_module_file(str(path)):
