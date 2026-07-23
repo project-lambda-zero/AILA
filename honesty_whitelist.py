@@ -442,6 +442,12 @@ HONESTY_WHITELIST = [
     # tasks.all_periodic_sweeps: dict-copy accessor so callers can't
     # mutate the registry by accident.
     ("platform/tasks/sweeps.py", "all_periodic_sweeps", "consider inlining"),
+    # RFC-02 Phase 2: module bindings of the shared platform investigation
+    # summary builder. Each supplies only its own *InvestigationSummary
+    # contract class; keeping the facade leaves the ~10 call sites per
+    # module unchanged (list, detail, and every lifecycle handler return).
+    ("vr/api_router.py", "_investigation_summary", "consider inlining"),
+    ("malware/api_router.py", "_investigation_summary", "consider inlining"),
 
     # Category (f): malware module.py protocol stubs. The ModuleProtocol
     # requires these methods but the malware module legitimately has

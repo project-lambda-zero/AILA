@@ -37,6 +37,9 @@ from aila.platform.services.factory import ServiceFactory
 from aila.platform.services.investigation_cost import (
     compute_live_investigation_cost,
 )
+from aila.platform.services.investigation_summaries import (
+    build_investigation_summary,
+)
 from aila.platform.uow import UnitOfWork
 from aila.storage.db_models import WorkflowStateCursor
 
@@ -708,50 +711,23 @@ def _investigation_summary(
 ) -> VRInvestigationSummary:
     """Project a VRInvestigationRecord row to the public summary.
 
-    ``live_cost_usd`` overrides the stored ``cost_actual_usd`` when
-    provided. The stored field has had no writers since inception, so
-    every read previously returned $0.00 regardless of actual spend.
-    Callers that aggregate ``LLMCostRecord`` per investigation pass the
-    sum here so the budget gauge reflects reality.
+    Binds the shared platform builder to VR's contract class. VR does not
+    set ``workspace_id`` from this path (callers that need it join it
+    separately). ``live_cost_usd`` overrides the stored
+    ``cost_actual_usd`` when provided.
     """
-    import json as _json
-
-    actual_cost = live_cost_usd if live_cost_usd is not None else record.cost_actual_usd
-    return VRInvestigationSummary(
-        id=record.id,
-        title=record.title,
-        target_id=record.target_id,
-        workspace_id=None,  # joined separately by callers that need it
-        parent_investigation_id=record.parent_investigation_id,
-        kind=InvestigationKind(record.kind),
-        status=InvestigationStatus(record.status),
-        pause_reason=(
-            InvestigationPauseReason(record.pause_reason)
-            if record.pause_reason else None
-        ),
-        auto_pilot=record.auto_pilot,
-        is_favorite=getattr(record, "is_favorite", False),
-        strategy_family=record.strategy_family,
-        cost_budget_usd=record.cost_budget_usd,
-        cost_actual_usd=actual_cost,
-        llm_tokens_cost_usd=record.llm_tokens_cost_usd,
-        mcp_calls_cost_usd=record.mcp_calls_cost_usd,
-        fuzz_infra_cost_usd=record.fuzz_infra_cost_usd,
+    return build_investigation_summary(
+        record,
+        summary_cls=VRInvestigationSummary,
         branch_count=branch_count,
         message_count=message_count,
         outcome_count=outcome_count,
-        primary_outcome_id=record.primary_outcome_id,
         primary_outcome_kind=primary_outcome_kind,
         primary_outcome_confidence=primary_outcome_confidence,
         primary_outcome_verdict_head=primary_outcome_verdict_head,
         verifier_verdict=verifier_verdict,
         verifier_confidence=verifier_confidence,
-        linked_campaign_ids=_json.loads(record.linked_campaign_ids_json or "[]"),
-        linked_finding_ids=_json.loads(record.linked_finding_ids_json or "[]"),
-        started_at=record.started_at,
-        stopped_at=record.stopped_at,
-        created_at=record.created_at,
-        updated_at=record.updated_at,
+        live_cost_usd=live_cost_usd,
     )
 
 
