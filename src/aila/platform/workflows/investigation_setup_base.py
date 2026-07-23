@@ -67,12 +67,14 @@ class InvestigationStateBindings:
 
     inv_model: type[Any]
     branch_model: type[Any]
-    target_model: type[Any]
-    primary_persona_value: str
-    unspecified_persona_value: str
-    spawn_fn: Callable[..., Awaitable[Any]]
-    pattern_store_factory: Callable[[], Any]
-    auto_deliberation_enabled: Callable[[], bool]
+    # setup-state (Phase 4a) inputs -- optional so a loop/emit-only
+    # bindings can omit them (only the two models above are shared).
+    target_model: type[Any] | None = None
+    primary_persona_value: str | None = None
+    unspecified_persona_value: str | None = None
+    spawn_fn: Callable[..., Awaitable[Any]] | None = None
+    pattern_store_factory: Callable[[], Any] | None = None
+    auto_deliberation_enabled: Callable[[], bool] | None = None
     module_id: str | None = None
     message_model: type[Any] | None = None
     outcome_model: type[Any] | None = None
@@ -81,6 +83,11 @@ class InvestigationStateBindings:
     run_turn: Callable[..., Awaitable[Any]] | None = None
     config_source: Any = None
     persona_siblings: tuple[Any, ...] = field(default_factory=tuple)
+    # loop-state (Phase 4b) inputs -- optional until the loop binds them.
+    researcher_factory: Callable[..., Any] | None = None
+    executor_factory: Callable[[], Any] | None = None
+    max_turns_reader: Callable[[], Awaitable[int]] | None = None
+    researcher_error: type[BaseException] | None = None
 
 
 @dataclass(frozen=True)
