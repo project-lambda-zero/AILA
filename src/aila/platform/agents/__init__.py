@@ -10,5 +10,10 @@ from __future__ import annotations
 
 from aila.platform.agents.auto_steering import maybe_post_auto_steering
 from aila.platform.agents.intent_classifier import classify_intent
+from aila.platform.agents.sibling_consensus import inject_sibling_consensus
 
-__all__ = ["classify_intent", "maybe_post_auto_steering"]
+__all__ = [
+    "classify_intent",
+    "inject_sibling_consensus",
+    "maybe_post_auto_steering",
+]
