@@ -301,7 +301,6 @@ ignore = [
 "src/aila/modules/vr/reporting/writer_agent.py" = ["PLC0415"]
 "src/aila/modules/vr/runtime.py" = ["PLC0415"]
 "src/aila/modules/vr/services/cve_intel_resolver.py" = ["PLC0415"]
-"src/aila/modules/vr/services/investigation_finalizers.py" = ["PLC0415"]
 # outcome_review bindings: F401 because the thin module re-exports the
 # platform QuorumOutcome / EditOutcomeResult / EDIT_OUTCOME_PROTECTED_KEYS
 # for legacy callers + tests; the imports are intentional re-exports.
