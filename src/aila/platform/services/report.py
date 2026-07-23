@@ -1,6 +1,5 @@
 """ReportService -- run management, finding upserts, report generation, severity queries per D-02.
 
-Emits: finding.upserted (batch), finding.resolved domain events.
 Uses PersistContract for atomic finding upserts.
 Each method accepts an optional external session (from UoW) for atomicity.
 When session is None, creates a short-lived session via async_session_scope (SDA-06).
@@ -83,7 +82,7 @@ class ReportService:
         records: list[SQLModel],
         session: AsyncSession | None = None,
     ) -> None:
-        """Batch upsert findings. Emits FindingUpserted with batch payload."""
+        """Batch upsert findings via PersistContract in one transaction."""
         async with _session_or_new(session) as (sess, owns):
             await PersistContract.upsert_many(sess, records)
             if owns:
@@ -95,7 +94,7 @@ class ReportService:
         resolution: str,
         session: AsyncSession | None = None,
     ) -> None:
-        """Mark a finding as resolved. Emits FindingResolved event."""
+        """Mark a finding as resolved and persist it via PersistContract."""
         async with _session_or_new(session) as (sess, owns):
             if hasattr(record, "resolution"):
                 setattr(record, "resolution", resolution)

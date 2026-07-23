@@ -1228,3 +1228,56 @@ class TestModulePrefixInPlatformToolName:
             'class B:\n    name = "generic_tool"\n',
         )
         assert "module_prefix_in_platform_tool_name" not in _rules(_audit(src))
+
+
+class TestPlatformOwnsEventVocabulary:
+    """Rule 46: platform event classes carry only generic infrastructure
+    vocabulary, never a module domain (scan/finding/investigation/module id)."""
+
+    def test_scan_class_name_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/events/domain_events.py",
+            'class ScanStarted:\n    event_type = "x"\n',
+        )
+        assert "platform_owns_event_vocabulary" in _rules(_audit(src))
+
+    def test_finding_event_type_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/events/domain_events.py",
+            'class Foo:\n    event_type = "finding.upserted"\n',
+        )
+        assert "platform_owns_event_vocabulary" in _rules(_audit(src))
+
+    def test_module_id_in_class_name_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/events/domain_events.py",
+            "class MalwareTargetDone:\n    pass\n",
+        )
+        assert "platform_owns_event_vocabulary" in _rules(_audit(src))
+
+    def test_infra_event_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/events/domain_events.py",
+            'class SystemRegistered:\n    event_type = "system.registered"\n',
+        )
+        assert "platform_owns_event_vocabulary" not in _rules(_audit(src))
+
+    def test_assessment_event_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/events/domain_events.py",
+            'class AssessmentCreated:\n    event_type = "assessment.created"\n',
+        )
+        assert "platform_owns_event_vocabulary" not in _rules(_audit(src))
+
+    def test_non_events_file_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/services/x.py",
+            "class ScanStarted:\n    pass\n",
+        )
+        assert "platform_owns_event_vocabulary" not in _rules(_audit(src))

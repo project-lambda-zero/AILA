@@ -47,6 +47,7 @@ Detects thirty-six categories of structural dishonesty:
 43. agent_llm_chat_bypass -- a module agents/ file calls llm_client.chat/chat_json/chat_structured directly instead of routing through platform idempotent_llm_call (double-pays the model on retry).
 44. private_platform_import -- a module imports a platform-private submodule symbol (tools._common, mcp.adapters._shared) that the public package already re-exports; import from the public path instead (RFC-05 concern f).
 45. module_prefix_in_platform_tool_name -- a platform MCP bridge hard-codes a module-prefixed tool name literal (name = "vr.audit_mcp_bridge"); derive the name from a constructor module_id instead (RFC-05 concern b).
+46. platform_owns_event_vocabulary -- an event class under platform/events/ carries module-domain vocabulary (scan/finding/investigation or a module id) in its class name or event_type; the platform owns only generic infrastructure events (RFC-05 concern c).
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -270,6 +271,34 @@ def _module_prefixed_name_literal(value: ast.expr | None) -> str | None:
         and isinstance(value.value, str)
         and _MODULE_TOOL_PREFIX_RE.match(value.value)
     ):
+        return value.value
+    return None
+
+
+# Rule 46 -- platform_owns_event_vocabulary. Event classes under
+# platform/events/ must not carry module-domain vocabulary; the platform
+# owns only generic infrastructure events (system lifecycle, config
+# change, assessment lifecycle, LLM accounting).
+_EVENTS_FILE_PATTERN = _re.compile(r"[/\\]aila[/\\]platform[/\\]events[/\\]")
+_EVENT_DOMAIN_TOKENS: frozenset[str] = frozenset({
+    "scan", "finding", "investigation", "malware", "vulnerability", "forensics",
+})
+
+
+def _event_type_string_literal(stmt: ast.stmt) -> str | None:
+    """Return the string assigned to an ``event_type`` field, or None."""
+    value: ast.expr | None = None
+    if (
+        isinstance(stmt, ast.AnnAssign)
+        and isinstance(stmt.target, ast.Name)
+        and stmt.target.id == "event_type"
+    ):
+        value = stmt.value
+    elif isinstance(stmt, ast.Assign) and any(
+        isinstance(t, ast.Name) and t.id == "event_type" for t in stmt.targets
+    ):
+        value = stmt.value
+    if isinstance(value, ast.Constant) and isinstance(value.value, str):
         return value.value
     return None
 
@@ -1568,6 +1597,48 @@ class _HonestyVisitor(ast.NodeVisitor):
                     if literal is not None:
                         self._emit_tool_name_finding(literal, node.lineno)
 
+    def _check_platform_owns_event_vocabulary(self, tree: ast.Module) -> None:
+        """Rule 46: platform_owns_event_vocabulary -- a platform event class
+        carries module-domain vocabulary.
+
+        The platform owns generic infrastructure events (system lifecycle,
+        config change, assessment lifecycle, LLM accounting). An event
+        class under platform/events/ whose name -- or whose ``event_type``
+        literal -- contains a module-domain token (scan, finding,
+        investigation, or a module id) belongs to a module, not the
+        platform.
+        """
+        if not _EVENTS_FILE_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            low_name = node.name.lower()
+            name_hit = next((t for t in _EVENT_DOMAIN_TOKENS if t in low_name), None)
+            if name_hit is not None:
+                self._emit(
+                    node.lineno,
+                    "platform_owns_event_vocabulary",
+                    f"platform_owns_event_vocabulary: event class {node.name!r} "
+                    f"carries module-domain token {name_hit!r} -- domain events "
+                    f"belong to the owning module, not the platform",
+                )
+                continue
+            for stmt in node.body:
+                literal = _event_type_string_literal(stmt)
+                if literal is None:
+                    continue
+                low_lit = literal.lower()
+                lit_hit = next((t for t in _EVENT_DOMAIN_TOKENS if t in low_lit), None)
+                if lit_hit is not None:
+                    self._emit(
+                        stmt.lineno,
+                        "platform_owns_event_vocabulary",
+                        f"platform_owns_event_vocabulary: event_type {literal!r} "
+                        f"on class {node.name!r} carries module-domain token "
+                        f"{lit_hit!r} -- domain events belong to the owning module",
+                    )
+
     def _emit_tool_name_finding(self, literal: str, lineno: int) -> None:
         """Emit a module_prefix_in_platform_tool_name finding."""
         self._emit(
@@ -2614,6 +2685,7 @@ class HonestyAuditor:
         visitor._check_broad_exception_catch(tree)
         visitor._check_config_schema_base(tree)
         visitor._check_module_prefix_in_tool_name(tree)
+        visitor._check_platform_owns_event_vocabulary(tree)
         return visitor.findings
 
     def audit_directory(self, directory: Path) -> list[Finding]:
