@@ -703,6 +703,46 @@ def _platform_service_corpus(filepath: str) -> dict[str, str]:
     return corpus
 
 
+# Rule 41 -- module workflow-state files must not be full copies of a
+# platform workflow-state base. Scoped to the vr/malware investigation
+# engine states (setup/loop/emit), which RFC-02 Phase 4 extracted to
+# platform/workflows/investigation_*_base.py.
+_WORKFLOW_STATE_SCOPE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]modules[/\\](?:vr|malware)[/\\]workflow[/\\]states[/\\]"
+    r"investigation_(?:setup|loop|emit)\.py$"
+)
+_WORKFLOW_BASE_CORPUS_CACHE: dict[str, dict[str, str]] = {}
+
+
+def _workflow_base_corpus(filepath: str) -> dict[str, str]:
+    """Return {relpath: normalized_source} for platform workflow-state bases.
+
+    Reads platform/workflows/investigation_*_base.py so a module state
+    file copied back from a platform base is caught. Normalized via
+    ast.unparse; cached per aila root.
+    """
+    match = _CONTRACTS_DIR_PATTERN.search(filepath.replace("\\", "/"))
+    if match is None:
+        return {}
+    aila_root = match.group(1)
+    cached = _WORKFLOW_BASE_CORPUS_CACHE.get(aila_root)
+    if cached is not None:
+        return cached
+    corpus: dict[str, str] = {}
+    base = Path(aila_root) / "platform" / "workflows"
+    if base.is_dir():
+        for py in sorted(base.glob("investigation_*_base.py")):
+            try:
+                normalized = ast.unparse(
+                    ast.parse(py.read_text(encoding="utf-8")),
+                )
+            except (OSError, SyntaxError, ValueError, RecursionError):
+                continue
+            corpus[f"workflows/{py.name}"] = normalized
+    _WORKFLOW_BASE_CORPUS_CACHE[aila_root] = corpus
+    return corpus
+
+
 def _classdef_is_table(node: ast.ClassDef) -> bool:
     """Return True when a class is declared with the SQLModel table=True flag."""
     for kw in node.keywords:
@@ -2083,6 +2123,52 @@ class _HonestyVisitor(ast.NodeVisitor):
                 "platform and keep a thin binding here",
             )
 
+    def _check_workflow_state_copy_of_platform(self, tree: ast.Module) -> None:
+        """Rule 41: workflow_state_copy_of_platform -- a vr/malware
+        investigation state file duplicates a platform state base.
+
+        RFC-02 Phase 4 extracted the setup/loop/emit turn engine to
+        platform/workflows/investigation_*_base.py; each module keeps only
+        a thin factory binding. A file whose normalized body matches a
+        platform base above the similarity threshold is a copy that
+        slipped back in. The length ceiling keeps thin bindings well under
+        the threshold; only a same-size copy trips it.
+        """
+        if not _WORKFLOW_STATE_SCOPE_PATTERN.search(
+            self.filename.replace("\\", "/"),
+        ):
+            return
+        try:
+            own = ast.unparse(tree)
+        except (ValueError, RecursionError):
+            return
+        if not own.strip():
+            return
+        best_name = ""
+        best_ratio = 0.0
+        own_len = len(own)
+        for name, base_src in _workflow_base_corpus(self.filename).items():
+            b_len = len(base_src)
+            if b_len == 0:
+                continue
+            if 2 * min(own_len, b_len) / (own_len + b_len) < _SERVICE_COPY_THRESHOLD:
+                continue
+            matcher = difflib.SequenceMatcher(None, own, base_src)
+            if matcher.quick_ratio() < _SERVICE_COPY_THRESHOLD:
+                continue
+            ratio = matcher.ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_name = name
+        if best_ratio >= _SERVICE_COPY_THRESHOLD:
+            self._emit(
+                1,
+                "workflow_state_copy_of_platform",
+                f"workflow_state_copy_of_platform: normalized body is "
+                f"{best_ratio:.0%} similar to platform/{best_name}; bind the "
+                "platform state factory instead of copying it",
+            )
+
     def _check_cost_read_stored_actual(
         self, tree: ast.Module, module_id: str,
     ) -> None:
@@ -2225,6 +2311,7 @@ class HonestyAuditor:
             visitor._check_unnamed_derived_constraint(tree, module_id)
             visitor._check_shadowed_platform_base(tree, module_id)
             visitor._check_service_copy_of_platform(tree)
+            visitor._check_workflow_state_copy_of_platform(tree)
             visitor._check_cost_read_stored_actual(tree, module_id)
             visitor._check_lifecycle_handler_bypass(tree, module_id)
         if _is_boundary_guarded_file(str(path)):

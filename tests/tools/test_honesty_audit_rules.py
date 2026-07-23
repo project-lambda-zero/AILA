@@ -846,3 +846,96 @@ class TestLifecycleHandlerBypass:
         )
         findings = _audit(src)
         assert "lifecycle_handler_bypass_service" not in _rules(findings)
+
+
+# ---------------------------------------------------------------------------
+# Rule 41 -- workflow_state_copy_of_platform
+# ---------------------------------------------------------------------------
+
+
+_WORKFLOW_BASE_SRC = '''\
+"""A platform workflow-state base that does real work."""
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+_log = logging.getLogger(__name__)
+
+
+def state_investigation_setup(bindings: Any, hooks: Any) -> Any:
+    """Build the setup handler."""
+
+    async def _handler(input: dict, services: Any) -> Any:
+        investigation_id = str(input.get("investigation_id") or "")
+        if not investigation_id:
+            raise ValueError("missing investigation_id")
+        total = 0
+        for key in sorted(input):
+            if key.startswith("x"):
+                total += 1
+                _log.info("counted %s for %s", key, investigation_id)
+        branch_id = str(input.get("branch_id") or "")
+        result = {"investigation_id": investigation_id, "branch_id": branch_id}
+        _log.info("setup ready %s total=%d", investigation_id, total)
+        return result
+
+    return _handler
+'''
+
+
+class TestWorkflowStateCopyOfPlatform:
+    """Rule 41: a vr/malware state file must not be a full copy of a
+    platform workflow-state base."""
+
+    def test_state_copy_flagged(self, tmp_path: Path) -> None:
+        _write(
+            tmp_path,
+            "aila/platform/workflows/investigation_setup_base.py",
+            _WORKFLOW_BASE_SRC,
+        )
+        copy = _WORKFLOW_BASE_SRC.replace("platform", "vr")
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/workflow/states/investigation_setup.py",
+            copy,
+        )
+        findings = _audit(src)
+        assert "workflow_state_copy_of_platform" in _rules(findings)
+
+    def test_thin_binding_not_flagged(self, tmp_path: Path) -> None:
+        _write(
+            tmp_path,
+            "aila/platform/workflows/investigation_setup_base.py",
+            _WORKFLOW_BASE_SRC,
+        )
+        binding = (
+            '"""VR setup -- thin binding of the platform factory."""\n'
+            "from __future__ import annotations\n\n"
+            "from aila.platform.workflows.investigation_setup_base import (\n"
+            "    state_investigation_setup as _build,\n"
+            ")\n\n"
+            "state_investigation_setup = _build(object(), object())\n"
+        )
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/workflow/states/investigation_setup.py",
+            binding,
+        )
+        findings = _audit(src)
+        assert "workflow_state_copy_of_platform" not in _rules(findings)
+
+    def test_forensics_out_of_scope(self, tmp_path: Path) -> None:
+        _write(
+            tmp_path,
+            "aila/platform/workflows/investigation_setup_base.py",
+            _WORKFLOW_BASE_SRC,
+        )
+        copy = _WORKFLOW_BASE_SRC.replace("platform", "forensics")
+        src = _write(
+            tmp_path,
+            "aila/modules/forensics/workflow/states/investigation_setup.py",
+            copy,
+        )
+        findings = _audit(src)
+        assert "workflow_state_copy_of_platform" not in _rules(findings)
