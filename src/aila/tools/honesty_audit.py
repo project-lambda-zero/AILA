@@ -44,6 +44,7 @@ Detects thirty-six categories of structural dishonesty:
 40. lifecycle_handler_bypass_service -- a pause/resume/re-enqueue route handler writes investigation .status directly instead of calling the platform lifecycle service.
 41. workflow_state_copy_of_platform -- a vr/malware investigation state file duplicates a platform workflow-state base instead of binding the factory.
 42. agent_primitive_reimplementation -- a module agents/ file defines a platform-owned agent primitive (auto-steering injector / intent classifier) at top level instead of importing it.
+43. agent_llm_chat_bypass -- a module agents/ file calls llm_client.chat() directly instead of routing through platform idempotent_llm_call (double-pays the model on retry).
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -2185,6 +2186,34 @@ class _HonestyVisitor(ast.NodeVisitor):
                 "platform state factory instead of copying it",
             )
 
+    def _check_agent_llm_chat_bypass(self, tree: ast.Module) -> None:
+        """Rule 43: agent_llm_chat_bypass -- a module agents/ file calls the
+        raw llm_client.chat() instead of the idempotent wrapper.
+
+        RFC-03 Phase 2 routes the module agent chat calls through
+        platform.agents.idempotent_llm_call so a retried worker replays the
+        cached response instead of paying the model API a second time. A
+        direct ``<x>.llm_client.chat(...)`` in a module agents/ file is a
+        bypass that reintroduces the double-pay. (chat_json / chat_structured
+        adoption lands in a later phase.)
+        """
+        if not _AGENTS_SCOPE_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            if not (isinstance(fn, ast.Attribute) and fn.attr == "chat"):
+                continue
+            recv = fn.value
+            if isinstance(recv, ast.Attribute) and recv.attr == "llm_client":
+                self._emit(
+                    node.lineno,
+                    "agent_llm_chat_bypass",
+                    "agent_llm_chat_bypass: route llm_client.chat() through "
+                    "platform.agents.idempotent_llm_call for retry safety",
+                )
+
     def _check_agent_primitive_reimplementation(self, tree: ast.Module) -> None:
         """Rule 42: agent_primitive_reimplementation -- a module agents/ file
         defines a platform-owned agent primitive at top level.
@@ -2355,6 +2384,7 @@ class HonestyAuditor:
             visitor._check_cost_read_stored_actual(tree, module_id)
             visitor._check_lifecycle_handler_bypass(tree, module_id)
             visitor._check_agent_primitive_reimplementation(tree)
+            visitor._check_agent_llm_chat_bypass(tree)
         if _is_boundary_guarded_file(str(path)):
             visitor._check_api_imports_modules(tree)
         if _is_module_file(str(path)):

@@ -984,3 +984,48 @@ class TestAgentPrimitiveReimplementation:
             "def classify_intent(text):\n    return 'x'\n",
         )
         assert "agent_primitive_reimplementation" not in _rules(_audit(src))
+
+
+# ---------------------------------------------------------------------------
+# Rule 43 -- agent_llm_chat_bypass
+# ---------------------------------------------------------------------------
+
+
+class TestAgentLlmChatBypass:
+    """Rule 43: module agents/ must route llm_client.chat() through the
+    platform idempotent wrapper (RFC-03 Phase 2)."""
+
+    def test_direct_chat_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/agents/claim_verifier.py",
+            "async def f(services):\n"
+            "    return await services.llm_client.chat(task_type='x', messages=[])\n",
+        )
+        assert "agent_llm_chat_bypass" in _rules(_audit(src))
+
+    def test_idempotent_wrapper_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/agents/claim_verifier.py",
+            "async def f(services):\n"
+            "    return await idempotent_llm_call(services.llm_client, method='chat')\n",
+        )
+        assert "agent_llm_chat_bypass" not in _rules(_audit(src))
+
+    def test_chat_json_not_flagged_this_phase(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/agents/pattern_extractor.py",
+            "async def f(c):\n    return await c.llm_client.chat_json('x', [], {})\n",
+        )
+        assert "agent_llm_chat_bypass" not in _rules(_audit(src))
+
+    def test_platform_chat_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/agents/idempotent_llm.py",
+            "async def f(services):\n"
+            "    return await services.llm_client.chat(task_type='x', messages=[])\n",
+        )
+        assert "agent_llm_chat_bypass" not in _rules(_audit(src))
