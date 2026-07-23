@@ -97,7 +97,7 @@ def _import_remaining():
         ),
         (OutcomeRecordBase, VRInvestigationOutcomeRecord, set()),
         (OutcomeReviewRecordBase, VRInvestigationOutcomeReviewRecord, set()),
-        (McpCallLogRecordBase, VRMcpCallLogRecord, {"investigation_id", "branch_id", "turn_number"}),
+        (McpCallLogRecordBase, VRMcpCallLogRecord, set()),
         (InvestigationTargetRecordBase, VRInvestigationTargetRecord, set()),
     ]
 
