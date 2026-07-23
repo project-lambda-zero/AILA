@@ -48,7 +48,7 @@ from aila.platform.mcp.adapters.ida_headless import (
     adapt_xrefs_from,
     adapt_xrefs_to,
 )
-from aila.modules.vr.agents.tool_executor import ToolExecutor, _parse_command
+from aila.modules.vr.agents.tool_executor import ToolExecutor, parse_command
 from aila.modules.vr.contracts import PayloadKind
 
 
@@ -202,7 +202,7 @@ class TestAndroidMcpDispatch:
          parameter and ``self._bridges`` had no ``"android_mcp"`` key --
          the executor would emit "No bridge configured for MCP server
          'android_mcp'" at the bridge lookup step.
-      3. The ``_parse_command`` JSON parser rejected the dotted tool id
+      3. The ``parse_command`` JSON parser rejected the dotted tool id
          -- same failure mode as (1) one step earlier.
     """
 
@@ -227,7 +227,7 @@ class TestAndroidMcpDispatch:
             "tool": "android_mcp.androguard_summary",
             "args": {"apk_path": "/tmp/sample.apk"},
         })
-        parsed = _parse_command(command)
+        parsed = parse_command(command)
         assert parsed is not None
         tool_id, args = parsed
         assert tool_id == "android_mcp.androguard_summary"
@@ -819,34 +819,34 @@ class TestCommandParser:
     def test_valid_command(self) -> None:
         raw = json.dumps({"tool": "ida_headless.decompile",
                           "args": {"binary_id": "abc", "address_or_name": "main"}})
-        parsed = _parse_command(raw)
+        parsed = parse_command(raw)
         assert parsed is not None
         tool_id, args = parsed
         assert tool_id == "ida_headless.decompile"
         assert args == {"binary_id": "abc", "address_or_name": "main"}
 
     def test_empty_string(self) -> None:
-        assert _parse_command("") is None
-        assert _parse_command("   ") is None
+        assert parse_command("") is None
+        assert parse_command("   ") is None
 
     def test_invalid_json(self) -> None:
-        assert _parse_command("not json") is None
-        assert _parse_command("{incomplete") is None
+        assert parse_command("not json") is None
+        assert parse_command("{incomplete") is None
 
     def test_non_dict_top_level(self) -> None:
-        assert _parse_command("[]") is None
-        assert _parse_command('"just a string"') is None
-        assert _parse_command("42") is None
+        assert parse_command("[]") is None
+        assert parse_command('"just a string"') is None
+        assert parse_command("42") is None
 
     def test_missing_tool_field(self) -> None:
-        assert _parse_command(json.dumps({"args": {}})) is None
+        assert parse_command(json.dumps({"args": {}})) is None
 
     def test_missing_args_defaults_empty(self) -> None:
         raw = json.dumps({"tool": "ida_headless.decompile"})
-        parsed = _parse_command(raw)
+        parsed = parse_command(raw)
         assert parsed is not None
         assert parsed[1] == {}
 
     def test_wrong_args_type(self) -> None:
         raw = json.dumps({"tool": "x.y", "args": "not a dict"})
-        assert _parse_command(raw) is None
+        assert parse_command(raw) is None

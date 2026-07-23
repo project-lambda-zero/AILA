@@ -7,7 +7,7 @@ with sample investigation + branch rows.
 """
 from __future__ import annotations
 
-from aila.modules.vr.agents.branch_manager import (
+from aila.platform.agents.branch_pool import (
     _decode,
     _encode,
     _has_contract,
