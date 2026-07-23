@@ -185,5 +185,52 @@ class VRConfigSchema(BaseModel):
         ),
     )
 
+    # --- Cap-exceeded reaper (operator-tunable) --------------------------
+    # The four caps below drive aila.modules.vr.services.investigation_reaper
+    # (which now routes through ConfigRegistry so PUT /config overrides land
+    # on the next tick without a worker restart). The prior code read raw
+    # VR_* env vars and ignored operator overrides; those names are
+    # retired, replaced by the standard AILA_VR_<KEY> env form.
+    investigation_turn_cap: int = Field(
+        default=300,
+        ge=10,
+        le=10000,
+        description=(
+            "Investigation-wide cap on cumulative reasoning turns "
+            "(sum across branches). Trips the cap-exceeded path in the "
+            "periodic reaper + workflow finalize chokepoint."
+        ),
+    )
+    investigation_message_cap: int = Field(
+        default=1000,
+        ge=10,
+        le=100000,
+        description=(
+            "Investigation-wide hard cap on messages emitted across all "
+            "branches. Trips the cap-exceeded path in workflow finalize."
+        ),
+    )
+    investigation_wall_clock_hours: float = Field(
+        default=6.0,
+        ge=0.5,
+        le=72.0,
+        description=(
+            "Investigation-wide wall-clock budget in hours before the "
+            "finalize chokepoint flips the investigation to a cap-exceeded "
+            "terminal."
+        ),
+    )
+    wall_clock_idle_grace_s: float = Field(
+        default=900.0,
+        ge=30.0,
+        le=86400.0,
+        description=(
+            "Idle-grace window in seconds the finalize chokepoint waits "
+            "after the wall-clock cap is hit before terminating, so an "
+            "investigation that is actively producing work doesn't get "
+            "killed for a slow turn."
+        ),
+    )
+
 
 VR_DEFAULTS = VRConfigSchema()

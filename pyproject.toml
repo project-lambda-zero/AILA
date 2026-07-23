@@ -270,12 +270,12 @@ ignore = [
 # aliases (BR, INV) following the standard convention used across
 # every sweep helper.
 "src/aila/platform/services/branch_reaper.py" = ["N806"]
+# platform/services/investigation_reaper.py: N806 for SQLAlchemy ORM
+# uppercase aliases (BR, INV, MSG) in the shared cap-sweep helpers.
+"src/aila/platform/services/investigation_reaper.py" = ["N806"]
 # malware/services/config_helpers.py: PLW0603 for the lazy registry
 # singleton (one instance per worker; constructed once on first read).
 "src/aila/modules/malware/services/config_helpers.py" = ["PLW0603"]
-# malware/services/investigation_reaper.py: same N806 rationale as
-# branch_reaper above; multiple ORM aliases inside the sweep helpers.
-"src/aila/modules/malware/services/investigation_reaper.py" = ["N806"]
 # platform/mcp/call_logger.py: BLE001 because record_call catches
 # BaseException only to enrich the log record then re-raise it; the broad
 # catch is an explicit observation point.
@@ -302,7 +302,6 @@ ignore = [
 "src/aila/modules/vr/runtime.py" = ["PLC0415"]
 "src/aila/modules/vr/services/cve_intel_resolver.py" = ["PLC0415"]
 "src/aila/modules/vr/services/investigation_finalizers.py" = ["PLC0415"]
-"src/aila/modules/vr/services/investigation_reaper.py" = ["N806", "PLC0415"]
 # outcome_review bindings: F401 because the thin module re-exports the
 # platform QuorumOutcome / EditOutcomeResult / EDIT_OUTCOME_PROTECTED_KEYS
 # for legacy callers + tests; the imports are intentional re-exports.
