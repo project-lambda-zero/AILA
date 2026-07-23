@@ -277,7 +277,6 @@ class AuditMcpBridgeTool(Tool):
                      index_id="a1b2c3", scanner="semgrep")
     """
 
-    name = "vr.audit_mcp_bridge"
     description = (
         "audit-mcp source code audit bridge. Supports 51+ tools: "
         "index_codebase, poll_index, attack_surface, preanalysis, "
@@ -300,7 +299,16 @@ class AuditMcpBridgeTool(Tool):
         base_url: str | None = None,
         timeout: float | None = None,
         recorder: BridgeRecorder | None = None,
+        *,
+        module_id: str = "vr",
     ) -> None:
+        # The owning module id drives the public tool name and the config
+        # namespace so the platform bridge never hard-codes a module. It
+        # defaults to "vr" -- the historical owner -- so existing callers
+        # keep the exact name "vr.audit_mcp_bridge" and the "vr" config
+        # namespace with no change.
+        self.module_id = module_id
+        self.name = f"{module_id}.audit_mcp_bridge"
         # `base_url` if explicitly supplied wins forever (tests, DI).
         # Otherwise resolve per-call via env → ConfigRegistry → default
         # so operator PATCH /vr/mcp/servers/audit_mcp takes effect without
@@ -357,7 +365,7 @@ class AuditMcpBridgeTool(Tool):
             self._resolved_base_url = env_value.rstrip("/")
             return self._resolved_base_url
         try:
-            cfg_value = await ConfigRegistry().get("vr", "audit_mcp_url")
+            cfg_value = await ConfigRegistry().get(self.module_id, "audit_mcp_url")
             if isinstance(cfg_value, str) and cfg_value.strip():
                 self._resolved_base_url = cfg_value.rstrip("/")
                 return self._resolved_base_url

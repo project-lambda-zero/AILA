@@ -348,7 +348,6 @@ class AndroidMcpBridgeTool(Tool):
     synthetic ``status="error"`` when the HTTP layer itself fails.
     """
 
-    name = "vr.android_mcp_bridge"
     description = (
         "android-mcp Android APK audit bridge. Supports apktool_decode, "
         "jadx_decompile, androguard_summary, mobsf_scan, drozer_scan_apk, "
@@ -384,7 +383,15 @@ class AndroidMcpBridgeTool(Tool):
         base_url: str | None = None,
         timeout: float | None = None,
         recorder: BridgeRecorder | None = None,
+        *,
+        module_id: str = "vr",
     ) -> None:
+        # Owning module id drives the public tool name and config
+        # namespace. Defaults to "vr" so existing callers keep the exact
+        # name "vr.android_mcp_bridge" and the "vr" config namespace
+        # unchanged.
+        self.module_id = module_id
+        self.name = f"{module_id}.android_mcp_bridge"
         # ``base_url`` if explicitly supplied wins forever (tests, DI).
         # Otherwise resolve per-call via env → ConfigRegistry → default
         # so PATCH /vr/mcp/servers/android_mcp takes effect without a
@@ -406,7 +413,7 @@ class AndroidMcpBridgeTool(Tool):
         if env_value:
             return env_value.rstrip("/")
         try:
-            cfg_value = await ConfigRegistry().get("vr", "android_mcp_url")
+            cfg_value = await ConfigRegistry().get(self.module_id, "android_mcp_url")
             if isinstance(cfg_value, str) and cfg_value.strip():
                 return cfg_value.rstrip("/")
         except (ValueError, RuntimeError, ImportError):

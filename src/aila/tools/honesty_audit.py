@@ -46,6 +46,7 @@ Detects thirty-six categories of structural dishonesty:
 42. agent_primitive_reimplementation -- a module agents/ file defines a platform-owned agent primitive (auto-steering injector / intent classifier) at top level instead of importing it.
 43. agent_llm_chat_bypass -- a module agents/ file calls llm_client.chat/chat_json/chat_structured directly instead of routing through platform idempotent_llm_call (double-pays the model on retry).
 44. private_platform_import -- a module imports a platform-private submodule symbol (tools._common, mcp.adapters._shared) that the public package already re-exports; import from the public path instead (RFC-05 concern f).
+45. module_prefix_in_platform_tool_name -- a platform MCP bridge hard-codes a module-prefixed tool name literal (name = "vr.audit_mcp_bridge"); derive the name from a constructor module_id instead (RFC-05 concern b).
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -249,6 +250,28 @@ _CONFIG_SCHEMA_PATH_PATTERN = _re.compile(
 def _is_module_file(filepath: str) -> bool:
     """Return True if *filepath* is inside the aila/modules/ package."""
     return bool(_MODULE_FILE_PATTERN.search(filepath.replace("\\", "/")))
+
+
+# Rule 45 -- module_prefix_in_platform_tool_name. Platform MCP bridge tool
+# names must derive from a constructor module_id, not a hard-coded literal
+# that names a module.
+_BRIDGE_FILE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]platform[/\\]mcp[/\\]bridges[/\\]"
+)
+_MODULE_TOOL_PREFIX_RE = _re.compile(
+    r"^(vr|vulnerability|forensics|malware|hello_world)\."
+)
+
+
+def _module_prefixed_name_literal(value: ast.expr | None) -> str | None:
+    """Return the string when *value* is a module-prefixed name literal."""
+    if (
+        isinstance(value, ast.Constant)
+        and isinstance(value.value, str)
+        and _MODULE_TOOL_PREFIX_RE.match(value.value)
+    ):
+        return value.value
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -1499,6 +1522,62 @@ class _HonestyVisitor(ast.NodeVisitor):
                                 f"Platform Services (SDA-05)",
                             )
 
+    def _check_module_prefix_in_tool_name(self, tree: ast.Module) -> None:
+        """Rule 45: module_prefix_in_platform_tool_name -- a platform MCP
+        bridge hard-codes a module-prefixed tool name literal.
+
+        Bridge tool names surface in agent prompts; a literal like
+        ``vr.audit_mcp_bridge`` welds the platform bridge to one module.
+        The name must be built from the constructor's ``module_id``
+        (an f-string / attribute), not a string constant. Flags a
+        class-level ``name = "<prefix>.…"`` / ``name: str = "<prefix>.…"``
+        or a ``self.name = "<prefix>.…"`` assignment where the prefix is a
+        known module id.
+        """
+        if not _BRIDGE_FILE_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        for cls in ast.walk(tree):
+            if not isinstance(cls, ast.ClassDef):
+                continue
+            for stmt in cls.body:
+                if isinstance(stmt, ast.Assign) and any(
+                    isinstance(t, ast.Name) and t.id == "name" for t in stmt.targets
+                ):
+                    literal = _module_prefixed_name_literal(stmt.value)
+                    if literal is not None:
+                        self._emit_tool_name_finding(literal, stmt.lineno)
+                elif (
+                    isinstance(stmt, ast.AnnAssign)
+                    and isinstance(stmt.target, ast.Name)
+                    and stmt.target.id == "name"
+                ):
+                    literal = _module_prefixed_name_literal(stmt.value)
+                    if literal is not None:
+                        self._emit_tool_name_finding(literal, stmt.lineno)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            for tgt in node.targets:
+                if (
+                    isinstance(tgt, ast.Attribute)
+                    and tgt.attr == "name"
+                    and isinstance(tgt.value, ast.Name)
+                    and tgt.value.id == "self"
+                ):
+                    literal = _module_prefixed_name_literal(node.value)
+                    if literal is not None:
+                        self._emit_tool_name_finding(literal, node.lineno)
+
+    def _emit_tool_name_finding(self, literal: str, lineno: int) -> None:
+        """Emit a module_prefix_in_platform_tool_name finding."""
+        self._emit(
+            lineno,
+            "module_prefix_in_platform_tool_name",
+            f"module_prefix_in_platform_tool_name: tool name literal "
+            f"{literal!r} hard-codes a module prefix -- derive the name "
+            f"from a constructor module_id instead",
+        )
+
     def _check_private_platform_import(self, tree: ast.Module) -> None:
         """Rule 44: private_platform_import -- module reaches into a platform
         private submodule for a publicly re-exported symbol.
@@ -2534,6 +2613,7 @@ class HonestyAuditor:
         visitor._check_log_format_concat(tree)
         visitor._check_broad_exception_catch(tree)
         visitor._check_config_schema_base(tree)
+        visitor._check_module_prefix_in_tool_name(tree)
         return visitor.findings
 
     def audit_directory(self, directory: Path) -> list[Finding]:

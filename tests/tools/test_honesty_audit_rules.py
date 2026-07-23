@@ -1173,3 +1173,58 @@ class TestPrivatePlatformImport:
             encoding="utf-8",
         )
         assert "private_platform_import" not in _rules(_audit(src, wl_path))
+
+
+class TestModulePrefixInPlatformToolName:
+    """Rule 45: a platform MCP bridge derives its tool name from a
+    constructor module_id, never a hard-coded module-prefixed literal."""
+
+    def test_class_level_literal_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/mcp/bridges/audit_mcp.py",
+            'class B:\n    name = "vr.audit_mcp_bridge"\n',
+        )
+        assert "module_prefix_in_platform_tool_name" in _rules(_audit(src))
+
+    def test_annotated_class_literal_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/mcp/bridges/x.py",
+            'class B:\n    name: str = "malware.foo_bridge"\n',
+        )
+        assert "module_prefix_in_platform_tool_name" in _rules(_audit(src))
+
+    def test_self_name_literal_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/mcp/bridges/x.py",
+            "class B:\n    def __init__(self) -> None:\n"
+            '        self.name = "vr.ida_bridge"\n',
+        )
+        assert "module_prefix_in_platform_tool_name" in _rules(_audit(src))
+
+    def test_fstring_name_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/mcp/bridges/x.py",
+            'class B:\n    def __init__(self, module_id: str = "vr") -> None:\n'
+            '        self.name = f"{module_id}.audit_mcp_bridge"\n',
+        )
+        assert "module_prefix_in_platform_tool_name" not in _rules(_audit(src))
+
+    def test_non_bridge_file_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/services/x.py",
+            'class B:\n    name = "vr.audit_mcp_bridge"\n',
+        )
+        assert "module_prefix_in_platform_tool_name" not in _rules(_audit(src))
+
+    def test_non_module_prefix_literal_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/mcp/bridges/x.py",
+            'class B:\n    name = "generic_tool"\n',
+        )
+        assert "module_prefix_in_platform_tool_name" not in _rules(_audit(src))

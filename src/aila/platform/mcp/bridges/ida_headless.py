@@ -88,7 +88,6 @@ class IDABridgeTool(Tool):
                      address_or_name="main")
     """
 
-    name = "vr.ida_bridge"
     description = (
         "IDA Pro headless binary analysis bridge. Supports 81+ tools: "
         "upload (upload binary for analysis), open_binary, decompile, "
@@ -110,7 +109,14 @@ class IDABridgeTool(Tool):
         base_url: str | None = None,
         timeout: float | None = None,
         recorder: BridgeRecorder | None = None,
+        *,
+        module_id: str = "vr",
     ) -> None:
+        # Owning module id drives the public tool name and config
+        # namespace. Defaults to "vr" so existing callers keep the exact
+        # name "vr.ida_bridge" and the "vr" config namespace unchanged.
+        self.module_id = module_id
+        self.name = f"{module_id}.ida_bridge"
         self._fixed_base_url = base_url.rstrip("/") if base_url else None
         self._timeout = timeout or float(
             os.environ.get("IDA_HEADLESS_TIMEOUT", "120"),
@@ -185,7 +191,7 @@ class IDABridgeTool(Tool):
         if env_value:
             return env_value.rstrip("/")
         try:
-            cfg_value = await ConfigRegistry().get("vr", "ida_headless_url")
+            cfg_value = await ConfigRegistry().get(self.module_id, "ida_headless_url")
             if isinstance(cfg_value, str) and cfg_value.strip():
                 return cfg_value.rstrip("/")
         except (SQLAlchemyError, OSError, RuntimeError, ImportError, ValueError, TypeError) as exc:
