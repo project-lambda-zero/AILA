@@ -85,11 +85,12 @@ def test_outcome_review_cascade_preserved() -> None:
     assert all(od == "CASCADE" for _, od in ondeletes)
 
 
-def test_vr_mcp_keeps_join_key_residue() -> None:
-    vr_cols = set(VRMcpCallLogRecord.model_fields)
-    assert {"investigation_id", "branch_id", "turn_number"} <= vr_cols
-    mw_cols = set(MalwareMcpCallLogRecord.model_fields)
-    assert not ({"investigation_id", "branch_id", "turn_number"} & mw_cols)
+def test_mcp_call_log_carries_join_keys() -> None:
+    # RFC-04 Phase 1 hoisted the #39 join-keys to McpCallLogRecordBase; both
+    # modules now carry investigation_id / branch_id / turn_number.
+    keys = {"investigation_id", "branch_id", "turn_number"}
+    assert keys <= set(VRMcpCallLogRecord.model_fields)
+    assert keys <= set(MalwareMcpCallLogRecord.model_fields)
 
 
 def test_domain_concretes_subclass_bases() -> None:

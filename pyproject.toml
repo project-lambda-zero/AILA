@@ -276,10 +276,10 @@ ignore = [
 # malware/services/investigation_reaper.py: same N806 rationale as
 # branch_reaper above; multiple ORM aliases inside the sweep helpers.
 "src/aila/modules/malware/services/investigation_reaper.py" = ["N806"]
-# malware/services/mcp_call_logger.py: BLE001 because the call logger
-# catches BaseException only to re-raise it after enriching the log
-# record; the broad catch is an explicit observation point.
-"src/aila/modules/malware/services/mcp_call_logger.py" = ["BLE001"]
+# platform/mcp/call_logger.py: BLE001 because record_call catches
+# BaseException only to enrich the log record then re-raise it; the broad
+# catch is an explicit observation point.
+"src/aila/platform/mcp/call_logger.py" = ["BLE001"]
 "src/aila/modules/malware/services/stall_recovery.py" = ["PLC0415"]
 "src/aila/modules/malware/workflow/definitions.py" = ["PLC0415"]
 # finalize + investigation_emit / _setup keep targeted deferred imports of
@@ -303,7 +303,6 @@ ignore = [
 "src/aila/modules/vr/services/cve_intel_resolver.py" = ["PLC0415"]
 "src/aila/modules/vr/services/investigation_finalizers.py" = ["PLC0415"]
 "src/aila/modules/vr/services/investigation_reaper.py" = ["N806", "PLC0415"]
-"src/aila/modules/vr/services/mcp_call_logger.py" = ["BLE001"]
 # outcome_review bindings: F401 because the thin module re-exports the
 # platform QuorumOutcome / EditOutcomeResult / EDIT_OUTCOME_PROTECTED_KEYS
 # for legacy callers + tests; the imports are intentional re-exports.

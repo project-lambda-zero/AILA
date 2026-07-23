@@ -14,11 +14,12 @@ A concrete module call-log collapses to::
     class MalwareMcpCallLogRecord(McpCallLogRecordBase, table=True):
         __tablename__ = "malware_mcp_call_log"
 
-Note on the shared column set: migration 082 (issue #39) added
-``investigation_id`` / ``branch_id`` / ``turn_number`` to ``vr_mcp_call_log``
-ONLY, so those three observability join-keys are vr-only residue and are
-intentionally OUT of this base. They stay on the vr concrete record until
-the malware side also grows them, at which point they can be hoisted.
+Shared column set includes the observability join-keys ``investigation_id``
+/ ``branch_id`` / ``turn_number`` (issue #39). They were vr-only until
+RFC-04 Phase 1 unified the MCP call logger; both modules now carry them so a
+call-log row joins back to the investigation, branch, and turn that made it.
+Migration 082 added them to ``vr_mcp_call_log``; a later migration adds them
+to ``malware_mcp_call_log``.
 
 No FKs live on the base: the concrete columns declare only ``target_id`` /
 ``team_id`` as opaque string references, matching the operator audit-trail
@@ -55,6 +56,12 @@ class McpCallLogRecordBase(TableDerivedConstraintsMixin, SQLModel):
     error_excerpt: str | None = Field(default=None, sa_type=Text, sa_column_kwargs={"nullable": True})
     target_id: str | None = Field(default=None, max_length=36, index=True)
     team_id: str | None = Field(default=None, max_length=36)
+    # #39 observability join-keys: correlate a call-log row to the
+    # investigation / branch / turn that made it. Stamped from the ambient
+    # correlation ContextVar by the MCP call logger.
+    investigation_id: str | None = Field(default=None, max_length=36, index=True)
+    branch_id: str | None = Field(default=None, max_length=36, index=True)
+    turn_number: int | None = Field(default=None)
     called_at: datetime = Field(
         default_factory=utc_now,
         sa_type=DateTime(timezone=True),
