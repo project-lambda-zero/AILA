@@ -489,41 +489,81 @@ async def resume_investigation(
     return summary
 
 
+async def _fan_out_reenqueue_submit(
+    investigation_id: str,
+    *,
+    submit_one: Callable[[str, str | None], Awaitable[None]],
+    branch_model: type[Any] | None,
+    branch_status_active: str | None,
+) -> int:
+    """Fan the fresh submit out across active branches (platform-owned).
+
+    ``branch_model is None`` selects submit-once mode (VR): one task with
+    no branch id, and the setup state respawns/reuses the persona
+    branches on dispatch. Otherwise (malware) one task is submitted per
+    active branch, or one setup task when no branch is active. Returns
+    the number of submit calls made. This orchestration lives in the
+    platform so a module cannot get the branch fan-out wrong.
+    """
+    if branch_model is None:
+        await submit_one(investigation_id, None)
+        return 1
+    async with UnitOfWork() as uow:
+        branch_stmt = (
+            select(branch_model.id)
+            .where(branch_model.investigation_id == investigation_id)
+            .where(branch_model.status == branch_status_active)
+        )
+        branch_ids = [
+            str(bid) for bid in (await uow.session.exec(branch_stmt)).all()
+        ]
+    if branch_ids:
+        for branch_id in branch_ids:
+            await submit_one(investigation_id, branch_id)
+        return len(branch_ids)
+    await submit_one(investigation_id, None)
+    return 1
+
+
 async def reenqueue_investigation(
     investigation_id: str,
     *,
     inv_model: type[Any],
-    track: str,
-    task_fn: Callable[..., Awaitable[Any]],
     fn_path_pattern: str,
-    task_queue: Any = None,
+    submit_one: Callable[[str, str | None], Awaitable[None]],
+    branch_model: type[Any] | None = None,
+    branch_status_active: str | None = None,
     new_kind: str | None = None,
     new_strategy: str | None = None,
-    user_id: str | None = None,
-    group_id: str | None = None,
-    team_id: str | None = None,
 ) -> dict[str, Any]:
-    """Reset an investigation to CREATED and submit a fresh task.
+    """Reset an investigation to CREATED and submit fresh worker tasks.
 
     Returns::
 
-        {"submitted": 1, "cancelled_stale_tasks": N,
+        {"submitted": N, "cancelled_stale_tasks": N,
          "wiped_crashed_cursors": N, "investigation_id": "<id>"}
 
-    Cancels every stale taskrecord matching ``fn_path_pattern`` and this
-    investigation (this is what stops ``TaskQueue.submit``'s input-hash
-    dedup from returning the pre-existing handle) and wipes every
-    ``__crashed__`` workflow_state_cursor tied to the investigation
-    (without which the engine refuses to resume cleanly). The commit
+    Owns the full re-enqueue state machine so a module cannot diverge:
+    reset the row to CREATED, cancel every stale taskrecord matching
+    ``fn_path_pattern`` and this investigation (this is what stops
+    ``TaskQueue.submit``'s input-hash dedup from returning the
+    pre-existing handle), wipe every ``__crashed__``
+    workflow_state_cursor tied to the investigation (without which the
+    engine refuses to resume cleanly), commit, then submit. The commit
     precedes the submit; the same UoW would race with the dedup session
     opened inside ``TaskQueue.submit``. ``new_kind`` / ``new_strategy``
     update ``inv.kind`` / ``inv.strategy_family`` when supplied; the
     caller resolves the module's kind-to-strategy default map.
+
+    The only module-specific input is the atomic submit primitive:
+    ``submit_one(investigation_id, branch_id | None) -> None`` submits
+    exactly one worker task. ``branch_model`` (with ``branch_status_active``)
+    selects the fan-out: ``None`` submits once (VR, setup respawns the
+    branches); a branch model submits one task per active branch, or one
+    setup task when no branch is active (malware). The branch fan-out
+    itself is platform-owned; the module supplies only the one-submit
+    primitive and the branch-query parameters as data.
     """
-    if task_queue is None:
-        raise ReenqueueInvestigationError(
-            "task_queue argument required (auth-bound for safety)",
-        )
     summary: dict[str, Any] = {
         "submitted": 0,
         "cancelled_stale_tasks": 0,
@@ -592,14 +632,11 @@ async def reenqueue_investigation(
         await uow.session.commit()
 
     # Commit precedes submit: the same UoW would race with the dedup
-    # session opened inside TaskQueue.submit.
-    await task_queue.submit(
-        track=track,
-        fn=task_fn,
-        kwargs={"investigation_id": investigation_id},
-        user_id=user_id,
-        group_id=group_id,
-        team_id=team_id,
+    # session opened inside the submit primitive's TaskQueue.submit.
+    summary["submitted"] = await _fan_out_reenqueue_submit(
+        investigation_id,
+        submit_one=submit_one,
+        branch_model=branch_model,
+        branch_status_active=branch_status_active,
     )
-    summary["submitted"] = 1
     return summary

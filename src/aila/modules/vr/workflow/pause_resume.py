@@ -112,17 +112,33 @@ async def reenqueue_investigation_atomic(
     group_id: str | None = None,
     team_id: str | None = None,
 ) -> dict[str, Any]:
-    """Reset + re-submit ``investigation_id`` (VR binding)."""
+    """Reset + re-submit ``investigation_id`` (VR binding).
+
+    VR submits exactly one task per investigation (``branch_model`` left
+    unset selects the platform submit-once mode); its setup state
+    respawns/reuses the persona branches on dispatch.
+    """
+    if task_queue is None:
+        raise ReenqueueInvestigationError(
+            "task_queue argument required (auth-bound for safety)",
+        )
+
+    async def _submit_one(inv_id: str, branch_id: str | None) -> None:
+        del branch_id  # VR submits once; setup owns branch spawn
+        await task_queue.submit(
+            track="vr",
+            fn=run_vr_investigate,
+            kwargs={"investigation_id": inv_id},
+            user_id=user_id,
+            group_id=group_id,
+            team_id=team_id,
+        )
+
     return await _platform_reenqueue(
         investigation_id,
         inv_model=VRInvestigationRecord,
-        track="vr",
-        task_fn=run_vr_investigate,
         fn_path_pattern="%run_vr_investigate%",
-        task_queue=task_queue,
+        submit_one=_submit_one,
         new_kind=new_kind,
         new_strategy=new_strategy,
-        user_id=user_id,
-        group_id=group_id,
-        team_id=team_id,
     )

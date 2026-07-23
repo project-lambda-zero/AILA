@@ -760,3 +760,88 @@ async def test_reenqueue_updates_kind_and_strategy() -> None:
     assert inv.kind == "discovery"
     assert inv.strategy_family == "vulnerability_research.discovery_research"
     assert inv.status == InvestigationStatus.CREATED.value
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_reenqueue_per_branch_fan_out() -> None:
+    """``branch_model`` set submits one task per active branch.
+
+    This is the malware fan-out mode. The fan-out orchestration lives in
+    the platform lifecycle service so a module cannot get it wrong. The
+    reset/cancel/wipe still runs; only the submit differs from the VR
+    submit-once mode. An inactive branch is excluded.
+    """
+    from aila.platform.services.investigation_lifecycle import (  # noqa: PLC0415
+        reenqueue_investigation as platform_reenqueue,
+    )
+
+    target_id = await _seed_target("refb")
+    inv_id = await _seed_inv(target_id, status=InvestigationStatus.RUNNING)
+    br1 = await _seed_branch(inv_id)
+    br2 = await _seed_branch(inv_id)
+    async with UnitOfWork() as uow:
+        dead = VRInvestigationBranchRecord(
+            investigation_id=inv_id, status="abandoned",
+            turn_count=1, fork_reason="primary",
+        )
+        uow.session.add(dead)
+        await uow.session.commit()
+
+    calls: list[tuple[str, str | None]] = []
+
+    async def _submit_one(inv: str, branch_id: str | None) -> None:
+        calls.append((inv, branch_id))
+
+    summary = await platform_reenqueue(
+        inv_id,
+        inv_model=VRInvestigationRecord,
+        fn_path_pattern="%run_vr_investigate%",
+        submit_one=_submit_one,
+        branch_model=VRInvestigationBranchRecord,
+        branch_status_active="active",
+    )
+
+    assert summary["submitted"] == 2
+    assert len(calls) == 2
+    assert {branch_id for _, branch_id in calls} == {br1, br2}
+    assert all(inv == inv_id for inv, _ in calls)
+
+    async with UnitOfWork() as uow:
+        inv = (await uow.session.exec(
+            select(VRInvestigationRecord)
+            .where(VRInvestigationRecord.id == inv_id),
+        )).first()
+    assert inv.status == InvestigationStatus.CREATED.value
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_reenqueue_no_active_branch_single_submit() -> None:
+    """``branch_model`` set with no active branch submits one setup task.
+
+    Fallback path of the fan-out: when no branch is active the platform
+    submits exactly one task with ``branch_id=None`` so the setup state
+    respawns the branches on dispatch.
+    """
+    from aila.platform.services.investigation_lifecycle import (  # noqa: PLC0415
+        reenqueue_investigation as platform_reenqueue,
+    )
+
+    target_id = await _seed_target("renb")
+    inv_id = await _seed_inv(target_id, status=InvestigationStatus.RUNNING)
+
+    calls: list[tuple[str, str | None]] = []
+
+    async def _submit_one(inv: str, branch_id: str | None) -> None:
+        calls.append((inv, branch_id))
+
+    summary = await platform_reenqueue(
+        inv_id,
+        inv_model=VRInvestigationRecord,
+        fn_path_pattern="%run_vr_investigate%",
+        submit_one=_submit_one,
+        branch_model=VRInvestigationBranchRecord,
+        branch_status_active="active",
+    )
+
+    assert summary["submitted"] == 1
+    assert calls == [(inv_id, None)]
