@@ -38,6 +38,7 @@ Detects thirty-six categories of structural dishonesty:
 34. hoisted_enum_redeclared -- a unified vr/malware module redeclares a StrEnum owned by platform.contracts.enums (RFC-01).
 35. unnamed_derived_constraint -- a unified vr/malware table hard-codes a UQ name instead of deriving via TabledUq.
 36. shadowed_platform_base -- a unified vr/malware table recreates a platform base's columns instead of subclassing it.
+37. module_config_schema_base -- a module config schema subclasses bare BaseModel instead of ModuleConfigBase (loses extra=forbid).
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -208,6 +209,11 @@ def _is_boundary_guarded_file(filepath: str) -> bool:
 
 
 _MODULE_FILE_PATTERN = _re.compile(r"[/\\]aila[/\\]modules[/\\]")
+
+# Rule 37 -- module config schemas must subclass ModuleConfigBase.
+_CONFIG_SCHEMA_PATH_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]modules[/\\][a-z][a-z0-9_]*[/\\]config_schema\.py$"
+)
 
 
 def _is_module_file(filepath: str) -> bool:
@@ -1936,6 +1942,32 @@ class _HonestyVisitor(ast.NodeVisitor):
                     f"{base_class} instead",
                 )
 
+    def _check_config_schema_base(self, tree: ast.Module) -> None:
+        """Rule 37: module_config_schema_base -- a module config schema must
+        subclass ModuleConfigBase.
+
+        A ``*ConfigSchema`` class in a ``modules/<name>/config_schema.py``
+        file must subclass ``aila.platform.config_base.ModuleConfigBase``,
+        which bakes in ``extra=forbid``. Subclassing bare ``BaseModel``
+        lets an undeclared config key pass at construction instead of
+        failing closed -- the gap vulnerability carried before RFC-04
+        Phase 2.
+        """
+        if not _CONFIG_SCHEMA_PATH_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef) or not node.name.endswith("ConfigSchema"):
+                continue
+            if "ModuleConfigBase" in _classdef_base_names(node):
+                continue
+            self._emit(
+                node.lineno,
+                "module_config_schema_base",
+                f"module_config_schema_base: config schema '{node.name}' must "
+                "subclass ModuleConfigBase (bakes in extra=forbid) instead of "
+                "bare BaseModel",
+            )
+
 
 class HonestyAuditor:
     """Audit one or more Python source files for structural dishonesty.
@@ -2008,6 +2040,7 @@ class HonestyAuditor:
         visitor._check_placeholder_return(tree)
         visitor._check_log_format_concat(tree)
         visitor._check_broad_exception_catch(tree)
+        visitor._check_config_schema_base(tree)
         return visitor.findings
 
     def audit_directory(self, directory: Path) -> list[Finding]:

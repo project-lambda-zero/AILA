@@ -618,3 +618,50 @@ class TestShadowedPlatformBase:
         )
         findings = _audit(src)
         assert "shadowed_platform_base" not in _rules(findings)
+
+
+# ---------------------------------------------------------------------------
+# Rule 37 -- module_config_schema_base
+# ---------------------------------------------------------------------------
+
+
+class TestModuleConfigSchemaBase:
+    """Rule 37: a module config schema must subclass ModuleConfigBase."""
+
+    def test_bare_basemodel_config_schema_flagged(self, tmp_path: Path) -> None:
+        """A *ConfigSchema subclassing bare BaseModel fires the rule."""
+        src = _write(
+            tmp_path,
+            "aila/modules/mymod/config_schema.py",
+            "from pydantic import BaseModel\n\n\n"
+            "class MymodConfigSchema(BaseModel):\n"
+            '    llm_model: str = "x"\n',
+        )
+        findings = _audit(src)
+        assert "module_config_schema_base" in _rules(findings)
+
+    def test_module_config_base_subclass_not_flagged(self, tmp_path: Path) -> None:
+        """A *ConfigSchema subclassing ModuleConfigBase is silent."""
+        src = _write(
+            tmp_path,
+            "aila/modules/mymod/config_schema.py",
+            "from aila.platform.config_base import ModuleConfigBase\n\n\n"
+            "class MymodConfigSchema(ModuleConfigBase):\n"
+            '    llm_model: str = "x"\n',
+        )
+        findings = _audit(src)
+        assert "module_config_schema_base" not in _rules(findings)
+
+    def test_config_schema_class_outside_config_schema_file_not_flagged(
+        self, tmp_path: Path
+    ) -> None:
+        """A *ConfigSchema class outside config_schema.py is out of scope."""
+        src = _write(
+            tmp_path,
+            "aila/modules/mymod/other.py",
+            "from pydantic import BaseModel\n\n\n"
+            "class MymodConfigSchema(BaseModel):\n"
+            '    llm_model: str = "x"\n',
+        )
+        findings = _audit(src)
+        assert "module_config_schema_base" not in _rules(findings)
