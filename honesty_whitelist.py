@@ -63,6 +63,12 @@ HONESTY_WHITELIST = [
     # module->platform private-attr coupling the accessor closes (RFC-05).
     ("tasks/progress.py", "stream_key", "inlining"),
 
+    # Category (g): encode_case_state is the serialization half of the
+    # case-state codec (paired with decode_case_state). Inlining the
+    # json.dumps at call sites re-scatters the serialization format the
+    # module exists to own as a single source of truth (RFC-03).
+    ("agents/turn_helpers.py", "encode_case_state", "inlining"),
+
     # Category (b): Pydantic field validator -- name is the public API contract.
     ("contracts/profile.py", "validate_display_name", "inlining"),
 

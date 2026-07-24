@@ -19,8 +19,6 @@ from aila.modules.vr.agents.vuln_researcher import (
     _PROMPT_VERSION_STORE,
     _applicable_servers_for_kind,
     _decision_to_message_payload,
-    _decode_case_state,
-    _encode_case_state,
     _fetch_tool_specs,
     _format_param,
     _load_prompt,
@@ -31,9 +29,13 @@ from aila.modules.vr.agents.vuln_researcher import (
     _render_operator_messages_section,
     _render_target_snapshot_section,
     _terminal_outcome_kind,
-    _to_outcome_confidence,
 )
 from aila.modules.vr.contracts import OutcomeConfidence, OutcomeKind, PayloadKind
+from aila.platform.agents.turn_helpers import (
+    decode_case_state,
+    encode_case_state,
+    to_outcome_confidence,
+)
 from aila.platform.contracts.reasoning import (
     EvidenceProvenance,
     Hypothesis,
@@ -55,20 +57,20 @@ class TestCaseStateEncoding:
             rejected=[RejectedHypothesis(id="h0", claim="old", reason="r")],
             observables={"k": "v"},
         )
-        encoded = _encode_case_state(original)
+        encoded = encode_case_state(original)
         assert isinstance(encoded, str)
-        restored = _decode_case_state(encoded)
+        restored = decode_case_state(encoded)
         assert restored == original
 
     def test_empty_decode(self) -> None:
-        assert _decode_case_state(None) == ReasoningCaseState()
-        assert _decode_case_state("") == ReasoningCaseState()
+        assert decode_case_state(None) == ReasoningCaseState()
+        assert decode_case_state("") == ReasoningCaseState()
 
     def test_invalid_json_decode_recovers(self) -> None:
-        assert _decode_case_state("{not json") == ReasoningCaseState()
+        assert decode_case_state("{not json") == ReasoningCaseState()
 
     def test_invalid_shape_recovers(self) -> None:
-        assert _decode_case_state(json.dumps({"hypotheses": "not a list"})) == ReasoningCaseState()
+        assert decode_case_state(json.dumps({"hypotheses": "not a list"})) == ReasoningCaseState()
 
 
 class TestDecisionToMessagePayload:
@@ -167,11 +169,11 @@ class TestToOutcomeConfidence:
     )
     def test_passthrough(self, value: str, expected: OutcomeConfidence) -> None:
         d = ReasoningTurnDecision(reasoning="", action="submit", confidence=value)
-        assert _to_outcome_confidence(d) == expected
+        assert to_outcome_confidence(d) == expected
 
     def test_missing_confidence_defaults_unknown(self) -> None:
         d = ReasoningTurnDecision(reasoning="", action="submit")
-        assert _to_outcome_confidence(d) == OutcomeConfidence.UNKNOWN
+        assert to_outcome_confidence(d) == OutcomeConfidence.UNKNOWN
 
 
 class TestOutcomePayload:
