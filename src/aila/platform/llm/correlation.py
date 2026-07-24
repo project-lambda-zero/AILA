@@ -20,6 +20,7 @@ __all__ = [
     "correlation_scope",
     "current_join_keys",
     "current_prompt_content_hash",
+    "current_prompt_version",
 ]
 
 
@@ -31,6 +32,7 @@ class CorrelationContext:
     branch_id: str | None = None
     turn_number: int | None = None
     prompt_content_hash: str | None = None
+    prompt_version: str | None = None
 
 
 _correlation: ContextVar[CorrelationContext | None] = ContextVar(
@@ -64,6 +66,20 @@ def current_prompt_content_hash() -> str | None:
     return corr.prompt_content_hash
 
 
+def current_prompt_version() -> str | None:
+    """Return the resolved prompt version for the current turn, or None.
+
+    None when no correlation is set or the prompt came from an inline
+    literal with no version-store entry. Read by the cost-record and seal
+    writers so each LLM call is attributable to the exact prompt version
+    that produced it (RFC-09).
+    """
+    corr = _correlation.get()
+    if corr is None:
+        return None
+    return corr.prompt_version
+
+
 @contextlib.contextmanager
 def correlation_scope(
     *,
@@ -71,6 +87,7 @@ def correlation_scope(
     branch_id: str | None = None,
     turn_number: int | None = None,
     prompt_content_hash: str | None = None,
+    prompt_version: str | None = None,
 ) -> Iterator[None]:
     """Set the ambient correlation for the duration of the block.
 
@@ -83,6 +100,7 @@ def correlation_scope(
             branch_id=branch_id,
             turn_number=turn_number,
             prompt_content_hash=prompt_content_hash,
+            prompt_version=prompt_version,
         ),
     )
     try:

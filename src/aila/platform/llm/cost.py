@@ -280,12 +280,14 @@ async def persist_cost_record(
         from aila.platform.llm.correlation import (
             current_join_keys,
             current_prompt_content_hash,
+            current_prompt_version,
         )
         from aila.platform.llm.cost_record import LLMCostRecord
         from aila.storage.database import async_session_scope
 
         _inv, _branch, _turn = current_join_keys()
         _phash = current_prompt_content_hash()
+        _pver = current_prompt_version()
         record = LLMCostRecord(
             run_id=run_id or "_no_run",
             model_id=model_id,
@@ -302,6 +304,7 @@ async def persist_cost_record(
             branch_id=_branch,
             turn_number=_turn,
             prompt_content_hash=_phash,
+            prompt_version=_pver,
         )
 
         async with async_session_scope() as session:

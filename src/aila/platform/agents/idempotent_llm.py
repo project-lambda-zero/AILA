@@ -17,12 +17,18 @@ calling the model. Disabled (kill-switch) responses are never cached.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any
 
 from pydantic import BaseModel
 
 from aila.platform.llm.client import LLMResponse
+from aila.platform.llm.correlation import (
+    correlation_scope,
+    current_prompt_content_hash,
+    current_prompt_version,
+)
 from aila.platform.llm.idempotency_cache import (
     lookup_cached_response,
     make_request_key,
@@ -33,6 +39,20 @@ from aila.platform.uow import UnitOfWork
 __all__ = ["idempotent_llm_call"]
 
 _log = logging.getLogger(__name__)
+
+
+def _system_prompt_hash(messages: list[dict[str, Any]]) -> str | None:
+    """sha256 of the first system message, or None when there is none.
+
+    Lets every call route its resolved prompt into the cost/seal records
+    (RFC-09) even when the caller did not open an outer correlation scope.
+    """
+    for msg in messages:
+        if msg.get("role") == "system":
+            content = msg.get("content") or ""
+            if content:
+                return hashlib.sha256(content.encode("utf-8")).hexdigest()
+    return None
 
 
 async def idempotent_llm_call(
@@ -48,6 +68,8 @@ async def idempotent_llm_call(
     model_class: type[BaseModel] | None = None,
     run_id: str | None = None,
     team_id: str | None = None,
+    prompt_content_hash: str | None = None,
+    prompt_version: str | None = None,
     ttl_days: int = 7,
 ) -> tuple[LLMResponse, bool]:
     """Call ``llm_client.<method>`` behind the idempotency cache.
@@ -84,26 +106,42 @@ async def idempotent_llm_call(
         )
         return replay, True
 
-    if method == "chat":
-        resp = await llm_client.chat(
-            task_type, messages, run_id=run_id, team_id=team_id,
-        )
-    elif method == "chat_json":
-        if schema is None:
-            raise ValueError("idempotent_llm_call: chat_json requires schema")
-        resp = await llm_client.chat_json(
-            task_type, messages, schema, run_id=run_id, team_id=team_id,
-        )
-    elif method == "chat_structured":
-        if model_class is None:
-            raise ValueError(
-                "idempotent_llm_call: chat_structured requires model_class",
+    # Set-if-unset: prefer an explicit arg, then an outer correlation scope
+    # (the researcher turn sets one), then derive from the system prompt so
+    # every agent LLM call lands a content_hash on its cost + seal records.
+    _phash = (
+        prompt_content_hash
+        or current_prompt_content_hash()
+        or _system_prompt_hash(messages)
+    )
+    _pver = prompt_version or current_prompt_version()
+    with correlation_scope(
+        investigation_id=investigation_id,
+        branch_id=branch_id,
+        turn_number=turn_number,
+        prompt_content_hash=_phash,
+        prompt_version=_pver,
+    ):
+        if method == "chat":
+            resp = await llm_client.chat(
+                task_type, messages, run_id=run_id, team_id=team_id,
             )
-        resp = await llm_client.chat_structured(
-            task_type, messages, model_class, run_id=run_id, team_id=team_id,
-        )
-    else:
-        raise ValueError(f"idempotent_llm_call: unknown method {method!r}")
+        elif method == "chat_json":
+            if schema is None:
+                raise ValueError("idempotent_llm_call: chat_json requires schema")
+            resp = await llm_client.chat_json(
+                task_type, messages, schema, run_id=run_id, team_id=team_id,
+            )
+        elif method == "chat_structured":
+            if model_class is None:
+                raise ValueError(
+                    "idempotent_llm_call: chat_structured requires model_class",
+                )
+            resp = await llm_client.chat_structured(
+                task_type, messages, model_class, run_id=run_id, team_id=team_id,
+            )
+        else:
+            raise ValueError(f"idempotent_llm_call: unknown method {method!r}")
 
     if not resp.disabled:
         usage = dict(resp.usage or {})
