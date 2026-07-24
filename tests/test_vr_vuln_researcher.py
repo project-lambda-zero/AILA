@@ -16,6 +16,7 @@ import pytest
 
 from aila.modules.vr.agents.vuln_researcher import (
     HonestVulnResearcher,
+    _PROMPT_VERSION_STORE,
     _applicable_servers_for_kind,
     _decision_to_message_payload,
     _decode_case_state,
@@ -24,6 +25,7 @@ from aila.modules.vr.agents.vuln_researcher import (
     _format_param,
     _load_prompt,
     _mcp_family_rule_for_kind,
+    _prompt_key,
     _outcome_payload,
     _render_available_tools_section,
     _render_operator_messages_section,
@@ -193,19 +195,28 @@ class TestOutcomePayload:
 
 
 class TestPromptLoading:
-    def test_audit_prompt_loads(self) -> None:
-        text = _load_prompt("vulnerability_research.audit")
+    async def test_audit_prompt_loads(self, test_db) -> None:
+        text = await _load_prompt("vulnerability_research.audit")
         assert "audit-only investigation" in text
         assert "submit" in text
 
-    def test_unknown_strategy_falls_back_to_audit(self) -> None:
-        text = _load_prompt("vulnerability_research.discovery_research")
+    async def test_unknown_strategy_falls_back_to_audit(self, test_db) -> None:
+        text = await _load_prompt("vulnerability_research.discovery_research")
         # Falls back to audit prompt for v0.3 v1 (other strategies stub)
         assert "audit-only investigation" in text
 
-    def test_completely_unknown_family_also_falls_back(self) -> None:
-        text = _load_prompt("weird.unknown_family")
+    async def test_completely_unknown_family_also_falls_back(self, test_db) -> None:
+        text = await _load_prompt("weird.unknown_family")
         assert "audit-only investigation" in text
+
+    async def test_registered_production_version_overrides_file(self, test_db) -> None:
+        """A version registered and aliased 'production' for the key is
+        served instead of the file baseline (the RFC-09 deploy path)."""
+        key = _prompt_key("vulnerability_research.audit")
+        version = await _PROMPT_VERSION_STORE.register(key, "DEPLOYED PROMPT BODY")
+        await _PROMPT_VERSION_STORE.set_alias(key, "production", version)
+        text = await _load_prompt("vulnerability_research.audit")
+        assert text == "DEPLOYED PROMPT BODY"
 
 
 class TestRenderOperatorMessagesSection:

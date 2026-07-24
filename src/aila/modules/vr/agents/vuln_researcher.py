@@ -89,6 +89,7 @@ from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
 from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
 from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 from aila.platform.prompts import PromptNotFoundError, PromptRegistry
+from aila.platform.prompts.version_store import PromptVersionStore
 from aila.platform.services.reasoning import CyberReasoningEngine
 from aila.platform.uow import UnitOfWork
 
@@ -239,7 +240,7 @@ class HonestVulnResearcher:
         case_state = inject_sibling_consensus(
             case_state, sibling_context, my_live_ids,
         )
-        system_prompt = _load_prompt(inv.strategy_family, branch.persona_voice)
+        system_prompt = await _load_prompt(inv.strategy_family, branch.persona_voice)
         system_prompt_hash = hashlib.sha256(
             (system_prompt or "").encode()
         ).hexdigest()
@@ -2907,14 +2908,35 @@ async def _upsert_canonical_outcome(
 
 
 _PROMPT_REGISTRY = PromptRegistry(_PROMPT_DIR, fallback_base="system_audit.md")
+_PROMPT_VERSION_STORE = PromptVersionStore()
 
 
-def _load_prompt(strategy_family: str, persona_voice: str | None = None) -> str:
+def _prompt_key(strategy_family: str, persona_voice: str | None = None) -> str:
+    """Version-store key for a strategy + persona -- keeps the store, the
+    file registry, and the operator deploy alias on one identity."""
+    return f"vr/{strategy_family}/{persona_voice or 'base'}"
+
+
+async def _load_prompt(strategy_family: str, persona_voice: str | None = None) -> str:
     """Load the system prompt for a strategy family + optional persona.
 
-    Delegates to the platform PromptRegistry (RFC-09), translating a
-    missing prompt into the module error the setup path expects.
+    Resolves a DB-registered version through the ``production`` alias first
+    (the RFC-09 deploy path), falling back to the file registry when no
+    version is deployed or the store is unavailable. The file is the
+    baseline; the store is an override, so a store fault must not block a
+    turn -- it degrades to the file.
     """
+    key = _prompt_key(strategy_family, persona_voice)
+    try:
+        versioned = await _PROMPT_VERSION_STORE.resolve(key, alias="production")
+    except (SQLAlchemyError, OSError, RuntimeError) as exc:
+        _log.warning(
+            "prompt version store resolve failed key=%s: %s (using file)",
+            key, exc,
+        )
+        versioned = None
+    if versioned is not None:
+        return versioned.body
     try:
         return _PROMPT_REGISTRY.load(strategy_family, persona_voice)
     except PromptNotFoundError as exc:
