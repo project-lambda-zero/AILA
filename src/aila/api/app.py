@@ -540,6 +540,10 @@ def create_app() -> FastAPI:
     from aila.api.routers.admin_prompts import router as admin_prompts_router
     application.include_router(admin_prompts_router)
 
+    # RFC-08: Admin eval-harness router (god-tier admin -- score candidate + gate promotion)
+    from aila.api.routers.admin_eval import router as admin_eval_router
+    application.include_router(admin_eval_router)
+
     # Health router: /health and /status -- no auth required (public endpoints)
     from aila.api.routers.health import router as health_router
     application.include_router(health_router)

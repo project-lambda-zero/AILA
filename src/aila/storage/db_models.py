@@ -1110,6 +1110,12 @@ class SystemMetadataRecord(SQLModel, table=True):
 # Re-exported here so Alembic auto-detection and SchemaRegistry see them.
 # ---------------------------------------------------------------------------
 
+# RFC-08 step 1: eval harness tables. Same reason as above -- import so the
+# create_all path (tests, fresh installs) sees the two eval tables.
+from aila.platform.eval.models import (
+    EvalBenchmarkRecord,
+    EvalRunRecord,
+)
 from aila.platform.llm.cost_record import LLMCostRecord
 
 # RFC-09 step 4: prompt version store tables. Re-imported so SQLModel.metadata
