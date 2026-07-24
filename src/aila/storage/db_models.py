@@ -1136,6 +1136,13 @@ from aila.platform.eval.models import (
     EvalRunRecord,
 )
 
+# RFC-12 criterion 7: retrieval eval tables. Imported so the create_all path
+# (tests, fresh installs) and Alembic autogen see the retrieval eval tables.
+from aila.platform.eval.retrieval_models import (
+    RetrievalBenchmarkRecord,
+    RetrievalRunRecord,
+)
+
 # RFC-10 steps 1-2: shadow/canary assignments. Imported so the create_all path
 # (tests, fresh installs) and Alembic autogen see lifecycle_canary_assignments.
 from aila.platform.lifecycle.assignments import LifecycleCanaryAssignment
@@ -1319,4 +1326,11 @@ class PlatformJournalDeadletterRecord(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
     replayed_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     replay_seq: int | None = Field(default=None, sa_column=Column(BigInteger, nullable=True))
+
+
+# RFC-12 criterion 5: knowledge graph edges. Imported at the very end (after
+# every record class is defined) so the transitive db_models references in the
+# knowledge-graph import chain resolve, letting create_all (fresh installs) and
+# Alembic autogen see knowledge_entry_edges without a circular import.
+from aila.platform.services.knowledge_graph import KnowledgeEntryEdge
 
