@@ -5,6 +5,83 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased] -- Investigation-engine extraction program (RFC-01 through RFC-12)
+
+The vulnerability-research and malware investigation engines are unified
+onto a shared platform: one turn runner, one tool executor, one set of
+support services and data-model bases, one agent primitive per concern.
+Modules now bind their record types, prompts, and gates to platform bases
+instead of carrying parallel copies. Also adds prompt versioning and
+deployment, an eval-gated agent lifecycle, a DB-backed MCP catalog, and
+per-vector knowledge provenance. Read the Changed section: the agent
+config env-var names and the promotion contract changed and may require
+operator action.
+
+### Added
+
+- Platform agent runtime (RFC-03): `AgentTurnRunnerBase`,
+  `ToolExecutorHelpersBase`, the shared turn helpers, and platform bases
+  for the pattern extractor, claim verifier, synthesis runner, persona
+  router, and outcome dispatcher. The vr and malware agents are thin
+  subclasses that set class attributes and override hooks; no agent
+  primitive is defined twice. Honesty rules 42 and 49 lock this in.
+- Prompt registry, immutable version store, and an admin deploy API so a
+  prompt change ships by an alias flip with no code release (RFC-09,
+  migrations 086/087/089). Every LLM call routed through the idempotency
+  wrapper now records a `prompt_content_hash`, and cost + seal records
+  gain a `prompt_version` column (migration 094).
+- Per-investigation prompt pinning: an investigation resolves and pins its
+  prompt versions on first use, so a later production-alias flip does not
+  re-route a running investigation (migration 095).
+- Eval-gated prompt promotion (RFC-08, migration 090) and an agent
+  lifecycle control plane with evaluate/approve/promote/rollback, a
+  distinct-approver review quorum, and an admin HTTP surface (RFC-10,
+  migration 091).
+- DB-backed MCP server instance catalog with a live-resolving registry and
+  an admin CRUD API, so a server can be added, disabled, retargeted, or
+  duplicated with no code change or worker restart (RFC-11, migration
+  092).
+- Content-aware knowledge chunker and per-vector provenance (`model_id`,
+  `content_hash`, `source_type`, `updated_at`) on knowledge entries
+  (RFC-12, migration 093).
+- Self-healing infra-death classifier that marks a multi-turn
+  infra-failed investigation retryable instead of emitting a hollow
+  no-finding outcome, plus an `aila_sse_write_failures_total` metric
+  replacing silent SSE-write swallows (RFC-07).
+- `_template` now scaffolds a `ModuleConfigBase` config schema and the
+  ModuleProtocol registry declarations so a copied module starts
+  boundary-clean.
+
+### Changed
+
+- Investigation lifecycle, support services, and data-model bases are
+  hoisted to the platform and shared by both modules (RFC-01/02/04);
+  modules bind their record and enum types. The platform never imports a
+  module (RFC-05), enforced by honesty rules 44 through 48.
+- Agent submit-gate caps resolve through `ConfigRegistry`. The operator
+  env-var names change from the raw `VR_*` / `MALWARE_*` form to the
+  standard `AILA_VR_<KEY>` / `AILA_MALWARE_<KEY>` form; defaults are
+  unchanged, so an operator who never set the old names sees no
+  difference.
+- Agent-behavior promotion now requires the eval gate AND a distinct
+  -approver quorum (`agent_promotion_quorum`, default 1) before the
+  production alias flips.
+
+### Fixed
+
+- The shared search router derived a finding result's `module_id` from a
+  hardcoded `"vulnerability"` literal even though the module was resolved
+  by capability; it now reads the resolved module's id, so a second
+  module exposing findings is labeled correctly.
+
+### Removed
+
+- Duplicated agent primitives, support services, and data-model records
+  across the vr and malware modules, consolidated onto the platform bases
+  above.
+
+---
+
 ## [0.3.0] - 2026-07-21 -- Security, correctness, and reliability hardening
 
 A broad hardening pass across authentication and tenant isolation,
