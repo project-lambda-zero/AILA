@@ -47,6 +47,31 @@ from .metrics import (
     precision_recall_per_kind,
 )
 from .models import EvalBenchmarkRecord, EvalRunRecord
+from .retrieval_metrics import (
+    RetrievalCase,
+    RetrievalCaseScore,
+    RetrievalReport,
+    aggregate_report,
+    average_precision,
+    dcg_at_k,
+    mean_average_precision,
+    mean_reciprocal_rank,
+    ndcg_at_k,
+    precision_at_k,
+    recall_at_k,
+    reciprocal_rank,
+    score_case,
+)
+from .retrieval_models import (
+    RetrievalBenchmarkRecord,
+    RetrievalRunRecord,
+)
+from .retrieval_runner import (
+    EmptyRetrievalBenchmarkError,
+    RetrievalBenchmarkNotFoundError,
+    RetrievalEvalRunner,
+    RetrieveFn,
+)
 from .routing_learner import (
     PRE_EXECUTION_SIZING_SEAM_STATUS,
     RoutingLearner,
@@ -73,6 +98,15 @@ __all__ = [
     "PRODUCTION_ALIAS",
     "BenchmarkNotFoundError",
     "CalibrationBucket",
+    "EmptyRetrievalBenchmarkError",
+    "RetrievalBenchmarkNotFoundError",
+    "RetrievalBenchmarkRecord",
+    "RetrievalCase",
+    "RetrievalCaseScore",
+    "RetrievalEvalRunner",
+    "RetrievalReport",
+    "RetrievalRunRecord",
+    "RetrieveFn",
     "CalibrationProposal",
     "CalibrationProposalNotFoundError",
     "CalibrationProposalRecord",
@@ -91,8 +125,18 @@ __all__ = [
     "RoutingSample",
     "TaskTypeScore",
     "calibration_curve",
+    "aggregate_report",
+    "average_precision",
+    "dcg_at_k",
     "determinism_score",
     "ece",
     "faithfulness_score",
+    "mean_average_precision",
+    "mean_reciprocal_rank",
+    "ndcg_at_k",
+    "precision_at_k",
     "precision_recall_per_kind",
+    "recall_at_k",
+    "reciprocal_rank",
+    "score_case",
 ]
