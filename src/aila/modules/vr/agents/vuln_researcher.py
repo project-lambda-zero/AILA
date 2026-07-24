@@ -240,6 +240,9 @@ class HonestVulnResearcher:
             case_state, sibling_context, my_live_ids,
         )
         system_prompt = _load_prompt(inv.strategy_family, branch.persona_voice)
+        system_prompt_hash = hashlib.sha256(
+            (system_prompt or "").encode()
+        ).hexdigest()
         tool_specs = await _fetch_tool_specs(
             target_kind=(target_snapshot or {}).get("kind"),
             primary_language=(target_snapshot or {}).get("primary_language"),
@@ -339,6 +342,7 @@ class HonestVulnResearcher:
                     investigation_id=self.investigation_id,
                     branch_id=self.branch_id,
                     turn_number=turn_number,
+                    prompt_content_hash=system_prompt_hash,
                 ):
                     decision = await self._engine.decide_next_turn(
                         task_type=task_type,

@@ -15,7 +15,12 @@ from collections.abc import Iterator
 from contextvars import ContextVar
 from dataclasses import dataclass
 
-__all__ = ["CorrelationContext", "correlation_scope", "current_join_keys"]
+__all__ = [
+    "CorrelationContext",
+    "correlation_scope",
+    "current_join_keys",
+    "current_prompt_content_hash",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +30,7 @@ class CorrelationContext:
     investigation_id: str | None = None
     branch_id: str | None = None
     turn_number: int | None = None
+    prompt_content_hash: str | None = None
 
 
 _correlation: ContextVar[CorrelationContext | None] = ContextVar(
@@ -45,12 +51,26 @@ def current_join_keys() -> tuple[str | None, str | None, int | None]:
     return (corr.investigation_id, corr.branch_id, corr.turn_number)
 
 
+def current_prompt_content_hash() -> str | None:
+    """Return the sha256 of the resolved system prompt for the current turn.
+
+    None when no correlation is set or the caller did not tag a prompt hash.
+    Read by the cost-record writer so each LLM call is attributable to the
+    exact prompt template that produced it (RFC-09).
+    """
+    corr = _correlation.get()
+    if corr is None:
+        return None
+    return corr.prompt_content_hash
+
+
 @contextlib.contextmanager
 def correlation_scope(
     *,
     investigation_id: str | None = None,
     branch_id: str | None = None,
     turn_number: int | None = None,
+    prompt_content_hash: str | None = None,
 ) -> Iterator[None]:
     """Set the ambient correlation for the duration of the block.
 
@@ -62,6 +82,7 @@ def correlation_scope(
             investigation_id=investigation_id,
             branch_id=branch_id,
             turn_number=turn_number,
+            prompt_content_hash=prompt_content_hash,
         ),
     )
     try:

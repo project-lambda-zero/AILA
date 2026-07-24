@@ -53,6 +53,10 @@ class LLMCostRecord(TeamScopedMixin, SQLModel, table=True):
     investigation_id: str | None = Field(default=None, index=True)
     branch_id: str | None = Field(default=None, index=True)
     turn_number: int | None = Field(default=None)
+    # RFC-09: sha256 of the resolved system prompt template for this call so
+    # cost is attributable to the exact prompt content that produced it.
+    # Nullable -- calls outside an agent turn (scoring, reports) leave it unset.
+    prompt_content_hash: str | None = Field(default=None, index=True)
     model_id: str = Field(index=True)
     task_type: str = Field(default="", index=True)
     prompt_tokens: int = Field(default=0)
