@@ -136,9 +136,11 @@ async def reap_zombie_tasks_and_cursors(
     transaction so step 3's JOIN observes step 1's UPDATE (READ
     COMMITTED):
 
-      1. cancel any task stuck at ``running`` with a heartbeat older than
-         ``heartbeat_min`` minutes -- a stale-running task is a zombie
-         regardless of which module's track owns it,
+      1. cancel any task stuck at ``running`` whose heartbeat was reported
+         then went stale (older than ``heartbeat_min`` minutes) -- a
+         stale-beating task is a zombie regardless of which track owns it;
+         a task that never beat (``heartbeat_at`` NULL) is left alone so a
+         long single-shot tool task is not false-cancelled mid-flight,
       2. purge orphan cursors (no matching taskrecord at all),
       3. purge cursors whose taskrecord is terminal AND whose cursor
          state is a reserved terminal,
@@ -157,10 +159,14 @@ async def reap_zombie_tasks_and_cursors(
     }
     try:
         async with async_session_scope() as session:
-            # 1. Cancel zombie tasks: any track, status=running, heartbeat
-            #    older than the threshold (also catches NULL heartbeat with
-            #    an old started_at -- both indicate a worker that never
-            #    reported life).
+            # 1. Cancel zombie tasks: any track, status=running, whose
+            #    heartbeat was reported then went stale (older than the
+            #    threshold). A task with heartbeat_at NULL is NOT reaped:
+            #    single-shot tool tasks (run_function_ranking, deep_audit)
+            #    stay at NULL for minutes while healthily awaiting one HTTP
+            #    response, so killing them is a false positive. The same
+            #    reap_null_heartbeat rule guards _sweep_orphan_running_tasks;
+            #    their lifecycle is bounded by the ARQ job timeout instead.
             zombie_sql = _text(
                 """
                 UPDATE taskrecord
@@ -169,7 +175,8 @@ async def reap_zombie_tasks_and_cursors(
                     updated_at = NOW(),
                     error = COALESCE(error, '') || ' [reaped: stale heartbeat]'
                 WHERE status = 'running'
-                  AND COALESCE(heartbeat_at, started_at) < NOW() - (:mins || ' minutes')::interval
+                  AND heartbeat_at IS NOT NULL
+                  AND heartbeat_at < NOW() - (:mins || ' minutes')::interval
                 """,
             )
             zombie_result = await session.exec(
