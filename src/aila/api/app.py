@@ -548,6 +548,10 @@ def create_app() -> FastAPI:
     from aila.api.routers.admin_eval import router as admin_eval_router
     application.include_router(admin_eval_router)
 
+    # RFC-10: Admin agent-lifecycle router (god-tier admin -- evaluate/promote/rollback + journal)
+    from aila.api.routers.admin_lifecycle import router as admin_lifecycle_router
+    application.include_router(admin_lifecycle_router)
+
     # Health router: /health and /status -- no auth required (public endpoints)
     from aila.api.routers.health import router as health_router
     application.include_router(health_router)
