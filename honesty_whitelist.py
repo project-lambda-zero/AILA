@@ -63,6 +63,11 @@ HONESTY_WHITELIST = [
     # module->platform private-attr coupling the accessor closes (RFC-05).
     ("tasks/progress.py", "stream_key", "inlining"),
 
+    # Category (b): _extra_user_prompt_kwargs is an optional template-method
+    # hook on AgentTurnRunnerBase. The base default contributes no extra
+    # user-prompt kwargs; VR overrides it to add cve_intel. Empty is real.
+    ("agents/turn_runner.py", "_extra_user_prompt_kwargs", "empty dict"),
+
     # Category (g): encode_case_state is the serialization half of the
     # case-state codec (paired with decode_case_state). Inlining the
     # json.dumps at call sites re-scatters the serialization format the
