@@ -62,14 +62,17 @@ async def purge_arq_jobs_for_investigation(
         redis_url = os.environ.get("AILA_PLATFORM_REDIS_URL", "").strip()
         if not redis_url:
             try:
-                from aila.platform.services.config_registry import (
-                    ConfigRegistry,
-                )
+                from aila.storage.registry import ConfigRegistry
                 registry = ConfigRegistry()
                 redis_url = await registry.get(
                     CONFIG_NS_PLATFORM, CONFIG_KEY_REDIS_URL,
                 )
-            except (ImportError, AttributeError, RuntimeError):
+            except (ImportError, AttributeError, RuntimeError) as exc:
+                _log.warning(
+                    "purge_arq_jobs_for_investigation: redis_url config "
+                    "lookup failed (%s); ARQ purge skipped",
+                    exc,
+                )
                 redis_url = None
     if not redis_url:
         return {"scanned": 0, "matched": 0, "purged_jobs": 0}
