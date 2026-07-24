@@ -62,7 +62,11 @@ from aila.platform.llm.client import is_llm_recently_unhealthy
 from aila.platform.services.branch_cleanup import (
     close_orphan_branches_on_terminal,
 )
+from aila.platform.services.infra_death import InfraDeathClassifier
 from aila.platform.uow import UnitOfWork
+
+# Module-level singleton -- the classifier is stateless.
+_INFRA_DEATH_CLASSIFIER: InfraDeathClassifier = InfraDeathClassifier()
 
 _log = logging.getLogger(__name__)
 
@@ -276,6 +280,60 @@ async def synthesize_no_finding_outcomes(
             except (SQLAlchemyError, RuntimeError) as exc:
                 _log.warning(
                     "zero-turn FAILED close failed inv=%s: %s",
+                    inv_id, exc, exc_info=True,
+                )
+            continue
+
+        # RFC-07 first increment: before writing a clean no-finding
+        # outcome for a multi-turn investigation, check whether the
+        # trailing branch closures look like infra death (LLM outage,
+        # stale-branch abandonment, provider transport failure). The
+        # outer function already skips the whole tick when the LLM is
+        # currently unhealthy; this guard catches the case where the
+        # LLM recovered between the last dead turn and this finalizer
+        # tick, so is_llm_recently_unhealthy reads healthy but the
+        # branches themselves closed on infra signals. Feeding pseudo
+        # error-class strings derived from each branch's closed_reason
+        # keeps the classifier PURE and testable without a DB.
+        recent_turn_errors: list[str] = []
+        for (_bid, _persona, _turns, closed_reason, _status) in unwrapped:
+            if closed_reason and closed_reason.startswith("stale_no_progress_"):
+                recent_turn_errors.append("stale_no_progress")
+        llm_unhealthy_at_close = is_llm_recently_unhealthy(600.0)
+        verdict = _INFRA_DEATH_CLASSIFIER.classify(
+            branch_turn_count=total_turns,
+            recent_turn_errors=recent_turn_errors,
+            llm_unhealthy_at_close=llm_unhealthy_at_close,
+        )
+        if verdict == "infra_death":
+            try:
+                await uow.session.exec(
+                    update(inv)
+                    .where(inv.id == inv_id)
+                    .where(inv.status == InvestigationStatus.RUNNING.value)
+                    .values(
+                        status=InvestigationStatus.FAILED.value,
+                        stopped_at=now,
+                        updated_at=now,
+                    ),
+                )
+                await close_orphan_branches_on_terminal(
+                    uow, inv_id, branch_table=branch_table,
+                    reason="auto_closed_infra", now=now,
+                )
+                synthesized += 1
+                _log.warning(
+                    "synthesize_no_finding: inv=%s downgraded to FAILED "
+                    "(infra_death: %d turns across %d branches; "
+                    "recent_errors=%s llm_unhealthy=%s -- retryable via "
+                    "reopen / re-enqueue)",
+                    inv_id, total_turns, len(unwrapped),
+                    ",".join(recent_turn_errors) or "none",
+                    llm_unhealthy_at_close,
+                )
+            except (SQLAlchemyError, RuntimeError) as exc:
+                _log.warning(
+                    "infra-death FAILED close failed inv=%s: %s",
                     inv_id, exc, exc_info=True,
                 )
             continue

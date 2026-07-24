@@ -50,6 +50,29 @@ def _get_sync_redis_client(redis_url: str):
 DestinationFn = Callable[..., None]
 
 
+# Destination names whose failures also surface on SSE_WRITE_FAILURES_TOTAL.
+# The other destinations (``audit_db``, ``run_history``) already have their
+# own operator-visible signals; duplicating them on the SSE counter would
+# muddy the metric that operators use to spot fan-out drop.
+_SSE_DESTINATION_NAMES: frozenset[str] = frozenset({"progress", "redis_stream"})
+
+
+def _bump_sse_write_failure(source: str) -> None:
+    """Best-effort increment of SSE_WRITE_FAILURES_TOTAL.
+
+    Deferred import keeps the emitter module importable in contexts
+    (tests, CLI, tools) where prometheus_client is not installed. Any
+    exception from the counter path is itself swallowed and logged --
+    an observability increment MUST NEVER kill the caller's turn.
+    """
+    try:
+        from aila.api.metrics import SSE_WRITE_FAILURES_TOTAL
+
+        SSE_WRITE_FAILURES_TOTAL.labels(source=source).inc()
+    except (ImportError, AttributeError, RuntimeError, ValueError) as exc:
+        _log.debug("SSE_WRITE_FAILURES_TOTAL bump skipped: %s", exc)
+
+
 # Comprehensive tuple used to isolate destination failures at fan-out time.
 # Any exception a destination might reasonably raise (I/O, coercion, missing
 # key, config bug, platform error) is caught, logged, and counted so the
@@ -114,20 +137,30 @@ class EventEmitter:
 
         Kept as a hook so ThreadSafeEventEmitter reuses the identical
         per-destination policy from inside its drain loop.
+
+        SSE / progress-stream destinations (``progress`` and
+        ``redis_stream``) additionally increment SSE_WRITE_FAILURES_TOTAL
+        on failure so an operator can spot a silently degrading fan-out
+        without diffing per-destination failure dicts. The counter
+        import is deferred so importing the emitter module never pulls
+        in prometheus_client on paths that do not need it.
         """
         try:
             fn(event)
         except _DESTINATION_ISOLATION_ERRORS as exc:
-            _log.exception(
+            _log.warning(
                 "emitter destination %r raised on event %s/%s: %s",
                 name,
                 event.stage,
                 event.action,
                 exc.__class__.__name__,
+                exc_info=True,
             )
             self._destination_failures[name] = (
                 self._destination_failures.get(name, 0) + 1
             )
+            if name in _SSE_DESTINATION_NAMES:
+                _bump_sse_write_failure("emitter")
 
     def get_destination_failures(self) -> dict[str, int]:
         """Return a snapshot of per-destination failure counts.

@@ -27,6 +27,7 @@ __all__ = [
     "TASK_ORPHANED_DEPENDENT_SWEPT_TOTAL",
     "TASK_CHECKPOINT_WRITES_TOTAL",
     "AUTOMATION_TICK_FAILURES_TOTAL",
+    "SSE_WRITE_FAILURES_TOTAL",
 ]
 
 from prometheus_client import Counter, Gauge, Histogram, Info
@@ -184,4 +185,21 @@ TASK_CHECKPOINT_WRITES_TOTAL = Counter(
     "aila_task_checkpoint_writes_total",
     "Number of successful checkpoint writes",
     labelnames=("module",),
+)
+
+# ---------------------------------------------------------------------------
+# SSE progress write failure counter (RFC-07 first increment)
+# ---------------------------------------------------------------------------
+# Increments each time an SSE / progress-stream write is swallowed by a
+# fail-safe except clause on the emitter or workflow-transition path.
+# The swallow is deliberate (a progress-write failure must not kill the
+# owning turn) but was previously silent; the counter surfaces the drop
+# to operators without flipping the fail-safe posture.
+# Labels:
+#   source -- "emitter" for aila.platform.events.emitter destinations;
+#             "workflow_log" for aila.platform.workflows.log XADD writes.
+SSE_WRITE_FAILURES_TOTAL = Counter(
+    "aila_sse_write_failures_total",
+    "SSE / progress-stream write failures swallowed by fail-safe handlers",
+    labelnames=("source",),
 )

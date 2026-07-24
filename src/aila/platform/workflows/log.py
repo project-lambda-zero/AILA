@@ -324,10 +324,32 @@ async def emit_transition_event(
                 maxlen=stream._maxlen,
                 approximate=False,
             )
-    except Exception:
+    except (
+        ImportError,
+        RuntimeError,
+        OSError,
+        TimeoutError,
+        ConnectionError,
+        ValueError,
+        TypeError,
+        AttributeError,
+    ) as exc:
+        # Fail-safe: the outer engine commit has already landed; losing
+        # the SSE fan-out MUST NOT roll it back. Log at WARNING and
+        # bump SSE_WRITE_FAILURES_TOTAL{source=workflow_log} so the
+        # drop is operator-visible rather than silently swallowed.
         _log.warning(
-            "transition emit failed (run_id=%s seq=%s)",
+            "transition emit failed (run_id=%s seq=%s): %s",
             run_id,
             seq,
+            exc.__class__.__name__,
             exc_info=True,
         )
+        try:
+            from aila.api.metrics import SSE_WRITE_FAILURES_TOTAL
+
+            SSE_WRITE_FAILURES_TOTAL.labels(source="workflow_log").inc()
+        except (ImportError, AttributeError, RuntimeError, ValueError) as bump_exc:
+            _log.debug(
+                "SSE_WRITE_FAILURES_TOTAL bump skipped: %s", bump_exc,
+            )
