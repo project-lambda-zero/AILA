@@ -432,6 +432,10 @@ class AuditSealRecord(SQLModel, table=True):
     output_hash: str
     model_id: str
     task_type: str = Field(index=True)
+    # RFC-09 step 1: sha256 of the resolved system prompt template for this
+    # call, so a seal is attributable to the exact prompt content. Nullable:
+    # calls outside an agent turn (scoring, reports) leave it unset.
+    prompt_content_hash: str | None = Field(default=None, index=True)
     timestamp: datetime = Field(sa_type=DateTime(timezone=True))
     classification: str | None = None
     confidence: str | None = None

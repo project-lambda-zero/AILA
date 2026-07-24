@@ -258,6 +258,52 @@ class TestSealStorage:
             assert len(rec.input_hash) == 64
             assert len(rec.output_hash) == 64
 
+    @pytest.mark.usefixtures("test_db")
+    async def test_seal_tags_prompt_content_hash(
+        self,
+        routing: LLMRouting,
+        sample_messages: list[dict[str, Any]],
+        sample_response: LLMResponse,
+    ) -> None:
+        """The seal records the correlation prompt_content_hash when set."""
+        from aila.platform.llm.correlation import correlation_scope
+
+        config = FakeConfigProvider({"llm_seal_hmac_key": "b" * 64})
+        step = make_seal_step(config_provider=config, emitter=None)
+        ctx: dict[str, Any] = {
+            "task_type": "scoring",
+            "response": sample_response,
+            "run_id": "run-phash",
+        }
+        phash = "deadbeef" * 8
+        with correlation_scope(prompt_content_hash=phash):
+            await step(ctx, sample_messages, routing)
+        async with async_session_scope() as session:
+            rec = (await session.exec(select(AuditSealRecord))).first()
+            assert rec is not None
+            assert rec.prompt_content_hash == phash
+
+    @pytest.mark.usefixtures("test_db")
+    async def test_seal_prompt_hash_none_outside_turn(
+        self,
+        routing: LLMRouting,
+        sample_messages: list[dict[str, Any]],
+        sample_response: LLMResponse,
+    ) -> None:
+        """With no correlation scope the seal leaves prompt_content_hash NULL."""
+        config = FakeConfigProvider({"llm_seal_hmac_key": "b" * 64})
+        step = make_seal_step(config_provider=config, emitter=None)
+        ctx: dict[str, Any] = {
+            "task_type": "scoring",
+            "response": sample_response,
+            "run_id": "run-nophash",
+        }
+        await step(ctx, sample_messages, routing)
+        async with async_session_scope() as session:
+            rec = (await session.exec(select(AuditSealRecord))).first()
+            assert rec is not None
+            assert rec.prompt_content_hash is None
+
 
 # ---------------------------------------------------------------------------
 # SEAL-04: TestSealFullChain
