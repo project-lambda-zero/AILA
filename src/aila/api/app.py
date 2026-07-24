@@ -540,6 +540,10 @@ def create_app() -> FastAPI:
     from aila.api.routers.admin_prompts import router as admin_prompts_router
     application.include_router(admin_prompts_router)
 
+    # RFC-11: Admin MCP instance catalog router (god-tier admin -- CRUD server rows)
+    from aila.api.routers.mcp_instances import router as mcp_instances_router
+    application.include_router(mcp_instances_router)
+
     # RFC-08: Admin eval-harness router (god-tier admin -- score candidate + gate promotion)
     from aila.api.routers.admin_eval import router as admin_eval_router
     application.include_router(admin_eval_router)

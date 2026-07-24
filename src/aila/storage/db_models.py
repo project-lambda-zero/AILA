@@ -1122,6 +1122,10 @@ from aila.platform.eval.models import (
 from aila.platform.lifecycle.models import LifecycleTransitionRecord
 from aila.platform.llm.cost_record import LLMCostRecord
 
+# RFC-11 step 1: MCP server instance catalog. Imported so create_all
+# and Alembic autogen see the mcp_server_instances table.
+from aila.platform.mcp.instance_catalog import McpServerInstance
+
 # RFC-09 step 4: prompt version store tables. Re-imported so SQLModel.metadata
 # registers them when db_models is imported (init_db, tests, alembic autogen).
 from aila.platform.prompts.version_models import (
