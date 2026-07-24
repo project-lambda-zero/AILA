@@ -164,6 +164,7 @@ class OutcomeDispatchStatus(StrEnum):
     """State of downstream dispatch after the outcome is accepted."""
 
     PENDING = "pending"
+    CLAIMED = "claimed"
     DISPATCHED = "dispatched"
     FAILED = "failed"
     SKIPPED = "skipped"

@@ -68,6 +68,7 @@ from aila.modules.vr.services.outcome_review import (
 from aila.platform.contracts import utc_now
 from aila.platform.services.branch_cleanup import close_orphan_branches_on_terminal
 from aila.platform.services.knowledge import KnowledgeService
+from aila.platform.services.outcome_dispatch import claim_outcome_for_dispatch
 from aila.platform.tasks.arq_purge import purge_arq_jobs_for_investigation
 from aila.platform.uow import UnitOfWork
 
@@ -212,6 +213,32 @@ class OutcomeDispatcher:
             task_queue_factory or _build_default_task_queue
         )
 
+    @staticmethod
+    def _dispatch_state_guard(outcome: VRInvestigationOutcomeRecord) -> str | None:
+        """Refuse dispatch of any outcome whose state is not approved.
+
+        Runs inside the platform claim's FOR UPDATE transaction. Returns a
+        skip reason for draft/rejected/already-dispatched rows so they are
+        not claimed, None to allow the claim (approved), and raises on a
+        corrupt state so the worker logs it and the caller marks FAILED.
+        """
+        state = outcome.state
+        if state is None:
+            raise OutcomeDispatcherError(
+                f"outcome.state is NULL outcome_id={outcome.id}",
+            )
+        if state == OUTCOME_STATE_DRAFT:
+            return "draft_awaiting_sibling_quorum"
+        if state == OUTCOME_STATE_REJECTED:
+            return "rejected_by_sibling_review"
+        if state == OUTCOME_STATE_DISPATCHED:
+            return "already_dispatched"
+        if state != OUTCOME_STATE_APPROVED:
+            raise OutcomeDispatcherError(
+                f"unknown outcome state outcome_id={outcome.id} state={state!r}",
+            )
+        return None
+
     async def dispatch(self, outcome_id: str) -> OutcomeDispatchResult:
         """Dispatch one outcome and update its dispatch_status.
 
@@ -222,6 +249,26 @@ class OutcomeDispatcher:
         lives in ``aila.modules.vr.services.outcome_review``.
         """
 
+        claim = await claim_outcome_for_dispatch(
+            VRInvestigationOutcomeRecord,
+            outcome_id,
+            guard=self._dispatch_state_guard,
+        )
+        if not claim.found:
+            raise ValueError(f"outcome {outcome_id} not found")
+        outcome_kind = OutcomeKind(claim.outcome_kind)
+        if not claim.won:
+            _log.info(
+                "outcome_dispatcher SKIP outcome_id=%s kind=%s reason=%s",
+                outcome_id, outcome_kind.value, claim.skip_reason,
+            )
+            return OutcomeDispatchResult(
+                outcome_id=outcome_id,
+                outcome_kind=outcome_kind,
+                dispatch_status=OutcomeDispatchStatus.SKIPPED,
+                dispatch_target=None,
+                reason=claim.skip_reason,
+            )
         async with UnitOfWork() as uow:
             outcome = (await uow.session.exec(
                 _select(VRInvestigationOutcomeRecord).where(
@@ -230,69 +277,9 @@ class OutcomeDispatcher:
             )).first()
             if outcome is None:
                 raise ValueError(f"outcome {outcome_id} not found")
-            if outcome.state is None:
-                # fix §182 -- legacy NULL state masked the bug where a row
-                # skipped the draft→approved→dispatched lifecycle entirely.
-                # Treat as a hard error so the operator sees it instead of
-                # the row silently being marked "already_dispatched".
-                raise OutcomeDispatcherError(
-                    f"outcome.state is NULL outcome_id={outcome_id}",
-                )
-            state = outcome.state
-            outcome_kind = OutcomeKind(outcome.outcome_kind)
             payload = json.loads(outcome.payload_json or "{}")
             investigation_id = outcome.investigation_id
 
-        if state == OUTCOME_STATE_DRAFT:
-            _log.info(
-                "outcome_dispatcher SKIP_DRAFT outcome_id=%s kind=%s "
-                "(awaiting sibling quorum)",
-                outcome_id, outcome_kind.value,
-            )
-            return OutcomeDispatchResult(
-                outcome_id=outcome_id,
-                outcome_kind=outcome_kind,
-                dispatch_status=OutcomeDispatchStatus.SKIPPED,
-                dispatch_target=None,
-                reason="draft_awaiting_sibling_quorum",
-            )
-        if state == OUTCOME_STATE_REJECTED:
-            _log.info(
-                "outcome_dispatcher SKIP_REJECTED outcome_id=%s kind=%s",
-                outcome_id, outcome_kind.value,
-            )
-            return OutcomeDispatchResult(
-                outcome_id=outcome_id,
-                outcome_kind=outcome_kind,
-                dispatch_status=OutcomeDispatchStatus.SKIPPED,
-                dispatch_target=None,
-                reason="rejected_by_sibling_review",
-            )
-        if state == OUTCOME_STATE_DISPATCHED:
-            _log.info(
-                "outcome_dispatcher SKIP_DISPATCHED outcome_id=%s kind=%s "
-                "(already shipped)",
-                outcome_id, outcome_kind.value,
-            )
-            return OutcomeDispatchResult(
-                outcome_id=outcome_id,
-                outcome_kind=outcome_kind,
-                dispatch_status=OutcomeDispatchStatus.SKIPPED,
-                dispatch_target=None,
-                reason="already_dispatched",
-            )
-        if state != OUTCOME_STATE_APPROVED:
-            # fix §183 -- supersedes §185. An unknown state means the
-            # outcome lifecycle is corrupted; SKIPPED is silent and
-            # hides the corruption. Raise so the worker logs the
-            # traceback and the caller marks the outcome FAILED.
-            _log.error(
-                "outcome_dispatcher UNKNOWN_STATE outcome_id=%s state=%s kind=%s",
-                outcome_id, state, outcome_kind.value,
-            )
-            raise OutcomeDispatcherError(
-                f"unknown outcome state outcome_id={outcome_id} state={state!r}",
-            )
         try:
             if outcome_kind == OutcomeKind.AUDIT_MEMO:
                 result = await self._dispatch_audit_memo(
