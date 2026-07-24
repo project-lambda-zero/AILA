@@ -79,6 +79,22 @@ class PromptVersionStore:
             await session.commit()
             return version
 
+    async def list_versions(self, key: str) -> list[PromptVersionRecord]:
+        """Every registered version for ``key``, oldest first."""
+        async with async_session_scope() as session:
+            return list((await session.exec(
+                select(PromptVersionRecord)
+                .where(PromptVersionRecord.key == key)
+                .order_by(PromptVersionRecord.created_at)
+            )).all())
+
+    async def list_aliases(self, key: str) -> list[PromptAliasRecord]:
+        """Every alias pointer for ``key``."""
+        async with async_session_scope() as session:
+            return list((await session.exec(
+                select(PromptAliasRecord).where(PromptAliasRecord.key == key)
+            )).all())
+
     async def resolve(
         self, key: str, *, alias: str | None = None, version: str | None = None,
     ) -> PromptVersionRecord | None:

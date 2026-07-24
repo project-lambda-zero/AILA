@@ -536,6 +536,10 @@ def create_app() -> FastAPI:
     from aila.api.routers.admin_workflows import router as admin_workflows_router
     application.include_router(admin_workflows_router)
 
+    # RFC-09: Admin prompt-version router (god-tier admin -- deploy/rollback prompts)
+    from aila.api.routers.admin_prompts import router as admin_prompts_router
+    application.include_router(admin_prompts_router)
+
     # Health router: /health and /status -- no auth required (public endpoints)
     from aila.api.routers.health import router as health_router
     application.include_router(health_router)
