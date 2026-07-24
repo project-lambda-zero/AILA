@@ -143,7 +143,7 @@ async def global_search(
                                     entity_id=str(finding.get("id") or ""),
                                     title=title,
                                     snippet=snippet,
-                                    module_id="vulnerability",
+                                    module_id=module.module_id,
                                 )
                             )
                 except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError):
