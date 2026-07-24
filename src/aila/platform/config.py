@@ -214,6 +214,18 @@ class PlatformConfigSchema(BaseModel):
     # env or PUT /config without a schema change.
     knowledge_pattern_relevance_floor: float = 0.3
 
+    # RFC-10 promotion quorum. The lifecycle controller counts DISTINCT
+    # actor strings on ``approved`` transitions for a (key, version) pair
+    # and refuses to flip the production alias until that count meets or
+    # exceeds this threshold, on top of the eval-pass gate. Default 1 =
+    # one explicit human approval on top of the passing eval; operators
+    # tune it upward per deployment via PUT /config/platform. A value of
+    # 0 keeps the eval-only gate (no approval required) for teams that
+    # want the RFC-08 auto-promote fast path routed through the
+    # controller; the RFC-08 auto-promote path itself stays admin-opt-in
+    # and skips the quorum gate by construction.
+    agent_promotion_quorum: int = 1
+
     # SMTP delivery for scheduled reports (#45 -- ghost config keys).
     # report_tasks.py reads these through ConfigRegistry, but they were never
     # declared here, so the registry never seeded them and

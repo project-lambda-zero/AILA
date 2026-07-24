@@ -1,10 +1,11 @@
 """API tests for the RFC-10 admin agent-lifecycle router.
 
 Covers the operator loop the RFC-10 acceptance criterion demands: a
-promote without a passing evaluate row returns 409 with the
-``StageTransitionError`` message surfaced, an evaluate-then-promote
-succeeds and flips the production alias, and the transitions listing
-reads the append-only journal.
+promote without a passing evaluate row returns 409, an evaluate +
+approve + promote flow succeeds and flips the production alias, a
+promote with a passing evaluate but no approval returns 409 with the
+quorum message surfaced, an approve without a prior passing evaluate
+returns 409, and the transitions listing reads the append-only journal.
 
 The tests seed data through the sibling admin routers (RFC-09
 ``/admin/prompts/versions`` and RFC-08 ``/admin/eval/benchmarks``) so
@@ -117,8 +118,9 @@ async def test_evaluate_then_promote_flips_alias(
     async_client: AsyncClient, admin_token: str, test_db,
 ) -> None:
     """The RFC-10 golden path: evaluate returns a passing transition,
-    promote returns a production transition, and the RFC-09 production
-    alias points at the promoted version."""
+    approve records a quorum vote, promote returns a production
+    transition, and the RFC-09 production alias points at the promoted
+    version."""
     del test_db
     hdr = {"Authorization": f"Bearer {admin_token}"}
     key = _key()
@@ -148,6 +150,17 @@ async def test_evaluate_then_promote_flips_alias(
     assert snapshot["verdict"] == "pass"
     assert snapshot["eval_run_id"]
 
+    approve_resp = await async_client.post(
+        "/admin/lifecycle/approve",
+        json={"key": key, "version": version, "reason": "looks good"},
+        headers=hdr,
+    )
+    assert approve_resp.status_code == 201, approve_resp.text
+    approve_data = approve_resp.json()["data"]
+    assert approve_data["from_stage"] == "evaluated"
+    assert approve_data["to_stage"] == "approved"
+    assert approve_data["reason"] == "looks good"
+
     promote_resp = await async_client.post(
         "/admin/lifecycle/promote",
         json={"key": key, "version": version, "reason": "ship"},
@@ -161,6 +174,8 @@ async def test_evaluate_then_promote_flips_alias(
     promote_snapshot = promote_data["metrics_snapshot"]
     assert promote_snapshot is not None
     assert promote_snapshot["verdict"] == "pass"
+    assert promote_snapshot["approver_count"] == 1
+    assert promote_snapshot["quorum_threshold"] == 1
 
     aliases = await async_client.get(
         "/admin/prompts/aliases", params={"key": key}, headers=hdr,
@@ -168,6 +183,79 @@ async def test_evaluate_then_promote_flips_alias(
     assert aliases.status_code == 200
     alias_map = {a["alias"]: a["version"] for a in aliases.json()["data"]}
     assert alias_map["production"] == version
+
+
+@pytest.mark.asyncio
+async def test_promote_without_approve_returns_409(
+    async_client: AsyncClient, admin_token: str, test_db,
+) -> None:
+    """Eval passes but no approve on record -> promote surfaces the
+    quorum-not-met StageTransitionError as 409 and leaves the alias
+    untouched. This is the RFC-10 quorum gate at the HTTP layer."""
+    del test_db
+    hdr = {"Authorization": f"Bearer {admin_token}"}
+    key = _key()
+
+    version = await _register_version(async_client, hdr, key, "PROMPT BODY")
+    benchmark_id = await _register_benchmark(
+        async_client, hdr, key, _passing_cases(version),
+    )
+
+    eval_resp = await async_client.post(
+        "/admin/lifecycle/evaluate",
+        json={
+            "key": key,
+            "version": version,
+            "benchmark_id": benchmark_id,
+        },
+        headers=hdr,
+    )
+    assert eval_resp.status_code == 201, eval_resp.text
+
+    promote_resp = await async_client.post(
+        "/admin/lifecycle/promote",
+        json={"key": key, "version": version, "reason": "skip approval"},
+        headers=hdr,
+    )
+    assert promote_resp.status_code == 409, promote_resp.text
+    detail = promote_resp.json()["detail"]
+    assert "quorum not met" in detail
+    assert "1 required" in detail
+
+    aliases = await async_client.get(
+        "/admin/prompts/aliases", params={"key": key}, headers=hdr,
+    )
+    assert aliases.status_code == 200
+    assert aliases.json()["data"] == []
+
+
+@pytest.mark.asyncio
+async def test_approve_without_passing_evaluate_returns_409(
+    async_client: AsyncClient, admin_token: str, test_db,
+) -> None:
+    """Approve on a (key, version) with no passing evaluate row surfaces
+    the StageTransitionError as HTTP 409 and writes no journal row."""
+    del test_db
+    hdr = {"Authorization": f"Bearer {admin_token}"}
+    key = _key()
+
+    version = await _register_version(async_client, hdr, key, "PROMPT BODY")
+
+    approve_resp = await async_client.post(
+        "/admin/lifecycle/approve",
+        json={"key": key, "version": version, "reason": "early"},
+        headers=hdr,
+    )
+    assert approve_resp.status_code == 409, approve_resp.text
+    detail = approve_resp.json()["detail"]
+    assert "no prior passing" in detail
+    assert version in detail
+
+    listing = await async_client.get(
+        "/admin/lifecycle/transitions", params={"key": key}, headers=hdr,
+    )
+    assert listing.status_code == 200
+    assert listing.json()["data"] == []
 
 
 @pytest.mark.asyncio
@@ -195,6 +283,11 @@ async def test_transitions_lists_journal_newest_first(
         headers=hdr,
     )
     await async_client.post(
+        "/admin/lifecycle/approve",
+        json={"key": key, "version": version, "reason": "lgtm"},
+        headers=hdr,
+    )
+    await async_client.post(
         "/admin/lifecycle/promote",
         json={"key": key, "version": version, "reason": "ship"},
         headers=hdr,
@@ -207,10 +300,10 @@ async def test_transitions_lists_journal_newest_first(
     )
     assert listing.status_code == 200, listing.text
     rows = listing.json()["data"]
-    assert len(rows) == 2
+    assert len(rows) == 3
 
     to_stages = [r["to_stage"] for r in rows]
-    assert to_stages == ["production", "evaluated"], (
+    assert to_stages == ["production", "approved", "evaluated"], (
         "list_transitions must return rows newest first"
     )
     assert {r["key"] for r in rows} == {key}
@@ -282,6 +375,13 @@ async def test_requires_admin(
         headers=hdr,
     )
     assert evaluate_resp.status_code == 403
+
+    approve_resp = await async_client.post(
+        "/admin/lifecycle/approve",
+        json={"key": key, "version": "1.0.0"},
+        headers=hdr,
+    )
+    assert approve_resp.status_code == 403
 
     promote_resp = await async_client.post(
         "/admin/lifecycle/promote",

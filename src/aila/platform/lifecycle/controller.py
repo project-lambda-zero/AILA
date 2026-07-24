@@ -3,26 +3,33 @@
 ``AgentLifecycleController`` composes the RFC-08 ``EvalRunner`` (scoring)
 and the RFC-09 ``PromptVersionStore`` (immutable versions + alias flips)
 and adds a stage-guarded append-only journal on top. Callers move a
-version through ``built`` to ``evaluated`` to ``production``, or back
-to a prior production version via ``rollback``. The controller decides
-whether an alias flip is allowed; the actual flip stays owned by the
-version store, which records its own audit row alongside ours.
+version through ``built`` to ``evaluated`` to ``approved`` to
+``production``, or back to a prior production version via ``rollback``.
+The controller decides whether an alias flip is allowed; the actual
+flip stays owned by the version store, which records its own audit row
+alongside ours.
 
-The three primary entry points are ``evaluate``, ``promote`` and
-``rollback``. Each writes exactly one ``LifecycleTransitionRecord``
+The four primary entry points are ``evaluate``, ``approve``, ``promote``
+and ``rollback``. Each writes exactly one ``LifecycleTransitionRecord``
 row and returns it. ``evaluate`` delegates scoring to the runner with
 ``auto_promote=False`` so the runner never flips ``production`` behind
 the controller's back; only ``promote`` may do that, and only when the
 most recent evaluated transition for the (key, version) pair carries a
-passing verdict.
+passing verdict AND at least ``platform.agent_promotion_quorum`` distinct
+actor strings appear on ``approved`` rows for that same (key, version).
+The RFC-10 acceptance criterion 1 ("cannot reach production without
+passing the eval gate AND a quorum approval") is enforced here; the
+RFC-08 eval-runner ``auto_promote`` fast path stays admin-opt-in and
+rides the eval-only gate by design, not through this controller.
 """
 from __future__ import annotations
 
 import json
 import logging
 
-from sqlmodel import select
+from sqlmodel import func, select
 
+from aila.platform.config import PlatformConfigSchema
 from aila.platform.eval.runner import EvalRunner
 from aila.platform.lifecycle.models import (
     LifecycleStage,
@@ -30,6 +37,7 @@ from aila.platform.lifecycle.models import (
 )
 from aila.platform.prompts.version_store import PromptVersionStore
 from aila.storage.database import async_session_scope
+from aila.storage.registry import ConfigRegistry
 
 __all__ = [
     "PRODUCTION_ALIAS",
@@ -45,10 +53,12 @@ PRODUCTION_ALIAS = "production"
 class StageTransitionError(RuntimeError):
     """Raised when a caller asks for a stage move the guard forbids.
 
-    Two cases fire this: ``promote`` without a prior passing
-    ``evaluated`` transition on record for the (key, version) pair, and
-    ``rollback`` with no prior production transition and no explicit
-    ``target_version``. In both cases the alias is left untouched.
+    Four cases fire this: ``approve`` on a (key, version) with no prior
+    passing ``evaluated`` transition; ``promote`` without a prior passing
+    ``evaluated`` transition; ``promote`` with fewer distinct approvers
+    than ``platform.agent_promotion_quorum`` demands; and ``rollback``
+    with no prior production transition and no explicit ``target_version``.
+    In every case the alias is left untouched.
     """
 
 
@@ -125,6 +135,50 @@ class AgentLifecycleController:
             metrics_snapshot_json=json.dumps(snapshot),
         )
 
+    async def approve(
+        self,
+        *,
+        key: str,
+        version: str,
+        actor: str = "",
+        reason: str = "",
+    ) -> LifecycleTransitionRecord:
+        """Journal a quorum approval for (key, version) after eval passed.
+
+        Guard: the most recent ``evaluated`` transition for (key, version)
+        must carry ``verdict == 'pass'`` in its metrics snapshot -- the
+        same query shape ``promote`` uses. Raises ``StageTransitionError``
+        otherwise; no journal row is written. On success, records an
+        ``evaluated`` to ``approved`` transition; ``actor`` becomes one
+        of the distinct approvers ``promote`` later counts against
+        ``platform.agent_promotion_quorum``. Two rows with the same
+        ``actor`` string count as one approver, so a single reviewer
+        cannot lift the quorum by re-signing.
+        """
+        evidence = await self._passing_evaluate(key=key, version=version)
+        if evidence is None:
+            raise StageTransitionError(
+                f"cannot approve key={key!r} version={version!r}: "
+                "no prior passing 'evaluated' transition on record",
+            )
+        snapshot: dict[str, object] = {
+            "eval_run_id": evidence.get("eval_run_id"),
+            "verdict": evidence.get("verdict"),
+        }
+        _log.info(
+            "lifecycle.approve key=%s version=%s actor=%s",
+            key, version, actor,
+        )
+        return await self._journal(
+            key=key,
+            version=version,
+            from_stage=LifecycleStage.EVALUATED.value,
+            to_stage=LifecycleStage.APPROVED.value,
+            actor=actor,
+            reason=reason,
+            metrics_snapshot_json=json.dumps(snapshot),
+        )
+
     async def promote(
         self,
         *,
@@ -133,20 +187,40 @@ class AgentLifecycleController:
         actor: str = "",
         reason: str = "",
     ) -> LifecycleTransitionRecord:
-        """Flip the production alias to ``version`` when the guard allows.
+        """Flip the production alias to ``version`` when both gates allow.
 
-        Guard: the most recent ``evaluated`` transition for (key, version)
-        must carry ``verdict == 'pass'`` in its metrics snapshot. Raises
-        ``StageTransitionError`` otherwise; the alias is not touched
-        because the version store call comes after the guard check.
-        On success, records an ``evaluated`` to ``production`` transition
-        that references the passing eval run id.
+        Two-part guard, enforcing the RFC-10 acceptance criterion
+        ("eval gate AND quorum approval"):
+
+        1. The most recent ``evaluated`` transition for (key, version)
+           must carry ``verdict == 'pass'`` in its metrics snapshot.
+        2. The number of DISTINCT actor strings on ``approved``
+           transitions for the same (key, version) must be at least
+           ``platform.agent_promotion_quorum`` (default 1).
+
+        Either check failing raises ``StageTransitionError`` with the
+        specific gap named; the alias is not touched because the version
+        store call sits after both checks. On success, records an
+        ``evaluated`` to ``production`` transition that packs the passing
+        eval run id and the observed approver count into the metrics
+        snapshot so the journal answers "who and what greenlit this?"
+        without replaying anything.
         """
         evidence = await self._passing_evaluate(key=key, version=version)
         if evidence is None:
             raise StageTransitionError(
                 f"cannot promote key={key!r} version={version!r}: "
                 "no prior passing 'evaluated' transition on record",
+            )
+        threshold = await self._resolve_quorum_threshold()
+        approver_count = await self._distinct_approver_count(
+            key=key, version=version,
+        )
+        if approver_count < threshold:
+            raise StageTransitionError(
+                f"cannot promote key={key!r} version={version!r}: "
+                f"quorum not met -- {approver_count} distinct approver(s) "
+                f"on record, {threshold} required",
             )
         flip_reason = reason or "lifecycle promote"
         await self._store.set_alias(
@@ -157,10 +231,12 @@ class AgentLifecycleController:
         snapshot: dict[str, object] = {
             "eval_run_id": evidence.get("eval_run_id"),
             "verdict": evidence.get("verdict"),
+            "approver_count": approver_count,
+            "quorum_threshold": threshold,
         }
         _log.info(
-            "lifecycle.promote key=%s version=%s actor=%s",
-            key, version, actor,
+            "lifecycle.promote key=%s version=%s actor=%s approvers=%d",
+            key, version, actor, approver_count,
         )
         return await self._journal(
             key=key,
@@ -322,3 +398,58 @@ class AgentLifecycleController:
             if row.version != current_version:
                 return row.version
         return None
+
+    async def _distinct_approver_count(
+        self, *, key: str, version: str,
+    ) -> int:
+        """Count DISTINCT ``actor`` strings on ``approved`` transitions.
+
+        Two rows with the same ``actor`` count as one approver -- the
+        gate the RFC-10 acceptance criterion demands ("same actor twice
+        does not satisfy"). Runs as a single ``count(distinct ...)`` on
+        the journal so the check stays O(1) round trips regardless of
+        how many re-approvals a version has accumulated.
+        """
+        async with async_session_scope() as session:
+            row = (await session.exec(
+                select(func.count(func.distinct(
+                    LifecycleTransitionRecord.actor,
+                )))
+                .where(
+                    LifecycleTransitionRecord.key == key,
+                    LifecycleTransitionRecord.version == version,
+                    LifecycleTransitionRecord.to_stage
+                    == LifecycleStage.APPROVED.value,
+                )
+            )).one()
+        # Async session.exec returns the scalar directly for a single-
+        # column select; guard for a tuple wrapper the driver may emit.
+        if isinstance(row, tuple):
+            row = row[0]
+        return int(row or 0)
+
+    async def _resolve_quorum_threshold(self) -> int:
+        """Read ``platform.agent_promotion_quorum`` via ConfigRegistry.
+
+        Env -> cache -> DB row -> :class:`PlatformConfigSchema` default,
+        with a schema-default fallback if the registry itself raises or
+        returns a non-integer -- a bad DB row must not silently disable
+        the quorum. Values below zero clamp to zero (eval-only gate)
+        because a negative threshold has no coherent meaning.
+        """
+        default_threshold = PlatformConfigSchema().agent_promotion_quorum
+        try:
+            raw = await ConfigRegistry().get(
+                "platform", "agent_promotion_quorum",
+            )
+        except (OSError, RuntimeError, ValueError, TypeError):
+            return default_threshold
+        if raw is None:
+            return default_threshold
+        try:
+            threshold = int(raw)
+        except (TypeError, ValueError):
+            return default_threshold
+        if threshold < 0:
+            return 0
+        return threshold

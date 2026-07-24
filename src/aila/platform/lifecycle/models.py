@@ -8,11 +8,18 @@ production version, or a re-eval on a candidate that stayed in
 ``evaluated`` -- writes exactly one row here. The controller in
 ``platform/lifecycle/controller.py`` is the only writer.
 
-Only ``built``, ``evaluated``, ``production``, and ``rolled_back`` are
-wired in the first RFC-10 increment. ``shadow`` and ``canary`` are
-reserved for a later increment that runs a live traffic-mirroring
-comparison; declaring them now keeps the stage vocabulary stable so
-downstream operator UIs need not migrate the enum on that increment.
+Stages active in this increment: ``built``, ``evaluated``, ``approved``,
+``production``, ``rolled_back``. ``approved`` sits between ``evaluated``
+and ``production`` and carries the RFC-10 quorum signal -- one row per
+distinct reviewer who signed off on the passing eval. ``shadow`` and
+``canary`` are reserved for a later increment that runs a live traffic-
+mirroring comparison; declaring them now keeps the stage vocabulary
+stable so downstream operator UIs need not migrate the enum on that
+increment.
+
+Adding a value to :class:`LifecycleStage` is a schema-safe change: the
+transition table stores ``to_stage``/``from_stage`` as ``TEXT``, so an
+enum extension needs no Alembic migration.
 
 Constraint and index names carry the ``lifecycle_transitions_`` prefix
 so they stay unique across the platform schema (Postgres constraint
@@ -36,16 +43,18 @@ __all__ = ["LifecycleStage", "LifecycleTransitionRecord"]
 class LifecycleStage(StrEnum):
     """Stages an agent prompt/version moves through under the control plane.
 
-    Members ``BUILT``, ``EVALUATED``, ``PRODUCTION``, ``ROLLED_BACK`` are
-    active in this increment. ``SHADOW`` and ``CANARY`` are reserved for
-    a later live-mirroring increment; they are part of the vocabulary
-    now so the enum does not need to migrate later.
+    ``APPROVED`` sits between ``EVALUATED`` and ``PRODUCTION``: a passing
+    eval row makes a version eligible for approval, and the quorum-many
+    distinct approvers gate the production alias flip. ``SHADOW`` and
+    ``CANARY`` are reserved for the live-mirroring increment; declaring
+    them now keeps the vocabulary stable.
     """
 
     BUILT = "built"
     EVALUATED = "evaluated"
     SHADOW = "shadow"
     CANARY = "canary"
+    APPROVED = "approved"
     PRODUCTION = "production"
     ROLLED_BACK = "rolled_back"
 

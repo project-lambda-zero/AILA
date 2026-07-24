@@ -16,9 +16,14 @@ to match the admin-eval / admin-prompts routers.
 
 Endpoints:
     POST /admin/lifecycle/evaluate       score a candidate + journal a transition
-    POST /admin/lifecycle/promote        flip production alias if the eval passed
+    POST /admin/lifecycle/approve        sign off on a passing eval (RFC-10 quorum vote)
+    POST /admin/lifecycle/promote        flip production alias if eval + quorum pass
     POST /admin/lifecycle/rollback       flip production alias back to a prior version
     GET  /admin/lifecycle/transitions    list transitions for a key (newest first)
+
+The RFC-08 eval-runner ``auto_promote`` fast path stays admin-opt-in
+and is eval-only by design; the quorum-gated path lives here on the
+lifecycle controller.
 """
 from __future__ import annotations
 
@@ -84,6 +89,14 @@ class EvaluateRequest(BaseModel):
     key: str = Field(min_length=1, max_length=256)
     version: str = Field(min_length=1, max_length=32)
     benchmark_id: str = Field(min_length=1, max_length=64)
+
+
+class ApproveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: str = Field(min_length=1, max_length=256)
+    version: str = Field(min_length=1, max_length=32)
+    reason: str = Field(default="", max_length=4096)
 
 
 class PromoteRequest(BaseModel):
@@ -166,6 +179,37 @@ async def evaluate(
     return DataEnvelope(data=_to_info(record))
 
 
+@router.post("/approve", status_code=status.HTTP_201_CREATED)
+@limiter.limit("30/minute")
+async def approve(
+    request: Request,
+    body: ApproveRequest,
+    ctx: AuthContext = Depends(_require_admin),
+) -> DataEnvelope[TransitionInfo]:
+    """Record ``ctx.user_id`` as one distinct approver on a passing eval.
+
+    Enforces the RFC-10 quorum half of the promotion gate: an approve
+    row is what ``promote`` counts against ``platform.agent_promotion_quorum``
+    when deciding whether to flip the production alias. Requires the
+    (key, version) pair to already have a passing ``evaluated`` transition
+    on record -- otherwise surfaces ``StageTransitionError`` as 409 and
+    writes no journal row.
+    """
+    del request
+    try:
+        record = await _CONTROLLER.approve(
+            key=body.key,
+            version=body.version,
+            actor=ctx.user_id,
+            reason=body.reason,
+        )
+    except StageTransitionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc),
+        ) from exc
+    return DataEnvelope(data=_to_info(record))
+
+
 @router.post("/promote", status_code=status.HTTP_201_CREATED)
 @limiter.limit("30/minute")
 async def promote(
@@ -173,10 +217,14 @@ async def promote(
     body: PromoteRequest,
     ctx: AuthContext = Depends(_require_admin),
 ) -> DataEnvelope[TransitionInfo]:
-    """Flip the production alias to ``version`` when the eval gate has
-    passed. Returns 409 when the most recent ``evaluated`` transition
-    for (key, version) is missing or did not carry a passing verdict --
-    the alias is left untouched in that case."""
+    """Flip the production alias to ``version`` when both gates pass.
+
+    Returns 409 when the eval gate has not passed (no ``evaluated`` row
+    with ``verdict='pass'``) or the quorum has not been met (fewer
+    distinct approver strings on ``approved`` rows than
+    ``platform.agent_promotion_quorum`` demands). The alias is left
+    untouched in either case.
+    """
     del request
     try:
         record = await _CONTROLLER.promote(
