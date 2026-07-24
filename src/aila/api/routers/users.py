@@ -65,7 +65,7 @@ from aila.api.schemas.users import (
     UserUpdateRequest,
 )
 from aila.config import get_settings
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.services.audit import record_audit_event
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import RefreshTokenRecord, UserRecord
@@ -228,6 +228,7 @@ async def login(request: Request, body: LoginRequest) -> DataEnvelope[TokenRespo
             status=AUDIT_STATUS_COMPLETED,
             target=body.username,
             user_id=user.id,
+            team_id=user.team_id,
             details={"role": user.role},
         )
         await session.commit()
@@ -402,18 +403,27 @@ async def revoke_session(
 async def list_users(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=250),
+    caller: AuthContext = Depends(_require_admin),
 ) -> DataEnvelope[list[UserResponse]]:
     """Return a paginated list of all user accounts. Admin only.
 
     Per D-26: offset/limit pagination with total count in DataEnvelope.meta.
     Per T-138-04: hashed_password is never included in responses.
+    Team-scoped (#36): a team-scoped admin sees only its team's users; a
+    god-tier admin (team_id=None, TEAM-06) sees all. The count/list statements
+    below use ``select(func.count())`` and a plain select that bypass the
+    do_orm_execute listener, so the team predicate is added explicitly.
     """
     async with async_session_scope() as session:
         count_stmt = select(func.count()).select_from(UserRecord)
+        if caller.team_id is not None:
+            count_stmt = count_stmt.where(UserRecord.team_id == caller.team_id)
         total_result = await session.exec(count_stmt)
         total = total_result.one()
 
         stmt = select(UserRecord).order_by(UserRecord.created_at).offset(offset).limit(limit)
+        if caller.team_id is not None:
+            stmt = stmt.where(UserRecord.team_id == caller.team_id)
         result = await session.exec(stmt)
         users = list(result.all())
 
@@ -463,13 +473,18 @@ async def create_user(
                 detail=f"Username '{body.username}' is already taken",
             )
 
+        # #36: a team-scoped admin can only create users inside their own
+        # team; the request body's team_id is ignored in that case. A god-tier
+        # admin (caller.team_id is None) may set any team_id, including None.
+        new_team_id = caller.team_id if caller.team_id is not None else body.team_id
+
         user = UserRecord(
             username=body.username,
             email=body.email,
             hashed_password=hashed_pw,
             role=body.role,
             group_id=body.group_id,
-            team_id=body.team_id,  # TEAM-02: data isolation boundary (D-08)
+            team_id=new_team_id,  # TEAM-02: data isolation boundary (D-08)
             is_active=True,
             created_at=now,
             updated_at=now,
@@ -484,7 +499,8 @@ async def create_user(
             status=AUDIT_STATUS_COMPLETED,
             target=body.username,
             user_id=caller.user_id,
-            details={"role": body.role, "group_id": body.group_id, "team_id": body.team_id},
+            team_id=new_team_id,
+            details={"role": body.role, "group_id": body.group_id, "team_id": new_team_id},
         )
         await session.commit()
         await session.refresh(user)
@@ -494,11 +510,21 @@ async def create_user(
 
 
 @_admin_router.get("/{user_id}", response_model=DataEnvelope[UserResponse], summary="Get user")
-async def get_user(user_id: str) -> DataEnvelope[UserResponse]:
-    """Return a single user by ID. Admin only."""
+async def get_user(
+    user_id: str,
+    caller: AuthContext = Depends(_require_admin),
+) -> DataEnvelope[UserResponse]:
+    """Return a single user by ID. Admin only.
+
+    Team-scoped (#36): a team-scoped admin reading a user in another team
+    receives 404 (never 403, so no cross-tenant existence oracle); a god-tier
+    admin (team_id=None, TEAM-06) sees any user.
+    """
     async with async_session_scope() as session:
         user: UserRecord | None = await session.get(UserRecord, user_id)
     if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User '{user_id}' not found")
+    if caller.team_id is not None and getattr(user, "team_id", None) != caller.team_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User '{user_id}' not found")
     return DataEnvelope(data=_user_to_response(user))
 
@@ -525,6 +551,12 @@ async def update_user(
     async with async_session_scope() as session:
         user: UserRecord | None = await session.get(UserRecord, user_id)
         if user is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User '{user_id}' not found")
+
+        # #36: a team-scoped admin mutating another team's user gets 404
+        # (never 403, so no cross-tenant existence oracle). A god-tier admin
+        # (caller.team_id is None) can edit any team's user.
+        if caller.team_id is not None and getattr(user, "team_id", None) != caller.team_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"User '{user_id}' not found")
 
         changes: dict = {}
@@ -557,6 +589,7 @@ async def update_user(
                 status=AUDIT_STATUS_COMPLETED,
                 target=user_id,
                 user_id=caller.user_id,
+                team_id=user.team_id,
                 details=changes,
             )
         await session.commit()

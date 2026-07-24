@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 from aila.config import Settings, get_settings
 from aila.modules.vr.config_schema import VRConfigSchema
@@ -23,6 +24,7 @@ from aila.platform.llm.client import AilaLLMClient
 from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 from aila.platform.services import SSHService
 from aila.platform.services.factory import ServiceFactory
+from aila.storage.registry import ConfigRegistry
 
 __all__ = ["VRWorkflowServices"]
 
@@ -69,9 +71,15 @@ class VRWorkflowServices:
         No caching across calls (D-15): two sequential ``build`` returns
         are distinct objects so handler retries always see a clean
         service surface.
+
+        The ``config`` field is populated from ConfigRegistry so that
+        operator overrides (``PUT /config/vr/*``) take effect on the
+        NEXT workflow run. Previously ``config = VRConfigSchema()``
+        built the bag from schema defaults only, silently ignoring
+        every DB-persisted override.
         """
         settings = get_settings()
-        config = VRConfigSchema()
+        config = await _resolve_vr_config()
         ida = IDABridgeTool(recorder=record_call)
         ssh = SSHService(build_platform_settings(settings))
         return cls(
@@ -87,3 +95,21 @@ class VRWorkflowServices:
             ssh=ssh,
             ingestion=TargetIngestionService(ssh=ssh),
         )
+
+
+async def _resolve_vr_config() -> VRConfigSchema:
+    """Build a VRConfigSchema whose fields carry operator overrides.
+
+    Resolves every declared field via ConfigRegistry (env > cache > DB >
+    schema default) and constructs the schema. Fields the registry
+    cannot resolve (returns ``None``) fall back to the schema default
+    by simply omitting them from the constructor kwargs, so pydantic
+    fills them from ``Field(default=...)``.
+    """
+    registry = ConfigRegistry()
+    resolved: dict[str, Any] = {}
+    for name in VRConfigSchema.model_fields:
+        value = await registry.get("vr", name)
+        if value is not None:
+            resolved[name] = value
+    return VRConfigSchema(**resolved)

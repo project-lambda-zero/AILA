@@ -1,7 +1,9 @@
 """Per-team monthly LLM budget alerting (Phase 175 / D-03, D-03a).
 
-Checks team's monthly spend against configured ceiling and emits
-a deduplicated NotificationRecord when 80% threshold is crossed.
+Checks team's monthly spend against configured ceiling.  Emits a
+deduplicated NotificationRecord when the 80% threshold is crossed and
+raises :class:`BudgetExceededError` when spend reaches or exceeds 100%
+of the configured ceiling (D-08 hard stop / design finding #38-3.3).
 
 Deduplication uses a conditional INSERT (WHERE NOT EXISTS subquery)
 to prevent TOCTOU race conditions.  If two concurrent calls try to
@@ -23,29 +25,46 @@ import structlog
 from sqlalchemy import func, text
 from sqlmodel import select
 
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.llm.cost_record import LLMCostRecord
+from aila.platform.llm.errors import BudgetExceededError
 from aila.storage.database import async_session_scope
 
 if TYPE_CHECKING:
     from aila.storage.registry import ConfigRegistry
 
+__all__ = ["BudgetExceededError", "check_monthly_budget"]
+
 _log = structlog.get_logger(__name__)
 
 
 async def check_monthly_budget(team_id: str | None, registry: ConfigRegistry) -> None:
-    """Check team's monthly LLM spend; emit 80% alert if threshold crossed.
+    """Check team's monthly LLM spend; alert at 80% and hard-stop at 100%.
 
     Args:
         team_id: Team identifier. None for admin/standalone calls (skipped).
         registry: ConfigRegistry for ceiling lookup (async -- uses await).
 
-    Never raises -- all exceptions are logged and swallowed.
-    Callers are guaranteed: check_monthly_budget failure never blocks cost recording.
+    Behaviour:
+      * Silent no-op when ``team_id`` is None, when no ceiling is configured,
+        or when the ceiling resolves to <= 0 (0 means unlimited).
+      * Emits a deduplicated ``NotificationRecord`` (category='warning') when
+        the team's month-to-date spend reaches or exceeds 80% of the ceiling.
+      * Raises :class:`BudgetExceededError` when spend reaches or exceeds
+        100% of the ceiling (D-08 hard stop / #38-3.3). The raise is emitted
+        AFTER the best-effort alert-insert guard so a genuine over-budget
+        signal is never swallowed by a widened infra-exception tuple.
+
+    Infra failures (DB, registry connection, arithmetic) during the alert
+    lookup or insert are logged and swallowed -- callers are guaranteed that
+    a transient infra glitch never blocks cost recording. Only the explicit
+    :class:`BudgetExceededError` propagates.
     """
     if team_id is None:
         return
 
+    ceiling: float | None = None
+    total_usd: float | None = None
     try:
         ceiling_raw = await registry.get("platform", f"llm_monthly_budget_usd_{team_id}")
         if ceiling_raw is None:
@@ -110,5 +129,31 @@ async def check_monthly_budget(team_id: str | None, registry: ConfigRegistry) ->
                 total_usd=total_usd,
                 ceiling=ceiling,
             )
-    except sqlalchemy.exc.SQLAlchemyError:
-        _log.warning("budget_alert_check_failed", team_id=team_id)
+    except (
+        sqlalchemy.exc.SQLAlchemyError,
+        RuntimeError,
+        ValueError,
+        TypeError,
+        OSError,
+    ):
+        # Fire-and-forget contract for INFRA leaks: budget alerting must never
+        # fail cost recording on a DB/registry/arithmetic glitch, so the
+        # realistic leak set is logged and swallowed. BudgetExceededError is
+        # NOT in this tuple and is raised only from the guarded block below --
+        # a genuine over-budget signal always propagates.
+        _log.warning("budget_alert_check_failed", team_id=team_id, exc_info=True)
+
+    # #38-3.3: hard stop when month-to-date spend reaches or exceeds 100% of
+    # the operator-configured ceiling (D-08). Raised OUTSIDE the infra-guard
+    # above so BudgetExceededError is never accidentally swallowed even if a
+    # future refactor widens the exception tuple. Only fires when both ceiling
+    # and total_usd resolved cleanly inside the guard -- an infra failure
+    # skips the check and yields the alert-only historical behaviour, keeping
+    # cost recording resilient to transient DB glitches.
+    if ceiling is not None and total_usd is not None and total_usd >= ceiling:
+        raise BudgetExceededError(
+            f"Monthly LLM budget exceeded for team {team_id}: "
+            f"${total_usd:.2f} of ${ceiling:.2f}. Configure "
+            f"PUT /config/platform/llm_monthly_budget_usd_{team_id} "
+            f"to raise or reset the ceiling."
+        )

@@ -9,6 +9,7 @@ zombie-investigation fix in outcome_dispatcher.
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -24,11 +25,14 @@ from aila.modules.vr.db_models import (
 )
 from aila.modules.vr.workflow.pause_resume import (
     PauseInvestigationError,
+    ReenqueueInvestigationError,
     ResumeInvestigationError,
     pause_investigation_atomic,
+    reenqueue_investigation_atomic,
     resume_investigation_atomic,
 )
 from aila.platform.contracts._common import utc_now
+from aila.platform.tasks.models import TaskRecord
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import RESERVED_PAUSED
 from aila.storage.db_models import WorkflowStateCursor
@@ -449,8 +453,13 @@ async def test_dispatch_variant_hunt_order_enqueues_child(
     def fake_default_task_queue() -> FakeQueue:
         return FakeQueue()
 
+    # outcome_dispatcher.py does `from aila.modules.vr._task_queue import
+    # default_task_queue` at module load and calls `default_task_queue()`
+    # via the local binding. Patching the source module is a no-op for
+    # that call site; the patch must target the imported name inside
+    # outcome_dispatcher instead.
     monkeypatch.setattr(
-        "aila.modules.vr._task_queue.default_task_queue",
+        "aila.modules.vr.agents.outcome_dispatcher.default_task_queue",
         fake_default_task_queue,
     )
 
@@ -573,3 +582,266 @@ async def test_branch_summary_carries_none_when_no_cursor() -> None:
     summary = _branch_summary(branch)
     assert summary.cursor_state is None
     assert summary.cursor_archived_state is None
+
+
+# ----------------------------------------------------------------------
+# #44 -- investigation loop routes a mid-LLM-retry cancellation to a
+# clean exit_reason instead of letting LLMCancelledError escape and
+# finalise the workflow as FAILED.
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_investigation_loop_llm_cancel_is_clean_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``LLMCancelledError`` from ``run_turn`` exits with cancellation_token_set.
+
+    The retry loop raises ``LLMCancelledError`` when a pause flips the
+    run's token during a provider backoff. That exception is NOT in the
+    researcher's narrow decide-block tuple, so it propagates out of
+    ``run_turn`` uncaught. The investigation loop must catch it as a
+    clean cancel (same exit as the turn-boundary poll) rather than
+    letting it escape and mark the run FAILED.
+    """
+    from types import SimpleNamespace  # noqa: PLC0415
+    from unittest.mock import MagicMock  # noqa: PLC0415
+
+    from aila.modules.vr.agents import HonestVulnResearcher  # noqa: PLC0415
+    from aila.modules.vr.workflow.states import (  # noqa: PLC0415
+        investigation_loop as loop_mod,
+    )
+    from aila.platform.llm.cancellation import (  # noqa: PLC0415
+        LLMCancelledError,
+        clear_for_investigation,
+    )
+
+    target_id = await _seed_target("cancel1")
+    inv_id = await _seed_inv(target_id)
+    branch_id = await _seed_branch(inv_id)
+    # Cursor keyed on branch_id in the investigation_loop state -- matches
+    # the SSOT the loop's alive-check reads.
+    await _seed_cursor(branch_id, current_state="investigation_loop")
+    # A fresh (non-cancelled) token so the turn-boundary alive-check
+    # passes; the raise comes from the patched run_turn, not the poll.
+    clear_for_investigation(inv_id)
+
+    async def _raise_cancel(_self: Any) -> Any:
+        raise LLMCancelledError(f"run {inv_id} cancelled during LLM retry")
+
+    monkeypatch.setattr(HonestVulnResearcher, "run_turn", _raise_cancel)
+    # Executor is never used (run_turn raises before any tool_run), but the
+    # loop builds it up front; stub the singleton getter to avoid bridge/
+    # config construction in the test.
+    monkeypatch.setattr(loop_mod, "_get_executor", lambda: MagicMock())
+
+    services = SimpleNamespace(llm_client=MagicMock())
+    result = await loop_mod.state_investigation_loop(
+        {
+            "investigation_id": inv_id,
+            "branch_id": branch_id,
+            "max_turns": 3,
+        },
+        services,
+    )
+
+    # Clean exit -- no exception escaped, routed to the same terminal
+    # emit state as any other loop completion.
+    assert result.next_state == "investigation_emit"
+    assert result.output["exit_reason"] == "cancellation_token_set"
+    # Cleanup the process-local token created by the alive-check.
+    clear_for_investigation(inv_id)
+
+
+# ----------------------------------------------------------------------
+# reenqueue_investigation_atomic
+# ----------------------------------------------------------------------
+
+
+async def _seed_taskrecord(
+    inv_id: str,
+    *,
+    status: str = "running",
+    run_id: str | None = None,
+) -> str:
+    """Seed a run_vr_investigate TaskRecord carrying inv_id in kwargs."""
+    tid = run_id or str(uuid.uuid4())
+    async with UnitOfWork() as uow:
+        tr = TaskRecord(
+            id=tid,
+            track="vr",
+            fn_path="aila.modules.vr.workflow.task.run_vr_investigate",
+            fn_module="aila.modules.vr.workflow.task",
+            status=status,
+            user_id="op",
+            group_id="operator",
+            team_id="admin",
+            kwargs_json=json.dumps({"investigation_id": inv_id}),
+        )
+        uow.session.add(tr)
+        await uow.session.commit()
+    return tid
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_reenqueue_resets_cancels_and_wipes() -> None:
+    """Re-enqueue resets to CREATED, cancels stale tasks, wipes __crashed__
+    cursors, and submits a fresh task."""
+    target_id = await _seed_target("re1")
+    inv_id = await _seed_inv(target_id, status=InvestigationStatus.RUNNING)
+    stale_tid = await _seed_taskrecord(inv_id, status="running")
+    # A crashed cursor whose run_id is a taskrecord referencing this inv.
+    crashed_run = await _seed_taskrecord(inv_id, status="failed")
+    await _seed_cursor(crashed_run, current_state="__crashed__")
+
+    mock_queue = AsyncMock()
+    mock_queue.submit = AsyncMock(return_value=None)
+    summary = await reenqueue_investigation_atomic(
+        inv_id, task_queue=mock_queue,
+        user_id="op", group_id="operator", team_id="admin",
+    )
+
+    async with UnitOfWork() as uow:
+        inv = (await uow.session.exec(
+            select(VRInvestigationRecord)
+            .where(VRInvestigationRecord.id == inv_id),
+        )).first()
+    assert inv.status == InvestigationStatus.CREATED.value
+    assert inv.pause_reason is None
+
+    async with UnitOfWork() as uow:
+        stale = (await uow.session.exec(
+            select(TaskRecord).where(TaskRecord.id == stale_tid),
+        )).first()
+    assert stale.status == "cancelled"
+
+    async with UnitOfWork() as uow:
+        cur = (await uow.session.exec(
+            select(WorkflowStateCursor)
+            .where(WorkflowStateCursor.run_id == crashed_run),
+        )).first()
+    assert cur is None
+
+    assert mock_queue.submit.await_count == 1
+    assert summary["cancelled_stale_tasks"] >= 1
+    assert summary["wiped_crashed_cursors"] == 1
+    assert summary["submitted"] == 1
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_reenqueue_missing_raises() -> None:
+    mock_queue = AsyncMock()
+    mock_queue.submit = AsyncMock(return_value=None)
+    with pytest.raises(ReenqueueInvestigationError, match="not found"):
+        await reenqueue_investigation_atomic(
+            "00000000-0000-0000-0000-000000000000",
+            task_queue=mock_queue,
+        )
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_reenqueue_updates_kind_and_strategy() -> None:
+    target_id = await _seed_target("re2")
+    inv_id = await _seed_inv(target_id, status=InvestigationStatus.RUNNING)
+    mock_queue = AsyncMock()
+    mock_queue.submit = AsyncMock(return_value=None)
+    await reenqueue_investigation_atomic(
+        inv_id,
+        new_kind="discovery",
+        new_strategy="vulnerability_research.discovery_research",
+        task_queue=mock_queue,
+        user_id="op", group_id="operator", team_id="admin",
+    )
+    async with UnitOfWork() as uow:
+        inv = (await uow.session.exec(
+            select(VRInvestigationRecord)
+            .where(VRInvestigationRecord.id == inv_id),
+        )).first()
+    assert inv.kind == "discovery"
+    assert inv.strategy_family == "vulnerability_research.discovery_research"
+    assert inv.status == InvestigationStatus.CREATED.value
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_reenqueue_per_branch_fan_out() -> None:
+    """``branch_model`` set submits one task per active branch.
+
+    This is the malware fan-out mode. The fan-out orchestration lives in
+    the platform lifecycle service so a module cannot get it wrong. The
+    reset/cancel/wipe still runs; only the submit differs from the VR
+    submit-once mode. An inactive branch is excluded.
+    """
+    from aila.platform.services.investigation_lifecycle import (  # noqa: PLC0415
+        reenqueue_investigation as platform_reenqueue,
+    )
+
+    target_id = await _seed_target("refb")
+    inv_id = await _seed_inv(target_id, status=InvestigationStatus.RUNNING)
+    br1 = await _seed_branch(inv_id)
+    br2 = await _seed_branch(inv_id)
+    async with UnitOfWork() as uow:
+        dead = VRInvestigationBranchRecord(
+            investigation_id=inv_id, status="abandoned",
+            turn_count=1, fork_reason="primary",
+        )
+        uow.session.add(dead)
+        await uow.session.commit()
+
+    calls: list[tuple[str, str | None]] = []
+
+    async def _submit_one(inv: str, branch_id: str | None) -> None:
+        calls.append((inv, branch_id))
+
+    summary = await platform_reenqueue(
+        inv_id,
+        inv_model=VRInvestigationRecord,
+        fn_path_pattern="%run_vr_investigate%",
+        submit_one=_submit_one,
+        branch_model=VRInvestigationBranchRecord,
+        branch_status_active="active",
+    )
+
+    assert summary["submitted"] == 2
+    assert len(calls) == 2
+    assert {branch_id for _, branch_id in calls} == {br1, br2}
+    assert all(inv == inv_id for inv, _ in calls)
+
+    async with UnitOfWork() as uow:
+        inv = (await uow.session.exec(
+            select(VRInvestigationRecord)
+            .where(VRInvestigationRecord.id == inv_id),
+        )).first()
+    assert inv.status == InvestigationStatus.CREATED.value
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_reenqueue_no_active_branch_single_submit() -> None:
+    """``branch_model`` set with no active branch submits one setup task.
+
+    Fallback path of the fan-out: when no branch is active the platform
+    submits exactly one task with ``branch_id=None`` so the setup state
+    respawns the branches on dispatch.
+    """
+    from aila.platform.services.investigation_lifecycle import (  # noqa: PLC0415
+        reenqueue_investigation as platform_reenqueue,
+    )
+
+    target_id = await _seed_target("renb")
+    inv_id = await _seed_inv(target_id, status=InvestigationStatus.RUNNING)
+
+    calls: list[tuple[str, str | None]] = []
+
+    async def _submit_one(inv: str, branch_id: str | None) -> None:
+        calls.append((inv, branch_id))
+
+    summary = await platform_reenqueue(
+        inv_id,
+        inv_model=VRInvestigationRecord,
+        fn_path_pattern="%run_vr_investigate%",
+        submit_one=_submit_one,
+        branch_model=VRInvestigationBranchRecord,
+        branch_status_active="active",
+    )
+
+    assert summary["submitted"] == 1
+    assert calls == [(inv_id, None)]

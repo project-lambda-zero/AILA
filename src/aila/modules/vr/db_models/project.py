@@ -1,13 +1,12 @@
 """Project table definition for the vulnerability research module.
 
 Per D-53: target identity moved to VRTargetRecord (M3.T-1). VRProjectRecord
-now holds only project-scoped fields:
-  - Identity: id, name, cve_id, team_id
-  - Target reference: target_id (NOT NULL), patched_target_id (optional, for
-    differential analysis)
-  - Lifecycle: status, budget_json, obligations_json, context_notes
-  - Machine assignment: analysis_system_id, poc_system_id
-  - Timestamps: created_at, updated_at
+now holds only project-scoped fields. The shared columns (id, name,
+target_id, analysis_system_id, context_notes, status, created_by,
+budget_json, obligations_json, created_at, updated_at) live on the
+platform ``ProjectRecordBase`` (RFC-01). This concrete keeps VR-only
+residue: ``cve_id``, ``patched_target_id`` (differential analysis FK to
+vr_targets), and ``poc_system_id`` (PoC machine assignment).
 
 All target metadata (target_class, target_path, binary_id, mitigations,
 ingestion descriptor) lives on VRTargetRecord and is read via the
@@ -19,19 +18,17 @@ Consumed by: workflow states, agent, advisory builder.
 """
 from __future__ import annotations
 
-from datetime import datetime
-from uuid import uuid4
+from typing import ClassVar
 
-from sqlalchemy import Column, DateTime, ForeignKey, Text
-from sqlmodel import Field, SQLModel
+from sqlalchemy import Column, ForeignKey
+from sqlmodel import Field
 
-from aila.platform.contracts._common import utc_now
-from aila.storage.mixins import TeamScopedMixin
+from aila.platform.contracts.project_base import ProjectRecordBase
 
 __all__ = ["VRProjectRecord"]
 
 
-class VRProjectRecord(TeamScopedMixin, SQLModel, table=True):
+class VRProjectRecord(ProjectRecordBase, table=True):
     """A vulnerability research project bound to one or two targets.
 
     The project is the unit of workflow execution + budget + obligation
@@ -40,19 +37,12 @@ class VRProjectRecord(TeamScopedMixin, SQLModel, table=True):
     """
 
     __tablename__ = "vr_projects"
+    __target_tablename__: ClassVar[str] = "vr_targets"
 
-    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    name: str = Field(index=True, max_length=255)
     cve_id: str | None = Field(default=None, index=True, max_length=32)
 
-    target_id: str = Field(
-        sa_column=Column(
-            "target_id",
-            ForeignKey("vr_targets.id"),
-            nullable=False,
-            index=True,
-        ),
-    )
+    # Optional second target for differential (patched-vs-vulnerable)
+    # analysis. FK to the same vr_targets table.
     patched_target_id: str | None = Field(
         default=None,
         sa_column=Column(
@@ -63,14 +53,6 @@ class VRProjectRecord(TeamScopedMixin, SQLModel, table=True):
         ),
     )
 
-    analysis_system_id: int | None = Field(default=None)
+    # Machine assignment for PoC development (separate from the shared
+    # ``analysis_system_id`` used for the primary investigation VM).
     poc_system_id: int | None = Field(default=None)
-
-    context_notes: str = Field(default="", sa_column=Column(Text))
-    status: str = Field(default="created", index=True, max_length=32)
-    created_by: str | None = Field(default=None, index=True, max_length=64)
-    budget_json: str = Field(default="{}", sa_column=Column(Text))
-    obligations_json: str = Field(default="{}", sa_column=Column(Text))
-
-    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
-    updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))

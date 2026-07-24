@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from aila.config import Settings
-from aila.platform.tools._common import Tool
+from aila.platform.tools import Tool
 
 TOOL_ALIAS = "volatility_runner"
 CAPABILITY = "Run Volatility 3 plugins (pslist, netscan, cmdline, malfind, etc.) on memory dumps via SSH."

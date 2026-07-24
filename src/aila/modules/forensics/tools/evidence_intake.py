@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from aila.config import Settings
-from aila.platform.tools._common import Tool
+from aila.platform.tools import Tool
 
 TOOL_ALIAS = "evidence_intake"
 CAPABILITY = "Scan evidence directory on analyzer machine, classify files by type, and compute SHA-256 hashes."

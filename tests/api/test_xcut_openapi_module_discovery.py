@@ -36,10 +36,21 @@ def _get_openapi_schema(app=None):
 
 
 def _find_bare_empty(obj, path=""):
-    """Recursively find all bare {} (empty dict) values in a nested structure."""
+    """Recursively find bare {} (empty dict) values in a nested structure.
+
+    Skips keys named ``default`` because a Pydantic field declared with an
+    empty-dict default (e.g. ``meta: dict[str, object] = {}`` on
+    ``DataEnvelope`` in src/aila/api/schemas/envelope.py:31) is emitted by
+    Pydantic v2 as ``default: {}`` on every component schema. That is a
+    legitimate default value, not a bare response schema, and would
+    otherwise flood this scan with false positives. The docstring intent
+    (per each caller) is bare response-shape schemas only.
+    """
     results = []
     if isinstance(obj, dict):
         for k, v in obj.items():
+            if k == "default":
+                continue
             if isinstance(v, dict) and len(v) == 0:
                 results.append(f"{path}.{k}")
             results.extend(_find_bare_empty(v, f"{path}.{k}"))
@@ -214,9 +225,6 @@ def test_module_removal_removes_routes_from_openapi():
     """
     from aila.platform.modules.builtin import builtin_module_factories
     from aila.platform.modules.platform import PlatformModule
-
-    # Cache the original result for cleanup
-    original = builtin_module_factories()
 
     # Clear lru_cache so the patched version is used
     builtin_module_factories.cache_clear()

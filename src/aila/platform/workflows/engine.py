@@ -220,6 +220,15 @@ class DurableStateMachine:
                     version=row.version,
                 )
 
+            # RFC-02 cursor keying: denormalise the investigation/branch
+            # ids off the initial_input so the lifecycle service can find
+            # this cursor by (investigation_id, branch_id) instead of by
+            # the ARQ task uuid it never sees. Every investigation task
+            # submits with ``kwargs={"investigation_id": ..., ...}`` and
+            # optionally ``branch_id``; non-investigation workflows leave
+            # both keys absent and both columns stay NULL.
+            inv_id = initial_input.get("investigation_id")
+            br_id = initial_input.get("branch_id")
             new_row = WorkflowStateCursor(
                 run_id=run_id,
                 current_state=definition.start_state,
@@ -227,6 +236,8 @@ class DurableStateMachine:
                 retries_in_state=0,
                 definition_id=definition.definition_id,
                 version=0,
+                investigation_id=str(inv_id) if inv_id else None,
+                branch_id=str(br_id) if br_id else None,
             )
             session.add(new_row)
             try:
@@ -987,9 +998,17 @@ class DurableStateMachine:
                 # the defensive backstop for any future cursor-delete
                 # path that races commit.
                 #
-                # Recovery: INSERT the cursor with the new state +
-                # version 1, commit, continue as if nothing happened.
-                # The transition audit still lands (write_exited runs
+                # Recovery: INSERT the cursor with the new state and
+                # keep the optimistic-lock version chain going
+                # (loaded_state.version + 1, matching new_state.version).
+                # Resetting to 1 desyncs the in-memory State that the
+                # engine loop is about to feed into the next
+                # _commit_transition against what the DB row actually
+                # holds; the following FOR UPDATE then sees a
+                # stale-version mismatch and burns a WorkflowConflictError
+                # retry for no reason. Preserving the chain keeps the
+                # very next commit's version check satisfied. The
+                # transition audit still lands (write_exited runs
                 # below) so the state machine's log is intact. The
                 # advance proceeds and AUTO_CONTINUE fires from the
                 # caller as designed.
@@ -1005,7 +1024,7 @@ class DurableStateMachine:
                     state_input=new_state.input,
                     retries_in_state=new_state.retries_in_state,
                     definition_id=definition.definition_id,
-                    version=1,
+                    version=loaded_state.version + 1,
                 )
                 session.add(new_row)
                 # Skip the version check + UPDATE below; we just

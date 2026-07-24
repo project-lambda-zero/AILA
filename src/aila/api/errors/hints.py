@@ -32,6 +32,19 @@ ERROR_HINTS: dict[str, str] = {
     ),
     # Framework-level codes.
     "VALIDATION_ERROR": "Fix the highlighted input fields and retry.",
+    "AUTHENTICATION_ERROR": (
+        "Sign in again or check the credentials for this operation."
+    ),
+    "RATE_LIMIT_ERROR": (
+        "The upstream provider is rate limiting. Wait and retry after a delay."
+    ),
+    "NOT_FOUND_ERROR": "The requested resource does not exist or was removed.",
+    "UPSTREAM_ERROR": (
+        "An upstream dependency failed. Retry, or contact support with the trace ID."
+    ),
+    "TIMEOUT_ERROR": (
+        "The operation timed out. Retry, or check the target system's reachability."
+    ),
     "INTERNAL_ERROR": (
         "An unexpected error occurred. Contact support with the trace ID shown below."
     ),

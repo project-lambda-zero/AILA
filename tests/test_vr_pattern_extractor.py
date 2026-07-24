@@ -14,7 +14,6 @@ import pytest
 from aila.modules.vr.agents.pattern_extractor import (
     PatternExtractor,
     PatternExtractorError,
-    _entry_to_create,
 )
 from aila.modules.vr.contracts import (
     OutcomeKind,
@@ -22,6 +21,11 @@ from aila.modules.vr.contracts import (
     PatternKind,
     PatternScope,
 )
+
+# ``_entry_to_create`` moved to a classmethod on the platform base
+# (RFC-03 Phase 5). Keep the module-local alias so the existing tests
+# call the same shape without changing every call site.
+_entry_to_create = PatternExtractor._entry_to_create
 
 
 class TestShouldExtract:
@@ -183,9 +187,46 @@ class _FakeLLM:
         self.calls: list[dict] = []
         self._response = response
 
-    async def chat_json(self, **kwargs) -> _FakeLLMResponse:
-        self.calls.append(kwargs)
+    async def chat_json(self, *args, **kwargs) -> _FakeLLMResponse:
+        # ``idempotent_llm_call`` forwards ``(task_type, messages,
+        # schema)`` positionally + ``run_id``/``team_id`` as kwargs.
+        # Normalise both call shapes into one recorded kwargs dict so
+        # legacy assertions still work.
+        recorded = dict(kwargs)
+        if args:
+            for slot, val in zip(
+                ("task_type", "messages", "schema"), args, strict=False,
+            ):
+                recorded.setdefault(slot, val)
+        self.calls.append(recorded)
         return self._response
+
+
+@pytest.fixture(autouse=True)
+def _bypass_idempotent_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bypass the RFC-03 Phase 2 idempotency wrapper for offline tests.
+
+    See tests/platform/agents/test_pattern_extractor.py for the same
+    shim -- the wrapper has its own coverage in
+    ``tests/platform/llm/`` and opening a UnitOfWork for cache lookup
+    would make these otherwise-DB-free tests depend on the
+    ``aila_test`` fixture.
+    """
+
+    async def _bypass(llm_client, *, method, task_type, messages, **kwargs):
+        assert method == "chat_json"
+        schema = kwargs.get("schema")
+        resp = await llm_client.chat_json(
+            task_type, messages, schema,
+            run_id=kwargs.get("run_id"),
+            team_id=kwargs.get("team_id"),
+        )
+        return resp, False
+
+    monkeypatch.setattr(
+        "aila.platform.agents.pattern_extractor.idempotent_llm_call",
+        _bypass,
+    )
 
 
 class _FakeStore:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aila"
-version = "0.2.1"
+version = "0.3.0"
 description = "Modular AI security platform with pluggable analysis modules."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -261,25 +261,22 @@ ignore = [
 "src/aila/modules/malware/api_router.py" = ["PLC0415", "N814", "SLF001"]
 "src/aila/modules/malware/module.py" = ["PLC0415"]
 "src/aila/modules/malware/runtime.py" = ["PLC0415"]
-# malware/services/arq_purge.py: S301 because ARQ stores job payloads
+# platform/tasks/arq_purge.py: S301 because ARQ stores job payloads
 # as raw pickle blobs; the helper reads them back from a trusted ARQ
 # queue, NOT from untrusted input. Replacing pickle would mean
 # re-encoding every queued job during a long deploy.
-"src/aila/modules/malware/services/arq_purge.py" = ["PLC0415", "S301"]
-# malware/services/branch_reaper.py: N806 for SQLAlchemy ORM uppercase
+"src/aila/platform/tasks/arq_purge.py" = ["PLC0415", "S301"]
+# platform/services/branch_reaper.py: N806 for SQLAlchemy ORM uppercase
 # aliases (BR, INV) following the standard convention used across
 # every sweep helper.
-"src/aila/modules/malware/services/branch_reaper.py" = ["N806"]
-# malware/services/config_helpers.py: PLW0603 for the lazy registry
-# singleton (one instance per worker; constructed once on first read).
-"src/aila/modules/malware/services/config_helpers.py" = ["PLW0603"]
-# malware/services/investigation_reaper.py: same N806 rationale as
-# branch_reaper above; multiple ORM aliases inside the sweep helpers.
-"src/aila/modules/malware/services/investigation_reaper.py" = ["N806"]
-# malware/services/mcp_call_logger.py: BLE001 because the call logger
-# catches BaseException only to re-raise it after enriching the log
-# record; the broad catch is an explicit observation point.
-"src/aila/modules/malware/services/mcp_call_logger.py" = ["BLE001"]
+"src/aila/platform/services/branch_reaper.py" = ["N806"]
+# platform/services/investigation_reaper.py: N806 for SQLAlchemy ORM
+# uppercase aliases (BR, INV, MSG) in the shared cap-sweep helpers.
+"src/aila/platform/services/investigation_reaper.py" = ["N806"]
+# platform/mcp/call_logger.py: BLE001 because record_call catches
+# BaseException only to enrich the log record then re-raise it; the broad
+# catch is an explicit observation point.
+"src/aila/platform/mcp/call_logger.py" = ["BLE001"]
 "src/aila/modules/malware/services/stall_recovery.py" = ["PLC0415"]
 "src/aila/modules/malware/workflow/definitions.py" = ["PLC0415"]
 # finalize + investigation_emit / _setup keep targeted deferred imports of
@@ -300,13 +297,12 @@ ignore = [
 "src/aila/modules/vr/reporting/pdf_report.py" = ["N802", "S603", "S607"]
 "src/aila/modules/vr/reporting/writer_agent.py" = ["PLC0415"]
 "src/aila/modules/vr/runtime.py" = ["PLC0415"]
-"src/aila/modules/vr/services/arq_purge.py" = ["PLC0415", "S301"]
-"src/aila/modules/vr/services/branch_reaper.py" = ["N806"]
 "src/aila/modules/vr/services/cve_intel_resolver.py" = ["PLC0415"]
-"src/aila/modules/vr/services/investigation_finalizers.py" = ["PLC0415"]
-"src/aila/modules/vr/services/investigation_reaper.py" = ["N806", "PLC0415"]
-"src/aila/modules/vr/services/mcp_call_logger.py" = ["BLE001"]
-"src/aila/modules/vr/services/outcome_review.py" = ["PLC0415"]
+# outcome_review bindings: F401 because the thin module re-exports the
+# platform QuorumOutcome / EditOutcomeResult / EDIT_OUTCOME_PROTECTED_KEYS
+# for legacy callers + tests; the imports are intentional re-exports.
+"src/aila/modules/vr/services/outcome_review.py" = ["F401"]
+"src/aila/modules/malware/services/outcome_review.py" = ["F401"]
 "src/aila/modules/vr/services/stall_recovery.py" = ["PLC0415"]
 "src/aila/modules/vr/services/target_analysis.py" = ["PLC0415"]
 "src/aila/modules/vr/workflow/definitions.py" = ["PLC0415"]
@@ -356,6 +352,7 @@ ignore = [
 "src/aila/modules/vulnerability/workflow/states/reporting.py" = ["ARG001"]
 "src/aila/modules/vulnerability/workflow/utils/row_helpers.py" = ["PLC0415"]
 "src/aila/platform/automation/runner.py" = ["E712"]
+"src/aila/platform/automation/supervisor.py" = ["PLC0415"]
 "src/aila/platform/contracts/persist.py" = ["PLC0415"]
 "src/aila/platform/contracts/reasoning.py" = ["PLC0415"]
 "src/aila/platform/events/emitter.py" = ["PLC0415"]
@@ -379,12 +376,21 @@ ignore = [
 "src/aila/platform/modules/registry.py" = ["PLC0415"]
 "src/aila/platform/routing/router.py" = ["PLC0415", "BLE001"]
 "src/aila/platform/runtime/builder.py" = ["PLC0415"]
+# branch_cleanup.py: S608 because the branch table name is interpolated into
+# the UPDATE. It is a trusted module constant (a table identifier cannot be a
+# bind parameter), never user input.
+"src/aila/platform/services/branch_cleanup.py" = ["S608"]
 "src/aila/platform/services/embedding.py" = ["PLC0415"]
 "src/aila/platform/services/health_probes.py" = ["PLC0415", "BLE001"]
 "src/aila/platform/services/knowledge.py" = ["PLC0415"]
 "src/aila/platform/services/reasoning.py" = ["E402"]
 "src/aila/platform/services/redis_pool.py" = ["PLW0603"]
 "src/aila/platform/services/report.py" = ["PLC0415"]
+# resilience.py: PLC0415 for the deferred metric imports inside record_signal.
+# The counter modules pull prometheus_client + api.metrics; the ResilienceLayer
+# module is imported from tools/tests/CLI where those are optional. Mirrors
+# the platform/events/emitter.py and platform/llm/config.py pattern.
+"src/aila/platform/services/resilience.py" = ["PLC0415"]
 "src/aila/platform/services/ssh.py" = ["PLC0415"]
 "src/aila/platform/services/system.py" = ["PLC0415"]
 "src/aila/platform/services/team_scope.py" = ["PLW0603", "ANN001"]

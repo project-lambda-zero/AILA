@@ -29,10 +29,10 @@ from pydantic import BaseModel
 from sqlmodel import select
 
 from ..platform.contracts._common import utc_now
-from .database import async_session_scope
+from .database import async_session_scope, session_scope
 from .db_models import ConfigEntryRecord
 
-__all__ = ["ConfigRegistry", "SchemaRegistry"]
+__all__ = ["ConfigRegistry", "DynamicKeyFamily", "SchemaRegistry", "is_secret_config_key"]
 
 _log = logging.getLogger(__name__)
 
@@ -45,6 +45,39 @@ class _CacheEntry:
     expires_at: float
 
 
+@_dc_dataclass(frozen=True)
+class DynamicKeyFamily:
+    """A typed family of config keys sharing a prefix.
+
+    Extends a namespace's schema contract to an open key space: any key of the
+    form ``{prefix}{suffix}`` -- for example the per-task-type override
+    ``llm_model_{task_type}`` -- is a valid, settable, type-cast config key that
+    resolves through the same env > cache > DB > default chain as a static
+    field. ``value_type`` drives set()-time validation and get()-time casting;
+    ``default`` is returned when no env/DB value exists. A schema declares its
+    families in a ``__dynamic_families__`` class attribute; the longest matching
+    prefix wins when families overlap.
+    """
+
+    prefix: str
+    value_type: type = str
+    default: Any = None
+    description: str = ""
+
+    def matches(self, key: str) -> bool:
+        return len(key) > len(self.prefix) and key.startswith(self.prefix)
+
+
+@_dc_dataclass(frozen=True)
+class _ResolvedField:
+    """Minimal field descriptor for a dynamic-key family match, exposing the
+    same ``annotation``/``default`` surface that casting and the default
+    resolution read off a Pydantic ``FieldInfo``."""
+
+    annotation: type
+    default: Any
+
+
 # Security-relevant config key prefixes that trigger audit logging on change (D-11).
 _SECURITY_KEY_PREFIXES: tuple[str, ...] = (
     "llm_kill_switch",
@@ -53,6 +86,40 @@ _SECURITY_KEY_PREFIXES: tuple[str, ...] = (
     "llm_pipeline_gate_",
     "llm_seal_hmac_key",
 )
+
+# Config keys whose stored value is a secret and must be redacted on read for
+# non-admin callers (C6). Substring match: any key containing one of these
+# tokens is treated as secret regardless of namespace.
+_SECRET_KEY_TOKENS: tuple[str, ...] = (
+    "api_key",
+    "secret",
+    "password",
+    "hmac_key",
+    "signing_key",
+    "encryption_key",
+    "private_key",
+    "client_secret",
+    "bearer",
+    "token",
+)
+
+
+def is_secret_config_key(key: str) -> bool:
+    """Return True when the value at this config key must be redacted (C6)."""
+    lower = key.lower()
+    return any(token in lower for token in _SECRET_KEY_TOKENS)
+
+
+_REDACTED = "[REDACTED]"
+
+
+def _hash_config_change(old_value: object, new_value: str) -> str:
+    """Return a sha256 of the old -> new transition so a secret rotation stays
+    auditable (did the value change?) without persisting the secret itself."""
+    import hashlib
+
+    old_str = str(old_value) if old_value is not None else ""
+    return hashlib.sha256(f"{old_str}\n{new_value}".encode()).hexdigest()
 
 
 class ConfigRegistry:
@@ -76,6 +143,28 @@ class ConfigRegistry:
         if any(key.startswith(p) for p in _SECURITY_KEY_PREFIXES):
             return True
         return "_fail_mode_" in key
+
+    def _resolve_field(self, namespace: str, key: str) -> Any:
+        """Resolve a key to a field descriptor for casting/validation.
+
+        Returns the static schema ``FieldInfo`` when the key is a declared
+        field, else the longest-matching dynamic-key family's descriptor, else
+        None. None means the key is unknown to the namespace -- ``set`` rejects
+        it and ``get`` yields no schema default.
+        """
+        schema = self._schemas.get(namespace)
+        if schema is None:
+            return None
+        field_info = schema.model_fields.get(key)
+        if field_info is not None:
+            return field_info
+        best: DynamicKeyFamily | None = None
+        for family in getattr(schema, "__dynamic_families__", ()):
+            if family.matches(key) and (best is None or len(family.prefix) > len(best.prefix)):
+                best = family
+        if best is None:
+            return None
+        return _ResolvedField(annotation=best.value_type, default=best.default)
 
     async def register(self, namespace: str, schema_class: type[BaseModel]) -> None:
         """Register a Pydantic schema for namespace. Persists defaults to DB on
@@ -111,8 +200,7 @@ class ConfigRegistry:
         env_name = f"AILA_{namespace.upper()}_{key.upper()}"
         env_val = os.environ.get(env_name)
 
-        schema = self._schemas.get(namespace)
-        field_info = schema.model_fields.get(key) if schema else None
+        field_info = self._resolve_field(namespace, key)
 
         if env_val is not None:
             return _cast_value(env_val, field_info)
@@ -142,14 +230,68 @@ class ConfigRegistry:
                     )
                 return value
 
-        if schema and field_info is not None:
-            default_val = schema().model_fields[key].default
+        if field_info is not None:
+            default_val = field_info.default
             # Cache the default too
             async with self._cache_lock:
                 self._cache[cache_key] = _CacheEntry(
                     value=default_val,
                     expires_at=time.monotonic() + self._cache_ttl,
                 )
+            return default_val
+        return None
+
+    def get_sync(self, namespace: str, key: str) -> Any:
+        """Synchronous twin of :meth:`get` for sync call sites.
+
+        Same resolution order (env var > cache > DB value > schema default) as
+        the async ``get``, but usable from a plain ``def`` without producing an
+        un-awaited coroutine. Sync call sites (proxy resolution, budget ceiling,
+        worker bootstrap) previously called ``get`` without ``await`` and either
+        guarded with ``hasattr(x, "__await__")`` or -- when they forgot --
+        operated on the coroutine object itself (issue #65/#38).
+
+        The DB read uses the sync engine via ``session_scope`` (psycopg). Cache
+        access is lock-free by design: dict get/set are atomic under the GIL and
+        the check-then-populate race is benign -- at worst a redundant DB read
+        and an idempotent overwrite with the same value. The async ``_cache_lock``
+        cannot be acquired from a sync context, so it is intentionally not used
+        here.
+        """
+        env_name = f"AILA_{namespace.upper()}_{key.upper()}"
+        env_val = os.environ.get(env_name)
+
+        field_info = self._resolve_field(namespace, key)
+
+        if env_val is not None:
+            return _cast_value(env_val, field_info)
+
+        cache_key = (namespace, key)
+        entry = self._cache.get(cache_key)
+        if entry is not None and time.monotonic() < entry.expires_at:
+            return entry.value
+
+        with session_scope() as session:
+            row = session.exec(
+                select(ConfigEntryRecord).where(
+                    ConfigEntryRecord.namespace == namespace,
+                    ConfigEntryRecord.key == key,
+                )
+            ).first()
+            if row is not None:
+                value = _cast_value(row.value, field_info)
+                self._cache[cache_key] = _CacheEntry(
+                    value=value,
+                    expires_at=time.monotonic() + self._cache_ttl,
+                )
+                return value
+
+        if field_info is not None:
+            default_val = field_info.default
+            self._cache[cache_key] = _CacheEntry(
+                value=default_val,
+                expires_at=time.monotonic() + self._cache_ttl,
+            )
             return default_val
         return None
 
@@ -164,7 +306,7 @@ class ConfigRegistry:
         schema = self._schemas.get(namespace)
         if schema is None:
             raise ValueError(f"No schema registered for namespace '{namespace}'.")
-        field_info = schema.model_fields.get(key)
+        field_info = self._resolve_field(namespace, key)
         if field_info is None:
             raise ValueError(f"Key '{key}' not found in schema for namespace '{namespace}'.")
 
@@ -210,6 +352,11 @@ class ConfigRegistry:
         if self._emitter is not None and self._is_security_relevant(key):
             from ..platform.events.event import PlatformEvent
 
+            secret = is_secret_config_key(key)
+            old_display = (
+                _REDACTED if secret else (str(old_value) if old_value is not None else "")
+            )
+            new_display = _REDACTED if secret else value
             self._emitter.emit(PlatformEvent(
                 stage="config_security_change",
                 action="update",
@@ -218,8 +365,11 @@ class ConfigRegistry:
                 details={
                     "namespace": namespace,
                     "key": key,
-                    "old_value": str(old_value) if old_value is not None else "",
-                    "new_value": value,
+                    "old_value": old_display,
+                    "new_value": new_display,
+                    "value_hash_sha256": (
+                        _hash_config_change(old_value, value) if secret else None
+                    ),
                     "user_id": "system",
                 },
             ))

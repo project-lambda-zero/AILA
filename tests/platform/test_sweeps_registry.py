@@ -51,10 +51,18 @@ def test_register_preserves_insertion_order() -> None:
     assert names == ["tests.first", "tests.second", "tests.third"]
 
 
-def test_duplicate_name_raises() -> None:
+def test_duplicate_name_different_callable_raises() -> None:
     sweeps.register_periodic_sweep("tests.dup", _noop_sweep)
     with pytest.raises(ValueError, match="already registered"):
         sweeps.register_periodic_sweep("tests.dup", _truthy_sweep)
+
+
+def test_duplicate_name_same_callable_is_idempotent() -> None:
+    # Re-registering the identical callable under the same name (double import
+    # of a module __init__) is benign and must not raise.
+    sweeps.register_periodic_sweep("tests.dup2", _noop_sweep)
+    sweeps.register_periodic_sweep("tests.dup2", _noop_sweep)
+    assert sweeps.all_periodic_sweeps()["tests.dup2"] is _noop_sweep
 
 
 def test_empty_name_raises() -> None:

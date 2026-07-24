@@ -16,25 +16,26 @@ import pytest
 
 from aila.modules.vr.agents.vuln_researcher import (
     HonestVulnResearcher,
+    _PROMPT_VERSION_STORE,
     _applicable_servers_for_kind,
     _decision_to_message_payload,
-    _decode_case_state,
-    _encode_case_state,
     _fetch_tool_specs,
     _format_param,
     _load_prompt,
     _mcp_family_rule_for_kind,
+    _prompt_key,
     _outcome_payload,
     _render_available_tools_section,
     _render_operator_messages_section,
     _render_target_snapshot_section,
     _terminal_outcome_kind,
-    _to_outcome_confidence,
 )
 from aila.modules.vr.contracts import OutcomeConfidence, OutcomeKind, PayloadKind
-from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
-from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
-from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
+from aila.platform.agents.turn_helpers import (
+    decode_case_state,
+    encode_case_state,
+    to_outcome_confidence,
+)
 from aila.platform.contracts.reasoning import (
     EvidenceProvenance,
     Hypothesis,
@@ -43,6 +44,9 @@ from aila.platform.contracts.reasoning import (
     ReasoningTurnDecision,
     RejectedHypothesis,
 )
+from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
+from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
+from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 
 
 class TestCaseStateEncoding:
@@ -53,20 +57,20 @@ class TestCaseStateEncoding:
             rejected=[RejectedHypothesis(id="h0", claim="old", reason="r")],
             observables={"k": "v"},
         )
-        encoded = _encode_case_state(original)
+        encoded = encode_case_state(original)
         assert isinstance(encoded, str)
-        restored = _decode_case_state(encoded)
+        restored = decode_case_state(encoded)
         assert restored == original
 
     def test_empty_decode(self) -> None:
-        assert _decode_case_state(None) == ReasoningCaseState()
-        assert _decode_case_state("") == ReasoningCaseState()
+        assert decode_case_state(None) == ReasoningCaseState()
+        assert decode_case_state("") == ReasoningCaseState()
 
     def test_invalid_json_decode_recovers(self) -> None:
-        assert _decode_case_state("{not json") == ReasoningCaseState()
+        assert decode_case_state("{not json") == ReasoningCaseState()
 
     def test_invalid_shape_recovers(self) -> None:
-        assert _decode_case_state(json.dumps({"hypotheses": "not a list"})) == ReasoningCaseState()
+        assert decode_case_state(json.dumps({"hypotheses": "not a list"})) == ReasoningCaseState()
 
 
 class TestDecisionToMessagePayload:
@@ -165,11 +169,11 @@ class TestToOutcomeConfidence:
     )
     def test_passthrough(self, value: str, expected: OutcomeConfidence) -> None:
         d = ReasoningTurnDecision(reasoning="", action="submit", confidence=value)
-        assert _to_outcome_confidence(d) == expected
+        assert to_outcome_confidence(d) == expected
 
     def test_missing_confidence_defaults_unknown(self) -> None:
         d = ReasoningTurnDecision(reasoning="", action="submit")
-        assert _to_outcome_confidence(d) == OutcomeConfidence.UNKNOWN
+        assert to_outcome_confidence(d) == OutcomeConfidence.UNKNOWN
 
 
 class TestOutcomePayload:
@@ -193,19 +197,28 @@ class TestOutcomePayload:
 
 
 class TestPromptLoading:
-    def test_audit_prompt_loads(self) -> None:
-        text = _load_prompt("vulnerability_research.audit")
+    async def test_audit_prompt_loads(self, test_db) -> None:
+        text = (await _load_prompt("vulnerability_research.audit")).body
         assert "audit-only investigation" in text
         assert "submit" in text
 
-    def test_unknown_strategy_falls_back_to_audit(self) -> None:
-        text = _load_prompt("vulnerability_research.discovery_research")
+    async def test_unknown_strategy_falls_back_to_audit(self, test_db) -> None:
+        text = (await _load_prompt("vulnerability_research.discovery_research")).body
         # Falls back to audit prompt for v0.3 v1 (other strategies stub)
         assert "audit-only investigation" in text
 
-    def test_completely_unknown_family_also_falls_back(self) -> None:
-        text = _load_prompt("weird.unknown_family")
+    async def test_completely_unknown_family_also_falls_back(self, test_db) -> None:
+        text = (await _load_prompt("weird.unknown_family")).body
         assert "audit-only investigation" in text
+
+    async def test_registered_production_version_overrides_file(self, test_db) -> None:
+        """A version registered and aliased 'production' for the key is
+        served instead of the file baseline (the RFC-09 deploy path)."""
+        key = _prompt_key("vulnerability_research.audit")
+        version = await _PROMPT_VERSION_STORE.register(key, "DEPLOYED PROMPT BODY")
+        await _PROMPT_VERSION_STORE.set_alias(key, "production", version)
+        text = (await _load_prompt("vulnerability_research.audit")).body
+        assert text == "DEPLOYED PROMPT BODY"
 
 
 class TestRenderOperatorMessagesSection:
@@ -453,13 +466,16 @@ class TestFetchToolSpecs:
 
 
     @pytest.mark.asyncio
-    async def test_android_apk_hits_both_android_and_audit_mcp(
+    async def test_android_apk_hits_all_three_bridges(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """F-2: android_apk targets need both android_mcp (APK facts:
-        manifest, perms, signing, behaviour classification) AND
-        audit_mcp (source-graph over the decompiled Java tree).
-        ida_headless must NOT be polled for this kind.
+        """android_apk targets now poll ALL three bridges: android_mcp
+        (APK-level facets), audit_mcp (source-graph over the jadx-
+        decompiled Java tree), AND ida_headless (native .so libraries
+        under lib/<abi>/). See _applicable_servers_for_kind in
+        src/aila/modules/vr/agents/vuln_researcher.py -- ida_headless
+        was intentionally added because excluding it forced agents to
+        hallucinate android_mcp calls for native analysis.
         """
         audit_calls: list[str] = []
         ida_calls: list[str] = []
@@ -494,17 +510,19 @@ class TestFetchToolSpecs:
         out = await _fetch_tool_specs(target_kind="android_apk")
         assert "android_mcp" in out
         assert "audit_mcp" in out
-        assert "ida_headless" not in out
+        assert "ida_headless" in out
         assert android_calls == ["hit"]
         assert audit_calls == ["hit"]
-        assert ida_calls == []
-        # Both bridges contribute their full filtered catalog.
+        assert ida_calls == ["hit"]
+        # Each bridge contributes its full filtered catalog.
         android_names = {s["name"] for s in out["android_mcp"]}
         assert "apktool_decode" in android_names
         assert "androguard_summary" in android_names
         assert "verify_capabilities" in android_names
         audit_names = {s["name"] for s in out["audit_mcp"]}
         assert "semantic_search" in audit_names
+        ida_names = {s["name"] for s in out["ida_headless"]}
+        assert "decompile" in ida_names
 
 
 class TestApplicableServersForKind:
@@ -516,15 +534,24 @@ class TestApplicableServersForKind:
     def test_native_binary_returns_ida_only(self) -> None:
         assert _applicable_servers_for_kind("native_binary") == {"ida_headless"}
 
-    def test_legacy_apk_still_routes_to_ida(self) -> None:
-        # Pre-existing "apk" kind ingests through ida_headless via the
-        # _ingest_binary path. F-2 must NOT widen this kind -- only the
-        # new "android_apk" gets the dual-bridge treatment.
-        assert _applicable_servers_for_kind("apk") == {"ida_headless"}
+    def test_legacy_apk_falls_through_to_unknown(self) -> None:
+        # "apk" is no longer a first-class kind (superseded by
+        # "android_apk"). It is not registered in _SOURCE_REPO_KINDS,
+        # _ANDROID_KINDS or _BINARY_KINDS, so the fallback branch
+        # returns every known bridge -- same as any other unrecognised
+        # kind. Live rows use "android_apk"; the legacy string is only
+        # exercised by this drift test.
+        out = _applicable_servers_for_kind("apk")
+        assert "ida_headless" in out
+        assert "audit_mcp" in out
+        assert "android_mcp" in out
 
-    def test_android_apk_returns_both_android_and_audit(self) -> None:
+    def test_android_apk_returns_all_three_bridges(self) -> None:
+        # android_apk needs android_mcp (APK-level facets), audit_mcp
+        # (source-graph over jadx-decompiled Java) AND ida_headless
+        # (native .so files under lib/<abi>/).
         assert _applicable_servers_for_kind("android_apk") == {
-            "android_mcp", "audit_mcp",
+            "android_mcp", "audit_mcp", "ida_headless",
         }
 
     def test_unknown_kind_defaults_to_every_bridge(self) -> None:
@@ -539,7 +566,7 @@ class TestMcpFamilyRuleForKind:
     right MCP family for the target kind.
     """
 
-    def test_android_apk_with_both_handles_names_both_servers(self) -> None:
+    def test_android_apk_with_both_handles_names_all_three_servers(self) -> None:
         rule = _mcp_family_rule_for_kind(
             "android_apk",
             {
@@ -551,24 +578,27 @@ class TestMcpFamilyRuleForKind:
         assert "android_mcp" in rule
         assert "idx-abc123" in rule
         assert "/tmp/sampleapp.apk" in rule
-        # The rule MUST NOT reach for ida_headless on this kind.
-        assert "ida_headless" not in rule
+        # ida_headless is now intentionally named for NATIVE LIBRARY
+        # analysis on lib/<abi>/*.so. Excluding it caused agents to
+        # skip native analysis entirely on APK targets.
+        assert "ida_headless" in rule
 
     def test_android_apk_missing_handles_still_emits_rule(self) -> None:
         rule = _mcp_family_rule_for_kind("android_apk", {})
         assert "audit_mcp" in rule
         assert "android_mcp" in rule
-        # When ingestion handles aren't ready yet, the rule should still
-        # name both bridges so the agent doesn't drift to ida_headless.
-        assert "ida_headless" not in rule
-
-    def test_legacy_apk_kind_still_routes_to_ida(self) -> None:
-        # The legacy "apk" kind (binary-style ingestion) stays on
-        # ida_headless. Only "android_apk" gets the new dual-bridge
-        # rule.
-        rule = _mcp_family_rule_for_kind("apk", {"binary_id": "b_xyz"})
+        # ida_headless is named unconditionally for android_apk (see
+        # the sibling test above); the RULE talks about NATIVE
+        # LIBRARY analysis for every android_apk target.
         assert "ida_headless" in rule
-        assert "android_mcp" not in rule
+
+    def test_legacy_apk_kind_has_no_rule(self) -> None:
+        # The legacy "apk" string is not in _mcp_family_rule_for_kind's
+        # dispatch table anymore; live rows all carry "android_apk".
+        # The function returns "" for unrecognised kinds -- callers
+        # concatenate unconditionally, so an empty rule is a no-op.
+        rule = _mcp_family_rule_for_kind("apk", {"binary_id": "b_xyz"})
+        assert rule == ""
 
 
 class TestSnapshotTargetAndroidApk:

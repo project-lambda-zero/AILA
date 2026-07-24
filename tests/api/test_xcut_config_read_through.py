@@ -44,7 +44,11 @@ async def platform_config_client(test_db) -> AsyncGenerator[AsyncClient, None]:
     from aila.platform.runtime.tools import ToolRegistry
 
     config_registry = ConfigRegistry()
-    config_registry.register("platform", PlatformConfigSchema)
+    # ConfigRegistry.register is async (registry.py:108) -- seeds default rows
+    # into ConfigEntryRecord via async_session_scope. A missing await here left
+    # _schemas empty, so every PUT below rejected as 422 with 'No schema
+    # registered for namespace platform.'
+    await config_registry.register("platform", PlatformConfigSchema)
 
     tool_registry = ToolRegistry()
 

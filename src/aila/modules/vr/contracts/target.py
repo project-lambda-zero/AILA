@@ -24,6 +24,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from aila.platform.contracts.enums import AnalysisState, TargetStatus, TargetTagSource
+
 __all__ = [
     "AnalysisState",
     "TargetKind",
@@ -53,37 +55,6 @@ class TargetKind(StrEnum):
     KERNEL_IMAGE = "kernel_image"
     KERNEL_MODULE = "kernel_module"
     HYPERVISOR_IMAGE = "hypervisor_image"
-
-
-class TargetStatus(StrEnum):
-    """Operator lifecycle state."""
-
-    ACTIVE = "active"
-    ARCHIVED = "archived"
-    QUARANTINED = "quarantined"
-
-
-class AnalysisState(StrEnum):
-    """Backend ingestion + capability-profile lifecycle (v0.4.5).
-
-    Operator-facing -- the UI renders each value as a clear sentence
-    ('Pulling from GitHub…' / 'Analyzing in IDA…' / 'Ready' /
-    'Failed: <reason>'). Code reads the enum; UI never shows the
-    raw value.
-    """
-
-    PENDING = "pending"        # created, ingestion not yet started
-    INGESTING = "ingesting"    # uploading / cloning / indexing in progress
-    READY = "ready"            # backend handles populated, ready for use
-    FAILED = "failed"          # ingestion errored; analysis_state_message has the reason
-
-
-class TargetTagSource(StrEnum):
-    """Provenance of a tag attached to a target (D-52)."""
-
-    OPERATOR = "operator"
-    SYSTEM = "system"
-    PATTERN = "pattern"
 
 
 class TargetTag(BaseModel):

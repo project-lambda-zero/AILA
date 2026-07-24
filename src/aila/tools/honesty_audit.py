@@ -1,6 +1,6 @@
 """honesty_audit -- AST-based structural honesty checker for Python code.
 
-Detects thirty-three categories of structural dishonesty:
+Detects thirty-six categories of structural dishonesty:
 
 1. unused_parameter    -- function parameter accepted but never referenced in body.
 2. misleading_name     -- function name implies intelligence but body only forwards.
@@ -35,6 +35,22 @@ Detects thirty-three categories of structural dishonesty:
 31. placeholder_return  -- function body is only a docstring + return {} or return []; no real logic.
 32. log_format_concat   -- logging call uses string concatenation/f-string instead of %-formatting.
 33. broad_exception_catch -- except Exception without a justifying comment (catches everything indiscriminately).
+34. hoisted_enum_redeclared -- a unified vr/malware module redeclares a StrEnum owned by platform.contracts.enums (RFC-01).
+35. unnamed_derived_constraint -- a unified vr/malware table hard-codes a UQ name instead of deriving via TabledUq.
+36. shadowed_platform_base -- a unified vr/malware table recreates a platform base's columns instead of subclassing it.
+37. module_config_schema_base -- a module config schema subclasses bare BaseModel instead of ModuleConfigBase (loses extra=forbid).
+38. service_copy_of_platform -- a vr/malware service file is a full copy of a platform service instead of a thin binding.
+39. cost_read_stored_actual -- a vr/malware lifecycle api_router reads the dead cost_actual_usd column in a response instead of aggregating live cost.
+40. lifecycle_handler_bypass_service -- a pause/resume/re-enqueue route handler writes investigation .status directly instead of calling the platform lifecycle service.
+41. workflow_state_copy_of_platform -- a vr/malware investigation state file duplicates a platform workflow-state base instead of binding the factory.
+42. agent_primitive_reimplementation -- a module agents/ file defines a platform-owned agent primitive (auto-steering injector / intent classifier) at top level instead of importing it.
+43. agent_llm_chat_bypass -- a module agents/ file calls llm_client.chat/chat_json/chat_structured directly instead of routing through platform idempotent_llm_call (double-pays the model on retry).
+44. private_platform_import -- a module imports a platform-private submodule symbol (tools._common, mcp.adapters._shared) that the public package already re-exports; import from the public path instead (RFC-05 concern f).
+45. module_prefix_in_platform_tool_name -- a platform MCP bridge hard-codes a module-prefixed tool name literal (name = "vr.audit_mcp_bridge"); derive the name from a constructor module_id instead (RFC-05 concern b).
+46. platform_owns_event_vocabulary -- an event class under platform/events/ carries module-domain vocabulary (scan/finding/investigation or a module id) in its class name or event_type; the platform owns only generic infrastructure events (RFC-05 concern c).
+47. raw_sql_platform_tables -- a module file issues raw SQL against a platform-owned task table (taskrecord, workflow_state_cursor); route through a platform lifecycle / TaskQueue service instead (RFC-05 Phase 6).
+48. platform_names_module -- a boundary-guarded file (api/, platform/, storage/) resolves a specific feature module by naming its id in a .require("vulnerability") / .require_module("forensics") call; resolve domain data by capability via ModuleRegistry.first_with/all_with instead (RFC-05 concerns a/g).
+49. agent_env_read -- a module agents/ file reads config via os.environ / os.getenv (attribute access or `from os import environ/getenv`) instead of platform ConfigRegistry; the RFC-03 lift removed every direct env read from module agent runtimes and this rule locks the closure in.
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -57,6 +73,7 @@ Design constraints (D-04):
 from __future__ import annotations
 
 import ast
+import difflib
 import logging
 import re as _re
 import sys
@@ -196,6 +213,28 @@ def _owning_module_id(filepath: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _endpoint_route_path(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> str | None:
+    """Return the route path from a ``@router.<verb>("...")`` decorator.
+
+    Returns the first positional string argument of the first router verb
+    decorator on *node*, or None when the function is not a route handler.
+    """
+    for dec in node.decorator_list:
+        if not isinstance(dec, ast.Call) or not isinstance(dec.func, ast.Attribute):
+            continue
+        if dec.func.attr not in {"get", "post", "put", "delete", "patch"}:
+            continue
+        if (
+            dec.args
+            and isinstance(dec.args[0], ast.Constant)
+            and isinstance(dec.args[0].value, str)
+        ):
+            return dec.args[0].value
+    return None
+
+
 _BOUNDARY_GUARDED_PATTERN = _re.compile(r"[/\\]aila[/\\](api|platform|storage)[/\\]")
 
 
@@ -206,10 +245,83 @@ def _is_boundary_guarded_file(filepath: str) -> bool:
 
 _MODULE_FILE_PATTERN = _re.compile(r"[/\\]aila[/\\]modules[/\\]")
 
+# Rule 37 -- module config schemas must subclass ModuleConfigBase.
+_CONFIG_SCHEMA_PATH_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]modules[/\\][a-z][a-z0-9_]*[/\\]config_schema\.py$"
+)
+
 
 def _is_module_file(filepath: str) -> bool:
     """Return True if *filepath* is inside the aila/modules/ package."""
     return bool(_MODULE_FILE_PATTERN.search(filepath.replace("\\", "/")))
+
+
+# Rule 45 -- module_prefix_in_platform_tool_name. Platform MCP bridge tool
+# names must derive from a constructor module_id, not a hard-coded literal
+# that names a module.
+_BRIDGE_FILE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]platform[/\\]mcp[/\\]bridges[/\\]"
+)
+_MODULE_TOOL_PREFIX_RE = _re.compile(
+    r"^(vr|vulnerability|forensics|malware|hello_world)\."
+)
+
+
+def _module_prefixed_name_literal(value: ast.expr | None) -> str | None:
+    """Return the string when *value* is a module-prefixed name literal."""
+    if (
+        isinstance(value, ast.Constant)
+        and isinstance(value.value, str)
+        and _MODULE_TOOL_PREFIX_RE.match(value.value)
+    ):
+        return value.value
+    return None
+
+
+# Rule 46 -- platform_owns_event_vocabulary. Event classes under
+# platform/events/ must not carry module-domain vocabulary; the platform
+# owns only generic infrastructure events (system lifecycle, config
+# change, assessment lifecycle, LLM accounting).
+_EVENTS_FILE_PATTERN = _re.compile(r"[/\\]aila[/\\]platform[/\\]events[/\\]")
+_EVENT_DOMAIN_TOKENS: frozenset[str] = frozenset({
+    "scan", "finding", "investigation", "malware", "vulnerability", "forensics",
+})
+
+
+# Rule 47 -- raw_sql_platform_tables. Modules must not issue raw SQL against
+# platform-owned task tables; route through a platform lifecycle / TaskQueue
+# service. Matches a FROM|INTO|UPDATE|JOIN <table> clause shape inside any
+# string constant so the call wrapper (text / sa_text / execute) is
+# irrelevant, while SQL-ish prose without the clause shape is not flagged.
+_RAW_SQL_PLATFORM_TABLE_RE = _re.compile(
+    r"\b(from|into|update|join)\s+(taskrecord|workflow_state_cursor)\b",
+    _re.IGNORECASE,
+)
+
+# Rule 48 -- platform_names_module. Feature module ids a boundary-guarded file
+# must never name in a registry require(...) call. The platform resolves domain
+# data by capability (ModuleRegistry.first_with/all_with), never by module id.
+_DOMAIN_MODULE_IDS = frozenset(
+    {"vulnerability", "forensics", "malware", "vr", "hello_world"}
+)
+
+
+def _event_type_string_literal(stmt: ast.stmt) -> str | None:
+    """Return the string assigned to an ``event_type`` field, or None."""
+    value: ast.expr | None = None
+    if (
+        isinstance(stmt, ast.AnnAssign)
+        and isinstance(stmt.target, ast.Name)
+        and stmt.target.id == "event_type"
+    ):
+        value = stmt.value
+    elif isinstance(stmt, ast.Assign) and any(
+        isinstance(t, ast.Name) and t.id == "event_type" for t in stmt.targets
+    ):
+        value = stmt.value
+    if isinstance(value, ast.Constant) and isinstance(value.value, str):
+        return value.value
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -567,6 +679,343 @@ def _body_has_cache_impl(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     """Return True if the body contains any identifier associated with caching."""
     body_ids = _collect_body_identifiers(func)
     return bool(body_ids & _CACHE_IMPL_IDENTIFIERS)
+
+
+# ---------------------------------------------------------------------------
+# RFC-01 re-duplication guardrails (rules 34-36)
+# ---------------------------------------------------------------------------
+
+# The enums hoisted to aila.platform.contracts.enums. A module must import
+# these rather than redeclare them. Module-owned enums (WorkspaceTheme,
+# TargetKind, etc.) are deliberately absent from this set.
+_HOISTED_ENUM_NAMES: frozenset[str] = frozenset({
+    "WorkspaceStatus", "TargetStatus", "AnalysisState", "TargetTagSource",
+    "BranchStatus", "PersonaVoice", "BranchOperation", "InvestigationStatus",
+    "InvestigationPauseReason", "OutcomeConfidence", "OutcomeDispatchStatus",
+    "SenderKind", "OperatorIntent", "PatternStatus", "PatternScope",
+    "PatternConfidence", "HypothesisState", "StageState", "StageName",
+})
+
+# Modules whose investigation-engine tables RFC-01 unified onto the platform
+# record bases. Other modules (forensics, vulnerability) keep independent
+# table shapes and are outside the scope of the derived-name + subclass rules.
+_RFC01_UNIFIED_MODULES: frozenset[str] = frozenset({"vr", "malware"})
+
+# Unified table role (tablename with the module prefix removed) mapped to the
+# platform base class the concrete must subclass.
+_UNIFIED_ROLE_BASES: dict[str, str] = {
+    "workspaces": "WorkspaceRecordBase",
+    "targets": "TargetRecordBase",
+    "target_tag_index": "TargetTagIndexBase",
+    "investigations": "InvestigationRecordBase",
+    "investigation_messages": "MessageRecordBase",
+    "investigation_branches": "BranchRecordBase",
+    "investigation_outcomes": "OutcomeRecordBase",
+    "outcome_reviews": "OutcomeReviewRecordBase",
+    "mcp_call_log": "McpCallLogRecordBase",
+    "investigation_targets": "InvestigationTargetRecordBase",
+    "patterns": "PatternRecordBase",
+    "projects": "ProjectRecordBase",
+}
+
+# Platform base class mapped to the *_base.py file under platform/contracts/
+# that defines it (two share target_base.py).
+_BASE_FILE_BY_CLASS: dict[str, str] = {
+    "WorkspaceRecordBase": "workspace_base.py",
+    "TargetRecordBase": "target_base.py",
+    "TargetTagIndexBase": "target_base.py",
+    "InvestigationRecordBase": "investigation_base.py",
+    "MessageRecordBase": "message_base.py",
+    "BranchRecordBase": "branch_base.py",
+    "OutcomeRecordBase": "outcome_base.py",
+    "OutcomeReviewRecordBase": "outcome_review_base.py",
+    "McpCallLogRecordBase": "mcp_call_log_base.py",
+    "InvestigationTargetRecordBase": "investigation_target_base.py",
+    "PatternRecordBase": "pattern_base.py",
+    "ProjectRecordBase": "project_base.py",
+}
+
+# Cache of platform base field-name sets, keyed by (base_file_path, class_name).
+_BASE_FIELD_CACHE: dict[tuple[str, str], frozenset[str]] = {}
+
+_CONTRACTS_DIR_PATTERN = _re.compile(r"^(.*/aila)/modules/")
+
+# Rule 38 -- module service files must not be full copies of a platform
+# service. Scoped to the vr/malware copy set (forensics keeps an
+# independent machine_readiness variant, outside the check).
+_SERVICE_COPY_SCOPE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]modules[/\\](?:vr|malware)[/\\]services[/\\][^/\\]+\.py$"
+)
+_PLATFORM_SERVICE_SUBDIRS: tuple[str, ...] = ("services", "mcp", "tasks")
+_SERVICE_COPY_THRESHOLD: float = 0.75
+_SERVICE_CORPUS_CACHE: dict[str, dict[str, str]] = {}
+
+
+def _platform_service_corpus(filepath: str) -> dict[str, str]:
+    """Return {relpath: normalized_source} for every platform service file.
+
+    Reads platform/services, platform/mcp, and platform/tasks so a module
+    service copied from any of them is caught. Each source is normalized via
+    ast.unparse (comments and formatting removed); cached per aila root.
+    """
+    match = _CONTRACTS_DIR_PATTERN.search(filepath.replace("\\", "/"))
+    if match is None:
+        return {}
+    aila_root = match.group(1)
+    cached = _SERVICE_CORPUS_CACHE.get(aila_root)
+    if cached is not None:
+        return cached
+    corpus: dict[str, str] = {}
+    for subdir in _PLATFORM_SERVICE_SUBDIRS:
+        base = Path(aila_root) / "platform" / subdir
+        if not base.is_dir():
+            continue
+        for py in sorted(base.glob("*.py")):
+            if py.name == "__init__.py":
+                continue
+            try:
+                normalized = ast.unparse(ast.parse(py.read_text(encoding="utf-8")))
+            except (OSError, SyntaxError, ValueError, RecursionError):
+                continue
+            corpus[f"{subdir}/{py.name}"] = normalized
+    _SERVICE_CORPUS_CACHE[aila_root] = corpus
+    return corpus
+
+
+# Rule 41 -- module workflow-state files must not be full copies of a
+# platform workflow-state base. Scoped to the vr/malware investigation
+# engine states (setup/loop/emit), which RFC-02 Phase 4 extracted to
+# platform/workflows/investigation_*_base.py.
+_WORKFLOW_STATE_SCOPE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]modules[/\\](?:vr|malware)[/\\]workflow[/\\]states[/\\]"
+    r"investigation_(?:setup|loop|emit)\.py$"
+)
+_WORKFLOW_BASE_CORPUS_CACHE: dict[str, dict[str, str]] = {}
+
+# Rule 42 -- module agents/ files must not re-implement a platform agent
+# primitive. RFC-03 Phase 1 lifted the operator-intent classifier and the
+# auto-steering injector to platform/agents/; Phase 7 lifted the per-turn
+# loop (AgentTurnRunnerBase.run_turn) and the case-state codec / terminal
+# resolver helpers (aila.platform.agents.turn_helpers). Modules import
+# them; a def of a lifted primitive -- whether at module top level or as a
+# method redefinition on a class body -- is a copy that drifted back in.
+# Import re-exports are Import/ImportFrom statements, not FunctionDefs, so
+# they never trip this. A thin subclass ``class VrRunner(AgentTurnRunnerBase):
+# pass`` inherits the platform method without defining one, so it stays
+# clean; only an actual ``async def run_turn`` in the class body fires.
+_AGENTS_SCOPE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]modules[/\\][^/\\]+[/\\]agents[/\\]"
+)
+_LIFTED_AGENT_PRIMITIVES: frozenset[str] = frozenset({
+    # Phase 1 lifts.
+    "maybe_post_auto_steering",
+    "classify_intent",
+    # Phase 7 turn-runner + turn-helpers lifts.
+    "run_turn",
+    "decode_case_state",
+    "encode_case_state",
+    "auto_resolve_live_on_terminal",
+    "to_outcome_confidence",
+})
+
+# Rule 49 -- agent_env_read. Attribute names on the ``os`` module that
+# reach the process environment. RFC-03's config-drift closure removed
+# every direct env read from ``modules/*/agents/**``; modules resolve
+# config through ``ConfigRegistry(module_id, key)`` so a DB override,
+# a per-module schema default, and env can all take turns without a
+# hand-coded fork per copy.
+_OS_ENV_ATTRS: frozenset[str] = frozenset({"environ", "getenv"})
+
+
+def _workflow_base_corpus(filepath: str) -> dict[str, str]:
+    """Return {relpath: normalized_source} for platform workflow-state bases.
+
+    Reads platform/workflows/investigation_*_base.py so a module state
+    file copied back from a platform base is caught. Normalized via
+    ast.unparse; cached per aila root.
+    """
+    match = _CONTRACTS_DIR_PATTERN.search(filepath.replace("\\", "/"))
+    if match is None:
+        return {}
+    aila_root = match.group(1)
+    cached = _WORKFLOW_BASE_CORPUS_CACHE.get(aila_root)
+    if cached is not None:
+        return cached
+    corpus: dict[str, str] = {}
+    base = Path(aila_root) / "platform" / "workflows"
+    if base.is_dir():
+        for py in sorted(base.glob("investigation_*_base.py")):
+            try:
+                normalized = ast.unparse(
+                    ast.parse(py.read_text(encoding="utf-8")),
+                )
+            except (OSError, SyntaxError, ValueError, RecursionError):
+                continue
+            corpus[f"workflows/{py.name}"] = normalized
+    _WORKFLOW_BASE_CORPUS_CACHE[aila_root] = corpus
+    return corpus
+
+
+def _classdef_is_table(node: ast.ClassDef) -> bool:
+    """Return True when a class is declared with the SQLModel table=True flag."""
+    for kw in node.keywords:
+        if kw.arg == "table" and isinstance(kw.value, ast.Constant) and kw.value.value is True:
+            return True
+    return False
+
+
+def _classdef_tablename(node: ast.ClassDef) -> str | None:
+    """Return the literal __tablename__ string assigned in a class body, or None."""
+    for stmt in node.body:
+        if not isinstance(stmt, ast.Assign):
+            continue
+        value = stmt.value
+        if not (isinstance(value, ast.Constant) and isinstance(value.value, str)):
+            continue
+        for target in stmt.targets:
+            if isinstance(target, ast.Name) and target.id == "__tablename__":
+                return value.value
+    return None
+
+
+def _classdef_base_names(node: ast.ClassDef) -> set[str]:
+    """Return the simple names of a class's declared bases."""
+    names: set[str] = set()
+    for base in node.bases:
+        if isinstance(base, ast.Name):
+            names.add(base.id)
+        elif isinstance(base, ast.Attribute):
+            names.add(base.attr)
+    return names
+
+
+def _sqlmodel_field_names(node: ast.ClassDef) -> set[str]:
+    """Return the annotated (non-dunder) field names declared directly on a class."""
+    names: set[str] = set()
+    for stmt in node.body:
+        if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+            field = stmt.target.id
+            if not field.startswith("__"):
+                names.add(field)
+    return names
+
+
+def _unique_constraint_literal_names(node: ast.ClassDef):
+    """Yield (literal_name, lineno) for each UniqueConstraint(name=<str>) in the class body."""
+    for stmt in node.body:
+        if not (isinstance(stmt, ast.Assign) and _assigns_table_args(stmt)):
+            continue
+        for call in ast.walk(stmt.value):
+            if not isinstance(call, ast.Call):
+                continue
+            callee = call.func
+            is_uq = (isinstance(callee, ast.Name) and callee.id == "UniqueConstraint") or (
+                isinstance(callee, ast.Attribute) and callee.attr == "UniqueConstraint"
+            )
+            if not is_uq:
+                continue
+            for kw in call.keywords:
+                if kw.arg == "name" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                    yield kw.value.value, call.lineno
+
+
+def _assigns_table_args(stmt: ast.Assign) -> bool:
+    """Return True when an assignment targets __table_args__."""
+    return any(isinstance(t, ast.Name) and t.id == "__table_args__" for t in stmt.targets)
+
+
+def _strip_module_prefix(tablename: str, module_id: str) -> str:
+    """Return the table role: the tablename with a leading '<module_id>_' removed."""
+    prefix = f"{module_id}_"
+    return tablename[len(prefix):] if tablename.startswith(prefix) else tablename
+
+
+def _platform_contracts_dir(filepath: str) -> Path | None:
+    """Resolve the platform/contracts directory from a module file path, or None."""
+    match = _CONTRACTS_DIR_PATTERN.search(filepath.replace("\\", "/"))
+    if match is None:
+        return None
+    return Path(match.group(1)) / "platform" / "contracts"
+
+
+# Rule 44 -- private_platform_import. Cache of a platform package's public
+# name set (its __init__.py __all__ members plus names bound by relative
+# re-export imports), keyed by the __init__.py path.
+_PLATFORM_PUBLIC_EXPORTS_CACHE: dict[str, frozenset[str]] = {}
+
+
+def _aila_root_from_module(filepath: str) -> Path | None:
+    """Resolve the aila package root from a module file path, or None."""
+    match = _CONTRACTS_DIR_PATTERN.search(filepath.replace("\\", "/"))
+    if match is None:
+        return None
+    return Path(match.group(1))
+
+
+def _platform_public_exports(init_path: Path) -> frozenset[str]:
+    """Return the public names published by a platform package.
+
+    A name is public when the package's ``__init__.py`` lists it in ``__all__``
+    or binds it via a relative re-export (``from ._x import Name``). Read via
+    AST and cached. Any read/parse failure yields an empty set so the caller
+    skips defensively rather than raising inside the gate.
+    """
+    key = str(init_path)
+    cached = _PLATFORM_PUBLIC_EXPORTS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    names: set[str] = set()
+    try:
+        tree = ast.parse(init_path.read_text(encoding="utf-8"), filename=key)
+    except (OSError, SyntaxError):
+        result = frozenset(names)
+        _PLATFORM_PUBLIC_EXPORTS_CACHE[key] = result
+        return result
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.level and node.names:
+            for alias in node.names:
+                if alias.name != "*":
+                    names.add(alias.asname or alias.name)
+            continue
+        targets: list[ast.expr] = []
+        if isinstance(node, ast.Assign):
+            targets = list(node.targets)
+        elif isinstance(node, ast.AugAssign):
+            targets = [node.target]
+        if not any(isinstance(t, ast.Name) and t.id == "__all__" for t in targets):
+            continue
+        value = node.value
+        if isinstance(value, (ast.List, ast.Tuple)):
+            for elt in value.elts:
+                if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                    names.add(elt.value)
+    result = frozenset(names)
+    _PLATFORM_PUBLIC_EXPORTS_CACHE[key] = result
+    return result
+
+
+def _platform_base_field_names(base_file: Path, base_class: str) -> frozenset[str]:
+    """Return the field-name set of a platform base class, read via AST and cached.
+
+    Returns an empty set when the file or class cannot be resolved so the caller
+    skips defensively rather than raising inside the gate.
+    """
+    cache_key = (str(base_file), base_class)
+    cached = _BASE_FIELD_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    result: frozenset[str] = frozenset()
+    try:
+        tree = ast.parse(base_file.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        _BASE_FIELD_CACHE[cache_key] = result
+        return result
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == base_class:
+            result = frozenset(_sqlmodel_field_names(node))
+            break
+    _BASE_FIELD_CACHE[cache_key] = result
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1082,6 +1531,34 @@ class _HonestyVisitor(ast.NodeVisitor):
                         f"{layer} file imports from '{node.module}' -- use module contracts, registry lookups, or injected adapters instead",
                     )
 
+    def _check_platform_names_module(self, tree: ast.Module) -> None:
+        """Rule 48: platform_names_module -- a boundary-guarded file resolves a
+        specific feature module by naming its id.
+
+        A ``.require("vulnerability")`` / ``.require_module("forensics")`` call
+        welds the platform or API layer to one module. Resolve domain data by
+        capability instead (ModuleRegistry.first_with / all_with) so the layer
+        names no module. Dynamic (variable) arguments are not flagged.
+        """
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not isinstance(func, ast.Attribute) or func.attr not in ("require", "require_module"):
+                continue
+            if not node.args or not isinstance(node.args[0], ast.Constant):
+                continue
+            value = node.args[0].value
+            if not isinstance(value, str) or value not in _DOMAIN_MODULE_IDS:
+                continue
+            self._emit(
+                node.lineno,
+                "platform_names_module",
+                f"platform_names_module: .{func.attr}({value!r}) names a feature "
+                f"module -- resolve by capability via "
+                f"ModuleRegistry.first_with/all_with instead",
+            )
+
     def _check_import_boundary(self, tree: ast.Module, module_id: str) -> None:
         """Rule: import_boundary.
 
@@ -1144,6 +1621,178 @@ class _HonestyVisitor(ast.NodeVisitor):
                                 f"'{alias.name}' from storage.database -- use "
                                 f"Platform Services (SDA-05)",
                             )
+
+    def _check_module_prefix_in_tool_name(self, tree: ast.Module) -> None:
+        """Rule 45: module_prefix_in_platform_tool_name -- a platform MCP
+        bridge hard-codes a module-prefixed tool name literal.
+
+        Bridge tool names surface in agent prompts; a literal like
+        ``vr.audit_mcp_bridge`` welds the platform bridge to one module.
+        The name must be built from the constructor's ``module_id``
+        (an f-string / attribute), not a string constant. Flags a
+        class-level ``name = "<prefix>.…"`` / ``name: str = "<prefix>.…"``
+        or a ``self.name = "<prefix>.…"`` assignment where the prefix is a
+        known module id.
+        """
+        if not _BRIDGE_FILE_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        for cls in ast.walk(tree):
+            if not isinstance(cls, ast.ClassDef):
+                continue
+            for stmt in cls.body:
+                if isinstance(stmt, ast.Assign) and any(
+                    isinstance(t, ast.Name) and t.id == "name" for t in stmt.targets
+                ):
+                    literal = _module_prefixed_name_literal(stmt.value)
+                    if literal is not None:
+                        self._emit_tool_name_finding(literal, stmt.lineno)
+                elif (
+                    isinstance(stmt, ast.AnnAssign)
+                    and isinstance(stmt.target, ast.Name)
+                    and stmt.target.id == "name"
+                ):
+                    literal = _module_prefixed_name_literal(stmt.value)
+                    if literal is not None:
+                        self._emit_tool_name_finding(literal, stmt.lineno)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            for tgt in node.targets:
+                if (
+                    isinstance(tgt, ast.Attribute)
+                    and tgt.attr == "name"
+                    and isinstance(tgt.value, ast.Name)
+                    and tgt.value.id == "self"
+                ):
+                    literal = _module_prefixed_name_literal(node.value)
+                    if literal is not None:
+                        self._emit_tool_name_finding(literal, node.lineno)
+
+    def _check_platform_owns_event_vocabulary(self, tree: ast.Module) -> None:
+        """Rule 46: platform_owns_event_vocabulary -- a platform event class
+        carries module-domain vocabulary.
+
+        The platform owns generic infrastructure events (system lifecycle,
+        config change, assessment lifecycle, LLM accounting). An event
+        class under platform/events/ whose name -- or whose ``event_type``
+        literal -- contains a module-domain token (scan, finding,
+        investigation, or a module id) belongs to a module, not the
+        platform.
+        """
+        if not _EVENTS_FILE_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            low_name = node.name.lower()
+            name_hit = next((t for t in _EVENT_DOMAIN_TOKENS if t in low_name), None)
+            if name_hit is not None:
+                self._emit(
+                    node.lineno,
+                    "platform_owns_event_vocabulary",
+                    f"platform_owns_event_vocabulary: event class {node.name!r} "
+                    f"carries module-domain token {name_hit!r} -- domain events "
+                    f"belong to the owning module, not the platform",
+                )
+                continue
+            for stmt in node.body:
+                literal = _event_type_string_literal(stmt)
+                if literal is None:
+                    continue
+                low_lit = literal.lower()
+                lit_hit = next((t for t in _EVENT_DOMAIN_TOKENS if t in low_lit), None)
+                if lit_hit is not None:
+                    self._emit(
+                        stmt.lineno,
+                        "platform_owns_event_vocabulary",
+                        f"platform_owns_event_vocabulary: event_type {literal!r} "
+                        f"on class {node.name!r} carries module-domain token "
+                        f"{lit_hit!r} -- domain events belong to the owning module",
+                    )
+
+    def _emit_tool_name_finding(self, literal: str, lineno: int) -> None:
+        """Emit a module_prefix_in_platform_tool_name finding."""
+        self._emit(
+            lineno,
+            "module_prefix_in_platform_tool_name",
+            f"module_prefix_in_platform_tool_name: tool name literal "
+            f"{literal!r} hard-codes a module prefix -- derive the name "
+            f"from a constructor module_id instead",
+        )
+
+    def _check_raw_sql_platform_tables(self, tree: ast.Module) -> None:
+        """Rule 47: raw_sql_platform_tables -- module file issues raw SQL
+        against a platform-owned task table.
+
+        ``taskrecord`` and ``workflow_state_cursor`` are platform-owned. A
+        module that writes raw SQL against them (a DELETE / SELECT / UPDATE
+        string literal with a ``FROM|INTO|UPDATE|JOIN <table>`` clause)
+        bypasses the platform's ownership of the task lifecycle. Route
+        through a platform service instead
+        (investigation_lifecycle.purge_investigation_cursors, TaskQueue).
+        The match is on the clause shape inside any string constant, so the
+        call wrapper (text / sa_text / session.execute) is irrelevant and
+        SQL-ish prose without the clause shape is left alone.
+        """
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            match = _RAW_SQL_PLATFORM_TABLE_RE.search(node.value)
+            if match is not None:
+                self._emit(
+                    node.lineno,
+                    "raw_sql_platform_tables",
+                    f"raw_sql_platform_tables: raw SQL against platform table "
+                    f"{match.group(2)!r} -- route through a platform lifecycle "
+                    f"/ TaskQueue service, never raw SQL from a module",
+                )
+
+    def _check_private_platform_import(self, tree: ast.Module) -> None:
+        """Rule 44: private_platform_import -- module reaches into a platform
+        private submodule for a publicly re-exported symbol.
+
+        A module file importing ``from aila.platform.<pkg>._<priv> import Name``
+        where ``Name`` is already published by ``aila.platform.<pkg>`` (its
+        ``__init__`` re-exports it or lists it in ``__all__``) is a finding: it
+        pins the module to an implementation path the platform is free to move.
+        Import from the public package instead. A private symbol with no public
+        counterpart is left alone -- the fence has no gate there.
+        """
+        aila_root = _aila_root_from_module(self.filename)
+        if aila_root is None:
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom) or node.module is None:
+                continue
+            mod = node.module
+            if not mod.startswith("aila.platform."):
+                continue
+            segs = mod.split(".")
+            priv_idx = next(
+                (i for i in range(2, len(segs)) if segs[i].startswith("_")),
+                None,
+            )
+            if priv_idx is None:
+                continue
+            public_segs = segs[:priv_idx]
+            init_path = aila_root.joinpath(
+                "platform", *public_segs[2:], "__init__.py",
+            )
+            public_names = _platform_public_exports(init_path)
+            if not public_names:
+                continue
+            public_pkg = ".".join(public_segs)
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                if alias.name in public_names:
+                    self._emit(
+                        node.lineno,
+                        "private_platform_import",
+                        f"private_platform_import: 'from {mod} import "
+                        f"{alias.name}' -- {alias.name} is publicly re-exported "
+                        f"from {public_pkg}; import from there",
+                    )
 
     def _check_asyncio_in_module(self, tree: ast.Module) -> None:
         """Rule 18: asyncio_in_module -- threading primitives banned from modules/.
@@ -1680,6 +2329,453 @@ class _HonestyVisitor(ast.NodeVisitor):
                     f"use honesty_whitelist.py with a documented justification instead",
                 )
 
+    def _check_hoisted_enum_redeclared(self, tree: ast.Module, module_id: str) -> None:
+        """Rule 34: hoisted_enum_redeclared -- a unified module redeclares a platform enum.
+
+        The enums in _HOISTED_ENUM_NAMES are owned by
+        aila.platform.contracts.enums. A vr/malware contracts file must import
+        them, never declare its own StrEnum of the same name. Scoped to the
+        unified modules: forensics and vulnerability keep independent enums that
+        happen to share a class name (e.g. their own InvestigationStatus).
+        """
+        if module_id not in _RFC01_UNIFIED_MODULES:
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef) or node.name not in _HOISTED_ENUM_NAMES:
+                continue
+            if "StrEnum" not in _classdef_base_names(node):
+                continue
+            self._emit(
+                node.lineno,
+                "hoisted_enum_redeclared",
+                f"hoisted_enum_redeclared: enum '{node.name}' is owned by "
+                f"platform.contracts.enums -- import it instead of redeclaring",
+            )
+
+    def _check_unnamed_derived_constraint(self, tree: ast.Module, module_id: str) -> None:
+        """Rule 35: unnamed_derived_constraint -- a unified table hand-names a UQ.
+
+        A vr/malware investigation-engine table must derive its unique-constraint
+        name from the tablename via TabledUq, not hard-code a literal. Scoped to
+        the unified tables so other modules keep their own constraint names.
+        """
+        if module_id not in _RFC01_UNIFIED_MODULES:
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef) or not _classdef_is_table(node):
+                continue
+            tablename = _classdef_tablename(node)
+            if tablename is None:
+                continue
+            if _strip_module_prefix(tablename, module_id) not in _UNIFIED_ROLE_BASES:
+                continue
+            derived_prefix = f"uq_{tablename}_"
+            for literal, lineno in _unique_constraint_literal_names(node):
+                if not literal.startswith(derived_prefix):
+                    self._emit(
+                        lineno,
+                        "unnamed_derived_constraint",
+                        f"unnamed_derived_constraint: table '{tablename}' hard-codes "
+                        f"constraint name '{literal}' -- derive it via TabledUq "
+                        f"({derived_prefix}...)",
+                    )
+
+    def _check_shadowed_platform_base(self, tree: ast.Module, module_id: str) -> None:
+        """Rule 36: shadowed_platform_base -- a unified table recreates base columns.
+
+        A vr/malware investigation-engine table whose role maps to a platform
+        base must subclass that base, not redeclare its columns. Fires when the
+        class does not subclass the base yet redeclares four or more of its
+        fields. The base field set is read from platform/contracts via AST.
+        """
+        if module_id not in _RFC01_UNIFIED_MODULES:
+            return
+        contracts_dir = _platform_contracts_dir(self.filename)
+        if contracts_dir is None:
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef) or not _classdef_is_table(node):
+                continue
+            tablename = _classdef_tablename(node)
+            if tablename is None:
+                continue
+            base_class = _UNIFIED_ROLE_BASES.get(_strip_module_prefix(tablename, module_id))
+            if base_class is None or base_class in _classdef_base_names(node):
+                continue
+            base_file = contracts_dir / _BASE_FILE_BY_CLASS[base_class]
+            base_fields = _platform_base_field_names(base_file, base_class)
+            if not base_fields:
+                continue
+            overlap = _sqlmodel_field_names(node) & base_fields
+            if len(overlap) >= 4:
+                self._emit(
+                    node.lineno,
+                    "shadowed_platform_base",
+                    f"shadowed_platform_base: table '{tablename}' recreates "
+                    f"{len(overlap)} columns of {base_class} -- subclass "
+                    f"{base_class} instead",
+                )
+
+    def _check_config_schema_base(self, tree: ast.Module) -> None:
+        """Rule 37: module_config_schema_base -- a module config schema must
+        subclass ModuleConfigBase.
+
+        A ``*ConfigSchema`` class in a ``modules/<name>/config_schema.py``
+        file must subclass ``aila.platform.config_base.ModuleConfigBase``,
+        which bakes in ``extra=forbid``. Subclassing bare ``BaseModel``
+        lets an undeclared config key pass at construction instead of
+        failing closed -- the gap vulnerability carried before RFC-04
+        Phase 2.
+        """
+        if not _CONFIG_SCHEMA_PATH_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef) or not node.name.endswith("ConfigSchema"):
+                continue
+            if "ModuleConfigBase" in _classdef_base_names(node):
+                continue
+            self._emit(
+                node.lineno,
+                "module_config_schema_base",
+                f"module_config_schema_base: config schema '{node.name}' must "
+                "subclass ModuleConfigBase (bakes in extra=forbid) instead of "
+                "bare BaseModel",
+            )
+
+    def _check_service_copy_of_platform(self, tree: ast.Module) -> None:
+        """Rule 38: service_copy_of_platform -- a vr/malware service duplicates
+        a platform service.
+
+        A file under modules/vr/services or modules/malware/services whose
+        comment- and format-normalized body matches a platform service above
+        the similarity threshold is the copy-and-rename pattern RFC-04 lifted
+        out. After a service is lifted the module keeps only a thin binding, so
+        a high-similarity match means a full copy slipped back in. Length
+        asymmetry keeps thin bindings well under the threshold; only a
+        same-size copy trips it. Scoped to the vr/malware copy set; forensics
+        keeps an independent variant.
+        """
+        if not _SERVICE_COPY_SCOPE_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        try:
+            own = ast.unparse(tree)
+        except (ValueError, RecursionError):
+            return
+        if not own.strip():
+            return
+        best_name = ""
+        best_ratio = 0.0
+        own_len = len(own)
+        for name, platform_src in _platform_service_corpus(self.filename).items():
+            p_len = len(platform_src)
+            if p_len == 0:
+                continue
+            # Length ceiling: the best achievable ratio is 2*min/(sum). Below
+            # the threshold the pair cannot match, so skip the O(n*m) compare.
+            # This prunes every thin binding (short) against a full platform
+            # impl (long) in O(1).
+            if 2 * min(own_len, p_len) / (own_len + p_len) < _SERVICE_COPY_THRESHOLD:
+                continue
+            matcher = difflib.SequenceMatcher(None, own, platform_src)
+            if matcher.quick_ratio() < _SERVICE_COPY_THRESHOLD:
+                continue
+            ratio = matcher.ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_name = name
+        if best_ratio >= _SERVICE_COPY_THRESHOLD:
+            self._emit(
+                1,
+                "service_copy_of_platform",
+                f"service_copy_of_platform: normalized body is {best_ratio:.0%} "
+                f"similar to platform/{best_name}; lift the shared logic to the "
+                "platform and keep a thin binding here",
+            )
+
+    def _check_workflow_state_copy_of_platform(self, tree: ast.Module) -> None:
+        """Rule 41: workflow_state_copy_of_platform -- a vr/malware
+        investigation state file duplicates a platform state base.
+
+        RFC-02 Phase 4 extracted the setup/loop/emit turn engine to
+        platform/workflows/investigation_*_base.py; each module keeps only
+        a thin factory binding. A file whose normalized body matches a
+        platform base above the similarity threshold is a copy that
+        slipped back in. The length ceiling keeps thin bindings well under
+        the threshold; only a same-size copy trips it.
+        """
+        if not _WORKFLOW_STATE_SCOPE_PATTERN.search(
+            self.filename.replace("\\", "/"),
+        ):
+            return
+        try:
+            own = ast.unparse(tree)
+        except (ValueError, RecursionError):
+            return
+        if not own.strip():
+            return
+        best_name = ""
+        best_ratio = 0.0
+        own_len = len(own)
+        for name, base_src in _workflow_base_corpus(self.filename).items():
+            b_len = len(base_src)
+            if b_len == 0:
+                continue
+            if 2 * min(own_len, b_len) / (own_len + b_len) < _SERVICE_COPY_THRESHOLD:
+                continue
+            matcher = difflib.SequenceMatcher(None, own, base_src)
+            if matcher.quick_ratio() < _SERVICE_COPY_THRESHOLD:
+                continue
+            ratio = matcher.ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_name = name
+        if best_ratio >= _SERVICE_COPY_THRESHOLD:
+            self._emit(
+                1,
+                "workflow_state_copy_of_platform",
+                f"workflow_state_copy_of_platform: normalized body is "
+                f"{best_ratio:.0%} similar to platform/{best_name}; bind the "
+                "platform state factory instead of copying it",
+            )
+
+    def _check_agent_llm_chat_bypass(self, tree: ast.Module) -> None:
+        """Rule 43: agent_llm_chat_bypass -- a module agents/ file calls the
+        raw llm_client.chat() instead of the idempotent wrapper.
+
+        RFC-03 Phase 2 routes the module agent LLM calls through
+        platform.agents.idempotent_llm_call so a retried worker replays the
+        cached response instead of paying the model API a second time. A
+        direct ``<x>.llm_client.chat(...)`` / ``.chat_json(...)`` /
+        ``.chat_structured(...)`` (or the same on ``self._llm``) in a module
+        agents/ file is a bypass that reintroduces the double-pay.
+        """
+        if not _AGENTS_SCOPE_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        _methods = ("chat", "chat_json", "chat_structured")
+        _receivers = ("llm_client", "_llm")
+        # Pass 1: local names aliased to an llm client, e.g.
+        # ``client = ServiceFactory().llm_client`` or ``c = services.llm_client``.
+        # A later ``client.chat(...)`` reaches the model through a Name
+        # receiver that the attribute check alone would miss.
+        aliases: set[str] = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            val = node.value
+            if isinstance(val, ast.Attribute) and val.attr in _receivers:
+                for tgt in node.targets:
+                    if isinstance(tgt, ast.Name):
+                        aliases.add(tgt.id)
+        # Pass 2: flag chat* calls on an llm-client attribute OR an alias.
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            if not (isinstance(fn, ast.Attribute) and fn.attr in _methods):
+                continue
+            recv = fn.value
+            is_bypass = (
+                (isinstance(recv, ast.Attribute) and recv.attr in _receivers)
+                or (isinstance(recv, ast.Name) and recv.id in aliases)
+            )
+            if is_bypass:
+                self._emit(
+                    node.lineno,
+                    "agent_llm_chat_bypass",
+                    "agent_llm_chat_bypass: route this LLM call through "
+                    "platform.agents.idempotent_llm_call for retry safety",
+                )
+
+    def _check_agent_primitive_reimplementation(self, tree: ast.Module) -> None:
+        """Rule 42: agent_primitive_reimplementation -- a module agents/ file
+        defines a platform-owned agent primitive.
+
+        RFC-03 lifted the per-turn loop (``run_turn``), the case-state
+        codec (``decode_case_state`` / ``encode_case_state``), the
+        terminal live-hypothesis resolver (``auto_resolve_live_on_terminal``),
+        the outcome-confidence coercion (``to_outcome_confidence``), the
+        auto-steering injector (``maybe_post_auto_steering``), and the
+        operator-intent classifier (``classify_intent``) to
+        ``aila.platform.agents``. Modules import them; a def of any of
+        these names -- whether at module top level or as a method
+        redefinition on a class body -- is a copy that drifts from the
+        single platform implementation. Import re-exports are Import /
+        ImportFrom statements, not FunctionDefs, so they never fire.
+        A thin subclass that just inherits the platform method without
+        overriding it stays clean; only an explicit ``async def run_turn``
+        (etc.) inside the class body fires.
+        """
+        if not _AGENTS_SCOPE_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        def_types = (ast.FunctionDef, ast.AsyncFunctionDef)
+        # Top-level defs (module body).
+        for node in tree.body:
+            if (
+                isinstance(node, def_types)
+                and node.name in _LIFTED_AGENT_PRIMITIVES
+            ):
+                self._emit(
+                    node.lineno,
+                    "agent_primitive_reimplementation",
+                    f"agent_primitive_reimplementation: '{node.name}' is owned "
+                    "by platform/agents/; import it instead of redefining it",
+                )
+        # Class-body method defs. A subclass that overrides a lifted
+        # method (e.g. ``async def run_turn(self, ...)`` on a subclass of
+        # ``AgentTurnRunnerBase``) is the exact regression Phase 7 forbids.
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            for stmt in node.body:
+                if (
+                    isinstance(stmt, def_types)
+                    and stmt.name in _LIFTED_AGENT_PRIMITIVES
+                ):
+                    self._emit(
+                        stmt.lineno,
+                        "agent_primitive_reimplementation",
+                        f"agent_primitive_reimplementation: '{stmt.name}' is "
+                        f"owned by platform/agents/; do not override it in "
+                        f"'{node.name}'",
+                    )
+
+    def _check_agent_env_read(self, tree: ast.Module) -> None:
+        """Rule 49: agent_env_read -- a module agents/ file reads config
+        via ``os.environ`` / ``os.getenv`` instead of ``ConfigRegistry``.
+
+        RFC-03's config-drift closure removed every direct env read from
+        ``modules/*/agents/**``: the old vr copies (``branch_manager.py``,
+        ``claim_verifier.py``) reached ``os.environ`` for the branch cap
+        and the auto-promote floor, silently bypassing the DB override
+        and diverging from the malware copy. Modules now resolve config
+        through ``ConfigRegistry(module_id, key)``, which lets env, the DB,
+        and the per-module schema default each participate on one path.
+
+        The check fires on three shapes:
+          - ``os.environ`` / ``os.getenv`` attribute access on the ``os``
+            module (covers ``os.environ["X"]``, ``os.environ.get("X")``,
+            ``os.getenv("X")``);
+          - ``from os import environ`` / ``from os import getenv``.
+        """
+        if not _AGENTS_SCOPE_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Attribute)
+                and node.attr in _OS_ENV_ATTRS
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "os"
+            ):
+                self._emit(
+                    node.lineno,
+                    "agent_env_read",
+                    f"agent_env_read: read config via ConfigRegistry(module_id, "
+                    f"key) instead of os.{node.attr} (RFC-03 config-drift closure)",
+                )
+                continue
+            if isinstance(node, ast.ImportFrom) and node.module == "os":
+                for alias in node.names:
+                    if alias.name in _OS_ENV_ATTRS:
+                        self._emit(
+                            node.lineno,
+                            "agent_env_read",
+                            f"agent_env_read: read config via ConfigRegistry"
+                            f"(module_id, key) instead of 'from os import "
+                            f"{alias.name}' (RFC-03 config-drift closure)",
+                        )
+
+    def _check_cost_read_stored_actual(
+        self, tree: ast.Module, module_id: str,
+    ) -> None:
+        """Rule 39: cost_read_stored_actual -- a lifecycle api_router reads the
+        dead ``cost_actual_usd`` column in a response instead of aggregating
+        live cost.
+
+        The ``cost_actual_usd`` column has no writers, so any read of it in a
+        response body reports a permanent $0. The live gauge comes from
+        ``compute_live_investigation_cost`` (sum LLMCostRecord by run_id). A
+        handler that reads ``record.cost_actual_usd`` without an aggregator
+        call in the same function has drifted back to the broken read. Scoped
+        to the vr/malware api_router; the create-time ``cost_actual_usd=0.0``
+        keyword is an insert, not an attribute read, so it never trips.
+        """
+        if module_id not in _RFC01_UNIFIED_MODULES:
+            return
+        if not self.filename.replace("\\", "/").endswith("/api_router.py"):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            reads = [
+                n for n in ast.walk(node)
+                if isinstance(n, ast.Attribute)
+                and n.attr == "cost_actual_usd"
+                and isinstance(n.ctx, ast.Load)
+            ]
+            if not reads:
+                continue
+            has_aggregator = any(
+                isinstance(c, ast.Call)
+                and (
+                    (isinstance(c.func, ast.Name)
+                     and c.func.id == "compute_live_investigation_cost")
+                    or (isinstance(c.func, ast.Attribute)
+                        and c.func.attr == "compute_live_investigation_cost")
+                )
+                for c in ast.walk(node)
+            )
+            if has_aggregator:
+                continue
+            self._emit(
+                reads[0].lineno,
+                "cost_read_stored_actual",
+                f"cost_read_stored_actual: '{node.name}' reads "
+                "record.cost_actual_usd in a response; that column has no "
+                "writers (always $0). Aggregate live cost via "
+                "compute_live_investigation_cost instead",
+            )
+
+    def _check_lifecycle_handler_bypass(
+        self, tree: ast.Module, module_id: str,
+    ) -> None:
+        """Rule 40: lifecycle_handler_bypass_service -- a pause / resume /
+        re-enqueue route handler writes ``.status`` directly instead of
+        routing through the platform investigation lifecycle service.
+
+        The four-source-of-truth transition (inv row, cursor, taskrecord,
+        ARQ) is a platform property; a handler that assigns ``.status``
+        itself is the drift that left the malware lifecycle broken. Scoped to
+        the vr/malware api_router pause / resume / re-enqueue routes. ``reset``
+        is intentionally excluded: it is a full-wipe that legitimately resets
+        ``status`` to CREATED and does not go through the lifecycle service.
+        """
+        if module_id not in _RFC01_UNIFIED_MODULES:
+            return
+        if not self.filename.replace("\\", "/").endswith("/api_router.py"):
+            return
+        _lifecycle_suffixes = ("/pause", "/resume", "/re-enqueue")
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            route = _endpoint_route_path(node)
+            if route is None or not route.endswith(_lifecycle_suffixes):
+                continue
+            for sub in ast.walk(node):
+                if not isinstance(sub, ast.Assign):
+                    continue
+                if any(
+                    isinstance(tgt, ast.Attribute) and tgt.attr == "status"
+                    for tgt in sub.targets
+                ):
+                    self._emit(
+                        sub.lineno,
+                        "lifecycle_handler_bypass_service",
+                        f"lifecycle_handler_bypass_service: '{node.name}' writes "
+                        ".status directly; route pause / resume / re-enqueue "
+                        "through the platform investigation lifecycle service",
+                    )
+                    break
+
 
 class HonestyAuditor:
     """Audit one or more Python source files for structural dishonesty.
@@ -1726,13 +2822,26 @@ class HonestyAuditor:
         module_id = _owning_module_id(str(path))
         if module_id is not None:
             visitor._check_import_boundary(tree, module_id)
+            visitor._check_hoisted_enum_redeclared(tree, module_id)
+            visitor._check_unnamed_derived_constraint(tree, module_id)
+            visitor._check_shadowed_platform_base(tree, module_id)
+            visitor._check_service_copy_of_platform(tree)
+            visitor._check_workflow_state_copy_of_platform(tree)
+            visitor._check_cost_read_stored_actual(tree, module_id)
+            visitor._check_lifecycle_handler_bypass(tree, module_id)
+            visitor._check_agent_primitive_reimplementation(tree)
+            visitor._check_agent_llm_chat_bypass(tree)
+            visitor._check_agent_env_read(tree)
         if _is_boundary_guarded_file(str(path)):
             visitor._check_api_imports_modules(tree)
+            visitor._check_platform_names_module(tree)
         if _is_module_file(str(path)):
             visitor._check_module_session_scope_import(tree)
             visitor._check_asyncio_in_module(tree)
             visitor._check_http_client_in_module(tree)
             visitor._check_direct_db_in_module(tree)
+            visitor._check_private_platform_import(tree)
+            visitor._check_raw_sql_platform_tables(tree)
         # Rules 19 and 20 apply to all router files (api/ and module routers alike)
         visitor._check_response_model_dict(tree)
         visitor._check_bare_dict_return_endpoint(tree)
@@ -1749,6 +2858,9 @@ class HonestyAuditor:
         visitor._check_placeholder_return(tree)
         visitor._check_log_format_concat(tree)
         visitor._check_broad_exception_catch(tree)
+        visitor._check_config_schema_base(tree)
+        visitor._check_module_prefix_in_tool_name(tree)
+        visitor._check_platform_owns_event_vocabulary(tree)
         return visitor.findings
 
     def audit_directory(self, directory: Path) -> list[Finding]:

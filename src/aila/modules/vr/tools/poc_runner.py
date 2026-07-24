@@ -17,7 +17,7 @@ from typing import Any
 from aila.config import Settings
 from aila.platform.config import build_platform_settings
 from aila.platform.services import SSHService
-from aila.platform.tools._common import Tool
+from aila.platform.tools import Tool
 
 __all__ = ["PoCRunnerTool"]
 

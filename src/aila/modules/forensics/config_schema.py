@@ -12,7 +12,9 @@ workflows, only new workflow runs pick up updated values.
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
+
+from aila.platform.config_base import ModuleConfigBase
 
 __all__ = ["ForensicsConfigSchema", "FORENSICS_DEFAULTS"]
 
@@ -20,10 +22,8 @@ __all__ = ["ForensicsConfigSchema", "FORENSICS_DEFAULTS"]
 FORENSICS_LLM_MODEL = "antigravity/claude-opus-4-6-thinking"
 
 
-class ForensicsConfigSchema(BaseModel):
+class ForensicsConfigSchema(ModuleConfigBase):
     """Operator-tunable settings for the forensics module."""
-
-    model_config = ConfigDict(extra="forbid")
 
     llm_model: str = Field(
         default=FORENSICS_LLM_MODEL,
@@ -52,6 +52,20 @@ class ForensicsConfigSchema(BaseModel):
         default=3600.0,
         ge=60.0,
         description="Timeout for the full artifact collection pipeline.",
+    )
+    freeflow_max_cost_usd: float = Field(
+        default=25.0,
+        ge=0.0,
+        description=(
+            "Hard per-investigation LLM spend ceiling in USD. When the sum "
+            "of ``LLMCostRecord.cost_usd`` rows for ``run_id == "
+            "investigation_id`` reaches this value the freeflow loop "
+            "terminates cleanly with status ``exhausted`` and a "
+            "``<budget_exhausted>`` final_answer marker. A value of 0.0 "
+            "disables the ceiling (only the ``_HARD_TURN_CAP`` safety net "
+            "remains). Freeflow_max_attempts and this ceiling are ANDed: "
+            "whichever fires first halts the run."
+        ),
     )
 
 

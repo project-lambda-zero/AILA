@@ -58,6 +58,22 @@ HONESTY_WHITELIST = [
     # the adapter interface method IS the indirection point.
     ("adapters/base.py", "collect_inventory", "inlining"),
 
+    # Category (g): stream_key is the single public accessor for the private
+    # _KEY_FMT stream-key format. Inlining it at call sites reinstates the
+    # module->platform private-attr coupling the accessor closes (RFC-05).
+    ("tasks/progress.py", "stream_key", "inlining"),
+
+    # Category (b): _extra_user_prompt_kwargs is an optional template-method
+    # hook on AgentTurnRunnerBase. The base default contributes no extra
+    # user-prompt kwargs; VR overrides it to add cve_intel. Empty is real.
+    ("agents/turn_runner.py", "_extra_user_prompt_kwargs", "empty dict"),
+
+    # Category (g): encode_case_state is the serialization half of the
+    # case-state codec (paired with decode_case_state). Inlining the
+    # json.dumps at call sites re-scatters the serialization format the
+    # module exists to own as a single source of truth (RFC-03).
+    ("agents/turn_helpers.py", "encode_case_state", "inlining"),
+
     # Category (b): Pydantic field validator -- name is the public API contract.
     ("contracts/profile.py", "validate_display_name", "inlining"),
 
@@ -418,14 +434,18 @@ HONESTY_WHITELIST = [
     # the typing contract.
     ("malware/contracts/target_stages.py", "get", "consider inlining"),
     ("vr/contracts/target_stages.py", "get", "consider inlining"),
+    # RFC-01: hoisted platform copy of the same typed getattr facade; the
+    # vr/malware entries above are removed when those files are deleted in
+    # RFC-01 Phase 3.
+    ("platform/contracts/target_stages.py", "get", "consider inlining"),
     # personas.role_notes_for: registry-style lookup facade, two-call
     # path lets the role_notes_for caller stay agnostic of the backing
     # registry shape.
     ("malware/personas/role_notes.py", "role_notes_for", "consider inlining"),
     # mcp_registry.probe_all: tuple wrapper around the iterator return
-    # so callers get a stable list[ServerSummary] return type.
-    ("malware/services/mcp_registry.py", "probe_all", "consider inlining"),
-    ("vr/services/mcp_registry.py", "probe_all", "consider inlining"),
+    # so callers get a stable list[ServerSummary] return type. Lifted to
+    # the platform base in RFC-04 Phase 1; the module subclasses inherit it.
+    ("platform/mcp/registry.py", "probe_all", "consider inlining"),
     # disclosure.info: dataclass-like accessor returning the bound
     # DisclosureTrackInfo singleton.
     ("vr/disclosure/base.py", "info", "consider inlining"),
@@ -438,6 +458,12 @@ HONESTY_WHITELIST = [
     # tasks.all_periodic_sweeps: dict-copy accessor so callers can't
     # mutate the registry by accident.
     ("platform/tasks/sweeps.py", "all_periodic_sweeps", "consider inlining"),
+    # RFC-02 Phase 2: module bindings of the shared platform investigation
+    # summary builder. Each supplies only its own *InvestigationSummary
+    # contract class; keeping the facade leaves the ~10 call sites per
+    # module unchanged (list, detail, and every lifecycle handler return).
+    ("vr/api_router.py", "_investigation_summary", "consider inlining"),
+    ("malware/api_router.py", "_investigation_summary", "consider inlining"),
 
     # Category (f): malware module.py protocol stubs. The ModuleProtocol
     # requires these methods but the malware module legitimately has

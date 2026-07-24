@@ -8,6 +8,20 @@ Tests cover:
 - config.py jwt_secret_key random default behavior
 - config.py __all__ exports
 - cli.py __all__ exports
+
+Contract updates
+----------------
+- Settings.database_url has no default anymore; its ``default_factory`` reads
+  AILA_DATABASE_URL and raises ``ValueError('AILA_DATABASE_URL must be set')``
+  when unset. The Settings-construction tests now pass an explicit
+  ``database_url`` so they can exercise the other default_factory fields
+  (jwt_secret_key, api_host, api_port) without depending on the ambient env.
+- ``create-api-key`` used to call ``session.add(AuditEventRecord)`` directly.
+  It now delegates to ``record_audit_event_sync`` which writes to the
+  hash-chained platform journal. The two create-api-key tests patch that
+  boundary at ``aila.cli.record_audit_event_sync`` -- otherwise the journal's
+  ``bytes.fromhex(prev_hash)`` call blows up on the MagicMock session's
+  MagicMock return values and the command exits nonzero.
 """
 from __future__ import annotations
 
@@ -29,12 +43,12 @@ runner = CliRunner()
 # ---------------------------------------------------------------------------
 
 class TestSettingsFields:
-    """Verify Settings has exactly 8 fields and each is documented."""
+    """Verify Settings has exactly 9 fields and each is documented."""
 
-    def test_settings_has_exactly_8_fields(self):
+    def test_settings_has_exactly_9_fields(self):
         fields = dataclasses.fields(Settings)
         field_names = [f.name for f in fields]
-        assert len(fields) == 8, f"Expected 8 fields, got {len(fields)}: {field_names}"
+        assert len(fields) == 9, f"Expected 9 fields, got {len(fields)}: {field_names}"
 
     def test_settings_field_names(self):
         field_names = {f.name for f in dataclasses.fields(Settings)}
@@ -47,13 +61,18 @@ class TestSettingsFields:
             "jwt_secret_key",
             "api_host",
             "api_port",
+            "oidc_cookie_secure",
         }
         assert field_names == expected
 
     def test_jwt_secret_key_random_default(self):
         """jwt_secret_key defaults to a random 32-byte hex string when
         AILA_JWT_SECRET_KEY is unset.  Each Settings instance gets its own
-        random value (via default_factory)."""
+        random value (via default_factory).
+
+        ``database_url`` is passed explicitly because its default_factory
+        requires AILA_DATABASE_URL to be set (SQLite is no longer supported).
+        """
         from aila.config import _build_settings
 
         _build_settings.cache_clear()
@@ -61,9 +80,10 @@ class TestSettingsFields:
             k: v for k, v in os.environ.items()
             if not k.startswith("AILA_")
         }
+        _dsn = "postgresql+asyncpg://x@localhost/test"
         with patch.dict(os.environ, env, clear=True):
-            s1 = Settings()
-            s2 = Settings()
+            s1 = Settings(database_url=_dsn)
+            s2 = Settings(database_url=_dsn)
         # Both should be 64 hex characters (32 bytes)
         assert len(s1.jwt_secret_key) == 64
         assert len(s2.jwt_secret_key) == 64
@@ -76,19 +96,19 @@ class TestSettingsFields:
 
         _build_settings.cache_clear()
         with patch.dict(os.environ, {"AILA_JWT_SECRET_KEY": "my-fixed-secret"}):
-            s = Settings()
+            s = Settings(database_url="postgresql+asyncpg://x@localhost/test")
         assert s.jwt_secret_key == "my-fixed-secret"
 
     def test_api_host_default(self):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("AILA_API_HOST", None)
-            s = Settings()
+            s = Settings(database_url="postgresql+asyncpg://x@localhost/test")
         assert s.api_host == "127.0.0.1"
 
     def test_api_port_default(self):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("AILA_API_PORT", None)
-            s = Settings()
+            s = Settings(database_url="postgresql+asyncpg://x@localhost/test")
         assert s.api_port == 8000
 
 
@@ -179,9 +199,16 @@ class TestServeCommand:
 # ---------------------------------------------------------------------------
 
 class TestCreateApiKeyCommand:
+    @patch("aila.cli.record_audit_event_sync")
     @patch("aila.cli.session_scope")
-    def test_create_api_key_outputs_key(self, mock_scope):
-        """create-api-key prints key info to stdout."""
+    def test_create_api_key_outputs_key(self, mock_scope, _mock_audit):
+        """create-api-key prints key info to stdout.
+
+        ``record_audit_event_sync`` is patched to a no-op: the real journal
+        write calls ``bytes.fromhex(prev_hash)`` on the mock session's
+        MagicMock return value and would raise TypeError, exiting nonzero
+        before any assertions run.
+        """
         mock_session = MagicMock()
         mock_scope.return_value.__enter__ = MagicMock(return_value=mock_session)
         mock_scope.return_value.__exit__ = MagicMock(return_value=False)
@@ -196,16 +223,26 @@ class TestCreateApiKeyCommand:
             with patch("aila.api.auth.hash_api_key", return_value="hashed_value"):
                 result = runner.invoke(app, ["create-api-key", "--label", "test-label"])
 
-        assert result.exit_code == 0
+        assert result.exit_code == 0, result.output
         assert "API key created:" in result.output
         assert "aila_ak_test" in result.output
         assert "admin" in result.output
         assert "test-label" in result.output
         assert "Store this key securely" in result.output
 
+    @patch("aila.cli.record_audit_event_sync")
     @patch("aila.cli.session_scope")
-    def test_create_api_key_persists_record(self, mock_scope):
-        """create-api-key adds ApiKeyRecord to session and commits."""
+    def test_create_api_key_persists_record(self, mock_scope, mock_audit):
+        """create-api-key adds ApiKeyRecord to session, delegates audit to journal.
+
+        Contract change: audit persistence moved from a direct
+        ``session.add(AuditEventRecord)`` inside ``create_api_key`` to a
+        delegated call to ``record_audit_event_sync`` (which internally uses
+        the hash-chained platform journal). With that delegate patched out,
+        ``session.add`` is invoked exactly once -- for the ApiKeyRecord.
+        ``record_audit_event_sync`` still fires once so the audit trail
+        surface stays covered here.
+        """
         mock_session = MagicMock()
         mock_scope.return_value.__enter__ = MagicMock(return_value=mock_session)
         mock_scope.return_value.__exit__ = MagicMock(return_value=False)
@@ -219,12 +256,17 @@ class TestCreateApiKeyCommand:
             with patch("aila.api.auth.hash_api_key", return_value="hash"):
                 runner.invoke(app, ["create-api-key"])
 
-        # session.add called twice: ApiKeyRecord + AuditEventRecord
-        assert mock_session.add.call_count == 2
+        # session.add called once: ApiKeyRecord only. Audit persistence is
+        # delegated to record_audit_event_sync (mocked out above).
+        assert mock_session.add.call_count == 1
         api_key_record = mock_session.add.call_args_list[0][0][0]
         assert api_key_record.role == "admin"
         assert api_key_record.created_by == "cli"
-        # Two commits: one for record+refresh, one after audit event
+        # Audit still fires exactly once via the delegated boundary.
+        assert mock_audit.call_count == 1
+        assert mock_audit.call_args.kwargs.get("action") == "create_api_key"
+        assert mock_audit.call_args.kwargs.get("stage") == "auth"
+        # Two commits: one for record+refresh, one after audit event.
         assert mock_session.commit.call_count == 2
 
 
@@ -269,7 +311,7 @@ class TestWorkerCommand:
         """worker command parses custom --redis-url for host and port."""
         mock_settings.return_value = MagicMock()
 
-        with patch("arq.run_worker") as mock_run:
+        with patch("arq.run_worker"):
             with patch("aila.platform.tasks.get_task_tuning", side_effect=lambda k, d: d):
                 result = runner.invoke(app, ["worker", "--redis-url", "redis://10.0.0.1:6380"])
 

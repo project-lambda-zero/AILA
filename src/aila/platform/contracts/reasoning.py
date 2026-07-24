@@ -1,8 +1,15 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+import json
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 __all__ = [
     "ReasoningAction",
@@ -18,10 +25,12 @@ __all__ = [
     "ReasoningGraphNodeKind",
     "ReasoningOperatorSteering",
     "ReasoningPromptContext",
+    "ReasoningStrategyDeclaration",
     "ReasoningStrategyFamily",
     "ReasoningTurnDecision",
     "EvidenceProvenance",
     "Hypothesis",
+    "ObservablesDict",
     "RejectedHypothesis",
 ]
 
@@ -35,17 +44,11 @@ ReasoningAction = Literal[
     "edit_outcome",
 ]
 ReasoningConfidence = Literal["exact", "strong", "medium", "caveated", "unknown"]
-ReasoningStrategyFamily = Literal[
-    "filesystem_triage",
-    "persistence_hunt",
-    "memory_forensics",
-    "network_forensics",
-    "malware_static",
-    "vulnerability_research",
-    "web_pentest",
-    "mobile_reverse",
-    "generic",
-]
+# Strategy families are runtime-validated by the platform StrategyRegistry
+# (populated from each module's reasoning_strategies() at load), not a
+# closed Literal -- the platform no longer names module-domain strategies.
+# ``"generic"`` is the one family the platform itself owns.
+ReasoningStrategyFamily = str
 ReasoningGraphNodeKind = Literal[
     "contract",
     "hypothesis",
@@ -158,6 +161,49 @@ class ReasoningGraphDiff(BaseModel):
     added_edges: list[ReasoningGraphEdge] = Field(default_factory=list)
     removed_edges: list[ReasoningGraphEdge] = Field(default_factory=list)
 
+def _require_json_serializable(value: dict[str, Any]) -> dict[str, Any]:
+    """Reject an observables dict that cannot round-trip through json.dumps.
+
+    observables is persisted to the DB and passed as task kwargs, both of which
+    json-encode it. A datetime, bytes, set, or custom object passes Pydantic's
+    ``dict[str, Any]`` check but crashes later at serialization time (issue
+    #61). Fail fast at construction with the offending detail instead.
+    """
+    try:
+        json.dumps(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"observables must be JSON-serializable (DB + task-kwarg persistence): {exc}"
+        ) from exc
+    return value
+
+
+def _validate_json_serializable(v: dict[str, Any]) -> dict[str, Any]:
+    """Reject non-JSON observables at construction time (#61-2).
+
+    Observables are persisted as ``case_state_json`` and forwarded as
+    task kwargs, both of which require JSON encoding; a ``datetime`` /
+    ``bytes`` / ``set`` slipping in passes Pydantic construction, survives
+    every in-process mutation, and only crashes later at ``model_dump
+    (mode='json')`` / ``task_queue.submit`` -- far from the code that
+    introduced it. One ``json.dumps`` here proves every key and value has
+    a JSON encoding and surfaces the offender at the source.
+    """
+    try:
+        json.dumps(v, sort_keys=True)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"observables must be JSON-serializable: {exc}",
+        ) from exc
+    return v
+
+
+ObservablesDict = Annotated[
+    dict[str, Any],
+    AfterValidator(_validate_json_serializable),
+]
+
+
 class ReasoningCaseState(BaseModel):
     """Normalized reasoning state carried across investigation turns."""
 
@@ -165,12 +211,17 @@ class ReasoningCaseState(BaseModel):
     hypotheses: list[Hypothesis] = Field(default_factory=list)
     rejected: list[RejectedHypothesis] = Field(default_factory=list)
     resolved: list[ResolvedHypothesis] = Field(default_factory=list)
-    observables: dict[str, Any] = Field(default_factory=dict)
+    observables: ObservablesDict = Field(default_factory=dict)
     # Most recent turn number this state was absorbed at. Used by
     # ``render_case_model`` to compute hypothesis age (current_turn -
     # hypothesis.opened_at_turn). 0 means "never absorbed with a turn
     # number" (legacy rows). Filled in by ``absorb(turn_number=N)``.
     current_turn: int = 0
+
+    @field_validator("observables")
+    @classmethod
+    def _observables_serializable(cls, v: dict[str, Any]) -> dict[str, Any]:
+        return _require_json_serializable(v)
 
 
 class ReasoningOperatorSteering(BaseModel):
@@ -181,6 +232,20 @@ class ReasoningOperatorSteering(BaseModel):
     guidance: list[str] = Field(default_factory=list)
     pinned_strategy_family: ReasoningStrategyFamily | None = None
     required_artifacts: list[str] = Field(default_factory=list)
+
+
+class ReasoningStrategyDeclaration(BaseModel):
+    """A reasoning strategy family published by a module.
+
+    Modules declare their strategy families through
+    ``ModuleProtocol.reasoning_strategies()``; the platform collects them
+    into the StrategyRegistry at load. The platform itself owns only the
+    ``generic`` family.
+    """
+
+    family: str
+    task_type: str
+    description: str = ""
 
 
 class ReasoningDomainProfile(BaseModel):
@@ -219,7 +284,7 @@ class ReasoningTurnDecision(BaseModel):
     contract: ReasoningContract | None = None
     hypotheses: list[Hypothesis] = Field(default_factory=list)
     rejected: list[RejectedHypothesis] = Field(default_factory=list)
-    observables: dict[str, Any] = Field(default_factory=dict)
+    observables: ObservablesDict = Field(default_factory=dict)
     script_content: str | None = None
     command: str | None = None
     # Names observable keys the engine MUST pull into the next turn's
@@ -266,6 +331,11 @@ class ReasoningTurnDecision(BaseModel):
     edit_patches: dict[str, Any] = Field(default_factory=dict)
     edit_comment: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("observables")
+    @classmethod
+    def _observables_serializable(cls, v: dict[str, Any]) -> dict[str, Any]:
+        return _require_json_serializable(v)
 
     @model_validator(mode="after")
     def _validate_tool_run_command(self) -> ReasoningTurnDecision:

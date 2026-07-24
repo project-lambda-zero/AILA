@@ -11,12 +11,23 @@ the real DB, middleware chain, or platform lifespan.
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 import structlog
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
 
+import aila.api.errors as errors_pkg
+from aila.api.app import create_app
 from aila.api.errors import ErrorEnvelope, register_error_handlers
+from aila.api.errors.handlers import (
+    _derive_module_label,
+    generic_error_handler,
+    typed_error_handler,
+    validation_error_handler,
+)
 from aila.api.errors.hints import ERROR_HINTS
 from aila.platform.exceptions import (
     AILAError,
@@ -25,11 +36,17 @@ from aila.platform.exceptions import (
     MissingApiKeyError,
     ModulePlatformNotReadyError,
     NotFoundError,
+    RateLimitError,
     RouterError,
     SSHConnectionFailedError,
+    TimeoutError,
+    UpstreamError,
+    ValidationError,
     WorkerUnreachableError,
 )
 
+# Issue #54 (2026-07-19): the six pre-existing legacy subclasses now carry real
+# ClassVar code/http_status, so they are exercised end-to-end here too.
 _D20_MAPPING = [
     (MissingApiKeyError, "MISSING_API_KEY", 503),
     (SSHConnectionFailedError, "SSH_CONNECTION_FAILED", 502),
@@ -37,6 +54,12 @@ _D20_MAPPING = [
     (ModulePlatformNotReadyError, "MODULE_PLATFORM_NOT_READY", 503),
     (ConfigValueMissingError, "CONFIG_VALUE_MISSING", 500),
     (WorkerUnreachableError, "WORKER_UNREACHABLE", 503),
+    (AuthenticationError, "AUTHENTICATION_ERROR", 401),
+    (RateLimitError, "RATE_LIMIT_ERROR", 429),
+    (NotFoundError, "NOT_FOUND_ERROR", 404),
+    (ValidationError, "VALIDATION_ERROR", 422),
+    (UpstreamError, "UPSTREAM_ERROR", 502),
+    (TimeoutError, "TIMEOUT_ERROR", 504),
 ]
 
 
@@ -71,10 +94,10 @@ def _assert_envelope_shape(body: dict) -> None:
 
 
 @pytest.mark.parametrize("cls,expected_code,expected_status", _D20_MAPPING)
-def test_handler_emits_envelope_for_each_of_six(
+def test_handler_emits_envelope_for_each_typed_error(
     cls: type[AILAError], expected_code: str, expected_status: int
 ) -> None:
-    """Each of the six D-20 typed errors produces the correct envelope + status."""
+    """Each typed error (six D-20 + six legacy per #54) produces the correct envelope + status."""
     app = _build_app({"/raise": cls})
     client = TestClient(app, raise_server_exceptions=False)
 
@@ -102,10 +125,15 @@ def test_handler_emits_envelope_for_typed_error() -> None:
     assert body["trace_id"] is None or isinstance(body["trace_id"], str)
 
 
-def test_handler_handles_pre_existing_aila_error_without_http_status() -> None:
-    """Pre-existing AILAError subclasses lack ClassVar http_status -- handler must
-    fall back to 500 and still emit the envelope shape (preflight BE-E)."""
-    app = _build_app({"/raise": AuthenticationError})
+def test_handler_falls_back_to_500_for_undeclared_subclass() -> None:
+    """An AILAError subclass that declares no ClassVar taxonomy still gets the
+    500 fallback + safe envelope. The fallback path is retained for future
+    subclasses; issue #54 gave the six named legacy classes real statuses."""
+
+    class _UndeclaredError(AILAError):
+        pass
+
+    app = _build_app({"/raise": _UndeclaredError})
     client = TestClient(app, raise_server_exceptions=False)
 
     resp = client.get("/raise")
@@ -118,18 +146,6 @@ def test_handler_handles_pre_existing_aila_error_without_http_status() -> None:
     # message must NOT leak str(exc) ("boom").
     assert "boom" not in body["message"].lower()
     assert "traceback" not in body["message"].lower()
-
-
-def test_handler_handles_notfound_without_classvar() -> None:
-    """NotFoundError (legacy) also goes through the 500 fallback path."""
-    app = _build_app({"/raise": NotFoundError})
-    client = TestClient(app, raise_server_exceptions=False)
-
-    resp = client.get("/raise")
-    body = resp.json()
-
-    assert resp.status_code == 500
-    _assert_envelope_shape(body)
 
 
 def test_handler_fallback_for_generic_exception() -> None:
@@ -158,10 +174,6 @@ def test_handler_includes_trace_id_from_structlog() -> None:
     exposes it as ``trace_id``. We call the handler directly (no HTTP) to
     bind contextvars on the same thread the handler reads them from.
     """
-    import asyncio
-
-    from aila.api.errors.handlers import typed_error_handler
-
     async def _drive() -> ErrorEnvelope:
         structlog.contextvars.clear_contextvars()
         structlog.contextvars.bind_contextvars(correlation_id="trace-xyz-123")
@@ -180,10 +192,6 @@ def test_handler_includes_trace_id_from_structlog() -> None:
 
 def test_handler_handles_middleware_error_with_no_trace_id(monkeypatch) -> None:
     """When contextvars is empty, trace_id is None and no crash occurs (D-26)."""
-    import asyncio
-
-    from aila.api.errors.handlers import typed_error_handler
-
     monkeypatch.setattr(
         "aila.api.errors.handlers.structlog.contextvars.get_contextvars",
         lambda: {},
@@ -203,52 +211,42 @@ def test_handler_handles_middleware_error_with_no_trace_id(monkeypatch) -> None:
 
 def test_handler_module_label_derivation_nested_modules() -> None:
     """aila.modules.X.* → module label ``X`` (preflight algorithm)."""
-    from aila.api.errors.handlers import _derive_module_label
-
-    class _FakeExc(Exception):
+    class _FakeError(Exception):
         pass
 
-    _FakeExc.__module__ = "aila.modules.vulnerability.services.reports"
-    assert _derive_module_label(_FakeExc("x")) == "vulnerability"
+    _FakeError.__module__ = "aila.modules.vulnerability.services.reports"
+    assert _derive_module_label(_FakeError("x")) == "vulnerability"
 
 
 def test_handler_module_label_derivation_platform() -> None:
     """aila.platform.* → module label ``platform``."""
-    from aila.api.errors.handlers import _derive_module_label
-
-    class _FakeExc(Exception):
+    class _FakeError(Exception):
         pass
 
-    _FakeExc.__module__ = "aila.platform.llm.client"
-    assert _derive_module_label(_FakeExc("x")) == "platform"
+    _FakeError.__module__ = "aila.platform.llm.client"
+    assert _derive_module_label(_FakeError("x")) == "platform"
 
 
 def test_handler_module_label_derivation_api() -> None:
     """aila.api.* → module label ``api``."""
-    from aila.api.errors.handlers import _derive_module_label
-
-    class _FakeExc(Exception):
+    class _FakeError(Exception):
         pass
 
-    _FakeExc.__module__ = "aila.api.routers.foo"
-    assert _derive_module_label(_FakeExc("x")) == "api"
+    _FakeError.__module__ = "aila.api.routers.foo"
+    assert _derive_module_label(_FakeError("x")) == "api"
 
 
 def test_handler_module_label_fallback_for_unknown_prefix() -> None:
     """Modules not rooted at ``aila`` fall back to ``platform``."""
-    from aila.api.errors.handlers import _derive_module_label
-
-    class _FakeExc(Exception):
+    class _FakeError(Exception):
         pass
 
-    _FakeExc.__module__ = "some.third.party.lib"
-    assert _derive_module_label(_FakeExc("x")) == "platform"
+    _FakeError.__module__ = "some.third.party.lib"
+    assert _derive_module_label(_FakeError("x")) == "platform"
 
 
 def test_handler_registered_on_app() -> None:
     """After create_app()/register_error_handlers, all three handlers are wired."""
-    from fastapi.exceptions import RequestValidationError
-
     app = FastAPI()
     register_error_handlers(app)
 
@@ -260,24 +258,13 @@ def test_handler_registered_on_app() -> None:
 
 def test_errors_package_phase2_exports() -> None:
     """Phase-2 package exports include register_error_handlers."""
-    import aila.api.errors as errors_pkg
-
     assert hasattr(errors_pkg, "register_error_handlers")
     assert "register_error_handlers" in errors_pkg.__all__
 
 
 def test_handler_registered_in_create_app() -> None:
     """The real create_app() wires the three envelope handlers."""
-    from fastapi.exceptions import RequestValidationError
-
-    from aila.api.app import create_app
-
     app = create_app()
-    from aila.api.errors.handlers import (
-        generic_error_handler,
-        typed_error_handler,
-        validation_error_handler,
-    )
 
     assert app.exception_handlers.get(AILAError) is typed_error_handler
     assert app.exception_handlers.get(RequestValidationError) is validation_error_handler

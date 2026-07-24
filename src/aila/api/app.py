@@ -60,7 +60,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     from aila.api.auth import hash_api_key
     from aila.logging_config import configure_logging
-    from aila.platform.contracts._common import utc_now
+    from aila.platform.contracts import utc_now
     from aila.storage.database import async_session_scope
     from aila.storage.db_models import ApiKeyRecord, UserRecord
 
@@ -225,33 +225,33 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.automation_registry = None
         app.state.automation_runner = None
 
-    # Start background automation tick loop (60s interval).
-    # Wires the fully-implemented AutomationRunner that was previously
-    # instantiated but never invoked (AUDIT-01 fix).
+    # Start the supervised background automation tick loop (60s base interval,
+    # exponential backoff on repeated failure). Wires the AutomationRunner that
+    # was previously instantiated but never invoked (AUDIT-01 fix). The
+    # supervisor catches every realistic tick fault so a malformed schedule row
+    # can no longer kill the loop and silently halt automation (#46).
     _automation_tick_task: asyncio.Task[None] | None = None
+    _automation_stop: asyncio.Event | None = None
     if app.state.automation_runner is not None:
-        _runner = app.state.automation_runner
+        from aila.platform.automation.supervisor import run_tick_supervisor
 
-        async def _tick_loop() -> None:
-            import sqlalchemy.exc as _sa_exc
-
-            from aila.platform.exceptions import AILAError as _AILAError
-            while True:
-                try:
-                    await _runner.tick()
-                except asyncio.CancelledError:
-                    raise
-                except (_AILAError, _sa_exc.SQLAlchemyError, ValueError, OSError):
-                    _log.warning("Automation tick failed", exc_info=True)
-                await asyncio.sleep(60)
-
-        _automation_tick_task = asyncio.create_task(_tick_loop(), name="automation-tick")
-        _log.info("Automation tick loop started (60s interval)")
+        _automation_stop = asyncio.Event()
+        _automation_tick_task = asyncio.create_task(
+            run_tick_supervisor(
+                app.state.automation_runner, stop_event=_automation_stop,
+            ),
+            name="automation-tick",
+        )
+        _log.info(
+            "Automation tick supervisor started (60s base interval, exponential backoff)",
+        )
 
     yield
 
-    # Cancel automation tick loop before other shutdown.
+    # Signal the supervisor to stop, then cancel as a backstop.
     if _automation_tick_task is not None:
+        if _automation_stop is not None:
+            _automation_stop.set()
         _automation_tick_task.cancel()
         try:
             await _automation_tick_task
@@ -358,6 +358,23 @@ async def _http_exception_handler(
     )
 
 
+def _cors_allow_credentials(origins: list[str]) -> bool:
+    """Decide whether the CORS middleware should send credentials.
+
+    A wildcard entry in ``allow_origins`` combined with ``allow_credentials=True``
+    reflects ``Access-Control-Allow-Origin: *`` alongside credentialed cookies,
+    which every current browser refuses and which is a live security misconfiguration
+    against a background of tenant-scoped auth cookies.  This predicate returns
+    ``True`` only when the allowlist is a concrete set of origins (no ``"*"``
+    entry, and the list itself is not literally ``["*"]``).
+    """
+    if origins == ["*"]:
+        return False
+    if "*" in origins:
+        return False
+    return True
+
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -390,6 +407,7 @@ def create_app() -> FastAPI:
         "http://localhost:5173,http://127.0.0.1:5173",
     )
     cors_origins = [o.strip() for o in cors_origins_raw.split(",") if o.strip()]
+    cors_credentials = _cors_allow_credentials(cors_origins)
 
     # Correlation ID middleware: bind correlation_id/path/method to structlog contextvars
     from aila.api.middleware import CorrelationIdMiddleware
@@ -408,7 +426,7 @@ def create_app() -> FastAPI:
     application.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
-        allow_credentials=True,
+        allow_credentials=cors_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -517,6 +535,22 @@ def create_app() -> FastAPI:
     # Phase 181: Admin workflow inspection router (admin only -- run/transition audit)
     from aila.api.routers.admin_workflows import router as admin_workflows_router
     application.include_router(admin_workflows_router)
+
+    # RFC-09: Admin prompt-version router (god-tier admin -- deploy/rollback prompts)
+    from aila.api.routers.admin_prompts import router as admin_prompts_router
+    application.include_router(admin_prompts_router)
+
+    # RFC-11: Admin MCP instance catalog router (god-tier admin -- CRUD server rows)
+    from aila.api.routers.mcp_instances import router as mcp_instances_router
+    application.include_router(mcp_instances_router)
+
+    # RFC-08: Admin eval-harness router (god-tier admin -- score candidate + gate promotion)
+    from aila.api.routers.admin_eval import router as admin_eval_router
+    application.include_router(admin_eval_router)
+
+    # RFC-10: Admin agent-lifecycle router (god-tier admin -- evaluate/promote/rollback + journal)
+    from aila.api.routers.admin_lifecycle import router as admin_lifecycle_router
+    application.include_router(admin_lifecycle_router)
 
     # Health router: /health and /status -- no auth required (public endpoints)
     from aila.api.routers.health import router as health_router

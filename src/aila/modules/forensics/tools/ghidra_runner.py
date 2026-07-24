@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 
 from aila.config import Settings
-from aila.platform.tools._common import Tool
+from aila.platform.tools import Tool
 
 _log = logging.getLogger(__name__)
 

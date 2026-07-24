@@ -155,7 +155,12 @@ def test_subsection_surfaces_control_id_title_and_verdict_label() -> None:
     assert "MSTG-STORAGE-1" in text
     # Title text wraps over multiple cells; pin a stable phrase.
     assert "System credential storage facilities" in text
-    assert "FINDING" in text
+    # Verdict badge now uses the security-audit standard labels
+    # (FAIL / PASS / N/A / REVIEW) so a reader cannot confuse
+    # ``FINDING`` (there is a vulnerability) with ``NO FINDING``
+    # (there is not); the badge for a MasvsVerdict.FINDING renders
+    # verbatim as ``FAIL``.
+    assert "FAIL" in text
     assert "82%" in text
 
 
@@ -257,8 +262,15 @@ def test_subsection_renders_verification_steps_as_bullets() -> None:
     pdf = build_pdf(_make_aggregate([verdict]), _make_target())
     text = _extract_all_text(pdf)
 
+    # When no agent_summary and no evidence_locations are present,
+    # the renderer falls back to the catalog's generic verification
+    # steps under a ``VERIFICATION CHECKLIST`` header. REMEDIATION
+    # is a distinct block owned by the section-writer's report_section
+    # payload (structured LLM output) and is intentionally NOT emitted
+    # on the fallback path -- the catalog checklist doubles as the
+    # remediation guidance for a control that produced no specific
+    # findings.
     assert "VERIFICATION" in text
-    assert "REMEDIATION" in text
     # Phrase lifted verbatim from the first verification step.
     assert "SharedPreferences.Editor.put" in text
 
@@ -302,7 +314,11 @@ def test_subsection_inconclusive_reason_renders_in_footer() -> None:
     pdf = build_pdf(_make_aggregate([verdict]), _make_target())
     text = _extract_all_text(pdf)
 
-    assert "INCONCLUSIVE" in text
+    # Verdict badge label for MasvsVerdict.INCONCLUSIVE is now ``REVIEW``
+    # (see the security-audit-standard label rename in
+    # ``masvs_report._VERDICT_LABEL``); the ``reason`` field still
+    # surfaces verbatim in the footer.
+    assert "REVIEW" in text
     assert "no_primary_outcome" in text
 
 
@@ -369,5 +385,7 @@ def test_subsections_render_for_every_verdict_in_a_group() -> None:
     assert "MSTG-STORAGE-2" in text
     assert "child-one" in text
     assert "child-two" in text
-    assert "FINDING" in text
-    assert "NO FINDING" in text
+    # Verdict badges now render as ``FAIL`` / ``PASS`` per the
+    # security-audit-standard label rename in ``_VERDICT_LABEL``.
+    assert "FAIL" in text
+    assert "PASS" in text

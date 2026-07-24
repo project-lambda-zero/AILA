@@ -78,6 +78,7 @@ const dispatchColor: Record<
   "info" | "low" | "medium" | "high" | "critical"
 > = {
   pending: "info",
+  claimed: "info",
   dispatched: "low",
   failed: "critical",
   skipped: "medium",

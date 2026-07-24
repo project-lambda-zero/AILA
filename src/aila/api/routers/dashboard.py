@@ -11,9 +11,10 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Request
+from sqlalchemy import func
 from sqlmodel import select
 
-from aila.api.auth import AuthContext, require_user_or_api_key
+from aila.api.auth import AuthContext, TeamContext, require_user_or_api_key
 from aila.api.constants import ROLE_OPERATOR
 from aila.api.limiter import limiter
 from aila.api.schemas.endpoints import DashboardResponse, FleetStats
@@ -55,29 +56,44 @@ async def get_dashboard(
     Per BE-01: requires operator or higher role.
     Per D-34: module data merged from all registered modules.
     """
-    async with async_session_scope() as session:
-        # System count
-        systems_result = await session.exec(select(ManagedSystemRecord))
-        all_systems = systems_result.all()
-        total_systems = len(all_systems)
+    # #36: bind the caller's TeamContext to the session so the do_orm_execute
+    # listener filters plain selects on team-scoped models (ManagedSystemRecord,
+    # LatestFindingRecord). Aggregates below carry an EXPLICIT team predicate
+    # because select(func.count()) forms bypass the listener entirely; a
+    # god-tier admin (team_id=None, TEAM-06) sees every team's rows.
+    async with async_session_scope(team_context=TeamContext.from_auth(auth)) as session:
+        # System count -- explicit team predicate; count(func) bypasses the listener.
+        systems_count_stmt = select(func.count(ManagedSystemRecord.id))
+        if auth.team_id is not None:
+            systems_count_stmt = systems_count_stmt.where(
+                ManagedSystemRecord.team_id == auth.team_id
+            )
+        total_systems = int((await session.exec(systems_count_stmt)).one() or 0)
 
-        # Finding severity counts -- vulnerability module contribution if registered
+        # Finding severity counts -- vulnerability module contribution if registered.
+        # report_count aggregates in Python; the module accepts team_id so the
+        # underlying SELECT carries an explicit team predicate that does not rely
+        # on the do_orm_execute listener.
         critical = high = medium = low = total_findings = 0
         platform = getattr(request.app.state, "platform", None)
         if platform is not None:
             try:
-                module = platform.runtime.module_registry.require("vulnerability")
-                counts = await module.report_count("", session)
-                total_findings = int(counts.get("total_findings", 0))
-                critical = int(counts.get("critical", 0))
-                high = int(counts.get("high", 0))
-                medium = int(counts.get("medium", 0))
-                low = int(counts.get("low", 0))
-            except Exception:
+                module = platform.runtime.module_registry.first_with("report_count")
+                if module is not None:
+                    counts = await module.report_count("", session, team_id=auth.team_id)
+                    total_findings = int(counts.get("total_findings", 0))
+                    critical = int(counts.get("critical", 0))
+                    high = int(counts.get("high", 0))
+                    medium = int(counts.get("medium", 0))
+                    low = int(counts.get("low", 0))
+            except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError):
                 _log.debug("vulnerability report_count unavailable; finding counts will be 0", exc_info=True)
 
-        # MTTR: mean time to resolution from FindingWorkflowRecord (closed transitions)
-        # Use last 30 days of closed transitions for a meaningful MTTR estimate
+        # MTTR: mean time to resolution from FindingWorkflowRecord (closed transitions).
+        # #36: FindingWorkflowRecord is NOT team-scoped (transitions carry no team_id
+        # of their own; it is a global audit trail keyed by finding_id), so no team
+        # predicate applies here. Cross-team enumeration is not possible because
+        # nothing identifies a row's owning team.
         thirty_days_ago = datetime.now(UTC) - timedelta(days=30)
         workflow_result = await session.exec(
             select(FindingWorkflowRecord).where(
@@ -121,9 +137,9 @@ async def get_dashboard(
                     try:
                         result = await provider() if asyncio_iscoroutinefunction(provider) else provider()
                         module_data[f"{module.module_id}.{name}"] = result
-                    except Exception:
+                    except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError):
                         _log.debug("Dashboard provider %s.%s failed", module.module_id, name)
-        except Exception:
+        except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError):
             _log.debug("Could not collect module dashboard data", exc_info=True)
 
     payload = DashboardResponse(

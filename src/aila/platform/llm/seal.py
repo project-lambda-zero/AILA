@@ -297,6 +297,10 @@ def make_seal_step(
 
         # Build AuditSealRecord
         from ...storage.db_models import AuditSealRecord
+        from .correlation import (
+            current_prompt_content_hash,
+            current_prompt_version,
+        )
 
         record = AuditSealRecord(
             run_id=ctx.get("run_id", ""),
@@ -305,6 +309,8 @@ def make_seal_step(
             output_hash=output_hash,
             model_id=routing.model_id,
             task_type=ctx["task_type"],
+            prompt_content_hash=current_prompt_content_hash(),
+            prompt_version=current_prompt_version(),
             timestamp=datetime.fromisoformat(ts),
             classification=classification,
             confidence=confidence,

@@ -157,14 +157,18 @@ async def _ensure_run_record(run_id: str, query_text: str) -> None:
     record is absent. This helper ensures the record exists before the engine
     starts. Concurrent retries are safe -- INSERT ON CONFLICT DO NOTHING.
     """
+    from aila.platform.tasks.queue import _current_task_team_id
     from aila.storage.database import async_session_scope
     from aila.storage.db_models import WorkflowRunRecord
 
+    # Stamp the running task's team so team-scoped readers surface this run;
+    # outside a task the context var default (None) leaves it unscoped (#36).
+    team_id = _current_task_team_id.get()
     tbl = WorkflowRunRecord.__table__  # type: ignore[attr-defined]
     async with async_session_scope() as session:
         await session.execute(
             pg_insert(tbl)
-            .values(id=run_id, query_text=query_text, status="running")
+            .values(id=run_id, query_text=query_text, status="running", team_id=team_id)
             .on_conflict_do_nothing(index_elements=["id"])
         )
         await session.commit()
@@ -430,6 +434,7 @@ def platform_task(
             # worker.py at boot, so a top-level import would form a cycle
             # during `aila.platform.tasks` package init.
             from aila.platform.tasks.hooks import _JobOutcome, _stash_outcome
+            from aila.platform.tasks.queue import _current_task_team_id
 
             job_id = str(ctx.get("job_id", ""))
             job_try = int(ctx.get("job_try", 1))
@@ -441,6 +446,12 @@ def platform_task(
                 user_id=user_id,
                 team_id=team_id,
             )
+
+            # #53: expose this task's team_id so a follow-up submitted from the
+            # body (or a nested agent) inherits it without threading team_id
+            # through every worker submit site. Reset in finally so a worker
+            # that runs many jobs never leaks one job's team into the next.
+            _team_token = _current_task_team_id.set(team_id)
 
             try:
                 if definition is not None:
@@ -501,7 +512,11 @@ def platform_task(
                         exception_class=type(conflict).__name__,
                     ),
                 )
-                raise Retry(defer=default_backoff(job_try)) from conflict
+                # job_try is ARQ's 1-based attempt counter, so during the first
+                # attempt (job_try=1) zero retries have completed and the defer
+                # must be default_backoff(0) in [1.0, 2.0). Passing job_try
+                # directly made every retry one exponent too high (#40).
+                raise Retry(defer=default_backoff(job_try - 1)) from conflict
 
             except Retry as retry_exc:
                 # The handler (or a nested wrapper) already chose to retry.
@@ -551,6 +566,8 @@ def platform_task(
                     ),
                 )
                 raise
+            finally:
+                _current_task_team_id.reset(_team_token)
 
         # Ensure ARQ's function-name resolution (ARQ builds a name->func map
         # keyed by ``func.__qualname__``/``func.__name__``) points at the

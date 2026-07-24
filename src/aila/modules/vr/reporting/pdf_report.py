@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-import psycopg
+from pydantic import ValidationError
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.pagesizes import LETTER
@@ -56,7 +56,10 @@ from reportlab.platypus import (
 from sqlmodel import func as _sa_func
 from sqlmodel import select as _select
 
-from aila.config import get_settings
+from aila.modules.vr.contracts.evidence_ref import (
+    EvidenceRefList,
+    PocDraftMetadataRef,
+)
 from aila.modules.vr.db_models import (
     VRFindingRecord,
     VRInvestigationBranchRecord,
@@ -69,6 +72,8 @@ from aila.modules.vr.reporting.poc_writer import PocWriter
 from aila.modules.vr.reporting.writer_agent import ReportContent, ReportWriter
 from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
+from aila.platform.services.runtime import run_blocking_io
+from aila.platform.tasks.runtime_stats import active_task_runtime_seconds
 from aila.platform.uow import UnitOfWork
 
 __all__ = ["render_investigation_pdf"]
@@ -116,7 +121,35 @@ async def render_investigation_pdf(investigation_id: str) -> bytes:
     writer = ReportWriter()
     content = await writer.write(facts)
 
-    return _render_pdf(facts=facts, content=content)
+    # ReportLab is CPU-bound and synchronous; running it inline stalls the
+    # event loop for the whole render. Offload to the platform worker pool
+    # so a large report does not block other requests on the same worker.
+    return await run_blocking_io(_render_pdf, facts=facts, content=content)
+
+
+def _extract_poc_draft_meta(evidence_refs_json: str | None) -> dict[str, Any]:
+    """Return the first ``poc_draft_metadata`` ref as a dict, or ``{}``.
+
+    Validation routes through ``EvidenceRefList`` (same discriminated
+    union the writer uses at ``workflow/task.py::run_vr_draft_poc``) so
+    a malformed list surfaces as a structured warning rather than a
+    silent empty section. Well-formed refs the writer emits today
+    round-trip unchanged.
+    """
+    if not evidence_refs_json:
+        return {}
+    try:
+        parsed = EvidenceRefList.model_validate_json(evidence_refs_json)
+    except ValidationError as exc:
+        _log.warning(
+            "evidence_refs_json failed validation; skipping PoC meta extract: %s",
+            exc,
+        )
+        return {}
+    for ref in parsed.root:
+        if isinstance(ref, PocDraftMetadataRef):
+            return ref.model_dump()
+    return {}
 
 
 async def _draft_poc_inline(facts: dict[str, Any]) -> dict[str, Any] | None:
@@ -316,15 +349,7 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
                 # Pull PoC draft metadata for this finding (matches
                 # _resolve_poc_drafts shape so the renderer can render
                 # uniformly).
-                meta: dict[str, Any] = {}
-                try:
-                    f_refs = json.loads(f.evidence_refs_json or "[]")
-                    for r in f_refs:
-                        if isinstance(r, dict) and r.get("kind") == "poc_draft_metadata":
-                            meta = r
-                            break
-                except (ValueError, TypeError):
-                    meta = {}
+                meta: dict[str, Any] = _extract_poc_draft_meta(f.evidence_refs_json)
                 variant_entry["findings"].append({
                     "finding_id": f.id,
                     "crash_type": f.crash_type,
@@ -356,15 +381,7 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
         for f in own_findings:
             if not f.poc_code:
                 continue
-            meta: dict[str, Any] = {}
-            try:
-                refs = json.loads(f.evidence_refs_json or "[]")
-                for r in refs:
-                    if isinstance(r, dict) and r.get("kind") == "poc_draft_metadata":
-                        meta = r
-                        break
-            except (ValueError, TypeError):
-                meta = {}
+            meta: dict[str, Any] = _extract_poc_draft_meta(f.evidence_refs_json)
             poc_drafts.append({
                 "finding_id": f.id,
                 "language": f.poc_language,
@@ -410,6 +427,12 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
             "created_at": o.created_at.isoformat() if o.created_at else None,
         })
 
+    # _resolve_audit_metadata shells out to git (subprocess) and opens a
+    # sync psycopg connection; both block the event loop. Offload to the
+    # platform worker pool. It takes already-loaded plain data (inv record
+    # + descriptor dict), so it is safe to run off-thread.
+    audit_metadata = await run_blocking_io(_resolve_audit_metadata, inv, descriptor)
+
     facts: dict[str, Any] = {
         "investigation_id": investigation_id,
         "investigation_title": inv.title,
@@ -433,7 +456,7 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
         "variants_hunted": variants,
         "panel_verdicts": panel_verdicts,
         "poc_drafts": poc_drafts,
-        "audit_metadata": _resolve_audit_metadata(inv, descriptor),
+        "audit_metadata": audit_metadata,
         "vulnerable_code_excerpts": await _resolve_code_excerpts(
             descriptor=descriptor,
             affected_components=(
@@ -481,7 +504,7 @@ def _resolve_audit_metadata(
     # between inv.created_at and inv.updated_at spans every idle
     # hour between re-enqueues which is misleading -- the user
     # wants "how long was the agent actually working".
-    duration_seconds = _sum_active_task_runtime(inv.id)
+    duration_seconds = active_task_runtime_seconds(inv.id)
 
     repo_url = descriptor.get("repo_url") or ""
     ref = descriptor.get("vulnerable_ref") or descriptor.get("ref") or "HEAD"
@@ -566,50 +589,6 @@ def _resolve_audit_metadata(
         "repo_url": repo_url or None,
         "clone_path": clone_path,
     }
-
-
-def _sum_active_task_runtime(investigation_id: str) -> int | None:
-    """Return total seconds the agent was actively working --
-    sum of (completed_at - started_at) (or heartbeat - started)
-    across every taskrecord row whose kwargs reference this
-    investigation.
-
-    The wall-clock ``inv.updated_at - inv.created_at`` measure
-    includes every idle hour between re-enqueues, which inflates
-    the duration to days for an investigation that was only
-    actively running for ~30min. This helper sums only the
-    intervals where a worker was actually executing the task.
-
-    Best-effort: returns ``None`` when the taskrecord table can't
-    be read (so the report still renders without the field).
-    """
-    try:
-        url = get_settings().database_url.replace("postgresql+asyncpg://", "postgresql://")
-        parsed = urlparse(url)
-        with psycopg.connect(
-            host=parsed.hostname,
-            port=parsed.port or 5432,
-            user=parsed.username,
-            password=parsed.password,
-            dbname=(parsed.path or "/").lstrip("/"),
-        ) as conn, conn.cursor() as cur:
-            cur.execute(
-                "SELECT COALESCE(SUM(EXTRACT(EPOCH FROM "
-                "(COALESCE(completed_at, heartbeat_at) - started_at))), 0) "
-                "FROM taskrecord "
-                "WHERE started_at IS NOT NULL "
-                "AND kwargs_json::text LIKE %s",
-                (f"%{investigation_id}%",),
-            )
-            row = cur.fetchone()
-            secs = int(row[0]) if row and row[0] else 0
-            return secs if secs > 0 else None
-    except (OSError, ValueError, RuntimeError, ImportError) as exc:
-        _log.warning(
-            "active-runtime taskrecord query FAILED investigation_id=%s reason=%s",
-            investigation_id, exc,
-        )
-        return None
 
 
 async def _resolve_code_excerpts(

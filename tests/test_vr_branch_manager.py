@@ -7,7 +7,7 @@ with sample investigation + branch rows.
 """
 from __future__ import annotations
 
-from aila.modules.vr.agents.branch_manager import (
+from aila.platform.agents.branch_pool import (
     _decode,
     _encode,
     _has_contract,
@@ -33,9 +33,13 @@ class TestBranchOperationEnum:
 
 
 class TestBranchStatusEnum:
-    def test_five_statuses(self) -> None:
+    def test_six_statuses(self) -> None:
+        # `completed` was added to BranchStatus after the initial
+        # M3.R-5 milestone; every terminal-but-not-abandoned/merged/
+        # promoted branch closes as COMPLETED.
         assert {m.value for m in BranchStatus} == {
             "active", "paused", "merged", "promoted", "abandoned",
+            "completed",
         }
 
 

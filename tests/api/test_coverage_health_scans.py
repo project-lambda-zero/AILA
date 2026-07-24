@@ -10,12 +10,15 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from unittest.mock import MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from aila.api.schemas.comprehensive_health import SubsystemHealth
+from aila.api.schemas.health import HealthCheckResult
 from aila.platform.tasks.models import TaskRecord, TaskStatus
 from aila.storage.database import session_scope
 
@@ -52,10 +55,12 @@ class _FakeModuleRegistry:
 
 @pytest_asyncio.fixture(scope="function")
 async def async_client_with_modules(test_db):
-    """Client with a platform that has modules exposing health_checks().
+    """Client with modules exposing health_checks() and healthy infra probes.
 
-    Exercises _collect_module_health_checks (lines 106-121) and
-    _run_single_health_check (lines 126-138).
+    Exercises _collect_module_health_checks and _run_single_health_check.
+    D-14 critical infrastructure checks (Redis, ARQ workers) are patched to
+    healthy/running so tests can isolate module-level and database aggregation
+    without a live Redis or worker.
     """
     from aila.api.app import create_app
 
@@ -93,11 +98,36 @@ async def async_client_with_modules(test_db):
     test_app.state.platform = stub_platform
     test_app.state.start_time = time.monotonic()
 
-    async with AsyncClient(
-        transport=ASGITransport(app=test_app),
-        base_url="http://testserver",
-    ) as client:
-        yield client
+    _now = datetime.now(UTC)
+    healthy_redis = SubsystemHealth(
+        name="redis",
+        status="healthy",
+        latency_ms=1.0,
+        last_checked_at=_now,
+        message="PING ok",
+    )
+    running_worker = SubsystemHealth(
+        name="arq_worker",
+        status="running",
+        last_checked_at=_now,
+        message="worker heartbeat live",
+    )
+
+    with (
+        patch(
+            "aila.platform.services.health_probes.probe_redis",
+            new=AsyncMock(return_value=healthy_redis),
+        ),
+        patch(
+            "aila.platform.services.health_probes.probe_arq_worker",
+            new=AsyncMock(return_value=running_worker),
+        ),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=test_app),
+            base_url="http://testserver",
+        ) as client:
+            yield client
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +141,10 @@ async def test_health_module_checks_present(
 ) -> None:
     """GET /health with modules that have health_checks() includes module checks.
 
-    Covers lines 106-121 (_collect_module_health_checks inner loop).
+    Covers _collect_module_health_checks inner loop plus _run_single_health_check
+    exception path (T-138-12): server-side logging captures the exception, but
+    the client-facing message is deliberately None so module error details never
+    leak to health consumers.
     """
     resp = await async_client_with_modules.get("/health")
     assert resp.status_code == 200
@@ -125,21 +158,28 @@ async def test_health_module_checks_present(
     # vuln module's bad check should be 'down' (raises ConnectionError)
     assert "vuln_redis" in checks
     assert checks["vuln_redis"]["status"] == "down"
-    assert "redis down" in checks["vuln_redis"]["message"]
+    # T-138-12: exception detail elided; client message is None
+    assert checks["vuln_redis"].get("message") is None
 
     # broken module's health_checks() itself raises -> module-level 'down'
     assert "broken_health" in checks
     assert checks["broken_health"]["status"] == "down"
-    assert "health_checks() raised" in checks["broken_health"]["message"]
+    # T-138-12: exception detail elided; client message is None
+    assert checks["broken_health"].get("message") is None
 
 
 @pytest.mark.asyncio
 async def test_health_aggregation_degraded_with_module_down(
     async_client_with_modules: AsyncClient,
 ) -> None:
-    """GET /health with module 'down' but DB up returns 'degraded'.
+    """GET /health with module 'down' but critical infra up returns 'degraded'.
 
-    Per Phase 98: only DB down = unhealthy; module down = degraded.
+    D-14 / D-15 (routers/health.py::get_health): critical checks are
+    {database, redis, workers}. When none of those are 'down' the aggregate
+    is not 'unhealthy'. With at least one module check 'down', not every
+    check is 'up', so the aggregate is 'degraded'.
+    Redis and workers are patched to healthy/running by the fixture; database
+    is 'up' via the real test DB.
     """
     resp = await async_client_with_modules.get("/health")
     assert resp.status_code == 200
@@ -204,19 +244,33 @@ async def test_health_noncallable_check_returns_down(
 async def test_health_database_down(
     async_client_with_modules: AsyncClient,
 ) -> None:
-    """GET /health when session_scope raises returns database status='down'.
+    """GET /health surfaces a 'down' database and aggregates to 'unhealthy'.
 
-    Covers lines 48-49 (except branch in _check_database).
+    D-14 (routers/health.py::get_health): database is a critical check;
+    any critical check 'down' -> aggregate 'unhealthy'.
+    T-138-12 (routers/health.py::_check_database): the SQLAlchemyError
+    handler is logged server-side but the client-facing message is None.
+
+    We patch _check_database directly instead of the underlying
+    async_session_scope so the test targets the aggregation contract
+    rather than SQLAlchemy plumbing internals.
     """
-    with patch("aila.api.routers.health.session_scope") as mock_scope:
-        mock_scope.side_effect = RuntimeError("DB connection failed")
+
+    async def _db_down() -> HealthCheckResult:
+        return HealthCheckResult(status="down", message=None)
+
+    with patch("aila.api.routers.health._check_database", new=_db_down):
         resp = await async_client_with_modules.get("/health")
 
     assert resp.status_code == 200
-    checks = resp.json()["checks"]
+    body = resp.json()
+    checks = body["checks"]
     assert "database" in checks
     assert checks["database"]["status"] == "down"
-    assert "DB connection failed" in checks["database"]["message"]
+    # T-138-12: no error detail leaks; client message is None
+    assert checks["database"].get("message") is None
+    # D-15: database is a critical check -> aggregate is 'unhealthy'
+    assert body["status"] == "unhealthy"
 
 
 # ---------------------------------------------------------------------------

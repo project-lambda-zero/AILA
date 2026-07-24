@@ -53,6 +53,7 @@ from aila.api.constants import (
     TRACK_PLATFORM,
 )
 from aila.api.limiter import limiter
+from aila.api.metrics import ACTIVE_SSE
 from aila.api.schemas.envelope import DataEnvelope
 from aila.api.schemas.tasks import (
     DrainQueueResponse,
@@ -284,6 +285,7 @@ async def cancel_task(
                 status=AUDIT_STATUS_COMPLETED,
                 target=task_id,
                 user_id=auth.user_id,
+                team_id=auth.team_id,
             )
             await session.commit()
 
@@ -340,6 +342,7 @@ async def resume_task(
                 status=AUDIT_STATUS_COMPLETED,
                 target=task_id,
                 user_id=auth.user_id,
+                team_id=auth.team_id,
             )
             await session.commit()
 
@@ -413,6 +416,7 @@ async def list_task_transitions(
 )
 async def stream_task_events(
     task_id: str,
+    request: Request,
     last_id: str = Query(default="0", description="Redis Stream ID to start from (default '0' = all events)"),
     auth: AuthContext = Depends(require_user_or_api_key),
 ) -> StreamingResponse:
@@ -465,31 +469,44 @@ async def stream_task_events(
     async def _sse_generator() -> AsyncGenerator[str, None]:
         from aila.platform.tasks.progress import ProgressStream
 
-        stream = ProgressStream()
-
-        # Replay all events since last_id (late-connect catchup, D-17/TASK-09)
+        # 60-6: ACTIVE_SSE gauge tracks live SSE connections. The try/finally
+        # guarantees .dec() runs on every exit path including client
+        # disconnect (StreamingResponse cancels the async generator, which
+        # runs finally cleanup) and exceptions raised mid-stream.
+        ACTIVE_SSE.inc()
         try:
-            catchup_events = await stream.catchup(task_id, last_id)
-            for event in catchup_events:
-                yield f"data: {json.dumps(event)}\n\n"
-        except Exception as exc:
-            _log.warning("SSE catchup failed for task %s: %s", task_id, exc)
+            stream = ProgressStream()
 
-        # Check if task already terminal after catchup
-        terminal = await _check_terminal(task_id)
-        if terminal:
-            yield f"event: done\ndata: {json.dumps({'status': terminal})}\n\n"
-            return
+            # Replay all events since last_id (late-connect catchup, D-17/TASK-09)
+            try:
+                catchup_events = await stream.catchup(task_id, last_id)
+                for event in catchup_events:
+                    yield f"data: {json.dumps(event)}\n\n"
+            except Exception as exc:
+                _log.warning("SSE catchup failed for task %s: %s", task_id, exc)
 
-        # Stream live events via ProgressStream.stream_events() async API
-        async for event in stream.stream_events(task_id, last_id):
-            yield f"data: {json.dumps(event)}\n\n"
-            # After each ping, check for terminal state (OPS-02)
-            if event.get("type") == "ping":
-                terminal = await _check_terminal(task_id)
-                if terminal:
-                    yield f"event: done\ndata: {json.dumps({'status': terminal})}\n\n"
+            # Check if task already terminal after catchup
+            terminal = await _check_terminal(task_id)
+            if terminal:
+                yield f"event: done\ndata: {json.dumps({'status': terminal})}\n\n"
+                return
+
+            # Stream live events via ProgressStream.stream_events() async API
+            async for event in stream.stream_events(task_id, last_id):
+                # 60-4: end the generator promptly when the client hangs up
+                # so the server does not hold a Redis connection + coroutine
+                # per zombie client until the next XREAD tick (up to 30 s).
+                if await request.is_disconnected():
                     return
+                yield f"data: {json.dumps(event)}\n\n"
+                # After each ping, check for terminal state (OPS-02)
+                if event.get("type") == "ping":
+                    terminal = await _check_terminal(task_id)
+                    if terminal:
+                        yield f"event: done\ndata: {json.dumps({'status': terminal})}\n\n"
+                        return
+        finally:
+            ACTIVE_SSE.dec()
 
     return StreamingResponse(
         _sse_generator(),
@@ -540,6 +557,7 @@ async def submit_task(
             kwargs={"query": req.query_text},
             user_id=auth.user_id,
             group_id=auth.role,
+            team_id=auth.team_id,
         )
         return str(handle.task_id)
 
@@ -555,6 +573,7 @@ async def submit_task(
                 status=AUDIT_STATUS_COMPLETED,
                 target=task_id,
                 user_id=auth.user_id,
+                team_id=auth.team_id,
                 details={"query": req.query_text[:200]},
             )
             await session.commit()

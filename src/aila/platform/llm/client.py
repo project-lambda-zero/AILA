@@ -20,9 +20,11 @@ Tool calling (per D-05-new):
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
+import re
 import time as _time_mod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -33,6 +35,7 @@ from openai import APIConnectionError, APITimeoutError, AsyncOpenAI, RateLimitEr
 from pydantic import BaseModel, ValidationError
 
 from ..exceptions import AILAError
+from .cancellation import LLMCancelledError, is_run_cancelled
 from .config import LLMConfigProvider
 from .errors import LLMError
 from .pipeline import PipelineRunner
@@ -42,6 +45,22 @@ if TYPE_CHECKING:
     from ...storage.secrets import SecretStore
 
 logger = logging.getLogger(__name__)
+
+# Best-effort cost / telemetry recording runs AFTER a successful LLM call. A
+# failure in any of those steps must never propagate into the provider-retry
+# loop and turn a good response into a retried LLMError, so each step swallows
+# this realistic leak set independently (DB, arithmetic, missing metrics import,
+# platform errors) while still logging.
+_COST_TELEMETRY_ERRORS: tuple[type[BaseException], ...] = (
+    ValueError,
+    TypeError,
+    RuntimeError,
+    OSError,
+    AttributeError,
+    ImportError,
+    sqlalchemy.exc.SQLAlchemyError,
+    AILAError,
+)
 
 # ── LLM endpoint health tracking ─────────────────────────────────────
 #
@@ -58,7 +77,6 @@ logger = logging.getLogger(__name__)
 # branches may have hit the same outage.
 _LAST_LLM_OK_AT: float = 0.0
 _LAST_LLM_ERROR_AT: float = 0.0
-_LLM_HEALTH_LOCK = asyncio.Lock()
 
 
 def _record_llm_ok() -> None:
@@ -166,9 +184,18 @@ def _get_rejection_markers() -> tuple[str, ...]:
 
 
 def _model_supports_temperature(model_id: str) -> bool:
-    """Return False when the routed model is known to reject ``temperature``."""
+    """Return False when the routed model is known to reject ``temperature``.
+
+    Markers match on alphanumeric boundaries so a short marker like ``o1`` does
+    not spuriously fire inside an unrelated id (``proto1``, ``audio1``); the
+    old ``marker in mid`` substring test stripped temperature from those by
+    accident (issue #44).
+    """
     mid = (model_id or "").lower()
-    return not any(marker in mid for marker in _get_rejection_markers())
+    return not any(
+        re.search(rf"(?<![a-z0-9]){re.escape(marker)}(?![a-z0-9])", mid)
+        for marker in _get_rejection_markers()
+    )
 
 
 def _strip_json_fences(content: str) -> str:
@@ -250,7 +277,16 @@ class LLMResponse:
     usage: dict[str, int] = field(default_factory=dict)
     disabled: bool = False
     finish_reason: str = ""
-    # Pipeline metadata (Phase 116) -- default None, transparent to existing callers
+    # Pipeline metadata (Phase 116) -- default None, transparent to existing callers.
+    # _enrich_response() populates these from the pipeline ctx after the
+    # classify / gate / seal steps run. Declaring them is required: the
+    # dataclass is frozen + slots, so _enrich_response constructing with these
+    # kwargs raised TypeError the moment any step wrote a non-None value
+    # (issue #44).
+    classification: Any = None
+    confidence: Any = None
+    seal_id: str | None = None
+    pipeline_metadata: dict[str, Any] | None = None
 # Retry budget -- TIGHT BY DESIGN.
 #
 # Background (the change shipped on 2026-06-13 after the maddie /
@@ -291,6 +327,98 @@ _MAX_RETRIES = max(1, int(os.environ.get("AILA_LLM_MAX_RETRIES", "3")))
 _RETRY_BASE_DELAY = max(0.1, float(os.environ.get("AILA_LLM_RETRY_BASE_DELAY_S", "1.0")))
 _RETRY_MAX_DELAY = max(_RETRY_BASE_DELAY, float(os.environ.get("AILA_LLM_RETRY_MAX_DELAY_S", "30.0")))
 
+# HTTP status codes that stay retryable even though they land in the 4xx
+# range: request-timeout (408), too-early (425), and rate-limit (429).
+# Everything else in 4xx (auth, permission, malformed request, not-found,
+# unprocessable) will keep failing on repeat and MUST fail fast so the
+# worker slot is not burned on doomed backoff sleeps.
+_RETRYABLE_4XX_STATUSES: frozenset[int] = frozenset({408, 425, 429})
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Classify a provider or client exception as retryable vs non-retryable.
+
+    Retryable: transient upstream failures where a repeat of the same request
+    has a realistic chance of succeeding -- HTTP 429 (rate limit), 5xx
+    (server errors), 408 (request timeout), 425 (too early), and network-
+    layer failures (connection reset, DNS, wall-clock timeout). Also:
+    LLMError instances that self-report as retryable.
+
+    Non-retryable: failures a retry cannot fix -- HTTP 4xx auth (401),
+    permission (403), malformed request (400), not-found (404),
+    unprocessable entity (422). Also: LLMError instances that self-report
+    as non-retryable (classification blocks, schema violations, kill switch).
+
+    Unknown exception types default to retryable so a transient failure from
+    an unfamiliar provider client does not silently regress the historical
+    retry-everything behaviour. Only recognised non-retryable classes and
+    explicit non-retryable HTTP statuses fail fast.
+    """
+    if isinstance(exc, LLMError):
+        return exc.retryable
+    # Transport-level provider failures the openai client raises. Listed
+    # explicitly so a future release that changes their status_code
+    # surface still classifies correctly.
+    if isinstance(exc, (APIConnectionError, APITimeoutError, RateLimitError)):
+        return True
+    # Status-code driven classification. Covers openai.APIStatusError
+    # subclasses (AuthenticationError, PermissionDeniedError,
+    # BadRequestError, NotFoundError, UnprocessableEntityError,
+    # InternalServerError) and any provider client that exposes an
+    # HTTP status through the same attribute name.
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        if status_code in _RETRYABLE_4XX_STATUSES:
+            return True
+        if 500 <= status_code < 600:
+            return True
+        if 400 <= status_code < 500:
+            return False
+    return True
+
+
+@dataclass(frozen=True, slots=True)
+class _ClientKey:
+    api_key_hash: str
+    base_url: str
+    timeout_s: float
+
+
+class _AsyncOpenAIPool:
+    """Process-local pool of AsyncOpenAI clients keyed by (api_key, base_url,
+    timeout).
+
+    Previously every LLM call built a fresh ``AsyncOpenAI`` -- each owning an
+    ``httpx.AsyncClient`` connection pool -- and ``_call_with_retry`` never
+    closed it, so the file-descriptor count grew unbounded under load (#44).
+    Routing is frozen per investigation, so a keyed pool converges to a tiny
+    number of long-lived clients whose connections are reused.
+
+    ``AsyncOpenAI`` construction is synchronous, so :meth:`get` has no await
+    point and is safe to call from concurrent coroutines on one event loop
+    without a lock.
+    """
+
+    def __init__(self) -> None:
+        self._pool: dict[_ClientKey, AsyncOpenAI] = {}
+
+    def get(self, *, api_key: str, base_url: str, timeout_s: float) -> AsyncOpenAI:
+        key = _ClientKey(
+            api_key_hash=hashlib.sha256(api_key.encode()).hexdigest()[:16],
+            base_url=base_url,
+            timeout_s=timeout_s,
+        )
+        client = self._pool.get(key)
+        if client is None:
+            client = AsyncOpenAI(
+                api_key=api_key,
+                base_url=base_url,
+                max_retries=0,  # retries handled in _call_with_retry
+                timeout=timeout_s,
+            )
+            self._pool[key] = client
+        return client
+
 
 class AilaLLMClient:
     """Async-first LLM client with config-based routing and operational controls.
@@ -309,6 +437,9 @@ class AilaLLMClient:
         self._pipeline = PipelineRunner(config_provider=self._config)
         self.cost_tracker: Any = None  # Set by builder.py to CostTracker instance
         self.bus: Any = None  # Optional EventBus; set by builder.py for domain events
+        # #44: reuse AsyncOpenAI clients across calls instead of building (and
+        # leaking) a fresh one per request.
+        self._client_pool = _AsyncOpenAIPool()
 
     @property
     def pipeline(self) -> PipelineRunner:
@@ -326,6 +457,7 @@ class AilaLLMClient:
         tool_executor: Callable[[str, dict[str, Any]], Awaitable[str]] | None = None,
         run_id: str | None = None,
         team_id: str | None = None,
+        max_output_tokens: int | None = None,
     ) -> LLMResponse:
         """Send a chat completion request and return text response.
 
@@ -352,6 +484,13 @@ class AilaLLMClient:
             )
 
         routing = await self._config.resolve_routing(task_type)
+        # §309 -- narrow the routing max_tokens to a per-call ceiling when the
+        # caller supplies one; never raise above the operator-configured cap.
+        if max_output_tokens is not None and max_output_tokens > 0:
+            from dataclasses import replace as _dc_replace
+            effective_max = min(int(max_output_tokens), int(routing.max_tokens))
+            if effective_max != routing.max_tokens:
+                routing = _dc_replace(routing, max_tokens=effective_max)
 
         return await self._call_with_retry(
             routing=routing,
@@ -683,16 +822,27 @@ class AilaLLMClient:
             _timeout_s = float(_os.environ.get("AILA_LLM_TIMEOUT_SECONDS", "180"))
         except ValueError:
             _timeout_s = 180.0
-        client = AsyncOpenAI(
+        client = self._client_pool.get(
             api_key=routing.api_key,
             base_url=routing.base_url,
-            max_retries=0,  # we handle retries ourselves for logging
-            timeout=_timeout_s,
+            timeout_s=_timeout_s,
         )
 
         last_error: Exception | None = None
 
         for attempt in range(_MAX_RETRIES):
+            # #44: abort promptly if the run was cancelled mid-retry. An
+            # investigation keys its cancellation token on run_id
+            # (== investigation_id) and creates it at the turn-boundary check
+            # before this call runs, so the peek sees it here. Non-
+            # investigation run_ids have no token, so this is a no-op for them
+            # and does not fabricate one. Without this, a pause during a long
+            # provider-outage backoff waits out the full retry schedule before
+            # the next turn-boundary poll notices the cancellation.
+            if run_id is not None and is_run_cancelled(run_id):
+                raise LLMCancelledError(
+                    f"run {run_id} cancelled during LLM retry (attempt {attempt + 1})"
+                )
             try:
                 response, ctx = await self._pipeline.run(
                     task_type=routing.task_type,
@@ -727,7 +877,7 @@ class AilaLLMClient:
                         routing.model_id, _prompt_tokens, _completion_tokens,
                         self._config._registry,  # LLMConfigProvider._registry is ConfigRegistry
                     )
-                except (ValueError, sqlalchemy.exc.SQLAlchemyError):
+                except _COST_TELEMETRY_ERRORS:
                     import structlog
                     structlog.get_logger(__name__).warning(
                         "cost_calculation_failed", run_id=run_id, model=routing.model_id,
@@ -770,7 +920,7 @@ class AilaLLMClient:
                         duration_ms=int(_call_duration * 1000),
                         status="ok",
                     )
-                except sqlalchemy.exc.SQLAlchemyError:
+                except _COST_TELEMETRY_ERRORS:
                     import structlog
                     structlog.get_logger(__name__).warning(
                         "cost_persistence_failed", run_id=run_id, model=routing.model_id,
@@ -781,17 +931,16 @@ class AilaLLMClient:
                     try:
                         from aila.platform.llm.cost import emit_missing_pricing_notification
                         await emit_missing_pricing_notification(routing.model_id)
-                    except sqlalchemy.exc.SQLAlchemyError:
+                    except _COST_TELEMETRY_ERRORS:
                         pass  # emit_missing_pricing_notification already swallows; belt-and-suspenders
 
                 # Step 4: Prometheus counter (separate try/except)
                 try:
                     from aila.api.metrics import LLM_COST_TOTAL
                     LLM_COST_TOTAL.labels(model=routing.model_id).inc(_cost_usd)
-                except (ImportError, ValueError, AttributeError) as exc:
+                except _COST_TELEMETRY_ERRORS as exc:
                     # Prometheus counter is best-effort telemetry; never fail the LLM call
-                    # because metrics emission failed. Specific types cover missing import,
-                    # invalid label values, and unexpected counter shape.
+                    # because metrics emission failed.
                     logger.debug("LLM cost counter update failed: %s", exc)
 
                 # Step 5: Domain event with real duration (separate try/except)
@@ -807,7 +956,7 @@ class AilaLLMClient:
                                 duration=_call_duration,
                             ),
                         ))
-                except (AILAError, AttributeError):
+                except _COST_TELEMETRY_ERRORS:
                     pass
 
                 _record_llm_ok()
@@ -873,12 +1022,30 @@ class AilaLLMClient:
                     # Non-retryable LLM errors (ClassificationBlockedError, etc.)
                     raise
             except Exception as exc:
-                # ALL provider errors are transient -- 500, 502, 503,
-                # connection reset, timeout, DNS failure, etc. The only
-                # non-retryable errors are LLMError(retryable=False)
-                # which are caught above (classification blocks, schema
-                # violations). Everything else gets retried.
+                # Two-branch classification (issue #44 -- retry reliability):
+                # non-retryable provider errors (HTTP 4xx auth/malformed:
+                # 400/401/403/404/422) fail fast so a doomed request does not
+                # burn the retry budget or block the worker on backoff sleeps.
+                # Retryable failures (429, 5xx, connection reset, timeout,
+                # DNS) keep the historical retry+backoff behaviour.
                 _record_llm_error()
+                # Deferred import: aila.platform.services.__init__ pulls in
+                # ServiceFactory, which imports back into aila.platform.llm.
+                # Loading redact_secrets at runtime sidesteps the cycle.
+                from ..services.log_redact import redact_secrets
+                if not _is_retryable(exc):
+                    status = getattr(exc, "status_code", None)
+                    logger.warning(
+                        "LLM non-retryable provider error: %s (status=%s): %s -- failing fast",
+                        type(exc).__name__,
+                        status,
+                        redact_secrets(str(exc))[:200],
+                    )
+                    raise LLMError(
+                        f"LLM non-retryable provider error: {type(exc).__name__}: "
+                        f"{redact_secrets(str(exc))}",
+                        retryable=False,
+                    ) from exc
                 last_error = exc
                 delay = min(_RETRY_BASE_DELAY * (2 ** attempt), _RETRY_MAX_DELAY)
                 logger.warning(
@@ -886,13 +1053,17 @@ class AilaLLMClient:
                     attempt + 1,
                     _MAX_RETRIES,
                     type(exc).__name__,
-                    str(exc)[:200],
+                    redact_secrets(str(exc))[:200],
                     delay,
                 )
                 await asyncio.sleep(delay)
 
+        # Deferred import: see the provider-error branch above for why
+        # redact_secrets is imported at runtime rather than at module load.
+        from ..services.log_redact import redact_secrets
         raise LLMError(
-            f"LLM API failed after {_MAX_RETRIES} retries: {last_error}",
+            f"LLM API failed after {_MAX_RETRIES} retries: "
+            f"{redact_secrets(str(last_error))}",
             retryable=True,
         )
 
@@ -922,81 +1093,85 @@ class AilaLLMClient:
         :meth:`_single_call` directly instead of routing through
         :class:`PipelineRunner`.
         """
+        # #38-3.2: budget check BEFORE the provider call, mirroring the
+        # pre-flight in :meth:`_call_with_retry` above (see :~810). Consensus
+        # (gate.py) and verify (verify.py) retries route their token spend
+        # through this method; without the seed, a run that already exceeded
+        # its ceiling still spent on every retry because the check only ran
+        # once on the primary path. check_budget_async seeds the in-memory
+        # totals from the durable ledger and raises BudgetExceededError when
+        # the per-run token ceiling is already crossed -- fail fast, no spend.
+        if self.cost_tracker is not None and run_id is not None:
+            await self.cost_tracker.check_budget_async(run_id, routing.task_type)
+
         try:
             _timeout_s = float(os.environ.get("AILA_LLM_TIMEOUT_SECONDS", "180"))
         except ValueError:
             _timeout_s = 180.0
-        client = AsyncOpenAI(
+        client = self._client_pool.get(
             api_key=routing.api_key,
             base_url=routing.base_url,
-            max_retries=0,
-            timeout=_timeout_s,
+            timeout_s=_timeout_s,
         )
         _call_start = _time_mod.perf_counter()
+        response = await self._single_call(
+            client=client,
+            routing=routing,
+            messages=messages,
+            response_format=response_format,
+            tools=tools,
+            tool_executor=tool_executor,
+        )
+
+        # Cost recording -- same shape as :meth:`_call_with_retry` so
+        # consensus / verify tokens land in the same per-run budget
+        # and the operator's spend reports tell the truth (fix §100).
         try:
-            response = await self._single_call(
-                client=client,
-                routing=routing,
-                messages=messages,
-                response_format=response_format,
-                tools=tools,
-                tool_executor=tool_executor,
+            if self.cost_tracker is not None:
+                self.cost_tracker.record(run_id, response.usage)
+        except Exception as exc:
+            logger.debug("inner_call cost_tracker.record failed: %s", exc)
+
+        try:
+            from aila.platform.llm.cost import (
+                calculate_cost_usd,
+                persist_cost_record,
+            )
+            _prompt_tokens = response.usage.get("prompt_tokens", 0)
+            _completion_tokens = response.usage.get("completion_tokens", 0)
+            _cost_usd, _ = await calculate_cost_usd(
+                routing.model_id, _prompt_tokens, _completion_tokens,
+                self._config._registry,
+            )
+            _duration_ms = int(
+                (_time_mod.perf_counter() - _call_start) * 1000,
+            )
+            await persist_cost_record(
+                run_id=run_id,
+                model_id=routing.model_id,
+                task_type=routing.task_type,
+                team_id=team_id,
+                prompt_tokens=_prompt_tokens,
+                completion_tokens=_completion_tokens,
+                cost_usd=_cost_usd,
+                registry=self._config._registry,
+                prompt_preview=None,
+                response_preview=(
+                    response.content
+                    if isinstance(response.content, str) else None
+                ),
+                duration_ms=_duration_ms,
+                status="ok",
+            )
+        except (
+            ValueError, sqlalchemy.exc.SQLAlchemyError, AttributeError,
+        ) as exc:
+            logger.debug(
+                "inner_call cost persistence failed: %s",
+                exc,
             )
 
-            # Cost recording -- same shape as :meth:`_call_with_retry` so
-            # consensus / verify tokens land in the same per-run budget
-            # and the operator's spend reports tell the truth (fix §100).
-            try:
-                if self.cost_tracker is not None:
-                    self.cost_tracker.record(run_id, response.usage)
-            except Exception as exc:
-                logger.debug("inner_call cost_tracker.record failed: %s", exc)
-
-            try:
-                from aila.platform.llm.cost import (
-                    calculate_cost_usd,
-                    persist_cost_record,
-                )
-                _prompt_tokens = response.usage.get("prompt_tokens", 0)
-                _completion_tokens = response.usage.get("completion_tokens", 0)
-                _cost_usd, _ = await calculate_cost_usd(
-                    routing.model_id, _prompt_tokens, _completion_tokens,
-                    self._config._registry,
-                )
-                _duration_ms = int(
-                    (_time_mod.perf_counter() - _call_start) * 1000,
-                )
-                await persist_cost_record(
-                    run_id=run_id,
-                    model_id=routing.model_id,
-                    task_type=routing.task_type,
-                    team_id=team_id,
-                    prompt_tokens=_prompt_tokens,
-                    completion_tokens=_completion_tokens,
-                    cost_usd=_cost_usd,
-                    registry=self._config._registry,
-                    prompt_preview=None,
-                    response_preview=(
-                        response.content
-                        if isinstance(response.content, str) else None
-                    ),
-                    duration_ms=_duration_ms,
-                    status="ok",
-                )
-            except (
-                ValueError, sqlalchemy.exc.SQLAlchemyError, AttributeError,
-            ) as exc:
-                logger.debug(
-                    "inner_call cost persistence failed: %s",
-                    exc,
-                )
-
-            return response
-        finally:
-            try:
-                await client.close()
-            except Exception as exc:
-                logger.debug("inner_call client.close() failed: %s", exc)
+        return response
 
     async def _single_call(
         self,
@@ -1102,6 +1277,12 @@ class AilaLLMClient:
         Max iterations = routing.max_tool_steps.  If max_tool_steps is 0 or
         not set, tool calling is disabled -- returns whatever the model said.
         """
+        # Deferred import mirrors the sanitize_output pattern at the
+        # bottom of this file -- keeps this module free of a top-level
+        # dependency on the sanitize submodules and matches the file's
+        # existing PLC0415 convention.
+        from .untrusted import sanitize_untrusted
+
         max_steps = routing.max_tool_steps
         if max_steps <= 0:
             # Tool calling disabled for this task_type
@@ -1149,11 +1330,44 @@ class AilaLLMClient:
                     tc.function.name,
                     json.dumps(args, default=str)[:200],
                 )
-                result = await tool_executor(tc.function.name, args)
+                # #44: bound each tool execution so one hung tool (e.g. an
+                # audit-mcp cold build) cannot block the whole LLM turn. A
+                # timeout is surfaced to the model as a domain-level tool
+                # failure -- the loop continues so the model can react; the LLM
+                # call is NOT retried from scratch.
+                tool_timeout_s = getattr(routing, "tool_timeout_s", None) or 300.0
+                try:
+                    raw_result = await asyncio.wait_for(
+                        tool_executor(tc.function.name, args),
+                        timeout=tool_timeout_s,
+                    )
+                    # #43-1: tool output is third-party content (MCP bridge,
+                    # HTTP, SSH). Fence-wrap it before appending to the
+                    # message list so injected instructions in the payload
+                    # cannot steer the next model turn -- the wrapper marks
+                    # the block as quoted data and escapes any occurrence
+                    # of the fence sentinel inside the payload.
+                    tool_content = sanitize_untrusted(
+                        str(raw_result),
+                        source=f"tool:{tc.function.name}",
+                    )
+                except TimeoutError:
+                    logger.warning(
+                        "tool executor timeout: tool=%s timeout_s=%.1f",
+                        tc.function.name,
+                        tool_timeout_s,
+                    )
+                    # Platform-generated timeout notice; not third-party
+                    # content, so no fence needed.
+                    tool_content = json.dumps({
+                        "error": "tool_timeout",
+                        "tool": tc.function.name,
+                        "timeout_s": tool_timeout_s,
+                    })
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
-                    "content": str(result),
+                    "content": tool_content,
                 })
 
             # Call the model again

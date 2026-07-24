@@ -7,7 +7,7 @@ search for patterns, and extract common forensic artifacts.
 from __future__ import annotations
 
 from aila.config import Settings
-from aila.platform.tools._common import Tool
+from aila.platform.tools import Tool
 
 TOOL_ALIAS = "registry_viewer"
 CAPABILITY = (

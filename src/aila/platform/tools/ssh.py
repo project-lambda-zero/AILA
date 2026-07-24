@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from ..config import PlatformSettings
+from ..services.log_redact import redact_command_line
 from ..services.ssh import SSHService
 from ._common import Tool
 
@@ -19,9 +20,15 @@ def _validate_ssh_command(command: str) -> None:
     2. Operators choose which user to connect as when registering a system
     3. Use an unprivileged user for read-only inventory collection
 
-    This hook records each dispatched command for the audit trail.
+    This hook records each dispatched command for the audit trail. The
+    command line is passed through the C6 redaction boundary first, so an
+    inline credential (``echo $PASS | sudo -S ...``, ``mysql -p hunter2``)
+    does not land verbatim in the structured log.
     """
-    _log.info("ssh.command_dispatch", extra={"command": command})
+    _log.info(
+        "ssh.command_dispatch",
+        extra={"command": redact_command_line(command)},
+    )
 
 
 class SSHCommandTool(Tool):
@@ -46,5 +53,12 @@ class SSHCommandTool(Tool):
         return await self.ssh_service.run_command(integration, command)
 
     async def forward_trusted(self, integration: dict, command: str, timeout_seconds: float | None = None) -> str:
-        """Execute a platform-constructed command without validation."""
+        """Execute a platform-constructed command, skipping agent-facing input
+        checks but still emitting the redacted dispatch audit log.
+
+        ``forward_trusted`` exists to bypass agent-visible validation, not to
+        bypass the audit trail: a platform-constructed command is still
+        recorded (redacted) so the dispatch log has no blind spots.
+        """
+        _validate_ssh_command(command)
         return await self.ssh_service.run_command(integration, command, timeout_seconds=timeout_seconds)

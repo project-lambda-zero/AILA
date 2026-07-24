@@ -27,9 +27,9 @@ from aila.api.constants import (
     MEDIA_TYPE_SSE,
     MODULE_ID_PLATFORM,
     ROLE_OPERATOR,
-    TRACK_VULNERABILITY,
 )
 from aila.api.limiter import limiter
+from aila.api.metrics import ACTIVE_SSE
 from aila.api.schemas.tasks import ScanStatusResponse, ScanSubmissionRequest, TaskSubmitResponse
 from aila.platform.services.audit import record_audit_event
 from aila.platform.services.redis_pool import pool_available
@@ -77,8 +77,15 @@ async def submit_scan(
             config_registry=getattr(getattr(platform, "runtime", None), "config_registry", None),
             module_id=MODULE_ID_PLATFORM,
         )
+        scan_module = platform.runtime.module_registry.first_with("scan_submission_track")
+        track = scan_module.scan_submission_track() if scan_module is not None else None
+        if track is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="No registered module accepts scan submissions.",
+            )
         handle = await task_queue.submit(
-            track=TRACK_VULNERABILITY,
+            track=track,
             fn=run_platform_handle,
             kwargs={
                 "query": req.query_text,
@@ -86,6 +93,7 @@ async def submit_scan(
             },
             user_id=auth.user_id,
             group_id=auth.role,
+            team_id=auth.team_id,
         )
         return handle.task_id
 
@@ -101,6 +109,7 @@ async def submit_scan(
                 status=AUDIT_STATUS_COMPLETED,
                 target=task_id,
                 user_id=auth.user_id,
+                team_id=auth.team_id,
                 details={"query": req.query_text[:200]},
             )
             await session.commit()
@@ -174,6 +183,7 @@ async def get_scan_status(
 )
 async def stream_scan_events(
     run_id: str,
+    request: Request,
     last_id: str = Query(default="0", description="Redis Stream ID to start from (default '0' = all events)"),
     auth: AuthContext = Depends(require_user_or_api_key),
 ) -> StreamingResponse:
@@ -222,67 +232,91 @@ async def stream_scan_events(
     async def _sse_generator() -> AsyncGenerator[str, None]:
         from datetime import datetime as _dt
 
-        stream = ProgressStream()
-
-        # Send initial connected event immediately so frontend knows SSE is up
-        yield f"data: {json.dumps({'stage': 'stream', 'message': 'Connected', 'percent': 0})}\n\n"
-
-        # Track the newest stream id we replayed so the live stream does not
-        # re-emit those same events (previous behaviour duplicated every event).
-        resume_from = last_id
-        latest_stage = "submitted"
+        # 60-6: ACTIVE_SSE gauge tracks live SSE connections. The try/finally
+        # guarantees .dec() runs on every exit path including client
+        # disconnect (StreamingResponse cancels the async generator, which
+        # runs finally cleanup) and exceptions raised mid-stream.
+        ACTIVE_SSE.inc()
         try:
-            catchup_events = await stream.catchup(run_id, last_id)
-            for event in catchup_events:
-                yield f"data: {json.dumps(event)}\n\n"
-                stage = event.get("stage")
-                if stage:
-                    latest_stage = stage
-            # ProgressStream.catchup returns events without their stream ids
-            # today, so use "$" to mean "only new events from here" -- avoids
-            # the duplicate replay reported by operators.
-            resume_from = "$"
-        except Exception as exc:
-            _log.warning("Scan SSE catchup failed for %s: %s", run_id, exc)
+            stream = ProgressStream()
 
-        # Check if task already terminal after catchup
-        status, _ = await _fetch_task_state(run_id)
-        if status in _terminal_statuses:
-            yield f"event: done\ndata: {json.dumps({'status': status})}\n\n"
-            return
+            # Send initial connected event immediately so frontend knows SSE is up
+            yield f"data: {json.dumps({'stage': 'stream', 'message': 'Connected', 'percent': 0})}\n\n"
 
-        async for event in stream.stream_events(run_id, resume_from):
-            if event.get("type") == "ping":
-                # Failsafe: on every ping, synthesise a heartbeat event with
-                # the DB-recorded status + age so the frontend never thinks a
-                # long-running stage has silently died. Stages such as advisory
-                # and intel enrichment can run for minutes without emitting
-                # progress; this keeps the UI honest.
-                status, hb = await _fetch_task_state(run_id)
-                if status in _terminal_statuses:
-                    yield f"event: done\ndata: {json.dumps({'status': status})}\n\n"
-                    return
-                hb_age_s: float | None = None
-                if hb is not None:
-                    now = _dt.now(tz=UTC)
-                    hb_for_calc = hb if hb.tzinfo is not None else hb.replace(tzinfo=UTC)
-                    hb_age_s = max(0.0, (now - hb_for_calc).total_seconds())
-                hb_payload = {
-                    "stage": "heartbeat",
-                    "message": f"Scan still running (stage={latest_stage}, last worker beat {int(hb_age_s)}s ago)"
-                    if hb_age_s is not None
-                    else f"Scan still running (stage={latest_stage})",
-                    "percent": None,
-                    "task_status": status,
-                    "heartbeat_age_s": round(hb_age_s, 1) if hb_age_s is not None else None,
-                }
-                yield f"data: {json.dumps(hb_payload)}\n\n"
-                continue
+            # Track the newest stream id we replayed so the live stream does not
+            # re-emit those same events (previous behaviour duplicated every event).
+            resume_from = last_id
+            latest_stage = "submitted"
+            try:
+                catchup_events = await stream.catchup(run_id, last_id)
+                for event in catchup_events:
+                    yield f"data: {json.dumps(event)}\n\n"
+                    stage = event.get("stage")
+                    if stage:
+                        latest_stage = stage
+                # ProgressStream.catchup returns events without their stream ids
+                # today, so use "$" to mean "only new events from here" -- avoids
+                # the duplicate replay reported by operators.
+                resume_from = "$"
+            except Exception as exc:
+                _log.warning("Scan SSE catchup failed for %s: %s", run_id, exc)
 
-            yield f"data: {json.dumps(event)}\n\n"
-            stage = event.get("stage")
-            if stage:
-                latest_stage = stage
+            # Check if task already terminal after catchup
+            status, _ = await _fetch_task_state(run_id)
+            if status in _terminal_statuses:
+                yield f"event: done\ndata: {json.dumps({'status': status})}\n\n"
+                return
+
+            # Wrap the live stream so a mid-stream backend error (e.g. a Redis blip)
+            # closes the SSE connection with a done sentinel instead of crashing the
+            # response, mirroring the catchup block above.
+            try:
+                async for event in stream.stream_events(run_id, resume_from):
+                    # 60-4: end the generator promptly when the client hangs
+                    # up so the server does not hold a Redis connection +
+                    # coroutine per zombie client until the next XREAD tick
+                    # (up to 30 s).
+                    if await request.is_disconnected():
+                        return
+                    if event.get("type") == "ping":
+                        # Failsafe: on every ping, synthesise a heartbeat event with
+                        # the DB-recorded status + age so the frontend never thinks a
+                        # long-running stage has silently died. Stages such as advisory
+                        # and intel enrichment can run for minutes without emitting
+                        # progress; this keeps the UI honest.
+                        status, hb = await _fetch_task_state(run_id)
+                        if status in _terminal_statuses:
+                            yield f"event: done\ndata: {json.dumps({'status': status})}\n\n"
+                            return
+                        hb_age_s: float | None = None
+                        if hb is not None:
+                            now = _dt.now(tz=UTC)
+                            hb_for_calc = hb if hb.tzinfo is not None else hb.replace(tzinfo=UTC)
+                            hb_age_s = max(0.0, (now - hb_for_calc).total_seconds())
+                        hb_payload = {
+                            "stage": "heartbeat",
+                            "message": f"Scan still running (stage={latest_stage}, last worker beat {int(hb_age_s)}s ago)"
+                            if hb_age_s is not None
+                            else f"Scan still running (stage={latest_stage})",
+                            "percent": None,
+                            "task_status": status,
+                            "heartbeat_age_s": round(hb_age_s, 1) if hb_age_s is not None else None,
+                        }
+                        yield f"data: {json.dumps(hb_payload)}\n\n"
+                        continue
+
+                    yield f"data: {json.dumps(event)}\n\n"
+                    stage = event.get("stage")
+                    if stage:
+                        latest_stage = stage
+            except Exception as exc:
+                # End the generator quietly so the StreamingResponse completes with
+                # 200 instead of surfacing a 500 mid-stream. No done sentinel is
+                # emitted -- the client's EventSource then auto-reconnects, which is
+                # the right behaviour for a transient backend error.
+                _log.warning("Scan SSE live stream failed for %s: %s", run_id, exc)
+        finally:
+            ACTIVE_SSE.dec()
 
     return StreamingResponse(
         _sse_generator(),

@@ -454,6 +454,25 @@ function renderMarkdown(md: string): string {
   return html;
 }
 
+/**
+ * Neutralize a markdown link target before it reaches an href (43-5).
+ *
+ * The surrounding markdown is HTML-escaped for &, <, and > only, so a raw URL
+ * can still (a) carry a javascript:/data:/vbscript: scheme that executes on
+ * click, or (b) contain a quote that breaks out of the href attribute. Collapse
+ * whitespace and control characters (browsers strip these before resolving a
+ * scheme) to detect the real scheme, reject anything outside http/https/mailto
+ * (relative and anchor links have no scheme and pass), then escape quotes.
+ */
+function safeHref(raw: string): string {
+  const collapsed = raw.replace(/[\u0000-\u0020]+/g, "").toLowerCase();
+  const scheme = collapsed.match(/^([a-z][a-z0-9+.-]*):/);
+  if (scheme && !["http", "https", "mailto"].includes(scheme[1])) {
+    return "about:blank";
+  }
+  return raw.trim().replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
 function inline(text: string): string {
   return text
     .replace(
@@ -464,6 +483,7 @@ function inline(text: string): string {
     .replace(/\*(.+?)\*/g, "<em>$1</em>")
     .replace(
       /\[([^\]]+)\]\(([^)]+)\)/g,
-      '<a href="$2" class="underline decoration-dotted" target="_blank" rel="noopener noreferrer">$1</a>',
+      (_m, label, url) =>
+        `<a href="${safeHref(url)}" class="underline decoration-dotted" target="_blank" rel="noopener noreferrer">${label}</a>`,
     );
 }

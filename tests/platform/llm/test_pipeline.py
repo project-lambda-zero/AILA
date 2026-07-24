@@ -27,22 +27,32 @@ from aila.platform.llm.pipeline import (
 # ---------------------------------------------------------------------------
 
 class FakeRegistry:
-    """In-memory ConfigRegistry fake."""
+    """In-memory ConfigRegistry fake.
+
+    ``get`` is async to match the real ConfigRegistry -- every resolver in
+    :mod:`aila.platform.llm.config` awaits it (see config.py::resolve_model,
+    is_step_enabled, resolve_fail_mode, etc.). Mirrors tests/platform/llm/
+    test_config.py::FakeRegistry.
+    """
 
     def __init__(self, data: dict[str, object] | None = None) -> None:
         self._data: dict[str, object] = data or {}
 
-    def get(self, namespace: str, key: str) -> object:
+    async def get(self, namespace: str, key: str) -> object:
         return self._data.get(f"{namespace}.{key}")
 
 
 class FakeSecretStore:
-    """In-memory SecretStore fake."""
+    """In-memory SecretStore fake.
+
+    ``resolve_provider_secret`` is async to match the real SecretStore
+    (LLMConfigProvider.resolve_api_key awaits it -- see config.py:83).
+    """
 
     def __init__(self, secrets: dict[str, str] | None = None) -> None:
         self._secrets: dict[str, str] = secrets or {}
 
-    def resolve_provider_secret(self, secret_key: str) -> str | None:
+    async def resolve_provider_secret(self, secret_key: str) -> str | None:
         return self._secrets.get(secret_key)
 
 
@@ -233,9 +243,17 @@ class TestFailModes:
 
     @pytest.mark.asyncio
     async def test_fail_open(self, routing: LLMRouting) -> None:
-        """Classify raises, fail-mode is open (default) -- pipeline continues."""
+        """Classify raises, fail-mode explicitly open -- pipeline continues.
+
+        ``classify`` is now in ``_SECURITY_CRITICAL_STEPS`` (config.py::
+        LLMConfigProvider) so the missing-key default is ``closed``; opt in
+        to fail-open explicitly to exercise this path.
+        """
         provider = LLMConfigProvider(
-            registry=FakeRegistry({"platform.llm_default_model": "test-model"}),  # type: ignore[arg-type]
+            registry=FakeRegistry({
+                "platform.llm_default_model": "test-model",
+                "platform.llm_pipeline_classify_fail_mode_scoring": "open",
+            }),  # type: ignore[arg-type]
             secret_store=FakeSecretStore({"openai_api_key": "sk-test"}),  # type: ignore[arg-type]
         )
         runner = PipelineRunner(config_provider=provider)
@@ -394,39 +412,54 @@ class TestContextIsolation:
 class TestConfigMethods:
     """is_step_enabled and resolve_fail_mode edge cases."""
 
-    def test_is_step_enabled_none_means_true(self) -> None:
+    async def test_is_step_enabled_none_means_true(self) -> None:
         """No config key set -> enabled."""
         provider = LLMConfigProvider(
             registry=FakeRegistry(),  # type: ignore[arg-type]
             secret_store=FakeSecretStore(),  # type: ignore[arg-type]
         )
-        assert provider.is_step_enabled("classify", "scoring") is True
+        assert await provider.is_step_enabled("classify", "scoring") is True
 
     @pytest.mark.parametrize("value", ["false", "0", "no", False])
-    def test_is_step_enabled_false_values(self, value: object) -> None:
+    async def test_is_step_enabled_false_values(self, value: object) -> None:
         """Values that disable a step."""
         provider = LLMConfigProvider(
             registry=FakeRegistry({"platform.llm_pipeline_classify_scoring": value}),  # type: ignore[arg-type]
             secret_store=FakeSecretStore(),  # type: ignore[arg-type]
         )
-        assert provider.is_step_enabled("classify", "scoring") is False
+        assert await provider.is_step_enabled("classify", "scoring") is False
 
     @pytest.mark.parametrize("value", [True, "true", "1", "yes"])
-    def test_is_step_enabled_true_values(self, value: object) -> None:
+    async def test_is_step_enabled_true_values(self, value: object) -> None:
         """Values that enable a step."""
         provider = LLMConfigProvider(
             registry=FakeRegistry({"platform.llm_pipeline_classify_scoring": value}),  # type: ignore[arg-type]
             secret_store=FakeSecretStore(),  # type: ignore[arg-type]
         )
-        assert provider.is_step_enabled("classify", "scoring") is True
+        assert await provider.is_step_enabled("classify", "scoring") is True
 
-    def test_resolve_fail_mode_none_means_open(self) -> None:
-        """No config key -> open."""
+    async def test_resolve_fail_mode_none_defaults_closed_for_security_critical(self) -> None:
+        """No config key -> closed for security-critical steps.
+
+        ``classify`` is in ``LLMConfigProvider._SECURITY_CRITICAL_STEPS``
+        (see config.py::_SECURITY_CRITICAL_STEPS + resolve_fail_mode), so
+        the missing-key default flipped from ``"open"`` to ``"closed"``.
+        """
         provider = LLMConfigProvider(
             registry=FakeRegistry(),  # type: ignore[arg-type]
             secret_store=FakeSecretStore(),  # type: ignore[arg-type]
         )
-        assert provider.resolve_fail_mode("classify", "scoring") == "open"
+        assert await provider.resolve_fail_mode("classify", "scoring") == "closed"
+
+    async def test_resolve_fail_mode_none_defaults_open_for_non_critical(self) -> None:
+        """No config key -> open for steps not in _SECURITY_CRITICAL_STEPS."""
+        provider = LLMConfigProvider(
+            registry=FakeRegistry(),  # type: ignore[arg-type]
+            secret_store=FakeSecretStore(),  # type: ignore[arg-type]
+        )
+        # Any name that is not sanitize/validate/gate/verify/classify/seal
+        # falls into the non-critical branch (open by default).
+        assert await provider.resolve_fail_mode("nonexistent_step", "scoring") == "open"
 
     @pytest.mark.parametrize("value,expected", [
         ("closed", "closed"),
@@ -434,14 +467,14 @@ class TestConfigMethods:
         ("open", "open"),
         ("anything_else", "open"),
     ])
-    def test_resolve_fail_mode_values(self, value: str, expected: str) -> None:
+    async def test_resolve_fail_mode_values(self, value: str, expected: str) -> None:
         provider = LLMConfigProvider(
             registry=FakeRegistry({
                 "platform.llm_pipeline_classify_fail_mode_scoring": value,
             }),  # type: ignore[arg-type]
             secret_store=FakeSecretStore(),  # type: ignore[arg-type]
         )
-        assert provider.resolve_fail_mode("classify", "scoring") == expected
+        assert await provider.resolve_fail_mode("classify", "scoring") == expected
 
 
 # ---------------------------------------------------------------------------
@@ -500,10 +533,10 @@ class TestPipelineWiring:
     async def test_chat_transparent_no_steps(self, client: AilaLLMClient) -> None:
         """No steps registered: chat() returns response with None pipeline fields."""
         mock_completion = _make_completion(content="transparent response")
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             response = await client.chat(
                 "scoring",
@@ -530,10 +563,10 @@ class TestPipelineWiring:
         client.pipeline.register("classify", fake_classify)
 
         mock_completion = _make_completion(content="classified response")
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             response = await client.chat(
                 "scoring",
@@ -560,10 +593,10 @@ class TestPipelineWiring:
         client.pipeline.register("classify", tracking_step)
 
         mock_completion = _make_completion(content="tracked")
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             await client.chat("scoring", [{"role": "user", "content": "test"}])
 

@@ -17,7 +17,12 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import func, select
 
-from aila.api.auth import AuthContext, require_role, require_user_or_api_key
+from aila.api.auth import (
+    AuthContext,
+    TeamContext,
+    require_role,
+    require_user_or_api_key,
+)
 from aila.api.constants import (
     AUDIT_ACTION_SYSTEM_CREATE,
     AUDIT_ACTION_SYSTEM_DELETE,
@@ -40,7 +45,7 @@ from aila.api.schemas.systems import (
     SystemResponse,
     SystemUpdateRequest,
 )
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.services.audit import record_audit_event
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import ManagedSystemRecord, SystemPortRecord, WorkflowRunRecord
@@ -134,7 +139,9 @@ async def _build_tags_map(session: object, system_ids: list[int], platform: obje
     if platform is None or not system_ids:
         return {}
     try:
-        module = platform.runtime.module_registry.require("vulnerability")  # type: ignore[attr-defined]
+        module = platform.runtime.module_registry.first_with("system_tags_map")
+        if module is None:
+            return {}
         return await module.system_tags_map(system_ids, session)
     except Exception:
         _log.debug("tags_map query failed", exc_info=True)
@@ -207,6 +214,7 @@ async def list_systems(
     request: Request,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=250),
+    auth: AuthContext = Depends(require_user_or_api_key),
 ) -> SystemListResponse:
     """Return a paginated list of all registered SSH systems with enrichment data.
 
@@ -215,8 +223,10 @@ async def list_systems(
     """
 
     async def _query() -> tuple[list[ManagedSystemRecord], int, dict, dict, dict, dict]:
-        async with async_session_scope() as session:
+        async with async_session_scope(team_context=TeamContext.from_auth(auth)) as session:
             count_stmt = select(func.count(ManagedSystemRecord.id))
+            if auth.team_id is not None:
+                count_stmt = count_stmt.where(ManagedSystemRecord.team_id == auth.team_id)
             total = (await session.exec(count_stmt)).one()
 
             offset = (page - 1) * page_size
@@ -304,6 +314,7 @@ async def _collect_module_summaries(platform: object, system_id: int, session: o
 async def get_system_connectivity(
     system_id: int,
     request: Request,
+    auth: AuthContext = Depends(require_user_or_api_key),
 ) -> ConnectivityStatusResponse:
     """Return SSH connectivity status for a system based on the last network discovery probe.
 
@@ -316,9 +327,11 @@ async def get_system_connectivity(
     """
 
     async def _query() -> ConnectivityStatusResponse | None:
-        async with async_session_scope() as session:
-            # Verify system exists
-            sys_record = await session.get(ManagedSystemRecord, system_id)
+        async with async_session_scope(team_context=TeamContext.from_auth(auth)) as session:
+            # Verify the system exists and belongs to the caller's team
+            sys_record = (await session.exec(
+                select(ManagedSystemRecord).where(ManagedSystemRecord.id == system_id)
+            )).first()
             if sys_record is None:
                 return None
 
@@ -384,6 +397,7 @@ def _heartbeat_lock(system_id: int) -> asyncio.Lock:
 async def get_system_heartbeat(
     system_id: int,
     request: Request,
+    auth: AuthContext = Depends(require_user_or_api_key),
 ) -> HeartbeatEnvelope:
     """Live SSH heartbeat -- opens a fresh paramiko connect with a 3 s
     timeout, runs ``echo ok``, measures latency, and returns the
@@ -395,6 +409,18 @@ async def get_system_heartbeat(
     from aila.platform.config import build_platform_settings
     from aila.platform.services.ssh import SSHService
 
+    # Enforce team ownership before consulting the shared cache so a
+    # cross-team caller cannot read another team's cached probe result.
+    async with async_session_scope(team_context=TeamContext.from_auth(auth)) as session:
+        owned = (await session.exec(
+            select(ManagedSystemRecord.id).where(ManagedSystemRecord.id == system_id)
+        )).first()
+    if owned is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"System {system_id} not found",
+        )
+
     now = _time.monotonic()
     cached = _heartbeat_cache.get(system_id)
     if cached is not None and (now - cached[0]) < _HEARTBEAT_CACHE_TTL_S:
@@ -405,8 +431,10 @@ async def get_system_heartbeat(
         if cached is not None and (_time.monotonic() - cached[0]) < _HEARTBEAT_CACHE_TTL_S:
             return HeartbeatEnvelope(data=HeartbeatResponse(**cached[1]))
 
-        async with async_session_scope() as session:
-            sys_record = await session.get(ManagedSystemRecord, system_id)
+        async with async_session_scope(team_context=TeamContext.from_auth(auth)) as session:
+            sys_record = (await session.exec(
+                select(ManagedSystemRecord).where(ManagedSystemRecord.id == system_id)
+            )).first()
             if sys_record is None:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -456,6 +484,7 @@ async def get_system_heartbeat(
 async def get_system(
     system_id: int,
     request: Request,
+    auth: AuthContext = Depends(require_user_or_api_key),
 ) -> SystemDetailResponse:
     """Return full system detail with module-contributed dashboard data.
 
@@ -464,8 +493,10 @@ async def get_system(
     """
 
     async def _fetch() -> tuple[ManagedSystemRecord | None, int, dict[str, dict[str, object]]]:
-        async with async_session_scope() as session:
-            record = await session.get(ManagedSystemRecord, system_id)
+        async with async_session_scope(team_context=TeamContext.from_auth(auth)) as session:
+            record = (await session.exec(
+                select(ManagedSystemRecord).where(ManagedSystemRecord.id == system_id)
+            )).first()
             if record is None:
                 return None, 0, {}
 
@@ -508,6 +539,7 @@ async def get_system_findings(
     request: Request,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=250),
+    auth: AuthContext = Depends(require_user_or_api_key),
 ) -> FindingsListResponse:
     """Return findings scoped to one system via module protocol delegation.
 
@@ -517,8 +549,10 @@ async def get_system_findings(
     platform = getattr(request.app.state, "platform", None)
 
     async def _query() -> dict[str, object]:
-        async with async_session_scope() as session:
-            sys_record = await session.get(ManagedSystemRecord, system_id)
+        async with async_session_scope(team_context=TeamContext.from_auth(auth)) as session:
+            sys_record = (await session.exec(
+                select(ManagedSystemRecord).where(ManagedSystemRecord.id == system_id)
+            )).first()
             if sys_record is None:
                 return {"items": [], "total": 0}
 
@@ -573,13 +607,16 @@ async def get_system_scans(
     system_id: int,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=250),
+    auth: AuthContext = Depends(require_user_or_api_key),
 ) -> ScanHistoryResponse:
     """Return scan history for a system (workflow runs linked to this system)."""
     from aila.api.schemas.reports import ReportSummaryResponse
 
     async def _query() -> tuple[ManagedSystemRecord | None, list[WorkflowRunRecord]]:
-        async with async_session_scope() as session:
-            sys_record = await session.get(ManagedSystemRecord, system_id)
+        async with async_session_scope(team_context=TeamContext.from_auth(auth)) as session:
+            sys_record = (await session.exec(
+                select(ManagedSystemRecord).where(ManagedSystemRecord.id == system_id)
+            )).first()
             if sys_record is None:
                 return None, []
             stmt = select(WorkflowRunRecord).order_by(WorkflowRunRecord.created_at.desc())  # type: ignore[attr-defined]  # SQLModel column expression
@@ -667,6 +704,7 @@ async def import_systems_csv(
                     password_secret_id = secret_rec.id
 
                 record = ManagedSystemRecord(
+                    team_id=auth.team_id,
                     name=item.name,
                     host=item.host,
                     username=item.username,
@@ -712,6 +750,7 @@ async def import_systems_csv(
                 status=AUDIT_STATUS_COMPLETED,
                 target="csv-batch-import",
                 user_id=auth.user_id,
+                team_id=auth.team_id,
                 details={
                     "created_count": len(created),
                     "error_count": len(errors),
@@ -765,6 +804,7 @@ async def create_system(
                 password_secret_id = secret_rec.id
 
             record = ManagedSystemRecord(
+                team_id=auth.team_id,
                 name=req.name,
                 host=req.host,
                 username=req.username,
@@ -775,15 +815,21 @@ async def create_system(
                 password_secret_id=password_secret_id,
             )
             session.add(record)
+            # #52-3.2: flush to populate the DB-generated PK and surface
+            # the unique-name constraint here, then stage the audit row
+            # and commit both in a single transaction. The previous flow
+            # (`commit(); refresh; audit; commit()`) opened a crash
+            # window where the system row was persisted but the audit
+            # trail row was lost. A duplicate-name 409 short-circuits
+            # before any audit row is staged -- no change, no audit.
             try:
-                await session.commit()
+                await session.flush()
             except IntegrityError:
                 await session.rollback()
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=f"System name '{req.name}' already exists -- choose a different name or update the existing system via PUT /systems/{{id}}",
                 )
-            await session.refresh(record)
             record_audit_event(
                 session,
                 run_id=str(record.id),
@@ -792,6 +838,7 @@ async def create_system(
                 status=AUDIT_STATUS_COMPLETED,
                 target=record.name,
                 user_id=auth.user_id,
+                team_id=auth.team_id,
                 details={"host": record.host, "name": record.name},
             )
             await session.commit()
@@ -818,8 +865,10 @@ async def update_system(
     """
 
     async def _update() -> ManagedSystemRecord:
-        async with async_session_scope() as session:
-            record: ManagedSystemRecord | None = await session.get(ManagedSystemRecord, system_id)
+        async with async_session_scope(team_context=TeamContext.from_auth(auth)) as session:
+            record: ManagedSystemRecord | None = (await session.exec(
+                select(ManagedSystemRecord).where(ManagedSystemRecord.id == system_id)
+            )).first()
             if record is None:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -860,15 +909,15 @@ async def update_system(
                 setattr(record, field, value)
             record.updated_at = utc_now()
             session.add(record)
-            try:
-                await session.commit()
-            except IntegrityError:
-                await session.rollback()
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"System name '{req.name}' already exists -- choose a different name or update the existing system via PUT /systems/{{id}}",
-                )
-            await session.refresh(record)
+            # #52-3.2: stage the audit row inside the SAME transaction as
+            # the row update. Previously the update committed first and
+            # the audit row was written in a second transaction, so a
+            # crash between the two lost the audit trail. record_audit_event
+            # only stages an INSERT on the session; the single commit
+            # below persists both or neither. An IntegrityError from the
+            # unique-name constraint rolls the audit row back with the
+            # attempted rename -- correct: no change, no audit.
+            audited_fields = list(update_data.keys())
             record_audit_event(
                 session,
                 run_id=str(system_id),
@@ -877,9 +926,17 @@ async def update_system(
                 status=AUDIT_STATUS_COMPLETED,
                 target=record.name,
                 user_id=auth.user_id,
-                details={"fields": list(update_data.keys())},
+                team_id=auth.team_id,
+                details={"fields": audited_fields},
             )
-            await session.commit()
+            try:
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"System name '{req.name}' already exists -- choose a different name or update the existing system via PUT /systems/{{id}}",
+                )
             await session.refresh(record)
             return record
 
@@ -900,8 +957,10 @@ async def delete_system(
     """
 
     async def _delete() -> None:
-        async with async_session_scope() as session:
-            record = await session.get(ManagedSystemRecord, system_id)
+        async with async_session_scope(team_context=TeamContext.from_auth(auth)) as session:
+            record = (await session.exec(
+                select(ManagedSystemRecord).where(ManagedSystemRecord.id == system_id)
+            )).first()
             if record is None:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -909,7 +968,9 @@ async def delete_system(
                 )
             system_name = record.name
             await session.delete(record)
-            await session.commit()
+            # #52-3.2: audit row shares the same transaction as the row
+            # delete. Previously a crash between the two commits lost the
+            # audit trail while the system row was already gone.
             record_audit_event(
                 session,
                 run_id=str(system_id),
@@ -918,6 +979,7 @@ async def delete_system(
                 status=AUDIT_STATUS_COMPLETED,
                 target=system_name,
                 user_id=auth.user_id,
+                team_id=auth.team_id,
                 details={"system_id": system_id},
             )
             await session.commit()

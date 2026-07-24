@@ -80,7 +80,9 @@ async def _load_severity_counts(system_ids: list[int], platform: object) -> dict
     if platform is None or not system_ids:
         return {}
     try:
-        module = platform.runtime.module_registry.require("vulnerability")  # type: ignore[attr-defined]
+        module = platform.runtime.module_registry.first_with("fleet_severity_summary")
+        if module is None:
+            return {}
         labels = await module.fleet_severity_summary(system_ids, None)
     except Exception:
         _log.debug("severity overlay unavailable", exc_info=True)
@@ -129,9 +131,20 @@ async def get_topology(
 
     Per T-138-25: operator+ role enforced; 30/minute rate limit.
     Per T-138-31: response limited to registered systems only (bounded set).
+
+    Team-scoped (#36): a team-scoped caller sees only its team's systems and
+    the ports, services, edges, and subnet groupings derived from them. The
+    child records (SystemPortRecord, SystemServiceRecord, SystemConnectionRecord,
+    SystemMetadataRecord) are not team-scoped themselves; filtering at the
+    ManagedSystemRecord parent is sufficient because each child is only
+    reachable through the already-filtered system_ids set. A god-tier admin
+    (team_id=None, TEAM-06) sees all teams' systems.
     """
     async with async_session_scope() as session:
-        systems = list((await session.exec(select(ManagedSystemRecord))).all())
+        stmt = select(ManagedSystemRecord)
+        if auth.team_id is not None:
+            stmt = stmt.where(ManagedSystemRecord.team_id == auth.team_id)
+        systems = list((await session.exec(stmt)).all())
 
     if not systems:
         return DataEnvelope(
@@ -185,12 +198,13 @@ async def get_topology(
     platform = getattr(request.app.state, "platform", None)
     if platform is not None:
         try:
-            module = platform.runtime.module_registry.require("vulnerability")
-            tag_map = await module.system_tags_map(system_ids, None)
-            for sid, tags in tag_map.items():
-                for tag in tags:
-                    if tag.get("tag_key") == "group":
-                        system_group_tags[sid].append(str(tag.get("tag_value") or ""))
+            module = platform.runtime.module_registry.first_with("system_tags_map")
+            if module is not None:
+                tag_map = await module.system_tags_map(system_ids, None)
+                for sid, tags in tag_map.items():
+                    for tag in tags:
+                        if tag.get("tag_key") == "group":
+                            system_group_tags[sid].append(str(tag.get("tag_value") or ""))
         except Exception:
             _log.debug("group tags unavailable", exc_info=True)
 
@@ -310,9 +324,15 @@ async def get_topology_subnets(
 
     Lightweight alternative to GET /topology for subnet-based filtering.
     Per T-138-25: operator+ role required.
+
+    Team-scoped (#36): a team-scoped caller sees only its team's systems in
+    the subnet groupings; a god-tier admin (team_id=None, TEAM-06) sees all.
     """
     async with async_session_scope() as session:
-        systems = list((await session.exec(select(ManagedSystemRecord))).all())
+        stmt = select(ManagedSystemRecord)
+        if auth.team_id is not None:
+            stmt = stmt.where(ManagedSystemRecord.team_id == auth.team_id)
+        systems = list((await session.exec(stmt)).all())
 
     subnet_map = detect_subnets(systems)
     subnets = [

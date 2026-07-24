@@ -27,8 +27,6 @@ What this commit does NOT do:
 """
 from __future__ import annotations
 
-import functools
-import hashlib
 import json
 import logging
 import re
@@ -36,19 +34,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
 from aila.modules.vr._task_queue import default_task_queue
-from aila.modules.vr.agents.auto_steering import _normalize_acked_observable
 from aila.modules.vr.agents.persona_router import resolve_task_type
 from aila.modules.vr.contracts import (
-    OutcomeConfidence,
     OutcomeKind,
     PayloadKind,
     SenderKind,
 )
-from aila.modules.vr.contracts.branch import BranchStatus
 from aila.modules.vr.contracts.investigation import InvestigationKind
 from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
@@ -58,6 +52,7 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
     VRTargetRecord,
 )
+from aila.modules.vr.services.config_helpers import get_int
 from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.modules.vr.services.outcome_review import (
     OUTCOME_STATE_APPROVED,
@@ -65,17 +60,16 @@ from aila.modules.vr.services.outcome_review import (
     evaluate_quorum,
     upsert_review,
 )
-from aila.platform.contracts._common import utc_now
+from aila.platform.agents.auto_steering import _normalize_acked_observable
+from aila.platform.agents.turn_helpers import (
+    decode_case_state,
+)
+from aila.platform.agents.turn_runner import AgentTurnRunnerBase
+from aila.platform.contracts import utc_now
 from aila.platform.contracts.reasoning import (
     ReasoningCaseState,
     ReasoningContract,
     ReasoningTurnDecision,
-    ResolvedHypothesis,
-)
-from aila.platform.llm.idempotency_cache import (
-    lookup_cached_response,
-    make_request_key,
-    store_response,
 )
 from aila.platform.mcp.adapters import (
     KNOWN_TOOLS,
@@ -85,6 +79,9 @@ from aila.platform.mcp.adapters.known_tools import tools_for_language
 from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
 from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
 from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
+from aila.platform.prompts import LoadedPrompt, PromptNotFoundError, PromptRegistry
+from aila.platform.prompts.pinning import resolve_pinned_prompt
+from aila.platform.prompts.version_store import PromptVersionStore
 from aila.platform.services.reasoning import CyberReasoningEngine
 from aila.platform.uow import UnitOfWork
 
@@ -116,29 +113,7 @@ _VARIANT_HUNT_EXHAUSTION_PATTERN = re.compile(
     r")\b"
 )
 
-# After this many consecutive rejected submits on the same branch, the
-# gate FORCES the submit through with a `variant_hunt_advisory:
-# forced_through_after_N_rejects` flag on the payload. The agent never
-# loops forever; the operator gets an audit trail of the over-forced
-# submissions. Configurable via env for operators tuning the trade-off
-# between "more variant fan-out" and "fewer no-op forced submits".
-_VARIANT_HUNT_REJECT_CAP = int(__import__("os").environ.get(
-    "VR_VARIANT_HUNT_REJECT_CAP", "3",
-))
-# Hypothesis-settlement gate on terminal submit. Every live hypothesis
-# must be either explicitly rejected (in decision.rejected[]) or folded
-# into the submitted answer/provenance as supported evidence -- no live
-# hypotheses are permitted to survive a submit. Without this gate, agents
-# accumulate live hypotheses across deep-search turns and submit while
-# the case still has 5+ unresolved claims, leaving the operator to
-# manually decide which ones the finding actually addresses.
-#
-# Cap mirrors variant_hunt: after N rejections the submit is FORCED
-# through with payload.unresolved_hypotheses_at_submit_advisory stamped
-# so the operator can grep the outcomes table.
-_UNRESOLVED_HYP_REJECT_CAP = int(__import__("os").environ.get(
-    "VR_UNRESOLVED_HYP_REJECT_CAP", "3",
-))
+
 
 
 _PROMPT_DIR = Path(__file__).parent / "prompts"
@@ -175,7 +150,7 @@ class VulnResearcherError(Exception):
         self.retryable = retryable
 
 
-class HonestVulnResearcher:
+class HonestVulnResearcher(AgentTurnRunnerBase):
     """Single-branch reasoning agent.
 
     Construction takes the reasoning engine + identifiers. The engine
@@ -197,547 +172,41 @@ class HonestVulnResearcher:
         self._cve_intel = list(cve_intel or [])
         self._applicable_patterns = list(applicable_patterns or [])
 
-    async def run_turn(self) -> VulnResearcherTurnResult:
-        """Run one turn for this branch and write the result to the DB.
+    # ---- AgentTurnRunnerBase config + hooks (RFC-03 Phase 7) -----------
+    _LOG_LABEL = "vuln_researcher"
+    _error_cls = VulnResearcherError
+    _result_cls = VulnResearcherTurnResult
+    _message_model = VRInvestigationMessageRecord
+    _branch_model = VRInvestigationBranchRecord
+    _OUTCOME_STATE_APPROVED = OUTCOME_STATE_APPROVED
 
-        On a ``submit`` decision, also writes a VRInvestigationOutcomeRecord
-        and returns ``terminal=True`` so the workflow state knows to
-        stop driving the branch.
-        """
-        inv, branch, target_snapshot = await self._load()
+    async def _load_turn_config(self) -> None:
+        self._variant_hunt_reject_cap = await get_int("variant_hunt_reject_cap")
+        self._unresolved_hyp_reject_cap = await get_int("unresolved_hyp_reject_cap")
 
-        case_state = _decode_case_state(branch.case_state_json)
-        turn_number = branch.turn_count + 1
+    def _extra_user_prompt_kwargs(self) -> dict[str, Any]:
+        return {"cve_intel": self._cve_intel}
 
-        pending_operator_messages = await self._consume_pending_operator_messages(
-            turn_number,
+    def _maybe_reject_fanout_submit(
+        self, *, decision: Any, inv: Any, case_state: Any, turn_number: int,
+    ) -> Any:
+        if inv.kind == InvestigationKind.VARIANT_HUNT.value:
+            return self._maybe_reject_variant_hunt_submit(
+                decision=decision, case_state=case_state, turn_number=turn_number,
+            )
+        return decision
+
+    async def _dispatch_approved_outcome(self, outcome_id: str) -> None:
+        # Deferred import: workflow.task imports the researcher module.
+        from aila.modules.vr.workflow.task import run_vr_outcome_dispatch
+        await default_task_queue().submit(
+            track="vr",
+            fn=run_vr_outcome_dispatch,
+            kwargs={"outcome_id": outcome_id},
+            user_id="system",
+            group_id="vr_dispatcher",
         )
 
-        # Re-enqueue blindness fix: on a continuation run (operator
-        # re-enqueued a completed investigation), the agent has zero
-        # awareness it already submitted DIRECT_FINDINGs in prior
-        # passes. Without this, it re-investigates from scratch every
-        # time and lands on the same root cause -- 6 outcomes, 0 new
-        # variants. Loading prior outcomes into the prompt forces it
-        # to acknowledge prior work and EXTEND instead of REPEAT.
-        prior_outcomes = await self._load_prior_outcomes()
-        sibling_context = await self._load_sibling_context()
-
-        # Sibling-consensus rejection pressure. When this branch's live
-        # hypotheses include an id that 2+ siblings have rejected (with
-        # source-citing claims), inject a directive forcing the agent
-        # to either reject it this turn or explain disagreement.
-        # Without this, the dialectic produces local rejection but
-        # never converges across branches: halvar keeps h1 alive
-        # forever even after maddie + renzo reject it with verbatim
-        # source proof (observed live on investigation <inv-uuid>).
-        my_live_ids = {h.id for h in case_state.hypotheses if h.id}
-        if my_live_ids and sibling_context:
-            sibling_rejection_count: dict[str, int] = {}
-            sibling_rejection_claims: dict[str, list[str]] = {}
-            for sib in sibling_context:
-                for rej in sib.get("rejected", []):
-                    rid = rej.get("id")
-                    if not rid or rid not in my_live_ids:
-                        continue
-                    sibling_rejection_count[rid] = sibling_rejection_count.get(rid, 0) + 1
-                    sibling_rejection_claims.setdefault(rid, []).append(
-                        f"{sib.get('persona_voice','?')}: {rej.get('claim','')[:120]}"
-                    )
-            consensus_rejections = {
-                rid: claims for rid, claims in sibling_rejection_claims.items()
-                if sibling_rejection_count.get(rid, 0) >= 2
-            }
-            if consensus_rejections:
-                directive_lines = [
-                    "*** SIBLING CONSENSUS REJECTION ***",
-                    f"You have {len(consensus_rejections)} hypothesis(es) still LIVE that ",
-                    "2+ sibling branches have already REJECTED with source-citing evidence:",
-                    "",
-                ]
-                for rid, claims in consensus_rejections.items():
-                    directive_lines.append(f"  hypothesis id={rid}")
-                    for c in claims:
-                        directive_lines.append(f"    - {c}")
-                directive_lines.append("")
-                directive_lines.append(
-                    "This turn you MUST either: (a) include these ids in your "
-                    "decision.rejected[] with your own short concurring claim, "
-                    "OR (b) explain in reasoning why you disagree AND cite the "
-                    "verbatim source contradicting the siblings' refutation. "
-                    "Passive 'keep alive without comment' is a deliberation "
-                    "integrity failure."
-                )
-                # fix §103 -- directive lives ONLY in the in-memory
-                # case_state.observables; the absorb()→branch_row write
-                # at the end of this turn persists it as part of the
-                # ONE consolidated case_state write per turn (was three
-                # writes: directive injection here, normal write at
-                # message-write site, terminal overwrite). The prompt
-                # builder below reads from `case_state` (line ~295) so
-                # this turn already sees the directive; absorb()
-                # preserves observables into new_case_state, which
-                # encodes to branch_row.case_state_json at end-of-turn.
-                # fix §89 -- eliminates the pre-LLM directive UoW
-                # (one of the three commits this method used to run
-                # per turn). On a crash before the end-of-turn UoW
-                # the directive recomputes deterministically from
-                # sibling_context on retry, so no audit loss.
-                case_state.observables["_directive.sibling_consensus_rejection"] = "\n".join(directive_lines)
-        system_prompt = _load_prompt(inv.strategy_family, branch.persona_voice)
-        tool_specs = await _fetch_tool_specs(
-            target_kind=(target_snapshot or {}).get("kind"),
-            primary_language=(target_snapshot or {}).get("primary_language"),
-        )
-        user_prompt = self._build_user_prompt(
-            inv=inv,
-            branch=branch,
-            case_state=case_state,
-            turn=turn_number,
-            pending_operator_messages=pending_operator_messages,
-            cve_intel=self._cve_intel,
-            target_snapshot=target_snapshot,
-            tool_specs=tool_specs,
-            prior_outcomes=prior_outcomes,
-            sibling_context=sibling_context,
-            applicable_patterns=self._applicable_patterns,
-        )
-        # fix §88 -- per-component prompt-size logging stays as
-        # diagnostic visibility, demoted from WARNING to DEBUG. At
-        # WARNING level this fired ~22k times per MASVS audit (53
-        # children × 70 turns × 6 personas), flooding the worker log
-        # and drowning real warnings. Operators enable
-        # vuln_researcher logger at DEBUG when they want to see the
-        # bloat distribution.
-        if _log.isEnabledFor(logging.DEBUG):
-            sys_chars = len(system_prompt or "")
-            usr_chars = len(user_prompt or "")
-            tools_chars = len(json.dumps(tool_specs) if tool_specs else "")
-            snap_chars = len(json.dumps(target_snapshot) if target_snapshot else "")
-            cs_chars = len(json.dumps(case_state.model_dump() if hasattr(case_state, "model_dump") else {}))
-            _log.debug(
-                "PROMPT_SIZE_DIAG inv=%s branch=%s turn=%d persona=%s "
-                "sys=%d user=%d tools=%d snap=%d case=%d TOTAL=%d (~%dK tok)",
-                inv.id[:8], branch.id[:8], turn_number, branch.persona_voice,
-                sys_chars, usr_chars, tools_chars, snap_chars, cs_chars,
-                sys_chars + usr_chars + tools_chars,
-                (sys_chars + usr_chars + tools_chars) // 4000,
-            )
-
-        # v0.4 GA-52: branch persona maps to a per-role task_type
-        # (researcher / implementer / critic). Falls back to the
-        # investigation's strategy_family when no persona is assigned.
-        task_type = resolve_task_type(branch.persona_voice) if branch.persona_voice else inv.strategy_family
-
-        # Idempotency: derive a request_key from (investigation, branch,
-        # turn, prompts) and check the cache before the LLM call. If a
-        # prior attempt completed the LLM call but crashed before the
-        # tool result was durably saved, the retry replays the cached
-        # decision instead of paying for a duplicate Claude call.
-        prompt_hash = hashlib.sha256(
-            (system_prompt + "\x00" + user_prompt).encode()
-        ).hexdigest()
-        request_key = make_request_key(
-            self.investigation_id, self.branch_id, turn_number, prompt_hash,
-        )
-        cached_response: dict[str, Any] | None = None
-        async with UnitOfWork() as cache_uow:
-            cached_response = await lookup_cached_response(
-                cache_uow.session, request_key,
-            )
-        # decision is set in exactly one of two paths: from a valid
-        # cache HIT, or from the upstream LLM call. Any failure to
-        # validate the cache row falls through to the API path.
-        decision: ReasoningTurnDecision | None = None
-        # fix §89 -- `cache_hit` flag lets the post-LLM UoW skip the
-        # cache store when we already had the response. The previous
-        # separate `store_uow` here is folded into the message-write
-        # UoW further down so one UoW covers all post-LLM writes.
-        cache_hit = False
-        if cached_response is not None:
-            try:
-                decision = ReasoningTurnDecision.model_validate(cached_response)
-                cache_hit = True
-                _log.info(
-                    "vuln_researcher: idempotency cache HIT inv=%s branch=%s turn=%d "
-                    "(skipped duplicate LLM call)",
-                    self.investigation_id, self.branch_id, turn_number,
-                )
-            except (ValueError, TypeError, KeyError, AttributeError) as exc:
-                # ValidationError, KeyError, AttributeError, or any
-                # other cache-shape mismatch. We fall through to the
-                # API path; the bad cache row stays in DB but will be
-                # overwritten by store_response on the next success.
-                # fix §350 -- surface traceback so a malformed cache row's
-                # actual shape failure is debuggable on first occurrence
-                # instead of waiting for a second hit.
-                _log.warning(
-                    "vuln_researcher: cache validate failed (%s: %s) -- calling LLM",
-                    type(exc).__name__, exc,
-                    exc_info=True,
-                )
-                decision = None
-
-        if decision is None:
-            try:
-                decision = await self._engine.decide_next_turn(
-                    task_type=task_type,
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                )
-            except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError) as exc:
-                # must surface as VulnResearcherError so the loop catches
-                # it, marks exit_reason='researcher_error:<msg>', and
-                # the workflow finalises with status=FAILED instead of
-                # silently completing the task with no outcome and
-                # status=RUNNING.
-                raise VulnResearcherError(
-                    f"engine.decide_next_turn failed for investigation_id="
-                    f"{self.investigation_id} branch_id={self.branch_id}: "
-                    f"{type(exc).__name__}: {exc}",
-                    retryable=bool(getattr(exc, "retryable", False)),
-                ) from exc
-            # fix §89 -- store_response moved into the post-LLM UoW at
-            # the end of run_turn. Cache row + message write + branch
-            # update + outcome upsert now share ONE transaction instead
-            # of three. Failure to commit means the cache row is also
-            # not persisted, so a retry hits the API again -- correct
-            # behavior for transient failures.
-
-        # fix §87 -- was a production `assert`; stripped under `-O` and
-        # then a NoneType-has-no-attribute crashes later on the next
-        # decision use. Raise explicitly so the workflow finalizer
-        # marks the investigation FAILED instead of partial-completing.
-        # decision must be set by now: either the cache HIT branch
-        # assigned it OR the LLM call branch did. The only escape path
-        # is the raise VulnResearcherError above which exits entirely.
-        if decision is None:
-            raise VulnResearcherError(
-                f"decision unbound after cache + LLM paths "
-                f"(inv={self.investigation_id} branch={self.branch_id} "
-                f"turn={turn_number}) -- logic bug",
-            )
-
-        # ── variant_hunt submit gate ────────────────────────────────────
-        # When the agent terminal-submits on a kind=variant_hunt
-        # investigation, the dispatcher spawns ONE CHILD investigation
-        # per `variant_hunt_orders` entry on the payload. After the
-        # turn-budget bump (c912d5b: 25→60→70) + branch-aware auto-
-        # continue (fba2a08) landed, agents started investigating
-        # candidates inline for the whole 60+ turn budget and submitting
-        # carrying `variant_hunt_orders=[]` AND no exhaustion declaration --
-        # collapsing the variant-hunt fan-out from ~120 children/day to
-        # ~2/day overnight (5-21 → 5-22). The submit was technically
-        # valid but it produced ZERO downstream investigations on
-        # exactly the investigation kind whose entire purpose is to
-        # fan out variant probes.
-        #
-        # The gate intercepts that submit and forces the agent to either:
-        #   (a) populate variant_hunt_orders with the candidates it
-        #       investigated inline (child investigations confirm-and-
-        #       extend, not duplicate work), or
-        #   (b) explicitly declare exhaustion via a recognised phrase
-        #       (matches outcome_dispatcher._VARIANT_EXHAUSTION_PATTERN
-        #       -- NO FURTHER VARIANTS, VARIANT DEAD, etc.)
-        #
-        # On rejection we DON'T persist the outcome and DON'T mark the
-        # branch terminal. Instead we inject a loud
-        # `_directive.variant_hunt_submit_rejected` observable into
-        # case_state so next turn's prompt surfaces the rejection at
-        # PROMPT POSITION 2 (render_active_directives_section).
-        #
-        # Safety: after _VARIANT_HUNT_REJECT_CAP consecutive rejections
-        # on the same branch we force the submit through with a
-        # `variant_hunt_advisory: forced_through_after_N_rejects` flag
-        # on the payload so the operator can audit and the agent
-        # doesn't loop forever.
-        # Pre-submit: every live hypothesis must be either explicitly
-        # rejected (in decision.rejected[]) or folded into the answer
-        # as supported evidence. Runs BEFORE the variant_hunt gate so
-        # the agent fixes the hypothesis-resolution issue first; once
-        # resolved cleanly, the variant_hunt gate (if applicable)
-        # evaluates against the cleaned decision.
-        # Pre-submit gate (NEW): if another branch in this investigation
-        # has a draft outcome up for review and this branch has not yet
-        # voted, refuse the submit and inject a "vote first" directive.
-        # Otherwise multiple siblings race to terminal_submit before
-        # anyone votes on the first draft, and the first draft sits
-        # stuck in draft forever because every potential voter has
-        # closed itself out. See an observed investigation (renzo's draft
-        # never reached quorum because maddie/wei/yuki all submitted
-        # their own before voting on it).
-        if decision.action == "submit":
-            decision = await self._maybe_reject_submit_when_draft_pending(
-                decision=decision,
-                case_state=case_state,
-                turn_number=turn_number,
-            )
-
-        # Reciprocal gate (Option B follow-up): if the agent emits
-        # submit_outcome_review for an outcome this branch ALREADY voted
-        # on, reject and steer back to investigation work. Without this
-        # gate the agent re-emits the same vote every turn (idempotent at
-        # the DB level via UNIQUE (outcome_id, branch_id) -- so harmless
-        # -- but burns the entire 70-turn budget on re-voting instead of
-        # adding to quorum or doing useful audit work). Observed live on
-        # an observed investigation and branch (yuki): turns 29-40 all
-        # re-voted approve on the same outcome.
-        if (
-            decision.action == "submit_outcome_review"
-            and decision.review_outcome_id
-        ):
-            decision = await self._maybe_reject_revote_when_already_voted(
-                decision=decision,
-                case_state=case_state,
-                turn_number=turn_number,
-            )
-
-        if decision.action == "submit":
-            decision = self._maybe_reject_submit_with_unresolved_hypotheses(
-                decision=decision,
-                case_state=case_state,
-                turn_number=turn_number,
-            )
-
-        if (
-            decision.action == "submit"
-            and inv.kind == InvestigationKind.VARIANT_HUNT.value
-        ):
-            decision = self._maybe_reject_variant_hunt_submit(
-                decision=decision,
-                case_state=case_state,
-                turn_number=turn_number,
-            )
-
-        # FINAL GATE -- empty tool_run coerce. Runs AFTER every other
-        # gate (re-vote, submit-with-unresolved-hyp, variant-hunt-submit)
-        # because those gates THEMSELVES produce action=tool_run +
-        # empty command as a "rejection no-op" output. Only checks
-        # `command` (the field tool_executor parses).
-        # Swap to "reasoning" (valid Literal; falls through to TEXT
-        # payload in _decision_to_message_payload). The directive
-        # observable explains what happened so the next prompt picks a
-        # real action instead of looping.
-        if (
-            decision.action == "tool_run"
-            and not (decision.command or "").strip()
-        ):
-            _log.info(
-                "empty_tool_run COERCED→reasoning inv=%s branch=%s turn=%d",
-                self.investigation_id, self.branch_id, turn_number,
-            )
-            case_state.observables["_directive.empty_tool_run_coerced"] = (
-                "*** EMPTY tool_run COERCED TO reasoning ***\n\n"
-                "Your prior turn emitted action='tool_run' but command "
-                "was empty. (Could also have come from an internal gate "
-                "that rejected your submit and converted to tool_run as "
-                "a no-op.) Engine treated it as action='reasoning'.\n\n"
-                "Valid actions: tool_run / reasoning / submit / "
-                "submit_outcome_review / script_execute. There is no "
-                "'observe' action. Empty tool_run wastes a turn -- pick "
-                "'reasoning' to think, or check the directives in this "
-                "prompt for what you actually need to do next."
-            )
-            decision = decision.model_copy(update={
-                "action": "reasoning",
-                "command": "",
-                "script_content": "",
-            })
-
-        new_case_state = self._engine.absorb(case_state, decision, turn_number=turn_number)
-
-        payload_kind, payload = _decision_to_message_payload(decision)
-        terminal = decision.action == "submit"
-        outcome_id: str | None = None
-
-        # fix §89 -- ONE post-LLM UoW: cache store (if we made the LLM
-        # call) + message write + branch state update + outcome upsert.
-        # Was three separate UoWs (sibling-directive pre-LLM, cache
-        # store post-LLM, message-write post-LLM). The sibling-directive
-        # UoW was eliminated entirely by §103 (directive lives in
-        # in-memory case_state.observables and persists with the
-        # end-of-turn case_state_json write).
-        # fix §103 -- ONE branch_row.case_state_json write per turn (was
-        # three). The final write happens AFTER terminal auto-resolve
-        # mutates new_case_state, so the durable scratchpad reflects
-        # the post-auto-resolve state in a single observable transition.
-        # Concurrent readers (frontend polling, auto_steering) see only
-        # the pre- and post-turn states, not three intermediate flips.
-        async with UnitOfWork() as uow:
-            if not cache_hit:
-                # Store on success only -- failed LLM calls leave no
-                # cache entry so retry hits the API again (correct for
-                # transient failures).
-                await store_response(
-                    uow.session,
-                    request_key=request_key,
-                    investigation_id=self.investigation_id,
-                    branch_id=self.branch_id,
-                    turn_number=turn_number,
-                    response=decision.model_dump(mode="json"),
-                )
-
-            msg = VRInvestigationMessageRecord(
-                investigation_id=self.investigation_id,
-                branch_id=self.branch_id,
-                sender_kind=SenderKind.ENGINE.value,
-                sender_id="engine",
-                payload_kind=payload_kind.value,
-                payload_json=json.dumps(payload),
-                at_turn=turn_number,
-                evidence_refs_json="[]",
-            )
-            uow.session.add(msg)
-
-            branch_row = (await uow.session.exec(
-                _select(VRInvestigationBranchRecord).where(
-                    VRInvestigationBranchRecord.id == self.branch_id,
-                )
-            )).first()
-            if branch_row is None:
-                raise VulnResearcherError(
-                    f"branch {self.branch_id} disappeared during turn",
-                )
-            branch_row.turn_count = turn_number
-            branch_row.updated_at = utc_now()
-
-            if terminal:
-                outcome_kind = _terminal_outcome_kind(decision)
-                new_payload = _outcome_payload(decision)
-                new_confidence = _to_outcome_confidence(decision).value
-                # Auto-reject any hypothesis still in `hypotheses` at
-                # submit time. The agent had every prior turn to call
-                # reject_hypothesis manually; whatever survives to the
-                # terminal turn is "unresolved" and stays "live" in the
-                # frontend forever unless we close it here. Carries an
-                # explicit reason so the audit trail shows it was
-                # auto-closed rather than reasoned-through.
-                _auto_resolve_live_on_terminal(
-                    new_case_state,
-                    turn=turn_number,
-                    outcome_kind=outcome_kind.value,
-                )
-                outcome_id = await _upsert_canonical_outcome(
-                    uow=uow,
-                    investigation_id=self.investigation_id,
-                    branch_id=self.branch_id,
-                    persona_voice=branch_row.persona_voice,
-                    new_outcome_kind=outcome_kind.value,
-                    new_confidence=new_confidence,
-                    new_payload=new_payload,
-                    at_turn=turn_number,
-                    # fix §173 -- explicit terminal-submit contract marker.
-                    # _upsert_canonical_outcome is the ONE canonical-outcome
-                    # write path and asserts this value at function entry;
-                    # any non-terminal write path would have to call this
-                    # starting inside its own terminal_submit (no separate
-                    # submit_canonical_addition action exists by design).
-                    action="terminal_submit",
-                )
-                # Close the branch -- BranchStatus.COMPLETED + closed_reason
-                # + closed_at -- so _maybe_trigger_synthesis can count it
-                # against the "expected to submit" set and the UI shows
-                # the branch as done rather than perpetually active.
-                branch_row.status = BranchStatus.COMPLETED.value
-                branch_row.closed_reason = (
-                    f"terminal_submit:turn_{turn_number}:{outcome_kind.value}"
-                )
-                branch_row.closed_at = utc_now()
-
-            # fix §103 -- single case_state_json write, performed after
-            # the optional terminal auto-resolve so the persisted
-            # scratchpad reflects post-resolution state.
-            branch_row.case_state_json = _encode_case_state(new_case_state)
-            uow.session.add(branch_row)
-
-            await uow.session.commit()
-            await uow.session.refresh(msg)
-
-        # ------- submit_outcome_review handling (draft outcome workflow) -------
-        # The message was already written in the UoW above; here we
-        # turn the agent's vote into a row in vr_outcome_reviews and
-        # evaluate quorum. If quorum flips state to APPROVED, the
-        # dispatcher fires inline so the outcome ships immediately
-        # rather than waiting for the next worker poll.
-        review_state: str | None = None
-        if decision.action == "submit_outcome_review" and decision.review_outcome_id:
-            try:
-                await upsert_review(
-                    outcome_id=decision.review_outcome_id,
-                    reviewer_branch_id=self.branch_id,
-                    vote=decision.review_vote or "abstain",
-                    comment=(decision.review_comment or decision.reasoning or ""),
-                    suggested_edits=decision.payload or {},
-                )
-                quorum = await evaluate_quorum(decision.review_outcome_id)
-                review_state = quorum.new_state
-                _log.info(
-                    "vuln_researcher REVIEW inv=%s branch=%s outcome=%s "
-                    "vote=%s state=%s approve=%d reject=%d k=%d",
-                    self.investigation_id, self.branch_id,
-                    decision.review_outcome_id, decision.review_vote,
-                    quorum.new_state, quorum.approve_count,
-                    quorum.reject_count, quorum.quorum_k,
-                )
-                if quorum.new_state == OUTCOME_STATE_APPROVED:
-                    # fix §90 -- enqueue the dispatcher as a separate
-                    # platform task rather than calling
-                    # ``dispatcher.dispatch`` inline from this branch's
-                    # turn. The dispatcher cascades cross-branch (halts
-                    # sibling branches, flips inv to COMPLETED, purges
-                    # ARQ jobs); running that cascade inside one
-                    # branch's turn-execution context made other
-                    # branches' workers observe mid-flight cross-branch
-                    # state outside their own atomic-commit boundary.
-                    # The new ``run_vr_outcome_dispatch`` task runs
-                    # starting in its own worker context with its own UoW and
-                    # its own retry budget.
-                    from aila.modules.vr.workflow.task import (
-                        run_vr_outcome_dispatch,
-                    )
-
-                    await default_task_queue().submit(
-                        track="vr",
-                        fn=run_vr_outcome_dispatch,
-                        kwargs={"outcome_id": decision.review_outcome_id},
-                        user_id="system",
-                        group_id="vr_dispatcher",
-                    )
-            except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError, VulnResearcherError) as exc:
-                # Was `(OSError, TimeoutError, RuntimeError, ValueError)`;
-                # SQLAlchemyError, pydantic.ValidationError, KeyError,
-                # AttributeError from upsert_review / evaluate_quorum /
-                # dispatcher.dispatch all fell through silently as the
-                # turn-loop just continued, dropping the vote. Catch
-                # everything, log with the type, then re-raise the
-                # subtypes that the workflow finalizer recognises as
-                # retryable LLM failures so the runner can re-enqueue.
-                _log.exception(
-                    "vuln_researcher REVIEW failed inv=%s branch=%s "
-                    "outcome=%s err=%s: %s",
-                    self.investigation_id, self.branch_id,
-                    decision.review_outcome_id,
-                    type(exc).__name__, exc,
-                )
-                if isinstance(exc, VulnResearcherError):
-                    raise
-
-        _log.info(
-            "vuln_researcher TURN inv=%s branch=%s turn=%d action=%s terminal=%s "
-            "review_state=%s",
-            self.investigation_id, self.branch_id, turn_number,
-            decision.action, terminal, review_state or "-",
-        )
-
-        return VulnResearcherTurnResult(
-            investigation_id=self.investigation_id,
-            branch_id=self.branch_id,
-            turn=turn_number,
-            decision=decision,
-            message_id=msg.id,
-            outcome_id=outcome_id,
-            terminal=terminal,
-        )
 
     async def _load(
         self,
@@ -850,7 +319,7 @@ class HonestVulnResearcher:
                     .order_by(VRInvestigationOutcomeRecord.created_at.desc())
                     .limit(1),
                 )).first()
-                cs = _decode_case_state(s.case_state_json)
+                cs = decode_case_state(s.case_state_json)
                 t_payload: dict[str, Any] | None = None
                 if terminal is not None:
                     try:
@@ -1215,7 +684,7 @@ class HonestVulnResearcher:
 
         Returns either:
           - the ORIGINAL decision (passed the gate, or forced-through
-            after _VARIANT_HUNT_REJECT_CAP rejections)
+            after self._variant_hunt_reject_cap rejections)
           - a REPLACEMENT decision with ``action='tool_run'``,
             ``command=''``, and a synthetic answer body explaining the
             rejection. The replacement is non-terminal so the loop
@@ -1254,7 +723,7 @@ class HonestVulnResearcher:
         )
         new_reject_count = prior_rejects + 1
 
-        if new_reject_count > _VARIANT_HUNT_REJECT_CAP:
+        if new_reject_count > self._variant_hunt_reject_cap:
             # Force through after N rejections so the agent doesn't loop
             # forever. Stamp the payload with an audit flag so the
             # operator can find these in the outcomes table.
@@ -1281,13 +750,13 @@ class HonestVulnResearcher:
             "variant_hunt submit REJECTED inv=%s branch=%s turn=%d "
             "rejects=%d/%d -- orders=0, no exhaustion phrase",
             self.investigation_id, self.branch_id, turn_number,
-            new_reject_count, _VARIANT_HUNT_REJECT_CAP,
+            new_reject_count, self._variant_hunt_reject_cap,
         )
 
         case_state.observables["_variant_hunt_submit_rejected_count"] = new_reject_count
         case_state.observables["_directive.variant_hunt_submit_rejected"] = (
             "*** VARIANT_HUNT SUBMIT REJECTED ***\n"
-            f"Rejection {new_reject_count}/{_VARIANT_HUNT_REJECT_CAP} on this branch.\n"
+            f"Rejection {new_reject_count}/{self._variant_hunt_reject_cap} on this branch.\n"
             "\n"
             "You attempted to terminal_submit a kind=variant_hunt investigation\n"
             "with EMPTY variant_hunt_orders AND no exhaustion declaration. The\n"
@@ -1319,9 +788,9 @@ class HonestVulnResearcher:
             "      site of the shared machinery and found no new candidates.\n"
             "      Cite which call sites you reviewed in the answer body.\n"
             "\n"
-            f"After {_VARIANT_HUNT_REJECT_CAP} rejections on this branch the\n"
+            f"After {self._variant_hunt_reject_cap} rejections on this branch the\n"
             "submit is FORCED THROUGH with variant_hunt_advisory:\n"
-            f"forced_through_after_{_VARIANT_HUNT_REJECT_CAP}_rejects stamped on\n"
+            f"forced_through_after_{self._variant_hunt_reject_cap}_rejects stamped on\n"
             "the payload. Don't burn through your safety budget -- pick (a)\n"
             "or (b) cleanly."
         )
@@ -1407,7 +876,7 @@ class HonestVulnResearcher:
             unresolved_lines.append(f"  ... and {len(unresolved) - 10} more")
         unresolved_block = "\n".join(unresolved_lines)
 
-        if new_reject_count > _UNRESOLVED_HYP_REJECT_CAP:
+        if new_reject_count > self._unresolved_hyp_reject_cap:
             _log.warning(
                 "unresolved_hyp submit FORCED THROUGH after %d rejections "
                 "inv=%s branch=%s turn=%d -- payload retained %d unresolved "
@@ -1434,13 +903,13 @@ class HonestVulnResearcher:
             "unresolved_hyp submit REJECTED inv=%s branch=%s turn=%d "
             "rejects=%d/%d -- %d live hypotheses unresolved",
             self.investigation_id, self.branch_id, turn_number,
-            new_reject_count, _UNRESOLVED_HYP_REJECT_CAP, len(unresolved),
+            new_reject_count, self._unresolved_hyp_reject_cap, len(unresolved),
         )
 
         case_state.observables["_unresolved_hyp_submit_rejected_count"] = new_reject_count
         case_state.observables["_directive.unresolved_hyp_submit_rejected"] = (
             "*** SUBMIT REJECTED - UNRESOLVED LIVE HYPOTHESES ***\n"
-            f"Rejection {new_reject_count}/{_UNRESOLVED_HYP_REJECT_CAP} on this branch.\n"
+            f"Rejection {new_reject_count}/{self._unresolved_hyp_reject_cap} on this branch.\n"
             "\n"
             f"You attempted action: submit while {len(unresolved)} live "
             "hypotheses are unresolved. Submitting now leaves the operator "
@@ -1464,7 +933,7 @@ class HonestVulnResearcher:
             "hypotheses must be reachable from (a) OR (b) on the same turn as\n"
             "the submit.\n"
             "\n"
-            f"After {_UNRESOLVED_HYP_REJECT_CAP} rejections on this branch the\n"
+            f"After {self._unresolved_hyp_reject_cap} rejections on this branch the\n"
             "submit is FORCED THROUGH with unresolved_hypotheses_at_submit_\n"
             "advisory stamped on the payload listing the surviving ids. The\n"
             "operator will audit those entries. Don't burn through your\n"
@@ -2315,6 +1784,13 @@ def _applicable_servers_for_kind(target_kind: str | None) -> set[str]:
     PLUS audit_mcp (source-graph over the decompiled Java tree).
     Unknown / mixed kinds default to every known bridge so the agent
     isn't locked out of any path.
+
+    RFC-11 replaces this hardcoded name map with capability-based
+    binding: see :func:`_applicable_servers_by_capability` for the
+    catalog-first path that consults ``capability_tags``. This name
+    map remains the deterministic fallback the researcher uses when
+    the catalog is empty for the VR scope so the empty-catalog
+    behaviour stays byte-identical.
     """
     k = (target_kind or "").lower()
     if k in _SOURCE_REPO_KINDS:
@@ -2335,6 +1811,42 @@ def _applicable_servers_for_kind(target_kind: str | None) -> set[str]:
     if k in _BINARY_KINDS:
         return {"ida_headless"}
     return set(KNOWN_TOOLS.keys())
+
+
+async def _applicable_servers_by_capability(
+    target_kind: str | None,
+) -> set[str] | None:
+    """Return applicable server names via capability tags, or ``None``.
+
+    RFC-11 step 3 -- the researcher declares the capability tags it
+    needs for the target's kind (see
+    :data:`aila.modules.vr.services.mcp_registry.MODULE_CAPABILITIES`)
+    and asks the platform registry for every catalog row whose
+    ``capability_tags`` column contains any of them. Returns the union
+    of the resolved instances' names.
+
+    Falls through with ``None`` when the catalog is empty for the VR
+    scope or the target kind has no declared capability list, so the
+    caller keeps using :func:`_applicable_servers_for_kind` as the
+    static default. That preserves byte-identical behaviour for
+    operators who have not populated the catalog.
+    """
+    from aila.modules.vr.services.mcp_registry import (
+        MODULE_CAPABILITIES,
+        McpRegistryService,
+    )
+
+    k = (target_kind or "").lower()
+    tags = MODULE_CAPABILITIES.get(k)
+    if not tags:
+        return None
+    svc = McpRegistryService()
+    resolved: set[str] = set()
+    for tag in tags:
+        for inst in await svc.resolve_by_capability(tag):
+            if inst.name:
+                resolved.add(inst.name)
+    return resolved or None
 
 
 async def _fetch_tool_specs(
@@ -2359,7 +1871,10 @@ async def _fetch_tool_specs(
     the trailmark graph even though the runtime calls them via
     vtable / monomorphization / dynamic dispatch.
     """
-    applicable = _applicable_servers_for_kind(target_kind)
+    # RFC-11 -- capability-first resolution when the catalog is
+    # populated for the VR scope, else the static name map.
+    catalog_applicable = await _applicable_servers_by_capability(target_kind)
+    applicable = catalog_applicable or _applicable_servers_for_kind(target_kind)
     out: dict[str, list[dict[str, Any]]] = {}
     if "audit_mcp" in applicable:
         specs = await AuditMcpBridgeTool(recorder=record_call).list_tool_specs()
@@ -2470,75 +1985,10 @@ def _render_available_tools_section(
 
 
 
-def _decode_case_state(raw_json: str | None) -> ReasoningCaseState:
-    if not raw_json:
-        return ReasoningCaseState()
-    try:
-        data = json.loads(raw_json)
-    except json.JSONDecodeError:
-        return ReasoningCaseState()
-    try:
-        return ReasoningCaseState.model_validate(data)
-    except (ValueError, TypeError):
-        return ReasoningCaseState()
 
 
-def _encode_case_state(state: ReasoningCaseState) -> str:
-    return json.dumps(state.model_dump(mode="json"))
 
 
-def _auto_resolve_live_on_terminal(
-    state: ReasoningCaseState,
-    *,
-    turn: int,
-    outcome_kind: str,
-) -> None:
-    """Move every still-live hypothesis to ``state.resolved`` in place.
-
-    Called from ``run_turn`` immediately before the case_state is
-    serialised for a terminal submission. A hypothesis sitting in
-    ``state.hypotheses`` at submit time can be in three states the
-    agent never explicitly labels:
-      - CONFIRMED: agent relied on it as the basis of the finding
-      - REJECTED: agent ran out of turns / refuted but forgot to move
-      - SUPERSEDED: subsumed by a finer hypothesis but never killed
-
-    Without auto-bucketing, these hypotheses stay "live" in the rail
-    forever even though the investigation has concluded. The previous
-    implementation moved them to ``state.rejected`` -- but that's
-    actively misleading for confirmed claims (e.g. the agent's
-    'predicate symmetry holds' claim that grounds a 'VARIANT DEAD'
-    finding shouldn't be labeled 'rejected' in red).
-
-    New behavior: move to ``state.resolved`` with a neutral note that
-    points the reader at the terminal outcome for the actual
-    classification. The frontend renders ``resolved`` with a yellow
-    badge -- neither red (rejected) nor green (confirmed) -- so readers
-    know to consult the canonical outcome.
-    """
-    if not state.hypotheses:
-        return
-    note = (
-        f"auto-resolved at turn {turn}: branch submitted terminal "
-        f"{outcome_kind} -- see canonical outcome for whether this "
-        f"claim was confirmed (basis of finding) or refuted "
-        f"(unaddressed alternative)"
-    )
-    seen_resolved = {r.id for r in state.resolved}
-    seen_rejected = {r.id for r in state.rejected}
-    for h in state.hypotheses:
-        if h.id in seen_resolved or h.id in seen_rejected:
-            continue
-        state.resolved.append(
-            ResolvedHypothesis(
-                id=h.id,
-                claim=h.claim,
-                resolved_at_turn=turn,
-                terminal_outcome_kind=outcome_kind,
-                note=note,
-            ),
-        )
-    state.hypotheses = []
 
 
 def _decision_to_message_payload(
@@ -2599,10 +2049,6 @@ def _terminal_outcome_kind(decision: ReasoningTurnDecision) -> OutcomeKind:
     return OutcomeKind.ASSESSMENT_REPORT
 
 
-def _to_outcome_confidence(decision: ReasoningTurnDecision) -> OutcomeConfidence:
-    if decision.confidence:
-        return OutcomeConfidence(decision.confidence)
-    return OutcomeConfidence.UNKNOWN
 
 
 def _outcome_payload(decision: ReasoningTurnDecision) -> dict[str, Any]:
@@ -2941,46 +2387,67 @@ async def _upsert_canonical_outcome(
     return existing.id
 
 
-@functools.lru_cache(maxsize=16)
-def _cached_read_prompt(path_str: str) -> str:
-    """Read a prompt file from disk with content cached by path.
-
-    Prompts are static files baked into the repo; reading the same
-    48KB system_audit.md hundreds of times per investigation is pure
-    overhead. ``maxsize=16`` comfortably covers base prompts +
-    per-persona variants.
-    """
-    return Path(path_str).read_text(encoding="utf-8")
+_PROMPT_REGISTRY = PromptRegistry(_PROMPT_DIR, fallback_base="system_audit.md")
+_PROMPT_VERSION_STORE = PromptVersionStore()
 
 
-def _load_prompt(strategy_family: str, persona_voice: str | None = None) -> str:
+def _prompt_key(strategy_family: str, persona_voice: str | None = None) -> str:
+    """Version-store key for a strategy + persona -- keeps the store, the
+    file registry, and the operator deploy alias on one identity."""
+    return f"vr/{strategy_family}/{persona_voice or 'base'}"
+
+
+async def _load_prompt(
+    strategy_family: str,
+    persona_voice: str | None = None,
+    *,
+    investigation_id: str | None = None,
+) -> LoadedPrompt:
     """Load the system prompt for a strategy family + optional persona.
 
-    When ``persona_voice`` is supplied AND a per-persona prompt file
-    exists at ``prompts/persona_<voice>.md``, that file's content is
-    prepended to the base audit prompt as a role-specific opening
-    section. The persona file should focus on ROLE BEHAVIOUR (what
-    this voice's job is in the deliberation), not repeat the common
-    audit rules -- those come from the base prompt below.
+    Resolves through the RFC-09 pin-per-investigation rule: the first
+    turn pins the current production-alias version onto the row and
+    every later turn on the same investigation resolves that exact
+    version, so a live production-alias flip does not rewrite the
+    prompt of an already-running investigation. Falls back to the file
+    registry when no version is deployed, when the pin points at a
+    missing version, or when the store fails. The file is the baseline;
+    the store is an override, so a store fault must not block a turn --
+    it degrades to the file.
 
-    Falls through to base ``system_<strategy>.md`` (or
-    ``system_audit.md``) when no persona is set or no persona file
-    exists.
+    Returns ``LoadedPrompt(body, version)`` so the turn runner can
+    stamp the resolved version onto the correlation scope (R1 attribution).
+    ``version`` is None when the fallback path resolved from disk.
     """
-    base_candidate = _PROMPT_DIR / f"system_{strategy_family.rsplit('.', 1)[-1]}.md"
-    if not base_candidate.exists():
-        base_candidate = _PROMPT_DIR / "system_audit.md"
-    if not base_candidate.exists():
-        raise VulnResearcherError(f"prompt file missing: {base_candidate}")
-    base = _cached_read_prompt(str(base_candidate))
-
-    if persona_voice:
-        persona_candidate = _PROMPT_DIR / f"persona_{persona_voice.lower()}.md"
-        if persona_candidate.exists():
-            persona_prefix = _cached_read_prompt(str(persona_candidate))
-            return f"{persona_prefix}\n\n---\n\n{base}"
-    return base
+    key = _prompt_key(strategy_family, persona_voice)
+    body, version = await resolve_pinned_prompt(
+        investigation_id=investigation_id,
+        key=key,
+        investigation_model=VRInvestigationRecord,
+        store=_PROMPT_VERSION_STORE,
+    )
+    if body is not None:
+        return LoadedPrompt(body=body, version=version)
+    try:
+        file_body = _PROMPT_REGISTRY.load(strategy_family, persona_voice)
+    except PromptNotFoundError as exc:
+        raise VulnResearcherError(str(exc)) from exc
+    return LoadedPrompt(body=file_body, version=None)
 
 
 # Resolves Pydantic forward refs when this module is imported standalone.
 ReasoningContract.model_rebuild()
+
+
+# Bind the per-module module-level helpers as staticmethods so the shared
+# AgentTurnRunnerBase.run_turn resolves them via ``self`` (they are defined
+# below the class, hence bound here at module import time).
+HonestVulnResearcher._fetch_tool_specs = staticmethod(_fetch_tool_specs)
+HonestVulnResearcher._load_prompt = staticmethod(_load_prompt)
+HonestVulnResearcher._decision_to_message_payload = staticmethod(_decision_to_message_payload)
+HonestVulnResearcher._terminal_outcome_kind = staticmethod(_terminal_outcome_kind)
+HonestVulnResearcher._outcome_payload = staticmethod(_outcome_payload)
+HonestVulnResearcher._upsert_canonical_outcome = staticmethod(_upsert_canonical_outcome)
+HonestVulnResearcher._resolve_task_type = staticmethod(resolve_task_type)
+HonestVulnResearcher._evaluate_quorum = staticmethod(evaluate_quorum)
+HonestVulnResearcher._upsert_review = staticmethod(upsert_review)

@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import logging
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from .context import TaskContext
 from .errors import WorkflowMigratedError
 from .models import (
@@ -51,13 +53,28 @@ __all__ = [
 
 
 def get_task_tuning(key: str, default: int) -> int:
-    """Return the compiled default for a task queue tuning knob.
+    """Return a task-queue tuning knob, reading namespace='platform' config live.
 
-    The ``key`` parameter names a ConfigEntryRecord row (namespace='platform')
-    that a future async-capable path can read at runtime. During worker startup
-    and module import there is no event loop, so attempting ``asyncio.run()``
-    creates stale asyncpg connections that crash ARQ on Windows. Until an async
-    caller is wired, this always returns the compiled ``default``.
+    Resolves the ConfigEntryRecord row (namespace='platform', ``key``) through the
+    synchronous ConfigRegistry path (``get_sync`` -> psycopg ``session_scope``),
+    which is safe from sync call sites and from worker startup (no event loop, no
+    ``asyncio.run`` -- the crash mode the old deferral guarded against). A fresh
+    registry instance is used per call so no in-memory cache masks a live config
+    change (XCUT-14). Falls back to the compiled ``default`` when the value is
+    unset, uncastable, or the DB is unreachable (e.g. bootstrap before the DB is
+    configured).
     """
-    _ = key  # reserved for future DB-backed override
-    return default
+    # Deferred import: importing the registry at module top pulls db_models and
+    # forms an import cycle through the tasks package init.
+    from aila.storage.registry import ConfigRegistry
+
+    try:
+        value = ConfigRegistry().get_sync("platform", key)
+    except (OSError, RuntimeError, ValueError, TypeError, SQLAlchemyError):
+        return default
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default

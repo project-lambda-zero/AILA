@@ -16,7 +16,7 @@ from aila.modules.vr.contracts.target import TargetKind
 from aila.modules.vr.db_models import VRTargetRecord
 from aila.modules.vr.enrichment.services import (
     CapabilityProfileBuilder,
-    ProfileBuilderError,
+    ProfileBuilderError,  # noqa: F401 -- surfaced by StageTracker wrap; kept for reader clarity
 )
 from aila.modules.vr.enrichment.services.profile_builder import (
     _APPLICABLE_FUZZING_ENGINES,
@@ -73,64 +73,90 @@ class TestMitigationsFromDict:
         assert flags.cfi is True
         assert flags.pie is True
 
-    def test_relro_full(self) -> None:
-        flags = _mitigations_from_dict({"relro": "full"})
-        assert flags.relro_partial is True
-        assert flags.relro_full is True
+    def test_relro_no_longer_parsed(self) -> None:
+        # _mitigations_from_dict was reduced to the six boolean checksec fields;
+        # relro is no longer parsed, so relro_partial/relro_full stay at their
+        # None defaults regardless of the input value.
+        for value in ("full", "partial", "no", "weird"):
+            flags = _mitigations_from_dict({"relro": value})
+            assert flags.relro_partial is None
+            assert flags.relro_full is None
 
-    def test_relro_partial(self) -> None:
-        flags = _mitigations_from_dict({"relro": "partial"})
-        assert flags.relro_partial is True
-        assert flags.relro_full is False
-
-    def test_relro_no(self) -> None:
-        flags = _mitigations_from_dict({"relro": "no"})
-        assert flags.relro_partial is False
-        assert flags.relro_full is False
-
-    def test_relro_unknown_silent(self) -> None:
-        flags = _mitigations_from_dict({"relro": "weird"})
-        assert flags.relro_partial is None
-        assert flags.relro_full is None
-
-    def test_sanitizers_list_filter(self) -> None:
+    def test_sanitizers_no_longer_parsed(self) -> None:
+        # The sanitizers list is no longer extracted; the field keeps its default.
         flags = _mitigations_from_dict({"sanitizers": ["asan", None, 42, "ubsan"]})
-        assert flags.sanitizers == ["asan", "ubsan"]
+        assert flags.sanitizers == []
 
-    def test_notes(self) -> None:
+    def test_notes_no_longer_parsed(self) -> None:
+        # notes is no longer extracted; the field keeps its default.
         flags = _mitigations_from_dict({"notes": "partial CFI"})
-        assert flags.notes == "partial CFI"
+        assert flags.notes == ""
 
-    def test_wrong_type_silently_dropped(self) -> None:
-        flags = _mitigations_from_dict({"nx": "yes"})
+    def test_string_bool_parsed(self) -> None:
+        # String booleans are now recognized (true/1/enabled/on/yes -> True).
+        assert _mitigations_from_dict({"nx": "yes"}).nx is True
+        assert _mitigations_from_dict({"nx": "false"}).nx is False
+
+    def test_unrecognized_type_silently_dropped(self) -> None:
+        # A non-bool, non-string value is dropped to the None default.
+        flags = _mitigations_from_dict({"nx": [1]})
         assert flags.nx is None
 
 
 class TestInferLanguageFromSurvey:
-    def test_rust_compiler(self) -> None:
-        assert _infer_language_from_survey({"compiler": "rustc 1.78"}) == "rust"
+    # _infer_language_from_survey was deliberately simplified: it now
+    # ONLY reads explicit survey keys ('primary_language' / 'language'
+    # / 'detected_language') and returns '' for everything else. The
+    # older compiler-string / mangled-imports heuristics were removed
+    # because they produced too many false positives on stripped and
+    # LTO'd binaries; the caller now trusts IDA's own
+    # `primary_language` field instead.
 
-    def test_go_compiler(self) -> None:
-        assert _infer_language_from_survey({"compiler": "go compiler 1.22"}) == "go"
+    def test_explicit_primary_language(self) -> None:
+        assert _infer_language_from_survey({"primary_language": "rust"}) == "rust"
 
-    def test_cxx_compiler(self) -> None:
-        assert _infer_language_from_survey({"compiler": "msvc 19.36"}) == "c++"
-        assert _infer_language_from_survey({"compiler": "g++ 13"}) == "c++"
-        assert _infer_language_from_survey({"compiler": "clang++ 18"}) == "c++"
+    def test_explicit_language_key(self) -> None:
+        assert _infer_language_from_survey({"language": "go"}) == "go"
 
-    def test_c_compiler(self) -> None:
-        assert _infer_language_from_survey({"compiler": "gcc 12"}) == "c"
-        assert _infer_language_from_survey({"compiler": "clang 17"}) == "c"
+    def test_explicit_detected_language_key(self) -> None:
+        assert _infer_language_from_survey({"detected_language": "c++"}) == "c++"
 
-    def test_cxx_via_mangled_imports(self) -> None:
-        assert _infer_language_from_survey({"imports": ["_ZN5stdcc2fooEv"]}) == "c++"
+    def test_first_present_key_wins(self) -> None:
+        # `primary_language` beats `language` beats `detected_language`.
+        assert _infer_language_from_survey({
+            "primary_language": "rust",
+            "language": "go",
+            "detected_language": "c",
+        }) == "rust"
 
-    def test_go_via_imports(self) -> None:
-        assert _infer_language_from_survey({"imports": ["runtime.rt_init"]}) == "go"
+    def test_empty_string_falls_through(self) -> None:
+        # An empty explicit value doesn't count as a signal.
+        assert _infer_language_from_survey({
+            "primary_language": "",
+            "language": "kotlin",
+        }) == "kotlin"
+
+    def test_compiler_string_no_longer_inferred(self) -> None:
+        # Deliberate reduction: compiler strings are no longer parsed.
+        # Every one of these used to map to a language and now returns ''.
+        for compiler in (
+            "rustc 1.78", "go compiler 1.22", "msvc 19.36", "g++ 13",
+            "clang++ 18", "gcc 12", "clang 17", "unknown",
+        ):
+            assert _infer_language_from_survey({"compiler": compiler}) == ""
+
+    def test_imports_no_longer_inferred(self) -> None:
+        # Deliberate reduction: mangled import names are no longer parsed.
+        assert _infer_language_from_survey({"imports": ["_ZN5stdcc2fooEv"]}) == ""
+        assert _infer_language_from_survey({"imports": ["runtime.rt_init"]}) == ""
 
     def test_empty_when_no_signal(self) -> None:
         assert _infer_language_from_survey({}) == ""
-        assert _infer_language_from_survey({"compiler": "unknown"}) == ""
+
+    def test_non_dict_survey(self) -> None:
+        # Guarded: bad input never raises, just returns ''.
+        assert _infer_language_from_survey(None) == ""
+        assert _infer_language_from_survey("junk") == ""
 
 
 class TestRuleTables:
@@ -185,7 +211,7 @@ class TestRuleTables:
     def test_v04_android_native_libs_get_libfuzzer_android(self) -> None:
         for lang in ("c", "c++"):
             assert _APPLICABLE_FUZZING_ENGINES.get(
-                (TargetKind.APK.value, lang),
+                (TargetKind.ANDROID_APK.value, lang),
             ) == ["libfuzzer-android"]
 
     def test_v04_dotnet_uses_sharpfuzz(self) -> None:
@@ -201,7 +227,9 @@ class TestRuleTables:
             ) == "vulnerability_research.source_audit"
 
     def test_v04_wildcard_strategies_for_mobile_and_dotnet(self) -> None:
-        for kind in (TargetKind.APK, TargetKind.IPA, TargetKind.DOTNET_ASSEMBLY):
+        for kind in (
+            TargetKind.ANDROID_APK, TargetKind.IPA, TargetKind.DOTNET_ASSEMBLY,
+        ):
             assert _DEFAULT_REASONING_STRATEGY.get(
                 (kind.value, "*"),
             ) == "vulnerability_research.discovery_research"
@@ -258,10 +286,13 @@ class TestComposeProfile:
 
     def test_apk_target(self) -> None:
         builder = CapabilityProfileBuilder(ida=_FakeMcp({}), audit_mcp=_FakeMcp({}))
-        target = _target(TargetKind.APK, "kotlin")
+        target = _target(TargetKind.ANDROID_APK, "kotlin")
         profile = builder._compose_profile(target, {"primary_language": "kotlin"})
         assert "jazzer" in profile.applicable_fuzzing_engines
-        assert profile.applicable_mcp_servers == ["ida_headless"]
+        # ANDROID_APK now routes through both android_mcp (APK-level
+        # facets) and audit_mcp (source-graph over jadx-decompiled
+        # Java). See _APPLICABLE_MCP_BY_KIND in profile_builder.py.
+        assert profile.applicable_mcp_servers == ["android_mcp", "audit_mcp"]
 
     def test_profile_round_trips(self) -> None:
         builder = CapabilityProfileBuilder(ida=_FakeMcp({}), audit_mcp=_FakeMcp({}))
@@ -273,8 +304,18 @@ class TestComposeProfile:
 
 
 class TestBuilderErrorPaths:
-    @pytest.mark.asyncio
-    async def test_target_not_found_raises(self) -> None:
+    async def test_target_not_found_raises(self, test_db) -> None:
+        # build() now enters StageTracker before hitting the builder's
+        # own _load(), so the missing-target error surfaces as
+        # StageTrackerError ("target <id> not found") rather than the
+        # legacy ProfileBuilderError. See:
+        #   src/aila/modules/vr/services/stage_tracker.py::StageTracker.__aenter__
+        #   src/aila/modules/vr/enrichment/services/profile_builder.py::build
+        # The _load() ProfileBuilderError branch is now unreachable dead
+        # code; noted in the migration report.
+        del test_db  # fixture activates the aila_test PostgreSQL engine
+        from aila.modules.vr.services.stage_tracker import StageTrackerError
+
         builder = CapabilityProfileBuilder(ida=_FakeMcp({}), audit_mcp=_FakeMcp({}))
-        with pytest.raises(ProfileBuilderError):
+        with pytest.raises(StageTrackerError, match="not found"):
             await builder.build(str(uuid.uuid4()))

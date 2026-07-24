@@ -143,10 +143,19 @@ class CostTracker:
         """Read budget ceiling from ConfigRegistry.
 
         Looks up ``llm_budget_max_total_tokens_{task_type}`` in the
-        ``platform`` namespace.  Returns 0 (unlimited) if the key is
-        missing or cannot be converted to int.
+        ``platform`` namespace. When that per-task-type key is unset,
+        falls back to the declared static key
+        ``llm_budget_max_total_tokens_default`` (schema default 0 =
+        unlimited) so an operator can set a global cap without writing
+        one row per task_type. Returns 0 (unlimited) when neither key
+        resolves or the value cannot be converted to int.
         """
-        raw = self._registry.get("platform", f"llm_budget_max_total_tokens_{task_type}")
+        # Use get_sync here (sync method): the async get produced an un-awaited
+        # coroutine that was not None and failed conversion, so the budget
+        # ceiling silently resolved to 0 -- dead code (issue #38).
+        raw = self._registry.get_sync("platform", f"llm_budget_max_total_tokens_{task_type}")
+        if raw is None:
+            raw = self._registry.get_sync("platform", "llm_budget_max_total_tokens_default")
         if raw is None:
             return 0
         try:
@@ -268,9 +277,17 @@ async def persist_cost_record(
             after the cost record is committed.
     """
     try:
+        from aila.platform.llm.correlation import (
+            current_join_keys,
+            current_prompt_content_hash,
+            current_prompt_version,
+        )
         from aila.platform.llm.cost_record import LLMCostRecord
         from aila.storage.database import async_session_scope
 
+        _inv, _branch, _turn = current_join_keys()
+        _phash = current_prompt_content_hash()
+        _pver = current_prompt_version()
         record = LLMCostRecord(
             run_id=run_id or "_no_run",
             model_id=model_id,
@@ -283,17 +300,16 @@ async def persist_cost_record(
             response_preview=_make_preview(response_preview),
             duration_ms=duration_ms,
             status=status or "ok",
+            investigation_id=_inv,
+            branch_id=_branch,
+            turn_number=_turn,
+            prompt_content_hash=_phash,
+            prompt_version=_pver,
         )
 
         async with async_session_scope() as session:
             session.add(record)
             await session.commit()
-
-        # Budget check runs after successful commit (D-03).
-        # check_monthly_budget is fire-and-forget -- handles its own exceptions.
-        if team_id is not None and registry is not None:
-            from aila.platform.llm.budget_alert import check_monthly_budget
-            await check_monthly_budget(team_id, registry)
     except sqlalchemy.exc.SQLAlchemyError:
         _log.warning(
             "persist_cost_record_failed",
@@ -303,6 +319,28 @@ async def persist_cost_record(
                 "task_type": task_type,
             },
         )
+        return
+
+    # Budget check runs after the successful commit (D-03). It is best-effort:
+    # the cost record already committed above, so a leaked exception here must
+    # never fail cost recording. check_monthly_budget handles its own errors,
+    # but this guard keeps the fire-and-forget contract even if one leaks.
+    if team_id is not None and registry is not None:
+        from aila.platform.llm.budget_alert import check_monthly_budget
+        try:
+            await check_monthly_budget(team_id, registry)
+        except (
+            sqlalchemy.exc.SQLAlchemyError,
+            RuntimeError,
+            ValueError,
+            TypeError,
+            OSError,
+        ):
+            _log.warning(
+                "check_monthly_budget_failed",
+                extra={"team_id": team_id, "model_id": model_id},
+                exc_info=True,
+            )
 
 
 async def emit_missing_pricing_notification(model_id: str) -> None:

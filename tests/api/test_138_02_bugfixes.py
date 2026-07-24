@@ -52,14 +52,20 @@ async def test_run_single_health_check_with_sync_callable() -> None:
 
 @pytest.mark.asyncio
 async def test_run_single_health_check_async_returns_down() -> None:
-    """Async health check returning 'down' is propagated correctly."""
+    """Async health check returning 'down' is propagated correctly.
+
+    Per T-138-12, the runner discards the module-supplied detail string when
+    normalizing dict-shaped results so module error text never reaches API
+    clients (src/aila/api/routers/health.py:243 sets ``message=None``). The
+    down status still surfaces; only the message is scrubbed.
+    """
 
     async def async_check_down() -> dict[str, object]:
         return {"status": "down", "detail": "service unavailable"}
 
     result = await _run_single_health_check(async_check_down)
     assert result.status == "down"
-    assert result.message is not None
+    assert result.message is None
 
 
 @pytest.mark.asyncio
@@ -90,7 +96,8 @@ async def test_run_single_health_check_timeout() -> None:
         health_module._HEALTH_CHECK_TIMEOUT_SECONDS = original
 
     assert result.status == "down"
-    assert "timed out" in (result.message or "").lower()
+    # src/aila/api/routers/health.py:250 sets message="timeout" on wait_for cancellation.
+    assert "timeout" in (result.message or "").lower()
 
 
 @pytest.mark.asyncio

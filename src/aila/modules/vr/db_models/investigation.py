@@ -10,71 +10,38 @@ Linked artifacts (campaign_ids, finding_ids) are stored as JSON lists
 rather than denormalized through join tables -- querying 'all findings
 from this investigation' is a low-volume operator action that doesn't
 need indexed access.
+
+The shared columns live on the platform base (RFC-01); this module sets
+the concrete table + target FK target name and appends the partial
+``is_favorite`` Index preserved from migration 058. VR carries no
+investigation residue columns.
 """
 from __future__ import annotations
 
-from datetime import datetime
-from uuid import uuid4
+from typing import ClassVar
 
-from sqlalchemy import Column, DateTime, ForeignKey, Text
-from sqlmodel import Field, SQLModel
+from sqlalchemy import Index, text
 
-from aila.platform.contracts._common import utc_now
-from aila.storage.mixins import TeamScopedMixin
+from aila.platform.contracts.investigation_base import InvestigationRecordBase
 
 __all__ = ["VRInvestigationRecord"]
 
 
-class VRInvestigationRecord(TeamScopedMixin, SQLModel, table=True):
+class VRInvestigationRecord(InvestigationRecordBase, table=True):
     """One operator-initiated reasoning session (D-43, D-50)."""
 
     __tablename__ = "vr_investigations"
+    __target_tablename__: ClassVar[str] = "vr_targets"
 
-    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    project_id: str | None = Field(default=None, max_length=64, index=True)
-    parent_investigation_id: str | None = Field(
-        default=None,
-        sa_column=Column(
-            "parent_investigation_id",
-            ForeignKey("vr_investigations.id"),
-            nullable=True,
-            index=True,
+    # Migration 058 built a PARTIAL index on is_favorite (WHERE
+    # is_favorite = true) rather than a full-table index. Declare it
+    # here so create_all (tests, fresh installs) matches the migrated
+    # production shape.
+    __table_args__ = (
+        *InvestigationRecordBase.__table_args__,
+        Index(
+            "ix_vr_investigations_is_favorite_true",
+            "is_favorite",
+            postgresql_where=text("is_favorite = true"),
         ),
     )
-    target_id: str = Field(
-        sa_column=Column(
-            "target_id",
-            ForeignKey("vr_targets.id"),
-            nullable=False,
-            index=True,
-        ),
-    )
-    secondary_target_refs_json: str = Field(default="[]", sa_column=Column(Text))
-
-    kind: str = Field(default="discovery", index=True, max_length=32)
-    title: str = Field(max_length=255)
-    initial_question: str = Field(default="", sa_column=Column(Text))
-    status: str = Field(default="created", index=True, max_length=32)
-    pause_reason: str | None = Field(default=None, max_length=32)
-    auto_pilot: bool = Field(default=True)
-    is_favorite: bool = Field(default=False, index=True)
-
-    strategy_family: str = Field(
-        default="vulnerability_research.discovery_research", max_length=64,
-    )
-    persona_dispatch_json: str = Field(default="{}", sa_column=Column(Text))
-
-    cost_budget_usd: float = Field(default=50.0)
-    cost_actual_usd: float = Field(default=0.0)
-    llm_tokens_cost_usd: float = Field(default=0.0)
-    mcp_calls_cost_usd: float = Field(default=0.0)
-    fuzz_infra_cost_usd: float = Field(default=0.0)
-
-    primary_outcome_id: str | None = Field(default=None, max_length=64)
-    linked_campaign_ids_json: str = Field(default="[]", sa_column=Column(Text))
-    linked_finding_ids_json: str = Field(default="[]", sa_column=Column(Text))
-
-    started_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
-    stopped_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
-    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
-    updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))

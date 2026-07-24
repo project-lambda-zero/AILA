@@ -11,7 +11,6 @@ Phase 56 adds SSE streaming via content negotiation on Accept: text/event-stream
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import math
@@ -184,6 +183,7 @@ async def create_session(
                 status=AUDIT_STATUS_COMPLETED,
                 target=record.id,
                 user_id=auth.user_id,
+                team_id=auth.team_id,
                 details={"title": record.title},
             )
             await db.commit()
@@ -210,9 +210,9 @@ async def create_session(
                     "schema": {
                         "type": "string",
                         "description": (
-                            "SSE token stream. Each `data:` line is a JSON object with "
-                            "keys: token (str), done (bool). Final event has done=true "
-                            "and includes message_id, role, content, run_id, created_at."
+                            "SSE stream. Each `data:` line is a JSON object. A token "
+                            "event has keys token (str) and type='token'; the final "
+                            "event has type='done' and run_id (str|null)."
                         ),
                     },
                 },
@@ -228,13 +228,13 @@ async def post_message(
 ) -> SessionMessageResponse | StreamingResponse:
     """Add a user message to a session and return the assistant response (TASK-03/TASK-04).
 
-    If the client sends Accept: text/event-stream, streams response tokens via SSE
-    using a per-connection asyncio.Queue bridge (D-06/D-12/D-13). Complete message
-    written to DB only after streaming completes (D-07). asyncio.CancelledError caught
-    on client disconnect to discard queue and cancel background task (D-09).
+    If the client sends Accept: text/event-stream, awaits the async platform
+    handle and streams the resolved summary as a single `token` event followed
+    by a `done` event carrying the run_id. The assistant message is persisted
+    after the response resolves (D-07).
 
-    If Accept header is not text/event-stream, returns JSON SessionMessageResponse
-    (unchanged behaviour from Phase 55).
+    If Accept header is not text/event-stream, awaits the same handle and
+    returns a JSON SessionMessageResponse.
 
     Returns 404 if session not found or belongs to another user (D-25).
     Returns 503 if platform not initialized.
@@ -277,25 +277,28 @@ async def _sync_message(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Session '{session_id}' not found or belongs to another user -- verify the session_id via POST /sessions",
                 )
-
-            user_msg = SessionMessageRecord(
+            db.add(SessionMessageRecord(
                 session_id=session_id,
                 role="user",
                 content=req.content,
                 run_id=None,
-            )
-            db.add(user_msg)
+            ))
             await db.commit()
 
-            try:
-                platform_response = platform.handle(query=req.content)
-                response_text = str(getattr(platform_response, "summary", "") or req.content)
-                response_run_id = getattr(platform_response, "run_id", None)
-            except Exception:
-                _log.exception("Platform handle() failed for session %s", session_id)
-                response_text = "I encountered an error processing your request."
-                response_run_id = None
+        # Run the platform OUTSIDE the DB session. handle() is async and drives a
+        # multi-step agent run: awaiting it here is the correctness fix (the
+        # result was previously an un-awaited coroutine, so the reply echoed the
+        # user's own text) and keeps a pooled connection off the long run (#63).
+        try:
+            platform_response = await platform.handle(query=req.content, team_id=auth.team_id)
+            response_text = str(getattr(platform_response, "summary", "") or req.content)
+            response_run_id = getattr(platform_response, "run_id", None)
+        except Exception:
+            _log.exception("Platform handle() failed for session %s", session_id)
+            response_text = "I encountered an error processing your request."
+            response_run_id = None
 
+        async with async_session_scope() as db:
             asst_msg = SessionMessageRecord(
                 session_id=session_id,
                 role="assistant",
@@ -303,8 +306,11 @@ async def _sync_message(
                 run_id=response_run_id,  # TASK-06: inline scan run_id if triggered
             )
             db.add(asst_msg)
-            await db.commit()
-            await db.refresh(asst_msg)
+            # #52-3.2: flush populates the PK so the audit payload references
+            # asst_msg.id, then stage the audit row and commit both in one
+            # transaction. expire_on_commit=False keeps the cached scalars
+            # readable after commit so _message_to_response needs no refresh.
+            await db.flush()
             record_audit_event(
                 db,
                 run_id=session_id,
@@ -313,10 +319,10 @@ async def _sync_message(
                 status=AUDIT_STATUS_COMPLETED,
                 target=session_id,
                 user_id=auth.user_id,
+                team_id=auth.team_id,
                 details={"message_id": asst_msg.id},
             )
             await db.commit()
-            await db.refresh(asst_msg)
             return asst_msg
 
     asst_msg = await _handle()
@@ -356,7 +362,11 @@ async def _stream_message(
                 run_id=None,
             )
             db.add(user_msg)
-            await db.commit()
+            # #52-3.2: stage the audit row inside the SAME transaction as
+            # the message insert. Previously the message committed first
+            # and the audit row was written in a second transaction, so a
+            # crash between the two lost the audit trail for the streaming
+            # user turn.
             record_audit_event(
                 db,
                 run_id=session_id,
@@ -365,6 +375,7 @@ async def _stream_message(
                 status=AUDIT_STATUS_COMPLETED,
                 target=session_id,
                 user_id=auth.user_id,
+                team_id=auth.team_id,
                 details={"streaming": True},
             )
             await db.commit()
@@ -372,83 +383,35 @@ async def _stream_message(
     await _add_user_msg()
 
     async def _stream_generator() -> AsyncGenerator[str, None]:
-        loop = asyncio.get_running_loop()
-        token_queue: asyncio.Queue[str | None] = asyncio.Queue()
-        response_text: list[str] = []
-        response_run_id: list[str | None] = [None]
-
-        def _sync_worker() -> None:
-            try:
-                def _token_cb(token: str) -> None:
-                    response_text.append(token)
-                    loop.call_soon_threadsafe(token_queue.put_nowait, token)
-
-                # platform.handle() is sync (D-03); call in this thread
-                # If platform.handle() does not support token_callback, tokens are not
-                # streamed individually -- the full response is buffered and emitted as
-                # a single token after completion (graceful fallback).
-                try:
-                    result = platform.handle(query=req.content, token_callback=_token_cb)
-                except TypeError:
-                    # platform.handle() does not accept token_callback -- fallback: buffer
-                    result = platform.handle(query=req.content)
-                    summary = str(getattr(result, "summary", "") or req.content)
-                    response_text.clear()
-                    response_text.append(summary)
-                    loop.call_soon_threadsafe(token_queue.put_nowait, summary)
-
-                response_run_id[0] = getattr(result, "run_id", None)
-            except Exception as exc:
-                _log.exception("Platform error during SSE streaming: %s", exc)
-                err_text = f"Error: {exc}"
-                response_text.append(err_text)
-                loop.call_soon_threadsafe(token_queue.put_nowait, err_text)
-            finally:
-                # Sentinel: signals end of stream (D-14)
-                loop.call_soon_threadsafe(token_queue.put_nowait, None)
-
-        task = asyncio.create_task(asyncio.to_thread(_sync_worker))
-
-        cancelled = False
+        # handle() is async and exposes no token-level callback, so await it in
+        # the request's event loop and stream the resolved summary as a single
+        # token event. The previous path ran it in a worker thread and called
+        # the async handle without awaiting it, so the stream carried the echoed
+        # input, never a real response. Progress-level streaming via handle()'s
+        # progress_callback is a separate enhancement.
+        run_id_val: str | None = None
         try:
-            while True:
-                token = await token_queue.get()
-                if token is None:  # D-14: sentinel → close stream
-                    break
-                yield f"data: {json.dumps({'token': token, 'type': 'token'})}\n\n"
-        except asyncio.CancelledError:
-            # D-09: client disconnected -- cancel background task, discard queue
-            task.cancel()
-            cancelled = True
-            raise
-        finally:
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass  # Expected: task was cancelled by client disconnect
-            except Exception:
-                _log.debug("SSE background task raised during cleanup", exc_info=True)
+            resp = await platform.handle(query=req.content, team_id=auth.team_id)
+            full_text = str(getattr(resp, "summary", "") or "")
+            run_id_val = getattr(resp, "run_id", None)
+        except Exception:
+            _log.exception("Platform error during SSE streaming for session %s", session_id)
+            full_text = "I encountered an error processing your request."
 
-            # D-07: persist complete assistant message after stream finishes
-            full_text = "".join(response_text)
-            run_id_val = response_run_id[0]
+        if full_text:
+            yield f"data: {json.dumps({'token': full_text, 'type': 'token'})}\n\n"
 
-            async def _persist_response() -> None:
-                async with async_session_scope() as db:
-                    asst_msg = SessionMessageRecord(
-                        session_id=session_id,
-                        role="assistant",
-                        content=full_text,
-                        run_id=run_id_val,
-                    )
-                    db.add(asst_msg)
-                    await db.commit()
+        # Persist the assistant message once the response resolves (D-07).
+        async with async_session_scope() as db:
+            db.add(SessionMessageRecord(
+                session_id=session_id,
+                role="assistant",
+                content=full_text,
+                run_id=run_id_val,
+            ))
+            await db.commit()
 
-            await _persist_response()
-
-        # Done sentinel emitted OUTSIDE finally -- only on normal completion
-        if not cancelled:
-            yield f"data: {json.dumps({'type': 'done', 'run_id': run_id_val})}\n\n"
+        yield f"data: {json.dumps({'type': 'done', 'run_id': run_id_val})}\n\n"
 
     return StreamingResponse(
         _stream_generator(),

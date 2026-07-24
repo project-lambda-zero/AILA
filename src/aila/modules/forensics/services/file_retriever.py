@@ -28,9 +28,14 @@ import tempfile
 from pathlib import Path
 
 from aila.config import Settings
+from aila.modules.forensics.services.hash_ledger import (
+    HashMismatchError,
+    verify_file_or_raise,
+)
 from aila.modules.forensics.tools._ssh_helper import get_ssh_service
 from aila.modules.forensics.tools.script_tool import ScriptExecutorTool
 from aila.platform.exceptions import AILAError
+from aila.platform.services.runtime import run_blocking_io
 
 __all__ = [
     "FileRetrievalError",
@@ -564,7 +569,39 @@ async def _run_script_and_pull(
     except (OSError, TimeoutError, RuntimeError, AILAError) as exc:
         _log.warning("analyzer temp cleanup failed: %s", exc)
 
-    return Path(local_path), size, sha256_hex, kind
+    # Finding 58-2: local re-hash of the pulled bytes. The analyzer host
+    # is untrusted per this module's docstring; ``sha256_hex`` is what the
+    # analyzer-side script REPORTED, not proof. Recompute over the bytes
+    # actually delivered and quarantine the local copy on mismatch.
+    # Streamed 1 MB chunk read in a worker thread so a 500 MB acquisition
+    # neither loads into memory nor blocks the event loop.
+    try:
+        verified_sha256 = await run_blocking_io(
+            verify_file_or_raise,
+            Path(local_path),
+            sha256_hex,
+            source=tmp_path_on_analyzer,
+        )
+    except HashMismatchError as exc:
+        _log.warning(
+            "forensic hash mismatch source=%s claimed=%s computed=%s size=%s -- quarantining local copy",
+            tmp_path_on_analyzer,
+            exc.claimed_sha256[:16],
+            exc.computed_sha256[:16],
+            exc.size_bytes,
+        )
+        try:
+            os.unlink(local_path)
+        except OSError:
+            pass
+        raise FileRetrievalError(
+            f"forensic hash mismatch: analyzer reported {exc.claimed_sha256[:16]}..., "
+            f"local recompute {exc.computed_sha256[:16]}...; file quarantined"
+        ) from exc
+
+    # From here on the LOCAL recomputation is the authoritative hash; the
+    # untrusted header value is intentionally discarded.
+    return Path(local_path), size, verified_sha256, kind
 
 
 def _final_basename(source_path: str, kind: str) -> str:

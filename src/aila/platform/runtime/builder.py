@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import logging
+from collections.abc import Iterable
+from typing import Any
+
 from ...storage.registry import ConfigRegistry, SchemaRegistry
 from ...storage.secrets import SecretStore
 from ..config import ApplicationSettings, PlatformConfigSchema, PlatformSettings
@@ -12,6 +16,11 @@ from ..llm.seal import make_seal_step
 from ..llm.validate import make_validate_step
 from ..llm.verify import make_verify_step
 from ..modules import ModuleContext, ModuleRegistry, register_builtin_modules
+from ..services.reasoning import (
+    register_reasoning_domain_profile,
+    register_reasoning_strategy,
+    reset_reasoning_registries,
+)
 from ..tools import (
     ArtifactSearchTool,
     ArtifactStoreTool,
@@ -29,6 +38,50 @@ from ..tools import (
 from ..tools._common import Tool
 from .platform import PlatformRuntime
 from .tools import ToolRegistry
+
+_log = logging.getLogger(__name__)
+
+
+async def _seed_all_modules(session: Any, modules: Iterable[Any]) -> None:
+    """Seed each registered module in isolation.
+
+    A DB/infra failure in one module is rolled back and logged; the remaining
+    modules still seed, so one degraded module cannot strand platform startup.
+    A programming error outside the caught set surfaces loudly at startup
+    rather than being masked.
+    """
+    from sqlalchemy.exc import SQLAlchemyError
+
+    for module in modules:
+        try:
+            await module.seed_data(session)
+        except (SQLAlchemyError, OSError, RuntimeError):
+            await session.rollback()
+            _log.exception(
+                "seed_data failed for module %s; rolled back its partial state "
+                "and continuing with remaining modules",
+                getattr(module, "module_id", type(module).__name__),
+            )
+
+
+def _collect_intel_service(module_runtimes: dict[str, Any]) -> Any | None:
+    """Return the CVE intel service published by a module runtime, or None.
+
+    The platform (which assembles every module runtime) is permitted to
+    introspect them; a peer module is not. Each runtime that owns a CVE
+    intel service exposes it through a ``provides_intel_service()`` method.
+    The first non-None result wins -- today only the vulnerability module
+    publishes one. Absence is normal (a worker started with --modules vr
+    only), so the caller degrades to no intel rather than raising.
+    """
+    for runtime in module_runtimes.values():
+        provider = getattr(runtime, "provides_intel_service", None)
+        if callable(provider):
+            candidate = provider()
+            if candidate is not None:
+                return candidate
+    return None
+
 
 PLATFORM_TOOL_KEYS: frozenset[str] = frozenset({
     "registry.systems",
@@ -176,13 +229,26 @@ async def build_platform_runtime(*, app_settings: ApplicationSettings, platform_
     _validate_step = make_validate_step(validators=_validators, emitter=None)
     runtime_model.pipeline.register("validate", _validate_step)
 
+    # RFC-05 (d): populate the platform reasoning registries from each
+    # module's declarations. The platform seeds only the generic strategy;
+    # every domain-specific strategy family and domain profile is
+    # module-owned. The registries are reset first so a re-build (tests,
+    # multi-init) starts from the platform baseline rather than accumulating.
+    reset_reasoning_registries()
+    for _module in module_registry.modules:
+        for _strategy in _module.reasoning_strategies():
+            register_reasoning_strategy(_strategy)
+        for _profile in _module.reasoning_domain_profiles():
+            register_reasoning_domain_profile(_profile)
+
     from ...storage.database import async_session_scope, init_db
     await init_db(app_settings, schema_registry)
 
-    # Call seed_data() for each registered module -- idempotent, skips if already seeded.
+    # Call seed_data() for each registered module -- idempotent, skips if already
+    # seeded. Isolation is delegated to _seed_all_modules so a degraded module
+    # cannot strand platform startup.
     async with async_session_scope(app_settings) as _seed_session:
-        for _module in module_registry.modules:
-            await _module.seed_data(_seed_session)
+        await _seed_all_modules(_seed_session, module_registry.modules)
 
     # Pre-resolve all config entries in async context so build_runtime() (sync)
     # can read them from a plain dict without hitting the DB.
@@ -204,4 +270,5 @@ async def build_platform_runtime(*, app_settings: ApplicationSettings, platform_
         tool_registry=tool_registry,
         runtime_model=runtime_model,
         config_registry=config_registry,
+        intel_service=_collect_intel_service(module_runtimes),
     )

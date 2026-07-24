@@ -2,22 +2,58 @@
 
 from __future__ import annotations
 
+import json
+import uuid
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import sqlalchemy.exc
 
-from aila.platform.llm.cost import CostTracker
+from aila.platform.llm.client import AilaLLMClient
+from aila.platform.llm.cost import (
+    CostTracker,
+    calculate_cost_usd,
+    emit_missing_pricing_notification,
+    persist_cost_record,
+)
 from aila.platform.llm.errors import BudgetExceededError, LLMError
 from aila.platform.llm.run_memory import RunMemory
+from aila.storage.db_models import NotificationRecord
 
 
 class _StubRegistry:
-    """Minimal ConfigRegistry stub for testing."""
+    """Minimal ConfigRegistry stub for testing.
+
+    Production ConfigRegistry.get is async (see aila.storage.registry); the
+    LLM client path awaits it via LLMConfigProvider.resolve_routing /
+    is_disabled. CostTracker._resolve_ceiling instead uses the sync twin
+    get_sync so a call from sync code never returns an un-awaited coroutine
+    (issue #38). Mirror both surfaces here.
+    """
 
     def __init__(self, data: dict[str, Any] | None = None) -> None:
         self._data: dict[str, Any] = data or {}
 
-    def get(self, namespace: str, key: str) -> Any:
+    async def get(self, namespace: str, key: str) -> Any:
+        return self._data.get(f"{namespace}.{key}")
+
+    def get_sync(self, namespace: str, key: str) -> Any:
+        return self._data.get(f"{namespace}.{key}")
+
+
+class _AsyncGetStubRegistry:
+    """Registry whose ``get`` is async (like the real ConfigRegistry) and whose
+    ``get_sync`` is the sync twin. Reproduces production shape: calling ``get``
+    without await yields a coroutine, not a value."""
+
+    def __init__(self, data: dict[str, Any] | None = None) -> None:
+        self._data: dict[str, Any] = data or {}
+
+    async def get(self, namespace: str, key: str) -> Any:
+        return self._data.get(f"{namespace}.{key}")
+
+    def get_sync(self, namespace: str, key: str) -> Any:
         return self._data.get(f"{namespace}.{key}")
 
 
@@ -184,6 +220,20 @@ class TestBudgetConfigRead:
             tracker.check_budget("r1", "scoring")
 
 
+class TestBudgetCeilingUsesSyncResolver:
+    """_resolve_ceiling must use get_sync so the async registry.get does not
+    return an un-awaited coroutine that silently disables the budget (#38)."""
+
+    def test_ceiling_enforced_with_async_registry(self) -> None:
+        reg = _AsyncGetStubRegistry(
+            {"platform.llm_budget_max_total_tokens_scoring": 100}
+        )
+        tracker = CostTracker(RunMemory(), reg)
+        tracker.record("r1", {"prompt_tokens": 60, "completion_tokens": 50})
+        with pytest.raises(BudgetExceededError):
+            tracker.check_budget("r1", "scoring")
+
+
 # ---------------------------------------------------------------------------
 # Integration: Client + CostTracker wiring (Plan 02)
 # ---------------------------------------------------------------------------
@@ -192,6 +242,45 @@ class TestBudgetConfigRead:
 class TestCostIntegration:
     """Integration tests for CostTracker wired into AilaLLMClient."""
 
+    @pytest.fixture(autouse=True)
+    def _isolate_db(self) -> Any:
+        """Prevent the LLM client path from touching a real PostgreSQL.
+
+        client.chat() reaches ``async_session_scope`` from three sites:
+          * RunMemory.ensure_cost_seeded -- seeds token totals from
+            LLMCostRecord (would cross-pollute run_ids across sessions).
+          * persist_cost_record -- writes the durable LLMCostRecord.
+          * emit_missing_pricing_notification -- writes NotificationRecord.
+
+        Leaving those live in unit tests leaks asyncpg connections whose
+        cleanup then runs on a closed pytest-asyncio event loop and
+        surfaces as ``AttributeError: 'NoneType' object has no attribute
+        'send'``. Patch every entry point to a no-op session so the LLM
+        path stays hermetic.
+        """
+        noop_session = AsyncMock()
+        noop_session.add = MagicMock()
+        noop_session.commit = AsyncMock()
+        exec_result = MagicMock()
+        exec_result.first = MagicMock(return_value=None)
+        noop_session.execute = AsyncMock(return_value=exec_result)
+        noop_session.exec = AsyncMock(return_value=exec_result)
+
+        def _noop_cm(*_args: Any, **_kwargs: Any) -> AsyncMock:
+            cm = AsyncMock()
+            cm.__aenter__ = AsyncMock(return_value=noop_session)
+            cm.__aexit__ = AsyncMock(return_value=False)
+            return cm
+
+        with patch(
+            "aila.storage.database.async_session_scope",
+            side_effect=_noop_cm,
+        ), patch(
+            "aila.platform.llm.run_memory.async_session_scope",
+            side_effect=_noop_cm,
+        ):
+            yield
+
     def _make_client_with_tracker(
         self, budget: int | None = None
     ) -> tuple[Any, CostTracker]:
@@ -199,17 +288,18 @@ class TestCostIntegration:
 
         Returns (client, cost_tracker) pair.
         """
-        from unittest.mock import MagicMock
 
-        from aila.platform.llm.client import AilaLLMClient
 
         reg_data: dict[str, Any] = {}
         if budget is not None:
             reg_data["platform.llm_budget_max_total_tokens_scoring"] = budget
 
         reg = _StubRegistry(reg_data)
+        # LLMConfigProvider.resolve_api_key awaits secret_store.resolve_provider_secret,
+        # so it must be an AsyncMock -- a bare MagicMock returns a value that
+        # ``await`` cannot consume.
         secret_store = MagicMock()
-        secret_store.resolve_provider_secret.return_value = "sk-test-key"
+        secret_store.resolve_provider_secret = AsyncMock(return_value="sk-test-key")
 
         client = AilaLLMClient(registry=reg, secret_store=secret_store)  # type: ignore[arg-type]
 
@@ -222,9 +312,13 @@ class TestCostIntegration:
     @pytest.mark.asyncio
     async def test_chat_records_usage_with_run_id(self) -> None:
         """chat() with run_id records token usage to CostTracker."""
-        from unittest.mock import AsyncMock, MagicMock, patch
 
         client, tracker = self._make_client_with_tracker()
+        # Unique per-invocation run_id: the integration path hits a real DB
+        # via CostTracker.check_budget_async -> RunMemory.ensure_cost_seeded,
+        # so hardcoded ids get seeded from prior runs' LLMCostRecord rows and
+        # this test then observes doubled totals.
+        run_id = f"test-run-{uuid.uuid4().hex}"
 
         usage_mock = MagicMock()
         usage_mock.prompt_tokens = 25
@@ -240,19 +334,19 @@ class TestCostIntegration:
         completion.choices = [choice]
         completion.usage = usage_mock
 
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=completion)
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             response = await client.chat(
                 "scoring",
                 [{"role": "user", "content": "test"}],
-                run_id="run-42",
+                run_id=run_id,
             )
 
         assert response.content == "response text"
-        usage = tracker.get_usage("run-42")
+        usage = tracker.get_usage(run_id)
         assert usage["prompt_tokens"] == 25
         assert usage["completion_tokens"] == 15
         assert usage["total_tokens"] == 40
@@ -261,21 +355,21 @@ class TestCostIntegration:
     async def test_budget_exceeded_blocks_call(self) -> None:
         """When budget is already exceeded, chat() raises BudgetExceededError before API call."""
         client, tracker = self._make_client_with_tracker(budget=50)
+        run_id = f"test-run-{uuid.uuid4().hex}"
 
         # Pre-load usage above budget
-        tracker.record("run-99", {"prompt_tokens": 30, "completion_tokens": 25})
+        tracker.record(run_id, {"prompt_tokens": 30, "completion_tokens": 25})
 
         with pytest.raises(BudgetExceededError, match="budget exceeded"):
             await client.chat(
                 "scoring",
                 [{"role": "user", "content": "test"}],
-                run_id="run-99",
+                run_id=run_id,
             )
 
     @pytest.mark.asyncio
     async def test_no_run_id_records_under_no_run(self) -> None:
         """chat() without run_id records under _no_run sentinel."""
-        from unittest.mock import AsyncMock, MagicMock, patch
 
         client, tracker = self._make_client_with_tracker()
 
@@ -293,10 +387,10 @@ class TestCostIntegration:
         completion.choices = [choice]
         completion.usage = usage_mock
 
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=completion)
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             await client.chat(
                 "scoring",
@@ -310,11 +404,11 @@ class TestCostIntegration:
     @pytest.mark.asyncio
     async def test_no_tracker_backward_compatible(self) -> None:
         """Client without cost_tracker set still works normally."""
-        from unittest.mock import AsyncMock, MagicMock, patch
 
         reg = _StubRegistry()
+        # Same async-await contract as _make_client_with_tracker.
         secret_store = MagicMock()
-        secret_store.resolve_provider_secret.return_value = "sk-test-key"
+        secret_store.resolve_provider_secret = AsyncMock(return_value="sk-test-key")
         client_obj = __import__(
             "aila.platform.llm.client", fromlist=["AilaLLMClient"]
         ).AilaLLMClient(
@@ -337,10 +431,10 @@ class TestCostIntegration:
         completion.choices = [choice]
         completion.usage = usage_mock
 
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=completion)
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             response = await client_obj.chat(
                 "scoring",
@@ -352,9 +446,9 @@ class TestCostIntegration:
     @pytest.mark.asyncio
     async def test_run_id_flows_to_pipeline_ctx(self) -> None:
         """run_id is set in pipeline ctx for seal step to read."""
-        from unittest.mock import AsyncMock, MagicMock, patch
 
         client, tracker = self._make_client_with_tracker()
+        run_id = f"test-run-{uuid.uuid4().hex}"
 
         captured_ctx: dict[str, Any] = {}
 
@@ -381,26 +475,25 @@ class TestCostIntegration:
         completion.choices = [choice]
         completion.usage = usage_mock
 
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=completion)
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             await client.chat(
                 "scoring",
                 [{"role": "user", "content": "test"}],
-                run_id="run-ctx-check",
+                run_id=run_id,
             )
 
-        assert captured_ctx.get("run_id") == "run-ctx-check"
+        assert captured_ctx.get("run_id") == run_id
 
     @pytest.mark.asyncio
     async def test_chat_json_accepts_run_id(self) -> None:
         """chat_json() also accepts run_id kwarg."""
-        import json
-        from unittest.mock import AsyncMock, MagicMock, patch
 
         client, tracker = self._make_client_with_tracker()
+        run_id = f"test-run-{uuid.uuid4().hex}"
 
         usage_mock = MagicMock()
         usage_mock.prompt_tokens = 12
@@ -416,26 +509,26 @@ class TestCostIntegration:
         completion.choices = [choice]
         completion.usage = usage_mock
 
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=completion)
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             await client.chat_json(
                 "scoring",
                 [{"role": "user", "content": "test"}],
                 {"type": "object", "properties": {"score": {"type": "number"}}},
-                run_id="run-json-1",
+                run_id=run_id,
             )
 
-        usage = tracker.get_usage("run-json-1")
+        usage = tracker.get_usage(run_id)
         assert usage["total_tokens"] == 20
 
     def test_chat_sync_accepts_run_id(self) -> None:
         """chat_sync() passes run_id through."""
-        from unittest.mock import AsyncMock, MagicMock, patch
 
         client, tracker = self._make_client_with_tracker()
+        run_id = f"test-run-{uuid.uuid4().hex}"
 
         usage_mock = MagicMock()
         usage_mock.prompt_tokens = 7
@@ -451,18 +544,18 @@ class TestCostIntegration:
         completion.choices = [choice]
         completion.usage = usage_mock
 
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=completion)
-            MockOAI.return_value = mock_instance
+            mock_oai.return_value = mock_instance
 
             client.chat_sync(
                 "scoring",
                 [{"role": "user", "content": "test"}],
-                run_id="run-sync-1",
+                run_id=run_id,
             )
 
-        usage = tracker.get_usage("run-sync-1")
+        usage = tracker.get_usage(run_id)
         assert usage["total_tokens"] == 11
 
 
@@ -487,7 +580,6 @@ class TestCalculateCostUsd:
     @pytest.mark.asyncio
     async def test_calculate_cost_usd_both_keys_present(self) -> None:
         """Returns (cost, True) when both pricing keys exist and are valid."""
-        from aila.platform.llm.cost import calculate_cost_usd
 
         registry = _AsyncStubRegistry({
             "platform.llm_cost_per_1k_prompt_gpt-4o": 0.005,
@@ -506,7 +598,6 @@ class TestCalculateCostUsd:
     @pytest.mark.asyncio
     async def test_calculate_cost_usd_missing_keys(self) -> None:
         """Returns (0.0, False) when pricing keys are missing."""
-        from aila.platform.llm.cost import calculate_cost_usd
 
         registry = _AsyncStubRegistry()  # no keys
         cost, configured = await calculate_cost_usd(
@@ -521,7 +612,6 @@ class TestCalculateCostUsd:
     @pytest.mark.asyncio
     async def test_calculate_cost_usd_non_numeric_keys(self) -> None:
         """Returns (0.0, False) when pricing keys are non-numeric strings."""
-        from aila.platform.llm.cost import calculate_cost_usd
 
         registry = _AsyncStubRegistry({
             "platform.llm_cost_per_1k_prompt_gpt-4o": "not-a-number",
@@ -539,7 +629,6 @@ class TestCalculateCostUsd:
     @pytest.mark.asyncio
     async def test_calculate_cost_usd_negative_price_rejected(self) -> None:
         """Returns (0.0, False) when prices are negative (T-175-01)."""
-        from aila.platform.llm.cost import calculate_cost_usd
 
         registry = _AsyncStubRegistry({
             "platform.llm_cost_per_1k_prompt_gpt-4o": -0.005,
@@ -557,7 +646,6 @@ class TestCalculateCostUsd:
     @pytest.mark.asyncio
     async def test_calculate_cost_usd_zero_tokens(self) -> None:
         """Zero tokens yields zero cost but still configured=True."""
-        from aila.platform.llm.cost import calculate_cost_usd
 
         registry = _AsyncStubRegistry({
             "platform.llm_cost_per_1k_prompt_gpt-4o": 0.005,
@@ -575,7 +663,6 @@ class TestCalculateCostUsd:
     @pytest.mark.asyncio
     async def test_calculate_cost_usd_only_prompt_key_missing(self) -> None:
         """Returns (0.0, False) when only one key is missing."""
-        from aila.platform.llm.cost import calculate_cost_usd
 
         registry = _AsyncStubRegistry({
             # prompt key missing
@@ -602,14 +689,20 @@ class TestPersistCostRecord:
     @pytest.mark.asyncio
     async def test_persist_cost_record_swallows_db_exception(self) -> None:
         """persist_cost_record() swallows DB exceptions and never raises."""
-        from unittest.mock import AsyncMock, MagicMock, patch
 
-        from aila.platform.llm.cost import persist_cost_record
 
-        # Patch async_session_scope to raise on commit
+        # Patch async_session_scope to raise on commit. Production catches
+        # sqlalchemy.exc.SQLAlchemyError specifically (see cost.py) -- the
+        # honesty-audit rule forbids bare ``except Exception``. A real commit()
+        # failure surfaces as OperationalError (a SQLAlchemyError subclass),
+        # so raise the same shape here.
         mock_session = AsyncMock()
         mock_session.add = MagicMock()
-        mock_session.commit = AsyncMock(side_effect=RuntimeError("DB connection lost"))
+        mock_session.commit = AsyncMock(
+            side_effect=sqlalchemy.exc.OperationalError(
+                "COMMIT", None, RuntimeError("DB connection lost"),
+            ),
+        )
         mock_cm = AsyncMock()
         mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
         mock_cm.__aexit__ = AsyncMock(return_value=False)
@@ -631,9 +724,7 @@ class TestPersistCostRecord:
     @pytest.mark.asyncio
     async def test_persist_cost_record_none_run_id_defaults(self) -> None:
         """persist_cost_record() with run_id=None uses '_no_run' sentinel."""
-        from unittest.mock import AsyncMock, MagicMock, patch
 
-        from aila.platform.llm.cost import persist_cost_record
 
         added_records: list = []
 
@@ -661,9 +752,7 @@ class TestPersistCostRecord:
     @pytest.mark.asyncio
     async def test_persist_cost_record_sets_all_fields(self) -> None:
         """persist_cost_record() creates record with all fields set correctly."""
-        from unittest.mock import AsyncMock, MagicMock, patch
 
-        from aila.platform.llm.cost import persist_cost_record
 
         added_records: list = []
 
@@ -707,9 +796,7 @@ class TestEmitMissingPricingNotification:
     @pytest.mark.asyncio
     async def test_emit_missing_pricing_notification_creates_record(self) -> None:
         """Creates a NotificationRecord with user_id='__system__' on first call."""
-        from unittest.mock import AsyncMock, MagicMock, patch
 
-        from aila.platform.llm.cost import emit_missing_pricing_notification
 
         added_records: list = []
 
@@ -737,10 +824,7 @@ class TestEmitMissingPricingNotification:
     @pytest.mark.asyncio
     async def test_emit_missing_pricing_notification_idempotent(self) -> None:
         """Does NOT create a new record if one already exists (dedup)."""
-        from unittest.mock import AsyncMock, MagicMock, patch
 
-        from aila.platform.llm.cost import emit_missing_pricing_notification
-        from aila.storage.db_models import NotificationRecord
 
         added_records: list = []
 
@@ -766,13 +850,18 @@ class TestEmitMissingPricingNotification:
 
     @pytest.mark.asyncio
     async def test_emit_missing_pricing_notification_swallows_exception(self) -> None:
-        """Swallows all exceptions and never raises."""
-        from unittest.mock import AsyncMock, patch
+        """Swallows DB exceptions and never raises."""
 
-        from aila.platform.llm.cost import emit_missing_pricing_notification
 
+        # Production catches sqlalchemy.exc.SQLAlchemyError specifically
+        # (see cost.py -- narrow catch per honesty-audit rule). A real
+        # session-open failure surfaces as OperationalError.
         mock_cm = AsyncMock()
-        mock_cm.__aenter__ = AsyncMock(side_effect=RuntimeError("DB unavailable"))
+        mock_cm.__aenter__ = AsyncMock(
+            side_effect=sqlalchemy.exc.OperationalError(
+                "CONNECT", None, RuntimeError("DB unavailable"),
+            ),
+        )
         mock_cm.__aexit__ = AsyncMock(return_value=False)
 
         with patch("aila.storage.database.async_session_scope", return_value=mock_cm):
@@ -783,9 +872,7 @@ class TestEmitMissingPricingNotification:
     @pytest.mark.asyncio
     async def test_emit_missing_pricing_notification_uses_system_user_id(self) -> None:
         """user_id is always '__system__' (required non-nullable field)."""
-        from unittest.mock import AsyncMock, MagicMock, patch
 
-        from aila.platform.llm.cost import emit_missing_pricing_notification
 
         added_records: list = []
 
@@ -807,9 +894,7 @@ class TestEmitMissingPricingNotification:
     @pytest.mark.asyncio
     async def test_emit_missing_pricing_notification_source_entity_id_format(self) -> None:
         """source_entity_id uses 'pricing_missing:{model_id}' format for dedup."""
-        from unittest.mock import AsyncMock, MagicMock, patch
 
-        from aila.platform.llm.cost import emit_missing_pricing_notification
 
         added_records: list = []
 

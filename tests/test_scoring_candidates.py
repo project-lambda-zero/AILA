@@ -594,13 +594,21 @@ class TestBuildScoringCandidates:
         assert c.cve_description == "A buffer overflow in openssl."
 
     def test_match_without_cve_id_uses_advisory_id_as_group_key(self):
-        """Advisory-only findings (no CVE) should still produce candidates."""
+        """Advisory-only findings (no CVE) should still produce candidates.
+
+        Contract: when a match has no CVE ID, build_scoring_candidates uses
+        the advisory ID as both the grouping key and the ScoringCandidate.cve_id
+        (see src/aila/modules/vulnerability/agents/scoring/candidates.py:
+        ``cve_id=match.cve_id or match.advisory_id or ""``). This keeps the
+        downstream scoring loop identifier-uniform: cve_id is typed ``str``
+        (never ``None``) on ScoringCandidate.
+        """
         matches = [_match(cve_id=None, advisory_id="GHSA-1234-abcd")]
         # No knowledge entry needed for advisory-only
         candidates = build_scoring_candidates(matches, {}, {})
         assert len(candidates) == 1
         c = candidates[0]
-        assert c.cve_id is None
+        assert c.cve_id == "GHSA-1234-abcd"
         # Advisory-only gets an empty CVEKnowledge stub
         assert c.nvd_url == ""
         assert c.cve_description == ""

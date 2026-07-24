@@ -316,7 +316,7 @@ async def emit_transition_event(
         # method (scope discipline).
         from aila.platform.services.redis_pool import get_redis
 
-        key = ProgressStream._KEY_FMT.format(task_id=run_id)
+        key = ProgressStream.stream_key(run_id)
         async with get_redis() as client:
             await client.xadd(
                 key,
@@ -324,10 +324,44 @@ async def emit_transition_event(
                 maxlen=stream._maxlen,
                 approximate=False,
             )
-    except Exception:
+    except (
+        ImportError,
+        RuntimeError,
+        OSError,
+        TimeoutError,
+        ConnectionError,
+        ValueError,
+        TypeError,
+        AttributeError,
+    ) as exc:
+        # Fail-safe: the outer engine commit has already landed; losing
+        # the SSE fan-out MUST NOT roll it back. Log at WARNING and
+        # bump SSE_WRITE_FAILURES_TOTAL{source=workflow_log} so the
+        # drop is operator-visible rather than silently swallowed.
         _log.warning(
-            "transition emit failed (run_id=%s seq=%s)",
+            "transition emit failed (run_id=%s seq=%s): %s",
             run_id,
             seq,
+            exc.__class__.__name__,
             exc_info=True,
         )
+        # Route the fail-safe signal through the ResilienceLayer facade so
+        # this site stops carrying its own SSE_WRITE_FAILURES_TOTAL bump
+        # line (RFC-07 acceptance bullet 2). The layer bumps the umbrella
+        # RESILIENCE_SIGNALS_TOTAL{op=workflow_log_emit} AND (for op names
+        # in _SSE_MIRRORED_OPS) the legacy SSE_WRITE_FAILURES_TOTAL so
+        # existing operator dashboards keep working unchanged.
+        try:
+            from aila.platform.services.resilience import (
+                get_default_resilience_layer,
+            )
+
+            get_default_resilience_layer().record_signal(
+                op="workflow_log_emit",
+                source="workflow_log",
+                exc=exc,
+            )
+        except (ImportError, AttributeError, RuntimeError, ValueError) as bump_exc:
+            _log.debug(
+                "resilience signal skipped: %s", bump_exc,
+            )

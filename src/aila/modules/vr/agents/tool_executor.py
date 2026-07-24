@@ -21,28 +21,23 @@ from __future__ import annotations
 import json
 import logging
 from collections import OrderedDict
-from dataclasses import dataclass
 from typing import Any
-from uuid import uuid4
 
-import httpx
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
-from aila.modules.vr.agents.auto_steering import maybe_post_auto_steering
-from aila.modules.vr.contracts import PayloadKind, SenderKind
+from aila.modules.vr.contracts import PayloadKind
 from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
     VRInvestigationMessageRecord,
     VRInvestigationRecord,
     VRTargetRecord,
 )
-from aila.platform.contracts._common import utc_now
-from aila.platform.mcp.adapters import (
-    AdapterContext,
-    get_adapter,
-    get_read_tools,
+from aila.modules.vr.services.config_helpers import get_int
+from aila.platform.agents.tool_execution import (
+    ToolExecutionResult,
 )
+from aila.platform.agents.tool_executor import ToolExecutorHelpersBase
 from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
 from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
 from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
@@ -55,54 +50,8 @@ __all__ = [
 
 _log = logging.getLogger(__name__)
 
-# fix §202 -- bridge writer-side whitelist contract (cross-ref W1 §214
-# ida_bridge, §215 android_mcp_bridge): success statuses are normalised
-# to exactly one of {"ready", "completed", "ok"}. The async progression
-# values {"pending", "queued", "running"} mean the bridge returned
-# without a final result -- the executor treats those identically
-# to an error because there is no payload to render. Any other value
-# (unknown / malformed) is coerced to error here so the engine sees a
-# loud message on the next turn instead of an empty rendering.
-_SUCCESS_STATUSES: frozenset[str] = frozenset({"ready", "completed", "ok"})
 
-# Hard cap on identical-call retries within one branch. When the same
-# (server.tool, canonical args) has failed this many times consecutively
-# on the SAME branch, the executor refuses to dispatch any further
-# attempt and returns a synthetic 'HARD-BLOCKED' error. Limit is
-# generous (3) so legitimately-transient errors (httpx pool exhaustion,
-# audit-mcp cold rebuild) still get retried. Tunable via env without
-# code change.
-_HARD_BLOCK_REPEAT_LIMIT: int = int(
-    __import__("os").environ.get("VR_TOOL_EXECUTOR_HARD_BLOCK_REPEAT", "3"),
-)
-
-# fix §254 -- single source of truth for the malformed-command marker.
-# Emitted by the executor (see line 159) and matched by the consecutive-
-# malformed counter (see _count_consecutive_malformed). Drift between
-# the two halves used to silently break the STOP-circuit-breaker.
-_MALFORMED_TOOL_RUN_MARKER: str = "Malformed tool_run"
-
-# fix §261 -- DoS guard. _parse_command runs json.loads on agent-supplied
-# strings; a runaway agent that emits a multi-megabyte command_raw would
-# pin a worker thread on the parse for seconds and bloat the resulting
-# error message that gets persisted. 64KB is well above any legitimate
-# tool call (the largest known shape is a script_execute body capped
-# elsewhere at ~16KB).
-_MAX_TOOL_CMD_BYTES: int = 65536
-
-
-@dataclass(slots=True)
-class ToolExecutionResult:
-    """Outcome of one tool_run dispatch."""
-
-    server_id: str
-    tool_name: str
-    message_id: str | None
-    success: bool
-    error: str = ""
-
-
-class ToolExecutor:
+class ToolExecutor(ToolExecutorHelpersBase):
     """Per-investigation tool dispatcher. Injects the three MCP bridges
     (ida_headless, audit_mcp, android_mcp).
 
@@ -123,12 +72,22 @@ class ToolExecutor:
         "default", "tip", "primary", "this", "auto",
     })
 
+    # Merged-dispatch config (ToolExecutorHelpersBase.execute reads these).
+    _TOOLRUN_EXAMPLE_JSON = (
+        '{"tool": "audit_mcp.read_function", "args": {"name": "..."}}'
+    )
+    _TOOLRUN_ACTIONS = (
+        "tool_run / reasoning / submit / submit_outcome_review / script_execute"
+    )
+
     def __init__(
         self,
         ida: IDABridgeTool | Any,
         audit_mcp: AuditMcpBridgeTool | Any,
         android_mcp: AndroidMcpBridgeTool | Any,
     ) -> None:
+        self._message_model = VRInvestigationMessageRecord
+        self._branch_model = VRInvestigationBranchRecord
         self._bridges: dict[str, Any] = {
             "ida_headless": ida,
             "audit_mcp": audit_mcp,
@@ -144,579 +103,75 @@ class ToolExecutor:
         # executor instance; created once per investigation loop.
         self._inv_index_id_cache: OrderedDict[str, str] = OrderedDict()
 
-    async def execute(
-        self,
-        investigation_id: str,
-        branch_id: str,
-        command_raw: str,
-        at_turn: int | None = None,
-    ) -> ToolExecutionResult:
-        """Dispatch one tool call. Writes a result message + updates observables."""
-        call_id = str(uuid4())
+    async def _hard_block_repeat_limit(self) -> int | None:
+        return await get_int("tool_executor_hard_block_repeat")
 
-        parsed = _parse_command(command_raw)
-        if parsed is None:
-            # fix §201 -- count TOTAL malformed-command errors on the
-            # last 50 engine messages from this branch (was: consecutive
-            # starting at the tail). Alternating empty→good→empty→good→empty
-            # legitimately means the agent cannot stabilise on a valid
-            # tool_run shape and should be force-stopped; the prior
-            # consecutive-only counter reset on every single good call
-            # in between, so a branch could produce 8 empty commands
-            # interleaved with 1-shot reasoning blocks and never trip
-            # the breaker. STOP fires when total >= 5 (this call would
-            # make the 6th).
-            malformed_count = await self._count_total_malformed(
-                branch_id,
-            )
-            if malformed_count >= 5:
-                err = (
-                    "STOP -- you have produced 6 or more empty or "
-                    "malformed tool_run commands on this branch (last "
-                    "50 messages). The engine cannot dispatch an empty "
-                    "command. Your next turn MUST be one of:\n"
-                    "  (a) action=tool_run with valid JSON command: "
-                    '{\"tool\": \"audit_mcp.read_function\", \"args\": {\"name\": \"...\"}}\n'
-                    "  (b) action=submit if you have enough evidence to "
-                    "submit your findings.\n"
-                    "  (c) action=reasoning to think without a tool call.\n\n"
-                    "Pick (c) if you are unsure -- reasoning is always safe "
-                    "and lets you think before dispatching another tool. "
-                    "(There is NO 'observe' action -- only tool_run / "
-                    "reasoning / submit / submit_outcome_review / "
-                    "script_execute.)"
-                )
-            else:
-                err = (
-                    f"{_MALFORMED_TOOL_RUN_MARKER} command -- expected JSON with "
-                    "'tool' (e.g. 'server.tool_name') and 'args' dict. "
-                    f"Got: {command_raw[:200]!r}. "
-                    "If you don't have a specific tool query to make this "
-                    "turn, pick action=reasoning instead of action=tool_run."
-                )
-            msg_id = await self._write_error_message(
-                investigation_id, branch_id, err, at_turn,
-            )
-            return ToolExecutionResult(
-                server_id="", tool_name="",
-                message_id=msg_id, success=False, error=err,
-            )
-
-        tool_id, args = parsed
-        server_id, _, tool_name = tool_id.partition(".")
-        if not tool_name:
-            err = (
-                "tool_run command 'tool' field must be '<server>.<tool>' "
-                f"(see the # Available tools section). Got: {tool_id!r}."
-            )
-            msg_id = await self._write_error_message(
-                investigation_id, branch_id, err, at_turn,
-            )
-            return ToolExecutionResult(
-                server_id=server_id, tool_name="",
-                message_id=msg_id, success=False, error=err,
-            )
-
-        adapter = get_adapter(server_id, tool_name)
-        if adapter is None:
-            err = (
-                f"No tool '{server_id}.{tool_name}' is available for this "
-                f"target. Re-read the # Available tools section in the "
-                f"prompt -- only tools listed there will execute."
-            )
-            msg_id = await self._write_error_message(
-                investigation_id, branch_id, err, at_turn,
-            )
-            return ToolExecutionResult(
-                server_id=server_id, tool_name=tool_name,
-                message_id=msg_id, success=False, error=err,
-            )
-
-        bridge = self._bridges.get(server_id)
-        if bridge is None:
-            err = f"No bridge configured for MCP server {server_id!r}"
-            msg_id = await self._write_error_message(
-                investigation_id, branch_id, err, at_turn,
-            )
-            return ToolExecutionResult(
-                server_id=server_id, tool_name=tool_name,
-                message_id=msg_id, success=False, error=err,
-            )
-        # Pre-call: auto-correct audit_mcp index_id if the agent passed
-        # a known placeholder or omitted it entirely. Saves a 30s+ LLM
-        # round-trip per call that would otherwise come back as
-        # "Unknown index: 'main'" or "missing required kwarg(s)
-        # ['index_id']".
+    async def _pre_dispatch_correct_args(
+        self, investigation_id: str, server_id: str, args: dict[str, Any],
+    ) -> dict[str, Any]:
+        # Auto-correct an audit_mcp index_id placeholder (saves a 30s+ LLM
+        # round-trip that would return "Unknown index" / a missing kwarg).
         if server_id == "audit_mcp":
-            args = await self._maybe_correct_index_id(investigation_id, args)
-        # fix: HARD-BLOCK identical retries BEFORE the bridge call.
-        # The circuit-breaker text (line 314+) augments the error
-        # message after the call lands, but agents still issue the
-        # same call up to 51 times per branch (observed live on
-        # one branch, 63x read_function('init')). The
-        # augmented warning is no deterrent because each retry
-        # produces a new turn worth of LLM thinking that re-derives
-        # 'this might work this time'.
-        #
-        # New rule: when the SAME (server.tool, canonical args)
-        # has failed in this branch ≥ _HARD_BLOCK_REPEAT_LIMIT
-        # times consecutively, refuse the dispatch entirely and
-        # hand back a synthetic error response WITHOUT making the
-        # network call. The agent burns one LLM turn reading the
-        # block notice; the bridge / upstream MCP roundtrip is
-        # saved. Limit is intentionally generous (3) so legitimately-
-        # transient errors (httpx pool exhaustion, audit-mcp cold
-        # rebuild) still get retried.
-        hard_block_count = await self._count_prior_failures(
-            branch_id, server_id, tool_name, args,
-        )
-        if hard_block_count >= _HARD_BLOCK_REPEAT_LIMIT:
-            err = (
-                f"{server_id}.{tool_name} HARD-BLOCKED: this exact call "
-                f"(args={sorted(args)}) has failed {hard_block_count} "
-                f"times in this branch. The bridge will NOT execute "
-                f"this call again -- every retry produces the same "
-                f"failure pattern. Choose a different tool OR a "
-                f"different args shape OR submit terminal_submit "
-                f"declaring you cannot proceed on this lead."
-            )
-            msg_id = await self._write_error_message(
-                investigation_id, branch_id, err, at_turn,
-            )
-            _log.warning(
-                "tool_executor HARD-BLOCK %s.%s after %d prior failures "
-                "(branch=%s args=%s)",
-                server_id, tool_name, hard_block_count, branch_id[:8],
-                sorted(args),
-            )
-            return ToolExecutionResult(
-                server_id=server_id, tool_name=tool_name,
-                message_id=msg_id, success=False, error=err,
-            )
+            return await self._maybe_correct_index_id(investigation_id, args)
+        return args
 
-        try:
-            raw = await bridge.forward(action=tool_name, **args)
-        except (httpx.HTTPError, OSError, RuntimeError, ValueError, TypeError) as exc:
-            # fix §197 -- broadened from (OSError, TimeoutError,
-            # RuntimeError). `bridge.forward` reaches into httpx
-            # (httpx.HTTPError, httpx.PoolTimeout -- neither one is
-            # an OSError subclass on every platform), pydantic.ValidationError
-            # covering malformed bridge response envelopes, and arbitrary
-            # provider errors from sync→async wrappers. A miss here
-            # used to crash the worker turn instead of writing the
-            # error envelope the engine expects.
-            _log.exception(
-                "tool_executor: bridge.forward raised for %s.%s",
-                server_id, tool_name,
+    def _augment_tool_error(
+        self, server_id: str, tool_name: str, args: dict[str, Any],
+        raw_err: Any, err: str,
+    ) -> str:
+        # An audit_mcp.read_function "not indexed" result is often a #define
+        # macro, so point the agent at search_macros.
+        if (
+            server_id == "audit_mcp"
+            and tool_name == "read_function"
+            and isinstance(raw_err, str)
+            and "not indexed" in raw_err.lower()
+        ):
+            requested = args.get("name") or args.get("function") or "<symbol>"
+            err += (
+                f"\n\nHINT: '{requested}' may be a macro (#define), not a function. "
+                f"Try audit_mcp.search_macros(name={requested!r}) BEFORE giving up -- "
+                f"identifiers that look like function calls (e.g. ngx_http_v2_write_*) "
+                f"are often macros that read_function can't see."
             )
-            err = f"{server_id}.{tool_name} bridge call raised: {exc}"
-            msg_id = await self._write_error_message(
-                investigation_id, branch_id, err, at_turn,
-            )
-            return ToolExecutionResult(
-                server_id=server_id, tool_name=tool_name,
-                message_id=msg_id, success=False, error=err,
-            )
+        return err
 
-        # fix §202 -- positive whitelist (writer contract closure for W1
-        # §214/§215). Treat anything outside _SUCCESS_STATUSES as an
-        # executor-visible error: includes legitimate `error` envelopes,
-        # the async in-progress values (pending/queued/running) that mean
-        # "no payload yet", and any unknown/malformed status string the
-        # bridge let slip through.
-        _status = raw.get("status")
-        if _status not in _SUCCESS_STATUSES:
-            raw_err = raw.get("error") or ""
-            if not raw_err and _status:
-                raw_err = (
-                    f"unexpected status {_status!r} (success requires "
-                    f"one of {sorted(_SUCCESS_STATUSES)})"
-                )
-            err = f"{server_id}.{tool_name} returned error: {raw_err!r}"
-            # Common false-negative: audit_mcp.read_function says
-            # 'Function X not indexed' -- but the identifier is a
-            # #define macro, not a function. Append a hint so the
-            # agent's next turn calls audit_mcp.search_macros instead
-            # of grinding on more search_source attempts.
-            if (
-                server_id == "audit_mcp"
-                and tool_name == "read_function"
-                and isinstance(raw_err, str)
-                and "not indexed" in raw_err.lower()
-            ):
-                requested = args.get("name") or args.get("function") or "<symbol>"
-                err += (
-                    f"\n\nHINT: '{requested}' may be a macro (#define), not a function. "
-                    f"Try audit_mcp.search_macros(name={requested!r}) BEFORE giving up -- "
-                    f"identifiers that look like function calls (e.g. ngx_http_v2_write_*) "
-                    f"are often macros that read_function can't see."
-                )
-            # Repeat-failure circuit breaker. Two complementary triggers:
-            #
-            # (1) Args-identical: same (server, tool, args) call has
-            #     already failed N times on this branch. Catches the
-            #     classic "ngx_http_proxy_set_body doesn't exist, retry
-            #     forever" pattern where the agent reissues the exact
-            #     same call without varying anything.
-            #
-            # (2) Error-class match: same (server, tool) call failed
-            #     sharing the SAME ERROR PREFIX N times on this branch
-            #     regardless of args. Catches the "fuzzing_targets
-            #     keeps getting unknown-kwarg 'threshold' / 'cutoff' /
-            #     'min_score'" pattern where the agent varies the bad
-            #     arg name but never realizes the param doesn't exist
-            #     at all. Without this, breaker #1 never fires because
-            #     each new bogus kwarg looks like a fresh call.
-            #
-            # Either trigger >= 2 (i.e. this is the 3rd offence) forces
-            # the breaker hint. Error-class match takes priority when
-            # both fire because its message is more actionable for the
-            # contract-violation case.
-            repeat_count = await self._count_prior_failures(
-                branch_id, server_id, tool_name, args,
-            )
-            error_class_count = await self._count_prior_error_class(
-                branch_id, server_id, tool_name, raw_err,
-            )
-            triggered_by_class = error_class_count >= 2
-            triggered_by_args = repeat_count >= 2
-            if triggered_by_class or triggered_by_args:
-                ident = (
-                    args.get("name") or args.get("function")
-                    or args.get("pattern") or "<args>"
-                )
-                alternatives: list[str] = []
-                if server_id == "audit_mcp" and tool_name == "read_function":
-                    alternatives.extend([
-                        f"  - audit_mcp.search_functions(query={ident!r})  # find similar function names",
-                        f"  - audit_mcp.search_source(pattern={ident!r}, limit=30)  # find any mention in source",
-                        f"  - audit_mcp.search_macros(name={ident!r})  # check if it's a #define",
-                    ])
-                elif server_id == "audit_mcp" and tool_name == "search_source":
-                    alternatives.extend([
-                        f"  - audit_mcp.search_macros(name={ident!r})  # if checking for a symbol, try macros",
-                        f"  - audit_mcp.search_constants(name={ident!r})  # if checking for a constant",
-                        "  - try a shorter / broader pattern",
-                    ])
+    def _pivot_alternatives(
+        self, server_id: str, tool_name: str, ident: str,
+    ) -> list[str]:
+        alternatives: list[str] = []
+        if server_id == "audit_mcp" and tool_name == "read_function":
+            alternatives.extend([
+                f"  - audit_mcp.search_functions(query={ident!r})  # find similar function names",
+                f"  - audit_mcp.search_source(pattern={ident!r}, limit=30)  # find any mention in source",
+                f"  - audit_mcp.search_macros(name={ident!r})  # check if it's a #define",
+            ])
+        elif server_id == "audit_mcp" and tool_name == "search_source":
+            alternatives.extend([
+                f"  - audit_mcp.search_macros(name={ident!r})  # if checking for a symbol, try macros",
+                f"  - audit_mcp.search_constants(name={ident!r})  # if checking for a constant",
+                "  - try a shorter / broader pattern",
+            ])
+        return alternatives
 
-                # Pick the breaker text based on which CLASS the error
-                # falls into. Wrong-kwarg / missing-kwarg / type-mismatch
-                # all share "the arg shape is wrong, re-read signature"
-                # advice. resource_not_found is the opposite -- arg shape
-                # is fine, the VALUE is wrong (typo, stale identifier,
-                # path the agent copied from somewhere stale). Telling
-                # the agent to "re-read the tool signature" in that case
-                # sends them down the wrong rabbit hole.
-                err_class = self._classify_contract_error(raw_err) if triggered_by_class else None
-                if err_class == "resource_not_found":
-                    err += (
-                        f"\n\n*** REPEAT-FAILURE CIRCUIT BREAKER (resource-not-found) ***\n"
-                        f"You have called {server_id}.{tool_name} {error_class_count + 1} times "
-                        f"in this branch and EACH attempt failed because the resource "
-                        f"identifier (path / id / file) you passed does not exist on disk "
-                        f"or in the index. The arg NAMES are fine -- the VALUE is wrong. "
-                        f"Typing a new typo of the same identifier will not help: every "
-                        f"version you've tried so far has missed.\n\n"
-                        f"Likely root cause: you are reconstructing a long identifier "
-                        f"(SHA-derived APK path, hex index id, GUID) from memory and "
-                        f"corrupting it each time. SHA-256 paths are 64 hex chars + extension; "
-                        f"a single dropped char or stray space breaks the lookup.\n\n"
-                        f"PIVOT -- do NOT call {server_id}.{tool_name} with another typed "
-                        f"identifier. Pull the canonical value from an existing observable "
-                        f"in this branch's case_state (a prior tool result, target metadata, "
-                        f"or the initial-question text), copy it byte-for-byte, OR pivot to "
-                        f"a different tool that takes a logical identifier (target_id, "
-                        f"investigation_id) instead of a raw filesystem path."
-                        + "\nOR submit a finding noting the obstacle."
-                    )
-                elif triggered_by_class:
-                    # Contract-violation path: the error itself names
-                    # the wrong kwarg / missing arg. The bridge
-                    # validator (audit_mcp_bridge._validate_kwargs)
-                    # already injected a 'did you mean' hint into the
-                    # raw error -- reinforce the STOP signal at the
-                    # breaker level so the agent realizes it's looping.
-                    err += (
-                        f"\n\n*** REPEAT-FAILURE CIRCUIT BREAKER (error-class match) ***\n"
-                        f"You have called {server_id}.{tool_name} {error_class_count + 1} times "
-                        f"in this branch and EACH attempt failed with the same error class. "
-                        f"Varying the arg VALUE will not help -- the arg NAME or shape is "
-                        f"wrong. Re-read the tool signature in the # Available tools section "
-                        f"of the prompt above. The valid parameter list is named in the error.\n\n"
-                        f"PIVOT -- do NOT call {server_id}.{tool_name} again until you have "
-                        f"a different param NAME, or call a different tool entirely."
-                        + ("\nTry one of:\n" + "\n".join(alternatives) if alternatives else "")
-                        + "\nOR submit a finding noting the obstacle."
-                    )
-                else:
-                    err += (
-                        f"\n\n*** REPEAT-FAILURE CIRCUIT BREAKER ***\n"
-                        f"You have already issued THIS EXACT CALL "
-                        f"{repeat_count + 1} times in this branch -- all failed with the "
-                        f"same error. STOP. The identifier {ident!r} does not exist "
-                        f"in the form you expect. Possible reasons:\n"
-                        f"  (a) it's a directive name, not a function (directives are\n"
-                        f"      registered in a static array, not exported as a function\n"
-                        f"      with that exact name);\n"
-                        f"  (b) it's a macro / typedef / constant, not a function;\n"
-                        f"  (c) it never existed and a sibling persona hallucinated it.\n\n"
-                        f"PIVOT -- your next tool call MUST NOT be the same call again."
-                        + ("\nTry one of:\n" + "\n".join(alternatives) if alternatives else "")
-                        + "\nOR submit a finding noting 'identifier not present in tree'."
-                    )
-            msg_id = await self._write_error_message(
-                investigation_id, branch_id, err, at_turn,
-            )
-            return ToolExecutionResult(
-                server_id=server_id, tool_name=tool_name,
-                message_id=msg_id, success=False, error=err,
-            )
-
-        ctx = AdapterContext(
-            mcp_server_id=server_id,
-            tool_name=tool_name,
-            investigation_id=investigation_id,
-            branch_id=branch_id,
-            call_id=call_id,
-            args=args,
-        )
-        adapter_result = adapter(raw, ctx)
-
-        # Survey-streak pivot hint. The agent on variant_hunt /
-        # discovery investigations tends to keep calling survey tools
-        # (attack_surface, complexity_hotspots, fuzzing_targets,
-        # search_functions) for 5-10 turns while debating in
-        # "adversarial deliberation" reasoning blocks, and only reads
-        # actual source bodies once near the end.
-        #
-        # The hint is appended to BOTH:
-        #   (a) the rendered text payload -- so it shows up in the UI
-        #       timeline next to the tool result, and
-        #   (b) the observables_delta under the reserved key
-        #       `_directive.pivot` -- so the next turn's
-        #       render_case_model() surfaces it in the agent's prompt.
-        # Without (b) the directive was written to a DB message but
-        # never made it into the agent's next-turn context: case_state
-        # only renders observables, not prior tool result text.
-        pivot_hint = await self._survey_streak_hint(
-            branch_id, server_id, tool_name,
-        )
-        if pivot_hint:
-            if isinstance(adapter_result.payload, dict):
-                existing = adapter_result.payload.get("text") or ""
-                adapter_result.payload["text"] = (
-                    existing.rstrip() + "\n\n" + pivot_hint
-                )
-            # fix §199 -- keep the single-string `_directive.pivot` for
-            # the prompt renderer (which filters non-string directive
-            # values), AND append a structured entry to the
-            # `_directive.pivot_history` array so the operator (and
-            # forensics) can audit every nudge the agent received on
-            # this branch. Capped to the last 20 entries to keep the
-            # observables blob bounded.
-            existing_history = await self._load_pivot_history(branch_id)
-            existing_history.append({
-                "at_ts": utc_now().isoformat(),
-                "server_id": server_id,
-                "tool_name": tool_name,
-                "hint": pivot_hint,
-            })
-            adapter_result.observables_delta = {
-                **(adapter_result.observables_delta or {}),
-                "_directive.pivot": pivot_hint,
-                "_directive.pivot_history": existing_history[-20:],
-            }
-        else:
-            # Clear the pivot directive ONLY when the agent satisfied
-            # it by calling an actual read/trace tool. Surveys obviously
-            # don't satisfy a pivot, but neither does search_functions
-            # / search_macros / semantic_search -- those find candidates
-            # without reading any source body. The directive stays put
-            # until the agent commits to a real read.
-            if (server_id, tool_name) in self._read_tools():
-                adapter_result.observables_delta = {
-                    **(adapter_result.observables_delta or {}),
-                    "_directive.pivot": "",
-                }
-
-        # fix §203 -- single UoW write: tool result message AND the
-        # observables delta land atomically so a concurrent reader
-        # cannot observe one half without the other.
-        msg_id = await self._persist_result_and_observables(
-            investigation_id, branch_id,
-            payload_kind=adapter_result.payload_kind,
-            payload=adapter_result.payload,
-            observables_delta=adapter_result.observables_delta or {},
-            at_turn=at_turn,
-        )
-
-        # fix §81 -- auto-steering rule evaluators key off raw_result
-        # shape; a tool that legitimately returns no payload (e.g.
-        # list_indexes on an empty repo, callees_of for a leaf
-        # function) was triggering rule misfires. Skip when the result
-        # is empty AND status is not 'error' (legitimate no-output
-        # case). Errors still flow through so contract-violation rules
-        # (kwarg rejected, file not found) keep firing.
-        result_is_empty = not raw or (
-            isinstance(raw, dict)
-            and not any(
-                k for k in raw.keys()
-                if k not in {"status", "action", "kwargs"}
-            )
-        )
-        result_status = raw.get("status") if isinstance(raw, dict) else None
-        if result_is_empty and result_status != "error":
-            _log.debug(
-                "auto_steering SKIP (empty result, non-error) inv=%s "
-                "branch=%s tool=%s",
-                investigation_id, branch_id, tool_name,
-            )
-        else:
-            # Auto-steering: examine raw tool result for known dead-end
-            # patterns (read_lines past EOF, read_function indexer
-            # fault). If a rule fires, post an operator-kind message
-            # to the investigation just like the human operator would
-            # -- same DB write, same prompt position on next turn,
-            # same ACK contract. Best-effort; failures here NEVER
-            # abort the tool result path.
-            #
-            # fix §80 (PARTIAL) -- auto-steering still uses its own
-            # internal UoWs for the operator-message post; full
-            # atomicity with the §203 single UoW above requires
-            # extending ``maybe_post_auto_steering`` to accept an
-            # external session, which is bundled into the E16 cleanup.
-            # The remaining race is theoretical here: the next agent
-            # turn cannot start until execute() returns, so the gap
-            # between the §203 commit and the auto-steering post is
-            # never observable to the agent itself; only an out-of-band
-            # reader (operator UI streaming inv messages) could see
-            # the result-message before the steering operator-message.
-            # fix §198 -- bridge_base_url comes from the audit_mcp
-            # bridge instance, not a hardcoded literal. See
-            # AuditMcpBridgeTool.base_url(); falls back to default
-            # only when the bridge stub lacks the accessor.
-            audit_mcp_bridge = self._bridges.get("audit_mcp")
-            if hasattr(audit_mcp_bridge, "base_url"):
-                try:
-                    bridge_base_url = await audit_mcp_bridge.base_url()
-                except (AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
-                    _log.info(
-                        "tool_executor: bridge.base_url() failed "
-                        "(%s: %s); falling back to default",
-                        type(exc).__name__, exc,
-                        exc_info=True,
-                    )
-                    bridge_base_url = "http://127.0.0.1:18822"
-            else:
-                bridge_base_url = "http://127.0.0.1:18822"
+    async def _resolve_bridge_base_url(self) -> str:
+        # bridge_base_url comes from the audit_mcp bridge instance, not a
+        # hardcoded literal; falls back to the default when the bridge stub
+        # lacks the accessor.
+        audit_mcp_bridge = self._bridges.get("audit_mcp")
+        if hasattr(audit_mcp_bridge, "base_url"):
             try:
-                posted_id = await maybe_post_auto_steering(
-                    investigation_id=investigation_id,
-                    branch_id=branch_id,
-                    server_id=server_id,
-                    tool_name=tool_name,
-                    args=args,
-                    raw_result=raw if isinstance(raw, dict) else {},
-                    bridge_base_url=bridge_base_url,
+                return await audit_mcp_bridge.base_url()
+            except (AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
+                _log.info(
+                    "tool_executor: bridge.base_url() failed (%s: %s); "
+                    "falling back to default",
+                    type(exc).__name__, exc, exc_info=True,
                 )
-                if posted_id:
-                    _log.info(
-                        "auto_steering POSTED inv=%s branch=%s tool=%s "
-                        "msg=%s",
-                        investigation_id, branch_id, tool_name, posted_id,
-                    )
-            except (OSError, RuntimeError, ValueError, TypeError, AttributeError, SQLAlchemyError, httpx.HTTPError) as exc:
-                _log.warning(
-                    "auto_steering failed (best-effort): %s", exc,
-                    exc_info=True,
-                )
+        return "http://127.0.0.1:18822"
 
-        _log.info(
-            "tool_executor OK server=%s tool=%s args=%s summary=%s",
-            server_id, tool_name, list(args.keys()), adapter_result.summary,
-        )
-        return ToolExecutionResult(
-            server_id=server_id, tool_name=tool_name,
-            message_id=msg_id, success=True,
-        )
 
-    async def _write_result_message(
-        self,
-        investigation_id: str,
-        branch_id: str,
-        *,
-        payload_kind: PayloadKind,
-        payload: dict[str, Any],
-        at_turn: int | None,
-    ) -> str:
-        async with UnitOfWork() as uow:
-            msg = VRInvestigationMessageRecord(
-                investigation_id=investigation_id,
-                branch_id=branch_id,
-                sender_kind=SenderKind.ENGINE.value,
-                sender_id="tool_executor",
-                payload_kind=payload_kind.value,
-                payload_json=json.dumps(payload),
-                at_turn=at_turn,
-                evidence_refs_json="[]",
-            )
-            uow.session.add(msg)
-            await uow.session.commit()
-            await uow.session.refresh(msg)
-            return msg.id
 
-    async def _persist_result_and_observables(
-        self,
-        investigation_id: str,
-        branch_id: str,
-        *,
-        payload_kind: PayloadKind,
-        payload: dict[str, Any],
-        observables_delta: dict[str, Any],
-        at_turn: int | None,
-    ) -> str:
-        """Write the tool result message AND merge observables in ONE UoW.
-
-        fix §203 -- was two separate transactions. A concurrent reader
-        (operator UI streaming inv messages, or a sibling branch reading
-        case_state mid-flight) could observe one half of the update
-        without the other. Single UoW eliminates the gap.
-
-        Returns the new message id.
-        """
-        async with UnitOfWork() as uow:
-            msg = VRInvestigationMessageRecord(
-                investigation_id=investigation_id,
-                branch_id=branch_id,
-                sender_kind=SenderKind.ENGINE.value,
-                sender_id="tool_executor",
-                payload_kind=payload_kind.value,
-                payload_json=json.dumps(payload),
-                at_turn=at_turn,
-                evidence_refs_json="[]",
-            )
-            uow.session.add(msg)
-            if observables_delta:
-                branch = (await uow.session.exec(
-                    _select(VRInvestigationBranchRecord).where(
-                        VRInvestigationBranchRecord.id == branch_id,
-                    )
-                )).first()
-                if branch is None:
-                    _log.warning(
-                        "tool_executor: branch %s vanished during "
-                        "combined result+observables write",
-                        branch_id,
-                    )
-                else:
-                    branch.case_state_json = self._apply_observables_delta(
-                        branch.case_state_json, observables_delta,
-                    )
-                    branch.updated_at = utc_now()
-                    uow.session.add(branch)
-            await uow.session.commit()
-            await uow.session.refresh(msg)
-            return msg.id
 
     async def _maybe_correct_index_id(
         self,
@@ -824,175 +279,9 @@ class ToolExecutor:
             )
             return ""
 
-    async def _write_error_message(
-        self,
-        investigation_id: str,
-        branch_id: str,
-        error_text: str,
-        at_turn: int | None,
-    ) -> str:
-        return await self._write_result_message(
-            investigation_id, branch_id,
-            payload_kind=PayloadKind.TEXT,
-            payload={"text": error_text, "is_error": True},
-            at_turn=at_turn,
-        )
 
 
-    async def _count_total_malformed(
-        self,
-        branch_id: str,
-    ) -> int:
-        """Count TOTAL malformed-command error messages on this branch
-        across the last 50 engine messages.
 
-        fix §201 -- was ``_count_consecutive_malformed`` which walked
-        backwards from the tail and stopped at the first non-malformed
-        message. That meant a single good call would reset the counter
-        and let the breaker miss alternating empty/good/empty/... loops.
-        Total count over a bounded window catches the alternating shape
-        while still self-clearing over time as good calls scroll the
-        50-message window past the malformed ones.
-        """
-        async with UnitOfWork() as uow:
-            rows = (await uow.session.exec(
-                _select(VRInvestigationMessageRecord)
-                .where(
-                    VRInvestigationMessageRecord.branch_id == branch_id,
-                    # fix §256 -- was the literal "engine"; drift hazard
-                    # should SenderKind.ENGINE's value ever change.
-                    VRInvestigationMessageRecord.sender_kind == SenderKind.ENGINE.value,
-                )
-                .order_by(VRInvestigationMessageRecord.created_at.desc())
-                .limit(50)
-            )).all()
-
-        count = 0
-        for row in rows:
-            try:
-                payload = json.loads(row.payload_json or "{}")
-            except (ValueError, TypeError):
-                continue
-            if payload.get("is_error") and _MALFORMED_TOOL_RUN_MARKER in str(payload.get("text", "")):
-                count += 1
-        return count
-    async def _count_prior_failures(
-        self,
-        branch_id: str,
-        server_id: str,
-        tool_name: str,
-        args: dict[str, Any],
-    ) -> int:
-        """Count prior error-messages on this branch with the same
-        ``server_id.tool_name`` and the same ``args``.
-
-        Args are JSON-canonicalised (sorted keys) for the comparison
-        so semantic-equivalence holds regardless of dict order. Used
-        by the repeat-failure circuit breaker -- when the same tool
-        call has failed 3+ times on the same branch, the executor
-        injects a hard pivot hint into the next error.
-        """
-        # fix §255 -- was O(N²): each of up-to-50 errors triggered a
-        # nested ``_messages_before`` query (1 + 50 round trips).
-        # Single query now fetches up to 100 recent messages, then
-        # one linear pass pairs each (tool_call, error_text) tuple
-        # by adjacency -- equivalent to a LAG() window function but
-        # portable across the SQLite/Postgres targets and easier to
-        # read.
-        canonical = json.dumps(args, sort_keys=True, default=str)
-        prefix = f"{server_id}.{tool_name} returned error"
-        async with UnitOfWork() as uow:
-            rows = (await uow.session.exec(
-                _select(VRInvestigationMessageRecord)
-                .where(VRInvestigationMessageRecord.branch_id == branch_id)
-                .order_by(VRInvestigationMessageRecord.created_at.desc())
-                .limit(100)
-            )).all()
-        # Walk oldest→newest so `prev` is always the message that
-        # preceded `r` chronologically. A repeat-failure pair is a
-        # tool_call followed immediately by an error-text whose
-        # payload-text starts with `<server>.<tool> returned error`
-        # and whose tool_call args canonicalise to the supplied set.
-        count = 0
-        prev: VRInvestigationMessageRecord | None = None
-        for r in reversed(rows):
-            if (
-                prev is not None
-                and prev.payload_kind == PayloadKind.TOOL_CALL.value
-                and r.payload_kind == PayloadKind.TEXT.value
-            ):
-                try:
-                    err_payload = json.loads(r.payload_json or "{}")
-                except (ValueError, TypeError):
-                    prev = r
-                    continue
-                if (
-                    err_payload.get("is_error")
-                    and str(err_payload.get("text") or "").startswith(prefix)
-                ):
-                    try:
-                        call_payload = json.loads(prev.payload_json or "{}")
-                        cmd = json.loads(call_payload.get("command") or "{}")
-                        cmd_args = cmd.get("args") or {}
-                        if json.dumps(cmd_args, sort_keys=True, default=str) == canonical:
-                            count += 1
-                    except (ValueError, TypeError):
-                        pass
-            prev = r
-        return count
-
-    async def _count_prior_error_class(
-        self,
-        branch_id: str,
-        server_id: str,
-        tool_name: str,
-        raw_err: Any,
-    ) -> int:
-        """Count prior error-messages on this branch with the same
-        ``server_id.tool_name`` whose ``raw_err`` shares the same
-        contract-violation class as the current error, regardless of
-        args.
-
-        Error-class matching is intentionally narrow -- only fires when
-        ``raw_err`` looks like a bridge-validator or upstream
-        contract-violation message (unknown kwarg, missing required
-        kwarg, unexpected keyword argument, signature mismatch). For
-        those classes, varying the arg VALUE never helps -- the agent
-        is calling the tool with the wrong arg NAME or shape and
-        needs to pivot, not retry. For other error classes (function
-        not indexed, file not found, timeout, etc.) varying args can
-        legitimately help, so this helper returns 0 and falls back to
-        the strict args-identical counter.
-        """
-        if not isinstance(raw_err, str):
-            return 0
-        class_key = self._classify_contract_error(raw_err)
-        if class_key is None:
-            return 0
-
-        prefix = f"{server_id}.{tool_name} returned error"
-        async with UnitOfWork() as uow:
-            rows = (await uow.session.exec(
-                _select(VRInvestigationMessageRecord)
-                .where(VRInvestigationMessageRecord.branch_id == branch_id)
-                .where(VRInvestigationMessageRecord.payload_kind == PayloadKind.TEXT.value)
-                .order_by(VRInvestigationMessageRecord.created_at.desc())
-                .limit(50)
-            )).all()
-        count = 0
-        for r in rows:
-            try:
-                payload = json.loads(r.payload_json or "{}")
-            except (ValueError, TypeError):
-                continue
-            if not payload.get("is_error"):
-                continue
-            text = str(payload.get("text") or "")
-            if not text.startswith(prefix):
-                continue
-            if self._classify_contract_error(text) == class_key:
-                count += 1
-        return count
 
     async def _load_pivot_history(
         self, branch_id: str,
@@ -1087,10 +376,6 @@ class ToolExecutor:
         ("ida_headless", "xrefs_from"),
     })
 
-    @classmethod
-    def _read_tools(cls) -> frozenset[tuple[str, str]]:
-        registered = get_read_tools()
-        return registered or cls._READ_TOOLS_FALLBACK
 
     async def _survey_streak_hint(
         self,
@@ -1158,185 +443,13 @@ class ToolExecutor:
             f"Adversarial deliberation is consuming turns without acquiring evidence. Read source NOW."
         )
 
-    @staticmethod
-    def _classify_contract_error(text: str) -> str | None:
-        """Return a coarse class key for contract-violation errors, or
-        None when ``text`` doesn't look like one.
-
-        Classes:
-          - "unknown_kwarg"  -- bridge validator OR upstream Python
-                              TypeError about an unexpected keyword
-          - "missing_kwarg"  -- required kwarg not provided
-          - "type_mismatch"  -- wrong type passed
-          - "resource_not_found" -- agent is passing a path / id /
-                              identifier the tool cannot resolve. Once
-                              an APK / index / file lookup misses, the
-                              same lookup with slightly different bytes
-                              keeps missing -- the agent typo-drifts the
-                              identifier (LLM transcription error on
-                              long SHA-derived paths) and the
-                              args-identical breaker never matches
-                              because each typo is "fresh". Treating
-                              this as a contract class so the
-                              error-class breaker fires after N misses
-                              regardless of which specific path was
-                              passed.
-        """
-        low = text.lower()
-        if (
-            "unknown kwarg" in low
-            or "unexpected keyword argument" in low
-            or "got an unexpected keyword" in low
-        ):
-            return "unknown_kwarg"
-        if "missing required" in low or "missing 1 required" in low:
-            return "missing_kwarg"
-        if "type mismatch" in low or "argument of type" in low:
-            return "type_mismatch"
-        if (
-            "filenotfounderror" in low
-            or "no such file or directory" in low
-            or "apk not found" in low
-            or "path not found" in low
-            or "unknown index" in low
-            or "index not found" in low
-            or "index_id not found" in low
-            or "does not exist" in low and ("path" in low or "file" in low or "apk" in low or "index" in low)
-        ):
-            return "resource_not_found"
-        return None
-
 
     # Cap on case_state.observables size. Each tool call typically
-    # adds 1-2 keys; long investigations accumulate observable
-    # entries fast and an unbounded map balloons the
-    # case_state_json blob into megabytes. Sized for the 262K
-    # context window: the render layer now indexes tool readings
-    # whole (no blind slice) and pulls full bodies on demand via
-    # the `recall` action, so more stored entries remain
-    # retrievable and worth keeping instead of amputated. 400
-    # covers ~200 turns at ~2 keys/turn and keeps the column
-    # bounded. `_directive.*` and `_recall.*` keys are reserved
-    # namespaces and are kept regardless of count -- steering
-    # directives and recall-pinned entries must survive eviction.
+    # adds 1-2 keys; long investigations accumulate observable entries
+    # fast and an unbounded map balloons the case_state_json blob into
+    # megabytes. ``_directive.*`` and ``_recall.*`` keys are reserved
+    # namespaces kept regardless of count -- steering directives and
+    # recall-pinned entries must survive eviction.
     _MAX_OBSERVABLES: int = 400
 
-    @classmethod
-    def _apply_observables_delta(
-        cls, case_state_json: str | None, delta: dict[str, Any],
-    ) -> str:
-        """Merge ``delta`` into the observables of ``case_state_json``
-        and return the new JSON string.
 
-        Preserves §259 insertion order and caps the result at
-        :attr:`_MAX_OBSERVABLES` entries (directives always kept). Pure
-        helper -- does no I/O -- so it can run inside any UoW.
-        """
-        try:
-            case_state = json.loads(case_state_json or "{}")
-        # fix §258 -- also catch TypeError so a corrupted column
-        # (e.g. integer or null where a JSON string is expected)
-        # never wedges the merge.
-        except (json.JSONDecodeError, TypeError):
-            case_state = {}
-        observables = case_state.get("observables")
-        if not isinstance(observables, dict):
-            observables = {}
-        observables.update({str(k): v for k, v in delta.items()})
-        # Bound the dict size. Eviction strategy: keep ALL reserved keys
-        # (``_directive.*`` steering must survive; ``_recall.pinned`` is
-        # the engine-written recall pin list and must not be evicted
-        # out from under the render layer), drop the OLDEST non-reserved
-        # keys by dict insertion order (Python 3.7+ guarantees insertion
-        # order in dicts).
-        if len(observables) > cls._MAX_OBSERVABLES:
-            # fix \u00a7259 -- preserve original key insertion order so the
-            # prompt-rendering position of every kept key stays stable
-            # across turns.
-            reserved_keys = {
-                k for k in observables
-                if str(k).startswith("_directive.")
-                or str(k).startswith("_recall.")
-            }
-            non_reserved_keys = [
-                k for k in observables if k not in reserved_keys
-            ]
-            keep_n = max(0, cls._MAX_OBSERVABLES - len(reserved_keys))
-            kept_non_reserved_keys = set(non_reserved_keys[-keep_n:])
-            kept_or_reserved = reserved_keys | kept_non_reserved_keys
-            observables = {
-                k: v for k, v in observables.items()
-                if k in kept_or_reserved
-            }
-        case_state["observables"] = observables
-        return json.dumps(case_state)
-
-    async def _merge_observables(
-        self,
-        branch_id: str,
-        delta: dict[str, Any],
-    ) -> None:
-        """Standalone observables merge (one UoW).
-
-        Retained for call sites that do not also write a result message
-        (the success path uses :meth:`_persist_result_and_observables`
-        which combines both writes into a single UoW -- see fix §203).
-        """
-        if not delta:
-            return
-        async with UnitOfWork() as uow:
-            branch = (await uow.session.exec(
-                _select(VRInvestigationBranchRecord).where(
-                    VRInvestigationBranchRecord.id == branch_id,
-                )
-            )).first()
-            if branch is None:
-                _log.warning(
-                    "tool_executor: branch %s vanished during observables merge",
-                    branch_id,
-                )
-                return
-            branch.case_state_json = self._apply_observables_delta(
-                branch.case_state_json, delta,
-            )
-            branch.updated_at = utc_now()
-            uow.session.add(branch)
-            await uow.commit()
-
-
-def _parse_command(raw: str) -> tuple[str, dict[str, Any]] | None:
-    """Parse a tool_run command string into (tool_id, args).
-
-    Expected JSON shape:
-        {"tool": "<server>.<tool>", "args": {<kwargs>}}
-    Returns None on any parse failure so the executor can report the
-    error back to the engine via a TEXT message.
-    """
-    if not raw or not raw.strip():
-        return None
-    # fix §261 -- bail before json.loads on oversize input.
-    if len(raw) > _MAX_TOOL_CMD_BYTES:
-        _log.warning(
-            "tool_executor._parse_command: command_raw exceeds cap "
-            "(%d > %d bytes); rejecting before JSON parse",
-            len(raw), _MAX_TOOL_CMD_BYTES,
-        )
-        return None
-    try:
-        decoded = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        _log.warning(
-            "tool_executor._parse_command: JSON decode failed (raw len=%d): %s",
-            len(raw), exc,
-        )
-        return None
-    if not isinstance(decoded, dict):
-        return None
-    tool_id = decoded.get("tool")
-    # fix §260 -- `args` explicitly set to None (e.g. by an agent that
-    # remembered list_indexes takes no kwargs) used to fail the dict
-    # isinstance check and force-stop. Coerce missing-OR-None to {}.
-    args = decoded.get("args") or {}
-    if not isinstance(tool_id, str) or not isinstance(args, dict):
-        return None
-    return tool_id, args

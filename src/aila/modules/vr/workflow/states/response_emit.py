@@ -19,7 +19,7 @@ from sqlmodel import select as _select
 
 from aila.modules.vr.contracts.project import VRProjectStatus
 from aila.modules.vr.db_models import VRProjectRecord
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.exceptions import AILAError
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import RESERVED_SUCCEEDED, StateResult

@@ -18,13 +18,64 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+import stat as _stat
 from pathlib import Path
+from typing import Final
 
 from ..base import CrashRecord, Sample
 
 _log = logging.getLogger("aila_fuzz_reporter.fuzzilli")
 
 __all__ = ["FuzzilliScraper"]
+
+_MAX_REPRODUCER_BYTES: Final[int] = 64 * 1024
+# Absurdly large files are refused outright, far above the read cap.
+_MAX_REPRODUCER_HARD_CAP: Final[int] = _MAX_REPRODUCER_BYTES * 16
+
+
+def _safe_crash_files(directory: Path) -> list[Path]:
+    """Return regular, non-symlink files in a crash dir, rejecting unsafe entries.
+
+    A fuzz output directory is untrusted input. A symlink planted there would
+    otherwise be dereferenced and its target's bytes read into a crash record
+    (an exfiltration path). Reject symlinks (lstat, no follow), non-regular
+    entries, and files above the hard size cap.
+    """
+    if not directory.is_dir():
+        return []
+    safe: list[Path] = []
+    for entry in directory.iterdir():
+        try:
+            lst = entry.lstat()
+        except OSError:
+            _log.warning("fuzz_scrape_reject path=%s reason=lstat_error", entry)
+            continue
+        if _stat.S_ISLNK(lst.st_mode):
+            _log.warning("fuzz_scrape_reject path=%s reason=symlink", entry)
+            continue
+        if not _stat.S_ISREG(lst.st_mode):
+            _log.warning("fuzz_scrape_reject path=%s reason=not_regular", entry)
+            continue
+        if lst.st_size > _MAX_REPRODUCER_HARD_CAP:
+            _log.warning(
+                "fuzz_scrape_reject path=%s reason=too_large size=%d", entry, lst.st_size
+            )
+            continue
+        safe.append(entry)
+    return safe
+
+
+def _read_reproducer(path: Path) -> tuple[bytes, int]:
+    """Read up to the cap with O_NOFOLLOW so a symlink swapped in after lstat is refused."""
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(str(path), flags)
+    with os.fdopen(fd, "rb", closefd=True) as fh:
+        size = os.fstat(fh.fileno()).st_size
+        payload = fh.read(_MAX_REPRODUCER_BYTES)
+    return payload, size
 
 
 class FuzzilliScraper:
@@ -82,16 +133,14 @@ class FuzzilliScraper:
         # on profile; check both.
         candidates: list[Path] = []
         for sub in ("crashes", "distinct_crashes"):
-            d = self.root / sub
-            if d.is_dir():
-                candidates.extend(p for p in d.iterdir() if p.is_file())
+            candidates.extend(_safe_crash_files(self.root / sub))
         out: list[CrashRecord] = []
         for path in candidates:
             try:
-                stat = path.stat()
-            except OSError:
+                payload, size = _read_reproducer(path)
+            except OSError as exc:
+                _log.warning("fuzz_scrape_reject path=%s reason=open_error err=%s", path, exc)
                 continue
-            payload = path.read_bytes() if stat.st_size <= 64 * 1024 else b""
             # Fuzzilli filenames look like "crash-<signature>.js" or
             # similar -- use SHA-256 of the filename as the stack hash
             # so reruns of the same minimised crash dedup.
@@ -102,7 +151,7 @@ class FuzzilliScraper:
                 crash_signature=path.name,
                 severity="unknown",
                 reproducer_path=str(path),
-                reproducer_size_bytes=stat.st_size,
+                reproducer_size_bytes=size,
                 stack_trace=None,
                 extra={
                     "engine": "fuzzilli",
@@ -115,9 +164,7 @@ class FuzzilliScraper:
         return out
 
     def _count_crash_files(self) -> int:
-        total = 0
-        for sub in ("crashes", "distinct_crashes"):
-            d = self.root / sub
-            if d.is_dir():
-                total += sum(1 for p in d.iterdir() if p.is_file())
-        return total
+        return sum(
+            len(_safe_crash_files(self.root / sub))
+            for sub in ("crashes", "distinct_crashes")
+        )

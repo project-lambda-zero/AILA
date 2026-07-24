@@ -14,9 +14,11 @@ from redis import asyncio as aioredis
 from sqlmodel import select
 
 from aila.api.metrics import TASK_ZOMBIES_REAPED_TOTAL
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
+from aila.platform.llm.drift import run_purge_old_records_cron as _drift_purge_cron
 from aila.platform.llm.idempotency_cache import run_purge_expired_cron
 from aila.platform.modules import load_builtin_modules
+from aila.platform.tasks import get_task_tuning
 from aila.platform.tasks.constants import (
     ARQ_DEAD_LETTER_KEY_TEMPLATE,
     ARQ_IN_PROGRESS_PREFIX,
@@ -27,7 +29,10 @@ from aila.platform.tasks.constants import (
     REAPER_HEARTBEAT_THRESHOLD_S,
     REAPER_ZOMBIE_THRESHOLD_S,
 )
-from aila.platform.tasks.cursor_reaper import sweep_orphan_crashed_cursors
+from aila.platform.tasks.cursor_reaper import (
+    reap_zombie_tasks_and_cursors,
+    sweep_orphan_crashed_cursors,
+)
 from aila.platform.tasks.hooks import _on_job_end, _on_job_start
 from aila.platform.tasks.models import TaskRecord, TaskStatus
 from aila.platform.tasks.sweeps import all_periodic_sweeps
@@ -55,6 +60,23 @@ try:
     )
 except ValueError:
     _REAPER_CRON_GRACE_S = 600
+
+# fix RFC-05 -- zombie-task + cursor reaping is platform-owned and sweeps
+# every track in the platform reaper cron (no module owns a private
+# reaper). Thresholds are env-driven with the historical vr defaults
+# (10 min stale-heartbeat, 5000 cursor rows per tick).
+try:
+    _REAPER_ZOMBIE_HEARTBEAT_MIN: int = int(
+        os.environ.get("PLATFORM_REAPER_ZOMBIE_HEARTBEAT_MIN", "10"),
+    )
+except ValueError:
+    _REAPER_ZOMBIE_HEARTBEAT_MIN = 10
+try:
+    _REAPER_CURSOR_BATCH_CAP: int = int(
+        os.environ.get("PLATFORM_REAPER_CURSOR_BATCH_CAP", "5000"),
+    )
+except ValueError:
+    _REAPER_CURSOR_BATCH_CAP = 5000
 
 # ``_persist_dead_letter`` is sibling-internal: imported by
 # ``aila.platform.tasks.hooks._on_job_end`` to record terminal failures.
@@ -313,6 +335,24 @@ async def reaper(ctx: dict[str, object]) -> None:
             _log.info("reaper: cleared %d orphan terminal cursors", cleared)
     except Exception as exc:
         _log.warning("reaper: cursor cleanup failed: %s", exc, exc_info=True)
+    try:
+        # RFC-05 -- platform-owned zombie-task + cursor reaping across every
+        # track. Replaces the vr module's private reaper step; a
+        # stale-running task is a zombie regardless of which track owns it.
+        reaped = await reap_zombie_tasks_and_cursors(
+            heartbeat_min=_REAPER_ZOMBIE_HEARTBEAT_MIN,
+            batch_cap=_REAPER_CURSOR_BATCH_CAP,
+        )
+        if reaped["zombies_cancelled"] or reaped["cursors_purged"]:
+            _log.info(
+                "reaper: cancelled %d zombie tasks, purged %d cursors "
+                "(orphan=%d terminal=%d succeeded=%d)",
+                reaped["zombies_cancelled"], reaped["cursors_purged"],
+                reaped["orphan_purged"], reaped["terminal_purged"],
+                reaped["succeeded_purged"],
+            )
+    except Exception as exc:
+        _log.warning("reaper: zombie/cursor reap failed: %s", exc, exc_info=True)
     # fix §123 -- idempotency-cache expired-row purge wired into the same
     # cron loop so the table doesn't accumulate stale rows forever. The
     # purge is best-effort and never crashes the cron tick.
@@ -325,6 +365,20 @@ async def reaper(ctx: dict[str, object]) -> None:
     except Exception as exc:
         _log.warning(
             "reaper: idempotency cache purge failed: %s", exc, exc_info=True,
+        )
+    # fix #45-5 -- confidence-drift retention sweep. record_and_check inserts
+    # one row per drift check with no upsert, so the table grew unbounded.
+    # Same shape as the idempotency_cache purge above: best-effort, logged,
+    # never crashes the cron tick.
+    try:
+        purged = await _drift_purge_cron()
+        if purged:
+            _log.info(
+                "reaper.confidence_drift: purged %d old rows", purged,
+            )
+    except Exception as exc:
+        _log.warning(
+            "reaper: confidence drift purge failed: %s", exc, exc_info=True,
         )
 
 
@@ -351,8 +405,23 @@ async def _reconcile_orphan_arq_locks() -> None:
         if not lock_keys:
             return
         now = utc_now()
-        fresh_cutoff = now - timedelta(seconds=REAPER_ZOMBIE_THRESHOLD_S)
-        heartbeat_cutoff = now - timedelta(seconds=REAPER_HEARTBEAT_THRESHOLD_S)
+        # Read live via get_task_tuning (see aila.platform.tasks.__init__:
+        # get_sync -> sync engine, fresh registry per call so an operator PUT
+        # /config/platform/{key} takes effect on the next cron tick). The
+        # compiled constants remain the fallback when the DB is unreachable
+        # or the value is unset. Schema defaults match the constants
+        # (reaper_zombie_threshold_s=3300, reaper_heartbeat_threshold_s=86400)
+        # so behavior is unchanged unless an operator wrote an override.
+        fresh_cutoff = now - timedelta(
+            seconds=get_task_tuning(
+                "reaper_zombie_threshold_s", REAPER_ZOMBIE_THRESHOLD_S,
+            ),
+        )
+        heartbeat_cutoff = now - timedelta(
+            seconds=get_task_tuning(
+                "reaper_heartbeat_threshold_s", REAPER_HEARTBEAT_THRESHOLD_S,
+            ),
+        )
         lock_jobs = {k: k[len(ARQ_IN_PROGRESS_PREFIX):] for k in lock_keys}
         job_ids = list(lock_jobs.values())
 

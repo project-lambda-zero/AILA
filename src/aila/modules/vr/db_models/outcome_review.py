@@ -1,69 +1,20 @@
-"""Sibling-review of a draft outcome (migration 062).
+"""Sibling-review of a draft outcome -- vr concrete (migration 062).
 
-One row per (outcome_id, reviewer_branch_id) pair -- UPSERT in the
-service layer keeps the latest vote per branch. The presence of any
-``vote='reject'`` row flips the outcome to ``rejected`` state; once
-the count of ``vote='approve'`` rows clears the quorum threshold, the
-outcome flips to ``approved`` and the dispatcher takes over.
-
-``suggested_edits_json`` is free-form: the reviewer agent (or the
-operator) can propose payload changes like ``{"confidence": "weak"}``
-or ``{"claims[0].file_path": "actual/path.c"}``. v1 surfaces these to
-the operator for manual application -- automated apply is intentionally
-out of scope until the format stabilizes.
+All columns come from the shared platform base; see
+:mod:`aila.platform.contracts.outcome_review_base`. The unique
+``(outcome_id, reviewer_branch_id)`` guard and the ON DELETE CASCADE foreign
+keys are derived by the base against this table's names.
 """
 from __future__ import annotations
 
-from datetime import datetime
-from uuid import uuid4
-
-from sqlalchemy import Column, DateTime, ForeignKey, Text, UniqueConstraint
-from sqlmodel import Field, SQLModel
-
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts.outcome_review_base import OutcomeReviewRecordBase
 
 __all__ = ["VRInvestigationOutcomeReviewRecord"]
 
 
-class VRInvestigationOutcomeReviewRecord(SQLModel, table=True):
+class VRInvestigationOutcomeReviewRecord(OutcomeReviewRecordBase, table=True):
     """One sibling vote on a draft outcome."""
 
     __tablename__ = "vr_outcome_reviews"
-    __table_args__ = (
-        UniqueConstraint(
-            "outcome_id", "reviewer_branch_id",
-            name="uq_vr_outcome_reviews_outcome_reviewer",
-        ),
-    )
-
-    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-
-    outcome_id: str = Field(
-        sa_column=Column(
-            "outcome_id",
-            ForeignKey("vr_investigation_outcomes.id", ondelete="CASCADE"),
-            nullable=False,
-            index=True,
-        ),
-    )
-    reviewer_branch_id: str = Field(
-        sa_column=Column(
-            "reviewer_branch_id",
-            ForeignKey("vr_investigation_branches.id", ondelete="CASCADE"),
-            nullable=False,
-        ),
-    )
-
-    # Copied from the reviewing branch's persona_voice for fast joinless
-    # display ("Halvar voted reject"). Always derived from the branch
-    # row at insert time; never updated.
-    reviewer_persona: str = Field(max_length=64)
-
-    # 'approve' | 'reject' | 'request_edit' | 'abstain'
-    vote: str = Field(max_length=16, index=True)
-    comment: str = Field(default="", sa_column=Column(Text))
-    suggested_edits_json: str = Field(default="{}", sa_column=Column(Text))
-
-    created_at: datetime = Field(
-        default_factory=utc_now, sa_type=DateTime(timezone=True),
-    )
+    __outcome_tablename__ = "vr_investigation_outcomes"
+    __branch_tablename__ = "vr_investigation_branches"

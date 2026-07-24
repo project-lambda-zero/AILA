@@ -15,7 +15,21 @@ from typing import Any
 from uuid import uuid4
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Column, Computed, DateTime, Index, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    Column,
+    Computed,
+    DateTime,
+    Index,
+    Integer,
+    SmallInteger,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlmodel import Field, SQLModel
 
@@ -127,7 +141,7 @@ class WorkflowRunRecord(TeamScopedMixin, SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     query_text: str
     action_id: str = Field(default="", sa_column=Column("intent", Text))
-    module_id: str = Field(default="", sa_column=Column("module_id", Text, server_default=""))
+    module_id: str = Field(default="", sa_column=Column("module_id", Text, server_default="", index=True))
     status: str = Field(default="running")
     route_json: str = Field(default="{}", sa_column=Column(Text))
     short_memory_json: str = Field(default="{}", sa_column=Column(Text))
@@ -197,6 +211,29 @@ class WorkflowStateCursor(SQLModel, table=True):
     archived_state: str | None = Field(
         default=None,
         sa_column=Column("archived_state", String(128), nullable=True),
+    )
+
+    # RFC-02 cursor keying (Class-A defect fix): the cursor row PK is the
+    # ARQ task uuid (see ``platform/tasks/template.py`` where
+    # ``run_id = task_context.task_id``), so it does NOT equal the
+    # investigation/branch id. The lifecycle service used to query cursors
+    # by ``run_id = ANY(investigation_id, branch_id...)`` which found zero
+    # rows in production; pause/resume archival silently no-oped. These
+    # denormalised join keys are populated from the task's ``initial_input``
+    # at cursor creation (engine ``_load_or_init_cursor``). NULL on rows
+    # created before the migration and on non-investigation workflows;
+    # the lifecycle service keeps its legacy fallback for those.
+    investigation_id: str | None = Field(
+        default=None,
+        sa_column=Column(
+            "investigation_id", String(64), nullable=True, index=True,
+        ),
+    )
+    branch_id: str | None = Field(
+        default=None,
+        sa_column=Column(
+            "branch_id", String(64), nullable=True, index=True,
+        ),
     )
 
 
@@ -354,7 +391,9 @@ class ArtifactRecord(TeamScopedMixin, SQLModel, table=True):
     content_type: str = Field(default="text/plain")
     body: str = Field(default="", sa_column=Column(Text))
     metadata_json: str = Field(default="{}", sa_column=Column(Text))
-    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+    created_at: datetime = Field(
+        default_factory=utc_now, sa_type=DateTime(timezone=True), index=True,
+    )
     updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
 
@@ -381,7 +420,9 @@ class AuditEventRecord(TeamScopedMixin, SQLModel, table=True):
         sa_column=Column("user_id", Text, server_default="system", index=True),
     )
     details_json: str = Field(default="{}", sa_column=Column(Text))
-    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+    created_at: datetime = Field(
+        default_factory=utc_now, sa_type=DateTime(timezone=True), index=True,
+    )
 
 
 class AuditSealRecord(SQLModel, table=True):
@@ -414,6 +455,12 @@ class AuditSealRecord(SQLModel, table=True):
     output_hash: str
     model_id: str
     task_type: str = Field(index=True)
+    # RFC-09 step 1: sha256 of the resolved system prompt template for this
+    # call, so a seal is attributable to the exact prompt content. Nullable:
+    # calls outside an agent turn (scoring, reports) leave it unset.
+    prompt_content_hash: str | None = Field(default=None, index=True)
+    # Resolved prompt version (version-store key); None for inline prompts.
+    prompt_version: str | None = Field(default=None, index=True)
     timestamp: datetime = Field(sa_type=DateTime(timezone=True))
     classification: str | None = None
     confidence: str | None = None
@@ -534,14 +581,24 @@ class KnowledgeEntryRecord(SQLModel, table=True):
     Consumed by: agent knowledge retrieval (pgvector cosine similarity + tsvector FTS).
 
     namespace is the agent class name (e.g. "ScoringAgent") per D-04.
-    embedding is a 384-dimensional vector stored as pgvector Vector(384)
+    embedding is a 1024-dimensional vector stored as pgvector Vector(1024)
     and queried via cosine distance with HNSW index. Dimension matches
-    the embedding model available via OmniRoute (MiniLM/all-MiniLM-L6-v2).
+    the default embedding model BGE-M3 (BAAI/bge-m3).
     search_vector is a PostgreSQL tsvector generated column for full-text search,
     auto-maintained by PostgreSQL on INSERT/UPDATE.
     dedup_key prevents duplicate seeding of identical knowledge entries across
     restarts; NULL means no deduplication is applied.
     entry_metadata holds arbitrary JSON for display and filtering.
+    model_id stamps the embedding provider's model identifier on every write
+    so a later provider swap can drive a background re-embed keyed on the old
+    id (RFC-12 provenance).
+    content_hash stores sha256(content) so operators can detect drift between
+    the stored text and the embedding without re-embedding.
+    source_type carries the ingestion kind ("code" | "document" | ...) so
+    retrieval callers can filter by shape without inspecting metadata JSON.
+    updated_at is refreshed on every insert and every upsert-update so a
+    stale row is obvious at a glance -- created_at pinpoints first write,
+    updated_at pinpoints last write.
     """
 
     __table_args__ = (
@@ -559,7 +616,7 @@ class KnowledgeEntryRecord(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     namespace: str = Field(index=True)
     content: str = Field(sa_column=Column(Text))
-    embedding: Any = Field(sa_column=Column("embedding", Vector(384)))
+    embedding: Any = Field(sa_column=Column("embedding", Vector(1024)))
     search_vector: Any = Field(
         sa_column=Column(
             "search_vector",
@@ -570,7 +627,11 @@ class KnowledgeEntryRecord(SQLModel, table=True):
     )
     entry_metadata: str = Field(default="{}", sa_column=Column("entry_metadata", Text))
     dedup_key: str | None = Field(default=None, sa_column=Column("dedup_key", Text, nullable=True, index=True))
+    model_id: str | None = Field(default=None, index=True)
+    content_hash: str | None = Field(default=None, index=True)
+    source_type: str | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+    updated_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
 
 
 class SeedVersionRecord(SQLModel, table=True):
@@ -661,6 +722,7 @@ class OIDCProviderRecord(SQLModel, table=True):
         sa_column=Column(Text, server_default='["openid","email","profile"]', nullable=False),
     )
     is_enabled: bool = Field(default=True)
+    default_team_id: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
 
@@ -813,6 +875,9 @@ class NotificationRecord(SQLModel, table=True):
     """
 
     __tablename__ = "notification_records"
+    __table_args__ = (
+        Index("ix_notification_user_created", "user_id", "created_at"),
+    )
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     user_id: str = Field(index=True)
@@ -862,12 +927,18 @@ class SavedFilterRecord(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
 
-class ScheduledReportRecord(SQLModel, table=True):
+class ScheduledReportRecord(TeamScopedMixin, SQLModel, table=True):
     """Scheduled report configuration with cron expression.
 
     cron_expression is validated via croniter before storage (T-138-20).
     Written by: POST /scheduled-reports (admin only).
     Consumed by: GET /scheduled-reports, arq scheduler (BE-10).
+
+    Team-scoped (#48-6): ``team_id`` is stamped from the creating
+    principal. God-tier admins (team_id=NULL, TEAM-06) own NULL-team rows
+    and see every row; a team-scoped admin sees and mutates only rows
+    carrying its own team_id. The CRUD handlers resolve single resources
+    by a team predicate, not a bare primary key.
     """
 
     __tablename__ = "scheduled_report_records"
@@ -1078,7 +1149,43 @@ class SystemMetadataRecord(SQLModel, table=True):
 # Re-exported here so Alembic auto-detection and SchemaRegistry see them.
 # ---------------------------------------------------------------------------
 
+# RFC-08 step 1: eval harness tables. Same reason as above -- import so the
+# create_all path (tests, fresh installs) sees the two eval tables.
+# RFC-08 step 2: calibration proposals table. Imported so the create_all path
+# (tests, fresh installs) and Alembic autogen see eval_calibration_proposals.
+from aila.platform.eval.calibration import CalibrationProposalRecord
+from aila.platform.eval.models import (
+    EvalBenchmarkRecord,
+    EvalRunRecord,
+)
+
+# RFC-12 criterion 7: retrieval eval tables. Imported so the create_all path
+# (tests, fresh installs) and Alembic autogen see the retrieval eval tables.
+from aila.platform.eval.retrieval_models import (
+    RetrievalBenchmarkRecord,
+    RetrievalRunRecord,
+)
+
+# RFC-10 steps 1-2: shadow/canary assignments. Imported so the create_all path
+# (tests, fresh installs) and Alembic autogen see lifecycle_canary_assignments.
+from aila.platform.lifecycle.assignments import LifecycleCanaryAssignment
+
+# RFC-10 step 1: agent lifecycle transition journal. Imported so the
+# create_all path (tests, fresh installs) and Alembic autogen see the table.
+from aila.platform.lifecycle.models import LifecycleTransitionRecord
 from aila.platform.llm.cost_record import LLMCostRecord
+
+# RFC-11 step 1: MCP server instance catalog. Imported so create_all
+# and Alembic autogen see the mcp_server_instances table.
+from aila.platform.mcp.instance_catalog import McpServerInstance
+
+# RFC-09 step 4: prompt version store tables. Re-imported so SQLModel.metadata
+# registers them when db_models is imported (init_db, tests, alembic autogen).
+from aila.platform.prompts.version_models import (
+    PromptAliasChangeRecord,
+    PromptAliasRecord,
+    PromptVersionRecord,
+)
 
 # ---------------------------------------------------------------------------
 # Phase 177: multi-team admin -- first-class team and member records.
@@ -1131,4 +1238,122 @@ class TeamMemberRecord(SQLModel, table=True):
         sa_column=Column(Text, nullable=False, server_default="operator"),
     )
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+
+
+class PlatformJournalRecord(SQLModel, table=True):
+    """One append-only, hash-chained event in the platform journal (C2).
+
+    Rows are immutable: a BEFORE UPDATE OR DELETE trigger (migration 071)
+    raises on any mutation. ``seq`` is monotonic within ``chain_id`` and
+    orders the log; ``row_hash`` chains each row to its predecessor so a
+    post-hoc rewrite is detectable via ``journal.verify_chain``.
+    """
+
+    __tablename__ = "platform_journal"
+    # Composite time-ordered indexes below (ix_pj_kind_written,
+    # ix_pj_team_kind_written, and the partial ix_pj_investigation /
+    # ix_pj_run built in migration 071) are declared DESC on ``written_at``
+    # / ``seq`` in the Alembic DDL; the Python-level Index entries here
+    # cover the same column pairs ASC so SQLModel.metadata.create_all
+    # (used by the test fixture) still builds a usable index. The ASC/DESC
+    # divergence is benign and intentional -- mirrors the D-43 note on
+    # WorkflowStateTransition.
+    __table_args__ = (
+        UniqueConstraint("journal_id", name="uq_platform_journal_journal_id"),
+        CheckConstraint(
+            # length() is portable (Postgres length(text) == char_length(text);
+            # SQLite has length() but not char_length), so create_all works on
+            # both the Postgres test DB and any SQLite-backed unit test.
+            "length(row_hash) = 64 AND length(payload_hash) = 64",
+            name="ck_platform_journal_hash_len",
+        ),
+        CheckConstraint(
+            "chain_id LIKE 'team:%' OR chain_id = 'global'",
+            name="ck_platform_journal_chain_id",
+        ),
+        Index("ix_pj_correlation", "correlation_id", "seq"),
+        Index("ix_pj_kind_written", "kind", "written_at"),
+        Index("ix_pj_team_kind_written", "team_id", "kind", "written_at"),
+    )
+
+    chain_id: str = Field(
+        sa_column=Column(String(64), primary_key=True, nullable=False)
+    )
+    seq: int = Field(
+        sa_column=Column(BigInteger, primary_key=True, autoincrement=False, nullable=False)
+    )
+    journal_id: str = Field(
+        default_factory=lambda: str(uuid4()),
+        sa_column=Column(String(36), nullable=False),
+    )
+    team_id: str | None = Field(
+        default=None, sa_column=Column(String(36), nullable=True, index=True)
+    )
+    prev_hash: str | None = Field(default=None, sa_column=Column(String(64), nullable=True))
+    row_hash: str = Field(sa_column=Column(String(64), nullable=False))
+    payload_hash: str = Field(sa_column=Column(String(64), nullable=False))
+    kind: str = Field(sa_column=Column(String(48), nullable=False))
+    source: str = Field(sa_column=Column(String(128), nullable=False))
+    actor_kind: str = Field(default="system", sa_column=Column(String(16), nullable=False))
+    actor_id: str = Field(default="system", sa_column=Column(String(128), nullable=False))
+    action: str = Field(sa_column=Column(String(128), nullable=False))
+    status: str = Field(default="ok", sa_column=Column(String(16), nullable=False))
+    run_id: str | None = Field(
+        default=None, sa_column=Column(String(36), nullable=True)
+    )
+    investigation_id: str | None = Field(
+        default=None, sa_column=Column(String(36), nullable=True)
+    )
+    branch_id: str | None = Field(
+        default=None, sa_column=Column(String(36), nullable=True)
+    )
+    turn_number: int | None = Field(default=None, sa_column=Column(Integer, nullable=True))
+    correlation_id: str = Field(sa_column=Column(String(64), nullable=False))
+    parent_journal_id: str | None = Field(
+        default=None, sa_column=Column(String(36), nullable=True)
+    )
+    payload_json: dict[str, Any] = Field(
+        default_factory=dict, sa_column=Column(JSONB, nullable=False)
+    )
+    contains_secret: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default="false"),
+    )
+    schema_version: int = Field(
+        default=1, sa_column=Column(SmallInteger, nullable=False, server_default="1")
+    )
+    occurred_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+    written_at: datetime = Field(
+        default_factory=utc_now,
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=func.now()),
+    )
+
+
+class PlatformJournalDeadletterRecord(SQLModel, table=True):
+    """Fallback destination for journal appends that could not chain (C2 0.2).
+
+    Rows here are NOT chain-linked and NOT tamper-evident; operator review
+    drains them into the main chain. Used only by ``append_or_deadletter``.
+    """
+
+    __tablename__ = "platform_journal_deadletter"
+
+    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
+    chain_id: str = Field(sa_column=Column(String(64), nullable=False))
+    team_id: str | None = Field(default=None, sa_column=Column(String(36), nullable=True))
+    entry_json: dict[str, Any] = Field(
+        default_factory=dict, sa_column=Column(JSONB, nullable=False)
+    )
+    failure_kind: str = Field(sa_column=Column(String(32), nullable=False))
+    failure_detail: str = Field(sa_column=Column(Text, nullable=False))
+    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+    replayed_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
+    replay_seq: int | None = Field(default=None, sa_column=Column(BigInteger, nullable=True))
+
+
+# RFC-12 criterion 5: knowledge graph edges. Imported at the very end (after
+# every record class is defined) so the transitive db_models references in the
+# knowledge-graph import chain resolve, letting create_all (fresh installs) and
+# Alembic autogen see knowledge_entry_edges without a circular import.
+from aila.platform.services.knowledge_graph import KnowledgeEntryEdge
 

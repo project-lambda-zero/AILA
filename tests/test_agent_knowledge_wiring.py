@@ -6,7 +6,7 @@ Covers:
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock, create_autospec, patch
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 from aila.platform.tools.knowledge import KnowledgeRetrieveTool, KnowledgeStoreTool
 
@@ -104,8 +104,17 @@ class TestRiskScoringAgentKnowledgeParams:
         )
         assert agent.knowledge_retrieve_tool is mock_retrieve
 
-    def test_store_signal_called_on_model_path(self):
-        """_store_signal_to_knowledge is called when signal_source == 'model'."""
+    async def test_store_signal_called_on_model_path(self):
+        """_store_signal_to_knowledge is called when signal_source == 'model'.
+
+        Contract: _store_signal_to_knowledge is ``async`` because
+        ``KnowledgeStoreTool.forward`` is awaited internally
+        (src/aila/modules/vulnerability/agents/scoring/agent.py).
+        The test must ``await`` the method to trigger the underlying
+        ``await self.knowledge_store_tool.forward(...)`` call; without the
+        await, the coroutine is created but never scheduled, so
+        ``mock_store.forward`` is never invoked.
+        """
         from aila.modules.vulnerability.agents.scoring.agent import RiskScoringAgent
         from aila.modules.vulnerability.contracts import SignalAssessment
 
@@ -138,22 +147,17 @@ class TestRiskScoringAgentKnowledgeParams:
             poc_available=False,
         )
 
-        agent._store_signal_to_knowledge(candidate, assessment)
+        await agent._store_signal_to_knowledge(candidate, assessment)
 
         mock_store.forward.assert_called_once()
-        call_kwargs = mock_store.forward.call_args[1] if mock_store.forward.call_args[1] else mock_store.forward.call_args[0]
-        # Accept both positional and keyword calling
-        if isinstance(call_kwargs, tuple):
-            content = call_kwargs[0]
-            metadata = call_kwargs[1]
-        else:
-            content = call_kwargs.get("content", mock_store.forward.call_args[0][0] if mock_store.forward.call_args[0] else None)
-            metadata = call_kwargs.get("metadata", mock_store.forward.call_args[0][1] if len(mock_store.forward.call_args[0]) > 1 else None)
+        # Production always uses kwargs: forward(content=..., metadata=...).
+        _, kwargs = mock_store.forward.call_args
+        content = kwargs["content"]
 
         assert "openssl" in content
         assert "CVE-2024-0001" in content
 
-    def test_dedup_key_present_in_metadata(self):
+    async def test_dedup_key_present_in_metadata(self):
         """knowledge_store_tool.forward receives _dedup_key in metadata dict."""
         from aila.modules.vulnerability.agents.scoring.agent import RiskScoringAgent
         from aila.modules.vulnerability.agents.scoring.models import ScoringCandidate
@@ -184,15 +188,15 @@ class TestRiskScoringAgentKnowledgeParams:
             detection_present=False,
             poc_available=False,
         )
-        agent._store_signal_to_knowledge(candidate, assessment)
+        await agent._store_signal_to_knowledge(candidate, assessment)
 
         _, kwargs = mock_store.forward.call_args
-        metadata = kwargs.get("metadata") or (mock_store.forward.call_args[0][1] if len(mock_store.forward.call_args[0]) > 1 else None)
+        metadata = kwargs["metadata"]
         assert metadata is not None
         assert "_dedup_key" in metadata
         assert metadata["_dedup_key"] == "openssl:CVE-2024-0001:web-01.example.com"
 
-    def test_store_signal_skips_when_tool_is_none(self):
+    async def test_store_signal_skips_when_tool_is_none(self):
         """_store_signal_to_knowledge does not raise when knowledge_store_tool is None."""
         from aila.modules.vulnerability.agents.scoring.agent import RiskScoringAgent
         from aila.modules.vulnerability.agents.scoring.models import ScoringCandidate
@@ -220,14 +224,22 @@ class TestRiskScoringAgentKnowledgeParams:
             poc_available=False,
         )
         # Must not raise
-        agent._store_signal_to_knowledge(candidate, assessment)
+        await agent._store_signal_to_knowledge(candidate, assessment)
 
-    def test_store_not_called_on_cache_path(self):
+    async def test_store_not_called_on_cache_path(self):
         """_store_signal_to_knowledge is NOT called when signal comes from cache.
 
         Verifies the conditional in _score_one_candidate:
         _store_signal_to_knowledge is only invoked after _analyze_candidate (model path),
         never on the cache path where load_cached_signal_assessment returns a non-None value.
+
+        Contract: ``_score_one_candidate`` and every collaborator patched below
+        (``load_cached_signal_assessment``, ``_analyze_candidate``,
+        ``_store_cached_signal_assessment``, ``_store_signal_to_knowledge``) are
+        ``async`` and awaited by production. ``patch`` / ``patch.object`` autodetect
+        the async target and install AsyncMock in Python 3.11+, but
+        ``load_cached_signal_assessment`` is a bare module function; we pin it to
+        AsyncMock explicitly to keep the intent obvious.
         """
         from aila.modules.vulnerability.agents.scoring.agent import RiskScoringAgent
 
@@ -242,6 +254,7 @@ class TestRiskScoringAgentKnowledgeParams:
              patch.object(agent, "_store_cached_signal_assessment"), \
              patch(
                  "aila.modules.vulnerability.agents.scoring.agent.load_cached_signal_assessment",
+                 new_callable=AsyncMock,
                  return_value=MagicMock(),  # cache hit -- signal_source = "cache"
              ), \
              patch.object(agent, "_analyze_candidate", side_effect=AssertionError("must not call model")), \
@@ -275,7 +288,7 @@ class TestRiskScoringAgentKnowledgeParams:
             )
             mock_policy = MagicMock()
             mock_policy.category_rank = {}
-            agent._score_one_candidate(candidate, mock_policy)
+            await agent._score_one_candidate(candidate, mock_policy)
 
         # _store_signal_to_knowledge must NOT have been called on the cache path
         mock_store_signal.assert_not_called()
@@ -339,16 +352,16 @@ class TestVulnerabilityModuleKnowledgeWiring:
         module = VulnerabilityModule()
         mock_context = _make_mock_context()
 
-        with patch("aila.modules.vulnerability.module.KnowledgeStoreTool") as MockStore, \
-             patch("aila.modules.vulnerability.module.KnowledgeRetrieveTool") as MockRetrieve, \
+        with patch("aila.modules.vulnerability.module.KnowledgeStoreTool") as mock_store_cls, \
+             patch("aila.modules.vulnerability.module.KnowledgeRetrieveTool") as mock_retrieve_cls, \
              patch("aila.modules.vulnerability.module.build_platform_settings") as mock_bps:
             mock_bps.return_value = MagicMock()
-            MockStore.return_value = _make_mock_store_tool()
-            MockRetrieve.return_value = _make_mock_retrieve_tool()
+            mock_store_cls.return_value = _make_mock_store_tool()
+            mock_retrieve_cls.return_value = _make_mock_retrieve_tool()
             module.build_runtime(mock_context)
 
         # Collect all calls and their namespace kwargs/args
-        store_calls = MockStore.call_args_list
+        store_calls = mock_store_cls.call_args_list
         namespaces = [_extract_namespace(c) for c in store_calls]
         assert "RiskScoringAgent" in namespaces
 
@@ -359,15 +372,15 @@ class TestVulnerabilityModuleKnowledgeWiring:
         module = VulnerabilityModule()
         mock_context = _make_mock_context()
 
-        with patch("aila.modules.vulnerability.module.KnowledgeStoreTool") as MockStore, \
-             patch("aila.modules.vulnerability.module.KnowledgeRetrieveTool") as MockRetrieve, \
+        with patch("aila.modules.vulnerability.module.KnowledgeStoreTool") as mock_store_cls, \
+             patch("aila.modules.vulnerability.module.KnowledgeRetrieveTool") as mock_retrieve_cls, \
              patch("aila.modules.vulnerability.module.build_platform_settings") as mock_bps:
             mock_bps.return_value = MagicMock()
-            MockStore.return_value = _make_mock_store_tool()
-            MockRetrieve.return_value = _make_mock_retrieve_tool()
+            mock_store_cls.return_value = _make_mock_store_tool()
+            mock_retrieve_cls.return_value = _make_mock_retrieve_tool()
             module.build_runtime(mock_context)
 
-        store_calls = MockStore.call_args_list
+        store_calls = mock_store_cls.call_args_list
         namespaces = [_extract_namespace(c) for c in store_calls]
         assert "SynthesisAgent" in namespaces
 

@@ -9,20 +9,20 @@ from aila.platform.llm.pipeline import POST_CALL_STEPS, PRE_CALL_STEPS, Pipeline
 class FakeRegistry:
     def __init__(self, data: dict[str, object] | None = None) -> None:
         self._data: dict[str, object] = data or {}
-    def get(self, namespace: str, key: str) -> object:
+    async def get(self, namespace: str, key: str) -> object:
         return self._data.get(f"{namespace}.{key}")
 
 
 class FakeSecretStore:
     def __init__(self, secrets: dict[str, str] | None = None) -> None:
         self._secrets: dict[str, str] = secrets or {}
-    def resolve_provider_secret(self, secret_key: str) -> str | None:
+    async def resolve_provider_secret(self, secret_key: str) -> str | None:
         return self._secrets.get(secret_key)
 
 
 def test_pipeline_import() -> None:
     assert PRE_CALL_STEPS == ("classify",)
-    assert POST_CALL_STEPS == ("validate", "gate", "seal")
+    assert POST_CALL_STEPS == ("validate", "gate", "verify", "seal")
 
 
 def test_pipeline_runner_instantiate() -> None:
@@ -64,17 +64,19 @@ def test_llm_routing_task_type() -> None:
     assert routing.task_type == "scoring"
 
 
-def test_config_is_step_enabled() -> None:
+async def test_config_is_step_enabled() -> None:
     provider = LLMConfigProvider(
         registry=FakeRegistry(),
         secret_store=FakeSecretStore(),
     )
-    assert provider.is_step_enabled("classify", "scoring") is True
+    assert await provider.is_step_enabled("classify", "scoring") is True
 
 
-def test_config_resolve_fail_mode() -> None:
+async def test_config_resolve_fail_mode() -> None:
     provider = LLMConfigProvider(
         registry=FakeRegistry(),
         secret_store=FakeSecretStore(),
     )
-    assert provider.resolve_fail_mode("classify", "scoring") == "open"
+    # classify is a security-critical step, so a missing config key defaults to
+    # fail-closed (config.py _SECURITY_CRITICAL_STEPS, fix §156).
+    assert await provider.resolve_fail_mode("classify", "scoring") == "closed"

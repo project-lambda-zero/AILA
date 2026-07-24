@@ -207,28 +207,109 @@ def _patch_load(dispatcher: OutcomeDispatcher) -> AsyncMock:
     return mock
 
 
+def _seed_campaign_launch_fixtures(
+    *,
+    workspace_id: str = "ws-x",
+    target_id: str = "tgt-x",
+    investigation_id: str = "inv-x",
+    branch_id: str = "br-x",
+    outcome_id: str = "oc-1",
+) -> None:
+    """Seed the FK-required rows so a fresh VRFuzzCampaignProposalRecord
+    INSERT succeeds against the real aila_test schema.
+
+    _dispatch_campaign_launch persists via UnitOfWork -- no longer via
+    KnowledgeService -- so the FK graph (workspace -> target ->
+    investigation -> branch -> outcome) has to exist before the insert.
+    """
+    from aila.modules.vr.db_models import (
+        VRInvestigationBranchRecord,
+        VRInvestigationOutcomeRecord,
+        VRInvestigationRecord,
+        VRTargetRecord,
+        VRWorkspaceRecord,
+    )
+    from aila.storage.database import session_scope
+
+    with session_scope() as sess:
+        # The models carry FK columns without ORM relationships, so SQLAlchemy
+        # cannot infer insert order; flush after each level so every parent row
+        # exists before its children reference it.
+        sess.add(VRWorkspaceRecord(
+            id=workspace_id, name="ws", slug=workspace_id,
+        ))
+        sess.flush()
+        sess.add(VRTargetRecord(
+            id=target_id, workspace_id=workspace_id,
+            display_name="tgt", kind="native_binary",
+        ))
+        sess.flush()
+        sess.add(VRInvestigationRecord(
+            id=investigation_id, target_id=target_id,
+            title="seed", kind="discovery",
+            strategy_family="vulnerability_research.discovery_research",
+        ))
+        sess.flush()
+        sess.add(VRInvestigationBranchRecord(
+            id=branch_id, investigation_id=investigation_id,
+        ))
+        sess.flush()
+        sess.add(VRInvestigationOutcomeRecord(
+            id=outcome_id, investigation_id=investigation_id,
+            branch_id=branch_id, outcome_kind="campaign_launch",
+            confidence="strong", state="approved",
+        ))
+        sess.commit()
+
+
 class TestDispatchCampaignLaunch:
-    @pytest.mark.asyncio
-    async def test_writes_to_knowledge_when_payload_valid(self) -> None:
+    async def test_persists_fuzz_proposal_when_payload_valid(
+        self, test_db,
+    ) -> None:
+        # _dispatch_campaign_launch was refactored from a
+        # KnowledgeService write to a direct INSERT into
+        # vr_fuzz_campaign_proposals (see
+        # src/aila/modules/vr/agents/outcome_dispatcher.py::
+        # _dispatch_campaign_launch). This test now verifies the DB
+        # row + returned dispatch_target.
+        del test_db  # activates the aila_test engine
+        _seed_campaign_launch_fixtures()
+
         fake_knowledge = _FakeKnowledge()
         d = OutcomeDispatcher(knowledge=fake_knowledge)
         _patch_load(d)
         outcome = MagicMock(confidence="strong")
+
         result = await d._dispatch_campaign_launch(
             "oc-1", "inv-x",
-            {"profile": "V8MapInferenceProfile",
-             "target_descriptor": {"binary_path": "/tmp/d8"},
-             "duration_hours": 24},
+            {
+                "profile": "V8MapInferenceProfile",
+                "target_descriptor": {
+                    "binary_path": "/tmp/d8",
+                    "harness": "MyHarness",
+                },
+                "suggested_duration_hours": 24,
+            },
             outcome,
         )
+
         assert result.dispatch_status == OutcomeDispatchStatus.DISPATCHED
-        assert result.dispatch_target == "knowledge_entry:42"
-        assert len(fake_knowledge.calls) == 1
-        call = fake_knowledge.calls[0]
-        assert call["namespace"] == "vr.campaign_request.workspace.ws-x"
-        assert call["metadata"]["profile"] == "V8MapInferenceProfile"
-        assert call["metadata"]["status"] == "pending"
-        assert call["metadata"]["duration_hours"] == 24
+        assert result.dispatch_target is not None
+        assert result.dispatch_target.startswith("fuzz_proposal:")
+        # New impl no longer writes to KnowledgeService for campaign
+        # launch -- proposal lives in vr_fuzz_campaign_proposals now.
+        assert fake_knowledge.calls == []
+
+        # Verify the DB row landed with the expected shape.
+        from aila.modules.vr.db_models import VRFuzzCampaignProposalRecord
+        from aila.storage.database import session_scope
+        with session_scope() as sess:
+            row = sess.query(VRFuzzCampaignProposalRecord).filter_by(
+                investigation_id="inv-x", outcome_id="oc-1",
+            ).one()
+            assert row.profile == "V8MapInferenceProfile"
+            assert row.status == "pending"
+            assert row.suggested_duration_hours == 24
 
     @pytest.mark.asyncio
     async def test_rejects_missing_profile(self) -> None:
@@ -240,6 +321,8 @@ class TestDispatchCampaignLaunch:
             MagicMock(confidence="strong"),
         )
         assert result.dispatch_status == OutcomeDispatchStatus.FAILED
+        # Failure branch runs entirely before the DB insert, so no
+        # seeding is needed.
         assert "missing_profile" in result.reason
 
     @pytest.mark.asyncio
@@ -272,9 +355,19 @@ class TestDispatchProfileSpecDraft:
         assert call["namespace"] == "vr.profile_spec.workspace.ws-x"
         assert call["metadata"]["profile_name"] == "NgxHttpFuzzProfile"
         assert call["metadata"]["status"] == "draft"
-        # Dedup is per-(workspace, kind, name) so a re-emission of the same
-        # draft hits the existing entry rather than spamming the namespace.
-        assert call["dedup_key"] == "ws-x|fuzzing|NgxHttpFuzzProfile"
+        # Dedup key now mixes in a 16-char hex hash of the canonical
+        # JSON spec (fix \u00a7264) so two drafts with the same name but
+        # different spec content no longer collapse to one row. Old
+        # form was 'ws-x|fuzzing|NgxHttpFuzzProfile'; new form appends
+        # '|<sha256[:16]>' -- see
+        # src/aila/modules/vr/agents/outcome_dispatcher.py::
+        # _dispatch_profile_spec_draft.
+        assert call["dedup_key"].startswith(
+            "ws-x|fuzzing|NgxHttpFuzzProfile|",
+        )
+        _, _, _, spec_hash = call["dedup_key"].split("|")
+        assert len(spec_hash) == 16
+        assert all(c in "0123456789abcdef" for c in spec_hash)
 
     @pytest.mark.asyncio
     async def test_rejects_empty_spec(self) -> None:
@@ -290,6 +383,13 @@ class TestDispatchProfileSpecDraft:
 
 
 class TestDispatchPatchAssessmentReport:
+    # _dispatch_patch_assessment_report was rewritten to run two
+    # parallel paths (variant_hunt_orders spawn + optional nday
+    # enqueue) and now ALWAYS returns DISPATCHED, folding per-path
+    # errors into ``reason``. Contract signature also dropped the
+    # trailing `outcome` positional argument. See
+    # src/aila/modules/vr/agents/outcome_dispatcher.py.
+
     @pytest.mark.asyncio
     async def test_enqueues_vr_nday(self) -> None:
         fake_queue = _FakeTaskQueue()
@@ -314,7 +414,11 @@ class TestDispatchPatchAssessmentReport:
                 },
             )
         assert result.dispatch_status == OutcomeDispatchStatus.DISPATCHED
-        assert result.dispatch_target == "task:task-nday-001"
+        # dispatch_target now encodes both paths:
+        # ``children=[<spawned_ids>];nday=<task_id>``. With no
+        # variant_hunt_orders in the payload, spawned_children is [].
+        assert result.dispatch_target == "children=[];nday=task-nday-001"
+        assert "nday_task=task-nday-001" in result.reason
         enqueue_mock.assert_awaited_once()
         kwargs = enqueue_mock.await_args.kwargs
         assert kwargs["source_outcome_id"] == "oc-3"
@@ -323,18 +427,36 @@ class TestDispatchPatchAssessmentReport:
         assert kwargs["parent_investigation_id"] == "inv-x"
 
     @pytest.mark.asyncio
-    async def test_rejects_missing_patch_descriptor(self) -> None:
+    async def test_no_patch_descriptor_falls_through_as_verdict_only(
+        self,
+    ) -> None:
+        # Old contract: missing patch_descriptor -> FAILED. New contract:
+        # patch_descriptor is optional. When neither variant_hunt_orders
+        # nor patch_descriptor are supplied, the dispatcher reports
+        # DISPATCHED with reason="verdict_only:no_variants_no_nday_descriptor"
+        # so the operator UI still shows green for a pure verdict
+        # report. See the verdict-only branch of
+        # _dispatch_patch_assessment_report.
         d = OutcomeDispatcher(knowledge=_FakeKnowledge())
         _patch_load(d)
         result = await d._dispatch_patch_assessment_report(
             "oc-3", "inv-x",
             {"assessment": {"verdict": "ok"}},
         )
-        assert result.dispatch_status == OutcomeDispatchStatus.FAILED
-        assert "missing_patch_descriptor" in result.reason
+        assert result.dispatch_status == OutcomeDispatchStatus.DISPATCHED
+        assert result.reason == "verdict_only:no_variants_no_nday_descriptor"
+        assert result.dispatch_target is None
 
     @pytest.mark.asyncio
-    async def test_enqueue_failure_surfaces_as_failed(self) -> None:
+    async def test_enqueue_failure_surfaces_in_reason_not_status(
+        self,
+    ) -> None:
+        # Old contract: enqueue failure -> FAILED with 'enqueue_failed'
+        # in reason. New contract: the whole dispatch still reports
+        # DISPATCHED but ``reason`` carries ``nday_error=<type>:<msg>``.
+        # This is a design smell (see migration report -- an enqueue
+        # failure being reported as DISPATCHED can mask real errors
+        # from the operator dashboard) but it matches current source.
         d = OutcomeDispatcher(
             knowledge=_FakeKnowledge(),
             task_queue_factory=lambda: _FakeTaskQueue(),
@@ -346,8 +468,13 @@ class TestDispatchPatchAssessmentReport:
         ):
             result = await d._dispatch_patch_assessment_report(
                 "oc-3", "inv-x",
-                {"patch_descriptor": {"vulnerable_ref": "x"}},
+                {"patch_descriptor": {
+                    "vulnerable_ref": "x",
+                    "patched_ref": "y",
+                    "repo_url": "https://example.com/repo",
+                }},
             )
-        assert result.dispatch_status == OutcomeDispatchStatus.FAILED
-        assert "enqueue_failed" in result.reason
+        assert result.dispatch_status == OutcomeDispatchStatus.DISPATCHED
+        assert "nday_error=" in result.reason
         assert "redis down" in result.reason
+        assert "RuntimeError" in result.reason

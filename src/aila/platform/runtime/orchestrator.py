@@ -120,6 +120,7 @@ class AILAPlatform:
         progress_callback: Callable[[ProgressUpdate], None] | None = None,
         debug: bool = False,
         run_id: str | None = None,
+        team_id: str | None = None,
     ) -> PlatformResponse:
         """Route and execute the query, returning a typed PlatformResponse.
 
@@ -136,6 +137,11 @@ class AILAPlatform:
         run_record = WorkflowRunRecord(query_text=query)
         if run_id:
             run_record.id = run_id
+        # Stamp the owning team so team-scoped readers (report list, module
+        # health summaries) surface this run instead of hiding it. Queued
+        # runs pass the team the task carries; direct API callers pass the
+        # request team; god-tier and CLI leave it None (#36).
+        run_record.team_id = team_id
         run_state = RunState(run_id=run_record.id, query=query)
 
         async with async_session_scope(self.settings) as session:
@@ -256,7 +262,7 @@ def _build_unknown_response(
         action_id=UNROUTABLE_ACTION_ID,
         message=message,
         route=run_state.route,
-        module_payload={"supported_actions": supported_actions},
+        module_payload={"query_mode": "unroutable", "supported_actions": supported_actions},
         state_history=run_state.events,
     )
 

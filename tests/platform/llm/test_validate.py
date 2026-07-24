@@ -8,13 +8,27 @@ audit emission, and _enrich_response propagation of evidence_validation.
 
 from __future__ import annotations
 
+import json
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from aila.modules.vulnerability.evidence_validator import VulnEvidenceValidator
 from aila.platform.events.event import PlatformEvent
+from aila.platform.llm.classify import make_classify_step
+from aila.platform.llm.client import AilaLLMClient, LLMResponse, _enrich_response
 from aila.platform.llm.config import LLMRouting
+from aila.platform.llm.errors import LLMError
+from aila.platform.llm.validate import (
+    CitationResult,
+    EvidenceValidationReport,
+    EvidenceValidator,
+    ValidationResult,
+    _emit_validation_event,
+    _merge_results,
+    make_validate_step,
+)
 
 # ---------------------------------------------------------------------------
 # Fakes (same patterns as test_classify.py)
@@ -55,7 +69,6 @@ class TestEvidenceValidatorProtocol:
     """Verify EvidenceValidator is runtime_checkable and accepts compliant classes."""
 
     def test_protocol_is_runtime_checkable(self) -> None:
-        from aila.platform.llm.validate import EvidenceValidator, ValidationResult
 
         class _Good:
             async def validate(self, content: str, ctx: dict[str, Any]) -> ValidationResult:
@@ -64,7 +77,6 @@ class TestEvidenceValidatorProtocol:
         assert isinstance(_Good(), EvidenceValidator)
 
     def test_non_compliant_class_rejected(self) -> None:
-        from aila.platform.llm.validate import EvidenceValidator
 
         class _Bad:
             def not_validate(self) -> None:
@@ -81,7 +93,6 @@ class TestDataclasses:
     """Verify frozen dataclasses have correct fields and defaults."""
 
     def test_citation_result_fields(self) -> None:
-        from aila.platform.llm.validate import CitationResult
 
         cr = CitationResult(
             citation_id="CVE-2024-1234",
@@ -95,20 +106,17 @@ class TestDataclasses:
         assert cr.detail == "found in store"
 
     def test_citation_result_default_detail(self) -> None:
-        from aila.platform.llm.validate import CitationResult
 
         cr = CitationResult(citation_id="CVE-2024-1234", citation_type="cve_id", status="valid")
         assert cr.detail == ""
 
     def test_citation_result_frozen(self) -> None:
-        from aila.platform.llm.validate import CitationResult
 
         cr = CitationResult(citation_id="CVE-2024-1234", citation_type="cve_id", status="valid")
         with pytest.raises(AttributeError):
             cr.status = "invalid"  # type: ignore[misc]
 
     def test_validation_result_fields(self) -> None:
-        from aila.platform.llm.validate import ValidationResult
 
         vr = ValidationResult(validator_name="vuln", citations=[], hallucination_count=0, overall_pass=True)
         assert vr.validator_name == "vuln"
@@ -117,7 +125,6 @@ class TestDataclasses:
         assert vr.overall_pass is True
 
     def test_validation_result_defaults(self) -> None:
-        from aila.platform.llm.validate import ValidationResult
 
         vr = ValidationResult(validator_name="vuln")
         assert vr.citations == []
@@ -125,7 +132,6 @@ class TestDataclasses:
         assert vr.overall_pass is True
 
     def test_evidence_validation_report_fields(self) -> None:
-        from aila.platform.llm.validate import EvidenceValidationReport
 
         report = EvidenceValidationReport(
             citations_found=3,
@@ -142,7 +148,6 @@ class TestDataclasses:
         assert report.overall_pass is False
 
     def test_evidence_validation_report_defaults(self) -> None:
-        from aila.platform.llm.validate import EvidenceValidationReport
 
         report = EvidenceValidationReport()
         assert report.citations_found == 0
@@ -161,7 +166,6 @@ class TestMergeResults:
     """Verify _merge_results aggregation logic."""
 
     def test_merge_empty(self) -> None:
-        from aila.platform.llm.validate import _merge_results
 
         report = _merge_results([])
         assert report.citations_found == 0
@@ -171,7 +175,6 @@ class TestMergeResults:
         assert report.overall_pass is True
 
     def test_merge_single_passing(self) -> None:
-        from aila.platform.llm.validate import CitationResult, ValidationResult, _merge_results
 
         result = ValidationResult(
             validator_name="test",
@@ -190,7 +193,6 @@ class TestMergeResults:
         assert report.overall_pass is True
 
     def test_merge_with_hallucinations(self) -> None:
-        from aila.platform.llm.validate import CitationResult, ValidationResult, _merge_results
 
         result = ValidationResult(
             validator_name="test",
@@ -208,7 +210,6 @@ class TestMergeResults:
         assert report.overall_pass is False
 
     def test_merge_multiple_results(self) -> None:
-        from aila.platform.llm.validate import CitationResult, ValidationResult, _merge_results
 
         r1 = ValidationResult(
             validator_name="v1",
@@ -234,7 +235,6 @@ class TestMergeResults:
         assert report.overall_pass is False
 
     def test_merge_deduplicates_hallucinated_ids(self) -> None:
-        from aila.platform.llm.validate import CitationResult, ValidationResult, _merge_results
 
         # Same CVE cited as hallucinated in two sub-assertions
         r1 = ValidationResult(
@@ -251,7 +251,6 @@ class TestMergeResults:
         assert report.hallucinated_ids == ["CVE-2099-9999"]
 
     def test_merge_counts_cve_id_type_only_for_found(self) -> None:
-        from aila.platform.llm.validate import CitationResult, ValidationResult, _merge_results
 
         result = ValidationResult(
             validator_name="test",
@@ -276,7 +275,6 @@ class TestEmitValidationEvent:
     """Verify audit event emission."""
 
     def test_emit_with_emitter(self, routing: LLMRouting) -> None:
-        from aila.platform.llm.validate import EvidenceValidationReport, _emit_validation_event
 
         emitter = FakeEmitter()
         ctx: dict[str, Any] = {"task_type": "scoring"}
@@ -300,7 +298,6 @@ class TestEmitValidationEvent:
         assert event.details["overall_pass"] is False
 
     def test_emit_with_none_emitter(self, routing: LLMRouting) -> None:
-        from aila.platform.llm.validate import EvidenceValidationReport, _emit_validation_event
 
         ctx: dict[str, Any] = {"task_type": "scoring"}
         report = EvidenceValidationReport()
@@ -317,11 +314,6 @@ class TestMakeValidateStep:
 
     @pytest.mark.asyncio
     async def test_factory_runs_validator_and_writes_ctx(self, routing: LLMRouting) -> None:
-        from aila.platform.llm.validate import (
-            CitationResult,
-            ValidationResult,
-            make_validate_step,
-        )
 
         class FakeValidator:
             async def validate(self, content: str, ctx: dict[str, Any]) -> ValidationResult:
@@ -350,7 +342,6 @@ class TestMakeValidateStep:
 
     @pytest.mark.asyncio
     async def test_factory_no_response_returns_without_error(self, routing: LLMRouting) -> None:
-        from aila.platform.llm.validate import make_validate_step
 
         step = make_validate_step([])
         ctx: dict[str, Any] = {"task_type": "scoring"}
@@ -361,7 +352,6 @@ class TestMakeValidateStep:
 
     @pytest.mark.asyncio
     async def test_factory_empty_content_writes_passing_report(self, routing: LLMRouting) -> None:
-        from aila.platform.llm.validate import make_validate_step
 
         step = make_validate_step([])
         ctx: dict[str, Any] = {
@@ -378,7 +368,6 @@ class TestMakeValidateStep:
 
     @pytest.mark.asyncio
     async def test_factory_emits_audit_event(self, routing: LLMRouting) -> None:
-        from aila.platform.llm.validate import make_validate_step
 
         emitter = FakeEmitter()
         step = make_validate_step([], emitter=emitter)
@@ -401,7 +390,6 @@ class TestEnrichResponse:
     """Verify _enrich_response propagates evidence_validation."""
 
     def test_propagates_evidence_validation(self) -> None:
-        from aila.platform.llm.client import _enrich_response
 
         response = LLMResponse(content="test", model="test-model")
         ev_data = {"citations_found": 2, "overall_pass": True}
@@ -412,7 +400,6 @@ class TestEnrichResponse:
         assert enriched.pipeline_metadata["evidence_validation"] == ev_data
 
     def test_no_evidence_validation_unchanged(self) -> None:
-        from aila.platform.llm.client import _enrich_response
 
         response = LLMResponse(content="test", model="test-model")
         ctx: dict[str, Any] = {}
@@ -422,7 +409,6 @@ class TestEnrichResponse:
         assert enriched.pipeline_metadata is None
 
     def test_merges_with_existing_metadata(self) -> None:
-        from aila.platform.llm.client import _enrich_response
 
         response = LLMResponse(content="test", model="test-model")
         ev_data = {"citations_found": 1, "overall_pass": True}
@@ -437,7 +423,6 @@ class TestEnrichResponse:
         assert enriched.pipeline_metadata["seal_id"] == "abc"
 
     def test_does_not_mutate_original_metadata(self) -> None:
-        from aila.platform.llm.client import _enrich_response
 
         response = LLMResponse(content="test", model="test-model")
         original_metadata = {"seal_id": "abc"}
@@ -455,11 +440,6 @@ class TestEnrichResponse:
 # ===========================================================================
 # Task 2: VulnEvidenceValidator tests
 # ===========================================================================
-
-import json
-from contextlib import contextmanager
-from unittest.mock import patch
-
 
 class _FakeRow:
     """Simulates a CacheRecord row returned by session.exec()."""
@@ -486,32 +466,31 @@ def _make_payload(
     })
 
 
-class _FakeExecResult:
-    """Simulates the result of session.exec(select(...))."""
+def _fake_batch_lookup(rows: list[_FakeRow]):
+    """Return an async replacement for VulnEvidenceValidator._batch_lookup.
 
-    def __init__(self, rows: list[_FakeRow]) -> None:
-        self._rows = rows
+    Production _batch_lookup issues an async SQL query against
+    ServiceFactory().storage.fetch_all(CacheRecord, ...) and returns
+    dict[cve_id -> parsed payload dict], filtered by cve_ids. This fake
+    reproduces that shape from an in-memory _FakeRow list so the tests
+    exercise the validator's parsing/citation logic without a DB.
+    """
 
-    def all(self) -> list[_FakeRow]:
-        return self._rows
+    async def _lookup(_self: Any, cve_ids: list[str]) -> dict[str, dict]:
+        wanted = set(cve_ids)
+        result: dict[str, dict] = {}
+        for row in rows:
+            if row.cache_key not in wanted:
+                continue
+            try:
+                payload = json.loads(row.payload_json)
+            except json.JSONDecodeError:
+                payload = {}
+            if isinstance(payload, dict):
+                result[row.cache_key] = payload
+        return result
 
-
-class _FakeSession:
-    """Simulates a SQLModel Session with exec() support."""
-
-    def __init__(self, rows: list[_FakeRow]) -> None:
-        self._rows = rows
-
-    def exec(self, statement: Any) -> _FakeExecResult:
-        return _FakeExecResult(self._rows)
-
-
-def _fake_session_scope(rows: list[_FakeRow]):
-    """Returns a callable that acts like session_scope (a context manager factory)."""
-    @contextmanager
-    def _scope(settings: Any = None):
-        yield _FakeSession(rows)
-    return _scope
+    return _lookup
 
 
 # Standard test rows
@@ -531,11 +510,10 @@ class TestVulnValidator:
 
     @pytest.mark.asyncio
     async def test_hallucinated_cve_not_in_store(self) -> None:
-        from aila.modules.vulnerability.evidence_validator import VulnEvidenceValidator
 
         with patch(
-            "aila.modules.vulnerability.evidence_validator.session_scope",
-            _fake_session_scope([])  # no rows -> CVE not found
+            "aila.modules.vulnerability.evidence_validator.VulnEvidenceValidator._batch_lookup",
+            _fake_batch_lookup([])  # no rows -> CVE not found
         ):
             validator = VulnEvidenceValidator(settings=MagicMock())
             result = await validator.validate("CVE-2099-9999 is critical", {})
@@ -548,11 +526,10 @@ class TestVulnValidator:
 
     @pytest.mark.asyncio
     async def test_valid_cve_in_store(self) -> None:
-        from aila.modules.vulnerability.evidence_validator import VulnEvidenceValidator
 
         with patch(
-            "aila.modules.vulnerability.evidence_validator.session_scope",
-            _fake_session_scope([_REAL_CVE_ROW])
+            "aila.modules.vulnerability.evidence_validator.VulnEvidenceValidator._batch_lookup",
+            _fake_batch_lookup([_REAL_CVE_ROW])
         ):
             validator = VulnEvidenceValidator(settings=MagicMock())
             result = await validator.validate("CVE-2024-1234 is critical", {})
@@ -563,11 +540,10 @@ class TestVulnValidator:
 
     @pytest.mark.asyncio
     async def test_mixed_real_and_fake_cves(self) -> None:
-        from aila.modules.vulnerability.evidence_validator import VulnEvidenceValidator
 
         with patch(
-            "aila.modules.vulnerability.evidence_validator.session_scope",
-            _fake_session_scope([_REAL_CVE_ROW])
+            "aila.modules.vulnerability.evidence_validator.VulnEvidenceValidator._batch_lookup",
+            _fake_batch_lookup([_REAL_CVE_ROW])
         ):
             validator = VulnEvidenceValidator(settings=MagicMock())
             result = await validator.validate(
@@ -584,11 +560,10 @@ class TestVulnValidator:
 
     @pytest.mark.asyncio
     async def test_case_normalization(self) -> None:
-        from aila.modules.vulnerability.evidence_validator import VulnEvidenceValidator
 
         with patch(
-            "aila.modules.vulnerability.evidence_validator.session_scope",
-            _fake_session_scope([_REAL_CVE_ROW])
+            "aila.modules.vulnerability.evidence_validator.VulnEvidenceValidator._batch_lookup",
+            _fake_batch_lookup([_REAL_CVE_ROW])
         ):
             validator = VulnEvidenceValidator(settings=MagicMock())
             # Lowercase cve in content -- CVE_PATTERN only matches uppercase,
@@ -601,11 +576,10 @@ class TestVulnValidator:
 
     @pytest.mark.asyncio
     async def test_no_cves_in_content(self) -> None:
-        from aila.modules.vulnerability.evidence_validator import VulnEvidenceValidator
 
         with patch(
-            "aila.modules.vulnerability.evidence_validator.session_scope",
-            _fake_session_scope([])
+            "aila.modules.vulnerability.evidence_validator.VulnEvidenceValidator._batch_lookup",
+            _fake_batch_lookup([])
         ):
             validator = VulnEvidenceValidator(settings=MagicMock())
             result = await validator.validate("no vulnerabilities found", {})
@@ -617,11 +591,10 @@ class TestVulnValidator:
     @pytest.mark.asyncio
     async def test_epss_valid_small_delta(self) -> None:
         """EPSS delta 0.01 < 0.1 threshold -> valid."""
-        from aila.modules.vulnerability.evidence_validator import VulnEvidenceValidator
 
         with patch(
-            "aila.modules.vulnerability.evidence_validator.session_scope",
-            _fake_session_scope([_REAL_CVE_ROW])  # stored epss=0.85
+            "aila.modules.vulnerability.evidence_validator.VulnEvidenceValidator._batch_lookup",
+            _fake_batch_lookup([_REAL_CVE_ROW])  # stored epss=0.85
         ):
             validator = VulnEvidenceValidator(settings=MagicMock())
             result = await validator.validate(
@@ -635,11 +608,10 @@ class TestVulnValidator:
     @pytest.mark.asyncio
     async def test_epss_invalid_large_delta(self) -> None:
         """EPSS delta 0.55 > 0.1 threshold -> invalid."""
-        from aila.modules.vulnerability.evidence_validator import VulnEvidenceValidator
 
         with patch(
-            "aila.modules.vulnerability.evidence_validator.session_scope",
-            _fake_session_scope([_REAL_CVE_ROW])  # stored epss=0.85
+            "aila.modules.vulnerability.evidence_validator.VulnEvidenceValidator._batch_lookup",
+            _fake_batch_lookup([_REAL_CVE_ROW])  # stored epss=0.85
         ):
             validator = VulnEvidenceValidator(settings=MagicMock())
             result = await validator.validate(
@@ -654,11 +626,10 @@ class TestVulnValidator:
     @pytest.mark.asyncio
     async def test_kev_valid_listed(self) -> None:
         """LLM claims KEV, stored kev_listed=True -> valid."""
-        from aila.modules.vulnerability.evidence_validator import VulnEvidenceValidator
 
         with patch(
-            "aila.modules.vulnerability.evidence_validator.session_scope",
-            _fake_session_scope([_REAL_CVE_ROW])  # kev_listed=True
+            "aila.modules.vulnerability.evidence_validator.VulnEvidenceValidator._batch_lookup",
+            _fake_batch_lookup([_REAL_CVE_ROW])  # kev_listed=True
         ):
             validator = VulnEvidenceValidator(settings=MagicMock())
             result = await validator.validate(
@@ -672,11 +643,10 @@ class TestVulnValidator:
     @pytest.mark.asyncio
     async def test_kev_invalid_not_listed(self) -> None:
         """LLM claims KEV, stored kev_listed=False -> invalid."""
-        from aila.modules.vulnerability.evidence_validator import VulnEvidenceValidator
 
         with patch(
-            "aila.modules.vulnerability.evidence_validator.session_scope",
-            _fake_session_scope([_REAL_CVE_ROW_NO_KEV])  # kev_listed=False
+            "aila.modules.vulnerability.evidence_validator.VulnEvidenceValidator._batch_lookup",
+            _fake_batch_lookup([_REAL_CVE_ROW_NO_KEV])  # kev_listed=False
         ):
             validator = VulnEvidenceValidator(settings=MagicMock())
             result = await validator.validate(
@@ -693,12 +663,10 @@ class TestValidatePipelineStep:
 
     @pytest.mark.asyncio
     async def test_end_to_end_with_vuln_validator(self, routing: LLMRouting) -> None:
-        from aila.modules.vulnerability.evidence_validator import VulnEvidenceValidator
-        from aila.platform.llm.validate import make_validate_step
 
         with patch(
-            "aila.modules.vulnerability.evidence_validator.session_scope",
-            _fake_session_scope([_REAL_CVE_ROW])
+            "aila.modules.vulnerability.evidence_validator.VulnEvidenceValidator._batch_lookup",
+            _fake_batch_lookup([_REAL_CVE_ROW])
         ):
             validator = VulnEvidenceValidator(settings=MagicMock())
             step = make_validate_step([validator])
@@ -722,19 +690,13 @@ class TestValidatePipelineStep:
 # Pipeline Integration Tests -- AilaLLMClient with validate step registered
 # ===========================================================================
 
-from unittest.mock import AsyncMock
-
-from aila.platform.llm.client import AilaLLMClient
-from aila.platform.llm.errors import LLMError
-
-
 class _IntFakeRegistry:
     """In-memory ConfigRegistry fake for integration tests."""
 
     def __init__(self, data: dict[str, object] | None = None) -> None:
         self._data: dict[str, object] = data or {}
 
-    def get(self, namespace: str, key: str) -> object:
+    async def get(self, namespace: str, key: str) -> object:
         return self._data.get(f"{namespace}.{key}")
 
 
@@ -744,7 +706,7 @@ class _IntFakeSecretStore:
     def __init__(self, secrets: dict[str, str] | None = None) -> None:
         self._secrets: dict[str, str] = secrets or {}
 
-    def resolve_provider_secret(self, secret_key: str) -> str | None:
+    async def resolve_provider_secret(self, secret_key: str) -> str | None:
         return self._secrets.get(secret_key)
 
 
@@ -797,11 +759,6 @@ class TestValidatePipelineIntegration:
         )
 
         # Create a FakeValidator that returns a known ValidationResult
-        from aila.platform.llm.validate import (
-            CitationResult,
-            ValidationResult,
-            make_validate_step,
-        )
 
         class FakeValidator:
             async def validate(self, content: str, ctx: dict[str, Any]) -> ValidationResult:
@@ -823,10 +780,10 @@ class TestValidatePipelineIntegration:
         client.pipeline.register("validate", step)
 
         mock_completion = _make_completion(content="CVE-2024-1234 is critical")
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_openai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
-            MockOAI.return_value = mock_instance
+            mock_openai.return_value = mock_instance
 
             response = await client.chat(
                 "scoring",
@@ -854,11 +811,6 @@ class TestValidatePipelineIntegration:
             secret_store=secret_store,  # type: ignore[arg-type]
         )
 
-        from aila.platform.llm.validate import (
-            CitationResult,
-            ValidationResult,
-            make_validate_step,
-        )
 
         class FakeValidator:
             async def validate(self, content: str, ctx: dict[str, Any]) -> ValidationResult:
@@ -875,10 +827,10 @@ class TestValidatePipelineIntegration:
         client.pipeline.register("validate", step)
 
         mock_completion = _make_completion(content="CVE-2024-1234 analysis")
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_openai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
-            MockOAI.return_value = mock_instance
+            mock_openai.return_value = mock_instance
 
             response = await client.chat(
                 "scoring",
@@ -891,10 +843,18 @@ class TestValidatePipelineIntegration:
 
     @pytest.mark.asyncio
     async def test_fail_open_logs_warning_on_validator_exception(self) -> None:
-        """Validate step in fail-open mode (default): validator exception
-        is logged but does not raise. Response is returned successfully."""
+        """Validate step in fail-open mode: validator exception is logged but
+        does not raise. Response is returned successfully.
+
+        fix §156 flipped the default fail_mode for security-critical steps
+        (validate/gate/verify/classify/seal/sanitize) to "closed", so this
+        test must opt into "open" explicitly to exercise the fail-open path.
+        See LLMConfigProvider._SECURITY_CRITICAL_STEPS and resolve_fail_mode.
+        """
         registry = _IntFakeRegistry({
             "platform.llm_default_model": "test-model",
+            # Opt into fail-open (default is now "closed" for validate per \u00a7156)
+            "platform.llm_pipeline_validate_fail_mode_scoring": "open",
         })
         secret_store = _IntFakeSecretStore({"openai_api_key": "sk-test"})
         client = AilaLLMClient(
@@ -902,10 +862,6 @@ class TestValidatePipelineIntegration:
             secret_store=secret_store,  # type: ignore[arg-type]
         )
 
-        from aila.platform.llm.validate import (
-            ValidationResult,
-            make_validate_step,
-        )
 
         class ExplodingValidator:
             async def validate(self, content: str, ctx: dict[str, Any]) -> ValidationResult:
@@ -915,10 +871,10 @@ class TestValidatePipelineIntegration:
         client.pipeline.register("validate", step)
 
         mock_completion = _make_completion(content="Some analysis result")
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_openai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
-            MockOAI.return_value = mock_instance
+            mock_openai.return_value = mock_instance
 
             # Should NOT raise -- fail-open swallows the error
             response = await client.chat(
@@ -942,10 +898,6 @@ class TestValidatePipelineIntegration:
             secret_store=secret_store,  # type: ignore[arg-type]
         )
 
-        from aila.platform.llm.validate import (
-            ValidationResult,
-            make_validate_step,
-        )
 
         class ExplodingValidator:
             async def validate(self, content: str, ctx: dict[str, Any]) -> ValidationResult:
@@ -955,10 +907,10 @@ class TestValidatePipelineIntegration:
         client.pipeline.register("validate", step)
 
         mock_completion = _make_completion(content="Some result")
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_openai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
-            MockOAI.return_value = mock_instance
+            mock_openai.return_value = mock_instance
 
             with pytest.raises(LLMError, match="fail-closed"):
                 await client.chat(
@@ -970,12 +922,6 @@ class TestValidatePipelineIntegration:
     async def test_full_pipeline_chain_classify_and_validate(self) -> None:
         """Full pipeline chain: classify (pre-call) -> API call -> validate
         (post-call). Both steps run in correct order and populate response."""
-        from aila.platform.llm.classify import make_classify_step
-        from aila.platform.llm.validate import (
-            CitationResult,
-            ValidationResult,
-            make_validate_step,
-        )
 
         registry = _IntFakeRegistry({
             "platform.llm_default_model": "test-model",
@@ -1015,10 +961,10 @@ class TestValidatePipelineIntegration:
         mock_completion = _make_completion(
             content="CVE-2024-1234 on 8.8.8.8 scored HIGH"
         )
-        with patch("aila.platform.llm.client.AsyncOpenAI") as MockOAI:
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_openai:
             mock_instance = AsyncMock()
             mock_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
-            MockOAI.return_value = mock_instance
+            mock_openai.return_value = mock_instance
 
             response = await client.chat(
                 "scoring",

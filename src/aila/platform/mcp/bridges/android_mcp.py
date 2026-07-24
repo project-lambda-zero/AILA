@@ -37,8 +37,8 @@ from typing import Any
 
 import httpx
 
-from aila.platform.tools._common import Tool
-from aila.storage.registry import ConfigRegistry
+from aila.platform.mcp.client import ResolvedInstance, resolve_instance
+from aila.platform.tools import Tool
 
 from ._recorder import BridgeRecorder, noop_recorder
 
@@ -348,7 +348,6 @@ class AndroidMcpBridgeTool(Tool):
     synthetic ``status="error"`` when the HTTP layer itself fails.
     """
 
-    name = "vr.android_mcp_bridge"
     description = (
         "android-mcp Android APK audit bridge. Supports apktool_decode, "
         "jadx_decompile, androguard_summary, mobsf_scan, drozer_scan_apk, "
@@ -384,7 +383,15 @@ class AndroidMcpBridgeTool(Tool):
         base_url: str | None = None,
         timeout: float | None = None,
         recorder: BridgeRecorder | None = None,
+        *,
+        module_id: str = "vr",
     ) -> None:
+        # Owning module id drives the public tool name and config
+        # namespace. Defaults to "vr" so existing callers keep the exact
+        # name "vr.android_mcp_bridge" and the "vr" config namespace
+        # unchanged.
+        self.module_id = module_id
+        self.name = f"{module_id}.android_mcp_bridge"
         # ``base_url`` if explicitly supplied wins forever (tests, DI).
         # Otherwise resolve per-call via env → ConfigRegistry → default
         # so PATCH /vr/mcp/servers/android_mcp takes effect without a
@@ -397,21 +404,44 @@ class AndroidMcpBridgeTool(Tool):
         # authors wire their own ``record_call`` here, tests + ad-hoc
         # callers omit it and get a no-op.
         self._recorder: BridgeRecorder = recorder or noop_recorder
+        # RFC-11 -- resolution moved onto the shared 4-tier resolver in
+        # aila.platform.mcp.client. Cache the full ResolvedInstance so
+        # every recorded call carries the catalog row's ``instance_id``
+        # (or ``None`` for env / config / default tiers).
+        self._resolved: ResolvedInstance | None = None
+
+    async def _resolve_instance(self) -> ResolvedInstance:
+        """Return the cached ResolvedInstance or resolve via the shared helper.
+
+        RFC-11 delegates the four-tier lookup (env > config > catalog >
+        default) to :func:`aila.platform.mcp.client.resolve_instance`.
+        The catalog tier (when a row exists for
+        ``(module_id, 'android_mcp')`` and is enabled) supplies the
+        ``instance_id`` recorded on every call.
+        """
+        if self._fixed_base_url is not None:
+            return ResolvedInstance(
+                url=self._fixed_base_url,
+                source="default",
+                instance_id=None,
+                capability_tags=(),
+                name="android_mcp",
+                module_scope=self.module_id,
+            )
+        if self._resolved is not None:
+            return self._resolved
+        self._resolved = await resolve_instance(
+            module_scope=self.module_id,
+            server_name="android_mcp",
+            env_var="ANDROID_MCP_URL",
+            config_key="android_mcp_url",
+            default_url="http://127.0.0.1:18823",
+        )
+        return self._resolved
 
     async def _resolve_base_url(self) -> str:
-        """Resolve android-mcp base URL with env > config > default order."""
-        if self._fixed_base_url is not None:
-            return self._fixed_base_url
-        env_value = os.environ.get("ANDROID_MCP_URL")
-        if env_value:
-            return env_value.rstrip("/")
-        try:
-            cfg_value = await ConfigRegistry().get("vr", "android_mcp_url")
-            if isinstance(cfg_value, str) and cfg_value.strip():
-                return cfg_value.rstrip("/")
-        except (ValueError, RuntimeError, ImportError):
-            pass
-        return "http://127.0.0.1:18823"
+        """Resolve android-mcp base URL via the shared helper (backwards-compat)."""
+        return (await self._resolve_instance()).url
 
     async def forward(self, action: str | None = None, **kwargs: Any) -> dict:
         """Dispatch to the android-mcp HTTP API.
@@ -508,11 +538,13 @@ class AndroidMcpBridgeTool(Tool):
                 kwargs[_k] = _canonical
                 _log.warning("android_mcp_bridge: %s", _note)
 
-        base = await self._resolve_base_url()
+        resolved = await self._resolve_instance()
+        base = resolved.url
         url = f"{base}/tools/{action}"
 
         async with self._recorder(
             server_id="android_mcp", base_url=base, action=action,
+            instance_id=resolved.instance_id,
         ) as ctx:
             try:
                 # fix §216 -- reuse the module-level pooled client

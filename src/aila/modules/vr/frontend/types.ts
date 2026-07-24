@@ -379,7 +379,7 @@ export type OutcomeConfidence =
   | "exact" | "strong" | "medium" | "caveated" | "unknown";
 
 export type OutcomeDispatchStatus =
-  | "pending" | "dispatched" | "failed" | "skipped";
+  | "pending" | "claimed" | "dispatched" | "failed" | "skipped";
 
 export interface VRInvestigationSummary {
   id: string;

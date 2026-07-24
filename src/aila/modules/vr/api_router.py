@@ -31,11 +31,18 @@ from aila.api.deps import get_task_queue
 from aila.api.limiter import limiter
 from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
 from aila.modules.vr.services.mcp_call_logger import record_call
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.contracts.auth import AuthContext, require_auth
-from aila.platform.llm.cost_record import LLMCostRecord
 from aila.platform.services.factory import ServiceFactory
-from aila.platform.tasks.models import TaskRecord, TaskStatus
+from aila.platform.services.investigation_cost import (
+    compute_live_investigation_cost,
+)
+from aila.platform.services.investigation_summaries import (
+    build_branch_summary,
+    build_investigation_summary,
+    build_message_summary,
+    build_outcome_summary,
+)
 from aila.platform.uow import UnitOfWork
 from aila.storage.db_models import WorkflowStateCursor
 
@@ -68,8 +75,6 @@ from .contracts import (
     InvestigationStatus,
     MasvsAuditAggregate,
     MasvsAuditDispatchResponse,
-    OperatorIntent,
-    OutcomeConfidence,
     OutcomeDispatchStatus,
     OutcomeKind,
     PatternKind,
@@ -707,82 +712,24 @@ def _investigation_summary(
 ) -> VRInvestigationSummary:
     """Project a VRInvestigationRecord row to the public summary.
 
-    ``live_cost_usd`` overrides the stored ``cost_actual_usd`` when
-    provided. The stored field has had no writers since inception, so
-    every read previously returned $0.00 regardless of actual spend.
-    Callers that aggregate ``LLMCostRecord`` per investigation pass the
-    sum here so the budget gauge reflects reality.
+    Binds the shared platform builder to VR's contract class. VR does not
+    set ``workspace_id`` from this path (callers that need it join it
+    separately). ``live_cost_usd`` overrides the stored
+    ``cost_actual_usd`` when provided.
     """
-    import json as _json
-
-    actual_cost = live_cost_usd if live_cost_usd is not None else record.cost_actual_usd
-    return VRInvestigationSummary(
-        id=record.id,
-        title=record.title,
-        target_id=record.target_id,
-        workspace_id=None,  # joined separately by callers that need it
-        parent_investigation_id=record.parent_investigation_id,
-        kind=InvestigationKind(record.kind),
-        status=InvestigationStatus(record.status),
-        pause_reason=(
-            InvestigationPauseReason(record.pause_reason)
-            if record.pause_reason else None
-        ),
-        auto_pilot=record.auto_pilot,
-        is_favorite=getattr(record, "is_favorite", False),
-        strategy_family=record.strategy_family,
-        cost_budget_usd=record.cost_budget_usd,
-        cost_actual_usd=actual_cost,
-        llm_tokens_cost_usd=record.llm_tokens_cost_usd,
-        mcp_calls_cost_usd=record.mcp_calls_cost_usd,
-        fuzz_infra_cost_usd=record.fuzz_infra_cost_usd,
+    return build_investigation_summary(
+        record,
+        summary_cls=VRInvestigationSummary,
         branch_count=branch_count,
         message_count=message_count,
         outcome_count=outcome_count,
-        primary_outcome_id=record.primary_outcome_id,
         primary_outcome_kind=primary_outcome_kind,
         primary_outcome_confidence=primary_outcome_confidence,
         primary_outcome_verdict_head=primary_outcome_verdict_head,
         verifier_verdict=verifier_verdict,
         verifier_confidence=verifier_confidence,
-        linked_campaign_ids=_json.loads(record.linked_campaign_ids_json or "[]"),
-        linked_finding_ids=_json.loads(record.linked_finding_ids_json or "[]"),
-        started_at=record.started_at,
-        stopped_at=record.stopped_at,
-        created_at=record.created_at,
-        updated_at=record.updated_at,
+        live_cost_usd=live_cost_usd,
     )
-
-
-async def _compute_live_investigation_cost(
-    uow: Any, investigation_id: str,
-) -> float:
-    """Aggregate LLMCostRecord.cost_usd over all task runs for this
-    investigation. Joins via TaskRecord.kwargs_json containing the
-    investigation_id since LLMCostRecord.run_id == TaskRecord.id.
-
-    Returns 0.0 on any error (best-effort -- budget gauge degrades to
-    the stored zero rather than crashing the read path).
-    """
-    try:
-
-
-        # Find all run_ids belonging to this investigation
-        task_ids_q = select(TaskRecord.id).where(
-            TaskRecord.fn_path.like("%run_vr_investigate%"),
-            TaskRecord.kwargs_json.like(f'%"{investigation_id}"%'),
-        )
-        task_ids = [r for r in (await uow.session.exec(task_ids_q)).all()]
-        if not task_ids:
-            return 0.0
-        sum_q = select(sa_func.coalesce(sa_func.sum(LLMCostRecord.cost_usd), 0.0)).where(
-            LLMCostRecord.run_id.in_(task_ids),
-        )
-        total = (await uow.session.exec(sum_q)).one()
-        return float(total)
-    except (AttributeError, ImportError, ValueError) as exc:
-        _log.warning("_compute_live_investigation_cost failed reason=%s", exc)
-        return 0.0
 
 
 def _branch_summary(
@@ -792,30 +739,16 @@ def _branch_summary(
 ) -> VRBranchSummary:
     """Project a VRInvestigationBranchRecord row to summary.
 
-    ``cursor_state`` + ``cursor_archived_state`` come from
-    :class:`WorkflowStateCursor` joined by ``run_id == branch.id``.
-    Callers that haven't joined the cursor table pass ``None``; the
-    UI then falls back to the legacy ``status`` field for paused-state
-    detection (which has the Phase B precision loss noted in the
+    Thin binding to the platform builder. ``cursor_state`` +
+    ``cursor_archived_state`` come from :class:`WorkflowStateCursor`
+    joined by ``run_id == branch.id``; callers that haven't joined pass
+    ``None`` and the UI falls back to the legacy ``status`` field for
+    paused-state detection (Phase B precision loss noted in the
     contract docstring).
     """
-    return VRBranchSummary(
-        id=record.id,
-        investigation_id=record.investigation_id,
-        parent_branch_id=record.parent_branch_id,
-        status=BranchStatus(record.status),
-        persona_voice=PersonaVoice(record.persona_voice) if record.persona_voice else None,
-        fork_reason=record.fork_reason or "",
-        fork_at_turn=record.fork_at_turn,
-        turn_count=record.turn_count,
-        branch_cost_usd=record.branch_cost_usd,
-        closed_reason=record.closed_reason or "",
-        merged_into_branch_id=record.merged_into_branch_id,
-        promoted=record.promoted,
-        closed_at=record.closed_at,
-        created_at=record.created_at,
-        updated_at=record.updated_at,
-        strategy_family=record.strategy_family,
+    return build_branch_summary(
+        record,
+        summary_cls=VRBranchSummary,
         cursor_state=cursor_state,
         cursor_archived_state=cursor_archived_state,
     )
@@ -823,44 +756,17 @@ def _branch_summary(
 
 def _message_summary(record: Any) -> VRMessageSummary:
     """Project a VRInvestigationMessageRecord row to summary."""
-    import json as _json
-
-    return VRMessageSummary(
-        id=record.id,
-        investigation_id=record.investigation_id,
-        branch_id=record.branch_id,
-        sender_kind=SenderKind(record.sender_kind),
-        sender_id=record.sender_id,
-        payload_kind=PayloadKind(record.payload_kind),
-        payload=_json.loads(record.payload_json or "{}"),
-        operator_intent=(
-            OperatorIntent(record.operator_intent) if record.operator_intent else None
-        ),
-        at_turn=record.at_turn,
-        evidence_refs=_json.loads(record.evidence_refs_json or "[]"),
-        created_at=record.created_at,
-    )
+    return build_message_summary(record, summary_cls=VRMessageSummary)
 
 
 def _outcome_summary(record: Any) -> VROutcomeSummary:
-    """Project a VRInvestigationOutcomeRecord row to summary."""
-    import json as _json
+    """Project a VRInvestigationOutcomeRecord row to summary.
 
-    return VROutcomeSummary(
-        id=record.id,
-        investigation_id=record.investigation_id,
-        branch_id=record.branch_id,
-        outcome_kind=OutcomeKind(record.outcome_kind),
-        payload=_json.loads(record.payload_json or "{}"),
-        confidence=OutcomeConfidence(record.confidence),
-        evidence_refs=_json.loads(record.evidence_refs_json or "[]"),
-        accepted_by_operator=record.accepted_by_operator,
-        accepted_at=record.accepted_at,
-        dispatch_status=OutcomeDispatchStatus(record.dispatch_status),
-        dispatch_target=record.dispatch_target,
-        created_at=record.created_at,
-        state=record.state or "dispatched",  # legacy NULL rows
-    )
+    VR does not surface sibling-review vote counts (contract fields
+    default to 0), so no ``review_counts`` is passed. The platform
+    builder maps legacy NULL ``state`` to ``'dispatched'``.
+    """
+    return build_outcome_summary(record, summary_cls=VROutcomeSummary)
 
 
 # Default strategy_family per InvestigationKind. Used both at create-time
@@ -1763,7 +1669,7 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRFinding]:
         del request
-        from aila.platform.contracts._common import utc_now
+        from aila.platform.contracts import utc_now
 
         from .db_models import VRFindingRecord, VRProjectRecord
 
@@ -1948,7 +1854,7 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRWorkspaceSummary]:
         del request
-        from aila.platform.contracts._common import utc_now
+        from aila.platform.contracts import utc_now
 
         from .db_models import VRWorkspaceRecord
 
@@ -2214,7 +2120,7 @@ def create_vr_router() -> APIRouter:
         del request
         import json as _json
 
-        from aila.platform.contracts._common import utc_now
+        from aila.platform.contracts import utc_now
 
         from .contracts.target import TargetTag, TargetTagSource
         from .db_models import VRTargetRecord
@@ -2753,6 +2659,7 @@ def create_vr_router() -> APIRouter:
                     h["audit_mcp_index_id"] = new_index_id
                     refreshed_row.mcp_handles_json = _json.dumps(h)
                     uow.session.add(refreshed_row)
+                    await uow.commit()
 
         return DataEnvelope(data={
             "target_id": target_id,
@@ -3524,8 +3431,8 @@ def create_vr_router() -> APIRouter:
           ``GET /investigations/{id}/report.pdf`` route.
 
         The PDF is rendered synchronously via ReportLab; the render is
-        pushed onto a worker thread via :func:`asyncio.to_thread` so a
-        large aggregate (~46 L1 controls plus subsections) doesn't
+        pushed onto a platform worker thread via :func:`run_blocking_io`
+        so a large aggregate (~46 L1 controls plus subsections) doesn't
         block the event loop while reportlab walks the flow.
         """
         del request
@@ -3534,6 +3441,7 @@ def create_vr_router() -> APIRouter:
             build_pdf,
             collect_findings,
         )
+        from aila.platform.services.runtime import run_blocking_io
 
         from .db_models import VRInvestigationRecord, VRTargetRecord
 
@@ -3613,12 +3521,14 @@ def create_vr_router() -> APIRouter:
         # the workflow lifecycle, NOT inline here). When no cached
         # section is present, the renderer falls back to the raw
         # agent_summary. The PDF endpoint never makes LLM calls.
-        # build_pdf is sync (CPU-bound ReportLab render). The
-        # investigation-report endpoint follows the same pattern --
-        # render directly on the event loop. The aggregate is bounded
-        # (≤53 L1 verdicts), so the render stays well inside ASGI
-        # request-budget territory.
-        pdf_bytes = build_pdf(aggregate, target_summary, handles=handles_dict)
+        # build_pdf is sync (CPU-bound ReportLab render); offload it to
+        # the platform worker pool via run_blocking_io so a large
+        # aggregate does not stall the event loop for other requests on
+        # this worker. Matches the investigation-report endpoint, which
+        # offloads its render inside render_investigation_pdf.
+        pdf_bytes = await run_blocking_io(
+            build_pdf, aggregate, target_summary, handles=handles_dict,
+        )
 
         filename = _masvs_report_filename(
             target_summary,
@@ -4070,12 +3980,15 @@ def create_vr_router() -> APIRouter:
                         if isinstance(vc, (int, float)):
                             verifier_confidence = float(vc)
 
-        # Live cost -- aggregate LLMCostRecord by run_id matching this
-        # investigation's TaskRecord ids. The stored cost_actual_usd has
-        # no writers so without this override every read returned $0
-        # regardless of actual spend, making the budget gauge decorative.
+        # Live cost -- sum LLMCostRecord by run_id (which the reasoning
+        # engine threads as the investigation id). The stored
+        # cost_actual_usd has no writers so without this override every
+        # read returned $0 regardless of actual spend, making the budget
+        # gauge decorative.
         async with UnitOfWork() as uow_cost:
-            live_cost = await _compute_live_investigation_cost(uow_cost, investigation_id)
+            live_cost = await compute_live_investigation_cost(
+                uow_cost, investigation_id,
+            )
         return DataEnvelope(data=_investigation_summary(
             inv,
             branch_count=int(branch_count),
@@ -4842,11 +4755,15 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRInvestigationSummary]:
         from aila.api.deps import get_task_queue
-        from aila.platform.contracts._common import utc_now
 
         from .db_models import VRInvestigationRecord
-        from .workflow.task import run_vr_investigate
+        from .workflow.pause_resume import reenqueue_investigation_atomic
 
+        # Auth visibility check: confirm the caller can see this row
+        # before mutating it. The platform reenqueue service owns the
+        # atomic reset (status to CREATED, stale-task cancel, crashed
+        # cursor wipe, commit before submit) across the four sources of
+        # truth; the handler keeps the team filter and the summary.
         async with UnitOfWork() as uow:
             inv = (await uow.session.exec(
                 _team_filter(
@@ -4861,80 +4778,36 @@ def create_vr_router() -> APIRouter:
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Investigation {investigation_id} not found.",
                 )
-            # Always sync strategy_family to kind's default when the
-            # operator re-enqueues with an explicit kind -- covers both
-            # 'change the kind' and 'fix a mismatch where the strategy
-            # was stuck on the wrong default from earlier create-time
-            # bug'. Without this, an investigation created with
-            # kind=variant_hunt but strategy_family=discovery_research
-            # (the pre-006047d default-fallback bug) couldn't be
-            # repaired without a direct DB edit.
-            if body and body.kind is not None:
-                inv.kind = body.kind.value
-                inv.strategy_family = _KIND_DEFAULT_STRATEGY[body.kind]
-            inv.status = InvestigationStatus.CREATED.value
-            inv.pause_reason = None
-            inv.updated_at = utc_now()
-            uow.session.add(inv)
 
-            # Cancel any stale run_vr_investigate TaskRecord still in
-            # queued/running/waiting for THIS investigation. Without
-            # this, TaskQueue.submit() (SEC-07 dedup, queue.py L128)
-            # returns the existing handle when input_hash matches --
-            # and the matching hash is exactly (fn=run_vr_investigate,
-            # kwargs={investigation_id: <id>}). When a previous worker
-            # crashed leaving its TaskRecord in 'running' without a
-            # live arq job, every re-enqueue silently no-op'd. Operator
-            # sees status=created, clicks 'Start', nothing happens.
+        # Resolve the kind change + its strategy default here (the
+        # kind-to-strategy map is VR policy); the service applies them.
+        new_kind: str | None = None
+        new_strategy: str | None = None
+        if body and body.kind is not None:
+            new_kind = body.kind.value
+            new_strategy = _KIND_DEFAULT_STRATEGY[body.kind]
 
-            stale_q = select(TaskRecord).where(
-                TaskRecord.fn_path.like("%run_vr_investigate%"),
-                TaskRecord.status.in_(["queued", "running", "waiting"]),
-                TaskRecord.kwargs_json.like(f'%"{investigation_id}"%'),
-            )
-            stale_rows = (await uow.session.exec(stale_q)).all()
-            for row in stale_rows:
-                row.status = TaskStatus.CANCELLED.value
-                uow.session.add(row)
-
-            # Branch cleanup is handled by investigation_setup's
-            # _spawn_persona_siblings_and_enqueue which now searches ALL
-            # branches by persona (not just current primary's children),
-            # reuses the best branch per persona, and abandons duplicates.
-            # Also wipe __crashed__ cursors for this investigation so the
-            # workflow engine starts fresh on next dispatch. Without this,
-            # crashed cursors persist forever and re-enqueue fires a new
-            # TaskRecord but the engine refuses to resume cleanly. I had
-            # to manually DELETE 219 such orphan crashed cursors today.
-            try:
-                await uow.session.exec(  # type: ignore[call-arg]
-                    sa_text(
-                        "DELETE FROM workflow_state_cursor "
-                        "WHERE current_state = '__crashed__' "
-                        "AND run_id IN (SELECT id FROM taskrecord "
-                        "WHERE kwargs_json LIKE :pat)"
-                    ).bindparams(pat=f'%"{investigation_id}"%')
-                )
-            except (SQLAlchemyError, OSError, RuntimeError) as exc:
-                logging.getLogger(__name__).warning(
-                    "re-enqueue: cursor cleanup failed: %s", exc,
-                    exc_info=True,
-                )
-            await uow.session.commit()
-            await uow.session.refresh(inv)
-        # (committed before submit so the next submit() sees a clean
-        # dedup table -- same UoW would race with the dedup_session
-        # opened inside TaskQueue.submit.)
-
-        task_queue = get_task_queue("vr", request)
-        await task_queue.submit(
-            track="vr",
-            fn=run_vr_investigate,
-            kwargs={"investigation_id": investigation_id},
+        await reenqueue_investigation_atomic(
+            investigation_id,
+            new_kind=new_kind,
+            new_strategy=new_strategy,
+            task_queue=get_task_queue("vr", request),
             user_id=auth.user_id,
             group_id=auth.role,
             team_id=auth.team_id,
         )
+
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                select(VRInvestigationRecord).where(
+                    VRInvestigationRecord.id == investigation_id,
+                ),
+            )).first()
+        if inv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Investigation {investigation_id} not found.",
+            )
         return DataEnvelope(data=_investigation_summary(inv))
 
     @router.post(
@@ -4953,7 +4826,8 @@ def create_vr_router() -> APIRouter:
         del request
         import json as _json
 
-        from .agents.intent_classifier import classify_intent
+        from aila.platform.agents.intent_classifier import classify_intent
+
         from .db_models import (
             VRInvestigationBranchRecord,
             VRInvestigationMessageRecord,

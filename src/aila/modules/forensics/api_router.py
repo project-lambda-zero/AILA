@@ -26,10 +26,13 @@ from sqlmodel import select
 
 from aila.api.schemas.common import PaginatedResponse
 from aila.api.schemas.envelope import DataEnvelope
+from aila.modules.forensics.config_schema import ForensicsConfigSchema
 from aila.platform.contracts.auth import AuthContext, require_auth
+from aila.platform.exceptions import AILAError
 from aila.platform.services.redis_pool import pool_available
 from aila.platform.tasks.progress import ProgressStream
 from aila.platform.uow import UnitOfWork
+from aila.storage.registry import ConfigRegistry
 
 from .contracts import (
     AnswerCandidate,
@@ -57,6 +60,29 @@ limiter = Limiter(key_func=get_remote_address)
 __all__ = ["create_forensics_router"]
 
 
+async def _read_freeflow_max_attempts() -> int:
+    """Resolve forensics.freeflow_max_attempts via ConfigRegistry.
+
+    Called only when the API request omits max_attempts. Falls back to
+    the ForensicsConfigSchema field default (10) on registry read
+    failure or non-numeric value so a transient DB blip never yields a
+    zero attempt cap (which would refuse to run any turns).
+    """
+    default = int(ForensicsConfigSchema.model_fields["freeflow_max_attempts"].default)
+    try:
+        raw = await ConfigRegistry().get("forensics", "freeflow_max_attempts")
+    except (OSError, RuntimeError, AILAError) as exc:
+        _log.warning("forensics.freeflow_max_attempts registry read failed (%s); using default %d", exc, default)
+        return default
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        _log.warning("forensics.freeflow_max_attempts config value %r not coercible to int; using default %d", raw, default)
+        return default
+
+
 def _finding_fingerprint(f: dict[str, Any]) -> str:
     """Stable 64-char hash of a finding's identity tuple.
 
@@ -78,6 +104,31 @@ def _finding_fingerprint(f: dict[str, Any]) -> str:
     ]
     payload = "\x1f".join(parts).encode("utf-8", errors="replace")
     return _hashlib.sha256(payload).hexdigest()
+
+
+async def _active_analysis_task_id(session: Any, project_id: str) -> str | None:
+    """Return the id of an active ``run_forensics_analysis`` task for this
+    project, or None (fix #59-3).
+
+    Readiness auto-enqueue used to transition CREATED -> READY and submit a
+    full-analysis task without checking whether one was already in flight.
+    Two rapid readiness-checks could open two full pipelines racing on
+    ArtifactRecord inserts. This detects an existing active task so the
+    caller can skip the second submit. The fn_path is derived from the
+    task callable the same way ``TaskQueue.submit`` stores it, so a future
+    module move does not silently break the match.
+    """
+    from aila.modules.forensics.workflow.task import run_forensics_analysis
+    from aila.platform.tasks.models import TaskRecord
+
+    fn_path = f"{run_forensics_analysis.__module__}.{run_forensics_analysis.__qualname__}"
+    return (await session.exec(
+        select(TaskRecord.id).where(
+            TaskRecord.fn_path == fn_path,
+            TaskRecord.status.in_(["queued", "running", "waiting"]),  # type: ignore[union-attr]
+            TaskRecord.kwargs_json.like(f'%"project_id": "{project_id}"%'),
+        ).limit(1)
+    )).first()
 
 
 def _agent_step_from_record(s: Any) -> AgentStep:
@@ -1076,11 +1127,15 @@ def create_forensics_router() -> APIRouter:
 
         from aila.modules.forensics.db_models import (
             AgentStepRecord,
+            AnalystDirectiveRecord,
+            AnswerCandidateRecord,
             ArtifactRecord,
+            FindingSuppressionRecord,
             ForensicsProjectRecord,
             InvestigationRunRecord,
             LeadRecord,
             ProjectEvidenceRecord,
+            SolidEvidenceRecord,
             WriteUpRecord,
         )
 
@@ -1102,6 +1157,11 @@ def create_forensics_router() -> APIRouter:
                 await uow.session.exec(
                     sa_delete(AgentStepRecord).where(AgentStepRecord.investigation_id == inv_id)
                 )
+                await uow.session.exec(
+                    sa_delete(AnswerCandidateRecord).where(
+                        AnswerCandidateRecord.investigation_id == inv_id
+                    )
+                )
             await uow.session.exec(
                 sa_delete(InvestigationRunRecord).where(InvestigationRunRecord.project_id == project_id)
             )
@@ -1116,6 +1176,29 @@ def create_forensics_router() -> APIRouter:
             )
             await uow.session.exec(
                 sa_delete(ProjectEvidenceRecord).where(ProjectEvidenceRecord.project_id == project_id)
+            )
+            # Project-scoped children whose FK is project_id -- previously
+            # orphaned on delete. AnswerCandidate can be linked by project_id
+            # without an investigation, so it is swept here as well.
+            await uow.session.exec(
+                sa_delete(AnswerCandidateRecord).where(
+                    AnswerCandidateRecord.project_id == project_id
+                )
+            )
+            await uow.session.exec(
+                sa_delete(AnalystDirectiveRecord).where(
+                    AnalystDirectiveRecord.project_id == project_id
+                )
+            )
+            await uow.session.exec(
+                sa_delete(FindingSuppressionRecord).where(
+                    FindingSuppressionRecord.project_id == project_id
+                )
+            )
+            await uow.session.exec(
+                sa_delete(SolidEvidenceRecord).where(
+                    SolidEvidenceRecord.project_id == project_id
+                )
             )
             await uow.session.delete(project)
             await uow.commit()
@@ -1177,38 +1260,51 @@ def create_forensics_router() -> APIRouter:
         )
 
         if result.ready:
-            task_queue = get_task_queue("forensics", request)
+            enqueue_mode: str | None = None
             async with UnitOfWork() as uow:
-                proj = (await uow.session.exec(
-                    select(ForensicsProjectRecord).where(ForensicsProjectRecord.id == project_id)
-                )).first()
-                if proj and proj.status == ProjectStatus.CREATED.value:
-                    proj.status = ProjectStatus.READY.value
-                    uow.session.add(proj)
-                    await uow.session.commit()
+                # fix #59-3: a full-analysis task may already be active for
+                # this project (double-click, or a prior submit still in
+                # flight). Detect it and skip re-enqueue so two pipelines do
+                # not race on ArtifactRecord inserts.
+                existing_task_id = await _active_analysis_task_id(
+                    uow.session, project_id,
+                )
+                if existing_task_id is not None:
+                    result.already_queued = True
+                    result.existing_task_id = existing_task_id
+                else:
+                    proj = (await uow.session.exec(
+                        select(ForensicsProjectRecord).where(ForensicsProjectRecord.id == project_id)
+                    )).first()
+                    if proj and proj.status == ProjectStatus.CREATED.value:
+                        proj.status = ProjectStatus.READY.value
+                        uow.session.add(proj)
+                        await uow.session.commit()
+                        enqueue_mode = (
+                            "raw_directory" if project.project_kind == "raw_directory" else "full_analysis"
+                        )
 
-                    enqueue_mode = (
-                        "raw_directory" if project.project_kind == "raw_directory" else "full_analysis"
-                    )
-                    await task_queue.submit(
-                        track="forensics",
-                        fn=run_forensics_analysis,
-                        kwargs={
-                            "project_id": project_id,
-                            "mode": enqueue_mode,
-                            "integration": integration,
-                            "analyzer_os": project.analyzer_os,
-                            "evidence_directory": project.evidence_directory,
-                            "project_kind": project.project_kind,
-                        },
-                        user_id=auth.user_id,
-                        group_id=auth.role,
-                        team_id=auth.team_id,
-                    )
-                    _log.info(
-                        "Auto-enqueued %s for project %s",
-                        enqueue_mode, project_id,
-                    )
+            # Enqueue OUTSIDE the DB session (#63): the ARQ/Redis submit is a
+            # network await and must not pin the pooled DB connection. The
+            # status flip is already committed above; enqueue only if it fired.
+            if enqueue_mode is not None:
+                task_queue = get_task_queue("forensics", request)
+                await task_queue.submit(
+                    track="forensics",
+                    fn=run_forensics_analysis,
+                    kwargs={
+                        "project_id": project_id,
+                        "mode": enqueue_mode,
+                        "integration": integration,
+                        "analyzer_os": project.analyzer_os,
+                        "evidence_directory": project.evidence_directory,
+                        "project_kind": project.project_kind,
+                    },
+                    user_id=auth.user_id,
+                    group_id=auth.role,
+                    team_id=auth.team_id,
+                )
+                _log.info("Auto-enqueued %s for project %s", enqueue_mode, project_id)
 
         return DataEnvelope(data=result)
 
@@ -1292,11 +1388,22 @@ def create_forensics_router() -> APIRouter:
             if result.ready:
                 task_queue = get_task_queue("forensics", request)
                 async with UnitOfWork() as _uow:
-                    proj = (await _uow.session.exec(
-                        select(ForensicsProjectRecord).where(
-                            ForensicsProjectRecord.id == project_id
-                        )
-                    )).first()
+                    # fix #59-3: skip enqueue if a full-analysis task is
+                    # already active for this project (double-click / prior
+                    # submit still in flight).
+                    existing_task_id = await _active_analysis_task_id(
+                        _uow.session, project_id,
+                    )
+                    proj = None
+                    if existing_task_id is not None:
+                        result.already_queued = True
+                        result.existing_task_id = existing_task_id
+                    else:
+                        proj = (await _uow.session.exec(
+                            select(ForensicsProjectRecord).where(
+                                ForensicsProjectRecord.id == project_id
+                            )
+                        )).first()
                     if proj and proj.status == ProjectStatus.CREATED.value:
                         proj.status = ProjectStatus.READY.value
                         _uow.session.add(proj)
@@ -1327,6 +1434,8 @@ def create_forensics_router() -> APIRouter:
             await progress_cb({
                 "stage": "done",
                 "ready": result.ready,
+                "already_queued": result.already_queued,
+                "existing_task_id": result.existing_task_id,
                 "installed_count": sum(1 for t in result.tools if t.status == "installed"),
                 "missing_count": sum(1 for t in result.tools if t.status == "missing"),
                 "total": len(result.tools),
@@ -1357,7 +1466,18 @@ def create_forensics_router() -> APIRouter:
         request: Request,
         project_id: str,
         auth: AuthContext = Depends(require_auth),
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=100, ge=1, le=500),
     ) -> DataEnvelope[list[EvidenceItem]]:
+        # SQL-level pagination (finding 59-3.4): the previous handler
+        # fetched every ProjectEvidenceRecord row for the project into
+        # memory. A project with thousands of evidence files blew both
+        # the response body size limit and the SQLModel row buffer at
+        # the same time. Applying LIMIT/OFFSET on a stable ORDER BY
+        # (created_at DESC, id ASC tiebreak) keeps the response bounded
+        # to page_size items while preserving the existing
+        # DataEnvelope[list[EvidenceItem]] envelope so callers do not
+        # need a schema migration.
         del request
 
         from aila.modules.forensics.db_models import ForensicsProjectRecord, ProjectEvidenceRecord
@@ -1371,7 +1491,14 @@ def create_forensics_router() -> APIRouter:
             _require_project_ownership(project, auth)
 
             rows = (await uow.session.exec(
-                select(ProjectEvidenceRecord).where(ProjectEvidenceRecord.project_id == project_id)
+                select(ProjectEvidenceRecord)
+                .where(ProjectEvidenceRecord.project_id == project_id)
+                .order_by(
+                    ProjectEvidenceRecord.created_at.desc(),  # type: ignore[union-attr]
+                    ProjectEvidenceRecord.id.asc(),  # type: ignore[union-attr]
+                )
+                .offset((page - 1) * page_size)
+                .limit(page_size)
             )).all()
 
         items = [
@@ -1396,10 +1523,24 @@ def create_forensics_router() -> APIRouter:
         request: Request,
         project_id: str,
         auth: AuthContext = Depends(require_auth),
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=100, ge=1, le=500),
     ) -> DataEnvelope[list[dict[str, Any]]]:
-        """Walk every artifact's ``records[]``, pull rows tagged
-        ``suspicious_reasons``, return them as a flat table the UI can render
-        as the auto-findings view."""
+        """Walk each artifact's ``records[]``, pull rows tagged
+        ``suspicious_reasons``, return them as a flat table.
+
+        SQL-level pagination (finding 59-3.4) is applied at the
+        ArtifactRecord layer: at most ``page_size`` artifacts are
+        deserialised per request, ordered by ``created_at DESC`` with an
+        id tiebreaker for stability. Because one artifact can yield
+        multiple record-level findings, the emitted findings count is not
+        bounded by ``page_size`` alone -- but the number of artifacts
+        scanned (the O(N) blow-up point) IS. Suppressions are queried
+        without a LIMIT because the fingerprint set is a project-scoped
+        allowlist and typically small.
+        """
+        del request
+
         from aila.modules.forensics.db_models import (
             ArtifactRecord,
             FindingSuppressionRecord,
@@ -1414,7 +1555,14 @@ def create_forensics_router() -> APIRouter:
                 raise HTTPException(status_code=404, detail=f"Project {project_id} not found.")
             _require_project_ownership(project, auth)
             arts = (await uow.session.exec(
-                select(ArtifactRecord).where(ArtifactRecord.project_id == project_id)
+                select(ArtifactRecord)
+                .where(ArtifactRecord.project_id == project_id)
+                .order_by(
+                    ArtifactRecord.created_at.desc(),  # type: ignore[union-attr]
+                    ArtifactRecord.id.asc(),  # type: ignore[union-attr]
+                )
+                .offset((page - 1) * page_size)
+                .limit(page_size)
             )).all()
             suppressed_fps = set((await uow.session.exec(
                 select(FindingSuppressionRecord.fingerprint).where(
@@ -1675,11 +1823,21 @@ def create_forensics_router() -> APIRouter:
                     detail=f"Analyzer system {project.system_id} no longer exists.",
                 )
 
+            # Only honor an operator-supplied max_attempts when the caller
+            # explicitly sent the field. When omitted, resolve via
+            # ConfigRegistry so an operator override of
+            # forensics.freeflow_max_attempts wins over the API contract's
+            # own Pydantic default (which is only a fallback for the fallback).
+            if "max_attempts" in body.model_fields_set:
+                resolved_max_attempts = body.max_attempts
+            else:
+                resolved_max_attempts = await _read_freeflow_max_attempts()
+
             record = InvestigationRunRecord(
                 project_id=project_id,
                 question=body.question,
                 status="pending",
-                max_attempts=body.max_attempts,
+                max_attempts=resolved_max_attempts,
             )
             uow.session.add(record)
             await uow.session.commit()
@@ -1704,7 +1862,7 @@ def create_forensics_router() -> APIRouter:
                     "investigation_id": record.id,
                     "project_id": project_id,
                     "question": body.question,
-                    "max_attempts": body.max_attempts,
+                    "max_attempts": resolved_max_attempts,
                     "integration": integration,
                     "analyzer_os": project.analyzer_os,
                     "evidence_directory": project.evidence_directory,
@@ -1905,7 +2063,17 @@ def create_forensics_router() -> APIRouter:
         request: Request,
         project_id: str,
         auth: AuthContext = Depends(require_auth),
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=100, ge=1, le=500),
     ) -> DataEnvelope[list[InvestigationSummary]]:
+        # SQL-level pagination (finding 59-3.4): a long-running project can
+        # accrue hundreds of investigations (each rerun creates a new row).
+        # Fetching all rows plus per-row ``_zombie_reap_reason`` queries
+        # scaled linearly with project age and eventually timed out.
+        # LIMIT/OFFSET on the ``created_at DESC, id ASC`` ordering keeps
+        # the response bounded to ``page_size`` items and preserves the
+        # existing ``DataEnvelope[list[InvestigationSummary]]`` envelope
+        # so client callers keep working without a shape change.
         del request
 
         from aila.modules.forensics.db_models import ForensicsProjectRecord, InvestigationRunRecord
@@ -1921,7 +2089,12 @@ def create_forensics_router() -> APIRouter:
             rows = list((await uow.session.exec(
                 select(InvestigationRunRecord)
                 .where(InvestigationRunRecord.project_id == project_id)
-                .order_by(InvestigationRunRecord.created_at.desc())
+                .order_by(
+                    InvestigationRunRecord.created_at.desc(),  # type: ignore[union-attr]
+                    InvestigationRunRecord.id.asc(),  # type: ignore[union-attr]
+                )
+                .offset((page - 1) * page_size)
+                .limit(page_size)
             )).all())
 
             # fix §49 -- GET no longer mutates. Build per-row needs_reap
@@ -3380,7 +3553,7 @@ def create_forensics_router() -> APIRouter:
             if record is None:
                 raise HTTPException(status_code=404, detail=f"Directive {directive_id} not found.")
             record.active = False
-            from aila.platform.contracts._common import utc_now
+            from aila.platform.contracts import utc_now
             record.resolved_at = utc_now()
             uow.session.add(record)
             await uow.commit()
@@ -3388,6 +3561,13 @@ def create_forensics_router() -> APIRouter:
     @router.post(
         "/projects/{project_id}/retrieve-file",
         summary="Extract an arbitrary file from a project's disk image and stream it back.",
+        response_class=StreamingResponse,
+        responses={
+            200: {
+                "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}},
+                "description": "Raw file bytes",
+            },
+        },
     )
     @limiter.limit("10/minute")
     async def retrieve_file(
@@ -3533,6 +3713,13 @@ def create_forensics_router() -> APIRouter:
     @router.post(
         "/projects/{project_id}/fetch-raw",
         summary="Fetch a file or directory from a raw_directory project's evidence.",
+        response_class=StreamingResponse,
+        responses={
+            200: {
+                "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}},
+                "description": "Raw file or archive bytes",
+            },
+        },
     )
     @limiter.limit("10/minute")
     async def fetch_raw(
@@ -3982,7 +4169,7 @@ def create_forensics_router() -> APIRouter:
             ForensicsProjectRecord,
             SolidEvidenceRecord,
         )
-        from aila.platform.contracts._common import utc_now
+        from aila.platform.contracts import utc_now
 
         async with UnitOfWork() as uow:
             project = (await uow.session.exec(
@@ -4230,7 +4417,7 @@ def create_forensics_router() -> APIRouter:
             FindingSuppressionRecord,
             ForensicsProjectRecord,
         )
-        from aila.platform.contracts._common import utc_now
+        from aila.platform.contracts import utc_now
 
         async with UnitOfWork() as uow:
             project = (await uow.session.exec(

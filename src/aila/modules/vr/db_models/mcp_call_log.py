@@ -1,43 +1,18 @@
 """MCP call log table -- operator audit trail of every delegated call.
 
-One row is written per ``AuditMcpBridgeTool.forward()`` /
-``IDABridgeTool.forward()`` invocation, capturing the action, latency,
-outcome, and an excerpt of the error message when the call failed.
-
-Bodies are NOT persisted (use worker logs for those). The point of this
-table is operator visibility: ``what was just called, did it work, how
-long did it take``.
+VR module's concrete record. Every column comes from the shared platform base;
+see :mod:`aila.platform.contracts.mcp_call_log_base`. The #39 observability
+join-keys (investigation_id / branch_id / turn_number) now live on the base
+(RFC-04 Phase 1 unified the MCP call logger across modules).
 """
 from __future__ import annotations
 
-from datetime import datetime
-from uuid import uuid4
-
-from sqlalchemy import Column, DateTime, Text
-from sqlmodel import Field, SQLModel
-
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts.mcp_call_log_base import McpCallLogRecordBase
 
 __all__ = ["VRMcpCallLogRecord"]
 
 
-class VRMcpCallLogRecord(SQLModel, table=True):
-    """One MCP call record."""
+class VRMcpCallLogRecord(McpCallLogRecordBase, table=True):
+    """One MCP call record (operator audit trail)."""
 
     __tablename__ = "vr_mcp_call_log"
-
-    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    server_id: str = Field(max_length=64, index=True)
-    base_url: str = Field(max_length=512)
-    action: str = Field(max_length=128)
-    status: str = Field(max_length=16)  # 'ready' | 'error' | 'pending'
-    http_status: int | None = Field(default=None)
-    latency_ms: int | None = Field(default=None)
-    error_excerpt: str | None = Field(default=None, sa_column=Column(Text))
-    target_id: str | None = Field(default=None, max_length=36, index=True)
-    team_id: str | None = Field(default=None, max_length=36)
-    called_at: datetime = Field(
-        default_factory=utc_now,
-        sa_type=DateTime(timezone=True),
-        index=True,
-    )

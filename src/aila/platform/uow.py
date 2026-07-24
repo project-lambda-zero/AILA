@@ -23,6 +23,17 @@ if TYPE_CHECKING:
     from ..api.auth import TeamContext
 
 
+class UnitOfWorkNotCommittedError(RuntimeError):
+    """A UoW body performed writes but exited without calling commit().
+
+    Raised by :meth:`UnitOfWork.__aexit__` on a non-exception exit when the
+    session still holds pending inserts, updates, or deletes. The underlying
+    ``async_session_scope`` rolls those writes back on close, so a forgotten
+    ``await uow.commit()`` silently loses data. This backstop converts that
+    silent loss into a named, test-visible failure (C4).
+    """
+
+
 class UnitOfWork:
     """Wraps one AsyncSession for the duration of a caller-controlled transaction.
 
@@ -62,9 +73,23 @@ class UnitOfWork:
         exc_val: BaseException | None,
         tb: object,
     ) -> None:
-        await self._cm.__aexit__(exc_type, exc_val, tb)
-        self._session = None
-        self._cm = None
+        # Capture pending-write state before the inner scope rolls back and
+        # expires the session on close.
+        uncommitted = (
+            exc_type is None
+            and self._session is not None
+            and bool(self._session.new or self._session.dirty or self._session.deleted)
+        )
+        try:
+            await self._cm.__aexit__(exc_type, exc_val, tb)
+        finally:
+            self._session = None
+            self._cm = None
+        if uncommitted:
+            raise UnitOfWorkNotCommittedError(
+                "UnitOfWork exited with uncommitted writes; call "
+                "'await uow.commit()' before the block exits (C4)"
+            )
 
     async def commit(self) -> None:
         """Explicitly commit the current transaction."""

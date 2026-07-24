@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from aila.platform.contracts._common import JsonObject
+from aila.platform.contracts import JsonObject
 from aila.platform.contracts.runtime import PlatformResponse
 
 __all__ = ["HelloWorldWorkflow"]

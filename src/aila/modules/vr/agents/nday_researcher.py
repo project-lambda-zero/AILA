@@ -15,6 +15,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from aila.platform.agents.idempotent_llm import idempotent_llm_call
 from aila.platform.contracts.budget import BudgetConfig, BudgetState
 from aila.platform.contracts.obligations import (
     AdjudicationResult,
@@ -302,12 +303,16 @@ class NdayResearcher:
         prompt = self._build_user_prompt(turn, pack, prior_steps)
         client = ServiceFactory().llm_client
         t0 = time.monotonic()
-        response = await client.chat(
+        response, _ = await idempotent_llm_call(
+            client,
+            method="chat",
             task_type="vulnerability_research",
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
+            investigation_id=self.run_id,
+            turn_number=turn,
             run_id=self.run_id,
         )
         # LLM wall-clock counts against the tool-time budget.

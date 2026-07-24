@@ -17,9 +17,15 @@ from typing import Any
 import pytest
 
 from aila.platform.events.event import PlatformEvent
-from aila.platform.llm.client import LLMResponse
+from aila.platform.llm.client import LLMResponse, _enrich_response
 from aila.platform.llm.config import LLMRouting
 from aila.platform.llm.errors import ConfidenceRejectedError
+from aila.platform.llm.gate import (
+    _map_confidence_level,
+    extract_confidence,
+    make_gate_step,
+)
+from aila.platform.llm.pipeline import PipelineRunner
 
 # ---------------------------------------------------------------------------
 # Fakes (same patterns as test_validate.py / test_classify.py)
@@ -37,25 +43,33 @@ class FakeEmitter:
 
 
 class FakeConfigRegistry:
-    """Minimal ConfigRegistry fake for threshold reads."""
+    """Minimal ConfigRegistry fake for threshold reads.
+
+    ``get`` is async to match the real ConfigRegistry -- gate.py's
+    ``_resolve_thresholds`` / ``_resolve_consensus_config`` await it.
+    """
 
     def __init__(self, overrides: dict[str, Any] | None = None) -> None:
         self._data = overrides or {}
 
-    def get(self, namespace: str, key: str) -> Any:
+    async def get(self, namespace: str, key: str) -> Any:
         return self._data.get(key)
 
 
 class FakeConfigProvider:
-    """Wraps FakeConfigRegistry as _registry attribute (mimics LLMConfigProvider)."""
+    """Wraps FakeConfigRegistry as _registry attribute (mimics LLMConfigProvider).
+
+    ``is_step_enabled`` and ``resolve_fail_mode`` are async to match the
+    real LLMConfigProvider -- PipelineRunner._run_step awaits both.
+    """
 
     def __init__(self, overrides: dict[str, Any] | None = None) -> None:
         self._registry = FakeConfigRegistry(overrides)
 
-    def is_step_enabled(self, step: str, task_type: str) -> bool:
+    async def is_step_enabled(self, step: str, task_type: str) -> bool:
         return True
 
-    def resolve_fail_mode(self, step: str, task_type: str) -> str:
+    async def resolve_fail_mode(self, step: str, task_type: str) -> str:
         return "open"
 
 
@@ -70,13 +84,16 @@ class FakeCallFn:
     async def __call__(
         self,
         *,
-        client: Any,
         routing: Any,
         messages: Any,
         response_format: Any = None,
         tools: Any = None,
         tool_executor: Any = None,
+        run_id: Any = None,
     ) -> LLMResponse:
+        # gate._run_consensus calls inner_call(routing=, messages=,
+        # response_format=None, tools=None, tool_executor=None, run_id=...)
+        # No ``client`` kwarg -- it's baked into inner_call closure upstream.
         self._calls.append({"routing": routing, "messages": messages})
         resp = self._responses[self._index % len(self._responses)]
         self._index += 1
@@ -116,67 +133,47 @@ class TestExtractConfidence:
     """Pure function: extract confidence score from response content."""
 
     def test_json_with_confidence_score(self) -> None:
-        from aila.platform.llm.gate import extract_confidence
-
         content = json.dumps({"confidence_score": 0.95, "answer": "yes"})
         assert extract_confidence(content, "stop") == 0.95
 
     def test_json_score_zero(self) -> None:
-        from aila.platform.llm.gate import extract_confidence
-
         content = json.dumps({"confidence_score": 0.0})
         assert extract_confidence(content, "stop") == 0.0
 
     def test_json_score_one(self) -> None:
-        from aila.platform.llm.gate import extract_confidence
-
         content = json.dumps({"confidence_score": 1.0})
         assert extract_confidence(content, "stop") == 1.0
 
     def test_json_score_out_of_range_falls_to_heuristic(self) -> None:
-        from aila.platform.llm.gate import extract_confidence
-
         content = json.dumps({"confidence_score": 1.5})
         # Out of [0, 1], falls to heuristic: content > 50 chars + stop -> 0.7
         score = extract_confidence(content, "stop")
         assert score != 1.5  # not the out-of-range value
 
     def test_json_score_not_a_number_falls_to_heuristic(self) -> None:
-        from aila.platform.llm.gate import extract_confidence
-
         content = json.dumps({"confidence_score": "not_a_number"})
         score = extract_confidence(content, "stop")
         # Falls to heuristic since "not_a_number" is not a number
         assert isinstance(score, float)
 
     def test_json_without_confidence_field_falls_to_heuristic(self) -> None:
-        from aila.platform.llm.gate import extract_confidence
-
         content = json.dumps({"answer": "yes", "reasoning": "because reasons"})
         score = extract_confidence(content, "stop")
         # No confidence_score key => heuristic
         assert isinstance(score, float)
 
     def test_plain_text_long_stop_returns_0_7(self) -> None:
-        from aila.platform.llm.gate import extract_confidence
-
         content = "This is a normal response with enough text to exceed fifty characters threshold."
         assert extract_confidence(content, "stop") == 0.7
 
     def test_finish_reason_length_returns_0_4(self) -> None:
-        from aila.platform.llm.gate import extract_confidence
-
         content = "Some content that was truncated"
         assert extract_confidence(content, "length") == 0.4
 
     def test_empty_content_returns_0_1(self) -> None:
-        from aila.platform.llm.gate import extract_confidence
-
         assert extract_confidence("", "stop") == 0.1
 
     def test_short_content_stop_returns_0_1(self) -> None:
-        from aila.platform.llm.gate import extract_confidence
-
         assert extract_confidence("short", "stop") == 0.1
 
 
@@ -189,43 +186,27 @@ class TestConfidenceLevel:
     """Mapping from numeric score to HIGH/MEDIUM/LOW/REJECT."""
 
     def test_high(self) -> None:
-        from aila.platform.llm.gate import _map_confidence_level
-
         assert _map_confidence_level(0.9, 0.8, 0.5, 0.2) == "HIGH"
 
     def test_high_boundary(self) -> None:
-        from aila.platform.llm.gate import _map_confidence_level
-
         assert _map_confidence_level(0.8, 0.8, 0.5, 0.2) == "HIGH"
 
     def test_medium(self) -> None:
-        from aila.platform.llm.gate import _map_confidence_level
-
         assert _map_confidence_level(0.6, 0.8, 0.5, 0.2) == "MEDIUM"
 
     def test_medium_boundary(self) -> None:
-        from aila.platform.llm.gate import _map_confidence_level
-
         assert _map_confidence_level(0.5, 0.8, 0.5, 0.2) == "MEDIUM"
 
     def test_low(self) -> None:
-        from aila.platform.llm.gate import _map_confidence_level
-
         assert _map_confidence_level(0.3, 0.8, 0.5, 0.2) == "LOW"
 
     def test_low_boundary(self) -> None:
-        from aila.platform.llm.gate import _map_confidence_level
-
         assert _map_confidence_level(0.2, 0.8, 0.5, 0.2) == "LOW"
 
     def test_reject(self) -> None:
-        from aila.platform.llm.gate import _map_confidence_level
-
         assert _map_confidence_level(0.1, 0.8, 0.5, 0.2) == "REJECT"
 
     def test_reject_zero(self) -> None:
-        from aila.platform.llm.gate import _map_confidence_level
-
         assert _map_confidence_level(0.0, 0.8, 0.5, 0.2) == "REJECT"
 
 
@@ -239,8 +220,6 @@ class TestGateRoutingHigh:
 
     @pytest.mark.asyncio
     async def test_high_auto_accept(self, routing: LLMRouting, default_config: FakeConfigProvider) -> None:
-        from aila.platform.llm.gate import make_gate_step
-
         response = LLMResponse(
             content=json.dumps({"confidence_score": 0.95, "answer": "yes"}),
             model="test-model",
@@ -257,8 +236,6 @@ class TestGateRoutingHigh:
 
     @pytest.mark.asyncio
     async def test_high_no_flagged(self, routing: LLMRouting, default_config: FakeConfigProvider) -> None:
-        from aila.platform.llm.gate import make_gate_step
-
         response = LLMResponse(
             content=json.dumps({"confidence_score": 0.85}),
             model="test-model",
@@ -283,8 +260,6 @@ class TestGateRoutingMedium:
 
     @pytest.mark.asyncio
     async def test_medium_flagged(self, routing: LLMRouting, default_config: FakeConfigProvider) -> None:
-        from aila.platform.llm.gate import make_gate_step
-
         response = LLMResponse(
             content=json.dumps({"confidence_score": 0.6}),
             model="test-model",
@@ -311,8 +286,6 @@ class TestGateRoutingLow:
 
     @pytest.mark.asyncio
     async def test_low_triggers_consensus(self, routing: LLMRouting) -> None:
-        from aila.platform.llm.gate import make_gate_step
-
         # Original response: LOW confidence (0.3)
         response = LLMResponse(
             content=json.dumps({"confidence_score": 0.3}),
@@ -349,8 +322,6 @@ class TestGateRoutingReject:
 
     @pytest.mark.asyncio
     async def test_reject_raises(self, routing: LLMRouting, default_config: FakeConfigProvider) -> None:
-        from aila.platform.llm.gate import make_gate_step
-
         response = LLMResponse(
             content=json.dumps({"confidence_score": 0.1}),
             model="test-model",
@@ -375,8 +346,6 @@ class TestRejectPropagation:
 
     @pytest.mark.asyncio
     async def test_reject_propagates_in_fail_open(self, routing: LLMRouting) -> None:
-        from aila.platform.llm.gate import make_gate_step
-        from aila.platform.llm.pipeline import PipelineRunner
 
         # Config with fail-open for gate step
         config = FakeConfigProvider()
@@ -415,8 +384,6 @@ class TestThresholdConfig:
 
     @pytest.mark.asyncio
     async def test_custom_thresholds(self, routing: LLMRouting) -> None:
-        from aila.platform.llm.gate import make_gate_step
-
         # Custom thresholds: high=0.9, medium=0.7, reject=0.4
         config = FakeConfigProvider({
             "llm_pipeline_gate_high_threshold_scoring": 0.9,
@@ -440,8 +407,6 @@ class TestThresholdConfig:
 
     @pytest.mark.asyncio
     async def test_default_thresholds_when_missing(self, routing: LLMRouting, default_config: FakeConfigProvider) -> None:
-        from aila.platform.llm.gate import make_gate_step
-
         # Score 0.85: with defaults (0.8/0.5/0.2) should be HIGH
         response = LLMResponse(
             content=json.dumps({"confidence_score": 0.85}),
@@ -467,8 +432,6 @@ class TestConsensusSameModel:
 
     @pytest.mark.asyncio
     async def test_same_model_uses_high_temp(self, routing: LLMRouting) -> None:
-        from aila.platform.llm.gate import make_gate_step
-
         # Original: LOW (0.3)
         response = LLMResponse(
             content=json.dumps({"confidence_score": 0.3}),
@@ -507,8 +470,6 @@ class TestConsensusCrossModel:
 
     @pytest.mark.asyncio
     async def test_cross_model_uses_different_model(self, routing: LLMRouting) -> None:
-        from aila.platform.llm.gate import make_gate_step
-
         response = LLMResponse(
             content=json.dumps({"confidence_score": 0.3}),
             model="test-model",
@@ -545,8 +506,6 @@ class TestMajorityVote:
 
     @pytest.mark.asyncio
     async def test_majority_passing_replaces_response(self, routing: LLMRouting) -> None:
-        from aila.platform.llm.gate import make_gate_step
-
         # Original: LOW (0.3). 3 retries: 0.6, 0.7, 0.35
         # Total votes: 4. Passing (>= 0.5): 0.6, 0.7 = 2. Not passing: 0.3, 0.35 = 2.
         # 2 > 4/2 = 2 -> NOT majority (need strictly > 50%)
@@ -586,8 +545,6 @@ class TestMajorityVote:
 
     @pytest.mark.asyncio
     async def test_majority_failing_keeps_original(self, routing: LLMRouting) -> None:
-        from aila.platform.llm.gate import make_gate_step
-
         # Original: LOW (0.3). 3 retries all LOW (0.3)
         # Total: 4. Passing: 0. -> no majority
         response = LLMResponse(
@@ -624,8 +581,6 @@ class TestConsensusResponseReplacement:
 
     @pytest.mark.asyncio
     async def test_winner_replaces_response(self, routing: LLMRouting) -> None:
-        from aila.platform.llm.gate import make_gate_step
-
         # Original: LOW (0.3). 2 retries: 0.9 (HIGH), 0.85 (HIGH)
         # Total: 3. Passing: 2. > 3/2 = 1.5 -> majority
         # Highest: 0.9 -> that response wins
@@ -658,8 +613,6 @@ class TestConsensusResponseReplacement:
 
     @pytest.mark.asyncio
     async def test_consensus_retry_count_from_config(self, routing: LLMRouting) -> None:
-        from aila.platform.llm.gate import make_gate_step
-
         response = LLMResponse(
             content=json.dumps({"confidence_score": 0.3}),
             model="test-model",
@@ -692,8 +645,6 @@ class TestAuditEvent:
 
     @pytest.mark.asyncio
     async def test_event_emitted_on_high(self, routing: LLMRouting, default_config: FakeConfigProvider) -> None:
-        from aila.platform.llm.gate import make_gate_step
-
         emitter = FakeEmitter()
         response = LLMResponse(
             content=json.dumps({"confidence_score": 0.95}),
@@ -716,8 +667,6 @@ class TestAuditEvent:
 
     @pytest.mark.asyncio
     async def test_event_emitted_on_reject(self, routing: LLMRouting, default_config: FakeConfigProvider) -> None:
-        from aila.platform.llm.gate import make_gate_step
-
         emitter = FakeEmitter()
         response = LLMResponse(
             content=json.dumps({"confidence_score": 0.05}),
@@ -739,8 +688,6 @@ class TestAuditEvent:
 
     @pytest.mark.asyncio
     async def test_event_fields_complete(self, routing: LLMRouting) -> None:
-        from aila.platform.llm.gate import make_gate_step
-
         emitter = FakeEmitter()
         response = LLMResponse(
             content=json.dumps({"confidence_score": 0.6}),
@@ -775,8 +722,6 @@ class TestGateGuard:
 
     @pytest.mark.asyncio
     async def test_no_response_noop(self, routing: LLMRouting, default_config: FakeConfigProvider) -> None:
-        from aila.platform.llm.gate import make_gate_step
-
         ctx: dict[str, Any] = {"task_type": "scoring"}
         call_fn = FakeCallFn([])
         step = make_gate_step(default_config, call_fn, emitter=None)
@@ -801,13 +746,13 @@ class FakeDisableableConfigProvider:
         self._registry = FakeConfigRegistry(overrides)
         self._disabled_steps = disabled_steps or {}
 
-    def is_step_enabled(self, step: str, task_type: str) -> bool:
+    async def is_step_enabled(self, step: str, task_type: str) -> bool:
         key = f"{step}_{task_type}"
         if key in self._disabled_steps:
             return not self._disabled_steps[key]
         return True
 
-    def resolve_fail_mode(self, step: str, task_type: str) -> str:
+    async def resolve_fail_mode(self, step: str, task_type: str) -> str:
         return "open"
 
 
@@ -822,9 +767,6 @@ class TestGatePipelineIntegration:
     @pytest.mark.asyncio
     async def test_high_confidence_passes_through_pipeline(self, routing: LLMRouting) -> None:
         """HIGH response passes through pipeline with confidence=HIGH in enriched LLMResponse."""
-        from aila.platform.llm.client import _enrich_response
-        from aila.platform.llm.gate import make_gate_step
-        from aila.platform.llm.pipeline import PipelineRunner
 
         config = FakeConfigProvider()
         runner = PipelineRunner(config_provider=config)
@@ -863,8 +805,6 @@ class TestGatePipelineIntegration:
     @pytest.mark.asyncio
     async def test_reject_propagates_through_pipeline(self, routing: LLMRouting) -> None:
         """REJECT response raises ConfidenceRejectedError through pipeline (NOT swallowed by fail-open)."""
-        from aila.platform.llm.gate import make_gate_step
-        from aila.platform.llm.pipeline import PipelineRunner
 
         config = FakeConfigProvider()
         runner = PipelineRunner(config_provider=config)
@@ -895,8 +835,6 @@ class TestGatePipelineIntegration:
     @pytest.mark.asyncio
     async def test_gate_response_replacement_flows_through(self, routing: LLMRouting) -> None:
         """Consensus replaces ctx['response'] and pipeline returns the new response (D-15 fix)."""
-        from aila.platform.llm.gate import make_gate_step
-        from aila.platform.llm.pipeline import PipelineRunner
 
         # Thresholds: reject=0.1, medium=0.6, high=0.9
         config = FakeConfigProvider({
@@ -944,9 +882,6 @@ class TestGatePipelineIntegration:
     @pytest.mark.asyncio
     async def test_medium_flagged_enriches_response(self, routing: LLMRouting) -> None:
         """MEDIUM response is flagged correctly and enriched into LLMResponse."""
-        from aila.platform.llm.client import _enrich_response
-        from aila.platform.llm.gate import make_gate_step
-        from aila.platform.llm.pipeline import PipelineRunner
 
         config = FakeConfigProvider()
         runner = PipelineRunner(config_provider=config)
@@ -985,8 +920,6 @@ class TestGatePipelineIntegration:
     @pytest.mark.asyncio
     async def test_gate_disabled_via_config_skips(self, routing: LLMRouting) -> None:
         """Gate step disabled via config: step skipped, no confidence in ctx."""
-        from aila.platform.llm.gate import make_gate_step
-        from aila.platform.llm.pipeline import PipelineRunner
 
         config = FakeDisableableConfigProvider(
             disabled_steps={"gate_scoring": True},

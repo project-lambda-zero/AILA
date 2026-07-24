@@ -38,7 +38,7 @@ from sqlmodel import select as _select
 
 from aila.modules.vr.contracts.project import VRProjectStatus
 from aila.modules.vr.db_models import VRProjectRecord, VRTargetRecord
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.contracts.budget import BudgetConfig, BudgetState
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import StateResult
