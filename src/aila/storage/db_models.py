@@ -213,6 +213,29 @@ class WorkflowStateCursor(SQLModel, table=True):
         sa_column=Column("archived_state", String(128), nullable=True),
     )
 
+    # RFC-02 cursor keying (Class-A defect fix): the cursor row PK is the
+    # ARQ task uuid (see ``platform/tasks/template.py`` where
+    # ``run_id = task_context.task_id``), so it does NOT equal the
+    # investigation/branch id. The lifecycle service used to query cursors
+    # by ``run_id = ANY(investigation_id, branch_id...)`` which found zero
+    # rows in production; pause/resume archival silently no-oped. These
+    # denormalised join keys are populated from the task's ``initial_input``
+    # at cursor creation (engine ``_load_or_init_cursor``). NULL on rows
+    # created before the migration and on non-investigation workflows;
+    # the lifecycle service keeps its legacy fallback for those.
+    investigation_id: str | None = Field(
+        default=None,
+        sa_column=Column(
+            "investigation_id", String(64), nullable=True, index=True,
+        ),
+    )
+    branch_id: str | None = Field(
+        default=None,
+        sa_column=Column(
+            "branch_id", String(64), nullable=True, index=True,
+        ),
+    )
+
 
 class WorkflowStateTransition(SQLModel, table=True):
     """Append-only audit/replay log of every engine state transition.

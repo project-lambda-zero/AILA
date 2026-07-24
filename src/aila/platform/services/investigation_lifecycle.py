@@ -75,8 +75,12 @@ async def purge_investigation_cursors(
     surrounding lifecycle mutation. When ``only_crashed`` is set, only the
     ``__crashed__`` sentinel rows are removed (the re-enqueue path);
     otherwise every cursor for the investigation is wiped (the full-reset
-    path). Cursor rows link to the investigation through the
-    ``investigation_id`` embedded in each ``taskrecord.kwargs_json``.
+    path).
+
+    RFC-02 cursor keying: cursors created after the join-key columns
+    ship carry ``investigation_id`` directly; the primary match is on
+    that column. Legacy cursors (pre-migration) fall back to the
+    taskrecord.kwargs_json join, which is what the code did before.
     Returns the number of rows deleted.
     """
     inv_pat = f'%"{investigation_id}"%'
@@ -84,15 +88,17 @@ async def purge_investigation_cursors(
         stmt = _sql_text(
             "DELETE FROM workflow_state_cursor "
             "WHERE current_state = '__crashed__' "
-            "  AND run_id IN (SELECT id FROM taskrecord "
-            "WHERE kwargs_json LIKE :inv_pat)"
-        ).bindparams(inv_pat=inv_pat)
+            "  AND (investigation_id = :inv "
+            "       OR run_id IN (SELECT id FROM taskrecord "
+            "                     WHERE kwargs_json LIKE :inv_pat))"
+        ).bindparams(inv=investigation_id, inv_pat=inv_pat)
     else:
         stmt = _sql_text(
             "DELETE FROM workflow_state_cursor "
-            "WHERE run_id IN (SELECT id FROM taskrecord "
-            "WHERE kwargs_json LIKE :inv_pat)"
-        ).bindparams(inv_pat=inv_pat)
+            "WHERE investigation_id = :inv "
+            "   OR run_id IN (SELECT id FROM taskrecord "
+            "                 WHERE kwargs_json LIKE :inv_pat)"
+        ).bindparams(inv=investigation_id, inv_pat=inv_pat)
     result = await session.exec(stmt)
     return result.rowcount or 0
 
@@ -199,36 +205,40 @@ async def pause_investigation(
 
         # 2. Lock + flip cursors. Raw SQL for the bulk lock + UPDATE
         #    because the pattern is clearer as a single statement.
-        if branch_ids:
-            # Lock the cursors matching the investigation's branches +
-            # the investigation_id itself (some workflows use the
-            # investigation_id as run_id for the parent).
-            lock_stmt = _sql_text(
-                "SELECT run_id, current_state FROM workflow_state_cursor "
-                "WHERE run_id = ANY(:ids) FOR UPDATE"
-            ).bindparams(ids=[investigation_id, *branch_ids])
-            locked = (await uow.session.exec(lock_stmt)).all()
-            pausable = [
-                row.run_id
-                for row in locked
-                if row.current_state != RESERVED_PAUSED
-            ]
-            if pausable:
-                upd_stmt = _sql_text(
-                    "UPDATE workflow_state_cursor "
-                    "SET archived_state = current_state, "
-                    "    current_state = :paused, "
-                    "    updated_at = :ts, "
-                    "    version = version + 1 "
-                    "WHERE run_id = ANY(:ids) "
-                    "  AND current_state <> :paused"
-                ).bindparams(
-                    paused=RESERVED_PAUSED,
-                    ts=now,
-                    ids=pausable,
-                )
-                result = await uow.session.exec(upd_stmt)
-                summary["paused_cursors"] = result.rowcount or 0
+        # RFC-02 cursor keying: the primary lookup is by the
+        # denormalised ``investigation_id`` column populated at cursor
+        # creation. The ``run_id = ANY(...)`` clause preserves the
+        # legacy path so pre-migration cursors (NULL investigation_id)
+        # still archive when their ``run_id`` happens to be an inv or
+        # branch id.
+        legacy_ids = [investigation_id, *branch_ids]
+        lock_stmt = _sql_text(
+            "SELECT run_id, current_state FROM workflow_state_cursor "
+            "WHERE investigation_id = :inv OR run_id = ANY(:ids) "
+            "FOR UPDATE"
+        ).bindparams(inv=investigation_id, ids=legacy_ids)
+        locked = (await uow.session.exec(lock_stmt)).all()
+        pausable = [
+            row.run_id
+            for row in locked
+            if row.current_state != RESERVED_PAUSED
+        ]
+        if pausable:
+            upd_stmt = _sql_text(
+                "UPDATE workflow_state_cursor "
+                "SET archived_state = current_state, "
+                "    current_state = :paused, "
+                "    updated_at = :ts, "
+                "    version = version + 1 "
+                "WHERE run_id = ANY(:ids) "
+                "  AND current_state <> :paused"
+            ).bindparams(
+                paused=RESERVED_PAUSED,
+                ts=now,
+                ids=pausable,
+            )
+            result = await uow.session.exec(upd_stmt)
+            summary["paused_cursors"] = result.rowcount or 0
 
         # 3. Cancel TaskRecord rows in active dispatch states. The worker
         #    that picks up the task next sees status != queued/running and
@@ -352,7 +362,9 @@ async def resume_investigation(
         "inv_status": None,
     }
     now = utc_now()
-    resumed_run_ids: list[str] = []
+    # (run_id, branch_id) pairs so the fan-out can submit with the
+    # correct branch_id even when run_id is the ARQ task uuid.
+    resumed_runs: list[tuple[str, str | None]] = []
 
     async with UnitOfWork() as uow:
         inv_stmt = (
@@ -371,7 +383,10 @@ async def resume_investigation(
             )
 
         # 1. Lock + restore paused cursors associated with this
-        #    investigation's branches (and the investigation_id itself).
+        #    investigation. RFC-02 cursor keying: primary match on the
+        #    denormalised ``investigation_id`` column populated at
+        #    cursor creation; ``run_id = ANY(...)`` covers legacy
+        #    cursors (pre-migration) whose join keys are NULL.
         branch_ids = (await uow.session.exec(
             select(branch_model.id)
             .where(
@@ -381,21 +396,33 @@ async def resume_investigation(
         candidate_ids = [investigation_id, *[str(b) for b in branch_ids]]
 
         lock_stmt = _sql_text(
-            "SELECT run_id, archived_state FROM workflow_state_cursor "
-            "WHERE run_id = ANY(:ids) "
+            "SELECT run_id, archived_state, branch_id "
+            "FROM workflow_state_cursor "
+            "WHERE (investigation_id = :inv OR run_id = ANY(:ids)) "
             "  AND current_state = :paused "
             "FOR UPDATE"
-        ).bindparams(paused=RESERVED_PAUSED, ids=candidate_ids)
+        ).bindparams(
+            paused=RESERVED_PAUSED,
+            inv=investigation_id,
+            ids=candidate_ids,
+        )
         locked = (await uow.session.exec(lock_stmt)).all()
 
         for row in locked:
             if row.archived_state:
-                resumed_run_ids.append(str(row.run_id))
+                # Legacy cursors carry NULL branch_id; fall back to
+                # ``run_id`` which was the branch id on that path
+                # (that is the only way pause could archive them at all).
+                br = (
+                    str(row.branch_id) if row.branch_id
+                    else (str(row.run_id) if str(row.run_id) != investigation_id else None)
+                )
+                resumed_runs.append((str(row.run_id), br))
 
-        if resumed_run_ids:
+        if resumed_runs:
             # 2. Restore archived_state and clear the archive. One UPDATE
             #    per run_id because each row's prior state differs.
-            for run_id in resumed_run_ids:
+            for run_id, _ in resumed_runs:
                 upd_stmt = _sql_text(
                     "UPDATE workflow_state_cursor "
                     "SET current_state = COALESCE(archived_state, 'investigation_setup'), "
@@ -410,7 +437,7 @@ async def resume_investigation(
                     paused=RESERVED_PAUSED,
                 )
                 await uow.session.exec(upd_stmt)
-            summary["resumed_cursors"] = len(resumed_run_ids)
+            summary["resumed_cursors"] = len(resumed_runs)
 
         # 2.5. Flip projection status of every branch previously paused
         # back to ``active``. Symmetric with pause's step 3.5. We DO NOT
@@ -453,14 +480,15 @@ async def resume_investigation(
             exc_info=True,
         )
     # 4. AFTER commit: fan-out one ARQ task per resumed cursor so every
-    #    branch (not just the primary) gets a worker pickup.
+    #    branch (not just the primary) gets a worker pickup. The cursor
+    #    row's ``branch_id`` column (RFC-02 keying) supplies the branch
+    #    id directly; legacy rows fall back to ``run_id`` (see the lock
+    #    query above).
     submitted = 0
-    for run_id in resumed_run_ids:
+    for run_id, branch_id in resumed_runs:
         kwargs: dict[str, Any] = {"investigation_id": investigation_id}
-        # If the cursor's run_id is a branch id (not the inv id), carry
-        # it as branch_id so investigation_loop targets that branch.
-        if run_id != investigation_id:
-            kwargs["branch_id"] = run_id
+        if branch_id:
+            kwargs["branch_id"] = branch_id
         try:
             await task_queue.submit(
                 track=track,
@@ -497,7 +525,7 @@ async def resume_investigation(
     # on this investigation and dispatch one task each. The new tasks
     # pick up wherever the branch left off (turn_count + case_state_json
     # persist across pause/resume; only the in-flight worker disappears).
-    if not resumed_run_ids:
+    if not resumed_runs:
         async with UnitOfWork() as uow:
             active_branches = (await uow.session.exec(
                 select(branch_model.id)
