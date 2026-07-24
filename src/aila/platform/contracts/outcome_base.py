@@ -76,6 +76,13 @@ class OutcomeRecordBase(TableDerivedConstraintsMixin, SQLModel):
     dispatch_status: str = Field(default="pending", index=True, max_length=16)
     dispatch_target: str | None = Field(default=None, max_length=128)
 
+    # Set when dispatch_status flips to 'claimed' (the dispatch claim,
+    # RFC-05 / RFC-03 Phase 6b). A CLAIMED row whose claimed_at is older
+    # than the reclaim window is a stranded claim -- the winning dispatcher
+    # crashed before writing a terminal status -- and the next dispatch
+    # attempt reclaims it. NULL until first claimed.
+    claimed_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
+
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
 

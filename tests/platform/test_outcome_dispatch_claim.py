@@ -9,6 +9,7 @@ a missing row reports not-found.
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
@@ -20,12 +21,17 @@ from aila.modules.vr.db_models import (
     VRTargetRecord,
     VRWorkspaceRecord,
 )
+from aila.platform.contracts import utc_now
 from aila.platform.contracts.enums import OutcomeDispatchStatus
 from aila.platform.services.outcome_dispatch import claim_outcome_for_dispatch
 from aila.storage.database import session_scope
 
 
-def _seed_outcome(dispatch_status: str = "pending") -> str:
+def _seed_outcome(
+    dispatch_status: str = "pending",
+    *,
+    claimed_minutes_ago: float | None = None,
+) -> str:
     """Seed the FK chain and one approved outcome; return the outcome id."""
     suffix = uuid4().hex[:8]
     ws_id = f"ws-{suffix}"
@@ -48,10 +54,15 @@ def _seed_outcome(dispatch_status: str = "pending") -> str:
         sess.flush()
         sess.add(VRInvestigationBranchRecord(id=branch_id, investigation_id=inv_id))
         sess.flush()
+        claimed_at = (
+            None if claimed_minutes_ago is None
+            else utc_now() - timedelta(minutes=claimed_minutes_ago)
+        )
         sess.add(VRInvestigationOutcomeRecord(
             id=outcome_id, investigation_id=inv_id, branch_id=branch_id,
             outcome_kind="direct_finding", confidence="strong",
             state="approved", dispatch_status=dispatch_status,
+            claimed_at=claimed_at,
         ))
         sess.commit()
     return outcome_id
@@ -85,7 +96,7 @@ async def test_second_claim_loses(test_db) -> None:
     assert first.won is True
     assert second.found is True
     assert second.won is False
-    assert second.skip_reason == "already_claimed_or_dispatched"
+    assert second.skip_reason == "claim_in_progress"
 
 
 @pytest.mark.asyncio
@@ -131,3 +142,44 @@ async def test_concurrent_claims_single_winner(test_db) -> None:
     winners = [r for r in results if r.won]
     assert len(winners) == 1
     assert _read_dispatch_status(outcome_id) == OutcomeDispatchStatus.CLAIMED.value
+
+
+@pytest.mark.asyncio
+async def test_stale_claim_is_reclaimed(test_db) -> None:
+    """A CLAIMED row whose claimed_at is older than the reclaim window was
+    stranded by a crashed dispatcher; the next attempt reclaims it."""
+    del test_db
+    outcome_id = _seed_outcome("claimed", claimed_minutes_ago=20)
+    claim = await claim_outcome_for_dispatch(
+        VRInvestigationOutcomeRecord, outcome_id,
+    )
+    assert claim.found is True
+    assert claim.won is True
+    assert _read_dispatch_status(outcome_id) == OutcomeDispatchStatus.CLAIMED.value
+
+
+@pytest.mark.asyncio
+async def test_fresh_claim_is_not_reclaimed(test_db) -> None:
+    """A CLAIMED row with a recent claimed_at is held by a live dispatcher
+    and must not be reclaimed."""
+    del test_db
+    outcome_id = _seed_outcome("claimed", claimed_minutes_ago=1)
+    claim = await claim_outcome_for_dispatch(
+        VRInvestigationOutcomeRecord, outcome_id,
+    )
+    assert claim.found is True
+    assert claim.won is False
+    assert claim.skip_reason == "claim_in_progress"
+
+
+@pytest.mark.asyncio
+async def test_dispatched_is_terminal(test_db) -> None:
+    """A DISPATCHED row is terminal -- never reclaimed regardless of age."""
+    del test_db
+    outcome_id = _seed_outcome("dispatched")
+    claim = await claim_outcome_for_dispatch(
+        VRInvestigationOutcomeRecord, outcome_id,
+    )
+    assert claim.found is True
+    assert claim.won is False
+    assert claim.skip_reason == "already_dispatched"
