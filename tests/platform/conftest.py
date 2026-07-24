@@ -25,6 +25,11 @@ TEST_DB_URL: str = os.environ.get(
 async def _session_async_engine() -> AsyncGenerator[object, None]:
     """Session-scoped async engine: create tables once, shared across all tests."""
     import aila.modules.vulnerability.db_models  # noqa: F401
+    # RFC-12 retrieval graph -- edge table lives in the retrieval
+    # slice module. Importing it here keeps the session engine's
+    # drop_all/create_all aware of the FK to knowledgeentryrecord
+    # regardless of which test file triggers the fixture.
+    import aila.platform.services.knowledge_graph  # noqa: F401
     import aila.storage.database as _db_module
     import aila.storage.db_models  # noqa: F401
 

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -33,6 +34,16 @@ from ...storage.db_models import KnowledgeEntryRecord
 from ...storage.registry import ConfigRegistry
 from .embedding import EmbeddingProvider, resolve_provider
 from .ingestor import DEFAULT_MAX_CHARS, Kind, KnowledgeIngestor
+
+__all__ = [
+    "KnowledgeService",
+    "NAMESPACE_AGENT_PREFIX",
+    "NAMESPACE_PLATFORM_PREFIX",
+    "NAMESPACE_USER_PREFIX",
+    "make_agent_namespace",
+    "make_platform_namespace",
+    "make_user_namespace",
+]
 
 # RFC-12 default source_type stamped on the non-chunked store path when the
 # caller does not pass a ``kind`` hint. Prose is the dominant knowledge shape
@@ -104,6 +115,107 @@ def make_user_namespace(team_id: str, category: str) -> str:
 def make_platform_namespace(category: str) -> str:
     """Build platform namespace: platform:{category}."""
     return f"{NAMESPACE_PLATFORM_PREFIX}{category}"
+
+
+# Module-level CAG cache instance so every KnowledgeService in the process
+# shares one preload of the stable core. Test-scope isolation uses
+# :meth:`StableCoreCache.invalidate` (via ``mod._STABLE_CORE_CACHE.invalidate()``)
+# to drop the cached rows between tests.
+def _build_stable_core_cache() -> Any:
+    """Import and instantiate the process-shared CAG cache.
+
+    Deferred to a helper so the module-level assignment does not trip
+    a circular import: :mod:`knowledge_stable_core` imports
+    :func:`_session_or_new` from THIS module, so we can only reach
+    into it once THIS module has finished defining its top-level
+    names.
+    """
+    from .knowledge_stable_core import StableCoreCache
+    return StableCoreCache()
+
+
+_STABLE_CORE_CACHE: Any = _build_stable_core_cache()
+
+
+def _stable_core_match(
+    query: str,
+    entries: list[dict[str, Any]],
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Rank stable-core entries against ``query`` by cheap token overlap.
+
+    Deterministic, no vector or FTS work: tokenise the query, count how
+    many query tokens appear as substrings inside each entry's content
+    or namespace (case-insensitive), and return the top-``limit``
+    matches. Entries that share zero tokens with the query still appear
+    at the tail of the list; the CAG contract is that the whole stable
+    core is available to the caller, and a token-agnostic query (for
+    example ``\"stable-core:\"`` alone) is deliberately handled as
+    \"return the entire core, capped at ``limit``\".
+    """
+    if not entries:
+        return []
+    lowered = (query or "").lower()
+    tokens = [t for t in re.findall(r"[a-z0-9][a-z0-9_-]*", lowered) if len(t) > 1]
+    if not tokens:
+        return list(entries[:limit])
+    scored: list[tuple[int, int, dict[str, Any]]] = []
+    for index, entry in enumerate(entries):
+        haystack_parts = [str(entry.get("content") or ""), str(entry.get("namespace") or "")]
+        haystack = " ".join(haystack_parts).lower()
+        overlap = sum(1 for tok in tokens if tok in haystack)
+        scored.append((overlap, -index, entry))
+    scored.sort(reverse=True)
+    return [entry for overlap, _neg_index, entry in scored[:limit] if overlap > 0] or list(entries[:limit])
+
+
+def _stable_core_hit(entry: dict[str, Any], index: int) -> dict[str, Any]:
+    """Adapt a cached stable-core row into the hit shape callers expect.
+
+    Score is a synthetic monotonic decreasing sentinel (1.0, 0.99, ...)
+    so the tool caller can rank stable-core hits alongside regular hits
+    without a special case, and ``source == \"stable_core\"`` names the
+    route the row came from. ``entry_metadata`` is the raw JSON string
+    on the row; the caller decodes it exactly as it does for the hybrid
+    path.
+    """
+    score = round(max(0.0, 1.0 - 0.01 * index), 6)
+    return {
+        "id": int(entry["id"]),
+        "content": entry.get("content") or "",
+        "metadata": json.loads(entry.get("entry_metadata") or "{}"),
+        "score": score,
+        "vec_score": 0.0,
+        "fts_score": 0.0,
+        "source": "stable_core",
+        "namespace": entry.get("namespace") or "",
+    }
+
+
+def _graph_hit(node: dict[str, Any]) -> dict[str, Any]:
+    """Adapt a :class:`TraversalHit` mapping into the hit shape callers expect.
+
+    Score decays with hop distance (1.0 at the seed, 0.5 at hop 1, and
+    so on) so the caller can still sort by relevance. The hop, path,
+    and incoming edge label are preserved so a UI can render the
+    traversal chain that reached the row.
+    """
+    hop = int(node.get("hop") or 0)
+    score = round(1.0 / float(1 + hop), 6)
+    return {
+        "id": int(node["id"]),
+        "content": node.get("content") or "",
+        "metadata": json.loads(node.get("entry_metadata") or "{}"),
+        "score": score,
+        "vec_score": 0.0,
+        "fts_score": 0.0,
+        "source": "graph",
+        "namespace": node.get("namespace") or "",
+        "hop": hop,
+        "path": list(node.get("path") or []),
+        "incoming_relation": node.get("incoming_relation"),
+        "incoming_weight": node.get("incoming_weight"),
+    }
 
 
 def _merge_and_rank(
@@ -512,6 +624,158 @@ class KnowledgeService:
 
         # Merge, floor, and rank outside the transaction (pure, unit-testable).
         return _merge_and_rank(vec_map, fts_map, fts_content_map, limit, min_score)
+
+    async def retrieve_routed(
+        self,
+        query: str,
+        *,
+        route: Any | None = None,
+        limit: int = 10,
+        min_score: float = 0.0,
+        namespaces: list[str] | None = None,
+        namespace_patterns: list[str] | None = None,
+        max_hops: int | None = None,
+        graph_seed_limit: int = 1,
+        session: AsyncSession | None = None,
+    ) -> dict[str, Any]:
+        """Adaptive RFC-12 retrieval entrypoint.
+
+        Classifies the query (or accepts an explicit ``route`` override)
+        and dispatches to one of three paths -- stable-core CAG, the
+        existing hybrid ``retrieve``, or the graph traversal. Every hit
+        the caller sees passes through :func:`apply_gate` so the
+        ``sanitized_content`` / ``classification`` / ``provenance``
+        fields are guaranteed on the result regardless of which path
+        served the request. The wrapping dict names the chosen ``route``
+        and (for the graph path) the ``hop_bound`` that shaped the
+        traversal so the tool caller can surface both in its own return
+        payload.
+
+        The ``simple`` path calls :meth:`retrieve` unchanged and only
+        overlays the gate + provenance fields; a caller that goes
+        through the raw :meth:`retrieve` API keeps its byte-identical
+        result shape.
+        """
+        from .knowledge_gate import apply_gate, apply_gate_many
+        from .knowledge_graph import DEFAULT_MAX_HOPS, KnowledgeGraph
+        from .knowledge_router import KnowledgeRouter, Route
+        from .knowledge_stable_core import STABLE_CORE_TOKEN_PREFIX
+
+        chosen: Route
+        if route is None:
+            chosen = KnowledgeRouter().classify(query)
+        elif isinstance(route, Route):
+            chosen = route
+        else:
+            chosen = Route(str(route))
+
+        hop_bound: int | None = None
+
+        if chosen is Route.STABLE_CORE:
+            entries = await _STABLE_CORE_CACHE.entries(session=session)
+            matched = _stable_core_match(query, entries, limit)
+            hits = [
+                _stable_core_hit(entry, index)
+                for index, entry in enumerate(matched)
+            ]
+            gated = [
+                apply_gate(hit, entry_row=entry)
+                for hit, entry in zip(hits, matched, strict=False)
+            ]
+        elif chosen is Route.GRAPH:
+            hop_bound = int(max_hops) if max_hops is not None else DEFAULT_MAX_HOPS
+            # Seed the traversal with a focused hybrid lookup so the
+            # BFS entrypoints stay small; the RFC's graph path is
+            # \"given a seed match, follow edges N hops\", singular,
+            # not a wide fan-out. A caller wanting a broader entry
+            # set passes an explicit ``graph_seed_limit`` value.
+            seed_limit = max(1, min(int(graph_seed_limit), limit))
+            seed_hits = await self.retrieve(
+                query=query,
+                namespaces=namespaces,
+                namespace_patterns=namespace_patterns,
+                limit=seed_limit,
+                min_score=min_score,
+                session=session,
+            )
+            seed_ids = [int(h["id"]) for h in seed_hits if h.get("id") is not None]
+            traversal: list[dict[str, Any]] = []
+            if seed_ids:
+                traversal = list(
+                    await KnowledgeGraph().traverse(
+                        seeds=seed_ids,
+                        max_hops=hop_bound,
+                        session=session,
+                    ),
+                )
+            gated = [
+                apply_gate(_graph_hit(node), entry_row=node)
+                for node in traversal[:limit]
+            ]
+        else:
+            hits = await self.retrieve(
+                query=query,
+                namespaces=namespaces,
+                namespace_patterns=namespace_patterns,
+                limit=limit,
+                min_score=min_score,
+                session=session,
+            )
+            rows_by_id = await self._hydrate_provenance_rows(
+                [int(h["id"]) for h in hits],
+                session=session,
+            )
+            gated = apply_gate_many(hits, entry_rows=rows_by_id)
+
+        return {
+            "status": "retrieved",
+            "route": chosen.value,
+            "query": query.replace(STABLE_CORE_TOKEN_PREFIX, "", 1).strip()
+                if query.lower().startswith(STABLE_CORE_TOKEN_PREFIX)
+                else query,
+            "count": len(gated),
+            "results": gated,
+            "hop_bound": hop_bound,
+        }
+
+    async def _hydrate_provenance_rows(
+        self,
+        ids: list[int],
+        session: AsyncSession | None = None,
+    ) -> dict[int, dict[str, Any]]:
+        """Return an ``id -> row-fields`` map for the hits fed to the gate.
+
+        The plain :meth:`retrieve` result carries content + namespace
+        + score, not the provenance columns; the gate needs
+        ``model_id`` / ``content_hash`` / ``source_type`` / timestamps
+        to stamp its ``provenance`` sub-dict. Loading them in a single
+        WHERE-IN keeps the overlay cost bounded regardless of the
+        result limit.
+        """
+        if not ids:
+            return {}
+        async with _session_or_new(session) as (sess, _owns):
+            stmt = select(
+                KnowledgeEntryRecord.id,
+                KnowledgeEntryRecord.namespace,
+                KnowledgeEntryRecord.model_id,
+                KnowledgeEntryRecord.content_hash,
+                KnowledgeEntryRecord.source_type,
+                KnowledgeEntryRecord.created_at,
+                KnowledgeEntryRecord.updated_at,
+            ).where(KnowledgeEntryRecord.id.in_(ids))
+            rows = (await sess.exec(stmt)).all()
+        return {
+            int(r.id): {
+                "namespace": r.namespace,
+                "model_id": r.model_id,
+                "content_hash": r.content_hash,
+                "source_type": r.source_type,
+                "created_at": r.created_at,
+                "updated_at": r.updated_at,
+            }
+            for r in rows
+        }
 
     async def delete(
         self,
