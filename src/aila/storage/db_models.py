@@ -1128,10 +1128,17 @@ class SystemMetadataRecord(SQLModel, table=True):
 
 # RFC-08 step 1: eval harness tables. Same reason as above -- import so the
 # create_all path (tests, fresh installs) sees the two eval tables.
+# RFC-08 step 2: calibration proposals table. Imported so the create_all path
+# (tests, fresh installs) and Alembic autogen see eval_calibration_proposals.
+from aila.platform.eval.calibration import CalibrationProposalRecord
 from aila.platform.eval.models import (
     EvalBenchmarkRecord,
     EvalRunRecord,
 )
+
+# RFC-10 steps 1-2: shadow/canary assignments. Imported so the create_all path
+# (tests, fresh installs) and Alembic autogen see lifecycle_canary_assignments.
+from aila.platform.lifecycle.assignments import LifecycleCanaryAssignment
 
 # RFC-10 step 1: agent lifecycle transition journal. Imported so the
 # create_all path (tests, fresh installs) and Alembic autogen see the table.
