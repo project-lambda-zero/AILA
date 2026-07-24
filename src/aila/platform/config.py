@@ -206,6 +206,14 @@ class PlatformConfigSchema(BaseModel):
     # worker/service restart to take effect.
     knowledge_embedding_model: str = "bge-m3"
 
+    # RFC-12 pattern retrieval relevance floor. Hybrid retrieval hits with a
+    # combined score (0.6*vec + 0.4*fts) below this value are dropped before
+    # they can enter a researcher prompt so orthogonal top-k noise never
+    # reaches the model. PatternStoreBase._resolve_relevance_floor reads this
+    # via ConfigRegistry so operators can override per-deployment through the
+    # env or PUT /config without a schema change.
+    knowledge_pattern_relevance_floor: float = 0.3
+
     # SMTP delivery for scheduled reports (#45 -- ghost config keys).
     # report_tasks.py reads these through ConfigRegistry, but they were never
     # declared here, so the registry never seeded them and

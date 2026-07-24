@@ -45,16 +45,17 @@ from aila.storage.registry import ConfigRegistry
 
 # RFC-12 relevance floor default for pattern retrieval. Below this combined
 # score (0.6*vec + 0.4*fts) a retrieval hit is considered noise and stripped
-# before it can reach a researcher prompt. Exposed as a module constant so a
-# future PlatformConfigSchema field can reuse the same value as its schema
-# default and both the ConfigRegistry lookup and the fallback stay in sync.
+# before it can reach a researcher prompt. Kept as a module constant so the
+# lookup below has a final safety fallback if ConfigRegistry itself fails
+# (bad DB row, transient OSError). Mirrors the PlatformConfigSchema field
+# ``knowledge_pattern_relevance_floor`` -- both must move together.
 PATTERN_RELEVANCE_FLOOR_DEFAULT: float = 0.3
 
 # ConfigRegistry namespace + key for the operator-tunable floor. Resolution
-# order is env AILA_PLATFORM_KNOWLEDGE_PATTERN_RELEVANCE_FLOOR -> DB row ->
-# schema default; when the key is not yet declared in the platform schema
-# (fresh installs before the schema field is added) the lookup returns None
-# and _resolve_relevance_floor falls back to PATTERN_RELEVANCE_FLOOR_DEFAULT.
+# order (via ConfigRegistry.get): env AILA_PLATFORM_KNOWLEDGE_PATTERN_RELEVANCE_FLOOR
+# -> cache -> DB row -> PlatformConfigSchema.knowledge_pattern_relevance_floor
+# schema default. PATTERN_RELEVANCE_FLOOR_DEFAULT is the last-resort fallback
+# used only when the registry lookup itself raises or returns a bad value.
 _RELEVANCE_FLOOR_CONFIG_NS: str = "platform"
 _RELEVANCE_FLOOR_CONFIG_KEY: str = "knowledge_pattern_relevance_floor"
 
@@ -544,13 +545,13 @@ class PatternStoreBase:
     async def _resolve_relevance_floor() -> float:
         """Resolve the pattern retrieval relevance floor via ConfigRegistry.
 
-        Env -> DB -> schema default (via :class:`ConfigRegistry`). When the
-        key is not declared in the platform schema (typical during the
-        RFC-12 rollout before the schema field lands) the lookup returns
-        None and the module falls back to
-        :data:`PATTERN_RELEVANCE_FLOOR_DEFAULT`. Non-numeric stored values
-        fall back to the same default so a bad DB row cannot silently
-        disable the floor.
+        Env -> cache -> DB -> PlatformConfigSchema default (via
+        :class:`ConfigRegistry`). The schema field is
+        ``knowledge_pattern_relevance_floor`` so a fresh install returns
+        0.3 without any DB seeding. :data:`PATTERN_RELEVANCE_FLOOR_DEFAULT`
+        is the last-resort fallback used only when the registry lookup
+        itself raises or returns a non-numeric value -- a bad DB row must
+        never silently disable the floor.
         """
         try:
             raw = await ConfigRegistry().get(

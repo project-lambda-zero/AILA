@@ -17,6 +17,7 @@ When session is None, creates a short-lived session via async_session_scope (SDA
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -32,6 +33,22 @@ from ...storage.db_models import KnowledgeEntryRecord
 from ...storage.registry import ConfigRegistry
 from .embedding import EmbeddingProvider, resolve_provider
 from .ingestor import DEFAULT_MAX_CHARS, Kind, KnowledgeIngestor
+
+# RFC-12 default source_type stamped on the non-chunked store path when the
+# caller does not pass a ``kind`` hint. Prose is the dominant knowledge shape
+# in the platform today (rubrics, prior findings, patterns rendered as text)
+# so it is the safest default; callers ingesting code MUST pass kind="code".
+_DEFAULT_SOURCE_TYPE: str = "document"
+
+
+def _content_hash(text: str) -> str:
+    """sha256 hexdigest of the UTF-8 bytes of ``text``.
+
+    Stamped on every knowledge write so drift between the stored content and
+    its embedding is detectable without re-embedding. Pure -- unit-testable
+    without a DB or a model.
+    """
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 _UNSET = object()
 _configured_model_cache: object = _UNSET
@@ -253,6 +270,13 @@ class KnowledgeService:
 
         meta_json = json.dumps(metadata or {})
         embedding_list = self.embed(content)
+        # RFC-12 provenance: model_id + content_hash + source_type + updated_at
+        # are stamped on every store path (insert AND upsert-update). Read
+        # once here so both branches share the same values without diverging.
+        model_id = self._provider.model_name
+        content_hash = _content_hash(content)
+        source_type = str(kind) if kind is not None else _DEFAULT_SOURCE_TYPE
+        stamped_at = utc_now()
 
         async with _session_or_new(session) as (sess, owns):
             existing_id: int | None = None
@@ -274,6 +298,10 @@ class KnowledgeService:
                         embedding=embedding_list,
                         entry_metadata=meta_json,
                         dedup_key=dedup_key,
+                        model_id=model_id,
+                        content_hash=content_hash,
+                        source_type=source_type,
+                        updated_at=stamped_at,
                     )
                 )
                 await sess.exec(update_stmt)
@@ -288,7 +316,11 @@ class KnowledgeService:
                     embedding=embedding_list,
                     entry_metadata=meta_json,
                     dedup_key=dedup_key,
-                    created_at=utc_now(),
+                    model_id=model_id,
+                    content_hash=content_hash,
+                    source_type=source_type,
+                    created_at=stamped_at,
+                    updated_at=stamped_at,
                 )
                 sess.add(record)
                 # fix §204 -- flush unconditionally so `record.id` is
@@ -366,6 +398,7 @@ class KnowledgeService:
                 metadata=chunk_meta,
                 dedup_key=chunk_dedup,
                 session=session,
+                kind=kind,
             )
             chunk_records.append(single)
             total_length += len(chunk_text)

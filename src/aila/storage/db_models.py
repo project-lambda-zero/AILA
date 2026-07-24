@@ -564,6 +564,16 @@ class KnowledgeEntryRecord(SQLModel, table=True):
     dedup_key prevents duplicate seeding of identical knowledge entries across
     restarts; NULL means no deduplication is applied.
     entry_metadata holds arbitrary JSON for display and filtering.
+    model_id stamps the embedding provider's model identifier on every write
+    so a later provider swap can drive a background re-embed keyed on the old
+    id (RFC-12 provenance).
+    content_hash stores sha256(content) so operators can detect drift between
+    the stored text and the embedding without re-embedding.
+    source_type carries the ingestion kind ("code" | "document" | ...) so
+    retrieval callers can filter by shape without inspecting metadata JSON.
+    updated_at is refreshed on every insert and every upsert-update so a
+    stale row is obvious at a glance -- created_at pinpoints first write,
+    updated_at pinpoints last write.
     """
 
     __table_args__ = (
@@ -592,7 +602,11 @@ class KnowledgeEntryRecord(SQLModel, table=True):
     )
     entry_metadata: str = Field(default="{}", sa_column=Column("entry_metadata", Text))
     dedup_key: str | None = Field(default=None, sa_column=Column("dedup_key", Text, nullable=True, index=True))
+    model_id: str | None = Field(default=None, index=True)
+    content_hash: str | None = Field(default=None, index=True)
+    source_type: str | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+    updated_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
 
 
 class SeedVersionRecord(SQLModel, table=True):

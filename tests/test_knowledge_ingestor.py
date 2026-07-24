@@ -234,6 +234,9 @@ async def test_store_chunked_path_writes_one_row_per_chunk(test_db) -> None:
         {
             "encode": staticmethod(lambda _text: [0.1] * 1024),
             "dimension": 1024,
+            # RFC-12 provenance stamping reads provider.model_name on every
+            # store; the stub must satisfy the full EmbeddingProvider Protocol.
+            "model_name": "stub/rfc12",
         },
     )()
     with patch(
@@ -293,6 +296,9 @@ async def test_store_chunked_empty_input_is_noop(test_db) -> None:
         {
             "encode": staticmethod(lambda _text: [0.1] * 1024),
             "dimension": 1024,
+            # RFC-12 provenance stamping reads provider.model_name on every
+            # store; the stub must satisfy the full EmbeddingProvider Protocol.
+            "model_name": "stub/rfc12",
         },
     )()
     with patch(
