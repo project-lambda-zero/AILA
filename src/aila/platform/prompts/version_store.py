@@ -61,7 +61,17 @@ class PromptVersionStore:
                     )
                 )
             ).all()
-            version = f"1.0.{len(prior)}"
+            # Next suffix is one past the highest issued suffix, not the
+            # row count: archiving an old version must not make a later
+            # register reuse (and collide with) an already-issued number.
+            next_suffix = 0
+            for rec in prior:
+                try:
+                    issued = int(rec.version.rsplit(".", 1)[-1])
+                except ValueError:
+                    continue
+                next_suffix = max(next_suffix, issued + 1)
+            version = f"1.0.{next_suffix}"
             session.add(PromptVersionRecord(
                 key=key, version=version, content_hash=content_hash,
                 body=body, author=author, notes=notes,

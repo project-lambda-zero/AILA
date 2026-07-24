@@ -11,7 +11,10 @@ from uuid import uuid4
 import pytest
 from sqlmodel import select
 
-from aila.platform.prompts.version_models import PromptAliasChangeRecord
+from aila.platform.prompts.version_models import (
+    PromptAliasChangeRecord,
+    PromptVersionRecord,
+)
 from aila.platform.prompts.version_store import (
     PromptVersionNotFoundError,
     PromptVersionStore,
@@ -81,6 +84,33 @@ async def test_set_alias_then_resolve_by_alias(test_db) -> None:
     by_to = {c.to_version: c for c in changes}
     assert by_to[v1].from_version is None
     assert by_to[v2].from_version == v1
+
+
+@pytest.mark.asyncio
+async def test_register_after_archive_does_not_reuse_suffix(test_db) -> None:
+    """Archiving an old version must not make a later register reuse (and
+    collide with) an already-issued suffix -- the next suffix is one past
+    the highest issued, not the surviving row count."""
+    del test_db
+    store = PromptVersionStore()
+    key = _key()
+    v0 = await store.register(key, "BODY 0")
+    await store.register(key, "BODY 1")
+    await store.register(key, "BODY 2")
+    assert v0 == "1.0.0"
+    # Archive the oldest version. A count-based next suffix would now emit
+    # "1.0.2", colliding with the surviving BODY 2 row.
+    with session_scope() as sess:
+        row = sess.exec(
+            select(PromptVersionRecord).where(
+                PromptVersionRecord.key == key,
+                PromptVersionRecord.version == v0,
+            )
+        ).one()
+        sess.delete(row)
+        sess.commit()
+    v3 = await store.register(key, "BODY 3")
+    assert v3 == "1.0.3"
 
 
 @pytest.mark.asyncio
