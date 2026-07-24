@@ -68,7 +68,7 @@ class ForensicsWorkflowEmitter:
             return
 
         try:
-            key = ProgressStream._KEY_FMT.format(task_id=self.run_id)
+            key = ProgressStream.stream_key(self.run_id)
             from aila.platform.contracts import utc_now
             from aila.platform.services.redis_pool import get_redis
 

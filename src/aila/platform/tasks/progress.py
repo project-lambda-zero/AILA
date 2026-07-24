@@ -58,6 +58,17 @@ class ProgressStream:
 
     _KEY_FMT = TASK_PROGRESS_KEY_TEMPLATE
 
+    @classmethod
+    def stream_key(cls, task_id: str) -> str:
+        """Redis stream key for a task's progress events.
+
+        The single public accessor for the key format. Callers that need a
+        custom XADD (workflow transition events, module stage events) use
+        this instead of reading the private template, so ``_KEY_FMT`` has
+        exactly one reader.
+        """
+        return cls._KEY_FMT.format(task_id=task_id)
+
     def __init__(self, maxlen: int | None = None) -> None:
         """Configure stream parameters.
 
@@ -84,7 +95,7 @@ class ProgressStream:
             message: Human-readable progress message.
             percent: Completion percentage 0-100.
         """
-        key = self._KEY_FMT.format(task_id=task_id)
+        key = self.stream_key(task_id)
         async with get_redis() as client:
             await client.xadd(
                 key,
@@ -113,7 +124,7 @@ class ProgressStream:
             List of event dicts with keys: stage, message, percent, timestamp.
             Empty list if no events exist yet.
         """
-        key = self._KEY_FMT.format(task_id=task_id)
+        key = self.stream_key(task_id)
         async with get_redis() as client:
             raw = await client.xrange(key, last_id, "+")
             return [fields for _, fields in raw]
@@ -138,7 +149,7 @@ class ProgressStream:
             Event dicts with stage/message/percent/timestamp keys, or
             {"type": "ping"} on 30-second timeout (SSE keepalive).
         """
-        key = self._KEY_FMT.format(task_id=task_id)
+        key = self.stream_key(task_id)
         current_id = last_id
         started = time.monotonic()
         while True:

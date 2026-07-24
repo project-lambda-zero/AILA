@@ -316,7 +316,7 @@ async def emit_transition_event(
         # method (scope discipline).
         from aila.platform.services.redis_pool import get_redis
 
-        key = ProgressStream._KEY_FMT.format(task_id=run_id)
+        key = ProgressStream.stream_key(run_id)
         async with get_redis() as client:
             await client.xadd(
                 key,

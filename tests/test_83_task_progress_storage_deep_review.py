@@ -305,10 +305,10 @@ class TestProgressStreamExports:
     """Verify __all__ exports for progress module."""
 
     def test_progress_all_exports(self) -> None:
-        """FILE-29: progress.py exports exactly ['ProgressStream']."""
+        """FILE-29: progress.py exports MAX_STREAM_LIFETIME_S + ProgressStream."""
         from aila.platform.tasks import progress
 
-        assert progress.__all__ == ["ProgressStream"]
+        assert progress.__all__ == ["MAX_STREAM_LIFETIME_S", "ProgressStream"]
 
 
 # ===========================================================================
@@ -697,3 +697,17 @@ class TestTaskRepositoryExports:
         from aila.platform.tasks import storage
 
         assert storage.__all__ == ["TaskRepository"]
+
+
+class TestProgressStreamKey:
+    """stream_key is the single public accessor for the stream-key format."""
+
+    def test_stream_key_matches_template(self) -> None:
+        """FILE-29: callers derive the key through stream_key, not _KEY_FMT."""
+        from aila.platform.tasks.constants import TASK_PROGRESS_KEY_TEMPLATE
+        from aila.platform.tasks.progress import ProgressStream
+
+        assert ProgressStream.stream_key("task-abc") == "task:task-abc:progress"
+        assert ProgressStream.stream_key("t") == TASK_PROGRESS_KEY_TEMPLATE.format(
+            task_id="t",
+        )

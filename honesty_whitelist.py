@@ -58,6 +58,11 @@ HONESTY_WHITELIST = [
     # the adapter interface method IS the indirection point.
     ("adapters/base.py", "collect_inventory", "inlining"),
 
+    # Category (g): stream_key is the single public accessor for the private
+    # _KEY_FMT stream-key format. Inlining it at call sites reinstates the
+    # module->platform private-attr coupling the accessor closes (RFC-05).
+    ("tasks/progress.py", "stream_key", "inlining"),
+
     # Category (b): Pydantic field validator -- name is the public API contract.
     ("contracts/profile.py", "validate_display_name", "inlining"),
 
