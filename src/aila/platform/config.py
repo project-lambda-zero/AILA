@@ -226,6 +226,16 @@ class PlatformConfigSchema(BaseModel):
     # and skips the quorum gate by construction.
     agent_promotion_quorum: int = 1
 
+    # RFC-10 canary drift + cost ceilings. record_canary_signal reads
+    # both via ConfigRegistry and holds an active canary when the
+    # observed drift score or observed per-turn cost breaches the
+    # matching ceiling. A ceiling of 0.0 disables that half of the
+    # gate (a signal on that axis never trips a hold). Drift is the
+    # normalized confidence-drift score the RFC-07 tracker emits
+    # (0.0 = flat, higher = worse); cost is USD per turn.
+    agent_canary_drift_ceiling: float = 0.2
+    agent_canary_cost_ceiling_usd: float = 5.0
+
     # SMTP delivery for scheduled reports (#45 -- ghost config keys).
     # report_tasks.py reads these through ConfigRegistry, but they were never
     # declared here, so the registry never seeded them and

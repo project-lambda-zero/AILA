@@ -8,14 +8,15 @@ production version, or a re-eval on a candidate that stayed in
 ``evaluated`` -- writes exactly one row here. The controller in
 ``platform/lifecycle/controller.py`` is the only writer.
 
-Stages active in this increment: ``built``, ``evaluated``, ``approved``,
-``production``, ``rolled_back``. ``approved`` sits between ``evaluated``
-and ``production`` and carries the RFC-10 quorum signal -- one row per
-distinct reviewer who signed off on the passing eval. ``shadow`` and
-``canary`` are reserved for a later increment that runs a live traffic-
-mirroring comparison; declaring them now keeps the stage vocabulary
-stable so downstream operator UIs need not migrate the enum on that
-increment.
+Stages active in this increment: ``built``, ``evaluated``, ``shadow``,
+``canary``, ``approved``, ``production``, ``held``, ``rolled_back``.
+``approved`` sits between ``evaluated`` and ``production`` and carries
+the RFC-10 quorum signal -- one row per distinct reviewer who signed
+off on the passing eval. ``shadow`` registers a candidate for off-path
+comparison; ``canary`` routes a hashed cohort of new investigations to
+the candidate; ``held`` is the terminal state a canary lands in when a
+drift or cost signal breaches the ceiling and the router stops handing
+it new traffic without an admin rollout.
 
 Adding a value to :class:`LifecycleStage` is a schema-safe change: the
 transition table stores ``to_stage``/``from_stage`` as ``TEXT``, so an
@@ -45,9 +46,10 @@ class LifecycleStage(StrEnum):
 
     ``APPROVED`` sits between ``EVALUATED`` and ``PRODUCTION``: a passing
     eval row makes a version eligible for approval, and the quorum-many
-    distinct approvers gate the production alias flip. ``SHADOW`` and
-    ``CANARY`` are reserved for the live-mirroring increment; declaring
-    them now keeps the vocabulary stable.
+    distinct approvers gate the production alias flip. ``SHADOW`` marks
+    a candidate registered for off-path comparison; ``CANARY`` marks a
+    candidate receiving a hashed cohort of new investigations; ``HELD``
+    marks a canary paused by a drift or cost breach.
     """
 
     BUILT = "built"
@@ -56,6 +58,7 @@ class LifecycleStage(StrEnum):
     CANARY = "canary"
     APPROVED = "approved"
     PRODUCTION = "production"
+    HELD = "held"
     ROLLED_BACK = "rolled_back"
 
 
