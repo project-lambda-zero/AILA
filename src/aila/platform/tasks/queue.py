@@ -440,15 +440,27 @@ class TaskQueue:
                     )
                 )).one()
         except (SQLAlchemyError, OSError, TimeoutError, RuntimeError) as exc:
-            # Fail closed (#31): a DB error makes in-flight load unmeasurable,
-            # so assume the queue is under pressure and back off by one bounded
-            # step rather than returning 0.0 -- returning 0.0 floods the queue
-            # under DB pressure and deepens the spiral. The defer is bounded
-            # and clears on the next healthy read.
-            _log.warning(
-                "investigation defer count failed, deferring conservatively: %s", exc,
+            # Fail closed (#31, RFC-07 acceptance bullet 2): a DB error makes
+            # in-flight load unmeasurable, so assume the queue is under
+            # pressure and back off by one bounded step rather than returning
+            # 0.0 -- returning 0.0 floods the queue under DB pressure and
+            # deepens the spiral. The defer is bounded and clears on the next
+            # healthy read. Routing through ResilienceLayer.conservative_default
+            # centralises the fail-signal bump so this site stops carrying its
+            # own metric-and-log pattern. The resilience module is imported
+            # inside this handler (not at file scope) because services/__init__
+            # re-exports audit which back-imports this module, so a top-level
+            # binding here breaks module load.
+            from aila.platform.services.resilience import (
+                get_default_resilience_layer,
             )
-            return self.INVESTIGATION_DEFER_STEP_S
+
+            return get_default_resilience_layer().conservative_default(
+                self.INVESTIGATION_DEFER_STEP_S,
+                op="queue_investigation_defer",
+                source="db_error",
+                exc=exc,
+            )
         excess = max(0, int(count) - self.INVESTIGATION_INFLIGHT_CAP)
         return excess * self.INVESTIGATION_DEFER_STEP_S
 

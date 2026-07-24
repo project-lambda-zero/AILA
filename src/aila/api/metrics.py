@@ -28,6 +28,7 @@ __all__ = [
     "TASK_CHECKPOINT_WRITES_TOTAL",
     "AUTOMATION_TICK_FAILURES_TOTAL",
     "SSE_WRITE_FAILURES_TOTAL",
+    "RESILIENCE_SIGNALS_TOTAL",
 ]
 
 from prometheus_client import Counter, Gauge, Histogram, Info
@@ -202,4 +203,27 @@ SSE_WRITE_FAILURES_TOTAL = Counter(
     "aila_sse_write_failures_total",
     "SSE / progress-stream write failures swallowed by fail-safe handlers",
     labelnames=("source",),
+)
+
+# ---------------------------------------------------------------------------
+# Resilience signal counter (RFC-07 acceptance bullet 2 -- single ResilienceLayer)
+# ---------------------------------------------------------------------------
+# Umbrella counter for every fail-closed signal funneled through
+# ``aila.platform.services.resilience.ResilienceLayer.record_signal``. Every
+# fail-open site that used to log-then-bump-its-own-counter now routes here
+# so a new site is a single call and operator dashboards read one series.
+# Labels:
+#   op     -- the operation name (e.g. "queue_investigation_defer",
+#             "sse_write", "workflow_log_emit"). Names are stable per
+#             call site and MUST NOT be templated with per-invocation ids.
+#   source -- the failing subsystem or classifier tag (e.g. "db_error",
+#             "emitter", "workflow_log"). Second dimension so an operator
+#             can slice one op by the failing dependency.
+# When ``op`` names an SSE / progress-stream call site the layer ALSO
+# bumps ``SSE_WRITE_FAILURES_TOTAL{source=<source>}`` so existing
+# dashboards keep reading from the counter they were built on.
+RESILIENCE_SIGNALS_TOTAL = Counter(
+    "aila_resilience_signals_total",
+    "Fail-closed signals surfaced by the ResilienceLayer facade",
+    labelnames=("op", "source"),
 )

@@ -345,11 +345,23 @@ async def emit_transition_event(
             exc.__class__.__name__,
             exc_info=True,
         )
+        # Route the fail-safe signal through the ResilienceLayer facade so
+        # this site stops carrying its own SSE_WRITE_FAILURES_TOTAL bump
+        # line (RFC-07 acceptance bullet 2). The layer bumps the umbrella
+        # RESILIENCE_SIGNALS_TOTAL{op=workflow_log_emit} AND (for op names
+        # in _SSE_MIRRORED_OPS) the legacy SSE_WRITE_FAILURES_TOTAL so
+        # existing operator dashboards keep working unchanged.
         try:
-            from aila.api.metrics import SSE_WRITE_FAILURES_TOTAL
+            from aila.platform.services.resilience import (
+                get_default_resilience_layer,
+            )
 
-            SSE_WRITE_FAILURES_TOTAL.labels(source="workflow_log").inc()
+            get_default_resilience_layer().record_signal(
+                op="workflow_log_emit",
+                source="workflow_log",
+                exc=exc,
+            )
         except (ImportError, AttributeError, RuntimeError, ValueError) as bump_exc:
             _log.debug(
-                "SSE_WRITE_FAILURES_TOTAL bump skipped: %s", bump_exc,
+                "resilience signal skipped: %s", bump_exc,
             )

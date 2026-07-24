@@ -386,6 +386,11 @@ ignore = [
 "src/aila/platform/services/reasoning.py" = ["E402"]
 "src/aila/platform/services/redis_pool.py" = ["PLW0603"]
 "src/aila/platform/services/report.py" = ["PLC0415"]
+# resilience.py: PLC0415 for the deferred metric imports inside record_signal.
+# The counter modules pull prometheus_client + api.metrics; the ResilienceLayer
+# module is imported from tools/tests/CLI where those are optional. Mirrors
+# the platform/events/emitter.py and platform/llm/config.py pattern.
+"src/aila/platform/services/resilience.py" = ["PLC0415"]
 "src/aila/platform/services/ssh.py" = ["PLC0415"]
 "src/aila/platform/services/system.py" = ["PLC0415"]
 "src/aila/platform/services/team_scope.py" = ["PLW0603", "ANN001"]

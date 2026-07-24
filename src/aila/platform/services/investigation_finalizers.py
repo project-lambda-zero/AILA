@@ -63,10 +63,16 @@ from aila.platform.services.branch_cleanup import (
     close_orphan_branches_on_terminal,
 )
 from aila.platform.services.infra_death import InfraDeathClassifier
+from aila.platform.services.resilience import get_default_resilience_layer
 from aila.platform.uow import UnitOfWork
 
-# Module-level singleton -- the classifier is stateless.
-_INFRA_DEATH_CLASSIFIER: InfraDeathClassifier = InfraDeathClassifier()
+# Module-level singleton -- the classifier is stateless. Sourced from the
+# ResilienceLayer facade (RFC-07 acceptance bullet 2) so a future policy
+# tweak (e.g. widening the retryable-infra set on the layer) reaches this
+# finalizer without every consumer building its own classifier instance.
+_INFRA_DEATH_CLASSIFIER: InfraDeathClassifier = (
+    get_default_resilience_layer().classifier
+)
 
 _log = logging.getLogger(__name__)
 

@@ -58,19 +58,26 @@ _SSE_DESTINATION_NAMES: frozenset[str] = frozenset({"progress", "redis_stream"})
 
 
 def _bump_sse_write_failure(source: str) -> None:
-    """Best-effort increment of SSE_WRITE_FAILURES_TOTAL.
+    """Best-effort SSE write-failure signal via the ResilienceLayer facade.
 
-    Deferred import keeps the emitter module importable in contexts
-    (tests, CLI, tools) where prometheus_client is not installed. Any
-    exception from the counter path is itself swallowed and logged --
-    an observability increment MUST NEVER kill the caller's turn.
+    Deferred import (both the metric and the facade) keeps the emitter
+    module importable in contexts (tests, CLI, tools) where the API
+    package is not initialised. Any exception from the counter path is
+    itself swallowed inside the layer -- an observability increment
+    MUST NEVER kill the caller's turn. Delegating here means every fail-
+    open site funnels through the same signal path (RFC-07 acceptance
+    bullet 2) instead of each carrying its own bump line.
     """
     try:
-        from aila.api.metrics import SSE_WRITE_FAILURES_TOTAL
+        from aila.platform.services.resilience import (
+            get_default_resilience_layer,
+        )
 
-        SSE_WRITE_FAILURES_TOTAL.labels(source=source).inc()
+        get_default_resilience_layer().record_signal(
+            op="sse_write", source=source,
+        )
     except (ImportError, AttributeError, RuntimeError, ValueError) as exc:
-        _log.debug("SSE_WRITE_FAILURES_TOTAL bump skipped: %s", exc)
+        _log.debug("resilience signal skipped: %s", exc)
 
 
 # Comprehensive tuple used to isolate destination failures at fan-out time.
