@@ -1116,6 +1116,10 @@ from aila.platform.eval.models import (
     EvalBenchmarkRecord,
     EvalRunRecord,
 )
+
+# RFC-10 step 1: agent lifecycle transition journal. Imported so the
+# create_all path (tests, fresh installs) and Alembic autogen see the table.
+from aila.platform.lifecycle.models import LifecycleTransitionRecord
 from aila.platform.llm.cost_record import LLMCostRecord
 
 # RFC-09 step 4: prompt version store tables. Re-imported so SQLModel.metadata
