@@ -48,7 +48,8 @@ from aila.platform.mcp.adapters.ida_headless import (
     adapt_xrefs_from,
     adapt_xrefs_to,
 )
-from aila.modules.vr.agents.tool_executor import ToolExecutor, parse_command
+from aila.modules.vr.agents.tool_executor import ToolExecutor
+from aila.platform.agents.tool_execution import parse_command
 from aila.modules.vr.contracts import PayloadKind
 
 
