@@ -13,6 +13,10 @@ if TYPE_CHECKING:
 
 from aila.config import Settings
 from aila.platform.contracts import JsonObject
+from aila.platform.contracts.reasoning import (
+    ReasoningDomainProfile,
+    ReasoningStrategyDeclaration,
+)
 from aila.platform.modules import (
     ModuleCapabilityProfile,
     ModuleContext,
@@ -24,6 +28,7 @@ from aila.platform.modules import (
 from aila.platform.runtime import ToolRegistry
 
 from .capabilities import MODULE_DESCRIPTION, MODULE_EXAMPLES, MODULE_TOOLS
+from .config_schema import TemplateConfigSchema
 from .runtime import TemplateRuntime
 from .tool_keys import TEMPLATE_SAMPLE_TOOL
 from .tools import TemplateSampleTool
@@ -110,15 +115,26 @@ class TemplateModule(ModuleProtocol):
         return list(MODULE_REPORT_FILTER_KEYS)
 
     async def register_tools(self, tool_registry: ToolRegistry, settings: Settings, registry=None, schema_registry=None) -> None:
-        """Register module tools into the platform ToolRegistry.
+        """Register module tools and typed config schema at platform startup.
 
         Args:
-            tool_registry: Platform-provided registry. Call register() for each tool.
+            tool_registry: Platform-provided ToolRegistry. Call register() for
+                each tool this module owns.
             settings: Infrastructure settings passed to tool constructors.
-            registry: Optional ConfigRegistry (unused by template).
-            schema_registry: Optional SchemaRegistry (unused by template).
+            registry: Platform ConfigRegistry. Every module that carries
+                operator-tunable settings registers its
+                :class:`TemplateConfigSchema` here under its own module id;
+                :class:`ModuleConfigBase` bakes in ``extra='forbid'`` so an
+                undeclared key fails closed. None only in lightweight test
+                fixtures that bypass config.
+            schema_registry: Optional SchemaRegistry for DB model registration
+                (unused by this simple-action template; modules with their own
+                tables push record classes here).
         """
+        del schema_registry
         tool_registry.register(TEMPLATE_SAMPLE_TOOL, TemplateSampleTool(settings))
+        if registry is not None:
+            await registry.register(self.module_id, TemplateConfigSchema)
 
     def build_runtime(self, context: ModuleContext) -> ModuleRuntime:
         """Construct the runtime handler for this module.
@@ -252,6 +268,58 @@ class TemplateModule(ModuleProtocol):
 
         Returns:
             Dict mapping check name to zero-argument callable.
+        """
+        return {}
+
+    def reasoning_strategies(self) -> list[ReasoningStrategyDeclaration]:
+        """Reasoning strategy families this module publishes (RFC-05 concern d).
+
+        Modules that drive a reasoning agent declare their strategy families
+        here so the platform ``StrategyRegistry`` picks them up at load. The
+        platform itself owns only the ``generic`` family; every domain-
+        specific family is module-declared. See ``modules/vr/module.py`` and
+        ``modules/forensics/module.py`` for populated examples.
+
+        Returns:
+            A list of ReasoningStrategyDeclaration. Empty (as here) means the
+            module does not publish reasoning strategies of its own and the
+            engine falls back to the platform ``generic`` family.
+        """
+        return []
+
+    def reasoning_domain_profiles(self) -> list[ReasoningDomainProfile]:
+        """Reasoning domain profiles this module publishes (RFC-05 concern d).
+
+        Collected by the platform builder into ``DomainProfileRegistry`` so
+        the reasoning engine resolves a module's default strategy and its
+        allowed set without the platform naming the domain. See
+        ``modules/vr/module.py`` and ``modules/forensics/module.py`` for
+        populated examples.
+
+        Returns:
+            A list of ReasoningDomainProfile. Empty (as here) means the
+            module does not carry a reasoning surface.
+        """
+        return []
+
+    def workflow_definitions(self) -> dict[str, dict[str, Any]]:
+        """Module-owned workflow state machine definitions (optional).
+
+        Called by ``GET /findings/workflow/states`` to list every registered
+        workflow. Each key is a workflow id; each value is a mapping with
+        ``states`` and ``transitions`` describing the state machine. See the
+        finding-transition surface for the concrete shape:
+
+            {
+                "template": {
+                    "states": ["new", "resolved"],
+                    "transitions": {"new": ["resolved"]},
+                },
+            }
+
+        Returns:
+            Dict keyed by workflow id. Empty (as here) means this module
+            contributes no lifecycle state machine.
         """
         return {}
 
