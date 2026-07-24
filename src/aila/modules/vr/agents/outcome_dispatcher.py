@@ -30,11 +30,9 @@ import hashlib
 import json
 import logging
 import re
-from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
 from aila.modules.vr._task_queue import (
@@ -65,10 +63,14 @@ from aila.modules.vr.services.outcome_review import (
     OUTCOME_STATE_REJECTED,
     set_outcome_state,
 )
+from aila.platform.agents.outcome_dispatcher import (
+    OutcomeDispatcherBase,
+    OutcomeDispatcherError,
+    OutcomeDispatchResult,
+)
 from aila.platform.contracts import utc_now
 from aila.platform.services.branch_cleanup import close_orphan_branches_on_terminal
 from aila.platform.services.knowledge import KnowledgeService
-from aila.platform.services.outcome_dispatch import claim_outcome_for_dispatch
 from aila.platform.tasks.arq_purge import purge_arq_jobs_for_investigation
 from aila.platform.uow import UnitOfWork
 
@@ -102,33 +104,15 @@ _VARIANT_EXHAUSTION_PATTERN = re.compile(
 )
 
 
-class OutcomeDispatcherError(Exception):
-    """Raised on fatal dispatcher failures (NULL state, unknown state,
-    handler exceptions). Surfacing rather than silently SKIPPING gives
-    the caller a chance to record FAILED + retry, instead of marking
-    the outcome dispatched-with-empty-result.
-    """
-
-
-# fix §237 -- variant-hunt fork-time guards. MAX_VARIANT_DEPTH bounds
+# fix \u00a7237 -- variant-hunt fork-time guards. MAX_VARIANT_DEPTH bounds
 # the recursion chain so a runaway agent can't fork variants of variants
 # of variants forever. VARIANT_MIN_BUDGET_USD prevents spawning a child
 # whose $-budget can't pay for even a single round of reasoning.
 MAX_VARIANT_DEPTH = 5
 VARIANT_MIN_BUDGET_USD = 5.0
 
-@dataclass(slots=True)
-class OutcomeDispatchResult:
-    """Result of dispatching one outcome."""
-
-    outcome_id: str
-    outcome_kind: OutcomeKind
-    dispatch_status: OutcomeDispatchStatus
-    dispatch_target: str | None
-    reason: str = ""
 
 
-# Outcome kinds whose downstream consumers don't yet exist in v0.3 v1.
 # Listed explicitly so the dispatcher emits SKIPPED with a real reason
 # rather than silently doing nothing.
 def _str_or_none(value: Any) -> str | None:
@@ -189,8 +173,15 @@ _NOT_YET_DISPATCHABLE: dict[OutcomeKind, str] = {
 }
 
 
-class OutcomeDispatcher:
-    """Routes accepted outcomes to their downstream artifacts.
+class OutcomeDispatcher(OutcomeDispatcherBase):
+    """Routes accepted VR outcomes to their downstream artifacts.
+
+    Thin subclass of :class:`OutcomeDispatcherBase`: the base owns the
+    claim + not-found/not-won paths + terminal status write cascade
+    wiring; this class supplies the VR outcome model, the state guard
+    that gates dispatch on ``state == 'approved'``, the if/elif
+    per-kind routing, and the VR-specific persist step (halt sibling
+    branches, flip investigation to COMPLETED, purge ARQ jobs).
 
     Construction takes only the KnowledgeService -- the other handlers
     use direct DB writes through UnitOfWork plus the platform task
@@ -198,6 +189,18 @@ class OutcomeDispatcher:
     KnowledgeService with the same ``store(namespace, content, ...)``
     coroutine signature.
     """
+
+    _outcome_model = VRInvestigationOutcomeRecord
+    _outcome_kind_cls = OutcomeKind
+    # A missing outcome is stamped with a terminal-flavoured kind so the
+    # SKIPPED result carries a valid enum member. ASSESSMENT_REPORT is
+    # the terminal-no-downstream VR kind and reads correctly on the
+    # operator dashboard.
+    _default_error_kind = OutcomeKind.ASSESSMENT_REPORT
+    # VR treats a handler exception as fatal: re-raise so the ARQ task
+    # is marked FAILED and the caller can decide to retry. Malware
+    # folds the same shape into a FAILED result via the base default.
+    _catch_handler_errors = False
 
     def __init__(
         self,
@@ -213,8 +216,7 @@ class OutcomeDispatcher:
             task_queue_factory or _build_default_task_queue
         )
 
-    @staticmethod
-    def _dispatch_state_guard(outcome: VRInvestigationOutcomeRecord) -> str | None:
+    def _dispatch_state_guard(self, outcome: VRInvestigationOutcomeRecord) -> str | None:
         """Refuse dispatch of any outcome whose state is not approved.
 
         Runs inside the platform claim's FOR UPDATE transaction. Returns a
@@ -239,111 +241,79 @@ class OutcomeDispatcher:
             )
         return None
 
-    async def dispatch(self, outcome_id: str) -> OutcomeDispatchResult:
-        """Dispatch one outcome and update its dispatch_status.
+    async def _load_outcome_row(
+        self, outcome_id: str,
+    ) -> VRInvestigationOutcomeRecord | None:
+        """Reload the outcome row after the claim so per-kind handlers
+        can read ``outcome.confidence`` off a live row.
 
-        Refuses any outcome whose ``state`` is not ``'approved'``:
-        draft outcomes are still waiting on sibling review; rejected
-        outcomes were vetoed and must not ship; dispatched outcomes
-        already shipped (re-dispatch is a no-op). The state machine
-        lives in ``aila.modules.vr.services.outcome_review``.
+        The base skeleton reads the routing values (payload,
+        investigation_id) off the claim snapshot; this reload only
+        supplies the row object AUDIT_MEMO / CAMPAIGN_LAUNCH /
+        PROFILE_SPEC_DRAFT need to stamp confidence onto their
+        knowledge-entry / proposal-row metadata.
         """
+        async with UnitOfWork() as uow:
+            return (await uow.session.exec(
+                _select(VRInvestigationOutcomeRecord).where(
+                    VRInvestigationOutcomeRecord.id == outcome_id,
+                ),
+            )).first()
 
-        claim = await claim_outcome_for_dispatch(
-            VRInvestigationOutcomeRecord,
-            outcome_id,
-            guard=self._dispatch_state_guard,
-        )
-        if not claim.found:
-            raise ValueError(f"outcome {outcome_id} not found")
-        outcome_kind = OutcomeKind(claim.outcome_kind)
-        if not claim.won:
-            _log.info(
-                "outcome_dispatcher SKIP outcome_id=%s kind=%s reason=%s",
-                outcome_id, outcome_kind.value, claim.skip_reason,
+    async def _handle_kind(
+        self,
+        *,
+        outcome_kind: OutcomeKind,
+        outcome_id: str,
+        investigation_id: str,
+        payload: dict[str, Any],
+        outcome_row: VRInvestigationOutcomeRecord | None,
+    ) -> OutcomeDispatchResult:
+        """Route the winning claim to the matching per-kind handler.
+
+        AUDIT_MEMO / CAMPAIGN_LAUNCH / PROFILE_SPEC_DRAFT need the
+        live outcome row for ``outcome.confidence``; the others take
+        only the payload snapshot.
+        """
+        if outcome_kind == OutcomeKind.AUDIT_MEMO:
+            return await self._dispatch_audit_memo(
+                outcome_id, investigation_id, payload, outcome_row,
             )
+        if outcome_kind == OutcomeKind.DIRECT_FINDING:
+            return await self._dispatch_direct_finding(
+                outcome_id, investigation_id, payload,
+            )
+        if outcome_kind == OutcomeKind.VARIANT_HUNT_ORDER:
+            return await self._dispatch_variant_hunt_order(
+                outcome_id, investigation_id, payload,
+            )
+        if outcome_kind == OutcomeKind.CAMPAIGN_LAUNCH:
+            return await self._dispatch_campaign_launch(
+                outcome_id, investigation_id, payload, outcome_row,
+            )
+        if outcome_kind == OutcomeKind.PROFILE_SPEC_DRAFT:
+            return await self._dispatch_profile_spec_draft(
+                outcome_id, investigation_id, payload, outcome_row,
+            )
+        if outcome_kind == OutcomeKind.PATCH_ASSESSMENT_REPORT:
+            return await self._dispatch_patch_assessment_report(
+                outcome_id, investigation_id, payload,
+            )
+        if outcome_kind in _NOT_YET_DISPATCHABLE:
             return OutcomeDispatchResult(
                 outcome_id=outcome_id,
                 outcome_kind=outcome_kind,
                 dispatch_status=OutcomeDispatchStatus.SKIPPED,
                 dispatch_target=None,
-                reason=claim.skip_reason,
+                reason=_NOT_YET_DISPATCHABLE[outcome_kind],
             )
-        async with UnitOfWork() as uow:
-            outcome = (await uow.session.exec(
-                _select(VRInvestigationOutcomeRecord).where(
-                    VRInvestigationOutcomeRecord.id == outcome_id,
-                )
-            )).first()
-            if outcome is None:
-                raise ValueError(f"outcome {outcome_id} not found")
-            payload = json.loads(outcome.payload_json or "{}")
-            investigation_id = outcome.investigation_id
-
-        try:
-            if outcome_kind == OutcomeKind.AUDIT_MEMO:
-                result = await self._dispatch_audit_memo(
-                    outcome_id, investigation_id, payload, outcome,
-                )
-            elif outcome_kind == OutcomeKind.DIRECT_FINDING:
-                result = await self._dispatch_direct_finding(
-                    outcome_id, investigation_id, payload,
-                )
-            elif outcome_kind == OutcomeKind.VARIANT_HUNT_ORDER:
-                result = await self._dispatch_variant_hunt_order(
-                    outcome_id, investigation_id, payload,
-                )
-            elif outcome_kind == OutcomeKind.CAMPAIGN_LAUNCH:
-                result = await self._dispatch_campaign_launch(
-                    outcome_id, investigation_id, payload, outcome,
-                )
-            elif outcome_kind == OutcomeKind.PROFILE_SPEC_DRAFT:
-                result = await self._dispatch_profile_spec_draft(
-                    outcome_id, investigation_id, payload, outcome,
-                )
-            elif outcome_kind == OutcomeKind.PATCH_ASSESSMENT_REPORT:
-                result = await self._dispatch_patch_assessment_report(
-                    outcome_id, investigation_id, payload,
-                )
-            elif outcome_kind in _NOT_YET_DISPATCHABLE:
-                result = OutcomeDispatchResult(
-                    outcome_id=outcome_id,
-                    outcome_kind=outcome_kind,
-                    dispatch_status=OutcomeDispatchStatus.SKIPPED,
-                    dispatch_target=None,
-                    reason=_NOT_YET_DISPATCHABLE[outcome_kind],
-                )
-            else:
-                result = OutcomeDispatchResult(
-                    outcome_id=outcome_id,
-                    outcome_kind=outcome_kind,
-                    dispatch_status=OutcomeDispatchStatus.SKIPPED,
-                    dispatch_target=None,
-                    reason=f"unknown_outcome_kind:{outcome_kind.value}",
-                )
-        except (
-            SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError,
-            AttributeError, LookupError, NameError, ImportError,
-        ):
-            # fix §184 -- narrow except masked UnboundLocalError on
-            # `result` when an unexpected exception escaped before
-            # `result` was assigned. Catch everything, log with the
-            # full traceback, and reraise so the caller can mark the
-            # outcome FAILED instead of leaving a half-state with a
-            # phantom `result`.
-            _log.exception(
-                "outcome_dispatcher FAILED outcome_id=%s kind=%s",
-                outcome_id, outcome_kind.value,
-            )
-            raise
-
-        await self._update_outcome_status(result)
-        _log.info(
-            "outcome_dispatcher RESULT outcome_id=%s kind=%s status=%s target=%s reason=%s",
-            result.outcome_id, result.outcome_kind.value,
-            result.dispatch_status.value, result.dispatch_target, result.reason,
+        return OutcomeDispatchResult(
+            outcome_id=outcome_id,
+            outcome_kind=outcome_kind,
+            dispatch_status=OutcomeDispatchStatus.SKIPPED,
+            dispatch_target=None,
+            reason=f"unknown_outcome_kind:{outcome_kind.value}",
         )
-        return result
 
     async def _dispatch_audit_memo(
         self,
@@ -1261,8 +1231,22 @@ class OutcomeDispatcher:
                 )
             return target, inv
 
-    async def _update_outcome_status(self, result: OutcomeDispatchResult) -> None:
+    async def _persist_dispatch_status(
+        self,
+        *,
+        outcome_id: str,
+        result: OutcomeDispatchResult,
+    ) -> None:
+        """Write the terminal dispatch status + cross-row cascade.
 
+        Overrides the base's minimal writer to add the VR-specific
+        cascade: on DISPATCHED, halt every sibling active branch that
+        was still churning on the same question, flip the parent
+        investigation to COMPLETED when no active branch remains, and
+        purge every ARQ job the investigation had queued (with a
+        short retry loop for transient Redis blips).
+        """
+        del outcome_id
         async with UnitOfWork() as uow:
             outcome = (await uow.session.exec(
                 _select(VRInvestigationOutcomeRecord).where(

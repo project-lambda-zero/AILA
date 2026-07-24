@@ -16,6 +16,22 @@ from aila.platform.agents.branch_pool import (
 )
 from aila.platform.agents.idempotent_llm import idempotent_llm_call
 from aila.platform.agents.intent_classifier import classify_intent
+from aila.platform.agents.outcome_dispatcher import (
+    OutcomeDispatcherBase,
+    OutcomeDispatcherError,
+    OutcomeDispatchResult,
+)
+from aila.platform.agents.pattern_extractor import (
+    PatternExtractionResult,
+    PatternExtractorBase,
+    PatternExtractorError,
+)
+from aila.platform.agents.persona_router import (
+    PERSONA_ROLE_MAP,
+    PersonaRole,
+    PersonaRouter,
+    persona_to_role,
+)
 from aila.platform.agents.sibling_consensus import inject_sibling_consensus
 from aila.platform.agents.tool_execution import (
     ToolExecutionResult,
@@ -24,9 +40,18 @@ from aila.platform.agents.tool_execution import (
 )
 
 __all__ = [
+    "PERSONA_ROLE_MAP",
     "BranchManagerError",
     "BranchOpResult",
     "BranchPool",
+    "OutcomeDispatchResult",
+    "OutcomeDispatcherBase",
+    "OutcomeDispatcherError",
+    "PatternExtractionResult",
+    "PatternExtractorBase",
+    "PatternExtractorError",
+    "PersonaRole",
+    "PersonaRouter",
     "ToolExecutionResult",
     "classify_contract_error",
     "classify_intent",
@@ -34,4 +59,5 @@ __all__ = [
     "inject_sibling_consensus",
     "maybe_post_auto_steering",
     "parse_command",
+    "persona_to_role",
 ]
