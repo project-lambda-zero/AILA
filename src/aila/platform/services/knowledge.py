@@ -31,6 +31,7 @@ from ...storage.database import async_session_scope
 from ...storage.db_models import KnowledgeEntryRecord
 from ...storage.registry import ConfigRegistry
 from .embedding import EmbeddingProvider, resolve_provider
+from .ingestor import DEFAULT_MAX_CHARS, Kind, KnowledgeIngestor
 
 _UNSET = object()
 _configured_model_cache: object = _UNSET
@@ -204,6 +205,10 @@ class KnowledgeService:
         metadata: dict | None = None,
         dedup_key: str | None = None,
         session: AsyncSession | None = None,
+        *,
+        chunked: bool = False,
+        kind: Kind | None = None,
+        chunk_max_chars: int = DEFAULT_MAX_CHARS,
     ) -> dict:
         """Store a knowledge entry with embedding per D-02/D-08.
 
@@ -216,10 +221,36 @@ class KnowledgeService:
             metadata: Optional JSON-serializable metadata dict.
             dedup_key: Optional dedup sentinel for idempotent upsert.
             session: Optional external session (from UoW).
+            chunked: RFC-12 opt-in. When True, ``content`` is split by
+                :class:`KnowledgeIngestor` into boundary-aligned chunks and
+                each chunk is written as its own row (one embedding per
+                chunk). The default False path is byte-identical to the
+                pre-RFC-12 behaviour so existing callers are unaffected.
+            kind: Chunking hint used only when ``chunked=True``. ``"code"``
+                splits on function/class boundaries; ``"document"`` (the
+                default when unset) splits on markdown heading rows.
+            chunk_max_chars: Per-chunk character ceiling used only when
+                ``chunked=True``. Oversize units are hard-split so no
+                emitted chunk violates the ceiling.
 
         Returns:
-            Dict with status, operation (inserted/updated), entry_id, namespace, embedding_dim.
+            Non-chunked path: dict with status, operation (inserted/updated),
+            entry_id, namespace, embedding_dim, content_length.
+            Chunked path: dict with status, operation='chunked', chunks (list
+            of per-chunk result dicts), chunk_count, namespace, embedding_dim,
+            content_length.
         """
+        if chunked:
+            return await self._store_chunked(
+                namespace=namespace,
+                content=content,
+                metadata=metadata,
+                dedup_key=dedup_key,
+                session=session,
+                kind=kind or "document",
+                chunk_max_chars=chunk_max_chars,
+            )
+
         meta_json = json.dumps(metadata or {})
         embedding_list = self.embed(content)
 
@@ -281,6 +312,71 @@ class KnowledgeService:
             "namespace": namespace,
             "embedding_dim": self._provider.dimension,
             "content_length": len(content),
+        }
+
+    async def _store_chunked(
+        self,
+        *,
+        namespace: str,
+        content: str,
+        metadata: dict | None,
+        dedup_key: str | None,
+        session: AsyncSession | None,
+        kind: Kind,
+        chunk_max_chars: int,
+    ) -> dict:
+        """Boundary-aligned multi-row ingestion path (RFC-12).
+
+        Delegates splitting to :class:`KnowledgeIngestor` and writes one
+        row per chunk through the standard :meth:`store` path so dedup
+        upsert, session ownership, and metadata merging all reuse the
+        same code as the single-row path. Each chunk carries its
+        ``chunk_index`` / ``chunk_count`` / ``chunk_kind`` in metadata;
+        when the caller supplies a ``dedup_key``, per-chunk keys derive
+        as ``"{dedup_key}#chunk={index}"`` so a later re-ingest updates
+        each chunk in place instead of proliferating rows.
+        """
+        chunks = KnowledgeIngestor().chunk(
+            content, kind=kind, max_chars=chunk_max_chars,
+        )
+        if not chunks:
+            return {
+                "status": "empty",
+                "operation": "noop",
+                "chunks": [],
+                "chunk_count": 0,
+                "namespace": namespace,
+                "embedding_dim": self._provider.dimension,
+                "content_length": 0,
+            }
+        base_meta: dict = dict(metadata or {})
+        chunk_records: list[dict] = []
+        total_length = 0
+        for index, chunk_text in enumerate(chunks):
+            chunk_dedup: str | None = None
+            if dedup_key is not None:
+                chunk_dedup = f"{dedup_key}#chunk={index}"
+            chunk_meta = dict(base_meta)
+            chunk_meta["chunk_index"] = index
+            chunk_meta["chunk_count"] = len(chunks)
+            chunk_meta["chunk_kind"] = kind
+            single = await self.store(
+                namespace=namespace,
+                content=chunk_text,
+                metadata=chunk_meta,
+                dedup_key=chunk_dedup,
+                session=session,
+            )
+            chunk_records.append(single)
+            total_length += len(chunk_text)
+        return {
+            "status": "stored",
+            "operation": "chunked",
+            "chunks": chunk_records,
+            "chunk_count": len(chunk_records),
+            "namespace": namespace,
+            "embedding_dim": self._provider.dimension,
+            "content_length": total_length,
         }
 
     async def retrieve(

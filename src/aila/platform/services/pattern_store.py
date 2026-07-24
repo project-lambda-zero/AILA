@@ -41,8 +41,25 @@ from aila.platform.contracts.enums import (
 )
 from aila.platform.services.knowledge import KnowledgeService
 from aila.platform.uow import UnitOfWork
+from aila.storage.registry import ConfigRegistry
+
+# RFC-12 relevance floor default for pattern retrieval. Below this combined
+# score (0.6*vec + 0.4*fts) a retrieval hit is considered noise and stripped
+# before it can reach a researcher prompt. Exposed as a module constant so a
+# future PlatformConfigSchema field can reuse the same value as its schema
+# default and both the ConfigRegistry lookup and the fallback stay in sync.
+PATTERN_RELEVANCE_FLOOR_DEFAULT: float = 0.3
+
+# ConfigRegistry namespace + key for the operator-tunable floor. Resolution
+# order is env AILA_PLATFORM_KNOWLEDGE_PATTERN_RELEVANCE_FLOOR -> DB row ->
+# schema default; when the key is not yet declared in the platform schema
+# (fresh installs before the schema field is added) the lookup returns None
+# and _resolve_relevance_floor falls back to PATTERN_RELEVANCE_FLOOR_DEFAULT.
+_RELEVANCE_FLOOR_CONFIG_NS: str = "platform"
+_RELEVANCE_FLOOR_CONFIG_KEY: str = "knowledge_pattern_relevance_floor"
 
 __all__ = [
+    "PATTERN_RELEVANCE_FLOOR_DEFAULT",
     "PatternRetrievalResult",
     "PatternStoreBase",
     "PatternStoreError",
@@ -453,10 +470,19 @@ class PatternStoreBase:
             namespaces.append(f"{self._namespace_prefix}.team.{team_id}")
         namespaces.append(f"{self._namespace_prefix}.global")
 
+        # RFC-12 relevance floor. Passed to retrieve() so the KnowledgeService
+        # can drop below-floor rows at rank time (no wasted downstream work),
+        # AND re-applied to the returned hits below so a caller that swaps in
+        # a test double or a proxy KnowledgeService still gets floor
+        # enforcement at the pattern layer. Two co-operating layers keep
+        # low-similarity noise out of researcher prompts.
+        floor = await self._resolve_relevance_floor()
+
         hits = await self._knowledge.retrieve(
             query=query,
             namespaces=namespaces,
             limit=k * 4,
+            min_score=floor,
         )
 
         results: list[PatternRetrievalResult] = []
@@ -467,6 +493,8 @@ class PatternStoreBase:
             if pid is None or pid not in candidates or pid in seen:
                 continue
             score = float(hit.get("score") or 0.0)
+            if score < floor:
+                continue
             results.append(
                 PatternRetrievalResult(
                     pattern=self._to_summary(candidates[pid]),
@@ -511,3 +539,29 @@ class PatternStoreBase:
                 await uow.session.commit()
 
         return results
+
+    @staticmethod
+    async def _resolve_relevance_floor() -> float:
+        """Resolve the pattern retrieval relevance floor via ConfigRegistry.
+
+        Env -> DB -> schema default (via :class:`ConfigRegistry`). When the
+        key is not declared in the platform schema (typical during the
+        RFC-12 rollout before the schema field lands) the lookup returns
+        None and the module falls back to
+        :data:`PATTERN_RELEVANCE_FLOOR_DEFAULT`. Non-numeric stored values
+        fall back to the same default so a bad DB row cannot silently
+        disable the floor.
+        """
+        try:
+            raw = await ConfigRegistry().get(
+                _RELEVANCE_FLOOR_CONFIG_NS,
+                _RELEVANCE_FLOOR_CONFIG_KEY,
+            )
+        except (OSError, RuntimeError, ValueError, TypeError):
+            return PATTERN_RELEVANCE_FLOOR_DEFAULT
+        if raw is None:
+            return PATTERN_RELEVANCE_FLOOR_DEFAULT
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return PATTERN_RELEVANCE_FLOOR_DEFAULT
