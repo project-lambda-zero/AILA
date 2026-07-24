@@ -197,7 +197,19 @@ class AgentTurnRunnerBase:
         case_state = inject_sibling_consensus(
             case_state, sibling_context, my_live_ids,
         )
-        system_prompt = await self._load_prompt(inv.strategy_family, branch.persona_voice)
+        # RFC-09 criterion 4: thread the investigation id so the module
+        # ``_load_prompt`` applies the pin-per-investigation rule (first
+        # turn pins the current production version; later turns resolve
+        # that exact version, insulating a running investigation from a
+        # live production-alias flip). The returned ``version`` is None
+        # only on the file-registry fallback path.
+        loaded_prompt = await self._load_prompt(
+            inv.strategy_family,
+            branch.persona_voice,
+            investigation_id=self.investigation_id,
+        )
+        system_prompt = loaded_prompt.body
+        resolved_prompt_version = loaded_prompt.version
         system_prompt_hash = hashlib.sha256(
             (system_prompt or "").encode()
         ).hexdigest()
@@ -301,6 +313,7 @@ class AgentTurnRunnerBase:
                     branch_id=self.branch_id,
                     turn_number=turn_number,
                     prompt_content_hash=system_prompt_hash,
+                    prompt_version=resolved_prompt_version,
                 ):
                     decision = await self._engine.decide_next_turn(
                         task_type=task_type,

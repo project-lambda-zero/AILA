@@ -106,30 +106,30 @@ class TestProfileRules:
 
 class TestPromptLoading:
     async def test_kernel_audit_prompt_loads(self, test_db) -> None:
-        text = await _load_prompt("vulnerability_research.kernel_audit")
+        text = (await _load_prompt("vulnerability_research.kernel_audit")).body
         assert "kernel audit" in text.lower()
         assert "slab" in text.lower()
         assert "refcount" in text.lower() or "ref-count" in text.lower()
 
     async def test_hypervisor_audit_prompt_loads(self, test_db) -> None:
-        text = await _load_prompt("vulnerability_research.hypervisor_audit")
+        text = (await _load_prompt("vulnerability_research.hypervisor_audit")).body
         assert "hypervisor" in text.lower()
         assert "virtio" in text.lower()
         assert "guest" in text.lower() and "host" in text.lower()
 
     async def test_kernel_prompt_mentions_hardening(self, test_db) -> None:
-        text = await _load_prompt("vulnerability_research.kernel_audit")
+        text = (await _load_prompt("vulnerability_research.kernel_audit")).body
         # Prompt should call out the hardening features that invalidate findings
         for term in ("KASLR", "SMEP", "KPTI"):
             assert term in text, f"kernel prompt missing {term}"
 
     async def test_hypervisor_prompt_mentions_iommu(self, test_db) -> None:
-        text = await _load_prompt("vulnerability_research.hypervisor_audit")
+        text = (await _load_prompt("vulnerability_research.hypervisor_audit")).body
         assert "iommu" in text.lower()
         assert "dma" in text.lower()
 
     async def test_unknown_kernel_strategy_falls_back_to_audit(self, test_db) -> None:
         # Loader strips dotted prefix; an unmapped suffix falls back to
         # the original system_audit.md
-        text = await _load_prompt("vulnerability_research.totally_unknown_kernel_thing")
+        text = (await _load_prompt("vulnerability_research.totally_unknown_kernel_thing")).body
         assert "audit-only investigation" in text

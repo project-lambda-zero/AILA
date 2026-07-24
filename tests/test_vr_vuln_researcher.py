@@ -198,17 +198,17 @@ class TestOutcomePayload:
 
 class TestPromptLoading:
     async def test_audit_prompt_loads(self, test_db) -> None:
-        text = await _load_prompt("vulnerability_research.audit")
+        text = (await _load_prompt("vulnerability_research.audit")).body
         assert "audit-only investigation" in text
         assert "submit" in text
 
     async def test_unknown_strategy_falls_back_to_audit(self, test_db) -> None:
-        text = await _load_prompt("vulnerability_research.discovery_research")
+        text = (await _load_prompt("vulnerability_research.discovery_research")).body
         # Falls back to audit prompt for v0.3 v1 (other strategies stub)
         assert "audit-only investigation" in text
 
     async def test_completely_unknown_family_also_falls_back(self, test_db) -> None:
-        text = await _load_prompt("weird.unknown_family")
+        text = (await _load_prompt("weird.unknown_family")).body
         assert "audit-only investigation" in text
 
     async def test_registered_production_version_overrides_file(self, test_db) -> None:
@@ -217,7 +217,7 @@ class TestPromptLoading:
         key = _prompt_key("vulnerability_research.audit")
         version = await _PROMPT_VERSION_STORE.register(key, "DEPLOYED PROMPT BODY")
         await _PROMPT_VERSION_STORE.set_alias(key, "production", version)
-        text = await _load_prompt("vulnerability_research.audit")
+        text = (await _load_prompt("vulnerability_research.audit")).body
         assert text == "DEPLOYED PROMPT BODY"
 
 

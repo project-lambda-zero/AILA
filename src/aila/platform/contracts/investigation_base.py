@@ -100,6 +100,16 @@ class InvestigationRecordBase(TableDerivedConstraintsMixin, TeamScopedMixin, SQL
     linked_campaign_ids_json: str = Field(default="[]", sa_type=Text, sa_column_kwargs={"nullable": True})
     linked_finding_ids_json: str = Field(default="[]", sa_type=Text, sa_column_kwargs={"nullable": True})
 
+    # RFC-09 criterion 4: pin-per-investigation. First resolve of a prompt
+    # key on this row records the current production-alias version here;
+    # subsequent resolves for the SAME investigation return the pinned
+    # version so a live production-alias flip never rewrites a running
+    # investigation. JSON object mapping prompt-key -> resolved version
+    # string. Empty object = nothing pinned yet.
+    prompt_pins_json: str = Field(
+        default="{}", sa_type=Text, sa_column_kwargs={"nullable": True},
+    )
+
     started_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     stopped_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
