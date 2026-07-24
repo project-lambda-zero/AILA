@@ -27,7 +27,6 @@ What this commit does NOT do:
 """
 from __future__ import annotations
 
-import functools
 import hashlib
 import json
 import logging
@@ -89,6 +88,7 @@ from aila.platform.mcp.adapters.known_tools import tools_for_language
 from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
 from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
 from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
+from aila.platform.prompts import PromptNotFoundError, PromptRegistry
 from aila.platform.services.reasoning import CyberReasoningEngine
 from aila.platform.uow import UnitOfWork
 
@@ -2902,45 +2902,19 @@ async def _upsert_canonical_outcome(
     return existing.id
 
 
-@functools.lru_cache(maxsize=16)
-def _cached_read_prompt(path_str: str) -> str:
-    """Read a prompt file from disk with content cached by path.
-
-    Prompts are static files baked into the repo; reading the same
-    48KB system_audit.md hundreds of times per investigation is pure
-    overhead. ``maxsize=16`` comfortably covers base prompts +
-    per-persona variants.
-    """
-    return Path(path_str).read_text(encoding="utf-8")
+_PROMPT_REGISTRY = PromptRegistry(_PROMPT_DIR, fallback_base="system_audit.md")
 
 
 def _load_prompt(strategy_family: str, persona_voice: str | None = None) -> str:
     """Load the system prompt for a strategy family + optional persona.
 
-    When ``persona_voice`` is supplied AND a per-persona prompt file
-    exists at ``prompts/persona_<voice>.md``, that file's content is
-    prepended to the base audit prompt as a role-specific opening
-    section. The persona file should focus on ROLE BEHAVIOUR (what
-    this voice's job is in the deliberation), not repeat the common
-    audit rules -- those come from the base prompt below.
-
-    Falls through to base ``system_<strategy>.md`` (or
-    ``system_audit.md``) when no persona is set or no persona file
-    exists.
+    Delegates to the platform PromptRegistry (RFC-09), translating a
+    missing prompt into the module error the setup path expects.
     """
-    base_candidate = _PROMPT_DIR / f"system_{strategy_family.rsplit('.', 1)[-1]}.md"
-    if not base_candidate.exists():
-        base_candidate = _PROMPT_DIR / "system_audit.md"
-    if not base_candidate.exists():
-        raise VulnResearcherError(f"prompt file missing: {base_candidate}")
-    base = _cached_read_prompt(str(base_candidate))
-
-    if persona_voice:
-        persona_candidate = _PROMPT_DIR / f"persona_{persona_voice.lower()}.md"
-        if persona_candidate.exists():
-            persona_prefix = _cached_read_prompt(str(persona_candidate))
-            return f"{persona_prefix}\n\n---\n\n{base}"
-    return base
+    try:
+        return _PROMPT_REGISTRY.load(strategy_family, persona_voice)
+    except PromptNotFoundError as exc:
+        raise VulnResearcherError(str(exc)) from exc
 
 
 # Resolves Pydantic forward refs when this module is imported standalone.
