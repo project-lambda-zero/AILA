@@ -21,6 +21,23 @@ module-specific table.
 """
 from __future__ import annotations
 
+from aila.platform.mcp.client import (
+    EmptyPoolError,
+    InstancePool,
+    McpClient,
+    ResolvedInstance,
+    compact_tool_spec,
+    resolve_instance,
+)
 from aila.platform.mcp.instance_catalog import McpInstanceCatalog, McpServerInstance
 
-__all__: list[str] = ["McpInstanceCatalog", "McpServerInstance"]
+__all__: list[str] = [
+    "EmptyPoolError",
+    "InstancePool",
+    "McpClient",
+    "McpInstanceCatalog",
+    "McpServerInstance",
+    "ResolvedInstance",
+    "compact_tool_spec",
+    "resolve_instance",
+]

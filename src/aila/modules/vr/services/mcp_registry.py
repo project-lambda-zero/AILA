@@ -13,7 +13,12 @@ from typing import ClassVar
 
 from aila.platform.mcp.registry import McpRegistryServiceBase
 
-__all__ = ["MCP_SERVERS", "McpRegistryService"]
+__all__ = [
+    "MCP_SERVERS",
+    "MODULE_CAPABILITIES",
+    "SERVER_CAPABILITY_DEFAULTS",
+    "McpRegistryService",
+]
 
 
 MCP_SERVERS: tuple[dict[str, str], ...] = (
@@ -52,6 +57,36 @@ MCP_SERVERS: tuple[dict[str, str], ...] = (
         "default_url": "http://127.0.0.1:18823",
     },
 )
+
+
+# RFC-11 step 3 -- capability-based module binding. VR declares the
+# capability tags it needs for each target kind; the platform's
+# ``McpRegistryServiceBase.resolve_by_capability`` returns every enabled
+# catalog row whose ``capability_tags`` column contains one of these
+# tags. Falls back to the static ``MCP_SERVERS`` name map when the
+# catalog is empty for this module scope so the pre-catalog behaviour
+# stays byte-identical.
+MODULE_CAPABILITIES: dict[str, tuple[str, ...]] = {
+    "source_repo": ("source_audit",),
+    "native_binary": ("binary_audit",),
+    "ipa": ("binary_audit",),
+    "jar": ("binary_audit",),
+    "dotnet_assembly": ("binary_audit",),
+    "kernel_image": ("binary_audit",),
+    "kernel_module": ("binary_audit",),
+    "hypervisor_image": ("binary_audit",),
+    "android_apk": ("android_audit", "source_audit", "binary_audit"),
+}
+
+# Default capability tags each seeded server row advertises. Operators
+# override per-instance via the ``PATCH /platform/mcp/instances/<id>``
+# endpoint; the map here is only the initial fallback the researcher
+# uses when a catalog row is missing a ``capability_tags`` set.
+SERVER_CAPABILITY_DEFAULTS: dict[str, tuple[str, ...]] = {
+    "audit_mcp": ("source_audit",),
+    "ida_headless": ("binary_audit",),
+    "android_mcp": ("android_audit",),
+}
 
 
 class McpRegistryService(McpRegistryServiceBase):

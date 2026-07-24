@@ -56,6 +56,12 @@ class McpCallLogRecordBase(TableDerivedConstraintsMixin, SQLModel):
     error_excerpt: str | None = Field(default=None, sa_type=Text, sa_column_kwargs={"nullable": True})
     target_id: str | None = Field(default=None, max_length=36, index=True)
     team_id: str | None = Field(default=None, max_length=36)
+    # RFC-11 provenance: which physical catalog row served this call.
+    # ``None`` when the URL came from the ``env`` / ``config`` / ``default``
+    # tiers of the resolver (the row-less pre-catalog paths). Indexed so
+    # the operator dashboard joins call-log rows to catalog rows on this
+    # key without a full scan.
+    instance_id: str | None = Field(default=None, max_length=128, index=True)
     # #39 observability join-keys: correlate a call-log row to the
     # investigation / branch / turn that made it. Stamped from the ambient
     # correlation ContextVar by the MCP call logger.

@@ -37,12 +37,21 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections.abc import Iterable
 from typing import Any, ClassVar
 
 import httpx
 
 from aila.platform.contracts import utc_now
-from aila.platform.mcp.instance_catalog import McpInstanceCatalog
+from aila.platform.mcp.client import (
+    InstancePool,
+    ResolvedInstance,
+    resolve_instance,
+)
+from aila.platform.mcp.instance_catalog import (
+    McpInstanceCatalog,
+    decode_capability_tags,
+)
 from aila.storage.registry import ConfigRegistry
 
 __all__ = ["McpRegistryServiceBase"]
@@ -96,6 +105,94 @@ class McpRegistryServiceBase:
 
     def _spec(self, server_id: str) -> dict[str, str] | None:
         return next((s for s in self._servers if s["id"] == server_id), None)
+
+    async def resolve_by_capability(
+        self,
+        capability: str,
+        *,
+        include_disabled: bool = False,
+    ) -> list[ResolvedInstance]:
+        """Return every catalog row for this scope advertising ``capability``.
+
+        RFC-11 step 3 -- capability-based module binding. A module
+        declares the capability tags it needs (``["disassembly",
+        "decompile"]``); the platform returns every enabled instance
+        whose ``capability_tags`` column contains the requested tag.
+        Disabled rows are skipped by default so the operator's
+        temporary disable flips a member out of the pool without a
+        deletion.
+
+        Empty catalog or no matching row returns an empty list; the
+        caller decides whether to fall back to the code-embedded
+        static server catalog (which is what the pre-RFC-11 modules
+        did) or surface the outage. The empty-catalog case therefore
+        stays byte-identical to the pre-RFC-11 behaviour.
+        """
+        rows = await self._catalog.list_instances(
+            module_scope=self._module_id, include_disabled=include_disabled,
+        )
+        out: list[ResolvedInstance] = []
+        for row in rows:
+            tags = decode_capability_tags(row.capability_tags)
+            if capability not in tags:
+                continue
+            endpoint = (row.endpoint or "").strip().rstrip("/")
+            if not endpoint:
+                continue
+            out.append(
+                ResolvedInstance(
+                    url=endpoint,
+                    source="catalog",
+                    instance_id=row.id,
+                    capability_tags=tuple(tags),
+                    name=row.name,
+                    module_scope=row.module_scope,
+                ),
+            )
+        return out
+
+    async def bind(
+        self, capabilities: Iterable[str],
+    ) -> dict[str, list[ResolvedInstance]]:
+        """Return ``{capability: [instances...]}`` for every requested tag.
+
+        RFC-11 step 4 -- one call per turn per module. A capability
+        with no matching row lands as an empty list so the caller can
+        distinguish "catalog empty for this capability" from "catalog
+        has rows but the requested tag is absent".
+        """
+        return {
+            cap: await self.resolve_by_capability(cap) for cap in capabilities
+        }
+
+    async def pool_for_capability(self, capability: str) -> InstancePool:
+        """Return an :class:`InstancePool` over every enabled instance.
+
+        Two catalog rows of one capability share load: ``pool.next()``
+        alternates picks across the members via a monotonic counter
+        under an async lock. The caller keeps the pool for the
+        lifetime of the turn so successive calls interleave rather
+        than repeatedly hammering the same member.
+        """
+        members = await self.resolve_by_capability(capability)
+        return InstancePool(members)
+
+    async def _resolve_instance(self, spec: dict[str, str]) -> ResolvedInstance:
+        """Return the full :class:`ResolvedInstance` for a static spec row.
+
+        Byte-identical to :meth:`_resolved_url` but carries the
+        ``instance_id`` and ``capability_tags`` when the catalog tier
+        wins so the caller can plumb provenance into the audit log.
+        """
+        return await resolve_instance(
+            module_scope=self._module_id,
+            server_name=spec["id"],
+            env_var=spec["env_var"],
+            config_key=spec["config_key"],
+            default_url=spec["default_url"],
+            catalog=self._catalog,
+            registry=self._registry,
+        )
 
     async def _resolved_url(self, spec: dict[str, str]) -> tuple[str, str]:
         """Return (url, source). source in {'env', 'config', 'catalog', 'default'}.

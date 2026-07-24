@@ -29,10 +29,9 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from sqlalchemy.exc import SQLAlchemyError
 
+from aila.platform.mcp.client import ResolvedInstance, resolve_instance
 from aila.platform.tools import Tool
-from aila.storage.registry import ConfigRegistry
 
 from ._kwarg_alias import build_alias_map, normalize_kwargs
 from ._recorder import BridgeRecorder, noop_recorder
@@ -327,7 +326,7 @@ class AuditMcpBridgeTool(Tool):
         # never reclaimed).
         self._warmed_indexes: set[str] = set()
         self._warm_locks: dict[str, Any] = {}
-        # fix §208 -- cache the resolved base URL on the instance. The
+        # fix \u00a7208 -- cache the resolved base URL on the instance. The
         # docstring originally promised per-call resolution so an
         # operator PATCH against /vr/mcp/servers/audit_mcp would take
         # effect without a restart; in practice every call paid ~5ms
@@ -335,7 +334,11 @@ class AuditMcpBridgeTool(Tool):
         # The URL is now resolved on first use and reused for the
         # lifetime of the bridge; call invalidate_base_url() to force
         # a re-read after operator config changes.
-        self._resolved_base_url: str | None = None
+        # RFC-11 -- resolution moved onto the shared 4-tier resolver in
+        # aila.platform.mcp.client. Cache the full ResolvedInstance so
+        # every recorded call carries the catalog row's ``instance_id``
+        # (or ``None`` for env / config / default tiers).
+        self._resolved: ResolvedInstance | None = None
 
     # ── Per-index pre-warm registry ──────────────────────────────────
     #
@@ -354,45 +357,38 @@ class AuditMcpBridgeTool(Tool):
     _PREWARM_FANOUT: int = 16
     _PREWARM_TIMEOUT_S: float = 90.0
 
-    async def _resolve_base_url(self) -> str:
+    async def _resolve_instance(self) -> ResolvedInstance:
+        """Return the cached ResolvedInstance or resolve via the shared helper.
+
+        RFC-11 delegates the four-tier lookup (env > config > catalog >
+        default) to :func:`aila.platform.mcp.client.resolve_instance` so
+        the bridge and the McpRegistryServiceBase probe path never
+        disagree on where the operator PATCH landed. The catalog tier
+        (when a row exists for ``(module_id, 'audit_mcp')`` and is
+        enabled) supplies the ``instance_id`` recorded on every call.
+        """
         if self._fixed_base_url is not None:
-            return self._fixed_base_url
-        # fix §208 -- cached on the instance for the bridge lifetime.
-        if self._resolved_base_url is not None:
-            return self._resolved_base_url
-        env_value = os.environ.get("AUDIT_MCP_URL")
-        if env_value:
-            self._resolved_base_url = env_value.rstrip("/")
-            return self._resolved_base_url
-        try:
-            cfg_value = await ConfigRegistry().get(self.module_id, "audit_mcp_url")
-            if isinstance(cfg_value, str) and cfg_value.strip():
-                self._resolved_base_url = cfg_value.rstrip("/")
-                return self._resolved_base_url
-        except (
-            ImportError,
-            SQLAlchemyError,
-            OSError,
-            RuntimeError,
-            ValueError,
-            TypeError,
-        ) as exc:
-            # fix §209 -- broadened from (ValueError, RuntimeError,
-            # ImportError). SQLAlchemy OperationalError, ConfigKeyError,
-            # and anything else raised by ConfigRegistry().get used to
-            # propagate and crash the bridge call. URL resolution is a
-            # config lookup -- fail-safe to the default.
-            # fix §350 -- traceback now reaches the fallback log so a
-            # non-transient ConfigRegistry break (DB unreachable, schema
-            # drift) is grep-able from the INFO line.
-            logging.getLogger(__name__).info(
-                "audit_mcp_bridge: ConfigRegistry lookup failed "
-                "(%s: %s) -- falling back to default URL",
-                type(exc).__name__, exc,
-                exc_info=True,
+            return ResolvedInstance(
+                url=self._fixed_base_url,
+                source="default",
+                instance_id=None,
+                capability_tags=(),
+                name="audit_mcp",
+                module_scope=self.module_id,
             )
-        self._resolved_base_url = "http://127.0.0.1:18822"
-        return self._resolved_base_url
+        if self._resolved is not None:
+            return self._resolved
+        self._resolved = await resolve_instance(
+            module_scope=self.module_id,
+            server_name="audit_mcp",
+            env_var="AUDIT_MCP_URL",
+            config_key="audit_mcp_url",
+            default_url="http://127.0.0.1:18822",
+        )
+        return self._resolved
+
+    async def _resolve_base_url(self) -> str:
+        return (await self._resolve_instance()).url
 
     async def base_url(self) -> str:
         """Public accessor for the resolved bridge base URL.
@@ -405,11 +401,12 @@ class AuditMcpBridgeTool(Tool):
         return await self._resolve_base_url()
 
     def invalidate_base_url(self) -> None:
-        """Drop the cached base URL; next call re-resolves via env + config."""
-        # fix §208 -- optional escape hatch for operators who PATCH the
-        # server config mid-run. The fixed-url path (test/DI) is
-        # unaffected and stays sticky for the bridge's lifetime.
-        self._resolved_base_url = None
+        """Drop the cached base URL; next call re-resolves via the shared helper."""
+        # fix \u00a7208 -- optional escape hatch for operators who PATCH the
+        # server config or catalog row mid-run. The fixed-url path
+        # (test/DI) is unaffected and stays sticky for the bridge's
+        # lifetime.
+        self._resolved = None
 
     # ── LLM kwarg synonym map ─────────────────────────────────────────
     #
@@ -542,11 +539,13 @@ class AuditMcpBridgeTool(Tool):
         if isinstance(index_id, str) and index_id:
             await self._ensure_prewarmed(index_id)
 
-        base = await self._resolve_base_url()
+        resolved = await self._resolve_instance()
+        base = resolved.url
         url = f"{base}/tools/{action}"
 
         async with self._recorder(
             server_id="audit_mcp", base_url=base, action=action,
+            instance_id=resolved.instance_id,
         ) as ctx:
             # Bound concurrency on memory-heavy tools. The semaphore is
             # class-level so every bridge instance in this worker process

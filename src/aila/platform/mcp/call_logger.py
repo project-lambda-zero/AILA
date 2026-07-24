@@ -43,6 +43,7 @@ async def record_call(
     action: str,
     record_model: type,
     log_prefix: str,
+    instance_id: str | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Async context manager that writes one MCP call-log row per call.
 
@@ -65,6 +66,9 @@ async def record_call(
         "error_excerpt": None,
         "target_id": None,
         "team_id": None,
+        # RFC-11 provenance: which catalog row served this call, or
+        # ``None`` when the URL came from env / config / default.
+        "instance_id": instance_id,
     }
     try:
         yield ctx
@@ -97,6 +101,7 @@ async def _write_record(
     team_id: str | None,
     record_model: type,
     log_prefix: str,
+    instance_id: str | None = None,
 ) -> None:
     """Persist one call-log row.
 
@@ -117,6 +122,7 @@ async def _write_record(
                 error_excerpt=error_excerpt,
                 target_id=target_id,
                 team_id=team_id,
+                instance_id=instance_id,
                 investigation_id=_inv,
                 branch_id=_branch,
                 turn_number=_turn,

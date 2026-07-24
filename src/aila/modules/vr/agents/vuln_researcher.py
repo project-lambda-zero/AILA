@@ -1784,6 +1784,13 @@ def _applicable_servers_for_kind(target_kind: str | None) -> set[str]:
     PLUS audit_mcp (source-graph over the decompiled Java tree).
     Unknown / mixed kinds default to every known bridge so the agent
     isn't locked out of any path.
+
+    RFC-11 replaces this hardcoded name map with capability-based
+    binding: see :func:`_applicable_servers_by_capability` for the
+    catalog-first path that consults ``capability_tags``. This name
+    map remains the deterministic fallback the researcher uses when
+    the catalog is empty for the VR scope so the empty-catalog
+    behaviour stays byte-identical.
     """
     k = (target_kind or "").lower()
     if k in _SOURCE_REPO_KINDS:
@@ -1804,6 +1811,42 @@ def _applicable_servers_for_kind(target_kind: str | None) -> set[str]:
     if k in _BINARY_KINDS:
         return {"ida_headless"}
     return set(KNOWN_TOOLS.keys())
+
+
+async def _applicable_servers_by_capability(
+    target_kind: str | None,
+) -> set[str] | None:
+    """Return applicable server names via capability tags, or ``None``.
+
+    RFC-11 step 3 -- the researcher declares the capability tags it
+    needs for the target's kind (see
+    :data:`aila.modules.vr.services.mcp_registry.MODULE_CAPABILITIES`)
+    and asks the platform registry for every catalog row whose
+    ``capability_tags`` column contains any of them. Returns the union
+    of the resolved instances' names.
+
+    Falls through with ``None`` when the catalog is empty for the VR
+    scope or the target kind has no declared capability list, so the
+    caller keeps using :func:`_applicable_servers_for_kind` as the
+    static default. That preserves byte-identical behaviour for
+    operators who have not populated the catalog.
+    """
+    from aila.modules.vr.services.mcp_registry import (
+        MODULE_CAPABILITIES,
+        McpRegistryService,
+    )
+
+    k = (target_kind or "").lower()
+    tags = MODULE_CAPABILITIES.get(k)
+    if not tags:
+        return None
+    svc = McpRegistryService()
+    resolved: set[str] = set()
+    for tag in tags:
+        for inst in await svc.resolve_by_capability(tag):
+            if inst.name:
+                resolved.add(inst.name)
+    return resolved or None
 
 
 async def _fetch_tool_specs(
@@ -1828,7 +1871,10 @@ async def _fetch_tool_specs(
     the trailmark graph even though the runtime calls them via
     vtable / monomorphization / dynamic dispatch.
     """
-    applicable = _applicable_servers_for_kind(target_kind)
+    # RFC-11 -- capability-first resolution when the catalog is
+    # populated for the VR scope, else the static name map.
+    catalog_applicable = await _applicable_servers_by_capability(target_kind)
+    applicable = catalog_applicable or _applicable_servers_for_kind(target_kind)
     out: dict[str, list[dict[str, Any]]] = {}
     if "audit_mcp" in applicable:
         specs = await AuditMcpBridgeTool(recorder=record_call).list_tool_specs()
