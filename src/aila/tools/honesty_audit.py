@@ -50,6 +50,7 @@ Detects thirty-six categories of structural dishonesty:
 46. platform_owns_event_vocabulary -- an event class under platform/events/ carries module-domain vocabulary (scan/finding/investigation or a module id) in its class name or event_type; the platform owns only generic infrastructure events (RFC-05 concern c).
 47. raw_sql_platform_tables -- a module file issues raw SQL against a platform-owned task table (taskrecord, workflow_state_cursor); route through a platform lifecycle / TaskQueue service instead (RFC-05 Phase 6).
 48. platform_names_module -- a boundary-guarded file (api/, platform/, storage/) resolves a specific feature module by naming its id in a .require("vulnerability") / .require_module("forensics") call; resolve domain data by capability via ModuleRegistry.first_with/all_with instead (RFC-05 concerns a/g).
+49. agent_env_read -- a module agents/ file reads config via os.environ / os.getenv (attribute access or `from os import environ/getenv`) instead of platform ConfigRegistry; the RFC-03 lift removed every direct env read from module agent runtimes and this rule locks the closure in.
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -793,15 +794,37 @@ _WORKFLOW_BASE_CORPUS_CACHE: dict[str, dict[str, str]] = {}
 
 # Rule 42 -- module agents/ files must not re-implement a platform agent
 # primitive. RFC-03 Phase 1 lifted the operator-intent classifier and the
-# auto-steering injector to platform/agents/; modules import them. A
-# top-level def of a lifted primitive is a copy that drifted back in.
+# auto-steering injector to platform/agents/; Phase 7 lifted the per-turn
+# loop (AgentTurnRunnerBase.run_turn) and the case-state codec / terminal
+# resolver helpers (aila.platform.agents.turn_helpers). Modules import
+# them; a def of a lifted primitive -- whether at module top level or as a
+# method redefinition on a class body -- is a copy that drifted back in.
+# Import re-exports are Import/ImportFrom statements, not FunctionDefs, so
+# they never trip this. A thin subclass ``class VrRunner(AgentTurnRunnerBase):
+# pass`` inherits the platform method without defining one, so it stays
+# clean; only an actual ``async def run_turn`` in the class body fires.
 _AGENTS_SCOPE_PATTERN = _re.compile(
     r"[/\\]aila[/\\]modules[/\\][^/\\]+[/\\]agents[/\\]"
 )
 _LIFTED_AGENT_PRIMITIVES: frozenset[str] = frozenset({
+    # Phase 1 lifts.
     "maybe_post_auto_steering",
     "classify_intent",
+    # Phase 7 turn-runner + turn-helpers lifts.
+    "run_turn",
+    "decode_case_state",
+    "encode_case_state",
+    "auto_resolve_live_on_terminal",
+    "to_outcome_confidence",
 })
+
+# Rule 49 -- agent_env_read. Attribute names on the ``os`` module that
+# reach the process environment. RFC-03's config-drift closure removed
+# every direct env read from ``modules/*/agents/**``; modules resolve
+# config through ``ConfigRegistry(module_id, key)`` so a DB override,
+# a per-module schema default, and env can all take turns without a
+# hand-coded fork per copy.
+_OS_ENV_ATTRS: frozenset[str] = frozenset({"environ", "getenv"})
 
 
 def _workflow_base_corpus(filepath: str) -> dict[str, str]:
@@ -2565,27 +2588,101 @@ class _HonestyVisitor(ast.NodeVisitor):
 
     def _check_agent_primitive_reimplementation(self, tree: ast.Module) -> None:
         """Rule 42: agent_primitive_reimplementation -- a module agents/ file
-        defines a platform-owned agent primitive at top level.
+        defines a platform-owned agent primitive.
 
-        RFC-03 Phase 1 extracted the operator-intent classifier and the
-        auto-steering injector to platform/agents/. Modules import them; a
-        top-level (re)definition is a copy that drifts from the platform
-        version. Import re-exports are statements, not defs, so they never
-        trip this.
+        RFC-03 lifted the per-turn loop (``run_turn``), the case-state
+        codec (``decode_case_state`` / ``encode_case_state``), the
+        terminal live-hypothesis resolver (``auto_resolve_live_on_terminal``),
+        the outcome-confidence coercion (``to_outcome_confidence``), the
+        auto-steering injector (``maybe_post_auto_steering``), and the
+        operator-intent classifier (``classify_intent``) to
+        ``aila.platform.agents``. Modules import them; a def of any of
+        these names -- whether at module top level or as a method
+        redefinition on a class body -- is a copy that drifts from the
+        single platform implementation. Import re-exports are Import /
+        ImportFrom statements, not FunctionDefs, so they never fire.
+        A thin subclass that just inherits the platform method without
+        overriding it stays clean; only an explicit ``async def run_turn``
+        (etc.) inside the class body fires.
         """
         if not _AGENTS_SCOPE_PATTERN.search(self.filename.replace("\\", "/")):
             return
+        def_types = (ast.FunctionDef, ast.AsyncFunctionDef)
+        # Top-level defs (module body).
         for node in tree.body:
-            is_def = isinstance(
-                node, (ast.FunctionDef, ast.AsyncFunctionDef),
-            )
-            if is_def and node.name in _LIFTED_AGENT_PRIMITIVES:
+            if (
+                isinstance(node, def_types)
+                and node.name in _LIFTED_AGENT_PRIMITIVES
+            ):
                 self._emit(
                     node.lineno,
                     "agent_primitive_reimplementation",
                     f"agent_primitive_reimplementation: '{node.name}' is owned "
                     "by platform/agents/; import it instead of redefining it",
                 )
+        # Class-body method defs. A subclass that overrides a lifted
+        # method (e.g. ``async def run_turn(self, ...)`` on a subclass of
+        # ``AgentTurnRunnerBase``) is the exact regression Phase 7 forbids.
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            for stmt in node.body:
+                if (
+                    isinstance(stmt, def_types)
+                    and stmt.name in _LIFTED_AGENT_PRIMITIVES
+                ):
+                    self._emit(
+                        stmt.lineno,
+                        "agent_primitive_reimplementation",
+                        f"agent_primitive_reimplementation: '{stmt.name}' is "
+                        f"owned by platform/agents/; do not override it in "
+                        f"'{node.name}'",
+                    )
+
+    def _check_agent_env_read(self, tree: ast.Module) -> None:
+        """Rule 49: agent_env_read -- a module agents/ file reads config
+        via ``os.environ`` / ``os.getenv`` instead of ``ConfigRegistry``.
+
+        RFC-03's config-drift closure removed every direct env read from
+        ``modules/*/agents/**``: the old vr copies (``branch_manager.py``,
+        ``claim_verifier.py``) reached ``os.environ`` for the branch cap
+        and the auto-promote floor, silently bypassing the DB override
+        and diverging from the malware copy. Modules now resolve config
+        through ``ConfigRegistry(module_id, key)``, which lets env, the DB,
+        and the per-module schema default each participate on one path.
+
+        The check fires on three shapes:
+          - ``os.environ`` / ``os.getenv`` attribute access on the ``os``
+            module (covers ``os.environ["X"]``, ``os.environ.get("X")``,
+            ``os.getenv("X")``);
+          - ``from os import environ`` / ``from os import getenv``.
+        """
+        if not _AGENTS_SCOPE_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Attribute)
+                and node.attr in _OS_ENV_ATTRS
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "os"
+            ):
+                self._emit(
+                    node.lineno,
+                    "agent_env_read",
+                    f"agent_env_read: read config via ConfigRegistry(module_id, "
+                    f"key) instead of os.{node.attr} (RFC-03 config-drift closure)",
+                )
+                continue
+            if isinstance(node, ast.ImportFrom) and node.module == "os":
+                for alias in node.names:
+                    if alias.name in _OS_ENV_ATTRS:
+                        self._emit(
+                            node.lineno,
+                            "agent_env_read",
+                            f"agent_env_read: read config via ConfigRegistry"
+                            f"(module_id, key) instead of 'from os import "
+                            f"{alias.name}' (RFC-03 config-drift closure)",
+                        )
 
     def _check_cost_read_stored_actual(
         self, tree: ast.Module, module_id: str,
@@ -2734,6 +2831,7 @@ class HonestyAuditor:
             visitor._check_lifecycle_handler_bypass(tree, module_id)
             visitor._check_agent_primitive_reimplementation(tree)
             visitor._check_agent_llm_chat_bypass(tree)
+            visitor._check_agent_env_read(tree)
         if _is_boundary_guarded_file(str(path)):
             visitor._check_api_imports_modules(tree)
             visitor._check_platform_names_module(tree)
