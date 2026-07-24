@@ -17,7 +17,9 @@ Design decision: Option A -- UPDATE original records (no sentinel run_id="_human
 """
 from __future__ import annotations
 
+import hashlib
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pydantic
@@ -26,6 +28,8 @@ import structlog
 from pydantic import BaseModel
 
 from ..exceptions import AILAError
+from ..prompts import PromptRegistry
+from .correlation import correlation_scope, current_join_keys, current_prompt_version
 from .errors import LLMError
 
 if TYPE_CHECKING:
@@ -36,15 +40,20 @@ _log = structlog.get_logger(__name__)
 
 _DEFAULT_HOURLY_RATE = 150.0
 
-HUMAN_COST_SYSTEM_PROMPT = (
-    "You are a security consulting cost estimator. Given a summary of automated "
-    "security assessment work performed by an AI platform, estimate how many hours "
-    "a human security consultant would need to perform equivalent work manually. "
-    "Consider: target enumeration, vulnerability scanning, finding analysis, "
-    "report writing, and quality review. Be realistic -- human consultants work "
-    "methodically but cannot parallelize like software. "
-    "Return your estimate as JSON."
-)
+_PROMPT_DIR = Path(__file__).resolve().parents[1] / "prompts"
+_PROMPT_REGISTRY = PromptRegistry(_PROMPT_DIR, fallback_base="system_human_cost.md")
+
+
+def _load_human_cost_prompt() -> str:
+    """Return the estimator system prompt from the platform prompt registry.
+
+    RFC-09 criterion 1: prompt lives in a versionable ``.md`` file, not an
+    inline literal. ``PromptRegistry.load("human_cost")`` reads
+    ``system_human_cost.md`` under the platform prompts directory (its
+    canonical fallback base), so the callable stays honest even if a
+    strategy-specific variant is later dropped in.
+    """
+    return _PROMPT_REGISTRY.load("human_cost")
 
 
 class HumanCostEstimate(BaseModel):
@@ -88,8 +97,9 @@ async def estimate_human_cost(
     Never raises -- logs and returns None on any error.
     """
     try:
+        system_prompt = _load_human_cost_prompt()
         messages = [
-            {"role": "system", "content": HUMAN_COST_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
                 "content": json.dumps({
@@ -101,13 +111,26 @@ async def estimate_human_cost(
             },
         ]
 
-        response = await llm_client.chat_structured(
-            "cost_estimation",
-            messages,
-            HumanCostEstimate,
-            run_id=None,   # NOT attributed to the scan run (D-06b)
-            team_id=team_id,
-        )
+        # RFC-09 criterion 2: stamp the resolved prompt's content hash so
+        # this LLM call's LLMCostRecord + AuditSealRecord attribute back to
+        # the exact prompt template. Version stays None until the estimator
+        # prompt is registered in the platform PromptVersionStore. Preserve
+        # any outer join keys so a caller that already opened a scope keeps
+        # its investigation/branch/turn attribution.
+        prompt_hash = hashlib.sha256(system_prompt.encode("utf-8")).hexdigest()
+        _inv, _br, _turn = current_join_keys()
+        with correlation_scope(
+            investigation_id=_inv, branch_id=_br, turn_number=_turn,
+            prompt_content_hash=prompt_hash,
+            prompt_version=current_prompt_version(),
+        ):
+            response = await llm_client.chat_structured(
+                "cost_estimation",
+                messages,
+                HumanCostEstimate,
+                run_id=None,   # NOT attributed to the scan run (D-06b)
+                team_id=team_id,
+            )
 
         if response.disabled:
             _log.warning(

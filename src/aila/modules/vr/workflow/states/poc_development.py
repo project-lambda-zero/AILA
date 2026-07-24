@@ -21,18 +21,41 @@ cannot crash the workflow.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import random
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from aila.platform.llm.correlation import (
+    correlation_scope,
+    current_join_keys,
+    current_prompt_version,
+)
+from aila.platform.prompts import PromptRegistry
 from aila.platform.workflows.types import StateResult
 
 __all__ = ["LLMDisabledByOperatorError", "state_poc_development"]
 
 _log = logging.getLogger(__name__)
+
+_PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
+_PROMPT_REGISTRY = PromptRegistry(
+    _PROMPT_DIR, fallback_base="system_poc_development.md",
+)
+
+
+def _load_system_prompt() -> str:
+    """Return the PoC-generator system prompt from the registry.
+
+    RFC-09 criterion 1: prompt lives in a versionable ``.md`` file, not
+    inline. Reads ``system_poc_development.md`` under the VR workflow
+    prompts directory.
+    """
+    return _PROMPT_REGISTRY.load("poc_development")
 
 
 # fix §303 -- dedicated exception for the LLM kill-switch state. The
@@ -80,27 +103,6 @@ class PoCResponse(BaseModel):
         description="One sentence explaining the trigger mechanism.",
         max_length=512,
     )
-
-_SYSTEM_PROMPT = """You write proof-of-concept exploits for vulnerability \
-research. Given a root-cause description, vulnerable function, and crash \
-type, emit a single PoC that triggers the bug. Default language is Python \
-(uses pwntools when helpful); use C only when stack/heap layout requires it.
-
-Return ONE JSON object exactly matching:
-{
-  "language": "python | c",
-  "filename": "poc.py | poc.c",
-  "code": "...full source...",
-  "rationale": "one sentence on the trigger mechanism"
-}
-
-Constraints:
-- The PoC will run with `python3 poc.py <target_binary>` (Python) or be \
-compiled and run with `./poc <target_binary>` (C).
-- Stay within /tmp/aila_vr/ for any side files.
-- Prefer ASAN-visible primitives (out-of-bounds writes, UAF, double free).
-- Do NOT include hash banners, license headers, or commentary outside the \
-JSON object."""
 
 _REVISION_HEADER = "Previous PoC attempt failed to crash. Revise the code."
 
@@ -188,16 +190,28 @@ async def _llm_poc(
     # truncation-induced JSON error that re-fires the correction
     # retry. 2048 gives ~1.5× headroom over the expected payload
     # and short-circuits runaway emissions.
-    response = await services.llm_client.chat_structured(
-        task_type=task_type,
-        messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        model_class=PoCResponse,
-        run_id=services.run_id,
-        max_output_tokens=2048,
-    )
+    system_prompt = _load_system_prompt()
+    # RFC-09 criterion 2: stamp the resolved system prompt's content hash
+    # so this LLM call's LLMCostRecord + AuditSealRecord attribute back to
+    # the exact PoC-generator prompt template. Preserve any outer join keys
+    # so an investigation-scoped caller keeps its attribution.
+    prompt_hash = hashlib.sha256(system_prompt.encode("utf-8")).hexdigest()
+    _inv, _br, _turn = current_join_keys()
+    with correlation_scope(
+        investigation_id=_inv, branch_id=_br, turn_number=_turn,
+        prompt_content_hash=prompt_hash,
+        prompt_version=current_prompt_version(),
+    ):
+        response = await services.llm_client.chat_structured(
+            task_type=task_type,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            model_class=PoCResponse,
+            run_id=services.run_id,
+            max_output_tokens=2048,
+        )
     if response.disabled:
         raise LLMDisabledByOperatorError("LLM disabled by operator")
     # chat_structured guarantees the content matches PoCResponse on

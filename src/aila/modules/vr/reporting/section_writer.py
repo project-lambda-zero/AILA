@@ -31,8 +31,10 @@ Architectural decisions:
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -40,9 +42,30 @@ from pydantic import BaseModel, ConfigDict, Field
 from aila.modules.vr.contracts.masvs import MasvsControlVerdict, MasvsVerdict
 from aila.modules.vr.masvs.models import MasvsControl
 from aila.platform.llm.client import AilaLLMClient
+from aila.platform.llm.correlation import (
+    correlation_scope,
+    current_join_keys,
+    current_prompt_version,
+)
 from aila.platform.llm.errors import LLMError
+from aila.platform.prompts import PromptRegistry
 
 _log = logging.getLogger(__name__)
+
+_PROMPT_DIR = Path(__file__).parent / "prompts"
+_PROMPT_REGISTRY = PromptRegistry(
+    _PROMPT_DIR, fallback_base="system_section_writer.md",
+)
+
+
+def _load_system_prompt() -> str:
+    """Return the report-section writer's system prompt from the registry.
+
+    RFC-09 criterion 1: prompt lives in a versionable ``.md`` file next
+    to this module, not an inline literal. The registry's file-backed
+    fallback resolves ``system_section_writer.md`` under ``prompts/``.
+    """
+    return _PROMPT_REGISTRY.load("section_writer")
 
 
 class ReportEvidence(BaseModel):
@@ -162,31 +185,6 @@ _VERDICT_VOCABULARY = {
 }
 
 
-_SYSTEM_PROMPT = (
-    "You are the report writer for a mobile app security audit. Your output "
-    "renders directly into a PDF a security team and the app's developers "
-    "will read. Voice: concrete, present-tense, no hedging, no padding, no "
-    "catalog-template phrases like 'verification target' or 'control "
-    "requires'. NEVER write 'we found' / 'audit revealed' / 'analysis "
-    "shows'. State facts.\n\n"
-    "You receive ONE MASVS control's audit data: the catalog text, the "
-    "auditor agent's raw conclusion, the cited evidence locations, the "
-    "verdict, and APK identity. Synthesize into a structured report "
-    "section. Pick the 2-4 most load-bearing pieces of evidence (drop "
-    "filler). Name the specific RISK in the app's domain (banking app → "
-    "'session-token theft enables account takeover', not 'data leaks'). "
-    "Give a CONCRETE remediation step with API/library names where the "
-    "evidence supports it.\n\n"
-    "If the auditor reached PASS / Compliant, write a short section "
-    "proving the safe pattern is present and set risk + remediation to "
-    "empty strings. If the auditor reached REVIEW / Inconclusive, name "
-    "the specific blocker that prevented a verdict.\n\n"
-    "Banned phrases (do not appear in your output): 'we found', 'audit "
-    "revealed', 'this is what', 'essentially', 'leverage', 'in essence', "
-    "'verification target', 'control requires that', 'it is worth noting'."
-)
-
-
 def _build_user_prompt(
     verdict: MasvsControlVerdict,
     control: MasvsControl | None,
@@ -253,17 +251,30 @@ async def generate_section(
     case so the PDF still ships -- partial fidelity beats 500 errors.
     """
     user_prompt = _build_user_prompt(verdict, control, raw_answer, apk_context)
+    system_prompt = _load_system_prompt()
+    # RFC-09 criterion 2: stamp the resolved prompt's content hash so the
+    # LLMCostRecord + AuditSealRecord written by chat_structured attribute
+    # back to the exact system-prompt template that produced this section.
+    # Preserve any outer join keys so a caller already inside an
+    # investigation scope keeps its attribution.
+    prompt_hash = hashlib.sha256(system_prompt.encode("utf-8")).hexdigest()
+    _inv, _br, _turn = current_join_keys()
     try:
-        response = await llm.chat_structured(
-            task_type="vr.masvs.report_section_writer",
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            model_class=ReportSection,
-            run_id=run_id,
-            team_id=team_id,
-        )
+        with correlation_scope(
+            investigation_id=_inv, branch_id=_br, turn_number=_turn,
+            prompt_content_hash=prompt_hash,
+            prompt_version=current_prompt_version(),
+        ):
+            response = await llm.chat_structured(
+                task_type="vr.masvs.report_section_writer",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                model_class=ReportSection,
+                run_id=run_id,
+                team_id=team_id,
+            )
     except LLMError as exc:
         # fix §350 -- DEFENSIVE: section synthesis falls back to the raw
         # agent_summary so the PDF still ships; surface the traceback so
