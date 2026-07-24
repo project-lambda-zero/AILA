@@ -14,6 +14,10 @@ from aila.platform.agents.branch_pool import (
     BranchOpResult,
     BranchPool,
 )
+from aila.platform.agents.claim_verifier import (
+    ClaimVerifierAgentBase,
+    is_negative_finding_claim,
+)
 from aila.platform.agents.idempotent_llm import idempotent_llm_call
 from aila.platform.agents.intent_classifier import classify_intent
 from aila.platform.agents.outcome_dispatcher import (
@@ -33,6 +37,10 @@ from aila.platform.agents.persona_router import (
     persona_to_role,
 )
 from aila.platform.agents.sibling_consensus import inject_sibling_consensus
+from aila.platform.agents.synthesis_runner import (
+    SynthesisRunnerBase,
+    synthesis_confidence,
+)
 from aila.platform.agents.tool_execution import (
     ToolExecutionResult,
     classify_contract_error,
@@ -44,6 +52,7 @@ __all__ = [
     "BranchManagerError",
     "BranchOpResult",
     "BranchPool",
+    "ClaimVerifierAgentBase",
     "OutcomeDispatchResult",
     "OutcomeDispatcherBase",
     "OutcomeDispatcherError",
@@ -52,12 +61,15 @@ __all__ = [
     "PatternExtractorError",
     "PersonaRole",
     "PersonaRouter",
+    "SynthesisRunnerBase",
     "ToolExecutionResult",
     "classify_contract_error",
     "classify_intent",
     "idempotent_llm_call",
     "inject_sibling_consensus",
+    "is_negative_finding_claim",
     "maybe_post_auto_steering",
     "parse_command",
     "persona_to_role",
+    "synthesis_confidence",
 ]
