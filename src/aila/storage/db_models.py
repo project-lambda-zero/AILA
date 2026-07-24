@@ -1108,6 +1108,14 @@ class SystemMetadataRecord(SQLModel, table=True):
 
 from aila.platform.llm.cost_record import LLMCostRecord
 
+# RFC-09 step 4: prompt version store tables. Re-imported so SQLModel.metadata
+# registers them when db_models is imported (init_db, tests, alembic autogen).
+from aila.platform.prompts.version_models import (
+    PromptAliasChangeRecord,
+    PromptAliasRecord,
+    PromptVersionRecord,
+)
+
 # ---------------------------------------------------------------------------
 # Phase 177: multi-team admin -- first-class team and member records.
 # Existing team_id strings on team-scoped tables remain authoritative for
