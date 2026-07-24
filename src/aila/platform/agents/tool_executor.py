@@ -79,9 +79,6 @@ class ToolExecutorHelpersBase:
     # Server allowlist enforced before adapter lookup; None disables the
     # check (all bridged servers reachable).
     _AGENT_ALLOWED_SERVERS: frozenset[str] | None = None
-    # Pre-call hard-block threshold for identical repeat failures; None
-    # disables the hard block (post-call soft breaker still applies).
-    _HARD_BLOCK_REPEAT_LIMIT: int | None = None
     # Example command + action list rendered in the malformed-command STOP
     # message; subclasses set the domain example.
     _TOOLRUN_EXAMPLE_JSON: str = '{"tool": "<server>.<tool>", "args": {}}'
@@ -425,6 +422,14 @@ class ToolExecutorHelpersBase:
             await uow.commit()
 
     # ---- merged-dispatch hooks (subclasses override) --------------------
+    async def _hard_block_repeat_limit(self) -> int | None:
+        """Pre-call hard-block threshold for identical repeat failures.
+
+        Default: None (no hard block; the post-call soft breaker still
+        applies). VR resolves it from ConfigRegistry.
+        """
+        return None
+
     async def _pre_dispatch_correct_args(
         self, investigation_id: str, server_id: str, args: dict[str, Any],
     ) -> dict[str, Any]:
@@ -585,13 +590,14 @@ class ToolExecutorHelpersBase:
             investigation_id, server_id, args,
         )
         # Pre-call HARD-BLOCK of identical repeat failures, when the module
-        # enables it (_HARD_BLOCK_REPEAT_LIMIT not None). Refuses the
-        # dispatch after N identical failures WITHOUT the network call.
-        if self._HARD_BLOCK_REPEAT_LIMIT is not None:
+        # enables it (hard_block_limit not None). Refuses the dispatch after
+        # N identical failures WITHOUT the network call.
+        hard_block_limit = await self._hard_block_repeat_limit()
+        if hard_block_limit is not None:
             hard_block_count = await self._count_prior_failures(
                 branch_id, server_id, tool_name, args,
             )
-            if hard_block_count >= self._HARD_BLOCK_REPEAT_LIMIT:
+            if hard_block_count >= hard_block_limit:
                 err = (
                     f"{server_id}.{tool_name} HARD-BLOCKED: this exact call "
                     f"(args={sorted(args)}) has failed {hard_block_count} "

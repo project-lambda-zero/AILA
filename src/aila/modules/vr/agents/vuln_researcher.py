@@ -53,6 +53,7 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
     VRTargetRecord,
 )
+from aila.modules.vr.services.config_helpers import get_int
 from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.modules.vr.services.outcome_review import (
     OUTCOME_STATE_APPROVED,
@@ -112,29 +113,7 @@ _VARIANT_HUNT_EXHAUSTION_PATTERN = re.compile(
     r")\b"
 )
 
-# After this many consecutive rejected submits on the same branch, the
-# gate FORCES the submit through with a `variant_hunt_advisory:
-# forced_through_after_N_rejects` flag on the payload. The agent never
-# loops forever; the operator gets an audit trail of the over-forced
-# submissions. Configurable via env for operators tuning the trade-off
-# between "more variant fan-out" and "fewer no-op forced submits".
-_VARIANT_HUNT_REJECT_CAP = int(__import__("os").environ.get(
-    "VR_VARIANT_HUNT_REJECT_CAP", "3",
-))
-# Hypothesis-settlement gate on terminal submit. Every live hypothesis
-# must be either explicitly rejected (in decision.rejected[]) or folded
-# into the submitted answer/provenance as supported evidence -- no live
-# hypotheses are permitted to survive a submit. Without this gate, agents
-# accumulate live hypotheses across deep-search turns and submit while
-# the case still has 5+ unresolved claims, leaving the operator to
-# manually decide which ones the finding actually addresses.
-#
-# Cap mirrors variant_hunt: after N rejections the submit is FORCED
-# through with payload.unresolved_hypotheses_at_submit_advisory stamped
-# so the operator can grep the outcomes table.
-_UNRESOLVED_HYP_REJECT_CAP = int(__import__("os").environ.get(
-    "VR_UNRESOLVED_HYP_REJECT_CAP", "3",
-))
+
 
 
 _PROMPT_DIR = Path(__file__).parent / "prompts"
@@ -200,6 +179,10 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
     _message_model = VRInvestigationMessageRecord
     _branch_model = VRInvestigationBranchRecord
     _OUTCOME_STATE_APPROVED = OUTCOME_STATE_APPROVED
+
+    async def _load_turn_config(self) -> None:
+        self._variant_hunt_reject_cap = await get_int("variant_hunt_reject_cap")
+        self._unresolved_hyp_reject_cap = await get_int("unresolved_hyp_reject_cap")
 
     def _extra_user_prompt_kwargs(self) -> dict[str, Any]:
         return {"cve_intel": self._cve_intel}
@@ -701,7 +684,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
 
         Returns either:
           - the ORIGINAL decision (passed the gate, or forced-through
-            after _VARIANT_HUNT_REJECT_CAP rejections)
+            after self._variant_hunt_reject_cap rejections)
           - a REPLACEMENT decision with ``action='tool_run'``,
             ``command=''``, and a synthetic answer body explaining the
             rejection. The replacement is non-terminal so the loop
@@ -740,7 +723,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         )
         new_reject_count = prior_rejects + 1
 
-        if new_reject_count > _VARIANT_HUNT_REJECT_CAP:
+        if new_reject_count > self._variant_hunt_reject_cap:
             # Force through after N rejections so the agent doesn't loop
             # forever. Stamp the payload with an audit flag so the
             # operator can find these in the outcomes table.
@@ -767,13 +750,13 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             "variant_hunt submit REJECTED inv=%s branch=%s turn=%d "
             "rejects=%d/%d -- orders=0, no exhaustion phrase",
             self.investigation_id, self.branch_id, turn_number,
-            new_reject_count, _VARIANT_HUNT_REJECT_CAP,
+            new_reject_count, self._variant_hunt_reject_cap,
         )
 
         case_state.observables["_variant_hunt_submit_rejected_count"] = new_reject_count
         case_state.observables["_directive.variant_hunt_submit_rejected"] = (
             "*** VARIANT_HUNT SUBMIT REJECTED ***\n"
-            f"Rejection {new_reject_count}/{_VARIANT_HUNT_REJECT_CAP} on this branch.\n"
+            f"Rejection {new_reject_count}/{self._variant_hunt_reject_cap} on this branch.\n"
             "\n"
             "You attempted to terminal_submit a kind=variant_hunt investigation\n"
             "with EMPTY variant_hunt_orders AND no exhaustion declaration. The\n"
@@ -805,9 +788,9 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             "      site of the shared machinery and found no new candidates.\n"
             "      Cite which call sites you reviewed in the answer body.\n"
             "\n"
-            f"After {_VARIANT_HUNT_REJECT_CAP} rejections on this branch the\n"
+            f"After {self._variant_hunt_reject_cap} rejections on this branch the\n"
             "submit is FORCED THROUGH with variant_hunt_advisory:\n"
-            f"forced_through_after_{_VARIANT_HUNT_REJECT_CAP}_rejects stamped on\n"
+            f"forced_through_after_{self._variant_hunt_reject_cap}_rejects stamped on\n"
             "the payload. Don't burn through your safety budget -- pick (a)\n"
             "or (b) cleanly."
         )
@@ -893,7 +876,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             unresolved_lines.append(f"  ... and {len(unresolved) - 10} more")
         unresolved_block = "\n".join(unresolved_lines)
 
-        if new_reject_count > _UNRESOLVED_HYP_REJECT_CAP:
+        if new_reject_count > self._unresolved_hyp_reject_cap:
             _log.warning(
                 "unresolved_hyp submit FORCED THROUGH after %d rejections "
                 "inv=%s branch=%s turn=%d -- payload retained %d unresolved "
@@ -920,13 +903,13 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             "unresolved_hyp submit REJECTED inv=%s branch=%s turn=%d "
             "rejects=%d/%d -- %d live hypotheses unresolved",
             self.investigation_id, self.branch_id, turn_number,
-            new_reject_count, _UNRESOLVED_HYP_REJECT_CAP, len(unresolved),
+            new_reject_count, self._unresolved_hyp_reject_cap, len(unresolved),
         )
 
         case_state.observables["_unresolved_hyp_submit_rejected_count"] = new_reject_count
         case_state.observables["_directive.unresolved_hyp_submit_rejected"] = (
             "*** SUBMIT REJECTED - UNRESOLVED LIVE HYPOTHESES ***\n"
-            f"Rejection {new_reject_count}/{_UNRESOLVED_HYP_REJECT_CAP} on this branch.\n"
+            f"Rejection {new_reject_count}/{self._unresolved_hyp_reject_cap} on this branch.\n"
             "\n"
             f"You attempted action: submit while {len(unresolved)} live "
             "hypotheses are unresolved. Submitting now leaves the operator "
@@ -950,7 +933,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             "hypotheses must be reachable from (a) OR (b) on the same turn as\n"
             "the submit.\n"
             "\n"
-            f"After {_UNRESOLVED_HYP_REJECT_CAP} rejections on this branch the\n"
+            f"After {self._unresolved_hyp_reject_cap} rejections on this branch the\n"
             "submit is FORCED THROUGH with unresolved_hypotheses_at_submit_\n"
             "advisory stamped on the payload listing the surviving ids. The\n"
             "operator will audit those entries. Don't burn through your\n"

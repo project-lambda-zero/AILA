@@ -33,6 +33,7 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
     VRTargetRecord,
 )
+from aila.modules.vr.services.config_helpers import get_int
 from aila.platform.agents.tool_execution import (
     ToolExecutionResult,
 )
@@ -72,11 +73,6 @@ class ToolExecutor(ToolExecutorHelpersBase):
     })
 
     # Merged-dispatch config (ToolExecutorHelpersBase.execute reads these).
-    # Hard cap on identical-call retries; generous (3) so transient errors
-    # still retry. Tunable via env without a code change.
-    _HARD_BLOCK_REPEAT_LIMIT: int | None = int(
-        __import__("os").environ.get("VR_TOOL_EXECUTOR_HARD_BLOCK_REPEAT", "3"),
-    )
     _TOOLRUN_EXAMPLE_JSON = (
         '{"tool": "audit_mcp.read_function", "args": {"name": "..."}}'
     )
@@ -106,6 +102,9 @@ class ToolExecutor(ToolExecutorHelpersBase):
         # AND can't share state across instances). Cache lives on the
         # executor instance; created once per investigation loop.
         self._inv_index_id_cache: OrderedDict[str, str] = OrderedDict()
+
+    async def _hard_block_repeat_limit(self) -> int | None:
+        return await get_int("tool_executor_hard_block_repeat")
 
     async def _pre_dispatch_correct_args(
         self, investigation_id: str, server_id: str, args: dict[str, Any],

@@ -103,6 +103,14 @@ class AgentTurnRunnerBase:
     )
 
     # ---- override hooks (subclasses specialize) -------------------------
+    async def _load_turn_config(self) -> None:
+        """Load per-turn operator-tunable caps onto ``self`` before the gates.
+
+        Default: no-op. Modules that read submit-gate caps from
+        ConfigRegistry override this to stash them as instance attributes so
+        the (sync) gate methods read a resolved value without an await.
+        """
+
     def _extra_user_prompt_kwargs(self) -> dict[str, Any]:
         """Per-module extra kwargs merged into the user-prompt build.
 
@@ -158,6 +166,7 @@ class AgentTurnRunnerBase:
         stop driving the branch.
         """
         inv, branch, target_snapshot = await self._load()
+        await self._load_turn_config()
 
         case_state = decode_case_state(branch.case_state_json)
         turn_number = branch.turn_count + 1

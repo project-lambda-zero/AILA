@@ -169,6 +169,39 @@ class VRConfigSchema(ModuleConfigBase):
         ),
     )
 
+    # --- Agent submit-gate caps (operator-tunable) -----------------------
+    # Resolved at the USE site via ConfigRegistry (namespace=vr) so a PUT
+    # /config override lands on the next turn without a worker restart. The
+    # prior code read raw VR_* env vars at import; those names are retired,
+    # replaced by the standard AILA_VR_<KEY> env form.
+    variant_hunt_reject_cap: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Consecutive variant-hunt submit rejections on a branch before "
+            "the gate forces the submit through with a variant_hunt_advisory "
+            "flag stamped on the payload."
+        ),
+    )
+    unresolved_hyp_reject_cap: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Consecutive unresolved-live-hypothesis submit rejections before "
+            "the gate forces the submit through, stamping the surviving "
+            "hypothesis ids on the payload as an advisory."
+        ),
+    )
+    tool_executor_hard_block_repeat: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Identical-args tool-call failures before the executor "
+            "hard-blocks the dispatch pre-call. Retries below this still "
+            "reach the bridge."
+        ),
+    )
+
     # --- Cap-exceeded reaper (operator-tunable) --------------------------
     # The four caps below drive aila.modules.vr.services.investigation_reaper
     # (which now routes through ConfigRegistry so PUT /config overrides land
