@@ -38,7 +38,10 @@ from aila.platform.services.investigation_cost import (
     compute_live_investigation_cost,
 )
 from aila.platform.services.investigation_summaries import (
+    build_branch_summary,
     build_investigation_summary,
+    build_message_summary,
+    build_outcome_summary,
 )
 from aila.platform.uow import UnitOfWork
 from aila.storage.db_models import WorkflowStateCursor
@@ -72,8 +75,6 @@ from .contracts import (
     InvestigationStatus,
     MasvsAuditAggregate,
     MasvsAuditDispatchResponse,
-    OperatorIntent,
-    OutcomeConfidence,
     OutcomeDispatchStatus,
     OutcomeKind,
     PatternKind,
@@ -738,30 +739,16 @@ def _branch_summary(
 ) -> VRBranchSummary:
     """Project a VRInvestigationBranchRecord row to summary.
 
-    ``cursor_state`` + ``cursor_archived_state`` come from
-    :class:`WorkflowStateCursor` joined by ``run_id == branch.id``.
-    Callers that haven't joined the cursor table pass ``None``; the
-    UI then falls back to the legacy ``status`` field for paused-state
-    detection (which has the Phase B precision loss noted in the
+    Thin binding to the platform builder. ``cursor_state`` +
+    ``cursor_archived_state`` come from :class:`WorkflowStateCursor`
+    joined by ``run_id == branch.id``; callers that haven't joined pass
+    ``None`` and the UI falls back to the legacy ``status`` field for
+    paused-state detection (Phase B precision loss noted in the
     contract docstring).
     """
-    return VRBranchSummary(
-        id=record.id,
-        investigation_id=record.investigation_id,
-        parent_branch_id=record.parent_branch_id,
-        status=BranchStatus(record.status),
-        persona_voice=PersonaVoice(record.persona_voice) if record.persona_voice else None,
-        fork_reason=record.fork_reason or "",
-        fork_at_turn=record.fork_at_turn,
-        turn_count=record.turn_count,
-        branch_cost_usd=record.branch_cost_usd,
-        closed_reason=record.closed_reason or "",
-        merged_into_branch_id=record.merged_into_branch_id,
-        promoted=record.promoted,
-        closed_at=record.closed_at,
-        created_at=record.created_at,
-        updated_at=record.updated_at,
-        strategy_family=record.strategy_family,
+    return build_branch_summary(
+        record,
+        summary_cls=VRBranchSummary,
         cursor_state=cursor_state,
         cursor_archived_state=cursor_archived_state,
     )
@@ -769,44 +756,17 @@ def _branch_summary(
 
 def _message_summary(record: Any) -> VRMessageSummary:
     """Project a VRInvestigationMessageRecord row to summary."""
-    import json as _json
-
-    return VRMessageSummary(
-        id=record.id,
-        investigation_id=record.investigation_id,
-        branch_id=record.branch_id,
-        sender_kind=SenderKind(record.sender_kind),
-        sender_id=record.sender_id,
-        payload_kind=PayloadKind(record.payload_kind),
-        payload=_json.loads(record.payload_json or "{}"),
-        operator_intent=(
-            OperatorIntent(record.operator_intent) if record.operator_intent else None
-        ),
-        at_turn=record.at_turn,
-        evidence_refs=_json.loads(record.evidence_refs_json or "[]"),
-        created_at=record.created_at,
-    )
+    return build_message_summary(record, summary_cls=VRMessageSummary)
 
 
 def _outcome_summary(record: Any) -> VROutcomeSummary:
-    """Project a VRInvestigationOutcomeRecord row to summary."""
-    import json as _json
+    """Project a VRInvestigationOutcomeRecord row to summary.
 
-    return VROutcomeSummary(
-        id=record.id,
-        investigation_id=record.investigation_id,
-        branch_id=record.branch_id,
-        outcome_kind=OutcomeKind(record.outcome_kind),
-        payload=_json.loads(record.payload_json or "{}"),
-        confidence=OutcomeConfidence(record.confidence),
-        evidence_refs=_json.loads(record.evidence_refs_json or "[]"),
-        accepted_by_operator=record.accepted_by_operator,
-        accepted_at=record.accepted_at,
-        dispatch_status=OutcomeDispatchStatus(record.dispatch_status),
-        dispatch_target=record.dispatch_target,
-        created_at=record.created_at,
-        state=record.state or "dispatched",  # legacy NULL rows
-    )
+    VR does not surface sibling-review vote counts (contract fields
+    default to 0), so no ``review_counts`` is passed. The platform
+    builder maps legacy NULL ``state`` to ``'dispatched'``.
+    """
+    return build_outcome_summary(record, summary_cls=VROutcomeSummary)
 
 
 # Default strategy_family per InvestigationKind. Used both at create-time

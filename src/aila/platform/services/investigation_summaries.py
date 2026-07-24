@@ -21,7 +21,12 @@ from typing import Any, TypeVar
 
 SummaryT = TypeVar("SummaryT")
 
-__all__ = ["build_investigation_summary"]
+__all__ = [
+    "build_branch_summary",
+    "build_investigation_summary",
+    "build_message_summary",
+    "build_outcome_summary",
+]
 
 
 def build_investigation_summary(
@@ -81,4 +86,110 @@ def build_investigation_summary(
         stopped_at=record.stopped_at,
         created_at=record.created_at,
         updated_at=record.updated_at,
+    )
+
+
+def build_branch_summary(
+    record: Any,
+    *,
+    summary_cls: type[SummaryT],
+    cursor_state: str | None = None,
+    cursor_archived_state: str | None = None,
+) -> SummaryT:
+    """Project a branch record row into ``summary_cls``.
+
+    ``cursor_state`` + ``cursor_archived_state`` come from
+    :class:`WorkflowStateCursor` joined by ``run_id == branch.id``.
+    Callers that haven't joined the cursor table pass ``None``; the UI
+    then falls back to the legacy ``status`` field for paused-state
+    detection. ``fork_reason`` / ``closed_reason`` empty-string coercion
+    matches the RFC-01 base's ``str`` typing when the DB stores NULL.
+    """
+    return summary_cls(
+        id=record.id,
+        investigation_id=record.investigation_id,
+        parent_branch_id=record.parent_branch_id,
+        status=record.status,
+        persona_voice=record.persona_voice or None,
+        fork_reason=record.fork_reason or "",
+        fork_at_turn=record.fork_at_turn,
+        turn_count=record.turn_count,
+        branch_cost_usd=record.branch_cost_usd,
+        closed_reason=record.closed_reason or "",
+        merged_into_branch_id=record.merged_into_branch_id,
+        promoted=record.promoted,
+        closed_at=record.closed_at,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+        strategy_family=record.strategy_family,
+        cursor_state=cursor_state,
+        cursor_archived_state=cursor_archived_state,
+    )
+
+
+def build_message_summary(
+    record: Any,
+    *,
+    summary_cls: type[SummaryT],
+) -> SummaryT:
+    """Project a message record row into ``summary_cls``.
+
+    ``acked_at`` is forwarded only when ``summary_cls`` declares it
+    (malware surfaces operator ACKs; VR does not). The introspection
+    keeps VR's ``extra='forbid'`` contract intact -- an unconditional
+    kwarg would raise on VR.
+    """
+    kwargs: dict[str, Any] = {
+        "id": record.id,
+        "investigation_id": record.investigation_id,
+        "branch_id": record.branch_id,
+        "sender_kind": record.sender_kind,
+        "sender_id": record.sender_id,
+        "payload_kind": record.payload_kind,
+        "payload": json.loads(record.payload_json or "{}"),
+        "operator_intent": record.operator_intent or None,
+        "at_turn": record.at_turn,
+        "evidence_refs": json.loads(record.evidence_refs_json or "[]"),
+        "created_at": record.created_at,
+    }
+    if "acked_at" in summary_cls.model_fields:
+        kwargs["acked_at"] = getattr(record, "acked_at", None)
+    return summary_cls(**kwargs)
+
+
+def build_outcome_summary(
+    record: Any,
+    *,
+    summary_cls: type[SummaryT],
+    review_counts: dict[str, int] | None = None,
+) -> SummaryT:
+    """Project an outcome record row into ``summary_cls``.
+
+    ``review_counts`` supplies the sibling-review vote breakdown as a
+    dict with keys ``approve``, ``reject``, ``request_edit``,
+    ``abstain``, ``quorum_k``. Callers that haven't joined the review
+    table (or the review pool doesn't apply) pass ``None``; each count
+    defaults to 0. ``state`` falls back to ``'dispatched'`` for legacy
+    NULL rows predating the draft-outcome lifecycle column.
+    """
+    counts = review_counts or {}
+    return summary_cls(
+        id=record.id,
+        investigation_id=record.investigation_id,
+        branch_id=record.branch_id,
+        outcome_kind=record.outcome_kind,
+        payload=json.loads(record.payload_json or "{}"),
+        confidence=record.confidence,
+        evidence_refs=json.loads(record.evidence_refs_json or "[]"),
+        accepted_by_operator=record.accepted_by_operator,
+        accepted_at=record.accepted_at,
+        dispatch_status=record.dispatch_status,
+        dispatch_target=record.dispatch_target,
+        created_at=record.created_at,
+        state=record.state or "dispatched",
+        approve_count=int(counts.get("approve", 0)),
+        reject_count=int(counts.get("reject", 0)),
+        request_edit_count=int(counts.get("request_edit", 0)),
+        abstain_count=int(counts.get("abstain", 0)),
+        quorum_k=int(counts.get("quorum_k", 0)),
     )
