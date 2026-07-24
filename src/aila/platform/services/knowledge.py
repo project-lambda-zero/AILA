@@ -35,6 +35,16 @@ from ...storage.registry import ConfigRegistry
 from .embedding import EmbeddingProvider, resolve_provider
 from .ingestor import DEFAULT_MAX_CHARS, Kind, KnowledgeIngestor
 
+# ``enrich_chunk`` is imported at call time inside ``store`` to break a
+# repo-wide import cycle: knowledge -> knowledge_enrichment ->
+# platform.agents -> claim_verifier -> platform.mcp.bridges ->
+# platform.tools -> storage.memory, which is still initialising via
+# storage.__init__ -> memory -> platform.contracts._common the first
+# time any test loads ``import aila``. Keeping the enrichment code
+# lazy fires the cycle only when a caller actually opts into RFC-12
+# enrichment (``store(..., enrich=True)``), by which point the modules
+# above are fully initialised.
+
 __all__ = [
     "KnowledgeService",
     "NAMESPACE_AGENT_PREFIX",
@@ -297,8 +307,16 @@ class KnowledgeService:
     def __init__(
         self,
         provider: EmbeddingProvider | None = None,
+        *,
+        llm_client: Any | None = None,
     ) -> None:
         self._provider = provider or resolve_provider(_configured_embedding_model())
+        # Optional platform LLM client used only when a caller opts into
+        # RFC-12 contextual enrichment on ingest (``store(..., enrich=True)``).
+        # The default None keeps the pre-enrichment constructor signature
+        # backward-compatible for the many callers that only ever store
+        # non-chunked or non-enriched entries.
+        self._llm_client = llm_client
 
     @property
     def provider(self) -> EmbeddingProvider:
@@ -338,6 +356,8 @@ class KnowledgeService:
         chunked: bool = False,
         kind: Kind | None = None,
         chunk_max_chars: int = DEFAULT_MAX_CHARS,
+        enrich: bool = False,
+        team_id: str | None = None,
     ) -> dict:
         """Store a knowledge entry with embedding per D-02/D-08.
 
@@ -361,6 +381,14 @@ class KnowledgeService:
             chunk_max_chars: Per-chunk character ceiling used only when
                 ``chunked=True``. Oversize units are hard-split so no
                 emitted chunk violates the ceiling.
+            enrich: RFC-12 criterion 2 contextual enrichment opt-in. Only
+                effective when ``chunked=True`` and the service was built
+                with an ``llm_client``. When enabled, each chunk gets a
+                50 to 100 token LLM-written blurb prepended before
+                embedding so the vector carries document-level context.
+                Default False; enabling costs one LLM completion per chunk.
+            team_id: Optional team scoping for the enrichment LLM call's
+                cost attribution. Ignored on the non-enriched path.
 
         Returns:
             Non-chunked path: dict with status, operation (inserted/updated),
@@ -378,6 +406,8 @@ class KnowledgeService:
                 session=session,
                 kind=kind or "document",
                 chunk_max_chars=chunk_max_chars,
+                enrich=enrich,
+                team_id=team_id,
             )
 
         meta_json = json.dumps(metadata or {})
@@ -468,6 +498,8 @@ class KnowledgeService:
         session: AsyncSession | None,
         kind: Kind,
         chunk_max_chars: int,
+        enrich: bool = False,
+        team_id: str | None = None,
     ) -> dict:
         """Boundary-aligned multi-row ingestion path (RFC-12).
 
@@ -479,6 +511,17 @@ class KnowledgeService:
         when the caller supplies a ``dedup_key``, per-chunk keys derive
         as ``"{dedup_key}#chunk={index}"`` so a later re-ingest updates
         each chunk in place instead of proliferating rows.
+
+        RFC-12 criterion 2 contextual enrichment: when ``enrich`` is True
+        and the service was built with an ``llm_client``, each chunk gets
+        a short LLM-written situating blurb prepended before embedding.
+        The blurb is captured in ``entry_metadata['context_blurb']`` and
+        the original unenriched chunk stays recoverable via
+        ``entry_metadata['chunk_original']``; ``entry_metadata['enriched']``
+        is set to True on every enriched row. On an empty blurb (LLM
+        disabled / empty response) the chunk is stored verbatim and
+        ``enriched`` is False -- the enrichment failure never blocks the
+        write.
         """
         chunks = KnowledgeIngestor().chunk(
             content, kind=kind, max_chars=chunk_max_chars,
@@ -493,6 +536,7 @@ class KnowledgeService:
                 "embedding_dim": self._provider.dimension,
                 "content_length": 0,
             }
+        enrichment_active = enrich and self._llm_client is not None
         base_meta: dict = dict(metadata or {})
         chunk_records: list[dict] = []
         total_length = 0
@@ -504,9 +548,29 @@ class KnowledgeService:
             chunk_meta["chunk_index"] = index
             chunk_meta["chunk_count"] = len(chunks)
             chunk_meta["chunk_kind"] = kind
+            stored_content = chunk_text
+            if enrichment_active:
+                # Deferred: keeps the import cycle broken (see top of
+                # file). PLC0415 is already ignored for knowledge.py in
+                # pyproject.toml per-file-ignores.
+                from .knowledge_enrichment import enrich_chunk
+                blurb = await enrich_chunk(
+                    self._llm_client,
+                    document=content,
+                    chunk=chunk_text,
+                    namespace=namespace,
+                    team_id=team_id,
+                )
+                if blurb:
+                    stored_content = f"{blurb}\n\n{chunk_text}"
+                    chunk_meta["enriched"] = True
+                    chunk_meta["context_blurb"] = blurb
+                    chunk_meta["chunk_original"] = chunk_text
+                else:
+                    chunk_meta["enriched"] = False
             single = await self.store(
                 namespace=namespace,
-                content=chunk_text,
+                content=stored_content,
                 metadata=chunk_meta,
                 dedup_key=chunk_dedup,
                 session=session,
