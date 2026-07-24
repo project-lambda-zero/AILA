@@ -51,6 +51,31 @@ operator action.
 - `_template` now scaffolds a `ModuleConfigBase` config schema and the
   ModuleProtocol registry declarations so a copied module starts
   boundary-clean.
+- A single platform `ResilienceLayer` facade over the fail-open sites
+  (classify failure, conservative default with a signal, retry decision),
+  funnelling every fail-closed signal through one
+  `aila_resilience_signals_total` counter (RFC-07).
+- Self-improvement loop behind the eval gate (RFC-08): an ExperienceWriter
+  that turns accept/reject review verdicts into signed positive/negative
+  patterns, a CalibrationProposer that aggregates per-outcome_kind history
+  into a versioned, reversible threshold proposal (migration 097), and a
+  RoutingLearner that publishes a routing recommendation.
+- Shadow and canary lifecycle stages (RFC-10, migration 096): a candidate
+  can be shadowed, canaried to a stable cohort fraction of new
+  investigations by an investigation-id hash, held on a drift or cost
+  spike, then promoted through the eval + quorum gate, all over admin
+  endpoints with no code release.
+- A generic `McpClient` with capability-based server resolution and
+  instance pooling; each MCP tool call records the serving `instance_id`
+  (RFC-11, migration 098). The three bridges keep only their server-
+  specific request/response shaping.
+- Adaptive knowledge retrieval (RFC-12): a router that picks a stable-core
+  (preloaded cache), simple (hybrid), or graph path; a knowledge-entry
+  edge table with bounded multi-hop traversal (migration 100); a
+  sanitize/classify + provenance gate on results; a record-replay
+  retrieval-quality eval with precision/recall/MRR/nDCG and a beats() gate
+  (migration 099); and opt-in LLM contextual enrichment of chunks on
+  ingest.
 
 ### Changed
 
@@ -73,6 +98,12 @@ operator action.
   hardcoded `"vulnerability"` literal even though the module was resolved
   by capability; it now reads the resolved module's id, so a second
   module exposing findings is labeled correctly.
+- Investigation pause/resume keyed workflow cursors by the random ARQ task
+  id, so the lifecycle service's investigation-scoped cursor queries
+  matched nothing and fell through to weaker fallbacks. Cursors now carry
+  investigation and branch ids (migration 101) and the lifecycle service
+  finds them by those keys, with the prior key kept as a fallback for
+  cursors created before the change (RFC-02).
 
 ### Removed
 
