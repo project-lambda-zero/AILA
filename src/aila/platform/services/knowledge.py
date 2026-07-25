@@ -61,6 +61,13 @@ __all__ = [
 # so it is the safest default; callers ingesting code MUST pass kind="code".
 _DEFAULT_SOURCE_TYPE: str = "document"
 
+# RFC-12 criterion 5 semantic-neighbor edge populator defaults. At ingest a
+# new entry is joined to its top-K nearest same-namespace entries whose
+# cosine similarity clears the floor, so the graph retrieval route can hop
+# across documents by meaning, not just within one document by adjacency.
+_NEIGHBOR_TOP_K: int = 5
+_NEIGHBOR_SIMILARITY_FLOOR: float = 0.75
+
 
 def _content_hash(text: str) -> str:
     """sha256 hexdigest of the UTF-8 bytes of ``text``.
@@ -358,6 +365,7 @@ class KnowledgeService:
         chunk_max_chars: int = DEFAULT_MAX_CHARS,
         enrich: bool = False,
         link_chunks: bool = False,
+        link_neighbors: bool = False,
         team_id: str | None = None,
     ) -> dict:
         """Store a knowledge entry with embedding per D-02/D-08.
@@ -395,6 +403,13 @@ class KnowledgeService:
                 retrieval route reaches a hit's surrounding context instead
                 of degrading to seed-only. Deterministic, zero-cost, and
                 idempotent on re-ingest. Default False.
+            link_neighbors: RFC-12 criterion 5 graph populator opt-in. When
+                enabled, the stored entry is joined by bidirectional
+                ``related`` edges (weight = cosine similarity) to its top-K
+                nearest same-namespace entries above the similarity floor,
+                so the graph route hops across documents by meaning.
+                Idempotent on re-ingest; costs one nearest-neighbour query
+                per stored entry. Default False.
             team_id: Optional team scoping for the enrichment LLM call's
                 cost attribution. Ignored on the non-enriched path.
 
@@ -416,6 +431,7 @@ class KnowledgeService:
                 chunk_max_chars=chunk_max_chars,
                 enrich=enrich,
                 link_chunks=link_chunks,
+                link_neighbors=link_neighbors,
                 team_id=team_id,
             )
 
@@ -488,10 +504,17 @@ class KnowledgeService:
                 entry_id = record.id
                 operation = "inserted"
 
+        neighbor_edge_count = 0
+        if link_neighbors and entry_id is not None:
+            neighbor_edge_count = await self._link_semantic_neighbors(
+                entry_id, embedding_list, namespace, session,
+            )
+
         return {
             "status": "stored",
             "operation": operation,
             "entry_id": entry_id,
+            "neighbor_edge_count": neighbor_edge_count,
             "namespace": namespace,
             "embedding_dim": self._provider.dimension,
             "content_length": len(content),
@@ -509,6 +532,7 @@ class KnowledgeService:
         chunk_max_chars: int,
         enrich: bool = False,
         link_chunks: bool = False,
+        link_neighbors: bool = False,
         team_id: str | None = None,
     ) -> dict:
         """Boundary-aligned multi-row ingestion path (RFC-12).
@@ -585,6 +609,7 @@ class KnowledgeService:
                 dedup_key=chunk_dedup,
                 session=session,
                 kind=kind,
+                link_neighbors=link_neighbors,
             )
             chunk_records.append(single)
             total_length += len(chunk_text)
@@ -601,6 +626,60 @@ class KnowledgeService:
             "embedding_dim": self._provider.dimension,
             "content_length": total_length,
         }
+
+    async def _link_semantic_neighbors(
+        self,
+        entry_id: int,
+        embedding: list[float],
+        namespace: str,
+        session: AsyncSession | None,
+    ) -> int:
+        """Join an entry to its nearest same-namespace neighbours by meaning.
+
+        RFC-12 criterion 5 cross-document graph populator. Runs one HNSW
+        top-K cosine query in ``namespace`` (excluding the entry itself),
+        and for every candidate whose cosine similarity clears
+        ``_NEIGHBOR_SIMILARITY_FLOOR`` writes a bidirectional ``related``
+        edge weighted by that similarity. Deterministic given the corpus
+        and idempotent: :meth:`KnowledgeGraph.add_edge` upserts the weight
+        on ``(src, dst, relation)`` so a re-ingest refreshes rather than
+        proliferates. Imported lazily to keep the knowledge to
+        knowledge_graph dependency one-directional.
+        """
+        async with _session_or_new(session) as (sess, _owns):
+            stmt = (
+                select(
+                    KnowledgeEntryRecord.id,
+                    KnowledgeEntryRecord.embedding.cosine_distance(
+                        embedding,
+                    ).label("distance"),
+                )
+                .where(
+                    KnowledgeEntryRecord.namespace == namespace,
+                    KnowledgeEntryRecord.id != entry_id,
+                    KnowledgeEntryRecord.embedding.is_not(None),
+                )
+                .order_by(
+                    KnowledgeEntryRecord.embedding.cosine_distance(embedding),
+                )
+                .limit(_NEIGHBOR_TOP_K)
+            )
+            rows = (await sess.exec(stmt)).all()
+        from .knowledge_graph import KnowledgeGraph
+        graph = KnowledgeGraph()
+        written = 0
+        for row in rows:
+            similarity = 1.0 - float(row.distance)
+            if similarity < _NEIGHBOR_SIMILARITY_FLOOR:
+                continue
+            await graph.add_edge(
+                entry_id, row.id, "related", weight=similarity, session=session,
+            )
+            await graph.add_edge(
+                row.id, entry_id, "related", weight=similarity, session=session,
+            )
+            written += 2
+        return written
 
     async def _link_adjacent_chunks(
         self,
@@ -641,6 +720,7 @@ class KnowledgeService:
         namespace_patterns: list[str] | None = None,
         limit: int = 10,
         min_score: float = 0.0,
+        source_types: list[str] | None = None,
         session: AsyncSession | None = None,
     ) -> list[dict]:
         """Retrieve knowledge entries by hybrid pgvector + tsvector search per D-09.
@@ -660,6 +740,11 @@ class KnowledgeService:
                 it to filter weakly-related hits, since the hybrid search would
                 otherwise return the top-k by score even when every candidate
                 is only loosely related.
+            source_types: Optional shape filter on the indexed ``source_type``
+                column (e.g. ["code"] or ["document", "pattern"]). When set,
+                both retrieval legs return only entries of these shapes, so a
+                caller can scope retrieval to the right kind of knowledge
+                without post-filtering. None searches every shape.
             session: Optional external session.
 
         Returns:
@@ -687,6 +772,10 @@ class KnowledgeService:
             )
             if ns_filters is not None:
                 vec_stmt = vec_stmt.where(ns_filters)
+            if source_types:
+                vec_stmt = vec_stmt.where(
+                    KnowledgeEntryRecord.source_type.in_(source_types),
+                )
             vec_rows = (await sess.exec(vec_stmt)).all()
 
             # --- FTS leg: PostgreSQL tsvector + plainto_tsquery ---
@@ -702,6 +791,10 @@ class KnowledgeService:
             )
             if ns_filters is not None:
                 fts_stmt = fts_stmt.where(ns_filters)
+            if source_types:
+                fts_stmt = fts_stmt.where(
+                    KnowledgeEntryRecord.source_type.in_(source_types),
+                )
             fts_rows = (await sess.exec(fts_stmt)).all()
 
             # Build lookup maps
