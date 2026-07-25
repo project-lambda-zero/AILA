@@ -652,13 +652,17 @@ class BranchPool:
         )
 
 def _strip_directives_from_state(raw_json: str) -> str:
-    """Strip ``_directive.*`` observables from a case_state JSON blob.
+    """Strip ``_directive.*`` and ``_ledger.*`` observables from a case_state
+    JSON blob.
 
     Used at fork time: children should start with a clean directive
     slate, not inherit the parent's pivot/steering. Otherwise spawning
     3 sibling personas at the moment the parent's pivot directive is
     active causes all 3 children to render '*** PIVOT REQUIRED ***' on
-    their turn 0, before they've made any tool calls of their own.
+    their turn 0, before they've made any tool calls of their own. The
+    shared ledger digest (``_ledger.board``) is stripped for the same
+    reason -- the turn runner re-derives it from the DB on each child's
+    first turn, so a stale inherited snapshot would only mislead.
     """
     if not raw_json:
         return raw_json
@@ -670,7 +674,9 @@ def _strip_directives_from_state(raw_json: str) -> str:
     if not isinstance(obs, dict):
         return raw_json
     data["observables"] = {
-        k: v for k, v in obs.items() if not str(k).startswith("_directive.")
+        k: v for k, v in obs.items()
+        if not str(k).startswith("_directive.")
+        and not str(k).startswith("_ledger.")
     }
     return json.dumps(data)
 

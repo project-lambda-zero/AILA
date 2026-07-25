@@ -30,6 +30,7 @@ __all__ = [
     "ReasoningTurnDecision",
     "EvidenceProvenance",
     "Hypothesis",
+    "LedgerWrite",
     "ObservablesDict",
     "RejectedHypothesis",
 ]
@@ -275,6 +276,28 @@ class ReasoningPromptContext(BaseModel):
     strategy_family: ReasoningStrategyFamily = "generic"
 
 
+class LedgerWrite(BaseModel):
+    """One append the agent asks the turn runner to post to the shared
+    investigation ledger (RFC-13 #68).
+
+    Rides alongside the turn's main action -- an agent can record a
+    discovery, note, or capability request WHILE running a tool, without
+    spending a whole turn on the write. The runner caps the list per turn
+    and derives an idempotency key so an ARQ retry never double-appends.
+    Objective and decision entries are not agent-writable here: objectives
+    are opened by the owner path and decisions are recorded by quorum, so
+    only these three kinds are accepted.
+    """
+
+    kind: Literal["discovery", "note", "request"] = "discovery"
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("payload")
+    @classmethod
+    def _payload_serializable(cls, v: dict[str, Any]) -> dict[str, Any]:
+        return _require_json_serializable(v)
+
+
 class ReasoningTurnDecision(BaseModel):
     """Single-turn decision emitted by the reasoning engine."""
 
@@ -331,6 +354,10 @@ class ReasoningTurnDecision(BaseModel):
     edit_patches: dict[str, Any] = Field(default_factory=dict)
     edit_comment: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
+    # RFC-13 (#68): optional appends to the shared investigation ledger
+    # posted after the engine call, capped per turn by the runner. Empty
+    # by default so a V1 decision round-trips byte-identically.
+    ledger_writes: list[LedgerWrite] = Field(default_factory=list)
 
     @field_validator("observables")
     @classmethod

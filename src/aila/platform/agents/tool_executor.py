@@ -364,9 +364,10 @@ class ToolExecutorHelpersBase:
         # Bound the dict size. Eviction strategy: keep ALL reserved keys
         # (``_directive.*`` steering must survive; ``_recall.pinned`` is
         # the engine-written recall pin list and must not be evicted
-        # out from under the render layer), drop the OLDEST non-reserved
-        # keys by dict insertion order (Python 3.7+ guarantees insertion
-        # order in dicts).
+        # out from under the render layer; ``_ledger.board`` is the shared
+        # ledger digest the render layer expects each turn), drop the
+        # OLDEST non-reserved keys by dict insertion order (Python 3.7+
+        # guarantees insertion order in dicts).
         if len(observables) > cls._MAX_OBSERVABLES:
             # fix \u00a7259 -- preserve original key insertion order so the
             # prompt-rendering position of every kept key stays stable
@@ -375,6 +376,7 @@ class ToolExecutorHelpersBase:
                 k for k in observables
                 if str(k).startswith("_directive.")
                 or str(k).startswith("_recall.")
+                or str(k).startswith("_ledger.")
             }
             non_reserved_keys = [
                 k for k in observables if k not in reserved_keys

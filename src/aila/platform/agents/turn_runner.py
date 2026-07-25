@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select as _select
 
 from aila.platform.agents.sibling_consensus import inject_sibling_consensus
@@ -52,11 +53,19 @@ from aila.platform.llm.idempotency_cache import (
     make_request_key,
     store_response,
 )
+from aila.platform.services.ledger import LedgerService
 from aila.platform.uow import UnitOfWork
 
 __all__ = ["AgentTurnResult", "AgentTurnRunnerBase"]
 
 _log = logging.getLogger(__name__)
+
+# RFC-13 (#68): per-turn ceiling on agent ledger appends (mirrors the
+# observable-set caps) and the size of the shared-ledger digest rendered
+# back into the next turn's prompt.
+_MAX_LEDGER_WRITES_PER_TURN = 5
+_LEDGER_BOARD_MAX_ENTRIES = 15
+_LEDGER_BOARD_PREVIEW = 160
 
 
 @dataclass
@@ -117,6 +126,74 @@ class AgentTurnRunnerBase:
         Default: none. VR adds ``cve_intel``.
         """
         return {}
+
+    async def _load_ledger_board(self) -> str:
+        """Render a bounded digest of the shared ledger for the turn prompt.
+
+        Reads the whole ledger oldest-first and keeps the most recent
+        entries so a branch sees the current state of the shared board.
+        Returns an empty string when the ledger is empty so the render
+        layer omits the section entirely (RFC-13 #68).
+        """
+        async with UnitOfWork() as uow:
+            entries = await LedgerService().read_general(
+                self.investigation_id, session=uow.session,
+            )
+        if not entries:
+            return ""
+        recent = entries[-_LEDGER_BOARD_MAX_ENTRIES:]
+        lines: list[str] = []
+        for entry in recent:
+            payload = entry.get("payload") or {}
+            preview = json.dumps(payload, ensure_ascii=False)
+            if len(preview) > _LEDGER_BOARD_PREVIEW:
+                preview = preview[:_LEDGER_BOARD_PREVIEW] + "..."
+            author = entry.get("author_branch_id") or "?"
+            status = entry.get("status")
+            status_tag = f" status={status}" if status else ""
+            lines.append(
+                f"  #{entry.get('id')} [{entry.get('kind')}] "
+                f"by {author}{status_tag}: {preview}"
+            )
+        header = f"Investigation ledger (shared, {len(entries)} entries"
+        if len(recent) < len(entries):
+            header += f", showing last {len(recent)}"
+        header += "):"
+        return header + "\n" + "\n".join(lines)
+
+    async def _post_ledger_writes(
+        self,
+        decision: ReasoningTurnDecision,
+        turn_number: int,
+        session: AsyncSession,
+    ) -> None:
+        """Append the turn's capped ledger writes inside the post-turn UoW.
+
+        Each write derives a deterministic idempotency key from the branch,
+        turn, entry index, and payload so an ARQ retry of the same turn
+        re-posts nothing new. The contract restricts the kind to discovery /
+        note / request, so no objective or decision entry reaches here.
+        """
+        writes = decision.ledger_writes[:_MAX_LEDGER_WRITES_PER_TURN]
+        if not writes:
+            return
+        service = LedgerService()
+        for index, write in enumerate(writes):
+            payload_hash = hashlib.sha256(
+                json.dumps(write.payload, sort_keys=True).encode()
+            ).hexdigest()[:16]
+            idem = (
+                f"{self.branch_id}:{turn_number}:{index}:"
+                f"{write.kind}:{payload_hash}"
+            )
+            await service.append_general(
+                self.investigation_id,
+                self.branch_id,
+                write.kind,
+                write.payload,
+                idempotency_key=idem,
+                session=session,
+            )
 
     def _maybe_reject_fanout_submit(
         self, *, decision: Any, inv: Any, case_state: Any, turn_number: int,
@@ -197,6 +274,13 @@ class AgentTurnRunnerBase:
         case_state = inject_sibling_consensus(
             case_state, sibling_context, my_live_ids,
         )
+        # RFC-13 (#68): render the shared investigation ledger into this
+        # turn's prompt via a reserved observable. The render layer lifts
+        # the board digest into its own section, and the runner re-derives
+        # it from the DB each turn so it reflects sibling appends.
+        ledger_board = await self._load_ledger_board()
+        if ledger_board:
+            case_state.observables["_ledger.board"] = ledger_board
         # RFC-09 criterion 4: thread the investigation id so the module
         # ``_load_prompt`` applies the pin-per-investigation rule (first
         # turn pins the current production version; later turns resolve
@@ -524,6 +608,8 @@ class AgentTurnRunnerBase:
                 )
             branch_row.turn_count = turn_number
             branch_row.updated_at = utc_now()
+
+            await self._post_ledger_writes(decision, turn_number, uow.session)
 
             if terminal:
                 outcome_kind = self._terminal_outcome_kind(decision)

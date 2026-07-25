@@ -34,6 +34,31 @@ operator action.
   smoke. The loop factory gains `phase_directive`, `phase_max_turns`, and
   `phase_allowed_servers` (all default to prior behavior), and the shared
   tool executor enforces the per-phase server allowlist on dispatch.
+- Discovery-driven dispatch hub (RFC-13 #68,
+  `platform/workflows/phase_graph.py`): a `build_dispatch_workflow` shape
+  (setup, hub, phase, hub, and so on until emit) where the hub re-decides
+  after each phase, activating the first unvisited phase whose `condition`
+  holds and whose `capability` matches the branch, bounded by a per-branch
+  visited set and the overall turn cap. `PhaseSpec` gains `condition`,
+  `capability`, and `trust` (confirmed or advisory). These fields are
+  unused by the static `build_phase_workflow`, so the V1 and V2 graphs are
+  unaffected.
+- Shared investigation ledger (RFC-13 #68, migration 102,
+  `platform/services/ledger.py`): one append-only `investigation_ledger`
+  table per investigation. Branches append discoveries, notes, and
+  capability requests; objectives are tagged entries folded to the latest
+  owner and status by a read view, so there is no separate objective table
+  and private per-branch hypotheses stay in the branch case state.
+  `append_general` is idempotent under retries, `read_general` with
+  `confirmed_only` returns only quorum-confirmed discoveries, and
+  `make_discovery_condition` turns a ledger read into a dispatch-hub
+  activation predicate. Migration 102 ships unapplied (operator-gated).
+- Agent ledger writes and shared-board render (RFC-13 #68): a reasoning
+  decision may carry `ledger_writes` (discovery, note, or request, capped
+  per turn and idempotency-keyed) that the turn runner posts inside the
+  post-turn transaction. Each turn renders a bounded digest of the shared
+  ledger back into the prompt as the reserved `_ledger.board` observable,
+  stripped at fork and re-derived from the DB each turn.
 - Platform agent runtime (RFC-03): `AgentTurnRunnerBase`,
   `ToolExecutorHelpersBase`, the shared turn helpers, and platform bases
   for the pattern extractor, claim verifier, synthesis runner, persona

@@ -20,7 +20,7 @@ slice owns its schema end-to-end; ``db_models`` adds a side-effect import so
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
@@ -34,7 +34,11 @@ from sqlmodel import Field, SQLModel, select
 from aila.platform.contracts._common import utc_now
 from aila.platform.uow import UnitOfWork
 
-__all__ = ["InvestigationLedgerRecord", "LedgerService"]
+__all__ = [
+    "InvestigationLedgerRecord",
+    "LedgerService",
+    "make_discovery_condition",
+]
 
 _UQ_IDEM = "uq_investigation_ledger_idem"
 
@@ -342,3 +346,37 @@ class LedgerService:
             supersedes_id=prior_id,
             session=session,
         )
+
+
+def make_discovery_condition(
+    kind: str = "discovery",
+    *,
+    confirmed_only: bool = False,
+    input_key: str = "investigation_id",
+) -> Callable[[dict[str, Any]], Awaitable[tuple[bool, str]]]:
+    """Build a dispatch-hub condition that fires when the ledger holds a
+    matching entry (RFC-13 #68).
+
+    The returned async predicate matches the phase-graph ``GateFn`` shape:
+    it reads the investigation id from the hub state input, reads the
+    ledger, and returns ``(present, reason)``. ``confirmed_only`` restricts
+    discoveries to those a quorum decision confirmed (a confirmed-trust
+    phase). The discovery-driven module graphs use it to activate a phase
+    only once a real discovery exists, rather than on a static edge.
+    """
+
+    async def _condition(state_input: dict[str, Any]) -> tuple[bool, str]:
+        investigation_id = state_input.get(input_key)
+        if not investigation_id:
+            return False, f"no {input_key} on dispatch input"
+        entries = await LedgerService().read_general(
+            str(investigation_id),
+            kinds=[kind],
+            confirmed_only=confirmed_only,
+        )
+        if entries:
+            scope = "confirmed " if confirmed_only else ""
+            return True, f"{len(entries)} {scope}{kind} entries on ledger"
+        return False, f"no {kind} entries on ledger yet"
+
+    return _condition

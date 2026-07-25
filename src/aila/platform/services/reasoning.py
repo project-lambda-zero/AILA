@@ -483,6 +483,10 @@ class CyberReasoningEngine:
           full-body rendering). It steers which tool_obs values render
           uncapped below; surfacing it as a raw observable would just
           confuse the agent.
+        * ``_ledger.*``: the shared investigation ledger digest
+          (``_ledger.board``) rides its own dedicated section near the
+          top and is skipped from the scratchpad partition so it is not
+          rendered twice.
 
         Retrieval model (replaces the previous blind ``tool_obs[-80:]`` /
         ``agent_obs[-15:]`` slice):
@@ -556,6 +560,15 @@ class CyberReasoningEngine:
             for rejected in case_state.rejected[:10]:
                 parts.append(f"  - {rejected.id or '?'}: {rejected.claim} ({rejected.reason})")
 
+        # RFC-13 (#68): the shared investigation ledger digest, written by
+        # the turn runner before this render (reserved observable, one line
+        # per recent entry). Surfaces cross-branch discoveries, notes, and
+        # requests so a branch extends the shared board instead of
+        # re-deriving what a sibling already posted.
+        ledger_board = case_state.observables.get("_ledger.board")
+        if isinstance(ledger_board, str) and ledger_board.strip():
+            parts.append(ledger_board)
+
         # Partition observables so tool-generated readings (read_function
         # bodies, taint_paths_to results, callers_of edges, semantic
         # search hits) always survive prompt rendering. Without this,
@@ -578,7 +591,11 @@ class CyberReasoningEngine:
         tool_obs: list[tuple[str, Any]] = []
         agent_obs: list[tuple[str, Any]] = []
         for k, v in case_state.observables.items():
-            if k.startswith("_directive.") or k.startswith("_recall."):
+            if (
+                k.startswith("_directive.")
+                or k.startswith("_recall.")
+                or k.startswith("_ledger.")
+            ):
                 continue
             if any(k.startswith(p) for p in tool_prefixes):
                 tool_obs.append((k, v))
