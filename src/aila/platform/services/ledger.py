@@ -20,7 +20,7 @@ slice owns its schema end-to-end; ``db_models`` adds a side-effect import so
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
@@ -39,6 +39,7 @@ __all__ = [
     "LedgerPermissionError",
     "LedgerService",
     "make_discovery_condition",
+    "make_evidence_condition",
 ]
 
 _UQ_IDEM = "uq_investigation_ledger_idem"
@@ -413,5 +414,46 @@ def make_discovery_condition(
             scope = "confirmed " if effective_confirmed else ""
             return True, f"{len(entries)} {scope}{kind} entries on ledger"
         return False, f"no {kind} entries on ledger yet"
+
+    return _condition
+
+
+def make_evidence_condition(
+    evidence_types: str | Iterable[str],
+    *,
+    confirmed_only: bool = False,
+    input_key: str = "investigation_id",
+) -> Callable[[dict[str, Any]], Awaitable[tuple[bool, str]]]:
+    """Build a dispatch-hub condition that fires on a discovered evidence type.
+
+    A content-aware sibling of :func:`make_discovery_condition`: it reads
+    ``discovery`` entries and matches each entry's ``payload["evidence_type"]``
+    against *evidence_types*. The forensics hub uses it so a discovered disk
+    image activates the disk lane and a discovered pcap activates the network
+    lane, off the shared ledger (RFC-13 #68). ``confirmed_only`` restricts to
+    quorum-confirmed discoveries and honors the same ratified-replan relax
+    flag as :func:`make_discovery_condition`.
+    """
+    wanted = {evidence_types} if isinstance(evidence_types, str) else set(evidence_types)
+
+    async def _condition(state_input: dict[str, Any]) -> tuple[bool, str]:
+        investigation_id = state_input.get(input_key)
+        if not investigation_id:
+            return False, f"no {input_key} on dispatch input"
+        effective_confirmed = confirmed_only and not state_input.get(
+            "_dispatch_replan_relax"
+        )
+        entries = await LedgerService().read_general(
+            str(investigation_id),
+            kinds=["discovery"],
+            confirmed_only=effective_confirmed,
+        )
+        matched = [
+            e for e in entries
+            if (e.get("payload") or {}).get("evidence_type") in wanted
+        ]
+        if matched:
+            return True, f"{len(matched)} discovery entries matching {sorted(wanted)}"
+        return False, f"no discovery matching {sorted(wanted)}"
 
     return _condition

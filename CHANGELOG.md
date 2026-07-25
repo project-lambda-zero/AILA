@@ -89,6 +89,19 @@ operator action.
   -- so it activates only once the panel confirms an exploitable finding by
   quorum. Reuses the Phase 0-4 substrate with no new platform code; ships
   bound nowhere live (operator rebind after smoke).
+- Discovery-driven forensics hub + evidence board (RFC-13 #68,
+  `forensics.investigate.hub`): a content-aware `make_evidence_condition`
+  matches a discovery's `evidence_type`, so a discovered disk image opens
+  the disk and binary lanes and a discovered pcap opens the network lane,
+  reusing the existing `_LANE_EVIDENCE_TYPES` classification. The hub runs
+  the proven forensics stages unchanged -- each phase adapter runs the real
+  stage and only overrides the transition back to the hub, and each lane
+  phase scopes `state_collection` to its single lane via `active_lanes` --
+  then runs the deterministic tail (deep_analysis, promotion, resolution,
+  writeup) unconditionally. `record_evidence` posts a discovered evidence
+  item to the shared ledger as the cross-branch evidence board. No
+  collector machinery is rewritten and the live `FORENSICS_DISPATCHER_V1`
+  is untouched; the hub ships bound nowhere (operator rebind after smoke).
 - Platform agent runtime (RFC-03): `AgentTurnRunnerBase`,
   `ToolExecutorHelpersBase`, the shared turn helpers, and platform bases
   for the pattern extractor, claim verifier, synthesis runner, persona
