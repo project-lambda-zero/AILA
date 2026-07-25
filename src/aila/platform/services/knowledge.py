@@ -357,6 +357,7 @@ class KnowledgeService:
         kind: Kind | None = None,
         chunk_max_chars: int = DEFAULT_MAX_CHARS,
         enrich: bool = False,
+        link_chunks: bool = False,
         team_id: str | None = None,
     ) -> dict:
         """Store a knowledge entry with embedding per D-02/D-08.
@@ -387,6 +388,13 @@ class KnowledgeService:
                 50 to 100 token LLM-written blurb prepended before
                 embedding so the vector carries document-level context.
                 Default False; enabling costs one LLM completion per chunk.
+            link_chunks: RFC-12 criterion 5 graph populator opt-in. Only
+                effective when ``chunked=True``. When enabled, each pair of
+                adjacent chunks from the same document is joined by a
+                bidirectional ``adjacent_chunk`` edge, so the graph
+                retrieval route reaches a hit's surrounding context instead
+                of degrading to seed-only. Deterministic, zero-cost, and
+                idempotent on re-ingest. Default False.
             team_id: Optional team scoping for the enrichment LLM call's
                 cost attribution. Ignored on the non-enriched path.
 
@@ -407,6 +415,7 @@ class KnowledgeService:
                 kind=kind or "document",
                 chunk_max_chars=chunk_max_chars,
                 enrich=enrich,
+                link_chunks=link_chunks,
                 team_id=team_id,
             )
 
@@ -499,6 +508,7 @@ class KnowledgeService:
         kind: Kind,
         chunk_max_chars: int,
         enrich: bool = False,
+        link_chunks: bool = False,
         team_id: str | None = None,
     ) -> dict:
         """Boundary-aligned multi-row ingestion path (RFC-12).
@@ -578,15 +588,51 @@ class KnowledgeService:
             )
             chunk_records.append(single)
             total_length += len(chunk_text)
+        edge_count = 0
+        if link_chunks:
+            edge_count = await self._link_adjacent_chunks(chunk_records, session)
         return {
             "status": "stored",
             "operation": "chunked",
             "chunks": chunk_records,
             "chunk_count": len(chunk_records),
+            "edge_count": edge_count,
             "namespace": namespace,
             "embedding_dim": self._provider.dimension,
             "content_length": total_length,
         }
+
+    async def _link_adjacent_chunks(
+        self,
+        chunk_records: list[dict],
+        session: AsyncSession | None,
+    ) -> int:
+        """Join adjacent same-document chunks with bidirectional edges.
+
+        RFC-12 criterion 5 graph populator. Each consecutive pair of chunk
+        rows gets an ``adjacent_chunk`` edge in both directions so a graph
+        traversal from any hit reaches its neighbours (and, at the default
+        two-hop bound, their neighbours). Deterministic and idempotent:
+        :meth:`KnowledgeGraph.add_edge` upserts on ``(src, dst, relation)``,
+        so a re-ingest returning the same entry ids rewrites the same edges
+        instead of proliferating rows. Imported lazily to keep the
+        knowledge to knowledge_graph dependency one-directional.
+        """
+        entry_ids = [
+            r.get("entry_id") for r in chunk_records if r.get("entry_id")
+        ]
+        if len(entry_ids) < 2:
+            return 0
+        from .knowledge_graph import KnowledgeGraph
+        graph = KnowledgeGraph()
+        written = 0
+        for left, right in zip(entry_ids, entry_ids[1:], strict=False):
+            if left == right:
+                continue
+            await graph.add_edge(left, right, "adjacent_chunk", session=session)
+            await graph.add_edge(right, left, "adjacent_chunk", session=session)
+            written += 2
+        return written
 
     async def retrieve(
         self,
