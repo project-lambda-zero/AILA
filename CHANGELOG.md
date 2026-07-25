@@ -69,6 +69,14 @@ operator action.
   on the indexed `source_type` column so a caller can scope retrieval to
   code, document, or pattern knowledge. All default to prior behavior; no
   new migration (the edge table and column already exist).
+- Content-derived knowledge metadata for intelligent retrieval (RFC-12):
+  opt-in `extract_entities` on store stamps the security identifiers found
+  in the content (CVE / CWE / CAPEC / ATT&CK technique / MASVS ids, a
+  deterministic no-cost regex pass) under `entry_metadata["entities"]`, and
+  `retrieve` gains a `metadata_filter` predicate so a caller can scope the
+  hybrid candidate set by any metadata key (scalar equality or list
+  membership), e.g. every entry tagged CVE-2024-1234. Default off; no
+  migration.
 - Self-healing infra-death classifier that marks a multi-turn
   infra-failed investigation retryable instead of emitting a hollow
   no-finding outcome, plus an `aila_sse_write_failures_total` metric

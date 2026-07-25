@@ -34,6 +34,7 @@ from ...storage.db_models import KnowledgeEntryRecord
 from ...storage.registry import ConfigRegistry
 from .embedding import EmbeddingProvider, resolve_provider
 from .ingestor import DEFAULT_MAX_CHARS, Kind, KnowledgeIngestor
+from .knowledge_entities import extract_entities as extract_security_entities
 
 # ``enrich_chunk`` is imported at call time inside ``store`` to break a
 # repo-wide import cycle: knowledge -> knowledge_enrichment ->
@@ -235,6 +236,30 @@ def _graph_hit(node: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _metadata_matches(meta_json: str | None, flt: dict[str, str]) -> bool:
+    """True when every (key, value) in *flt* is satisfied by the entry metadata.
+
+    A scalar metadata value matches on equality; a list value (e.g. the
+    ``entities`` tag list) matches when the filter value is a member. A
+    missing key, non-dict metadata, or unparseable JSON fails the match.
+    All filter pairs must hold (logical AND).
+    """
+    try:
+        meta = json.loads(meta_json or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return False
+    if not isinstance(meta, dict):
+        return False
+    for key, value in flt.items():
+        actual = meta.get(key)
+        if isinstance(actual, list):
+            if value not in actual:
+                return False
+        elif actual != value:
+            return False
+    return True
+
+
 def _merge_and_rank(
     vec_map: dict[int, dict],
     fts_map: dict[int, float],
@@ -366,6 +391,7 @@ class KnowledgeService:
         enrich: bool = False,
         link_chunks: bool = False,
         link_neighbors: bool = False,
+        extract_entities: bool = False,
         team_id: str | None = None,
     ) -> dict:
         """Store a knowledge entry with embedding per D-02/D-08.
@@ -410,6 +436,12 @@ class KnowledgeService:
                 so the graph route hops across documents by meaning.
                 Idempotent on re-ingest; costs one nearest-neighbour query
                 per stored entry. Default False.
+            extract_entities: RFC-12 metadata opt-in. When enabled, security
+                identifiers found in the content (CVE / CWE / CAPEC / ATT&CK
+                technique / MASVS ids) are stamped under
+                ``entry_metadata["entities"]`` so retrieval can scope by
+                identifier through ``metadata_filter``. Deterministic regex,
+                no model cost. Default False.
             team_id: Optional team scoping for the enrichment LLM call's
                 cost attribution. Ignored on the non-enriched path.
 
@@ -432,10 +464,16 @@ class KnowledgeService:
                 enrich=enrich,
                 link_chunks=link_chunks,
                 link_neighbors=link_neighbors,
+                extract_entities=extract_entities,
                 team_id=team_id,
             )
 
-        meta_json = json.dumps(metadata or {})
+        entry_meta = dict(metadata or {})
+        if extract_entities:
+            entities = extract_security_entities(content)
+            if entities:
+                entry_meta["entities"] = entities
+        meta_json = json.dumps(entry_meta)
         embedding_list = self.embed(content)
         # RFC-12 provenance: model_id + content_hash + source_type + updated_at
         # are stamped on every store path (insert AND upsert-update). Read
@@ -533,6 +571,7 @@ class KnowledgeService:
         enrich: bool = False,
         link_chunks: bool = False,
         link_neighbors: bool = False,
+        extract_entities: bool = False,
         team_id: str | None = None,
     ) -> dict:
         """Boundary-aligned multi-row ingestion path (RFC-12).
@@ -610,6 +649,7 @@ class KnowledgeService:
                 session=session,
                 kind=kind,
                 link_neighbors=link_neighbors,
+                extract_entities=extract_entities,
             )
             chunk_records.append(single)
             total_length += len(chunk_text)
@@ -721,6 +761,7 @@ class KnowledgeService:
         limit: int = 10,
         min_score: float = 0.0,
         source_types: list[str] | None = None,
+        metadata_filter: dict[str, str] | None = None,
         session: AsyncSession | None = None,
     ) -> list[dict]:
         """Retrieve knowledge entries by hybrid pgvector + tsvector search per D-09.
@@ -745,6 +786,12 @@ class KnowledgeService:
                 both retrieval legs return only entries of these shapes, so a
                 caller can scope retrieval to the right kind of knowledge
                 without post-filtering. None searches every shape.
+            metadata_filter: Optional entry_metadata predicate. Each (key,
+                value) pair must hold on a candidate: a scalar metadata
+                value matches on equality, a list value (e.g. ``entities``)
+                matches when the value is a member. Applied to the hybrid
+                candidate set before ranking, so a caller can scope to, say,
+                {"entities": "CVE-2024-1234"}. None applies no predicate.
             session: Optional external session.
 
         Returns:
@@ -824,6 +871,18 @@ class KnowledgeService:
                     r.id: {"content": r.content, "entry_metadata": r.entry_metadata, "namespace": r.namespace}
                     for r in content_rows
                 }
+
+        if metadata_filter:
+            vec_map = {
+                i: v for i, v in vec_map.items()
+                if _metadata_matches(v.get("entry_metadata"), metadata_filter)
+            }
+            fts_content_map = {
+                i: v for i, v in fts_content_map.items()
+                if _metadata_matches(v.get("entry_metadata"), metadata_filter)
+            }
+            allowed = set(vec_map) | set(fts_content_map)
+            fts_map = {i: r for i, r in fts_map.items() if i in allowed}
 
         # Merge, floor, and rank outside the transaction (pure, unit-testable).
         return _merge_and_rank(vec_map, fts_map, fts_content_map, limit, min_score)
