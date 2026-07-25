@@ -59,6 +59,13 @@ operator action.
   post-turn transaction. Each turn renders a bounded digest of the shared
   ledger back into the prompt as the reserved `_ledger.board` observable,
   stripped at fork and re-derived from the DB each turn.
+- Objective ownership lifecycle on the shared ledger (RFC-13 #68): a branch
+  may change only the objectives it owns; a non-owner attempt is refused
+  and must file a request. Branch merge transfers a source branch's
+  objectives to the merge-result branch, and abandon or promote orphans a
+  closed branch's objectives to the investigation, so a terminal branch
+  never keeps a live objective. No new table (objectives stay tagged
+  ledger entries).
 - Platform agent runtime (RFC-03): `AgentTurnRunnerBase`,
   `ToolExecutorHelpersBase`, the shared turn helpers, and platform bases
   for the pattern extractor, claim verifier, synthesis runner, persona

@@ -56,6 +56,7 @@ from aila.platform.contracts.reasoning import (
     ReasoningContract,
     RejectedHypothesis,
 )
+from aila.platform.services.ledger import LedgerService
 from aila.platform.uow import UnitOfWork
 
 __all__ = [
@@ -285,6 +286,11 @@ class BranchPool:
                     uow, branch, BranchStatus.MERGED,
                     reason=merge_reason or "merged", at=now,
                 )
+            # RFC-13 (#68): objectives owned by either source branch move to
+            # the merge-result branch so the winner inherits the shared work.
+            await self._transfer_objectives(
+                uow.session, {branch_a_id, branch_b_id}, merged.id,
+            )
             await uow.commit()
 
             return BranchOpResult(
@@ -342,6 +348,11 @@ class BranchPool:
                     reason=sib.closed_reason, at=now,
                 )
                 affected.append(sib.id)
+            # RFC-13 (#68): the promoted branch keeps its objectives; the
+            # abandoned siblings orphan theirs to the investigation.
+            await self._transfer_objectives(
+                uow.session, {sib.id for sib in siblings}, None,
+            )
             await uow.commit()
 
             return BranchOpResult(
@@ -378,6 +389,9 @@ class BranchPool:
                 uow, branch, BranchStatus.ABANDONED,
                 reason=branch.closed_reason, at=now,
             )
+            # RFC-13 (#68): a closed branch orphans its objectives to the
+            # investigation so they can be reclaimed by a request.
+            await self._transfer_objectives(uow.session, {branch_id}, None)
             await uow.commit()
 
             return BranchOpResult(
@@ -570,6 +584,36 @@ class BranchPool:
             key = row.strategy_family or ""
             groups.setdefault(key, []).append(row.id)
         return groups
+
+    async def _transfer_objectives(
+        self,
+        session: Any,
+        source_branch_ids: set[str],
+        new_owner_branch_id: str | None,
+    ) -> None:
+        """Reassign shared-ledger objectives owned by any source branch.
+
+        Called on merge (owner moves to the merge-result branch) and on
+        abandon / promote (a closed branch orphans its objectives to None),
+        so a terminal branch never keeps a live objective on the shared
+        ledger (RFC-13 #68). Reads the folded objectives once and transfers
+        only those a source branch currently owns, inside the caller's
+        transaction.
+        """
+        if not source_branch_ids:
+            return
+        service = LedgerService()
+        objectives = await service.read_objectives(
+            self.investigation_id, session=session,
+        )
+        for objective in objectives:
+            if objective["owner_branch_id"] in source_branch_ids:
+                await service.transfer_objective_owner(
+                    self.investigation_id,
+                    objective["objective_key"],
+                    new_owner_branch_id,
+                    session=session,
+                )
 
     async def _load_branch(
         self, uow: Any, branch_id: str, *, for_update: bool = False,

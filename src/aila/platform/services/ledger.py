@@ -36,11 +36,25 @@ from aila.platform.uow import UnitOfWork
 
 __all__ = [
     "InvestigationLedgerRecord",
+    "LedgerPermissionError",
     "LedgerService",
     "make_discovery_condition",
 ]
 
 _UQ_IDEM = "uq_investigation_ledger_idem"
+# The system actor used by ownership transfers (branch merge / abandon).
+# A write under this author bypasses the owner-only guard on objective
+# status because the transfer path IS the ownership-change mechanism.
+_SYSTEM_ACTOR = "__system__"
+
+
+class LedgerPermissionError(RuntimeError):
+    """A non-owner branch tried to mutate an objective directly.
+
+    A branch that does not own an objective must file a capability request
+    (Phase 4) rather than change the objective's status itself. The owner
+    path and the system transfer path are the only direct mutators.
+    """
 
 
 class InvestigationLedgerRecord(SQLModel, table=True):
@@ -300,13 +314,28 @@ class LedgerService:
         *,
         session: AsyncSession | None = None,
     ) -> int:
-        """Change an objective's status via a new superseding entry."""
+        """Change an objective's status via a new superseding entry.
+
+        Owner-only: a non-owner branch is refused here and must file a
+        capability request instead (Phase 4). The system actor bypasses the
+        guard because branch merge / abandon changes ownership through this
+        path.
+        """
         async with _session_or_new(session) as (sess, _owns):
             latest = await self._latest_objective(
                 sess, investigation_id, objective_key,
             )
             owner = latest.owner_branch_id if latest else None
             prior_id = latest.id if latest else None
+        if (
+            latest is not None
+            and author_branch_id != owner
+            and author_branch_id != _SYSTEM_ACTOR
+        ):
+            raise LedgerPermissionError(
+                f"branch {author_branch_id} does not own objective "
+                f"{objective_key!r} (owner {owner!r}); file a request instead"
+            )
         return await self.append_general(
             investigation_id,
             author_branch_id,
@@ -325,7 +354,7 @@ class LedgerService:
         objective_key: str,
         new_owner_branch_id: str | None,
         *,
-        author_branch_id: str = "__system__",
+        author_branch_id: str = _SYSTEM_ACTOR,
         session: AsyncSession | None = None,
     ) -> int:
         """Reassign an objective's owner (None orphans it to the investigation)."""
