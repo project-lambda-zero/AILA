@@ -16,6 +16,10 @@ from typing import Any
 
 from sqlmodel import select as _select
 
+from aila.platform.agents.turn_helpers import (
+    decode_case_state,
+    encode_case_state,
+)
 from aila.platform.contracts.enums import BranchStatus, InvestigationStatus
 from aila.platform.llm.cancellation import (
     LLMCancelledError,
@@ -117,11 +121,36 @@ async def _is_loop_alive(
     return True, "alive"
 
 
+async def _write_phase_directive(
+    branch_model: Any, branch_id: str, directive: str,
+) -> None:
+    """Write the phase mission as a ``_directive.phase_mission`` observable.
+
+    The render layer surfaces ``_directive.*`` observables in the next-turn
+    prompt (reserved keys, never evicted), so a phase-scoped loop tells the
+    shared expert agent this phase's objective and exit criteria without a
+    phase-specific system prompt. Overwritten at each phase entry; stripped
+    at fork so children start on a clean directive slate.
+    """
+    async with UnitOfWork() as uow:
+        branch = (await uow.session.exec(
+            _select(branch_model).where(branch_model.id == branch_id)
+        )).first()
+        if branch is None:
+            return
+        case_state = decode_case_state(branch.case_state_json)
+        case_state.observables["_directive.phase_mission"] = directive
+        branch.case_state_json = encode_case_state(case_state)
+        uow.session.add(branch)
+        await uow.session.commit()
+
+
 def state_investigation_loop(
     bindings: InvestigationStateBindings,
     hooks: InvestigationStateHooks,
     *,
     next_state: str = "investigation_emit",
+    phase_directive: str | None = None,
 ) -> Callable[[dict[str, Any], Any], Awaitable[StateResult]]:
     """Build the loop-state handler bound to *bindings* + *hooks*.
 
@@ -130,6 +159,9 @@ def state_investigation_loop(
     passes the next phase or a router state, so the same loop body serves
     every phase. *phase_max_turns* in the state input overrides the
     module turn cap for a phase-scoped loop; absent, the V1 cap applies.
+    *phase_directive*, when set, is written to the branch case state as the
+    ``_directive.phase_mission`` observable at phase entry so the agent's
+    next turn sees this phase's objective; None preserves V1 behavior.
     """
     del hooks  # loop takes no optional hooks today
 
@@ -145,6 +177,11 @@ def state_investigation_loop(
         branch_id = str(input.get("branch_id") or "")
         if not investigation_id or not branch_id:
             raise ValueError("investigation_loop: missing investigation_id or branch_id")
+
+        if phase_directive:
+            await _write_phase_directive(
+                bindings.branch_model, branch_id, phase_directive,
+            )
 
         max_turns = int(
             input.get("phase_max_turns")
