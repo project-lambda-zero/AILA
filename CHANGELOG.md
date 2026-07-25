@@ -19,6 +19,21 @@ operator action.
 
 ### Added
 
+- Phase-graph workflow substrate (`platform/workflows/phase_graph.py`): a
+  module declares its investigation lifecycle as a `PhaseGraphSpec`, a
+  graph of bounded adaptive loops wired by static edges, dynamic routers,
+  and entry gates over the durable state machine. Each phase carries its
+  own tool allowlist, turn cap, and mission directive (surfaced to the
+  panel as the `_directive.phase_mission` observable). Opt-in
+  `malware.investigate.v2` (target-readiness gate plus a kind router into
+  triage / config_extract / yara_generate / full_analysis) and
+  `vr.investigate.v2` (kind router into source / variant / binary / mobile
+  audit, each scoped to an enforced per-phase MCP server allowlist) ship
+  alongside the V1 single-loop definitions. Every module seed stays bound
+  to V1; a V2 is enabled by rebinding the seed's `definition` after a live
+  smoke. The loop factory gains `phase_directive`, `phase_max_turns`, and
+  `phase_allowed_servers` (all default to prior behavior), and the shared
+  tool executor enforces the per-phase server allowlist on dispatch.
 - Platform agent runtime (RFC-03): `AgentTurnRunnerBase`,
   `ToolExecutorHelpersBase`, the shared turn helpers, and platform bases
   for the pattern extractor, claim verifier, synthesis runner, persona
