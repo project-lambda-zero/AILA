@@ -120,8 +120,17 @@ async def _is_loop_alive(
 def state_investigation_loop(
     bindings: InvestigationStateBindings,
     hooks: InvestigationStateHooks,
+    *,
+    next_state: str = "investigation_emit",
 ) -> Callable[[dict[str, Any], Any], Awaitable[StateResult]]:
-    """Build the loop-state handler bound to *bindings* + *hooks*."""
+    """Build the loop-state handler bound to *bindings* + *hooks*.
+
+    *next_state* is the transition taken when the loop exits (default
+    ``investigation_emit`` -- the single-loop V1 shape). A phase-graph node
+    passes the next phase or a router state, so the same loop body serves
+    every phase. *phase_max_turns* in the state input overrides the
+    module turn cap for a phase-scoped loop; absent, the V1 cap applies.
+    """
     del hooks  # loop takes no optional hooks today
 
     async def _handler(input: dict[str, Any], services: Any) -> StateResult:
@@ -137,7 +146,11 @@ def state_investigation_loop(
         if not investigation_id or not branch_id:
             raise ValueError("investigation_loop: missing investigation_id or branch_id")
 
-        max_turns = int(input.get("max_turns") or await bindings.max_turns_reader())
+        max_turns = int(
+            input.get("phase_max_turns")
+            or input.get("max_turns")
+            or await bindings.max_turns_reader()
+        )
 
         # fix §289 -- strict input validation. cve_intel + applicable_patterns
         # flow through state input dicts and the workflow engine persists
@@ -249,7 +262,7 @@ def state_investigation_loop(
                 )
 
         return StateResult(
-            next_state="investigation_emit",
+            next_state=next_state,
             output={
                 **input,
                 "branch_id": branch_id,

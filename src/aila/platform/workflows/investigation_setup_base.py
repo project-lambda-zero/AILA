@@ -121,8 +121,16 @@ class InvestigationStateHooks:
 def state_investigation_setup(
     bindings: InvestigationStateBindings,
     hooks: InvestigationStateHooks,
+    *,
+    next_state: str = "investigation_loop",
 ) -> Callable[[dict[str, Any], Any], Awaitable[StateResult]]:
-    """Build the setup-state handler bound to *bindings* + *hooks*."""
+    """Build the setup-state handler bound to *bindings* + *hooks*.
+
+    *next_state* is the transition taken after a successful setup (default
+    ``investigation_loop`` -- the single-loop V1 shape). A phase-graph
+    passes its first phase. The already-terminal short-circuits still route
+    straight to ``investigation_emit``.
+    """
 
     async def _handler(input: dict[str, Any], services: Any) -> StateResult:
         """Validate + mark RUNNING. Returns input + resolved branch_id.
@@ -510,7 +518,7 @@ def state_investigation_setup(
         )
 
         return StateResult(
-            next_state="investigation_loop",
+            next_state=next_state,
             output={
                 "investigation_id": investigation_id,
                 "branch_id": branch.id,
