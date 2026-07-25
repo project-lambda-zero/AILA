@@ -81,6 +81,14 @@ operator action.
   confirmed-trust; full_analysis the advisory fallback), bound nowhere
   live -- enabled by an operator seed rebind after smoke, like the V2
   graphs.
+- Discovery-driven vr hub (RFC-13 #68, `vr.investigate.hub`): recon runs
+  first and posts scoping discoveries; the audit phases (source / variant /
+  binary / mobile, each keeping its V2 MCP server allowlist) activate on
+  those discoveries under advisory trust and per-capability routing; and
+  poc_development is gated -- `trust="confirmed"`, `capability="exploit-dev"`
+  -- so it activates only once the panel confirms an exploitable finding by
+  quorum. Reuses the Phase 0-4 substrate with no new platform code; ships
+  bound nowhere live (operator rebind after smoke).
 - Platform agent runtime (RFC-03): `AgentTurnRunnerBase`,
   `ToolExecutorHelpersBase`, the shared turn helpers, and platform bases
   for the pattern extractor, claim verifier, synthesis runner, persona
