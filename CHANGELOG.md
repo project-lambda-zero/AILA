@@ -59,6 +59,16 @@ operator action.
 - Content-aware knowledge chunker and per-vector provenance (`model_id`,
   `content_hash`, `source_type`, `updated_at`) on knowledge entries
   (RFC-12, migration 093).
+- Knowledge-graph edge populators so the graph retrieval route stops
+  degrading to seed-only (RFC-12 criterion 5). Opt-in `link_chunks` joins
+  adjacent same-document chunks with bidirectional `adjacent_chunk` edges;
+  opt-in `link_neighbors` joins a stored entry to its nearest
+  same-namespace entries above a similarity floor with weighted `related`
+  edges (cross-document hops by meaning). Both are deterministic and
+  idempotent on re-ingest. `retrieve` gains a `source_types` shape filter
+  on the indexed `source_type` column so a caller can scope retrieval to
+  code, document, or pattern knowledge. All default to prior behavior; no
+  new migration (the edge table and column already exist).
 - Self-healing infra-death classifier that marks a multi-turn
   infra-failed investigation retryable instead of emitting a hollow
   no-finding outcome, plus an `aila_sse_write_failures_total` metric
