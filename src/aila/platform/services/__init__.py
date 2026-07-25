@@ -7,6 +7,7 @@ from .embedding import BGEProvider, EmbeddingProvider, MiniLMProvider, resolve_p
 from .factory import ServiceFactory
 from .http import build_http_client
 from .knowledge import KnowledgeService
+from .ledger import LedgerService
 from .reasoning import CyberReasoningEngine
 from .reasoning_graphs import ReasoningGraphService
 from .report import ReportService
@@ -19,6 +20,7 @@ __all__ = [
     "CyberReasoningEngine",
     "EmbeddingProvider",
     "KnowledgeService",
+    "LedgerService",
     "MiniLMProvider",
     "ReasoningGraphService",
     "ReportService",

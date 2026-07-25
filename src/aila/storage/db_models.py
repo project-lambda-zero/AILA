@@ -1357,3 +1357,8 @@ class PlatformJournalDeadletterRecord(SQLModel, table=True):
 # Alembic autogen see knowledge_entry_edges without a circular import.
 from aila.platform.services.knowledge_graph import KnowledgeEntryEdge
 
+# RFC-13 (#68): the shared investigation ledger. Same end-of-file rule so
+# create_all + Alembic autogen register investigation_ledger without a
+# circular import back through the platform services chain.
+from aila.platform.services.ledger import InvestigationLedgerRecord
+
