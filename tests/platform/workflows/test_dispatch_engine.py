@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from aila.platform.services.ledger import LedgerService
+from aila.platform.services.ledger import LedgerService, make_discovery_condition
+from aila.platform.services.oracle import Oracle
 from aila.platform.workflows import DurableStateMachine, StateResult
 from aila.platform.workflows.phase_graph import (
     DISPATCH_STATE,
@@ -127,3 +128,106 @@ async def test_resume_preserves_visited_set(workflow_run_id: str) -> None:
     out = await DurableStateMachine.execute(workflow_run_id, wf, {"ignored": True})
     assert ran == ["phaseB"]  # phaseA was visited before the pause
     assert set(out["_dispatch_visited"]) == {"phaseA", "phaseB"}
+
+
+def _make_loop_wf(
+    phases: tuple[PhaseSpec, ...],
+    ran: list[str],
+    recon_hook,
+) -> Any:
+    """A hub whose ``recon`` loop runs *recon_hook* (simulating an agent's
+    ledger activity) before looping back to the hub."""
+    def setup_builder(next_state: str) -> Any:
+        async def _h(state_input: dict[str, Any], services: Any) -> StateResult:
+            del services
+            return StateResult(next_state=next_state, output={**state_input})
+        return _h
+
+    def loop_builder(phase: PhaseSpec, next_state: str) -> Any:
+        async def _h(state_input: dict[str, Any], services: Any) -> StateResult:
+            del services
+            ran.append(phase.name)
+            if phase.name == "recon":
+                await recon_hook(state_input["investigation_id"])
+            return StateResult(next_state=next_state, output={**state_input})
+        return _h
+
+    async def emit_handler(state_input: dict[str, Any], services: Any) -> StateResult:
+        del services
+        return StateResult(next_state=RESERVED_SUCCEEDED, output={**state_input})
+
+    return build_dispatch_workflow(
+        "test.hub.loop.v1", phases,
+        services_factory=_svc,
+        setup_builder=setup_builder,
+        loop_builder=loop_builder,
+        emit_handler=emit_handler,
+    )
+
+
+async def test_full_loop_ratified_request_activates_confirmed_phase(
+    workflow_run_id: str,
+) -> None:
+    """End-to-end through the DurableStateMachine: recon posts a discovery +
+    a request, a sibling ratifies it, the hub applies the ratified request
+    (confirming the discovery) on its next visit, and the confirmed-trust
+    ``deep`` phase then activates. This exercises the ledger -> oracle -> hub
+    wiring in the running engine, not the router in isolation."""
+    ran: list[str] = []
+    svc = LedgerService()
+    oracle = Oracle()
+
+    async def recon_hook(inv: str) -> None:
+        discovery = await svc.append_general(inv, "b1", "discovery", {"packed": True})
+        request = await svc.append_general(
+            inv, "b1", "request",
+            {"intent": "activate_phase", "discovery_id": discovery},
+        )
+        await oracle.record_decision(inv, request, "b2", approve=True)
+
+    phases = (
+        PhaseSpec(name="recon", condition=_always),
+        PhaseSpec(
+            name="deep",
+            condition=make_discovery_condition("discovery"),
+            trust="confirmed",
+        ),
+    )
+    wf = _make_loop_wf(phases, ran, recon_hook)
+    await DurableStateMachine.execute(
+        workflow_run_id, wf, {"investigation_id": workflow_run_id},
+    )
+    assert ran == ["recon", "deep"]
+
+
+async def test_full_loop_unratified_request_does_not_activate_confirmed_phase(
+    workflow_run_id: str,
+) -> None:
+    """Same graph, but the request is never ratified. The confirmed-trust
+    ``deep`` phase must NOT activate -- proving the hub-apply of a ratified
+    request is load-bearing, not incidental."""
+    ran: list[str] = []
+    svc = LedgerService()
+
+    async def recon_hook(inv: str) -> None:
+        discovery = await svc.append_general(inv, "b1", "discovery", {"packed": True})
+        await svc.append_general(
+            inv, "b1", "request",
+            {"intent": "activate_phase", "discovery_id": discovery},
+        )
+        # No approval -- the request stays unratified.
+
+    phases = (
+        PhaseSpec(name="recon", condition=_always),
+        PhaseSpec(
+            name="deep",
+            condition=make_discovery_condition("discovery"),
+            trust="confirmed",
+        ),
+    )
+    wf = _make_loop_wf(phases, ran, recon_hook)
+    out = await DurableStateMachine.execute(
+        workflow_run_id, wf, {"investigation_id": workflow_run_id},
+    )
+    assert ran == ["recon"]  # deep never activated -- discovery unconfirmed
+    assert out.get("stalled") is True
