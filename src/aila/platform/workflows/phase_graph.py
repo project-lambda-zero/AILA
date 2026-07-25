@@ -259,7 +259,12 @@ def make_dispatch_router(phases: tuple[PhaseSpec, ...]) -> HandlerFn:
                 continue
             if phase.condition is None:
                 return phase, "unconditional"
-            enabled, reason = await phase.condition(state_input)
+            # Thread the phase trust so the condition resolves confirmed-vs-
+            # advisory from the declared tier (single source of truth), not a
+            # value baked into the condition (RFC-13 #68).
+            enabled, reason = await phase.condition(
+                {**state_input, "_dispatch_phase_trust": phase.trust},
+            )
             if enabled:
                 return phase, reason
         return None, ""
@@ -329,6 +334,21 @@ def make_dispatch_router(phases: tuple[PhaseSpec, ...]) -> HandlerFn:
                 )
         return None
 
+    async def _apply_ratified_requests(investigation_id: str) -> None:
+        # Apply every ratified, not-yet-applied ledger request before the hub
+        # re-decides, so a panel-approved request (a confirmed discovery, an
+        # opened objective) takes effect this visit. The oracle's apply is
+        # idempotent. Lazy import breaks the db_models load-time cycle (see
+        # _replan_ratified).
+        from aila.platform.services.oracle import Oracle
+        from aila.platform.uow import UnitOfWork
+        async with UnitOfWork() as uow:
+            applied = await Oracle().apply_all_ratified(
+                investigation_id, session=uow.session,
+            )
+            if applied:
+                await uow.session.commit()
+
     async def _handler(state_input: dict[str, Any], services: Any) -> StateResult:
         del services
         if state_input.get("_budget_exhausted"):
@@ -338,6 +358,9 @@ def make_dispatch_router(phases: tuple[PhaseSpec, ...]) -> HandlerFn:
             )
         visited = set(state_input.get("_dispatch_visited") or [])
         branch_capability = state_input.get("_branch_capability")
+        investigation_id = state_input.get("investigation_id")
+        if investigation_id:
+            await _apply_ratified_requests(str(investigation_id))
         phase, reason = await _pick(state_input, visited, branch_capability)
         if phase is not None:
             return _activate(state_input, visited, phase, reason)
@@ -345,7 +368,6 @@ def make_dispatch_router(phases: tuple[PhaseSpec, ...]) -> HandlerFn:
             p.name for p in phases
             if p.name not in visited and p.condition is not None
         ]
-        investigation_id = state_input.get("investigation_id")
         if blocked and investigation_id and not state_input.get(
             "_dispatch_replan_relax"
         ):

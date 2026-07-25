@@ -72,6 +72,14 @@ operator action.
   decider by `target_capability`, enforces a distinct-approver rule (a
   branch cannot ratify its own request), and applies only the declared
   mechanical effect once a quorum ratifies -- it decides nothing itself.
+  The loop is wired end to end: a decider approves a request by naming it
+  in the decision's `ledger_approvals` (the turn runner routes each vote
+  through the oracle), and the dispatch hub calls `apply_all_ratified` on
+  every visit so a ratified request takes effect (its discovery confirmed,
+  its objective opened) before the hub re-evaluates activation. A phase's
+  `trust` tier is the single source of truth for confirmed-versus-advisory:
+  the hub threads it into each condition, which resolves whether a
+  quorum-confirmed discovery is required.
   The dispatch hub gained overall-cap handling (emits `budget_truncated`),
   a stall path that raises one `replan` request per visited-set, and a
   ratified-replan relaxation that drops confirmed trust to advisory for

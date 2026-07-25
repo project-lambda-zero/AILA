@@ -93,7 +93,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
     PhaseSpec(
         name="poc_development",
         directive=_POC_DEV_DIRECTIVE,
-        condition=make_discovery_condition("discovery", confirmed_only=True),
+        condition=make_discovery_condition("discovery"),
         capability="exploit-dev",
         trust="confirmed",
         allowed_servers=("audit_mcp", "ida_headless"),

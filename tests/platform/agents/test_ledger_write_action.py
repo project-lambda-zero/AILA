@@ -18,6 +18,7 @@ from aila.platform.contracts.reasoning import (
     ReasoningTurnDecision,
 )
 from aila.platform.services.ledger import LedgerService, make_discovery_condition
+from aila.platform.services.oracle import Oracle
 from aila.platform.services.reasoning import CyberReasoningEngine
 from aila.platform.uow import UnitOfWork
 
@@ -149,3 +150,55 @@ def test_render_case_model_surfaces_ledger_board() -> None:
     assert "packed" in rendered
     # The reserved key itself is never rendered as a raw scratchpad line.
     assert "_ledger.board" not in rendered
+
+
+async def test_trust_drives_confirmed_gating(test_db) -> None:
+    del test_db
+    inv = "inv-trust"
+    svc = LedgerService()
+    discovery = await svc.append_general(inv, "b1", "discovery", {"x": 1})
+    condition = make_discovery_condition("discovery")  # no baked confirmed_only
+    # Advisory trust: any discovery activates.
+    ok_adv, _r = await condition(
+        {"investigation_id": inv, "_dispatch_phase_trust": "advisory"},
+    )
+    assert ok_adv is True
+    # Confirmed trust: an unconfirmed discovery does not activate.
+    ok_unconf, _r = await condition(
+        {"investigation_id": inv, "_dispatch_phase_trust": "confirmed"},
+    )
+    assert ok_unconf is False
+    # Once confirmed, the confirmed-trust phase activates.
+    await svc.append_general(inv, "b2", "decision", {"approved": True, "target": discovery})
+    ok_conf, _r = await condition(
+        {"investigation_id": inv, "_dispatch_phase_trust": "confirmed"},
+    )
+    assert ok_conf is True
+
+
+async def test_agent_approval_records_decision(test_db) -> None:
+    del test_db
+    inv = "inv-approve"
+    request = await LedgerService().append_general(
+        inv, "b1", "request", {"intent": "replan"},
+    )
+    me = SimpleNamespace(investigation_id=inv, branch_id="b2")
+    decision = ReasoningTurnDecision(reasoning="x", ledger_approvals=[request])
+    async with UnitOfWork() as uow:
+        await AgentTurnRunnerBase._post_ledger_approvals(me, decision, uow.session)
+        await uow.session.commit()
+    assert await Oracle().is_ratified(inv, request) is True
+
+
+async def test_agent_self_approval_skipped(test_db) -> None:
+    del test_db
+    inv = "inv-selfapprove"
+    request = await LedgerService().append_general(
+        inv, "b1", "request", {"intent": "replan"},
+    )
+    me = SimpleNamespace(investigation_id=inv, branch_id="b1")  # author approves own
+    decision = ReasoningTurnDecision(reasoning="x", ledger_approvals=[request])
+    async with UnitOfWork() as uow:
+        await AgentTurnRunnerBase._post_ledger_approvals(me, decision, uow.session)
+        await uow.session.commit()
+    assert await Oracle().is_ratified(inv, request) is False  # distinct-approver rule

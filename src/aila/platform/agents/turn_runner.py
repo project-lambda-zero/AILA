@@ -53,7 +53,8 @@ from aila.platform.llm.idempotency_cache import (
     make_request_key,
     store_response,
 )
-from aila.platform.services.ledger import LedgerService
+from aila.platform.services.ledger import LedgerPermissionError, LedgerService
+from aila.platform.services.oracle import Oracle, OracleError
 from aila.platform.uow import UnitOfWork
 
 __all__ = ["AgentTurnResult", "AgentTurnRunnerBase"]
@@ -194,6 +195,35 @@ class AgentTurnRunnerBase:
                 idempotency_key=idem,
                 session=session,
             )
+
+    async def _post_ledger_approvals(
+        self,
+        decision: ReasoningTurnDecision,
+        session: AsyncSession,
+    ) -> None:
+        """Record this branch's request approvals through the oracle.
+
+        Each vote is idempotency-keyed by (request, approver) inside the
+        oracle. A branch approving its own request is refused by the
+        distinct-approver rule; that is a no-op here, not a turn failure.
+        """
+        approvals = decision.ledger_approvals[:_MAX_LEDGER_WRITES_PER_TURN]
+        if not approvals:
+            return
+        oracle = Oracle()
+        for request_id in approvals:
+            try:
+                await oracle.record_decision(
+                    self.investigation_id,
+                    int(request_id),
+                    self.branch_id,
+                    approve=True,
+                    session=session,
+                )
+            except (LedgerPermissionError, OracleError):
+                # Self-approval blocked by the distinct-approver rule, or the
+                # request id does not exist; skip without failing the turn.
+                continue
 
     def _maybe_reject_fanout_submit(
         self, *, decision: Any, inv: Any, case_state: Any, turn_number: int,
@@ -610,6 +640,7 @@ class AgentTurnRunnerBase:
             branch_row.updated_at = utc_now()
 
             await self._post_ledger_writes(decision, turn_number, uow.session)
+            await self._post_ledger_approvals(decision, uow.session)
 
             if terminal:
                 outcome_kind = self._terminal_outcome_kind(decision)

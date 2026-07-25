@@ -173,9 +173,53 @@ class Oracle:
             investigation_id, request_id, quorum_k=quorum_k, session=session,
         ):
             return {"applied": False, "reason": "not ratified"}
+        if await self._is_applied(investigation_id, request_id, session):
+            # The hub applies ratified requests on every visit; an already
+            # applied request is a no-op so a non-idempotent effect (opening
+            # an objective) never runs twice.
+            return {"applied": False, "reason": "already applied"}
         request = await self._load_request(investigation_id, request_id, session)
         payload = request.get("payload") or {}
-        intent = payload.get("intent")
+        result = await self._apply_effect(
+            investigation_id, payload.get("intent"), payload, session,
+        )
+        await self._mark_applied(investigation_id, request_id, session)
+        return result
+
+    async def _is_applied(
+        self, investigation_id: str, request_id: int, session: AsyncSession | None,
+    ) -> bool:
+        """True when this request already has an applied marker on the ledger."""
+        rows = await self._ledger.read_general(
+            investigation_id, kinds=["decision"], session=session,
+        )
+        for row in rows:
+            payload = row.get("payload") or {}
+            if payload.get("applied") and int(payload.get("target", -1)) == request_id:
+                return True
+        return False
+
+    async def _mark_applied(
+        self, investigation_id: str, request_id: int, session: AsyncSession | None,
+    ) -> None:
+        """Record that a ratified request's effect has been applied (idempotent)."""
+        await self._ledger.append_general(
+            investigation_id,
+            _ORACLE_ACTOR,
+            "decision",
+            {"applied": True, "target": request_id},
+            idempotency_key=f"applied:{request_id}",
+            session=session,
+        )
+
+    async def _apply_effect(
+        self,
+        investigation_id: str,
+        intent: Any,
+        payload: dict[str, Any],
+        session: AsyncSession | None,
+    ) -> dict[str, Any]:
+        """Apply the single declared mechanical effect for a request intent."""
         if intent == "activate_phase":
             discovery_id = payload.get("discovery_id")
             if discovery_id is None:
@@ -214,6 +258,33 @@ class Oracle:
             # relaxes confirmed trust for one pass once a replan is ratified.
             return {"applied": True, "intent": intent}
         raise OracleError(f"unknown request intent {intent!r}")
+
+    async def apply_all_ratified(
+        self,
+        investigation_id: str,
+        *,
+        quorum_k: int = 1,
+        session: AsyncSession | None = None,
+    ) -> list[dict[str, Any]]:
+        """Apply every ratified, not-yet-applied request; return what changed.
+
+        The dispatch hub calls this on each visit so a request the panel has
+        ratified takes effect (its discovery is confirmed, its objective
+        opened) before the hub re-evaluates phase activation. apply_decision
+        is idempotent, so an already-applied request is skipped.
+        """
+        requests = await self._ledger.read_general(
+            investigation_id, kinds=["request"], session=session,
+        )
+        applied: list[dict[str, Any]] = []
+        for request in requests:
+            result = await self.apply_decision(
+                investigation_id, int(request["id"]),
+                quorum_k=quorum_k, session=session,
+            )
+            if result.get("applied"):
+                applied.append(result)
+        return applied
 
     async def _load_request(
         self,

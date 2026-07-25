@@ -378,6 +378,24 @@ class LedgerService:
         )
 
 
+def _resolve_confirmed(state_input: dict[str, Any], confirmed_only: bool) -> bool:
+    """Resolve whether a hub condition requires quorum-confirmed discoveries.
+
+    The dispatch hub injects the phase's ``trust`` as ``_dispatch_phase_trust``
+    so ``trust`` is the single source of truth for confirmed-versus-advisory;
+    a standalone condition (no hub) falls back to the ``confirmed_only`` param.
+    A ratified replan relaxes confirmed trust for one pass either way.
+    """
+    trust = state_input.get("_dispatch_phase_trust")
+    if trust == "confirmed":
+        base = True
+    elif trust == "advisory":
+        base = False
+    else:
+        base = confirmed_only
+    return base and not state_input.get("_dispatch_replan_relax")
+
+
 def make_discovery_condition(
     kind: str = "discovery",
     *,
@@ -399,12 +417,9 @@ def make_discovery_condition(
         investigation_id = state_input.get(input_key)
         if not investigation_id:
             return False, f"no {input_key} on dispatch input"
-        # A ratified replan relaxes confirmed trust for one hub pass, so a
-        # confirmed-trust phase can activate on an unconfirmed discovery
-        # rather than deadlocking when quorum never confirms (RFC-13 #68).
-        effective_confirmed = confirmed_only and not state_input.get(
-            "_dispatch_replan_relax"
-        )
+        # Trust (hub-injected) is the source of truth for confirmed-vs-
+        # advisory; a ratified replan relaxes it for one pass (RFC-13 #68).
+        effective_confirmed = _resolve_confirmed(state_input, confirmed_only)
         entries = await LedgerService().read_general(
             str(investigation_id),
             kinds=[kind],
@@ -440,9 +455,7 @@ def make_evidence_condition(
         investigation_id = state_input.get(input_key)
         if not investigation_id:
             return False, f"no {input_key} on dispatch input"
-        effective_confirmed = confirmed_only and not state_input.get(
-            "_dispatch_replan_relax"
-        )
+        effective_confirmed = _resolve_confirmed(state_input, confirmed_only)
         entries = await LedgerService().read_general(
             str(investigation_id),
             kinds=["discovery"],

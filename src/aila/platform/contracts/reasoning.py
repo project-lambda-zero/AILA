@@ -358,6 +358,10 @@ class ReasoningTurnDecision(BaseModel):
     # posted after the engine call, capped per turn by the runner. Empty
     # by default so a V1 decision round-trips byte-identically.
     ledger_writes: list[LedgerWrite] = Field(default_factory=list)
+    # RFC-13 (#68): request ids on the shared ledger this branch approves
+    # this turn. The runner routes each through the oracle, which enforces
+    # the distinct-approver rule (a branch cannot approve its own request).
+    ledger_approvals: list[int] = Field(default_factory=list)
 
     @field_validator("observables")
     @classmethod

@@ -114,3 +114,40 @@ async def test_quorum_k_requires_distinct_approvers(test_db) -> None:
     assert await oracle.is_ratified(inv, request, quorum_k=2) is False
     await oracle.record_decision(inv, request, "b3", approve=True)
     assert await oracle.is_ratified(inv, request, quorum_k=2) is True
+
+
+async def test_apply_decision_idempotent_open_objective(test_db) -> None:
+    del test_db
+    inv = "inv-idem-apply"
+    svc = LedgerService()
+    request = await svc.append_general(
+        inv, "b1", "request",
+        {"intent": "open_objective", "objective_key": "o", "owner_branch_id": "b1"},
+    )
+    oracle = Oracle()
+    await oracle.record_decision(inv, request, "b2", approve=True)
+    first = await oracle.apply_decision(inv, request)
+    assert first["applied"] is True
+    second = await oracle.apply_decision(inv, request)
+    assert second["applied"] is False  # already applied -- no second effect
+    opened = [o for o in await svc.read_objectives(inv) if o["objective_key"] == "o"]
+    assert len(opened) == 1
+
+
+async def test_apply_all_ratified_applies_and_is_idempotent(test_db) -> None:
+    del test_db
+    inv = "inv-apply-all"
+    svc = LedgerService()
+    discovery = await svc.append_general(inv, "b1", "discovery", {"packed": True})
+    request = await svc.append_general(
+        inv, "b1", "request",
+        {"intent": "activate_phase", "discovery_id": discovery},
+    )
+    oracle = Oracle()
+    assert await oracle.apply_all_ratified(inv) == []  # nothing ratified yet
+    await oracle.record_decision(inv, request, "b2", approve=True)
+    applied = await oracle.apply_all_ratified(inv)
+    assert len(applied) == 1
+    confirmed = await svc.read_general(inv, kinds=["discovery"], confirmed_only=True)
+    assert discovery in [r["id"] for r in confirmed]
+    assert await oracle.apply_all_ratified(inv) == []  # second sweep is a no-op
