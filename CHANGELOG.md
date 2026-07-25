@@ -124,6 +124,14 @@ operator action.
 - Agent-behavior promotion now requires the eval gate AND a distinct
   -approver quorum (`agent_promotion_quorum`, default 1) before the
   production alias flips.
+- The RFC-12 retrieval-intelligence layer is now live on the core
+  knowledge-write paths: findings and audit memos, CVE intel memos,
+  reusable patterns, and the agent knowledge-store tool all stamp security
+  entity tags and write semantic-neighbor `related` edges at write time.
+  Retrieval can therefore scope by `source_type` / `metadata_filter` and
+  hop the graph route across related knowledge without any per-call opt-in.
+  Each write adds one nearest-neighbour query; the entity pass is regex,
+  no model cost. No migration.
 
 ### Fixed
 

@@ -544,7 +544,7 @@ class KnowledgeService:
 
         neighbor_edge_count = 0
         if link_neighbors and entry_id is not None:
-            neighbor_edge_count = await self._link_semantic_neighbors(
+            neighbor_edge_count = await self.link_semantic_neighbors(
                 entry_id, embedding_list, namespace, session,
             )
 
@@ -667,7 +667,7 @@ class KnowledgeService:
             "content_length": total_length,
         }
 
-    async def _link_semantic_neighbors(
+    async def link_semantic_neighbors(
         self,
         entry_id: int,
         embedding: list[float],

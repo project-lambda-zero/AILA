@@ -370,6 +370,8 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
                 "outcome_id": outcome_id,
             },
             dedup_key=target_signature,
+            extract_entities=True,
+            link_neighbors=True,
         )
         entry_id = store_result.get("entry_id")
 

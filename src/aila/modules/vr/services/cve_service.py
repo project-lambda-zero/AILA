@@ -297,6 +297,8 @@ class CVEService:
             metadata=merged_metadata,
             dedup_key=existing_metadata.get("target_signature")
             or existing_metadata.get("dedup_key"),
+            extract_entities=True,
+            link_neighbors=True,
         )
 
     async def get(self, cve_id: str) -> CVERecordSummary | None:

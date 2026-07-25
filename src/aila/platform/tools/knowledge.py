@@ -10,6 +10,7 @@ from ...platform.contracts._common import utc_now
 from ...storage.database import async_session_scope
 from ...storage.db_models import KnowledgeEntryRecord
 from ..config import PlatformSettings
+from ..services.knowledge_entities import extract_entities
 from ..services.runtime import run_blocking_io
 from ._common import Tool, normalize_limit, require_text
 
@@ -114,6 +115,12 @@ class KnowledgeStoreTool(Tool):
         # Extract dedup sentinel before storing -- do not persist _dedup_key inside entry_metadata (per D-06)
         dedup_key: str | None = meta.pop("_dedup_key", None)
 
+        # RFC-12: tag the security identifiers in the content so retrieval can
+        # scope by CVE / CWE / technique id through metadata_filter.
+        entities = extract_entities(content)
+        if entities:
+            meta["entities"] = entities
+
         # Embedding computed outside transaction -- keep write lock short.
         # #37: embed via KnowledgeService so the store path shares the service
         # provider + 384-dim truncation (embed already returns list[float],
@@ -172,6 +179,14 @@ class KnowledgeStoreTool(Tool):
                     await session.commit()
                     entry_id = winner_id
                     operation = "updated"
+
+        # RFC-12: link this entry to its nearest same-namespace neighbours so
+        # the graph retrieval route can hop to related agent knowledge. Runs
+        # after the write commits; a linking failure never fails the store.
+        if entry_id is not None:
+            await _knowledge_service().link_semantic_neighbors(
+                entry_id, embedding_list, self.namespace, None,
+            )
 
         return {
             "status": "stored",

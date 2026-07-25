@@ -221,6 +221,8 @@ class PatternStoreBase:
                 },
                 dedup_key=dedup_key,
                 session=uow.session,
+                extract_entities=True,
+                link_neighbors=True,
             )
             entry_id = store_result.get("entry_id")
 
@@ -383,6 +385,8 @@ class PatternStoreBase:
                         "applicability": json.loads(row.applicability_json or "{}"),
                     },
                     dedup_key=dedup_key,
+                    extract_entities=True,
+                    link_neighbors=True,
                 )
                 entry_id = store_result.get("entry_id")
                 if isinstance(entry_id, int) and entry_id != row.knowledge_entry_id:
