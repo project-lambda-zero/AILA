@@ -30,6 +30,7 @@ from aila.platform.workflows.types import (
 )
 
 __all__ = [
+    "DISPATCH_STATE",
     "EMIT_STATE",
     "SETUP_STATE",
     "GateFn",
@@ -38,13 +39,17 @@ __all__ = [
     "PhaseSpec",
     "RouterFn",
     "SetupBuilder",
+    "build_dispatch_workflow",
     "build_phase_workflow",
+    "make_dispatch_router",
     "make_gate_state",
     "make_router_state",
 ]
 
 SETUP_STATE = "investigation_setup"
 EMIT_STATE = "investigation_emit"
+# The dispatch hub state of a discovery-driven graph (build_dispatch_workflow).
+DISPATCH_STATE = "dispatch"
 
 # A router reads the state input (carrying the prior phase's output) and
 # returns the name of the next phase to enter.
@@ -72,6 +77,15 @@ class PhaseSpec:
     through to the terminal emit. ``entry_gate`` guards the phase (readiness
     / approval / custody); a denied gate routes to ``on_fallback`` (default
     emit).
+
+    Dispatch-graph fields (``build_dispatch_workflow``): ``condition`` is
+    the activation predicate the hub evaluates (the module-supplied evidence
+    reader, which honors ``trust`` itself); ``capability`` is the persona
+    specialty that owns the phase (None means any branch may walk it);
+    ``trust`` is ``"confirmed"`` (activate only on quorum-confirmed
+    discoveries) or ``"advisory"`` (any discovery). These are unused by
+    ``build_phase_workflow`` and ``next`` / ``router`` / ``entry_gate`` are
+    unused by ``build_dispatch_workflow``.
     """
 
     name: str
@@ -83,6 +97,9 @@ class PhaseSpec:
     router: RouterFn | None = None
     entry_gate: GateFn | None = None
     on_fallback: str | None = None
+    condition: GateFn | None = None
+    capability: str | None = None
+    trust: str = "confirmed"
     timeout_s: float = 3600.0
     on_failure: str | None = None
     max_retries: int = 0
@@ -91,6 +108,10 @@ class PhaseSpec:
         if self.next is not None and self.router is not None:
             raise ValueError(
                 f"PhaseSpec {self.name!r} sets both next and router; pick one",
+            )
+        if self.trust not in ("confirmed", "advisory"):
+            raise ValueError(
+                f"PhaseSpec {self.name!r} trust must be 'confirmed' or 'advisory'",
             )
 
 
@@ -190,6 +211,117 @@ def build_phase_workflow(
                 ),
                 timeout_s=30.0,
             )
+    states[EMIT_STATE] = StateSpec(handler=emit_handler, timeout_s=120.0)
+    return WorkflowDefinition(
+        definition_id=definition_id,
+        start_state=SETUP_STATE,
+        states=states,
+        services_factory=services_factory,
+    )
+
+
+def make_dispatch_router(phases: tuple[PhaseSpec, ...]) -> HandlerFn:
+    """Build the dispatch-hub handler over *phases* (activation, not decision).
+
+    The hub is the per-branch control loop of a discovery-driven graph. On
+    each visit it reads the durable ``_dispatch_visited`` set and, in
+    declared order, transitions to the first unvisited phase for which all
+    hold:
+
+    * the phase ``condition`` is satisfied (None means unconditional); the
+      condition is the module-supplied evidence reader and honors the phase
+      ``trust`` tier itself;
+    * the phase ``capability`` is None (shared) or equals the branch
+      capability threaded on the input as ``_branch_capability`` (None on
+      the input disables capability filtering, the single-agent shape);
+    * the overall budget is not exhausted (``_budget_exhausted`` on the
+      input; the platform loop sets it from the investigation turn cap).
+
+    When no unvisited phase qualifies it transitions to ``EMIT_STATE``;
+    when the budget is exhausted it emits with a ``budget_truncated``
+    marker. The chosen phase is marked visited so it runs at most once per
+    branch; ``MAX_STEPS_PER_JOB`` bounds the whole walk. A phase loops back
+    to the hub, so a discovery written during one phase can enable a later
+    phase on the next visit.
+    """
+
+    async def _handler(state_input: dict[str, Any], services: Any) -> StateResult:
+        del services
+        if state_input.get("_budget_exhausted"):
+            return StateResult(
+                next_state=EMIT_STATE,
+                output={**state_input, "budget_truncated": True},
+            )
+        visited = set(state_input.get("_dispatch_visited") or [])
+        branch_capability = state_input.get("_branch_capability")
+        for phase in phases:
+            if phase.name in visited:
+                continue
+            if (
+                phase.capability is not None
+                and branch_capability is not None
+                and phase.capability != branch_capability
+            ):
+                continue
+            if phase.condition is None:
+                enabled, reason = True, "unconditional"
+            else:
+                enabled, reason = await phase.condition(state_input)
+            if enabled:
+                return StateResult(
+                    next_state=phase.name,
+                    output={
+                        **state_input,
+                        "_dispatch_visited": sorted(visited | {phase.name}),
+                        "_dispatch_last": phase.name,
+                        "_dispatch_reason": reason,
+                    },
+                )
+        return StateResult(next_state=EMIT_STATE, output={**state_input})
+
+    return _handler
+
+
+def build_dispatch_workflow(
+    definition_id: str,
+    phases: tuple[PhaseSpec, ...],
+    *,
+    services_factory: Callable[[str], Awaitable[WorkflowServices]],
+    setup_builder: SetupBuilder,
+    loop_builder: LoopBuilder,
+    emit_handler: HandlerFn,
+) -> WorkflowDefinition:
+    """Expand a discovery-driven phase graph into an engine WorkflowDefinition.
+
+    The shape is setup, then the dispatch hub, then a phase, then back to the
+    hub, and so on until emit. Every phase loops back to the hub (unlike
+    ``build_phase_workflow``, which wires static edges), so the hub
+    re-decides after each phase and the traversal grows with the agents'
+    discoveries. The module supplies the setup and per-phase loop handlers;
+    the hub handler is the substrate's.
+    """
+    if not phases:
+        raise ValueError(
+            f"{definition_id}: build_dispatch_workflow needs at least one phase",
+        )
+    states: dict[str, StateSpec] = {
+        SETUP_STATE: StateSpec(
+            handler=setup_builder(DISPATCH_STATE),
+            timeout_s=60.0,
+            max_retries=1,
+        ),
+        DISPATCH_STATE: StateSpec(
+            handler=make_dispatch_router(phases),
+            timeout_s=30.0,
+        ),
+    }
+    for phase in phases:
+        states[phase.name] = StateSpec(
+            handler=loop_builder(phase, DISPATCH_STATE),
+            timeout_s=phase.timeout_s,
+            on_failure=phase.on_failure,
+            max_retries=phase.max_retries,
+        )
     states[EMIT_STATE] = StateSpec(handler=emit_handler, timeout_s=120.0)
     return WorkflowDefinition(
         definition_id=definition_id,
