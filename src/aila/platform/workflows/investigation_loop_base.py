@@ -152,6 +152,7 @@ def state_investigation_loop(
     next_state: str = "investigation_emit",
     phase_directive: str | None = None,
     phase_max_turns: int | None = None,
+    phase_allowed_servers: tuple[str, ...] | None = None,
 ) -> Callable[[dict[str, Any], Any], Awaitable[StateResult]]:
     """Build the loop-state handler bound to *bindings* + *hooks*.
 
@@ -165,8 +166,15 @@ def state_investigation_loop(
     next turn sees this phase's objective; None preserves V1 behavior.
     *phase_max_turns*, when set, caps this phase's loop (takes precedence
     over the ``phase_max_turns`` state input and the module reader).
+    *phase_allowed_servers*, when set, restricts this phase's tool dispatch
+    to that server allowlist on top of the module's own allowlist.
     """
     del hooks  # loop takes no optional hooks today
+    _phase_servers = (
+        frozenset(phase_allowed_servers)
+        if phase_allowed_servers is not None
+        else None
+    )
 
     async def _handler(input: dict[str, Any], services: Any) -> StateResult:
         """Run turns until terminal / max / status flips out of RUNNING.
@@ -279,6 +287,7 @@ def state_investigation_loop(
                     branch_id=branch_id,
                     command_raw=result.decision.command or "",
                     at_turn=result.turn,
+                    phase_allowed_servers=_phase_servers,
                 )
                 _log.info(
                     "investigation_loop TOOL inv=%s turn=%d server=%s tool=%s success=%s",

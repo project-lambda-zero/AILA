@@ -469,8 +469,16 @@ class ToolExecutorHelpersBase:
         branch_id: str,
         command_raw: str,
         at_turn: int | None = None,
+        *,
+        phase_allowed_servers: frozenset[str] | None = None,
     ) -> ToolExecutionResult:
-        """Dispatch one tool call. Writes a result message + updates observables."""
+        """Dispatch one tool call. Writes a result message + updates observables.
+
+        *phase_allowed_servers*, when set by a phase-graph loop, further
+        restricts this call to the phase's tool allowlist on top of the
+        module-level ``_AGENT_ALLOWED_SERVERS``; None leaves the module
+        allowlist as the only bound.
+        """
         call_id = str(uuid4())
 
         parsed = parse_command(command_raw)
@@ -550,6 +558,26 @@ class ToolExecutorHelpersBase:
                 f"from tool_run. Re-read the # Available tools section in "
                 f"the prompt -- any other server name you learned from prior "
                 f"context is stale."
+            )
+            msg_id = await self._write_error_message(
+                investigation_id, branch_id, err, at_turn,
+            )
+            return ToolExecutionResult(
+                server_id=server_id, tool_name=tool_name,
+                message_id=msg_id, success=False, error=err,
+            )
+
+        # Phase-graph tool scoping: a phase-scoped loop narrows the reachable
+        # servers below the module allowlist. Rejected the same way as the
+        # module bound so the agent sees the tool did not run.
+        if (
+            phase_allowed_servers is not None
+            and server_id not in phase_allowed_servers
+        ):
+            err = (
+                f"MCP server {server_id!r} is not enabled in this phase. "
+                f"This phase allows only {sorted(phase_allowed_servers)}. "
+                f"Use one of those, or submit if this phase is complete."
             )
             msg_id = await self._write_error_message(
                 investigation_id, branch_id, err, at_turn,
