@@ -20,6 +20,52 @@ The template uses a simplified TemplateWorkflowContext to keep the skeleton
 import-clean. Wire into the durable workflow engine by creating a
 WorkflowServices subclass and defining handlers as async def
 state_*(state_input, services) -> StateResult.
+
+RFC-13 adaptive path (optional, discovery-driven)
+-------------------------------------------------
+When a module's phases should activate on what the agents discover rather
+than a fixed edge order, build the lifecycle on the dispatch-hub substrate
+instead of the linear stage machine above. The hub re-decides after every
+phase, activating the first unvisited phase whose condition holds:
+
+    from aila.platform.workflows import build_dispatch_workflow, PhaseSpec
+    from aila.platform.services.ledger import make_discovery_condition
+
+    PHASES = (
+        PhaseSpec(name="triage", condition=_target_ready),
+        PhaseSpec(
+            name="deep",
+            condition=make_discovery_condition("discovery", confirmed_only=True),
+            capability="re",
+            trust="confirmed",
+        ),
+    )
+    MODULE_INVESTIGATE_HUB = build_dispatch_workflow(
+        "yourmodule.investigate.hub", PHASES,
+        services_factory=_build_services,
+        setup_builder=_setup_builder,
+        loop_builder=_loop_builder,
+        emit_handler=_emit_handler,
+    )
+
+Shared ledger (the blackboard). Branches append discoveries, notes, and
+capability requests to one InvestigationLedgerRecord table; the planner
+oracle routes requests and applies quorum-ratified effects. Always write
+through LedgerService -- never write to the investigation_ledger table
+directly (the honesty audit enforces this):
+
+    from aila.platform.services import LedgerService, Oracle
+
+    await LedgerService().append_general(
+        investigation_id, branch_id, "discovery", {"evidence_type": "pcap"},
+    )
+    board = await LedgerService().read_general(investigation_id)
+    pending = await Oracle().route_pending(investigation_id)
+
+Every state a hub or phase graph references must be declared in the
+definition. The engine freezes the node set at construction and the honesty
+audit forbids mutating WorkflowDefinition.states afterwards -- agents
+activate declared phases, they never mint a node at runtime.
 """
 from __future__ import annotations
 

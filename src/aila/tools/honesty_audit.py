@@ -826,6 +826,21 @@ _LIFTED_AGENT_PRIMITIVES: frozenset[str] = frozenset({
 # hand-coded fork per copy.
 _OS_ENV_ATTRS: frozenset[str] = frozenset({"environ", "getenv"})
 
+# Rule 50 -- static_node_mutation. Mutating a WorkflowDefinition.states map
+# after construction reopens the node set the dispatch-hub / phase-graph
+# substrates freeze so every transition target stays auditable (RFC-13 #68).
+_STATES_MUTATOR_METHODS: frozenset[str] = frozenset({
+    "update", "pop", "setdefault", "clear", "popitem",
+    "__setitem__", "__delitem__",
+})
+
+# Rule 51 -- ledger_write_bypass. LedgerService is the sole writer of the
+# investigation_ledger table (it owns idempotency + the append-only rule).
+_LEDGER_RECORD_NAME = "InvestigationLedgerRecord"
+_LEDGER_TABLE_NAME = "investigation_ledger"
+_LEDGER_INSERT_CALLABLES: frozenset[str] = frozenset({"insert", "pg_insert"})
+_LEDGER_SERVICE_PATH_SUFFIX = "platform/services/ledger.py"
+
 
 def _workflow_base_corpus(filepath: str) -> dict[str, str]:
     """Return {relpath: normalized_source} for platform workflow-state bases.
@@ -2684,6 +2699,132 @@ class _HonestyVisitor(ast.NodeVisitor):
                             f"{alias.name}' (RFC-03 config-drift closure)",
                         )
 
+    def _check_static_node_mutation(self, tree: ast.Module) -> None:
+        """Rule 50: static_node_mutation -- a WorkflowDefinition.states map is
+        mutated after construction (RFC-13 #68).
+
+        The dispatch-hub and phase-graph substrates freeze the node set at
+        construction so every transition target is declared and the engine
+        can validate it. Assigning into, deleting from, or calling a mutator
+        on a ``.states`` attribute reopens that set at runtime -- the exact
+        mint-a-node-on-the-fly escape the static-graph invariant forbids.
+        Declare every state in the definition; never mutate ``.states`` after.
+
+        A local ``states = {...}`` dict a builder assembles is a plain Name,
+        not a ``.states`` attribute, so it never trips this.
+        """
+        for node in ast.walk(tree):
+            hit_line: int | None = None
+            if isinstance(node, ast.Assign):
+                for tgt in node.targets:
+                    if self._is_states_subscript(tgt):
+                        hit_line = node.lineno
+                        break
+            elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+                if self._is_states_subscript(node.target):
+                    hit_line = node.lineno
+            elif isinstance(node, ast.Delete):
+                for tgt in node.targets:
+                    if self._is_states_subscript(tgt):
+                        hit_line = node.lineno
+                        break
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _STATES_MUTATOR_METHODS
+                and isinstance(node.func.value, ast.Attribute)
+                and node.func.value.attr == "states"
+            ):
+                hit_line = node.lineno
+            if hit_line is not None:
+                self._emit(
+                    hit_line,
+                    "static_node_mutation",
+                    "static_node_mutation: WorkflowDefinition.states is frozen "
+                    "at construction; declare every state in the definition "
+                    "rather than mutating .states afterwards (RFC-13 "
+                    "static-graph invariant)",
+                )
+
+    @staticmethod
+    def _is_states_subscript(target: ast.expr) -> bool:
+        """Return True when *target* is a ``<expr>.states[...]`` subscript."""
+        return (
+            isinstance(target, ast.Subscript)
+            and isinstance(target.value, ast.Attribute)
+            and target.value.attr == "states"
+        )
+
+    def _check_ledger_write_encapsulation(self, tree: ast.Module) -> None:
+        """Rule 51: ledger_write_bypass -- a direct write to the
+        investigation_ledger table outside LedgerService (RFC-13 #68).
+
+        LedgerService owns the append-only invariant and the idempotency
+        key. A pg_insert / insert of the record, a session.add of one, or a
+        raw INSERT into the table anywhere else reopens the write path and
+        drifts from that single owner. Append through
+        LedgerService.append_general instead. The service file itself and
+        the alembic migration (which creates the table) are exempt.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if normalized.endswith(_LEDGER_SERVICE_PATH_SUFFIX):
+            return
+        # The audit tool itself names the table and the verb in this rule's
+        # own strings, so it is self-exempt like the noqa rule.
+        if normalized.endswith("tools/honesty_audit.py"):
+            return
+        if _ALEMBIC_PATH_PATTERN.search(normalized):
+            return
+        insert_verb = "insert " + "into "
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and self._is_ledger_write_call(node):
+                self._emit(
+                    node.lineno,
+                    "ledger_write_bypass",
+                    "ledger_write_bypass: append through "
+                    "LedgerService.append_general; a direct write to the "
+                    "ledger table outside LedgerService reopens the "
+                    "append-only path",
+                )
+            elif (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and insert_verb in node.value.lower()
+                and _LEDGER_TABLE_NAME in node.value.lower()
+            ):
+                self._emit(
+                    node.lineno,
+                    "ledger_write_bypass",
+                    "ledger_write_bypass: raw INSERT against the ledger table; "
+                    "append through LedgerService.append_general",
+                )
+
+    @staticmethod
+    def _is_ledger_write_call(node: ast.Call) -> bool:
+        """Return True for an insert(record) / pg_insert(record) / .add(record)."""
+        func = node.func
+        if (
+            isinstance(func, ast.Name)
+            and func.id in _LEDGER_INSERT_CALLABLES
+            and node.args
+            and _HonestyVisitor._names_ledger_record(node.args[0])
+        ):
+            return True
+        return bool(
+            isinstance(func, ast.Attribute)
+            and func.attr == "add"
+            and node.args
+            and isinstance(node.args[0], ast.Call)
+            and _HonestyVisitor._names_ledger_record(node.args[0].func)
+        )
+
+    @staticmethod
+    def _names_ledger_record(node: ast.expr) -> bool:
+        """Return True when *node* references the InvestigationLedgerRecord class."""
+        if isinstance(node, ast.Name):
+            return node.id == _LEDGER_RECORD_NAME
+        return isinstance(node, ast.Attribute) and node.attr == _LEDGER_RECORD_NAME
+
     def _check_cost_read_stored_actual(
         self, tree: ast.Module, module_id: str,
     ) -> None:
@@ -2861,6 +3002,10 @@ class HonestyAuditor:
         visitor._check_config_schema_base(tree)
         visitor._check_module_prefix_in_tool_name(tree)
         visitor._check_platform_owns_event_vocabulary(tree)
+        # Rules 50-51: RFC-13 static-graph + ledger-encapsulation invariants
+        # (apply to all Python source files; ledger rule self-exempts).
+        visitor._check_static_node_mutation(tree)
+        visitor._check_ledger_write_encapsulation(tree)
         return visitor.findings
 
     def audit_directory(self, directory: Path) -> list[Finding]:

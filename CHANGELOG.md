@@ -102,6 +102,17 @@ operator action.
   item to the shared ledger as the cross-branch evidence board. No
   collector machinery is rewritten and the live `FORENSICS_DISPATCHER_V1`
   is untouched; the hub ships bound nowhere (operator rebind after smoke).
+- RFC-13 guardrails + module scaffold (#68): two honesty-audit rules lock
+  the invariants. `static_node_mutation` (rule 50) forbids mutating a
+  `WorkflowDefinition.states` map after construction -- the node set is
+  frozen so every transition target stays declared and auditable, and
+  agents activate declared phases rather than minting a node at runtime.
+  `ledger_write_bypass` (rule 51) forbids a direct write to the
+  investigation_ledger table (pg_insert / session.add of the record, or a
+  raw INSERT) outside LedgerService, keeping it the sole writer that owns
+  idempotency and the append-only rule. The `_template` module documents
+  the optional discovery-driven dispatch path and the shared-ledger usage
+  so a new module adopts the pattern by example.
 - Platform agent runtime (RFC-03): `AgentTurnRunnerBase`,
   `ToolExecutorHelpersBase`, the shared turn helpers, and platform bases
   for the pattern extractor, claim verifier, synthesis runner, persona

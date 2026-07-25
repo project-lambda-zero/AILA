@@ -1415,3 +1415,99 @@ class TestPlatformNamesModule:
             '    return registry.require("vulnerability")\n',
         )
         assert "platform_names_module" not in _rules(_audit(src))
+
+
+# ---------------------------------------------------------------------------
+# Rule 50 -- static_node_mutation (RFC-13 #68)
+# ---------------------------------------------------------------------------
+
+
+class TestStaticNodeMutation:
+    """Rule 50: a WorkflowDefinition.states map is frozen after construction."""
+
+    def test_states_subscript_assignment_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/workflows/x.py",
+            "def build(wf, h):\n    wf.states['x'] = h\n    return wf\n",
+        )
+        assert "static_node_mutation" in _rules(_audit(src))
+
+    def test_states_update_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/workflows/x.py",
+            "def build(wf, e):\n    wf.states.update(e)\n    return wf\n",
+        )
+        assert "static_node_mutation" in _rules(_audit(src))
+
+    def test_states_delete_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/workflows/x.py",
+            "def build(wf):\n    del wf.states['x']\n    return wf\n",
+        )
+        assert "static_node_mutation" in _rules(_audit(src))
+
+    def test_local_states_dict_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/workflows/x.py",
+            "def build():\n    states = {}\n    states['x'] = 1\n    return states\n",
+        )
+        assert "static_node_mutation" not in _rules(_audit(src))
+
+
+# ---------------------------------------------------------------------------
+# Rule 51 -- ledger_write_bypass (RFC-13 #68)
+# ---------------------------------------------------------------------------
+
+
+class TestLedgerWriteBypass:
+    """Rule 51: investigation_ledger is written only through LedgerService."""
+
+    def test_pg_insert_record_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/services/other.py",
+            "def w(s):\n"
+            "    return s.execute(pg_insert(InvestigationLedgerRecord).values())\n",
+        )
+        assert "ledger_write_bypass" in _rules(_audit(src))
+
+    def test_session_add_record_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/services/other.py",
+            "def w(s):\n    s.add(InvestigationLedgerRecord(kind='x'))\n",
+        )
+        assert "ledger_write_bypass" in _rules(_audit(src))
+
+    def test_raw_insert_sql_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/services/other.py",
+            "def w(s):\n"
+            "    return s.execute("
+            "\"INSERT INTO investigation_ledger (kind) VALUES (1)\")\n",
+        )
+        assert "ledger_write_bypass" in _rules(_audit(src))
+
+    def test_ledger_service_call_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/services/other.py",
+            "async def w(svc, inv):\n"
+            "    return await svc.append_general(inv, 'b', 'discovery', {})\n",
+        )
+        assert "ledger_write_bypass" not in _rules(_audit(src))
+
+    def test_ledger_service_file_exempt(self, tmp_path: Path) -> None:
+        # The service file itself is the sanctioned writer -- exempt.
+        src = _write(
+            tmp_path,
+            "aila/platform/services/ledger.py",
+            "def w(s):\n"
+            "    return s.execute(pg_insert(InvestigationLedgerRecord).values())\n",
+        )
+        assert "ledger_write_bypass" not in _rules(_audit(src))
