@@ -66,16 +66,19 @@ class PhaseSpec:
 
     ``strategy_family`` selects the phase prompt via the version store;
     ``allowed_servers`` is the phase tool allowlist; ``max_turns`` caps the
-    phase. Exactly one of ``next`` (static edge) or ``router`` (dynamic
-    edge) sets the exit; omit both to fall through to the terminal emit.
-    ``entry_gate`` guards the phase (sandbox / approval / custody); a denied
-    gate routes to ``on_fallback`` (default emit).
+    phase; ``directive`` is the phase mission surfaced to the agent as a
+    ``_directive.phase_mission`` observable. Exactly one of ``next`` (static
+    edge) or ``router`` (dynamic edge) sets the exit; omit both to fall
+    through to the terminal emit. ``entry_gate`` guards the phase (readiness
+    / approval / custody); a denied gate routes to ``on_fallback`` (default
+    emit).
     """
 
     name: str
     strategy_family: str | None = None
     allowed_servers: tuple[str, ...] | None = None
     max_turns: int | None = None
+    directive: str | None = None
     next: str | None = None
     router: RouterFn | None = None
     entry_gate: GateFn | None = None

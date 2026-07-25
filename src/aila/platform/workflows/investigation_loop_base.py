@@ -151,6 +151,7 @@ def state_investigation_loop(
     *,
     next_state: str = "investigation_emit",
     phase_directive: str | None = None,
+    phase_max_turns: int | None = None,
 ) -> Callable[[dict[str, Any], Any], Awaitable[StateResult]]:
     """Build the loop-state handler bound to *bindings* + *hooks*.
 
@@ -162,6 +163,8 @@ def state_investigation_loop(
     *phase_directive*, when set, is written to the branch case state as the
     ``_directive.phase_mission`` observable at phase entry so the agent's
     next turn sees this phase's objective; None preserves V1 behavior.
+    *phase_max_turns*, when set, caps this phase's loop (takes precedence
+    over the ``phase_max_turns`` state input and the module reader).
     """
     del hooks  # loop takes no optional hooks today
 
@@ -184,7 +187,8 @@ def state_investigation_loop(
             )
 
         max_turns = int(
-            input.get("phase_max_turns")
+            phase_max_turns
+            or input.get("phase_max_turns")
             or input.get("max_turns")
             or await bindings.max_turns_reader()
         )
