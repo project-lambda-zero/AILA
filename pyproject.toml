@@ -408,6 +408,11 @@ ignore = [
 "src/aila/platform/workflows/engine.py" = ["BLE001", "PLC0415"]
 "src/aila/platform/workflows/errors.py" = ["N818"]
 "src/aila/platform/workflows/log.py" = ["PLC0415", "BLE001"]
+# phase_graph.py: PLC0415 for the deferred LedgerService / UnitOfWork imports
+# inside the dispatch hub's stall handler. phase_graph is imported while
+# db_models is still loading (tasks -> workflows -> phase_graph), so a
+# module-scope services import would re-enter a half-built db_models.
+"src/aila/platform/workflows/phase_graph.py" = ["PLC0415"]
 "src/aila/storage/database.py" = ["PLC0415"]
 "src/aila/storage/db_models.py" = ["E402", "F401"]
 "src/aila/storage/operations.py" = ["PLC0415"]

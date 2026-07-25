@@ -66,6 +66,21 @@ operator action.
   closed branch's objectives to the investigation, so a terminal branch
   never keeps a live objective. No new table (objectives stay tagged
   ledger entries).
+- Planner oracle + discovery-driven malware hub (RFC-13 #68): a thin
+  request router (`platform/services/oracle.py`) resolves ledger requests
+  (activate_phase / open_objective / write_objective / replan) to their
+  decider by `target_capability`, enforces a distinct-approver rule (a
+  branch cannot ratify its own request), and applies only the declared
+  mechanical effect once a quorum ratifies -- it decides nothing itself.
+  The dispatch hub gained overall-cap handling (emits `budget_truncated`),
+  a stall path that raises one `replan` request per visited-set, and a
+  ratified-replan relaxation that drops confirmed trust to advisory for
+  one pass so a quorum deadlock cannot freeze the graph.
+  `malware.investigate.hub` ships the malware phases as a discovery-driven
+  dispatch (unpack capability=re, config_extract capability=crypto, both
+  confirmed-trust; full_analysis the advisory fallback), bound nowhere
+  live -- enabled by an operator seed rebind after smoke, like the V2
+  graphs.
 - Platform agent runtime (RFC-03): `AgentTurnRunnerBase`,
   `ToolExecutorHelpersBase`, the shared turn helpers, and platform bases
   for the pattern extractor, claim verifier, synthesis runner, persona

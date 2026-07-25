@@ -245,15 +245,9 @@ def make_dispatch_router(phases: tuple[PhaseSpec, ...]) -> HandlerFn:
     phase on the next visit.
     """
 
-    async def _handler(state_input: dict[str, Any], services: Any) -> StateResult:
-        del services
-        if state_input.get("_budget_exhausted"):
-            return StateResult(
-                next_state=EMIT_STATE,
-                output={**state_input, "budget_truncated": True},
-            )
-        visited = set(state_input.get("_dispatch_visited") or [])
-        branch_capability = state_input.get("_branch_capability")
+    async def _pick(
+        state_input: dict[str, Any], visited: set[str], branch_capability: Any,
+    ) -> tuple[PhaseSpec | None, str]:
         for phase in phases:
             if phase.name in visited:
                 continue
@@ -264,19 +258,107 @@ def make_dispatch_router(phases: tuple[PhaseSpec, ...]) -> HandlerFn:
             ):
                 continue
             if phase.condition is None:
-                enabled, reason = True, "unconditional"
-            else:
-                enabled, reason = await phase.condition(state_input)
+                return phase, "unconditional"
+            enabled, reason = await phase.condition(state_input)
             if enabled:
-                return StateResult(
-                    next_state=phase.name,
-                    output={
-                        **state_input,
-                        "_dispatch_visited": sorted(visited | {phase.name}),
-                        "_dispatch_last": phase.name,
-                        "_dispatch_reason": reason,
-                    },
+                return phase, reason
+        return None, ""
+
+    def _activate(
+        state_input: dict[str, Any], visited: set[str], phase: PhaseSpec, reason: str,
+    ) -> StateResult:
+        return StateResult(
+            next_state=phase.name,
+            output={
+                **state_input,
+                "_dispatch_visited": sorted(visited | {phase.name}),
+                "_dispatch_last": phase.name,
+                "_dispatch_reason": reason,
+            },
+        )
+
+    async def _replan_ratified(investigation_id: str) -> bool:
+        # Lazy import: phase_graph is imported while db_models is still
+        # loading (tasks -> workflows -> phase_graph), so importing the
+        # services package at module scope would re-enter a half-built
+        # db_models. Deferring to call time breaks that cycle.
+        from aila.platform.services.ledger import LedgerService
+        rows = await LedgerService().read_general(investigation_id)
+        replan_ids = {
+            int(r["id"]) for r in rows
+            if r["kind"] == "request"
+            and (r.get("payload") or {}).get("intent") == "replan"
+        }
+        for row in rows:
+            if row["kind"] != "decision":
+                continue
+            payload = row.get("payload") or {}
+            if payload.get("approved") and int(payload.get("target", -1)) in replan_ids:
+                return True
+        return False
+
+    async def _handle_stall(
+        investigation_id: str,
+        visited: set[str],
+        blocked: list[str],
+        state_input: dict[str, Any],
+        branch_capability: Any,
+    ) -> StateResult | None:
+        # Raise one replan request per distinct visited-set (idempotent), then
+        # relax confirmed trust for one pass if a replan is already ratified.
+        # Lazy import breaks the db_models load-time cycle (see
+        # _replan_ratified).
+        from aila.platform.services.ledger import LedgerService
+        from aila.platform.uow import UnitOfWork
+        service = LedgerService()
+        async with UnitOfWork() as uow:
+            await service.append_general(
+                investigation_id, "__hub__", "request",
+                {"intent": "replan", "reason": "no activatable phase",
+                 "blocked": blocked},
+                idempotency_key=f"replan:{','.join(sorted(visited))}",
+                session=uow.session,
+            )
+            await uow.session.commit()
+        if await _replan_ratified(investigation_id):
+            relaxed = {**state_input, "_dispatch_replan_relax": True}
+            phase, reason = await _pick(relaxed, visited, branch_capability)
+            if phase is not None:
+                return _activate(
+                    state_input, visited, phase, f"replan-relaxed: {reason}",
                 )
+        return None
+
+    async def _handler(state_input: dict[str, Any], services: Any) -> StateResult:
+        del services
+        if state_input.get("_budget_exhausted"):
+            return StateResult(
+                next_state=EMIT_STATE,
+                output={**state_input, "budget_truncated": True},
+            )
+        visited = set(state_input.get("_dispatch_visited") or [])
+        branch_capability = state_input.get("_branch_capability")
+        phase, reason = await _pick(state_input, visited, branch_capability)
+        if phase is not None:
+            return _activate(state_input, visited, phase, reason)
+        blocked = [
+            p.name for p in phases
+            if p.name not in visited and p.condition is not None
+        ]
+        investigation_id = state_input.get("investigation_id")
+        if blocked and investigation_id and not state_input.get(
+            "_dispatch_replan_relax"
+        ):
+            relaxed = await _handle_stall(
+                str(investigation_id), visited, blocked, state_input,
+                branch_capability,
+            )
+            if relaxed is not None:
+                return relaxed
+            return StateResult(
+                next_state=EMIT_STATE,
+                output={**state_input, "stalled": True, "blocked_phases": blocked},
+            )
         return StateResult(next_state=EMIT_STATE, output={**state_input})
 
     return _handler

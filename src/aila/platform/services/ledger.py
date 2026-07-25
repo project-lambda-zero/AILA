@@ -398,13 +398,19 @@ def make_discovery_condition(
         investigation_id = state_input.get(input_key)
         if not investigation_id:
             return False, f"no {input_key} on dispatch input"
+        # A ratified replan relaxes confirmed trust for one hub pass, so a
+        # confirmed-trust phase can activate on an unconfirmed discovery
+        # rather than deadlocking when quorum never confirms (RFC-13 #68).
+        effective_confirmed = confirmed_only and not state_input.get(
+            "_dispatch_replan_relax"
+        )
         entries = await LedgerService().read_general(
             str(investigation_id),
             kinds=[kind],
-            confirmed_only=confirmed_only,
+            confirmed_only=effective_confirmed,
         )
         if entries:
-            scope = "confirmed " if confirmed_only else ""
+            scope = "confirmed " if effective_confirmed else ""
             return True, f"{len(entries)} {scope}{kind} entries on ledger"
         return False, f"no {kind} entries on ledger yet"
 

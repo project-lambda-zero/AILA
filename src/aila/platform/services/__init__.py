@@ -8,6 +8,7 @@ from .factory import ServiceFactory
 from .http import build_http_client
 from .knowledge import KnowledgeService
 from .ledger import LedgerService
+from .oracle import Oracle
 from .reasoning import CyberReasoningEngine
 from .reasoning_graphs import ReasoningGraphService
 from .report import ReportService
@@ -22,6 +23,7 @@ __all__ = [
     "KnowledgeService",
     "LedgerService",
     "MiniLMProvider",
+    "Oracle",
     "ReasoningGraphService",
     "ReportService",
     "SSHService",
