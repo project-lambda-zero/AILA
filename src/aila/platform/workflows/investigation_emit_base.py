@@ -37,6 +37,7 @@ from aila.platform.contracts import utc_now
 from aila.platform.contracts.enums import BranchStatus, InvestigationStatus
 from aila.platform.services.branch_cleanup import close_orphan_branches_on_terminal
 from aila.platform.services.factory import ServiceFactory
+from aila.platform.services.ledger import LedgerService
 from aila.platform.tasks.arq_purge import purge_arq_jobs_for_investigation
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.investigation_setup_base import (
@@ -675,6 +676,29 @@ def state_investigation_emit(
             # refuses draft/rejected outcomes; checking here avoids the
             # redundant DB load + log line for the common still-DRAFT path.
             if approved:
+                # Bridge (RFC-13 Phase 4): a quorum-approved finding confirms
+                # the proposing branch's discoveries on the shared ledger.
+                # Without this the outcome-review quorum and the ledger oracle
+                # stay disconnected -- no discovery ever becomes confirmed, so
+                # confirmed-trust phases (poc_development) never activate and
+                # replan requests never ratify. Lazy import mirrors the hub's
+                # break of the db_models load-time cycle.
+                try:
+                    if outcome_row is not None and investigation_id:
+                        confirmed_ids = await LedgerService().confirm_branch_discoveries(
+                            str(investigation_id), outcome_row.branch_id,
+                        )
+                        if confirmed_ids:
+                            _log.info(
+                                "investigation_emit CONFIRM outcome_id=%s "
+                                "branch=%s discoveries=%s",
+                                outcome_id, outcome_row.branch_id, confirmed_ids,
+                            )
+                except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+                    _log.warning(
+                        "investigation_emit CONFIRM failed outcome_id=%s err=%s",
+                        outcome_id, exc,
+                    )
                 dispatcher = bindings.outcome_dispatcher_cls(knowledge=ServiceFactory().knowledge)
                 try:
                     dispatch_result = await dispatcher.dispatch(str(outcome_id))

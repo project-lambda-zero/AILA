@@ -243,6 +243,46 @@ class LedgerService:
             rows = [r for r in rows if r.kind in wanted]
         return [_to_dict(r) for r in rows[:limit]]
 
+    async def confirm_branch_discoveries(
+        self,
+        investigation_id: str,
+        branch_id: str,
+        *,
+        approver_branch_id: str = "__quorum__",
+        session: AsyncSession | None = None,
+    ) -> list[int]:
+        """Confirm every discovery authored by ``branch_id`` (RFC-13 Phase 4).
+
+        The bridge from the outcome-review quorum to the ledger: once a
+        finding is approved by sibling quorum, the discoveries the proposing
+        branch posted are confirmed by writing a decision entry
+        ``{"approved": true, "target": <discovery_id>}`` per discovery. That
+        is exactly what ``_confirmed_discovery_ids`` reads, so confirmed-trust
+        phase conditions (e.g. poc_development) and the confirmed-only ledger
+        read finally see confirmed discoveries. Idempotent per discovery id
+        via the ``confirm:<id>`` key, so a re-run adds no duplicate.
+
+        Returns the list of confirmed discovery ids.
+        """
+        rows = await self.read_general(
+            investigation_id, kinds=["discovery"], session=session,
+        )
+        confirmed: list[int] = []
+        for row in rows:
+            if str(row.get("author_branch_id")) != str(branch_id):
+                continue
+            discovery_id = int(row["id"])
+            await self.append_general(
+                investigation_id,
+                approver_branch_id,
+                "decision",
+                {"approved": True, "target": discovery_id},
+                idempotency_key=f"confirm:{discovery_id}",
+                session=session,
+            )
+            confirmed.append(discovery_id)
+        return confirmed
+
     async def open_objective(
         self,
         investigation_id: str,

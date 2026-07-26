@@ -752,9 +752,17 @@ async def evaluate_quorum(
             and paused_siblings_count == 0
             and (approve_count + reject_count) < quorum_k
         ):
-            new_state = OUTCOME_STATE_APPROVED
+            # Hold for operator review -- do NOT auto-approve. A multi-branch
+            # finding that never earned quorum (every sibling went idle
+            # before approving) shipping with no corroboration is a vacuous
+            # quorum (observed live: a 6-branch finding approved with 0
+            # votes). Leave the outcome in draft; the investigation still
+            # settles (emit flips to COMPLETED once no sibling is active) and
+            # the operator reviews the undispatched draft. The single-branch
+            # no-siblings case (quorum_k == 0) above still auto-approves,
+            # because there genuinely is no one to vote.
             transition_reason = (
-                f"auto_approved_no_active_voters_"
+                f"held_for_operator_no_active_voters_"
                 f"approve={approve_count}_reject={reject_count}_"
                 f"abstain={abstain_count}_k={quorum_k}"
             )

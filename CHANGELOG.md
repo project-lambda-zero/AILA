@@ -228,6 +228,16 @@ operator action.
 
 ### Fixed
 
+- Quorum-approved findings now confirm the proposing branch's discoveries on
+  the shared ledger (RFC-13 Phase 4). Previously nothing wrote ledger
+  decision entries, so no discovery was ever confirmed: the confirmed-trust
+  dispatch phases (poc_development) could never activate and replan requests
+  could never ratify. The outcome-review quorum and the ledger oracle were
+  disconnected; approving a finding now bridges them.
+- A multi-branch finding whose siblings all go idle before reaching quorum is
+  held as a draft for operator review instead of auto-approving with no
+  corroboration. The single-branch no-siblings case still auto-approves
+  (there is genuinely no one to vote).
 - Sibling deliberation cycled until the auto-continue cap on any finding
   that drew a split vote. Under near-unanimous quorum a single abstain or
   request_edit made approval unreachable, so the outcome stayed draft and

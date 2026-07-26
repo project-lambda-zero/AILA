@@ -49,6 +49,7 @@ async def _seed(
     proposer: str,
     sibling_ids: list[str],
     votes: list[tuple[str, str]],
+    sibling_status: str = "active",
 ) -> str:
     """Create the FK chain, a draft outcome, its branches, and vote rows."""
     ws_id, tgt_id = f"ws-{inv}", f"tgt-{inv}"
@@ -86,7 +87,9 @@ async def _seed(
         )
         for sid in sibling_ids:
             uow.session.add(
-                VRInvestigationBranchRecord(id=sid, investigation_id=inv),
+                VRInvestigationBranchRecord(
+                    id=sid, investigation_id=inv, status=sibling_status,
+                ),
             )
         await uow.session.flush()
         outcome_id = outcome.id
@@ -170,6 +173,29 @@ async def test_active_voters_reject_veto(test_db) -> None:
     assert res.new_state == OUTCOME_STATE_REJECTED
     assert res.transition_occurred is True
     assert "veto" in res.transition_reason.lower()
+
+
+async def test_no_active_voters_holds_for_operator(test_db) -> None:
+    del test_db
+    # Five NON-active (completed) siblings, zero votes -> the old fallback
+    # auto-approved (a vacuous 0-vote ship). Now it must HOLD as draft for
+    # operator review: no state transition, a held_for_operator reason.
+    outcome_id = await _seed(
+        inv="inv-q-novoters",
+        proposer="p",
+        sibling_ids=["s1", "s2", "s3", "s4", "s5"],
+        votes=[],
+        sibling_status="completed",
+    )
+    res = await evaluate_quorum(
+        outcome_id, veto_k=1, audit_stage="source_audit", **_MODELS,
+    )
+    assert res.quorum_k == 3
+    assert res.siblings_active == 0
+    assert res.new_state == OUTCOME_STATE_DRAFT
+    assert res.transition_occurred is False
+    assert "held_for_operator_no_active_voters" in res.transition_reason
+    assert "auto_approved" not in res.transition_reason
 
 
 async def test_active_voters_block_premature_approval(test_db) -> None:
