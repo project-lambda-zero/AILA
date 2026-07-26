@@ -519,10 +519,12 @@ async def upsert_review(
     ``suggested_edits`` payload (e.g. ``{"confidence": "weak"}``,
     ``{"answer": "corrected text"}``). That payload is persisted on the
     review row as ``suggested_edits_json`` and is **consumed by the
-    synthesis agent** when it merges per-persona panel contributions
-    into the canonical outcome. See the module's ``SynthesisAgent.run``
-    -- that is the ONE place suggested edits get folded back into the
-    canonical narrative.
+    synthesis runner**: :meth:`SynthesisRunnerBase._load_reviews` reads
+    every review row on the canonical outcome and
+    :meth:`_render_user_prompt` surfaces the vote + comment +
+    suggested_edits to the synthesiser, which folds the requested
+    corrections + dissent into the consolidated verdict. That render
+    step is the one place suggested edits reach the outcome narrative.
 
     Structured per-row semantics for downstream readers:
 
@@ -596,33 +598,25 @@ async def upsert_review(
         await uow.commit()
         await uow.session.refresh(row)
 
-    # fix §170 -- synthesis agent consumes -- see merge_panel_contributions
-    # (i.e. SynthesisAgent.run in agents/synthesis_agent.py -- the
-    # consolidator step that reads every contribution + review on the
-    # canonical outcome and folds them into ``panel_summary``).
-    #
-    # DESIGN: option (b) chosen -- agent-driven consumption rather than
-    # a frontend-Apply path. Until the synthesis agent's
-    # _load_panel_reviews step lands (TODO: wire the SELECT against the
-    # module's outcome-reviews table into SynthesisAgent.run so it
-    # passes suggested_edits into the LLM panel-render), this WARNING
-    # is the visible-in-logs marker that a request_edit vote is
-    # waiting on synthesis pickup. After the wiring lands, drop the
-    # warning -- the merge step makes the suggestion non-silent by
-    # construction.
-    #
-    # NOTE on ``applied_by_synthesis``: the docstring above documents
-    # this as an IMPLICIT contract bit, not a DB column. Synthesis is
-    # the sole consumer and runs idempotently against panel_summary;
-    # we do NOT need a per-row applied flag because re-running
-    # synthesis is a no-op once panel_summary is set.
+    # fix §170 -- the suggested edits are consumed by the synthesis
+    # runner: SynthesisRunnerBase._load_reviews reads every review row
+    # on the canonical outcome and the module's _render_user_prompt
+    # folds each vote + comment + suggested_edits into the synthesiser
+    # prompt, so the consolidated verdict honors the requested change.
+    # DESIGN: option (b) -- agent-driven consumption at synthesis time
+    # rather than a frontend-Apply path. Synthesis runs once every panel
+    # branch is terminal and is idempotent (its panel_summary marker on
+    # the canonical outcome means the fold has incorporated every review
+    # row visible at synthesis time), so no per-row applied flag is
+    # needed. The INFO line records that a suggestion is staged for the
+    # next synthesis fold.
     if suggested:
-        _log.warning(
-            "outcome_review.suggested_edits_pending_synthesis -- "
+        _log.info(
+            "outcome_review.suggested_edits_staged -- "
             "outcome=%s branch=%s persona=%s vote=%s edits_keys=%s. "
-            "Suggestion stored on review row; will be picked up by "
-            "SynthesisAgent.run on next synthesis (see fix §170 "
-            "design note in services/outcome_review.upsert_review).",
+            "Folded into the consolidated verdict by SynthesisRunner "
+            "on next synthesis (see fix §170 in "
+            "services/outcome_review.upsert_review).",
             outcome_id, reviewer_branch_id, row.reviewer_persona, vote,
             sorted(suggested.keys()),
         )

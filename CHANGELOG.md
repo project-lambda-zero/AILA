@@ -273,6 +273,16 @@ operator action.
 
 ### Fixed
 
+- Sibling `request_edit` review suggestions now reach the outcome. A
+  `request_edit` vote's `suggested_edits` and the reviewer comment were
+  written to the review row and never read back: the synthesis agent,
+  documented as the sole consumer, had no step that loaded them, so every
+  requested correction was silently dropped. The synthesis runner now
+  loads every review on the canonical outcome and both module renderers
+  surface the vote, comment, and suggested_edits to the synthesiser, so
+  the consolidated verdict honors a requested confidence change, corrects
+  a claim a reviewer flagged as wrong, and names a dissent instead of
+  dropping it.
 - Dispatch-hub audit phases activate on the target's kind instead of
   waiting for a shared-ledger discovery. Gating source_audit, variant_hunt,
   binary_audit, and mobile_audit on discoveries alone stalled the hub when

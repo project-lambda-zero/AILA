@@ -292,6 +292,23 @@ def bypass_llm(monkeypatch: pytest.MonkeyPatch):
     return configure, calls
 
 
+@pytest.fixture(autouse=True)
+def _stub_load_reviews(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default: no sibling reviews, so the DB-backed ``_load_reviews``
+    seam (fix \u00a7170) never opens a UnitOfWork in these infra-free
+    tests. Tests exercising the review fold override
+    ``agent._load_reviews`` per-instance, which shadows this class patch.
+    """
+    async def _empty(self: Any, canonical_id: str) -> list[dict[str, Any]]:
+        del self, canonical_id
+        return []
+
+    monkeypatch.setattr(
+        "aila.platform.agents.synthesis_runner.SynthesisRunnerBase._load_reviews",
+        _empty,
+    )
+
+
 # --------------------------------------------------------------------- #
 #  Class binding                                                         #
 # --------------------------------------------------------------------- #
@@ -397,7 +414,7 @@ class TestRenderUserPrompt:
     def test_prompt_contains_expected_snippets(self, cfg: _Config) -> None:
         agent = cfg.agent_factory()
         panel = self._panel(cfg)
-        prompt = agent._render_user_prompt(panel)
+        prompt = agent._render_user_prompt(panel, [])
         for snippet in cfg.expected_prompt_snippets:
             assert snippet in prompt, (
                 f"{cfg.label} prompt missing snippet {snippet!r}\n{prompt}"
@@ -406,7 +423,7 @@ class TestRenderUserPrompt:
     def test_vr_renders_component_and_hunt_counts(self) -> None:
         agent = VR_CONFIG.agent_factory()
         panel = self._panel(VR_CONFIG)
-        prompt = agent._render_user_prompt(panel)
+        prompt = agent._render_user_prompt(panel, [])
         # canonical payload has 2 affected_components + 1 variant_hunt_order
         assert "affected_components: 2 entries" in prompt
         assert "variant_hunt_orders: 1 entries" in prompt
@@ -414,7 +431,7 @@ class TestRenderUserPrompt:
     def test_malware_injects_default_operator_controls(self) -> None:
         agent = MALWARE_CONFIG.agent_factory()
         panel = self._panel(MALWARE_CONFIG)
-        prompt = agent._render_user_prompt(panel)
+        prompt = agent._render_user_prompt(panel, [])
         # Default options=operator+standard: check both directives fire.
         assert "Terse, action-oriented voice" in prompt
         assert "Length: standard" in prompt
@@ -432,7 +449,7 @@ class TestRenderUserPrompt:
             ),
         )
         panel = self._panel(MALWARE_CONFIG)
-        prompt = agent._render_user_prompt(panel)
+        prompt = agent._render_user_prompt(panel, [])
         # Executive tone directive.
         assert "Non-technical executive voice" in prompt
         # Brief length directive.
@@ -448,7 +465,7 @@ class TestRenderUserPrompt:
     def test_persona_name_uppercased(self, cfg: _Config) -> None:
         agent = cfg.agent_factory()
         panel = self._panel(cfg)
-        prompt = agent._render_user_prompt(panel)
+        prompt = agent._render_user_prompt(panel, [])
         assert "PERSONA0" in prompt
         assert "PERSONA1" in prompt
 
@@ -939,3 +956,72 @@ class TestMalwareForceBypass:
         }
         # LLM never called.
         assert calls == []
+
+
+@pytest.mark.parametrize("cfg", ALL_CONFIGS, ids=[c.label for c in ALL_CONFIGS])
+class TestReviewFold:
+    """fix \u00a7170 -- request_edit suggested_edits + reviewer comments
+    reach the synthesiser prompt so the consolidated verdict honors them
+    instead of silently dropping every review row.
+    """
+
+    @pytest.mark.asyncio
+    async def test_reviews_folded_into_prompt(
+        self, cfg: _Config, bypass_llm,
+    ) -> None:
+        configure, calls = bypass_llm
+        configure(response=cfg.canned_response)
+        agent = cfg.agent_factory()
+        canonical_payload = _canonical_payload(contribs_count=2)
+        canonical = _fake_canonical_row(payload=canonical_payload)
+        agent._load_inv_and_canonical = AsyncMock(  # type: ignore[method-assign]
+            return_value=(_fake_inv_row(), canonical, canonical_payload),
+        )
+        agent._commit_synthesis = AsyncMock(  # type: ignore[method-assign]
+            return_value={
+                "status": "ok",
+                "canonical_outcome_id": "oc-1",
+                "panel_size": 2,
+            },
+        )
+        agent._load_reviews = AsyncMock(  # type: ignore[method-assign]
+            return_value=[{
+                "persona": "renzo",
+                "vote": "request_edit",
+                "comment": "must address the SecurityPolicy role",
+                "suggested_edits": {"confidence": "weak"},
+            }],
+        )
+        result = await agent.run()
+        assert result["status"] == "ok"
+        assert len(calls) == 1
+        user_msg = calls[0]["messages"][-1]["content"]
+        assert "Sibling reviews" in user_msg
+        assert "RENZO voted request_edit" in user_msg
+        assert "SecurityPolicy" in user_msg
+        assert "weak" in user_msg
+
+    @pytest.mark.asyncio
+    async def test_no_reviews_omits_section(
+        self, cfg: _Config, bypass_llm,
+    ) -> None:
+        configure, calls = bypass_llm
+        configure(response=cfg.canned_response)
+        agent = cfg.agent_factory()
+        canonical_payload = _canonical_payload(contribs_count=2)
+        canonical = _fake_canonical_row(payload=canonical_payload)
+        agent._load_inv_and_canonical = AsyncMock(  # type: ignore[method-assign]
+            return_value=(_fake_inv_row(), canonical, canonical_payload),
+        )
+        agent._commit_synthesis = AsyncMock(  # type: ignore[method-assign]
+            return_value={
+                "status": "ok",
+                "canonical_outcome_id": "oc-1",
+                "panel_size": 2,
+            },
+        )
+        # _load_reviews defaults to [] via the autouse stub.
+        result = await agent.run()
+        assert result["status"] == "ok"
+        user_msg = calls[0]["messages"][-1]["content"]
+        assert "Sibling reviews" not in user_msg

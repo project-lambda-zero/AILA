@@ -20,12 +20,14 @@ carries a ``panel_summary``.
 """
 from __future__ import annotations
 
+import json
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from aila.modules.vr.db_models import (
     VRInvestigationOutcomeRecord,
+    VRInvestigationOutcomeReviewRecord,
     VRInvestigationRecord,
 )
 from aila.platform.agents.synthesis_runner import SynthesisRunnerBase
@@ -122,7 +124,43 @@ _SYSTEM_PROMPT = (
 )
 
 
-def _render_panel(panel: list[dict[str, Any]]) -> str:
+def _render_reviews(lines: list[str], reviews: list[dict[str, Any]]) -> None:
+    """Append the sibling-review section so the synthesiser honors edits.
+
+    fix §170 -- the request_edit vote's suggested_edits + the reviewer
+    comment were previously written to the review row and never read.
+    Surfacing them here is the consumer that folds the requested
+    corrections + dissent into the consolidated verdict.
+    """
+    if not reviews:
+        return
+    lines.append("# Sibling reviews of the panel drafts")
+    lines.append("")
+    lines.append(
+        "Each persona reviewed the drafts. Fold the substance of these "
+        "reviews into the verdict: honor a requested confidence change, "
+        "correct any claim a reviewer flagged as wrong, and name a dissent "
+        "instead of dropping it. A reviewer's suggested_edits and comment "
+        "are corrections to apply, not optional notes."
+    )
+    lines.append("")
+    for rv in reviews:
+        persona = sanitize_input(str(rv.get("persona") or "(none)")).upper()
+        vote = sanitize_input(str(rv.get("vote") or ""))
+        lines.append(f"## {persona} voted {vote}")
+        comment = rv.get("comment") or ""
+        if comment:
+            lines.append(f"comment: {sanitize_input(comment)}")
+        edits = rv.get("suggested_edits") or {}
+        if edits:
+            lines.append(f"suggested_edits: {sanitize_input(json.dumps(edits))}")
+        lines.append("")
+
+
+def _render_panel(
+    panel: list[dict[str, Any]],
+    reviews: list[dict[str, Any]] | None = None,
+) -> str:
     """Render the vr persona panel into the LLM user-side prompt.
 
     fix §165 -- panel content (answer / reasoning / persona_voice) is
@@ -158,6 +196,7 @@ def _render_panel(panel: list[dict[str, Any]]) -> str:
             lines.append("### reasoning")
             lines.append(sanitize_input(p["reasoning"]))
             lines.append("")
+    _render_reviews(lines, reviews or [])
     lines.append(
         "# Synthesis instruction\n\n"
         "Produce ONE consolidated verdict in markdown. Structure:\n"
@@ -205,6 +244,9 @@ class SynthesisAgent(SynthesisRunnerBase):
     )
     _response_model: ClassVar[type[SynthesisResponse]] = SynthesisResponse
     _branch_table: ClassVar[str] = "vr_investigation_branches"
+    _review_model: ClassVar[type[VRInvestigationOutcomeReviewRecord]] = (
+        VRInvestigationOutcomeReviewRecord
+    )
 
     def _build_panel_entry(
         self,
@@ -226,5 +268,9 @@ class SynthesisAgent(SynthesisRunnerBase):
         )
         return entry
 
-    def _render_user_prompt(self, panel: list[dict[str, Any]]) -> str:
-        return _render_panel(panel)
+    def _render_user_prompt(
+        self,
+        panel: list[dict[str, Any]],
+        reviews: list[dict[str, Any]],
+    ) -> str:
+        return _render_panel(panel, reviews)

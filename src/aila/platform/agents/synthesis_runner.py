@@ -101,6 +101,12 @@ class SynthesisRunnerBase(ABC):
     _outcome_model: ClassVar[type[Any]]
     _response_model: ClassVar[type[BaseModel]]
     _branch_table: ClassVar[str]
+    # Module's outcome-review record (vr / malware). Bound by the
+    # subclass so synthesis can fold sibling review votes + comments +
+    # suggested edits into the consolidated verdict (fix §170: the
+    # request_edit vote's deferred consumer). None means the review pool
+    # does not apply and _load_reviews returns an empty list.
+    _review_model: ClassVar[type[Any] | None] = None
 
     def __init__(self, investigation_id: str) -> None:
         self.investigation_id = investigation_id
@@ -172,14 +178,23 @@ class SynthesisRunnerBase(ABC):
         }
 
     @abstractmethod
-    def _render_user_prompt(self, panel: list[dict[str, Any]]) -> str:
-        """Render the LLM user-side prompt from panel entries.
+    def _render_user_prompt(
+        self,
+        panel: list[dict[str, Any]],
+        reviews: list[dict[str, Any]],
+    ) -> str:
+        """Render the LLM user-side prompt from panel entries + reviews.
 
         No shared default: vr renders a plain persona panel with a
         Points-of-agreement / disagreement instruction; malware injects
         tone + length + optional operator-focus directives plus a
         different structured-schema instruction. Subclasses MUST
-        implement this hook.
+        implement this hook. ``reviews`` is the list produced by
+        :meth:`_load_reviews` (one dict per sibling review carrying
+        ``persona`` / ``vote`` / ``comment`` / ``suggested_edits``); the
+        renderer surfaces the requested edits + dissent so the
+        synthesiser folds them into the consolidated verdict rather than
+        dropping them (fix §170).
         """
 
     def _update_payload_extras(
@@ -241,6 +256,38 @@ class SynthesisRunnerBase(ABC):
             except (ValueError, TypeError):
                 canonical_payload = {}
             return inv, canonical, canonical_payload
+
+    async def _load_reviews(self, canonical_id: str) -> list[dict[str, Any]]:
+        """UoW read: sibling reviews on the canonical outcome (fix §170).
+
+        One dict per review row (``persona`` / ``vote`` / ``comment`` /
+        parsed ``suggested_edits``) so :meth:`_render_user_prompt` can
+        fold reviewer corrections + dissent into the consolidated
+        verdict -- the deferred consumer the ``request_edit`` vote was
+        waiting on. Returns an empty list when the subclass binds no
+        ``_review_model`` so callers stay uniform. Overridable as a test
+        seam alongside :meth:`_load_inv_and_canonical`.
+        """
+        model = self._review_model
+        if model is None:
+            return []
+        async with UnitOfWork() as uow:
+            rows = (await uow.session.exec(
+                _select(model).where(model.outcome_id == canonical_id),
+            )).all()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            try:
+                edits = json.loads(getattr(r, "suggested_edits_json", None) or "{}")
+            except (ValueError, TypeError):
+                edits = {}
+            out.append({
+                "persona": getattr(r, "reviewer_persona", None) or "(none)",
+                "vote": getattr(r, "vote", None) or "",
+                "comment": getattr(r, "comment", None) or "",
+                "suggested_edits": edits,
+            })
+        return out
 
     async def _commit_synthesis(
         self,
@@ -405,6 +452,11 @@ class SynthesisRunnerBase(ABC):
         if not panel:
             return {"status": "skipped", "reason": "no_valid_contributions"}
 
+        # fix §170 -- load sibling reviews so the synthesiser folds
+        # requested edits + dissent into the consolidated verdict
+        # instead of silently dropping every request_edit suggestion.
+        reviews = await self._load_reviews(canonical.id)
+
         # fix §159 -- chat_structured so the response is schema-validated;
         # the renderer never has to parse free-text markdown that might
         # drift. fix §158 -- broad LLM-failure catch so systemic errors
@@ -421,7 +473,7 @@ class SynthesisRunnerBase(ABC):
                     {"role": "system", "content": self._SYSTEM_PROMPT},
                     {
                         "role": "user",
-                        "content": self._render_user_prompt(panel),
+                        "content": self._render_user_prompt(panel, reviews),
                     },
                 ],
                 model_class=self._response_model,
