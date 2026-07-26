@@ -19,6 +19,16 @@ operator action.
 
 ### Added
 
+- User-extensible specialist-agent registry (`platform/services/specialist_registry.py`,
+  migration 103): the investigation panel is a fixed 3-role spine
+  (researcher, critic, implementer) plus optional specialist agents a core
+  branch can request from the oracle for a different expert perspective. A
+  specialist is data -- a `specialist_agent` row carrying a `capability`
+  (matching a dispatch phase so the hub routes it), an optional prompt
+  family, and a description -- so users define their own specialists
+  (reverse engineering, crypto, exploit-dev, or anything) through CRUD
+  without a code change; every module inherits the mechanism. Built-in
+  defaults seed per module. Migration 103 ships unapplied (operator-gated).
 - Phase-graph workflow substrate (`platform/workflows/phase_graph.py`): a
   module declares its investigation lifecycle as a `PhaseGraphSpec`, a
   graph of bounded adaptive loops wired by static edges, dynamic routers,

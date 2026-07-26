@@ -1362,3 +1362,8 @@ from aila.platform.services.knowledge_graph import KnowledgeEntryEdge
 # circular import back through the platform services chain.
 from aila.platform.services.ledger import InvestigationLedgerRecord
 
+# User-extensible specialist-agent registry (optional panel members). Same
+# end-of-file rule so create_all + Alembic autogen register specialist_agent
+# without a circular import back through the platform services chain.
+from aila.platform.services.specialist_registry import SpecialistAgentRecord
+
