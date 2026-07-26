@@ -259,6 +259,13 @@ operator action.
 
 ### Fixed
 
+- `read_function` auto-retries with the bare method name when a
+  class-qualified name is not indexed. Agents over-qualify (a class-scoped
+  method name) but trailmark keys the function index on the bare name; the
+  bridge previously only appended nearest-name suggestions, and the agent
+  repeated the qualified name until the 3-strike hard-block. It now retries
+  once with the tail after the last separator and returns the body if it
+  resolves, saving the wasted turns.
 - The discovery-driven dispatch hub no longer stalls at recon. Recon
   agents route their target characterization into `hypotheses` (and a
   terminal scoping outcome), not ledger notes, so the audit phases -- which

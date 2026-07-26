@@ -680,6 +680,49 @@ class AuditMcpBridgeTool(Tool):
                                 # below -- we already gave the agent
                                 # the file content.
                                 return payload
+                        # Bare-name auto-retry. Agents routinely over-qualify
+                        # read_function names -- a class-qualified method such
+                        # as DockerContainerAPI dot execute_command -- but
+                        # trailmark keys the function index on the BARE method
+                        # name. Left as a dead-end, the agent repeats the
+                        # qualified name until the 3-strike hard-block, burning
+                        # turns. Retry once with the tail after the last
+                        # separator (period, double-colon, or hash) and return
+                        # the body if it resolves.
+                        bare = name
+                        for _sep in (".", "::", "#"):
+                            if _sep in bare:
+                                bare = bare.split(_sep)[-1]
+                        bare = bare.strip()
+                        if bare and bare != name and bare not in _GENERIC_JAVA_NAMES:
+                            retry_kwargs = dict(normalized_kwargs)
+                            retry_kwargs["name"] = bare
+                            try:
+                                async with httpx.AsyncClient(
+                                    timeout=self._timeout,
+                                ) as _rc:
+                                    _rresp = await _rc.post(url, json=retry_kwargs)
+                                _rpayload = _rresp.json()
+                            except (
+                                httpx.ConnectError, httpx.TimeoutException, ValueError,
+                            ):
+                                _rpayload = None
+                            if (
+                                isinstance(_rpayload, dict)
+                                and _rpayload.get("status") == "ready"
+                            ):
+                                logging.getLogger(__name__).info(
+                                    "read_function BARE_RETRY %r -> %r resolved",
+                                    name, bare,
+                                )
+                                _rpayload["_bridge_note"] = (
+                                    f"{name!r} was not indexed; auto-resolved to "
+                                    f"the bare method name {bare!r}. Use {bare!r} "
+                                    f"(no class prefix) with read_function -- the "
+                                    f"function index keys on bare names."
+                                )
+                                ctx["status"] = "ready"
+                                return _rpayload
                         suggestions = await self._suggest_function_names(
                             base=base,
                             index_id=normalized_kwargs.get("index_id") or "",
