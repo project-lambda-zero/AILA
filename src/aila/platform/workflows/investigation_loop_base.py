@@ -42,6 +42,18 @@ _log = logging.getLogger(__name__)
 
 __all__ = ["state_investigation_loop"]
 
+# RFC-13 (#12) escalation ceiling. The tool_executor's HARD-BLOCK guard
+# refuses to re-dispatch an identical failing tool call, but the agent is
+# free to reissue the same command over and over -- burning a turn per
+# reissue and never escaping the loop. Track consecutive HARD-BLOCKED
+# tool_run turns per branch in ``case_state.observables`` and exit the
+# loop cleanly with ``exit_reason='tool_loop_blocked'`` once the streak
+# reaches this ceiling. A successful tool call OR any non-tool_run turn
+# resets the streak to 0.
+_MAX_HARD_BLOCK_STREAK: int = 3
+_HARD_BLOCK_STREAK_KEY: str = "_tool_hard_block_streak"
+_HARD_BLOCK_MARKER: str = "HARD-BLOCKED"
+
 
 async def _is_loop_alive(
     inv_model: Any, branch_model: Any, investigation_id: str, branch_id: str,
@@ -119,6 +131,47 @@ async def _is_loop_alive(
         )
 
     return True, "alive"
+
+
+async def _update_hard_block_streak(
+    branch_model: Any, branch_id: str, *, bump: bool,
+) -> int:
+    """Increment or reset the branch's consecutive HARD-BLOCK streak.
+
+    Persists the counter under ``_tool_hard_block_streak`` inside
+    ``case_state.observables`` so it survives an auto_continue re-
+    enqueue (belt-and-braces -- ``tool_loop_blocked`` is already a
+    non-continue reason). Returns the new streak value; the caller
+    compares against ``_MAX_HARD_BLOCK_STREAK`` to decide whether to
+    break the turn loop.
+    """
+    async with UnitOfWork() as uow:
+        branch = (await uow.session.exec(
+            _select(branch_model).where(branch_model.id == branch_id)
+        )).first()
+        if branch is None:
+            return 0
+        case_state = decode_case_state(branch.case_state_json)
+        if bump:
+            current = int(
+                case_state.observables.get(_HARD_BLOCK_STREAK_KEY, 0) or 0
+            )
+            new_value = current + 1
+        else:
+            new_value = 0
+        # Skip the write when a reset would be a no-op; avoids a needless
+        # row update per non-tool_run turn on branches that never hit
+        # HARD-BLOCK.
+        prior = case_state.observables.get(_HARD_BLOCK_STREAK_KEY)
+        if prior == new_value:
+            return new_value
+        if new_value == 0 and prior is None:
+            return 0
+        case_state.observables[_HARD_BLOCK_STREAK_KEY] = new_value
+        branch.case_state_json = encode_case_state(case_state)
+        uow.session.add(branch)
+        await uow.session.commit()
+    return new_value
 
 
 async def _write_phase_directive(
@@ -294,6 +347,35 @@ def state_investigation_loop(
                     investigation_id, result.turn,
                     tool_outcome.server_id, tool_outcome.tool_name,
                     tool_outcome.success,
+                )
+                # RFC-13 (#12): the tool_executor's HARD-BLOCK guard sets
+                # ``success=False`` and includes the literal string
+                # ``HARD-BLOCKED`` in ``error`` when it refuses an
+                # identical repeat call. Any other failure (bridge error,
+                # error envelope, malformed command) is NOT a hard block
+                # and MUST NOT escalate here -- it resets the streak so
+                # unrelated transient failures don't bank toward the cap.
+                is_hard_block = (
+                    not tool_outcome.success
+                    and _HARD_BLOCK_MARKER in (tool_outcome.error or "")
+                )
+                streak = await _update_hard_block_streak(
+                    bindings.branch_model, branch_id, bump=is_hard_block,
+                )
+                if is_hard_block and streak >= _MAX_HARD_BLOCK_STREAK:
+                    exit_reason = "tool_loop_blocked"
+                    _log.warning(
+                        "investigation_loop EXIT investigation_id=%s branch_id=%s "
+                        "reason=%s streak=%d after_turn=%d",
+                        investigation_id, branch_id, exit_reason, streak,
+                        result.turn,
+                    )
+                    break
+            else:
+                # Non-tool_run turn: clear any accumulated streak so
+                # HARD-BLOCK escalation requires CONSECUTIVE offenses.
+                await _update_hard_block_streak(
+                    bindings.branch_model, branch_id, bump=False,
                 )
 
             if result.terminal:

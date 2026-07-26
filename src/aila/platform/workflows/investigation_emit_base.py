@@ -53,6 +53,27 @@ _log = logging.getLogger(__name__)
 
 __all__ = ["state_investigation_emit"]
 
+# RFC-13 wiring audit: bound the researcher_error auto_continue path. That
+# path re-enqueues on the SAME turn (turn_count is not advanced), so
+# overall_turn_cap never trips and a persistently-erroring branch loops
+# forever. This per-branch counter is threaded through the auto_continue
+# re-enqueue kwargs (``_auto_continue_count``) and forwarded by setup, so
+# a hard ceiling stops the runaway independent of turn_count.
+_MAX_AUTO_CONTINUE_CYCLES: int = 30
+
+# RFC-13 wiring audit: exit_reasons that mean "the branch or hub is DONE,
+# do NOT auto-continue". phase_graph.make_dispatch_router emits the three
+# ``hub_*`` reasons at hub->emit transitions; ``tool_loop_blocked`` is the
+# tool-executor's breaker signal. Any of these MUST short-circuit
+# _should_auto_continue regardless of the historical
+# ``exit_reason == 'max_turns'`` matcher.
+_NON_CONTINUE_EXIT_REASONS: frozenset[str] = frozenset({
+    "hub_complete",
+    "hub_stalled",
+    "hub_budget_exhausted",
+    "tool_loop_blocked",
+})
+
 
 def state_investigation_emit(
     bindings: InvestigationStateBindings,
@@ -112,6 +133,7 @@ def state_investigation_emit(
         exit_reason: str,
         outcome_id: Any,
         branch_id: str | None = None,
+        auto_continue_count: int = 0,
     ) -> tuple[bool, int]:
         """Decide whether to auto-re-enqueue + return the branch turn count.
 
@@ -121,11 +143,40 @@ def state_investigation_emit(
         loop exit), we check THAT branch's turn count, not the primary's.
         Without the branch-scoping, the previous implementation always
         looked at the primary, decided based on its turn count, and the
-        sibling auto-continue then enqueued without branch_id → setup
-        defaulted to primary → siblings starved.
+        sibling auto-continue then enqueued without branch_id \u2192 setup
+        defaulted to primary \u2192 siblings starved.
+
+        RFC-13 wiring audit -- two extra guards land here:
+          1. ``exit_reason`` in _NON_CONTINUE_EXIT_REASONS (hub_complete /
+             hub_stalled / hub_budget_exhausted / tool_loop_blocked) means
+             the hub or breaker has already decided the branch is done.
+             The old matcher only knew ``max_turns``, so a hub->emit that
+             forwarded a stale ``max_turns`` from a prior phase loop
+             looked identical to a real cap breach and re-enqueued
+             indefinitely (563-task runaway on one investigation).
+          2. ``auto_continue_count`` >= _MAX_AUTO_CONTINUE_CYCLES stops
+             the researcher_error path from looping forever without
+             advancing turn_count.
         """
+        if exit_reason in _NON_CONTINUE_EXIT_REASONS:
+            _log.info(
+                "investigation_emit AUTO_CONTINUE SKIP inv=%s branch=%s "
+                "exit_reason=%s (hub/breaker terminal)",
+                investigation_id, branch_id, exit_reason,
+            )
+            return False, 0
         is_any_researcher_error = exit_reason.startswith("researcher_error")
         if (exit_reason != "max_turns" and not is_any_researcher_error) or outcome_id is not None:
+            return False, 0
+        if auto_continue_count >= _MAX_AUTO_CONTINUE_CYCLES:
+            _log.warning(
+                "investigation_emit AUTO_CONTINUE_CAP_EXCEEDED inv=%s "
+                "branch=%s cycles=%d cap=%d exit_reason=%s -- refusing "
+                "further re-enqueues; branch stops here even though "
+                "turn_count is under overall_turn_cap.",
+                investigation_id, branch_id, auto_continue_count,
+                _MAX_AUTO_CONTINUE_CYCLES, exit_reason,
+            )
             return False, 0
         async with UnitOfWork() as uow:
             if branch_id:
@@ -151,6 +202,8 @@ def state_investigation_emit(
         investigation_id: str,
         team_id: str | None,
         branch_id: str | None = None,
+        dispatch_visited: list[str] | None = None,
+        auto_continue_count: int = 0,
     ) -> None:
         """Submit the investigate task so the agent continues reasoning on
         the SAME branch it was running.
@@ -162,12 +215,25 @@ def state_investigation_emit(
         Always pass branch_id when the caller knows which branch's loop
         just exited.
 
+        RFC-13 wiring audit: ``_dispatch_visited`` and
+        ``_auto_continue_count`` ride the re-enqueue kwargs so a resumed
+        branch does NOT re-walk every phase the hub already activated,
+        and the cycle counter survives across task boundaries. setup
+        (investigation_setup_base) forwards both from its input dict
+        into its output so the dispatch hub picks them back up.
+
         Imports are deferred so this module stays import-safe -- the worker
         boots before its ARQ client surface is wired through.
         """
         kwargs: dict[str, Any] = {"investigation_id": investigation_id}
         if branch_id:
             kwargs["branch_id"] = branch_id
+        if dispatch_visited:
+            # JSON-safe: list[str] serializes cleanly through ARQ + the
+            # workflow engine's initial_input dict.
+            kwargs["_dispatch_visited"] = list(dispatch_visited)
+        if auto_continue_count:
+            kwargs["_auto_continue_count"] = int(auto_continue_count)
         task_queue = bindings.task_queue_factory()
         await task_queue.submit(
             track=bindings.track,
@@ -192,8 +258,19 @@ def state_investigation_emit(
 
         investigation_id = str(input.get("investigation_id") or "")
         branch_id = str(input.get("branch_id") or "") or None
-        exit_reason = str(input.get("exit_reason") or "max_turns")
+        # RFC-13 wiring audit: default to ``hub_complete`` instead of
+        # ``max_turns`` when the input carries no explicit exit_reason.
+        # An emit reached via the dispatch hub's clean-completion branch
+        # SHOULD not auto_continue; the historical ``max_turns`` default
+        # made a hub->emit with a missing reason look like a real cap
+        # breach and re-enqueued the branch.
+        exit_reason = str(input.get("exit_reason") or "hub_complete")
         outcome_id = input.get("outcome_id")
+        # RFC-13 wiring audit: carry the dispatch walk + cycle counter
+        # through the re-enqueue path so a resumed branch does not
+        # re-walk every phase and the researcher_error loop is bounded.
+        dispatch_visited_in = input.get("_dispatch_visited") or []
+        auto_continue_count = int(input.get("_auto_continue_count") or 0)
 
         # Auto-continuation: on max_turns without a terminal outcome, re-
         # enqueue another investigate task so the agent keeps
@@ -201,6 +278,7 @@ def state_investigation_emit(
         # status stays RUNNING, no dispatch/extraction, no stopped_at.
         auto_continue, turn_count = await _should_auto_continue(
             investigation_id, exit_reason, outcome_id, branch_id=branch_id,
+            auto_continue_count=auto_continue_count,
         )
         if auto_continue:
             async with UnitOfWork() as uow:
@@ -213,6 +291,8 @@ def state_investigation_emit(
             try:
                 await _enqueue_next_investigation_run(
                     investigation_id, team_id, branch_id=branch_id,
+                    dispatch_visited=list(dispatch_visited_in) if dispatch_visited_in else None,
+                    auto_continue_count=auto_continue_count + 1,
                 )
             except (OSError, TimeoutError, RuntimeError, ConnectionError) as exc:
                 # Auto-continue submit failed (Redis down, queue full,

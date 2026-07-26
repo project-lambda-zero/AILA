@@ -249,6 +249,32 @@ operator action.
   retries the same call in `json_object` mode with the schema appended to
   the prompt when a provider rejects the strict schema, so reasoning turns
   run across both strict and lenient providers.
+- Dispatch-hub investigations advanced every branch to zero turns and then
+  spun into a task runaway. The hub forwarded the last phase loop's stale
+  `max_turns` exit reason to the emit state, so auto_continue re-enqueued
+  the branch on every hub completion; each re-enqueue started a fresh
+  workflow run at setup, and the setup reactivation path reset an
+  abandoned branch's turn count and deleted its messages, while a dedup
+  hash mismatch let duplicate per-branch tasks accumulate (observed: 563
+  tasks for one investigation). The hub now stamps an explicit terminal
+  exit reason (`hub_complete` / `hub_stalled` / `hub_budget_exhausted`) on
+  its emit transitions, auto_continue skips those reasons and is bounded
+  by a per-branch cycle ceiling, the dispatch walk and cycle counter
+  persist across re-enqueues, and a branch-scoped dedup suppresses
+  duplicate per-branch tasks.
+- Recon-phase findings were written to the shared ledger as `note`
+  entries, but the discovery-driven audit phases (source_audit,
+  variant_hunt, binary_audit, mobile_audit, poc_development) activate only
+  on `discovery` entries, so the phase graph never advanced past recon.
+  Recon `note` writes are now recorded as `discovery` so the audit phases
+  can activate.
+- A branch that reissued an identical blocked tool call burned turns
+  without limit; after three consecutive hard-blocked calls the branch
+  loop now exits cleanly.
+- The pre-submit draft-pending gate could reject a branch's terminal
+  submit indefinitely; it now forces the submit through after a
+  configurable rejection cap (`draft_pending_reject_cap`), matching the
+  variant-hunt and unresolved-hypothesis submit gates.
 
 ### Removed
 

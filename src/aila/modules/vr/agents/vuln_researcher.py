@@ -183,6 +183,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
     async def _load_turn_config(self) -> None:
         self._variant_hunt_reject_cap = await get_int("variant_hunt_reject_cap")
         self._unresolved_hyp_reject_cap = await get_int("unresolved_hyp_reject_cap")
+        self._draft_pending_reject_cap = await get_int("draft_pending_reject_cap")
 
     def _extra_user_prompt_kwargs(self) -> dict[str, Any]:
         return {"cve_intel": self._cve_intel}
@@ -969,10 +970,21 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         a draft outcome up for review on this investigation, and this
         branch has not yet voted on that draft.
 
-        Returns a non-terminal observe with a directive injected at
-        operator-priority. Original submit payload is preserved on the
-        observables under ``_pending_draft_blocked_submit`` so the agent
-        can re-submit once it has voted on every open draft.
+        Same shape as ``_maybe_reject_variant_hunt_submit`` and
+        ``_maybe_reject_submit_with_unresolved_hypotheses``:
+          - Pass: clear directive + counter + preserved submit,
+            return original decision.
+          - Reject (under cap): convert to non-terminal placeholder,
+            inject directive into case_state.observables, increment
+            ``_draft_pending_reject_count``.
+          - Force-through (over cap): stamp payload with
+            ``draft_pending_advisory`` and return the submit so the
+            branch does not loop forever on a quorum that never
+            assembles.
+
+        Original submit payload is preserved on the observables under
+        ``_pending_draft_blocked_submit`` on reject so the agent can
+        re-submit once it has voted on every open draft.
 
         Without this gate, multiple siblings race each other to
         terminal_submit, each one closes itself out, and the first
@@ -993,6 +1005,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                 ),
             )).all()
             if not drafts:
+                self._clear_draft_pending_gate_state(case_state)
                 return decision
 
             # Exclude drafts proposed by this branch -- the proposer
@@ -1001,6 +1014,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                 d for d in drafts if d.branch_id != self.branch_id
             ]
             if not other_drafts:
+                self._clear_draft_pending_gate_state(case_state)
                 return decision
 
             voted_on: set[str] = set()
@@ -1022,17 +1036,49 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
 
             pending = [d for d in other_drafts if d.id not in voted_on]
             if not pending:
+                self._clear_draft_pending_gate_state(case_state)
                 return decision
 
+        prior_rejects = int(
+            case_state.observables.get("_draft_pending_reject_count", 0) or 0,
+        )
+        new_reject_count = prior_rejects + 1
+
+        if new_reject_count > self._draft_pending_reject_cap:
+            # Force through after N rejections so the agent doesn't loop
+            # forever waiting on a sibling quorum that never assembles.
+            # Stamp the payload with an audit flag so the operator can
+            # find these in the outcomes table.
+            _log.warning(
+                "draft_pending submit FORCED THROUGH after %d rejections "
+                "inv=%s branch=%s turn=%d -- %d unvoted draft outcomes: %s",
+                prior_rejects, self.investigation_id, self.branch_id,
+                turn_number, len(pending),
+                [d.id[:8] for d in pending],
+            )
+            payload = decision.payload or {}
+            new_payload = dict(payload)
+            new_payload["draft_pending_advisory"] = {
+                "unvoted_count": len(pending),
+                "unvoted_draft_ids": [d.id for d in pending[:50]],
+                "forced_through_after_rejects": prior_rejects,
+            }
+            self._clear_draft_pending_gate_state(case_state)
+            return decision.model_copy(update={"payload": new_payload})
+
         _log.info(
-            "draft_pending submit REJECTED inv=%s branch=%s turn=%d -- "
-            "%d unvoted draft outcomes: %s",
+            "draft_pending submit REJECTED inv=%s branch=%s turn=%d "
+            "rejects=%d/%d -- %d unvoted draft outcomes: %s",
             self.investigation_id, self.branch_id, turn_number,
+            new_reject_count, self._draft_pending_reject_cap,
             len(pending), [d.id[:8] for d in pending],
         )
 
+        case_state.observables["_draft_pending_reject_count"] = new_reject_count
+
         directive_lines = [
             "*** SUBMIT BLOCKED - UNVOTED DRAFT OUTCOMES IN THIS INVESTIGATION ***",
+            f"Rejection {new_reject_count}/{self._draft_pending_reject_cap} on this branch.",
             "",
             "Another sibling branch submitted a terminal outcome that is now in",
             "DRAFT state and waiting for quorum. You MUST vote on it before",
@@ -1054,6 +1100,12 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             "",
             "Once all drafts on this investigation have your vote, you may",
             "submit your own outcome.",
+            "",
+            f"After {self._draft_pending_reject_cap} rejections on this branch",
+            "the submit is FORCED THROUGH with draft_pending_advisory stamped",
+            "on the payload listing the unvoted draft ids. The operator will",
+            "audit those entries. Vote on the drafts to avoid burning your",
+            "safety budget.",
         ])
         directive = "\n".join(directive_lines)
 
@@ -1079,9 +1131,29 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             "payload": {
                 **(decision.payload or {}),
                 "_draft_pending_gate_rejected": True,
+                "_draft_pending_gate_reject_count": new_reject_count,
                 "_draft_pending_unvoted_count": len(pending),
             },
         })
+
+    @staticmethod
+    def _clear_draft_pending_gate_state(
+        case_state: ReasoningCaseState,
+    ) -> None:
+        """Drop the draft_pending gate's counter + directive + preserved
+        submit from ``case_state.observables``.
+
+        Called on every gate-pass branch (no drafts / no other-branch
+        drafts / all voted) and after a force-through, so a later
+        regression on the same branch starts with a fresh counter --
+        matching the pass-branch cleanup pattern used by the two sibling
+        submit gates.
+        """
+        case_state.observables.pop("_draft_pending_reject_count", None)
+        case_state.observables.pop(
+            "_directive.draft_pending_submit_blocked", None,
+        )
+        case_state.observables.pop("_pending_draft_blocked_submit", None)
 
     async def _maybe_reject_revote_when_already_voted(
         self,

@@ -32,7 +32,7 @@ async def test_ledger_write_appends_one_row(test_db) -> None:
         ledger_writes=[LedgerWrite(kind="discovery", payload={"packed": True})],
     )
     async with UnitOfWork() as uow:
-        await AgentTurnRunnerBase._post_ledger_writes(me, decision, 3, uow.session)
+        await AgentTurnRunnerBase._post_ledger_writes(me, decision, 3, uow.session, ReasoningCaseState())
         await uow.session.commit()
     rows = await LedgerService().read_general(inv)
     assert len(rows) == 1
@@ -51,10 +51,10 @@ async def test_ledger_write_retry_does_not_double_append(test_db) -> None:
     )
     # Same turn processed twice (an ARQ retry) writes exactly one row.
     async with UnitOfWork() as uow:
-        await AgentTurnRunnerBase._post_ledger_writes(me, decision, 3, uow.session)
+        await AgentTurnRunnerBase._post_ledger_writes(me, decision, 3, uow.session, ReasoningCaseState())
         await uow.session.commit()
     async with UnitOfWork() as uow:
-        await AgentTurnRunnerBase._post_ledger_writes(me, decision, 3, uow.session)
+        await AgentTurnRunnerBase._post_ledger_writes(me, decision, 3, uow.session, ReasoningCaseState())
         await uow.session.commit()
     rows = await LedgerService().read_general(inv)
     assert len(rows) == 1
@@ -67,7 +67,7 @@ async def test_ledger_write_per_turn_cap(test_db) -> None:
     writes = [LedgerWrite(kind="note", payload={"i": i}) for i in range(10)]
     decision = ReasoningTurnDecision(reasoning="x", ledger_writes=writes)
     async with UnitOfWork() as uow:
-        await AgentTurnRunnerBase._post_ledger_writes(me, decision, 1, uow.session)
+        await AgentTurnRunnerBase._post_ledger_writes(me, decision, 1, uow.session, ReasoningCaseState())
         await uow.session.commit()
     rows = await LedgerService().read_general(inv)
     assert len(rows) == _MAX_LEDGER_WRITES_PER_TURN
@@ -79,7 +79,7 @@ async def test_ledger_write_empty_list_is_noop(test_db) -> None:
     me = SimpleNamespace(investigation_id=inv, branch_id=branch)
     decision = ReasoningTurnDecision(reasoning="x")
     async with UnitOfWork() as uow:
-        await AgentTurnRunnerBase._post_ledger_writes(me, decision, 1, uow.session)
+        await AgentTurnRunnerBase._post_ledger_writes(me, decision, 1, uow.session, ReasoningCaseState())
     rows = await LedgerService().read_general(inv)
     assert rows == []
 

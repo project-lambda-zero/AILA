@@ -168,6 +168,7 @@ class AgentTurnRunnerBase:
         decision: ReasoningTurnDecision,
         turn_number: int,
         session: AsyncSession,
+        case_state: Any,
     ) -> None:
         """Append the turn's capped ledger writes inside the post-turn UoW.
 
@@ -175,23 +176,44 @@ class AgentTurnRunnerBase:
         turn, entry index, and payload so an ARQ retry of the same turn
         re-posts nothing new. The contract restricts the kind to discovery /
         note / request, so no objective or decision entry reaches here.
+
+        RFC-13 (#8) wiring coercion: in the RECON phase, agent-emitted
+        ``note`` writes ARE the phase's discoveries -- recon is where the
+        agent characterizes the target and surfaces the promising audit
+        surfaces. The audit phases' activation conditions gate on
+        ``make_discovery_condition('discovery')`` (exact kind equality),
+        so notes posted during recon never satisfy them and the graph
+        stalls. Coerce ``note`` -> ``discovery`` for the duration of the
+        recon phase (``_directive.phase_mission`` begins with ``RECON``);
+        leave ``request`` untouched and leave all non-recon phases
+        untouched. The idempotency key is derived from the COERCED kind
+        so an ARQ retry replays the same append and is deduped.
         """
         writes = decision.ledger_writes[:_MAX_LEDGER_WRITES_PER_TURN]
         if not writes:
             return
+        phase_mission = ""
+        if case_state is not None:
+            phase_mission = str(
+                case_state.observables.get("_directive.phase_mission", "") or ""
+            )
+        in_recon = phase_mission.upper().startswith("RECON")
         service = LedgerService()
         for index, write in enumerate(writes):
+            kind = write.kind
+            if in_recon and kind == "note":
+                kind = "discovery"
             payload_hash = hashlib.sha256(
                 json.dumps(write.payload, sort_keys=True).encode()
             ).hexdigest()[:16]
             idem = (
                 f"{self.branch_id}:{turn_number}:{index}:"
-                f"{write.kind}:{payload_hash}"
+                f"{kind}:{payload_hash}"
             )
             await service.append_general(
                 self.investigation_id,
                 self.branch_id,
-                write.kind,
+                kind,
                 write.payload,
                 idempotency_key=idem,
                 session=session,
@@ -646,7 +668,9 @@ class AgentTurnRunnerBase:
             branch_row.turn_count = turn_number
             branch_row.updated_at = utc_now()
 
-            await self._post_ledger_writes(decision, turn_number, uow.session)
+            await self._post_ledger_writes(
+                decision, turn_number, uow.session, case_state,
+            )
             await self._post_ledger_approvals(decision, uow.session)
 
             if terminal:

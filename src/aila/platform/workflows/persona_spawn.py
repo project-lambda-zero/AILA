@@ -129,6 +129,17 @@ async def spawn_persona_siblings(
                 # stripped case_state, prior messages deleted) so the
                 # cap math, steering directives, rejected-hypothesis
                 # lists, and tool-failure breaker all start clean.
+                #
+                # RFC-13 SETUP IDEMPOTENCY (2026-07-26): this reset MUST
+                # only fire for terminal branches (``abandoned`` /
+                # ``completed``). An ``active`` / ``paused`` winner is a
+                # live branch -- resetting turn_count and DELETEing its
+                # messages here would wipe an investigation mid-run every
+                # time setup re-ran (e.g. on the auto_continue re-enqueue
+                # path). The status guard below is the single load-bearing
+                # check; do NOT relax it. investigation_setup relies on
+                # this contract when it calls spawn_fn on every setup
+                # invocation for a RUNNING investigation.
                 if b.status in ("abandoned", "completed"):
                     b.status = "active"
                     b.closed_reason = ""
@@ -197,6 +208,15 @@ async def spawn_persona_siblings(
         await uow.commit()
 
     # Phase 2 -- best-effort enqueue per resolved branch.
+    #
+    # RFC-13 DEDUP CONTRACT (2026-07-26): these submits go through the
+    # normal (bypass_dedup=False) TaskQueue path. The dedup search there
+    # is branch-scoped (see aila.platform.tasks.queue.TaskQueue.submit
+    # "Branch-scoped soft dedup"), so if an auto_continue task is
+    # already in-flight for the same (investigation_id, branch_id) --
+    # even though its input_hash was UUID-mixed by ``bypass_dedup=True``
+    # on the caller side -- this submit returns that existing task's
+    # handle rather than enqueueing a duplicate.
     for persona in siblings:
         sibling_branch_id = sibling_branch_ids.get(persona.value)
         if not sibling_branch_id:

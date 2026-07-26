@@ -351,10 +351,24 @@ def make_dispatch_router(phases: tuple[PhaseSpec, ...]) -> HandlerFn:
 
     async def _handler(state_input: dict[str, Any], services: Any) -> StateResult:
         del services
+        # NOTE (RFC-13 wiring audit): ``_budget_exhausted`` is READ here but
+        # never SET anywhere in the platform today -- the input carrier does
+        # not receive it from any loop / caller. Treat this branch as dead
+        # code for the moment; leave the read in place so the wiring is
+        # obvious if/when a real budget mechanism lands.
         if state_input.get("_budget_exhausted"):
             return StateResult(
                 next_state=EMIT_STATE,
-                output={**state_input, "budget_truncated": True},
+                # Explicit non-continue exit_reason so emit._should_auto_continue
+                # does NOT re-enqueue this branch after a hub-level halt --
+                # forwarding {**state_input} alone inherited the prior phase
+                # loop's stale ``exit_reason='max_turns'`` and produced the
+                # 563-task runaway diagnosed on RFC-13.
+                output={
+                    **state_input,
+                    "budget_truncated": True,
+                    "exit_reason": "hub_budget_exhausted",
+                },
             )
         visited = set(state_input.get("_dispatch_visited") or [])
         branch_capability = state_input.get("_branch_capability")
@@ -379,9 +393,22 @@ def make_dispatch_router(phases: tuple[PhaseSpec, ...]) -> HandlerFn:
                 return relaxed
             return StateResult(
                 next_state=EMIT_STATE,
-                output={**state_input, "stalled": True, "blocked_phases": blocked},
+                # See the ``hub_budget_exhausted`` branch above -- explicit
+                # non-continue exit_reason so emit does not auto_continue on
+                # a hub-level stall.
+                output={
+                    **state_input,
+                    "stalled": True,
+                    "blocked_phases": blocked,
+                    "exit_reason": "hub_stalled",
+                },
             )
-        return StateResult(next_state=EMIT_STATE, output={**state_input})
+        # Clean hub completion: no unvisited phase qualified, no stall. Same
+        # explicit non-continue exit_reason so emit does not auto_continue.
+        return StateResult(
+            next_state=EMIT_STATE,
+            output={**state_input, "exit_reason": "hub_complete"},
+        )
 
     return _handler
 

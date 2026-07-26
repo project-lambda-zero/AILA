@@ -294,6 +294,57 @@ class TaskQueue:
                     )
                     return TaskHandle(task_id=str(existing.id))
 
+        # RFC-13 DEDUP MISMATCH FIX (2026-07-26): branch-scoped soft dedup.
+        # The hash-based dedup above cannot see an in-flight auto_continue
+        # because that same branch's auto_continue mixes a UUID into the
+        # hash (``bypass_dedup=True`` in emit_base) so the caller does not
+        # match its own running TaskRecord. Consequence: when spawn_fn
+        # (normal dedup) races an already-in-flight auto_continue, both
+        # succeed and two tasks land on the same branch. Duplicate turns
+        # bill twice, race the case_state cursor, and produce the
+        # per-branch duplication reported on RFC-13.
+        #
+        # This branch-scoped check runs for every submit that carries both
+        # ``investigation_id`` and ``branch_id`` (regardless of
+        # ``bypass_dedup``) and searches ONLY ``queued`` / ``waiting``
+        # tasks -- never ``running`` -- so it can never match the caller's
+        # own record on the auto_continue path. It narrows by fn_path and
+        # by a LIKE match on branch_id in kwargs_json before parsing the
+        # candidate rows, so the Python-side filter stays bounded even on
+        # a busy queue. Documented choice: extend spawn_fn's dedup surface
+        # to SEE auto_continue tasks (rather than stripping bypass_dedup
+        # out of auto_continue, which would re-open the caller-matches-self
+        # bug diagnosed 2026-06-12 on maddie branch).
+        inv_id_val = kwargs.get("investigation_id") if isinstance(kwargs, dict) else None
+        branch_id_val = kwargs.get("branch_id") if isinstance(kwargs, dict) else None
+        if (
+            isinstance(inv_id_val, str) and inv_id_val
+            and isinstance(branch_id_val, str) and branch_id_val
+        ):
+            async with async_session_scope() as branch_dedup_session:
+                candidates = (await branch_dedup_session.exec(
+                    select(TaskRecord)
+                    .where(TaskRecord.fn_path == fn_path)
+                    .where(TaskRecord.status.in_(["queued", "waiting"]))  # type: ignore[union-attr]
+                    .where(TaskRecord.kwargs_json.like(f'%"{branch_id_val}"%'))
+                )).all()
+            for c in candidates:
+                try:
+                    c_kwargs = json.loads(c.kwargs_json or "{}")
+                except (ValueError, TypeError):
+                    continue
+                if (
+                    str(c_kwargs.get("investigation_id") or "") == inv_id_val
+                    and str(c_kwargs.get("branch_id") or "") == branch_id_val
+                ):
+                    _log.info(
+                        "Task branch-dedup: returning existing %s for "
+                        "inv=%s branch=%s fn=%s (avoids duplicate "
+                        "spawn/auto_continue for the same branch)",
+                        c.id, inv_id_val, branch_id_val, fn_path,
+                    )
+                    return TaskHandle(task_id=str(c.id))
+
 
         # Fail-fast Redis reachability check (no DB record written yet). This
         # is the single source of truth for "broker is usable" -- if the check

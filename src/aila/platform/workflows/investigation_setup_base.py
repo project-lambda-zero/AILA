@@ -200,6 +200,15 @@ def state_investigation_setup(
         # skip the auto-spawn block and just hydrate the named branch.
         explicit_branch_id = str(input.get("branch_id") or "")
 
+        # RFC-13 wiring audit: forward the dispatch walk + cycle counter
+        # out of setup's input into setup's output so the dispatch hub picks
+        # them back up after an auto_continue re-enqueue. Without this a
+        # resumed branch would re-walk every phase from scratch and the
+        # researcher_error auto_continue counter would reset every task
+        # boundary, defeating _MAX_AUTO_CONTINUE_CYCLES.
+        dispatch_visited_pass_through = list(input.get("_dispatch_visited") or [])
+        auto_continue_count_pass_through = int(input.get("_auto_continue_count") or 0)
+
         async with UnitOfWork() as uow:
             inv = (await uow.session.exec(
                 _select(bindings.inv_model).where(
@@ -248,6 +257,10 @@ def state_investigation_setup(
                         "last_turn_idx": 0,
                         "last_action": "",
                         "outcome_id": None,
+                        # Preserve so a paused-then-resumed run does not
+                        # reset the dispatch walk / cycle counter.
+                        "_dispatch_visited": dispatch_visited_pass_through,
+                        "_auto_continue_count": auto_continue_count_pass_through,
                     },
                 )
 
@@ -288,6 +301,8 @@ def state_investigation_setup(
                             "last_turn_idx": branch.turn_count or 0,
                             "last_action": "",
                             "outcome_id": None,
+                            "_dispatch_visited": dispatch_visited_pass_through,
+                            "_auto_continue_count": auto_continue_count_pass_through,
                         },
                     )
             else:
@@ -430,6 +445,18 @@ def state_investigation_setup(
         # land. Diagnosed on three MASVS investigations --
         # all three stuck at 1 branch (halvar) after stall-recovery
         # re-enqueued them with branch_id.
+        #
+        # RFC-13 SETUP IDEMPOTENCY (2026-07-26): re-enqueued tasks on a
+        # RUNNING investigation with an already-active branch MUST NOT
+        # wipe branch state. persona_spawn.spawn_persona_siblings enforces
+        # this at the reactivation guard: it only fires the fresh-slot
+        # reset (``turn_count = 0``, stripped case_state, DELETE FROM
+        # messages) when the WINNER branch's status is ``abandoned`` or
+        # ``completed``. Active / paused branches skip that entire block.
+        # Setup can therefore call spawn_fn safely on every invocation --
+        # the only mutations that survive for an active branch are
+        # idempotent (missing-persona INSERT, duplicate-persona abandon).
+        # See persona_spawn.py "Reactivate the winner per persona" block.
         if bindings.auto_deliberation_enabled():
             await bindings.spawn_fn(
                 investigation_id=investigation_id,
@@ -528,6 +555,12 @@ def state_investigation_setup(
                 "team_id": inv.team_id,
                 "cve_intel": cve_intel,
                 "applicable_patterns": applicable_patterns,
+                # RFC-13 wiring audit: forward across setup so the dispatch
+                # hub picks up its walk + the cycle counter for the
+                # resumed branch. Empty defaults are harmless on a fresh
+                # run.
+                "_dispatch_visited": dispatch_visited_pass_through,
+                "_auto_continue_count": auto_continue_count_pass_through,
             },
         )
 

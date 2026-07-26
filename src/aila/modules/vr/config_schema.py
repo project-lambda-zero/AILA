@@ -192,6 +192,17 @@ class VRConfigSchema(ModuleConfigBase):
             "hypothesis ids on the payload as an advisory."
         ),
     )
+    draft_pending_reject_cap: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Consecutive draft-pending submit rejections on a branch before "
+            "the gate forces the submit through, stamping the unvoted draft "
+            "ids on the payload as a draft_pending_advisory. Without this "
+            "cap the same branch can be rejected forever if the pending "
+            "draft never assembles quorum, burning its whole turn budget."
+        ),
+    )
     tool_executor_hard_block_repeat: int = Field(
         default=3,
         ge=1,
