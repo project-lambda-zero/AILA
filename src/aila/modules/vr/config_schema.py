@@ -212,6 +212,16 @@ class VRConfigSchema(ModuleConfigBase):
             "reach the bridge."
         ),
     )
+    core_persona_siblings: str = Field(
+        default="maddie,renzo",
+        description=(
+            "Comma-separated persona voices spawned as the core panel "
+            "siblings, in addition to the halvar primary (researcher). The "
+            "baseline is the 3-role spine: maddie (critic) + renzo "
+            "(implementer). Optional specialist agents are spawned on demand "
+            "via the oracle, not listed here. Unknown names are skipped."
+        ),
+    )
 
     # --- Cap-exceeded reaper (operator-tunable) --------------------------
     # The four caps below drive aila.modules.vr.services.investigation_reaper

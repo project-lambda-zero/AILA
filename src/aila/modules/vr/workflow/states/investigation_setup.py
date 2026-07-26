@@ -63,20 +63,48 @@ from aila.platform.workflows.persona_spawn import (
 def _is_auto_deliberation_enabled() -> bool:
     return os.environ.get("VR_AUTO_PERSONA_DELIBERATION", "1") == "1"
 
+
+_BASELINE_CORE_SIBLINGS = "maddie,renzo"  # critic + implementer; halvar primary = researcher
+
+
+async def _core_sibling_personas() -> tuple[PersonaVoice, ...]:
+    """Config-driven core panel siblings (baseline: critic + implementer).
+
+    Reads ``vr.core_persona_siblings`` (comma-separated persona voices) and
+    resolves each to a PersonaVoice, skipping unknown names. Falls back to
+    the 3-role baseline when the config is unset/None so a fresh worker that
+    has not seeded the key never collapses the panel to the lone primary.
+    Optional specialists are spawned on demand via the oracle, not listed
+    here.
+    """
+    from aila.modules.vr.services.config_helpers import get_str
+    try:
+        raw = await get_str("core_persona_siblings")
+    except (TypeError, ValueError):
+        raw = ""
+    if not raw or raw.strip().lower() == "none":
+        raw = _BASELINE_CORE_SIBLINGS
+    out: list[PersonaVoice] = []
+    for token in raw.split(","):
+        name = token.strip().lower()
+        if not name:
+            continue
+        try:
+            out.append(PersonaVoice(name))
+        except ValueError:
+            continue
+    return tuple(out)
+
 # The personas assigned to the auto-spawned siblings. Primary branch
 # becomes the first researcher; each entry below spawns a sibling.
 #
-# Full 6-persona panel (2 researchers + 2 critics + 2 implementers):
-#   halvar (primary) + noor  = researchers -- propose hypotheses
-#   maddie + yuki            = critics -- falsify, demand evidence
-#   renzo + wei              = implementers -- build PoCs, settle disputes
-_DELIBERATION_SIBLINGS: tuple[PersonaVoice, ...] = (
-    PersonaVoice.NOOR,    # researcher (alternative style to halvar)
-    PersonaVoice.MADDIE,  # critic (aggressive falsifier)
-    PersonaVoice.YUKI,    # critic (methodical falsifier)
-    PersonaVoice.RENZO,   # implementer (PoC builder)
-    PersonaVoice.WEI,     # implementer (cost-efficient prioritizer)
-)
+# Core panel = the 3-role spine (configurable via vr.core_persona_siblings):
+#   halvar (primary) = researcher -- propose hypotheses
+#   maddie           = critic -- falsify, demand evidence
+#   renzo            = implementer -- build PoCs, settle disputes
+# The former 2nd-of-each-role personas (noor/yuki/wei) are no longer spawned
+# by default; expert diversity comes from optional specialist agents spawned
+# on demand via the oracle (request_specialist). See _core_sibling_personas.
 _PRIMARY_PERSONA: PersonaVoice = PersonaVoice.HALVAR  # researcher
 
 __all__ = ["state_investigation_setup"]
@@ -187,7 +215,7 @@ async def _spawn_persona_siblings_and_enqueue(
         investigation_id,
         primary_branch_id,
         team_id,
-        siblings=_DELIBERATION_SIBLINGS,
+        siblings=await _core_sibling_personas(),
         branch_model=VRInvestigationBranchRecord,
         inv_table="vr_investigations",
         message_table="vr_investigation_messages",

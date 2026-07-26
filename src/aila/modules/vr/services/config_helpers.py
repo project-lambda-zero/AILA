@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from aila.platform.config_base import ModuleConfigReader
 
-__all__ = ["get_float", "get_int"]
+__all__ = ["get_float", "get_int", "get_str"]
 
 _reader = ModuleConfigReader("vr")
 
 get_int = _reader.get_int
 get_float = _reader.get_float
+get_str = _reader.get_str

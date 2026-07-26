@@ -219,6 +219,13 @@ operator action.
 
 ### Changed
 
+- The default investigation panel is the 3-role spine -- halvar (researcher,
+  primary), maddie (critic), renzo (implementer) -- instead of the former
+  fixed 6 personas. Configurable via `vr.core_persona_siblings` (falls back
+  to the baseline when unset). Expert diversity now comes from optional
+  specialist agents spawned on demand via the oracle, not a hardwired panel.
+  This changes the sibling-review quorum denominator (fewer non-proposing
+  branches) and cuts baseline per-investigation cost.
 - Investigation lifecycle, support services, and data-model bases are
   hoisted to the platform and shared by both modules (RFC-01/02/04);
   modules bind their record and enum types. The platform never imports a

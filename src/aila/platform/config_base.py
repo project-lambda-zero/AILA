@@ -82,3 +82,7 @@ class ModuleConfigReader:
     async def get_float(self, key: str) -> float:
         """Resolve ``<namespace>/<key>`` and coerce to float."""
         return float(await _shared_registry().get(self._namespace, key))
+
+    async def get_str(self, key: str) -> str:
+        """Resolve ``<namespace>/<key>`` and coerce to str."""
+        return str(await _shared_registry().get(self._namespace, key))
