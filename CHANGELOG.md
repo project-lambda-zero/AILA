@@ -232,6 +232,23 @@ operator action.
   investigation and branch ids (migration 101) and the lifecycle service
   finds them by those keys, with the prior key kept as a fallback for
   cursors created before the change (RFC-02).
+- A non-retryable provider `LLMError` raised during a reasoning turn
+  escaped the turn runner uncaught (it is a direct `Exception` subclass,
+  absent from the builtin-error except tuple that wraps engine failures as
+  the module researcher error). It crashed the phase state, failed the
+  task, and flipped the whole investigation to FAILED, which then starved
+  every sibling branch at the setup status-lock and left the dispatch hub
+  completing with zero turns. Such errors are now wrapped as the module
+  researcher error, so the investigation stays RUNNING, other branches
+  continue, and auto_continue re-enqueues the affected branch.
+- Reasoning turns sent a strict `json_schema` response format built from
+  `ReasoningTurnDecision`, whose free-form dict fields (observables,
+  payload, edit_patches) cannot be expressed in strict structured-output
+  mode. Strict OpenAI-compatible providers rejected the schema outright,
+  so every reasoning turn failed on those providers. `chat_json` now
+  retries the same call in `json_object` mode with the schema appended to
+  the prompt when a provider rejects the strict schema, so reasoning turns
+  run across both strict and lenient providers.
 
 ### Removed
 

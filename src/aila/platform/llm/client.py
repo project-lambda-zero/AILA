@@ -560,25 +560,63 @@ class AilaLLMClient:
             if effective_max != routing.max_tokens:
                 routing = _dc_replace(routing, max_tokens=effective_max)
 
-        strict_schema = _make_strict_schema(schema)
-        response_format = {
+        # Try strict json_schema first. Lenient providers accept and enforce it
+        # even for schemas with free-form dict fields (observables / payload /
+        # edit_patches), producing conforming output. Strict OpenAI-compatible
+        # providers reject such a schema outright; only then fall back to
+        # json_object mode (shape guided by the system prompt, validated
+        # client-side). Falling back unconditionally would discard provider-side
+        # enforcement on lenient providers and let weak models emit
+        # non-conforming JSON that fails the client parse.
+        response_format: dict[str, Any] = {
             "type": "json_schema",
             "json_schema": {
                 "name": schema.get("title", "response"),
                 "strict": True,
-                "schema": strict_schema,
+                "schema": _make_strict_schema(schema),
             },
         }
-
-        resp = await self._call_with_retry(
-            routing=routing,
-            messages=messages,
-            response_format=response_format,
-            tools=tools,
-            tool_executor=tool_executor,
-            run_id=run_id,
-            team_id=team_id,
-        )
+        try:
+            resp = await self._call_with_retry(
+                routing=routing,
+                messages=messages,
+                response_format=response_format,
+                tools=tools,
+                tool_executor=tool_executor,
+                run_id=run_id,
+                team_id=team_id,
+            )
+        except LLMError as exc:
+            if not (_schema_has_open_object(schema) and _is_strict_schema_rejection(exc)):
+                raise
+            logger.warning(
+                "chat_json: provider rejected strict json_schema (%s) -- "
+                "retrying in json_object mode",
+                str(exc)[:160],
+            )
+            # json_object mode has no provider-side enforcement, so a weak model
+            # emits non-conforming JSON that fails the client parse. Append the
+            # schema to the prompt so the model still has the exact field names,
+            # enum values, and required set.
+            schema_hint = {
+                "role": "system",
+                "content": (
+                    "Respond with a SINGLE JSON object that conforms exactly to "
+                    "this JSON schema. Include every required field and use the "
+                    "exact field names and enum values. Emit only the JSON "
+                    "object, no prose and no code fences.\n"
+                    + json.dumps(schema)
+                ),
+            }
+            resp = await self._call_with_retry(
+                routing=routing,
+                messages=[*messages, schema_hint],
+                response_format={"type": "json_object"},
+                tools=tools,
+                tool_executor=tool_executor,
+                run_id=run_id,
+                team_id=team_id,
+            )
         # Some upstream routers (OmniRoute via Anthropic Claude) wrap structured
         # output in Markdown code fences despite response_format=json_schema.
         # Strip fences so downstream json.loads() never chokes on ```json\n...\n```
@@ -1530,6 +1568,59 @@ def _make_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
     if "$defs" in schema:
         schema["$defs"] = {k: _make_strict_schema(v) for k, v in schema["$defs"].items()}
     return schema
+
+
+def _schema_has_open_object(schema: dict[str, Any]) -> bool:
+    """True when the schema contains an open-ended object (a free-form dict).
+
+    Pydantic renders a ``dict[str, Any]`` field (observables, payload,
+    edit_patches) as ``{type: object, additionalProperties: true}`` with no
+    declared properties. OpenAI strict structured-output mode cannot express
+    that: strict mode forces ``additionalProperties: false`` and lists every
+    property in ``required``, which a free-form dict has none of. Strict
+    OpenAI-compatible providers reject the resulting json_schema outright with
+    "object type must have at least one required field", zeroing every turn on
+    those providers. A schema carrying one must drop to json_object mode.
+    """
+    if not isinstance(schema, dict):
+        return False
+    if schema.get("type") == "object" and not schema.get("properties"):
+        return True
+    for node in (schema.get("properties") or {}).values():
+        if _schema_has_open_object(node):
+            return True
+    for defn in (schema.get("$defs") or {}).values():
+        if _schema_has_open_object(defn):
+            return True
+    for variant in schema.get("anyOf", []):
+        if _schema_has_open_object(variant):
+            return True
+    for key in ("items", "prefixItems"):
+        node = schema.get(key)
+        if isinstance(node, dict) and _schema_has_open_object(node):
+            return True
+        if isinstance(node, list) and any(_schema_has_open_object(n) for n in node):
+            return True
+    return False
+
+
+def _is_strict_schema_rejection(exc: Exception) -> bool:
+    """True when a provider error is a rejection of the strict json_schema shape.
+
+    Strict OpenAI-compatible providers reject a schema carrying a free-form
+    dict (observables / payload) with a 400 that names the response_format or
+    json_schema and the required-field / additionalProperties constraint. Such
+    a call must retry in json_object mode rather than fail the turn. Transient
+    and unrelated errors (token caps, inactive accounts, rate limits) do not
+    match and propagate normally.
+    """
+    msg = str(exc).lower()
+    if "json_schema" in msg or "response_format" in msg:
+        return True
+    return (
+        "must have at least one required" in msg
+        or "additionalproperties" in msg
+    )
 
 
 def _extract_usage(completion: Any) -> dict[str, int]:

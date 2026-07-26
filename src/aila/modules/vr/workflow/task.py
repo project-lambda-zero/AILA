@@ -43,6 +43,7 @@ from aila.modules.vr.reporting.poc_writer import PocWriter
 from aila.modules.vr.services import TargetAnalysisService
 from aila.modules.vr.services.fuzz_service import FuzzCampaignService
 from aila.modules.vr.workflow.definitions import VR_INVESTIGATE_V1, VR_NDAY_V1
+from aila.modules.vr.workflow.definitions_hub import VR_INVESTIGATE_HUB
 from aila.platform.contracts import utc_now
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.tasks.context import TaskContext
@@ -117,7 +118,7 @@ async def run_vr_nday(
     # retry, a Pydantic ValidationError / KeyError / PermissionError
     # / CancelledError is not.
     retriable_on=_TASK_TRANSIENT,
-    definition=VR_INVESTIGATE_V1,
+    definition=VR_INVESTIGATE_HUB,
 )
 async def run_vr_investigate(
     ctx: TaskContext,

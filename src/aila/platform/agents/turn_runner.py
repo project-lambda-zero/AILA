@@ -48,6 +48,7 @@ from aila.platform.contracts import utc_now
 from aila.platform.contracts.enums import BranchStatus, SenderKind
 from aila.platform.contracts.reasoning import ReasoningTurnDecision
 from aila.platform.llm.correlation import correlation_scope
+from aila.platform.llm.errors import LLMError
 from aila.platform.llm.idempotency_cache import (
     lookup_cached_response,
     make_request_key,
@@ -435,12 +436,18 @@ class AgentTurnRunnerBase:
                         user_prompt=user_prompt,
                         run_id=self.investigation_id,
                     )
-            except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError) as exc:
-                # must surface as self._error_cls so the loop catches
-                # it, marks exit_reason='researcher_error:<msg>', and
-                # the workflow finalises with status=FAILED instead of
-                # silently completing the task with no outcome and
-                # status=RUNNING.
+            except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError, LLMError) as exc:
+                # Wrap every engine failure as self._error_cls so the loop's
+                # researcher_error handler catches it, sets
+                # exit_reason='researcher_error:<msg>', and _resolve_final_status
+                # leaves the investigation RUNNING while auto_continue
+                # re-enqueues this branch. LLMError was previously absent from
+                # this tuple: a non-retryable provider error (a 400 model
+                # rejection) is a direct Exception subclass, not OSError or
+                # RuntimeError, so it escaped run_turn uncaught, crashed the
+                # phase state, failed the task, and flipped the whole
+                # investigation to FAILED, starving every sibling branch at
+                # setup STATUS_LOCKED.
                 raise self._error_cls(
                     f"engine.decide_next_turn failed for investigation_id="
                     f"{self.investigation_id} branch_id={self.branch_id}: "
