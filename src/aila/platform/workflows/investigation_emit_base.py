@@ -38,6 +38,7 @@ from aila.platform.contracts.enums import BranchStatus, InvestigationStatus
 from aila.platform.services.branch_cleanup import close_orphan_branches_on_terminal
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.services.ledger import LedgerService
+from aila.platform.services.outcome_review import summarize_outcome_for_review
 from aila.platform.tasks.arq_purge import purge_arq_jobs_for_investigation
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.investigation_setup_base import (
@@ -653,7 +654,9 @@ def state_investigation_emit(
                         ),
                         outcome_kind=outcome_row.outcome_kind,
                         confidence=outcome_row.confidence,
-                        payload_summary=(outcome_row.payload_json or "")[:400],
+                        payload_summary=summarize_outcome_for_review(
+                            outcome_row.payload_json,
+                        ),
                     )
                 quorum = await bindings.evaluate_quorum(str(outcome_id))
                 _log.info(

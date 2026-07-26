@@ -38,6 +38,7 @@ from aila.platform.services.outcome_review import (
     VOTE_REQUEST_EDIT,
     QuorumOutcome,
     compute_quorum,
+    summarize_outcome_for_review,
 )
 from aila.platform.services.outcome_review import (
     evaluate_quorum as _platform_evaluate_quorum,
@@ -65,6 +66,7 @@ __all__ = [
     "evaluate_quorum",
     "post_draft_review_request",
     "set_outcome_state",
+    "summarize_outcome_for_review",
     "upsert_review",
 ]
 

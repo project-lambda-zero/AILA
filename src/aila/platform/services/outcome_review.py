@@ -75,6 +75,7 @@ from sqlmodel import select as _select
 from aila.platform.contracts import utc_now
 from aila.platform.contracts.enums import BranchStatus, OperatorIntent, SenderKind
 from aila.platform.contracts.mcp_payload import PayloadKind
+from aila.platform.llm.sanitize import sanitize_input
 from aila.platform.services.audit import record_audit_event
 from aila.platform.uow import UnitOfWork
 
@@ -95,6 +96,7 @@ __all__ = [
     "evaluate_quorum",
     "post_draft_review_request",
     "set_outcome_state",
+    "summarize_outcome_for_review",
     "upsert_review",
 ]
 
@@ -112,6 +114,65 @@ VOTE_REQUEST_EDIT = "request_edit"
 VOTE_ABSTAIN = "abstain"
 
 _VALID_VOTES = frozenset({VOTE_APPROVE, VOTE_REJECT, VOTE_REQUEST_EDIT, VOTE_ABSTAIN})
+
+
+def summarize_outcome_for_review(
+    payload_json: str | None,
+    *,
+    max_chars: int = 1600,
+) -> str:
+    """Human-readable excerpt of a draft outcome for a reviewer prompt.
+
+    A sibling voting on a draft needs to see the CLAIMS it must verify,
+    not a raw JSON prefix (the prior ``payload_json[:400]`` handed the
+    reviewer brace + key plumbing and cut the finding mid-token, so a
+    reviewer could not judge the draft and abstained). This pulls the
+    finding text out of the payload -- ``answer`` for vr,
+    ``headline_verdict`` / ``summary`` for malware -- plus a few
+    high-signal fields, sanitises it so a pasted tool-result cannot
+    hijack the reviewer prompt, and bounds it to ``max_chars``. Falls
+    back to a compact dump of the non-empty top-level keys when no
+    recognised finding field is present.
+    """
+    try:
+        data = json.loads(payload_json or "{}")
+    except (ValueError, TypeError):
+        data = {}
+    if not isinstance(data, dict):
+        return sanitize_input(str(data)[:max_chars]) or "(empty draft payload)"
+
+    parts: list[str] = []
+    for key in ("answer", "headline_verdict", "summary"):
+        val = data.get(key)
+        if isinstance(val, str) and val.strip():
+            parts.append(val.strip())
+            break
+
+    vf = data.get("vulnerable_function")
+    if isinstance(vf, str) and vf.strip():
+        parts.append(f"vulnerable_function: {vf.strip()}")
+    comps = data.get("affected_components")
+    if isinstance(comps, list) and comps:
+        parts.append(
+            "affected_components: " + ", ".join(str(c) for c in comps[:8]),
+        )
+    fam = data.get("family_attribution")
+    if isinstance(fam, str) and fam.strip():
+        parts.append(f"family_attribution: {fam.strip()}")
+
+    if not parts:
+        compact = {
+            k: v for k, v in data.items()
+            if v and k != "panel_contributions"
+        }
+        if not compact:
+            return "(empty draft payload)"
+        parts.append(json.dumps(compact))
+
+    text = "\n".join(parts).strip()
+    if len(text) > max_chars:
+        text = text[:max_chars] + " [...truncated]"
+    return sanitize_input(text) or "(empty draft payload)"
 
 
 # Keys agents are NEVER permitted to overwrite via direct edit. These

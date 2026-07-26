@@ -58,6 +58,7 @@ from aila.modules.vr.services.outcome_review import (
     OUTCOME_STATE_APPROVED,
     OUTCOME_STATE_DRAFT,
     evaluate_quorum,
+    summarize_outcome_for_review,
     upsert_review,
 )
 from aila.platform.agents.auto_steering import _normalize_acked_observable
@@ -1092,6 +1093,9 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                 f"  - outcome_id={d.id} kind={d.outcome_kind} "
                 f"confidence={d.confidence}",
             )
+            for line in summarize_outcome_for_review(d.payload_json).splitlines():
+                directive_lines.append(f"      {line}")
+            directive_lines.append("")
         directive_lines.extend([
             "",
             "Your next turn MUST be a submit_outcome_review action with one",

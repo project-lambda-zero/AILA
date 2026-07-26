@@ -273,6 +273,15 @@ operator action.
 
 ### Fixed
 
+- Draft-outcome reviewers are now shown the finding they vote on. The
+  submit-block review directive listed each pending draft by id, kind,
+  and confidence only, and the emit-time review notice showed the first
+  400 characters of the raw payload JSON (brace and key plumbing, the
+  finding cut mid-token), so a sibling could not judge the draft and
+  abstained. A shared `summarize_outcome_for_review` helper now extracts
+  the finding text (`answer` for vr, `headline_verdict` for malware) plus
+  a few high-signal fields, sanitises it against prompt injection, and
+  both the review directive and the review notice render that excerpt.
 - Sibling `request_edit` review suggestions now reach the outcome. A
   `request_edit` vote's `suggested_edits` and the reviewer comment were
   written to the review row and never read back: the synthesis agent,
