@@ -189,9 +189,6 @@ class AgentTurnRunnerBase:
         untouched. The idempotency key is derived from the COERCED kind
         so an ARQ retry replays the same append and is deduped.
         """
-        writes = decision.ledger_writes[:_MAX_LEDGER_WRITES_PER_TURN]
-        if not writes:
-            return
         phase_mission = ""
         if case_state is not None:
             phase_mission = str(
@@ -199,6 +196,39 @@ class AgentTurnRunnerBase:
             )
         in_recon = phase_mission.upper().startswith("RECON")
         service = LedgerService()
+        # RFC-13 recon->audit feeder. The audit phases gate on
+        # make_discovery_condition('discovery'); the hub's design expects
+        # recon to POST discoveries. Agents route their target
+        # characterization into decision.hypotheses (and a terminal scoping
+        # outcome), not ledger notes, so the ledger stays empty of
+        # discoveries, every audit phase is blocked, and the hub replans ->
+        # stalls -> the branch short-circuits to a draft. Coerce each live
+        # hypothesis raised during recon into a ledger discovery, idempotent
+        # per hypothesis id so it posts once regardless of how many recon
+        # turns keep it live. This unlocks source_audit / variant_hunt off
+        # the shared ledger.
+        if in_recon:
+            for hyp in decision.hypotheses:
+                hid = (hyp.id or "").strip()
+                if not hid:
+                    continue
+                await service.append_general(
+                    self.investigation_id,
+                    self.branch_id,
+                    "discovery",
+                    {
+                        "hypothesis_id": hid,
+                        "claim": hyp.claim,
+                        "why_plausible": hyp.why_plausible,
+                        "kill_criterion": hyp.kill_criterion,
+                        "source": "recon_hypothesis",
+                    },
+                    idempotency_key=f"{self.branch_id}:hyp:{hid}",
+                    session=session,
+                )
+        writes = decision.ledger_writes[:_MAX_LEDGER_WRITES_PER_TURN]
+        if not writes:
+            return
         for index, write in enumerate(writes):
             kind = write.kind
             if in_recon and kind == "note":

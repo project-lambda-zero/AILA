@@ -23,7 +23,6 @@ from aila.modules.vr.workflow.definitions import _build_services
 from aila.modules.vr.workflow.definitions_v2 import (
     _BINARY_AUDIT_DIRECTIVE,
     _MOBILE_AUDIT_DIRECTIVE,
-    _RECON_DIRECTIVE,
     _RECON_MAX_TURNS,
     _SOURCE_AUDIT_DIRECTIVE,
     _VARIANT_HUNT_DIRECTIVE,
@@ -50,10 +49,29 @@ _POC_DEV_DIRECTIVE = (
     "trigger and the observed effect."
 )
 
+# Hub-specific recon directive. The V2 kind-router recon directive tells
+# the agent to "submit a scoping outcome" -- correct there because the
+# router auto-transitions recon -> source_audit. In the discovery-driven
+# hub a terminal submit ENDS the branch, so that directive made the panel
+# short-circuit to a draft at recon instead of progressing. Here recon
+# advances by POSTING DISCOVERIES: the hub converts recon hypotheses into
+# shared ledger discoveries that activate the deep audit phases, so the
+# agent must surface hypotheses and must NOT submit a terminal finding yet.
+_HUB_RECON_DIRECTIVE = (
+    "RECON PHASE. Objective: characterize the target scope and entry "
+    "points and surface the most promising audit targets. For each "
+    "promising surface, raise a concrete hypothesis naming the entry point "
+    "and the sink you suspect -- the hub turns your recon hypotheses into "
+    "shared discoveries that route the panel to the deep audit phase. Do "
+    "NOT submit a terminal finding in this phase, and do NOT start a "
+    "systematic audit or a PoC yet: recon hands off automatically once you "
+    "have surfaced discoveries."
+)
+
 VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
     PhaseSpec(
         name="recon",
-        directive=_RECON_DIRECTIVE,
+        directive=_HUB_RECON_DIRECTIVE,
         max_turns=_RECON_MAX_TURNS,
         allowed_servers=("audit_mcp", "ida_headless"),
         trust="confirmed",

@@ -259,6 +259,18 @@ operator action.
 
 ### Fixed
 
+- The discovery-driven dispatch hub no longer stalls at recon. Recon
+  agents route their target characterization into `hypotheses` (and a
+  terminal scoping outcome), not ledger notes, so the audit phases -- which
+  gate on `make_discovery_condition('discovery')` -- never activated: the
+  hub raised a `no activatable phase` replan, nobody ratified it, and the
+  branch short-circuited to a draft. Two fixes: (1) recon hypotheses are
+  coerced into ledger discoveries (idempotent per hypothesis id), the feeder
+  that unlocks `source_audit`/`variant_hunt`; (2) the hub gets its own recon
+  directive that tells the agent to surface discoveries and NOT submit a
+  terminal finding during recon (the V2 kind-router directive told it to
+  submit, which ends the branch under the hub). Verified: a fresh run posts
+  9 discoveries with zero replan requests.
 - audit_mcp tool calls now always use the investigation's one resolved
   index. The executor previously rewrote only a hardcoded blocklist of
   placeholder `index_id` values (`main`, `primary`, `head`, ...); a model
