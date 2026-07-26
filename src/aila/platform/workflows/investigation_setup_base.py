@@ -89,6 +89,13 @@ class InvestigationStateBindings:
     executor_factory: Callable[[], Any] | None = None
     max_turns_reader: Callable[[], Awaitable[int]] | None = None
     researcher_error: type[BaseException] | None = None
+    # on-demand specialist spawn. Polls ratified request_specialist
+    # capabilities for the investigation and spawns the matching registry
+    # specialist (idempotent per persona_voice). Bound by modules that
+    # support specialists; called at setup AND at every loop-cycle entry so
+    # a request ratified mid-run spawns on the next cycle, not only when the
+    # request predates setup. None -> the module has no specialist support.
+    specialist_spawn_fn: Callable[[str], Awaitable[None]] | None = None
     # emit-state (Phase 4c) inputs -- optional until the emit binds them.
     synthesis_task_fn: Callable[..., Awaitable[Any]] | None = None
     verifier_task_fn: Callable[..., Awaitable[Any]] | None = None

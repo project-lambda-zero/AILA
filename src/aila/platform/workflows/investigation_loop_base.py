@@ -322,6 +322,18 @@ def state_investigation_loop(
                 )
                 break
 
+            # On-demand specialists (mid-run spawn). A request_specialist
+            # ratified AFTER setup ran must still spawn -- setup does not
+            # re-run on auto-continue, so a setup-only spawn never fires for
+            # the real use case (the agent requests a specialist mid-
+            # investigation). Poll each live turn so a request ratified by a
+            # sibling this turn spawns the matching specialist on the next
+            # turn. Idempotent per persona_voice; a single cheap query when
+            # nothing new is ratified. None when the module has no specialist
+            # support.
+            if bindings.specialist_spawn_fn is not None:
+                await bindings.specialist_spawn_fn(investigation_id)
+
             try:
                 result = await researcher.run_turn()
             except LLMCancelledError:

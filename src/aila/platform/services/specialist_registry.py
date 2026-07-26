@@ -34,7 +34,6 @@ __all__ = [
     "SpecialistAgentRecord",
     "SpecialistAgentRegistry",
     "SpecialistAgentSummary",
-    "builtin_specialists",
 ]
 
 
@@ -119,10 +118,6 @@ _BUILTINS: dict[str, tuple[dict[str, str], ...]] = {
 }
 
 
-def builtin_specialists(module_id: str) -> tuple[dict[str, str], ...]:
-    """Built-in specialist templates for *module_id* (empty if none)."""
-    return _BUILTINS.get(module_id, ())
-
 
 def _to_summary(rec: SpecialistAgentRecord) -> SpecialistAgentSummary:
     return SpecialistAgentSummary(
@@ -144,7 +139,7 @@ class SpecialistAgentRegistry:
                 SpecialistAgentRecord.module_id == module_id,
             )
             if enabled_only:
-                stmt = stmt.where(SpecialistAgentRecord.enabled == True)  # noqa: E712
+                stmt = stmt.where(SpecialistAgentRecord.enabled.is_(True))
             rows = list((await uow.session.exec(stmt)).all())
         return [_to_summary(r) for r in sorted(rows, key=lambda r: r.name)]
 
@@ -182,7 +177,7 @@ class SpecialistAgentRegistry:
                 select(SpecialistAgentRecord).where(
                     SpecialistAgentRecord.module_id == module_id,
                     SpecialistAgentRecord.capability == capability,
-                    SpecialistAgentRecord.enabled == True,  # noqa: E712
+                    SpecialistAgentRecord.enabled.is_(True),
                 ),
             )).first()
         return _to_summary(row) if row is not None else None
@@ -236,7 +231,7 @@ class SpecialistAgentRegistry:
         inserted.
         """
         inserted = 0
-        for tmpl in builtin_specialists(module_id):
+        for tmpl in _BUILTINS.get(module_id, ()):
             if await self.get_by_name(module_id, tmpl["name"]) is not None:
                 continue
             await self.upsert(SpecialistAgentCreate(

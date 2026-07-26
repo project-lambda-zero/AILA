@@ -196,6 +196,64 @@ async def _has_unvoted_pending_draft(branch: Any) -> bool:
     return len(set(voted)) < len(set(draft_ids))
 
 
+async def _spawn_ratified_specialists(investigation_id: str) -> None:
+    """Spawn ratified request_specialist capabilities not yet on the panel.
+
+    Polls the oracle for ratified specialist capabilities, resolves each to a
+    registry specialist, and spawns its branch (idempotent per persona_voice
+    via spawn_specialist_branch). Self-derives the primary branch (parent)
+    and team_id from the investigation so the SAME poll runs both at setup
+    and at every loop-cycle entry -- a request ratified mid-run spawns on the
+    next cycle, not only when the request predates setup. No-op when nothing
+    is ratified or the primary branch does not exist yet.
+    """
+    capabilities = await Oracle().ratified_specialist_capabilities(
+        investigation_id,
+    )
+    if not capabilities:
+        return
+    from aila.modules.vr.workflow.task import run_vr_investigate
+
+    async with UnitOfWork() as uow:
+        inv = (await uow.session.exec(
+            _select(VRInvestigationRecord).where(
+                VRInvestigationRecord.id == investigation_id,
+            )
+        )).first()
+        if inv is None:
+            return
+        team_id = inv.team_id
+        primary = (await uow.session.exec(
+            _select(VRInvestigationBranchRecord).where(
+                VRInvestigationBranchRecord.investigation_id
+                == investigation_id,
+                VRInvestigationBranchRecord.fork_reason == "primary",
+            )
+        )).first()
+    if primary is None:
+        return
+    registry = SpecialistAgentRegistry()
+    for capability in capabilities:
+        spec = await registry.find_by_capability("vr", capability)
+        if spec is None:
+            continue
+        await spawn_specialist_branch(
+            investigation_id,
+            primary.id,
+            team_id,
+            specialist_name=spec.name,
+            branch_model=VRInvestigationBranchRecord,
+            inv_table="vr_investigations",
+            task_fn=run_vr_investigate,
+            track="vr",
+            group_id="vr_specialist",
+            task_queue=default_task_queue(),
+            strip_case_state=lambda raw: _strip_rejected_from_state(
+                _strip_directives_from_state(raw),
+            ),
+        )
+
+
 async def _spawn_persona_siblings_and_enqueue(
     *,
     investigation_id: str,
@@ -229,36 +287,11 @@ async def _spawn_persona_siblings_and_enqueue(
         should_reactivate=_has_unvoted_pending_draft,
     )
 
-    # On-demand specialists: for each ratified request_specialist capability,
-    # resolve the registry specialist and spawn its branch. Idempotent per
-    # specialist (spawn_specialist_branch dedupes on persona_voice), so this
-    # runs safely on every setup pass. The spawned branch's persona_voice is
-    # the specialist name, which setup resolves back to _branch_capability so
-    # the hub routes it to the capability-scoped phases.
-    capabilities = await Oracle().ratified_specialist_capabilities(
-        investigation_id,
-    )
-    if capabilities:
-        registry = SpecialistAgentRegistry()
-        for capability in capabilities:
-            spec = await registry.find_by_capability("vr", capability)
-            if spec is None:
-                continue
-            await spawn_specialist_branch(
-                investigation_id,
-                primary_branch_id,
-                team_id,
-                specialist_name=spec.name,
-                branch_model=VRInvestigationBranchRecord,
-                inv_table="vr_investigations",
-                task_fn=run_vr_investigate,
-                track="vr",
-                group_id="vr_specialist",
-                task_queue=default_task_queue(),
-                strip_case_state=lambda raw: _strip_rejected_from_state(
-                    _strip_directives_from_state(raw),
-                ),
-            )
+    # On-demand specialists: spawn any ratified request_specialist
+    # capabilities. Shared with the loop-cycle hook (specialist_spawn_fn) so a
+    # request ratified after setup also spawns -- see
+    # _spawn_ratified_specialists.
+    await _spawn_ratified_specialists(investigation_id)
 
 
 _SETUP_BINDINGS = InvestigationStateBindings(
@@ -270,6 +303,7 @@ _SETUP_BINDINGS = InvestigationStateBindings(
     spawn_fn=_spawn_persona_siblings_and_enqueue,
     pattern_store_factory=lambda: PatternStore(knowledge=KnowledgeService()),
     auto_deliberation_enabled=_is_auto_deliberation_enabled,
+    specialist_spawn_fn=_spawn_ratified_specialists,
 )
 _SETUP_HOOKS = InvestigationStateHooks(resolve_cve_intel=_resolve_cve_intel)
 

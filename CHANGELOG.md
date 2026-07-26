@@ -22,10 +22,14 @@ operator action.
 - On-demand specialist spawn + CRUD API for the specialist-agent registry.
   A core branch asks the oracle for a specialist (`request_specialist`
   ledger request, target capability); a distinct branch (the critic)
-  ratifies it; the module's setup resolves the ratified capability to a
-  registry specialist and spawns one branch (`spawn_specialist_branch`,
-  idempotent) whose persona_voice resolves back to `_branch_capability` so
-  the hub routes it to the capability-scoped phases. The
+  ratifies it; the module resolves the ratified capability to a registry
+  specialist and spawns one branch (`spawn_specialist_branch`, idempotent)
+  at setup AND at every live loop turn -- so a request ratified mid-run
+  (the real case: the agent asks for an expert eye after recon, long after
+  setup ran) spawns on the next turn, not only when the request predates
+  setup. The spawned branch's persona_voice resolves back to
+  `_branch_capability` so the hub routes it to the capability-scoped
+  phases. The
   `/agents/specialists` router lists, creates/updates, seeds, and deletes
   specialists so operators define new expert perspectives without a code
   change.

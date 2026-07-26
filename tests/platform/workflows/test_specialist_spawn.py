@@ -19,6 +19,11 @@ from aila.modules.vr.db_models import (
     VRTargetRecord,
     VRWorkspaceRecord,
 )
+from aila.modules.vr.workflow.states.investigation_loop import _LOOP_BINDINGS
+from aila.modules.vr.workflow.states.investigation_setup import (
+    _SETUP_BINDINGS,
+    _spawn_ratified_specialists,
+)
 from aila.platform.services.ledger import LedgerPermissionError, LedgerService
 from aila.platform.services.oracle import Oracle
 from aila.platform.uow import UnitOfWork
@@ -126,3 +131,17 @@ async def test_spawn_specialist_branch_is_idempotent(test_db) -> None:
     assert re_branches[0].status == "active"
     # One enqueue for the first spawn; the idempotent second does not re-enqueue.
     assert len(queue.calls) == 1
+
+
+def test_specialist_spawn_hook_wired_on_setup_and_loop_bindings() -> None:
+    """Regression guard: the specialist-spawn poll is bound on BOTH the
+    setup AND loop bindings.
+
+    Before this wiring the poll ran only at setup (one-time). Setup does not
+    re-run on auto-continue, so a request_specialist ratified mid-run -- the
+    real use case, since the agent requests a specialist after recon -- never
+    spawned. The loop binding makes the same poll run each live turn. Dropping
+    either binding re-deadens the feature; this test fails if that happens.
+    """
+    assert _SETUP_BINDINGS.specialist_spawn_fn is _spawn_ratified_specialists
+    assert _LOOP_BINDINGS.specialist_spawn_fn is _spawn_ratified_specialists

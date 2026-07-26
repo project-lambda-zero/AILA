@@ -26,6 +26,9 @@ from aila.modules.vr.db_models import (
 )
 from aila.modules.vr.services.config_helpers import get_int
 from aila.modules.vr.services.mcp_call_logger import record_call
+from aila.modules.vr.workflow.states.investigation_setup import (
+    _spawn_ratified_specialists,
+)
 from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
 from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
 from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
@@ -99,6 +102,7 @@ _LOOP_BINDINGS = InvestigationStateBindings(
     executor_factory=_get_executor,
     max_turns_reader=lambda: get_int("max_turns_per_task"),
     researcher_error=VulnResearcherError,
+    specialist_spawn_fn=_spawn_ratified_specialists,
 )
 
 # The loop handler is the platform factory bound to VR's researcher.
