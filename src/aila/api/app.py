@@ -552,6 +552,10 @@ def create_app() -> FastAPI:
     from aila.api.routers.admin_lifecycle import router as admin_lifecycle_router
     application.include_router(admin_lifecycle_router)
 
+    # RFC-13: user-extensible specialist-agent registry (optional panel members)
+    from aila.api.routers.specialist_agents import router as specialist_agents_router
+    application.include_router(specialist_agents_router)
+
     # Health router: /health and /status -- no auth required (public endpoints)
     from aila.api.routers.health import router as health_router
     application.include_router(health_router)

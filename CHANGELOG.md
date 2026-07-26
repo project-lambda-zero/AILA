@@ -19,6 +19,16 @@ operator action.
 
 ### Added
 
+- On-demand specialist spawn + CRUD API for the specialist-agent registry.
+  A core branch asks the oracle for a specialist (`request_specialist`
+  ledger request, target capability); a distinct branch (the critic)
+  ratifies it; the module's setup resolves the ratified capability to a
+  registry specialist and spawns one branch (`spawn_specialist_branch`,
+  idempotent) whose persona_voice resolves back to `_branch_capability` so
+  the hub routes it to the capability-scoped phases. The
+  `/agents/specialists` router lists, creates/updates, seeds, and deletes
+  specialists so operators define new expert perspectives without a code
+  change.
 - User-extensible specialist-agent registry (`platform/services/specialist_registry.py`,
   migration 103): the investigation panel is a fixed 3-role spine
   (researcher, critic, implementer) plus optional specialist agents a core
