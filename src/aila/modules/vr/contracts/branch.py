@@ -35,7 +35,15 @@ class VRBranchSummary(BaseModel):
     investigation_id: str
     parent_branch_id: str | None = None
     status: BranchStatus
-    persona_voice: PersonaVoice | None = None
+    # Voice identifier for the branch. One of the core PersonaVoice values
+    # (halvar/maddie/yuki/renzo/noor/wei + the synthetic
+    # unspecified/merge_result/fork_unnamed) for a core-role branch, OR a
+    # specialist name (e.g. 're', 'exploit-dev') for an on-demand specialist
+    # branch. Typed as str -- NOT the PersonaVoice enum -- because specialists
+    # are user-extensible (specialist_registry), so the set of valid voices is
+    # open. A PersonaVoice-typed field 500'd this summary (and the SSE branch
+    # event) for any investigation that spawned a specialist.
+    persona_voice: str | None = None
     fork_reason: str = ""
     fork_at_turn: int | None = None
     turn_count: int = 0

@@ -259,6 +259,13 @@ operator action.
 
 ### Fixed
 
+- The investigation branch list (`/vr/investigations/{id}/branches`) and the
+  branch SSE event no longer 500 when an investigation contains an on-demand
+  specialist branch. `VRBranchSummary.persona_voice` was typed as the
+  `PersonaVoice` enum, which rejected specialist voice identifiers (`re`,
+  `exploit-dev`, etc.); it is now a plain string, since specialists are
+  user-extensible. Without this the entire detail page lost its branch and
+  agent-name display for any investigation that spawned a specialist.
 - Per-phase prompt selection now works: a dispatch phase's `strategy_family`
   overrides the investigation-level prompt family (threaded loop ->
   `_directive.phase_strategy_family` observable -> turn runner), falling back

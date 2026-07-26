@@ -1324,7 +1324,7 @@ export function InvestigationDetailPage() {
 
 type OutcomeRowProps = {
   outcome: import("../types").VROutcomeSummary;
-  persona: PersonaVoice | null;
+  persona: PersonaVoice | string | null;
   invId: string;
   reverifyMut: ReturnType<typeof useReverifyInvestigation>;
   promoteMut: ReturnType<typeof usePromoteOutcomeToFinding>;

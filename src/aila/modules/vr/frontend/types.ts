@@ -420,7 +420,11 @@ export interface VRBranchSummary {
   investigation_id: string;
   parent_branch_id?: string | null;
   status: BranchStatus;
-  persona_voice?: PersonaVoice | null;
+  // Core persona name OR an on-demand specialist name (e.g. 'exploit-dev').
+  // Specialists are user-extensible, so this is a plain string, not the
+  // narrow PersonaVoice union. personaMeta()/formatBranchDisplayName() both
+  // fall back gracefully for names outside PersonaVoice.
+  persona_voice?: PersonaVoice | string | null;
   fork_reason: string;
   fork_at_turn?: number | null;
   turn_count: number;
