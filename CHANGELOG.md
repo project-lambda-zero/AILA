@@ -259,6 +259,14 @@ operator action.
 
 ### Fixed
 
+- `read_function` returns real source instead of looping when a function is
+  absent from the index. After the class-rewrite and bare-name retries miss
+  (the function simply was not captured by the indexer), the bridge now
+  auto-falls back: with a `file_path` it reads that file's first 400 lines
+  from disk (bypassing the indexer); otherwise it runs `semantic_search` on
+  the name and returns the top match. Previously the only output was a
+  suggestion-only error the agent ignored, repeating the call until the
+  3-strike hard-block.
 - `read_function` auto-retries with the bare method name when a
   class-qualified name is not indexed. Agents over-qualify (a class-scoped
   method name) but trailmark keys the function index on the bare name; the

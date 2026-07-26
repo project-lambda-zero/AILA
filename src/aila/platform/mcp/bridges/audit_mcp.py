@@ -723,6 +723,92 @@ class AuditMcpBridgeTool(Tool):
                                 )
                                 ctx["status"] = "ready"
                                 return _rpayload
+                        # AUTO-FALLBACK. The function is not in the index
+                        # under any name (class-rewrite + bare-retry both
+                        # missed) -- trailmark simply did not capture it. Do
+                        # NOT bounce a suggestion-only error: the agent
+                        # ignores suggestions and repeats the call until the
+                        # 3-strike hard-block. Return actual source. With a
+                        # file_path, read the file region from disk (bypasses
+                        # the indexer); otherwise fall back to semantic_search
+                        # by name.
+                        if file_hint:
+                            fb = await self._read_lines_local({
+                                "index_id": normalized_kwargs.get("index_id") or "",
+                                "file_path": file_hint,
+                                "start": 1,
+                                "end": 400,
+                            })
+                            if fb.get("status") == "ready":
+                                logging.getLogger(__name__).info(
+                                    "read_function NOT_INDEXED_FALLBACK %r -> "
+                                    "read_lines(%s, 1-400)", name, file_hint,
+                                )
+                                ctx["status"] = "ready"
+                                return {
+                                    "status": "ready",
+                                    "name": name,
+                                    "file_path": file_hint,
+                                    "start_line": 1,
+                                    "end_line": fb.get("end_line", 0),
+                                    "total_lines_in_file": fb.get(
+                                        "total_lines_in_file", 0,
+                                    ),
+                                    "content": fb.get("content", ""),
+                                    "_bridge_note": (
+                                        f"{name!r} is not in the function index. "
+                                        f"Auto-read {file_hint!r} lines 1-400 "
+                                        f"from disk. Search this content for the "
+                                        f"body; call read_lines for a wider "
+                                        f"window if it runs past line 400."
+                                    ),
+                                }
+                        elif normalized_kwargs.get("index_id"):
+                            ss_kwargs = {
+                                "index_id": normalized_kwargs["index_id"],
+                                "query": name,
+                                "top_k": 3,
+                            }
+                            try:
+                                async with httpx.AsyncClient(
+                                    timeout=self._timeout,
+                                ) as _sc:
+                                    _sresp = await _sc.post(
+                                        f"{base}/tools/semantic_search",
+                                        json=ss_kwargs,
+                                    )
+                                _spayload = _sresp.json()
+                            except (
+                                httpx.ConnectError, httpx.TimeoutException, ValueError,
+                            ):
+                                _spayload = None
+                            _results = (
+                                _spayload.get("results")
+                                if isinstance(_spayload, dict) else None
+                            )
+                            if isinstance(_results, list) and _results:
+                                _top = _results[0]
+                                logging.getLogger(__name__).info(
+                                    "read_function NOT_INDEXED_FALLBACK %r -> "
+                                    "semantic_search top result", name,
+                                )
+                                ctx["status"] = "ready"
+                                return {
+                                    "status": "ready",
+                                    "name": name,
+                                    "file_path": _top.get("file_path") or "?",
+                                    "start_line": _top.get("start_line") or 0,
+                                    "end_line": _top.get("end_line") or 0,
+                                    "content": (
+                                        _top.get("content") or _top.get("body") or ""
+                                    ),
+                                    "_bridge_note": (
+                                        f"{name!r} is not in the function index. "
+                                        f"Auto-fell back to semantic_search; "
+                                        f"showing the top match. Use read_lines "
+                                        f"for a wider window."
+                                    ),
+                                }
                         suggestions = await self._suggest_function_names(
                             base=base,
                             index_id=normalized_kwargs.get("index_id") or "",
