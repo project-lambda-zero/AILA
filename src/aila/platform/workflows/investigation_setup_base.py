@@ -23,6 +23,7 @@ from sqlmodel import select as _select
 
 from aila.platform.contracts import utc_now
 from aila.platform.contracts.enums import BranchStatus, InvestigationStatus
+from aila.platform.services.specialist_registry import SpecialistAgentRegistry
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import StateResult
 
@@ -544,6 +545,12 @@ def state_investigation_setup(
             len(applicable_patterns),
         )
 
+        branch_capability: str | None = None
+        if bindings.module_id and branch.persona_voice:
+            branch_capability = await SpecialistAgentRegistry().resolve_capability(
+                bindings.module_id, branch.persona_voice,
+            )
+
         return StateResult(
             next_state=next_state,
             output={
@@ -555,6 +562,14 @@ def state_investigation_setup(
                 "team_id": inv.team_id,
                 "cve_intel": cve_intel,
                 "applicable_patterns": applicable_patterns,
+                # Specialist capability routing: a spawned specialist branch
+                # carries the specialist name as its persona_voice; resolve it
+                # back to a capability so the dispatch hub's _pick filter
+                # routes it to the capability-scoped phases. Core roles
+                # (researcher/critic/implementer) are not registered
+                # specialists, so this resolves to None and they walk every
+                # phase -- the correct all-branches dialectic.
+                "_branch_capability": branch_capability,
                 # RFC-13 wiring audit: forward across setup so the dispatch
                 # hub picks up its walk + the cycle counter for the
                 # resumed branch. Empty defaults are harmless on a fresh
