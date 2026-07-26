@@ -141,6 +141,7 @@ def _loop_builder(phase: PhaseSpec, next_state: str) -> HandlerFn:
         phase_directive=phase.directive,
         phase_max_turns=phase.max_turns,
         phase_allowed_servers=phase.allowed_servers,
+        phase_strategy_family=phase.strategy_family,
     )
 
 

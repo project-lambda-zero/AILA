@@ -228,6 +228,15 @@ operator action.
 
 ### Fixed
 
+- Per-phase prompt selection now works: a dispatch phase's `strategy_family`
+  overrides the investigation-level prompt family (threaded loop ->
+  `_directive.phase_strategy_family` observable -> turn runner), falling back
+  to the investigation family when a phase sets none. The field was
+  previously declared but ignored.
+- The dispatch hub's overall-turn budget guard is now fed: a phase loop that
+  exits on its turn cap sets `_budget_exhausted` once the branch's cumulative
+  turns reach the overall cap, so the hub stops the walk within a single task
+  instead of relying only on the re-enqueue cap.
 - Quorum-approved findings now confirm the proposing branch's discoveries on
   the shared ledger (RFC-13 Phase 4). Previously nothing wrote ledger
   decision entries, so no discovery was ever confirmed: the confirmed-trust

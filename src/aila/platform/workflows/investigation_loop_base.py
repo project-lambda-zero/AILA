@@ -175,16 +175,21 @@ async def _update_hard_block_streak(
 
 
 async def _write_phase_directive(
-    branch_model: Any, branch_id: str, directive: str,
+    branch_model: Any, branch_id: str, directive: str | None,
+    *, strategy_family: str | None = None,
 ) -> None:
-    """Write the phase mission as a ``_directive.phase_mission`` observable.
+    """Write the phase regime (mission + optional prompt family) to observables.
 
     The render layer surfaces ``_directive.*`` observables in the next-turn
     prompt (reserved keys, never evicted), so a phase-scoped loop tells the
     shared expert agent this phase's objective and exit criteria without a
-    phase-specific system prompt. Overwritten at each phase entry; stripped
-    at fork so children start on a clean directive slate.
+    phase-specific system prompt. ``strategy_family``, when set, is written
+    to ``_directive.phase_strategy_family`` so the turn runner selects this
+    phase's prompt family instead of the investigation-level one. Overwritten
+    at each phase entry; stripped at fork so children start on a clean slate.
     """
+    if directive is None and strategy_family is None:
+        return
     async with UnitOfWork() as uow:
         branch = (await uow.session.exec(
             _select(branch_model).where(branch_model.id == branch_id)
@@ -192,7 +197,12 @@ async def _write_phase_directive(
         if branch is None:
             return
         case_state = decode_case_state(branch.case_state_json)
-        case_state.observables["_directive.phase_mission"] = directive
+        if directive is not None:
+            case_state.observables["_directive.phase_mission"] = directive
+        if strategy_family is not None:
+            case_state.observables["_directive.phase_strategy_family"] = (
+                strategy_family
+            )
         branch.case_state_json = encode_case_state(case_state)
         uow.session.add(branch)
         await uow.session.commit()
@@ -206,6 +216,7 @@ def state_investigation_loop(
     phase_directive: str | None = None,
     phase_max_turns: int | None = None,
     phase_allowed_servers: tuple[str, ...] | None = None,
+    phase_strategy_family: str | None = None,
 ) -> Callable[[dict[str, Any], Any], Awaitable[StateResult]]:
     """Build the loop-state handler bound to *bindings* + *hooks*.
 
@@ -221,6 +232,9 @@ def state_investigation_loop(
     over the ``phase_max_turns`` state input and the module reader).
     *phase_allowed_servers*, when set, restricts this phase's tool dispatch
     to that server allowlist on top of the module's own allowlist.
+    *phase_strategy_family*, when set, overrides the prompt family the turn
+    runner selects for this phase (via the ``_directive.phase_strategy_family``
+    observable); None keeps the investigation-level family.
     """
     del hooks  # loop takes no optional hooks today
     _phase_servers = (
@@ -242,9 +256,10 @@ def state_investigation_loop(
         if not investigation_id or not branch_id:
             raise ValueError("investigation_loop: missing investigation_id or branch_id")
 
-        if phase_directive:
+        if phase_directive or phase_strategy_family:
             await _write_phase_directive(
                 bindings.branch_model, branch_id, phase_directive,
+                strategy_family=phase_strategy_family,
             )
 
         max_turns = int(
@@ -393,6 +408,29 @@ def state_investigation_loop(
                     investigation_id, max_turns,
                 )
 
+        # Feed the hub-level budget guard (RFC-13): when a phase loop exits
+        # on the turn cap AND the branch's cumulative turns have reached the
+        # overall investigation cap, tell the dispatch hub the budget is
+        # exhausted so it emits instead of activating another phase inside
+        # this task. The hub reads ``_budget_exhausted`` (phase_graph). Only
+        # set on the max_turns exit -- terminal_submit / errors keep their
+        # own routing. Redundant with the re-enqueue cap and
+        # MAX_STEPS_PER_JOB, but enforces the overall cap WITHIN a single
+        # hub walk rather than only across re-enqueues.
+        budget_exhausted = False
+        if exit_reason == "max_turns":
+            overall_cap = int(await bindings.max_turns_reader())
+            async with UnitOfWork() as uow:
+                _b = (await uow.session.exec(
+                    _select(bindings.branch_model).where(
+                        bindings.branch_model.id == branch_id,
+                    )
+                )).first()
+                cumulative_turns = (
+                    int(_b.turn_count) if _b is not None else last_turn_idx
+                )
+            budget_exhausted = cumulative_turns >= overall_cap
+
         return StateResult(
             next_state=next_state,
             output={
@@ -402,6 +440,7 @@ def state_investigation_loop(
                 "last_turn_idx": last_turn_idx,
                 "last_action": last_action,
                 "outcome_id": last_outcome_id,
+                "_budget_exhausted": budget_exhausted,
             },
         )
 

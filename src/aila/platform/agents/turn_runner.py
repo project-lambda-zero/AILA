@@ -340,8 +340,17 @@ class AgentTurnRunnerBase:
         # that exact version, insulating a running investigation from a
         # live production-alias flip). The returned ``version`` is None
         # only on the file-registry fallback path.
+        # Per-phase prompt family (RFC-13): a dispatch phase may override the
+        # investigation-level strategy_family via the
+        # ``_directive.phase_strategy_family`` observable the loop writes at
+        # phase entry. None (no phase override) falls back to the
+        # investigation family, preserving single-loop V1 behavior.
+        effective_strategy_family = (
+            case_state.observables.get("_directive.phase_strategy_family")
+            or inv.strategy_family
+        )
         loaded_prompt = await self._load_prompt(
-            inv.strategy_family,
+            effective_strategy_family,
             branch.persona_voice,
             investigation_id=self.investigation_id,
         )
@@ -392,7 +401,7 @@ class AgentTurnRunnerBase:
         # v0.4 GA-52: branch persona maps to a per-role task_type
         # (researcher / implementer / critic). Falls back to the
         # investigation's strategy_family when no persona is assigned.
-        task_type = self._resolve_task_type(branch.persona_voice) if branch.persona_voice else inv.strategy_family
+        task_type = self._resolve_task_type(branch.persona_voice) if branch.persona_voice else effective_strategy_family
 
         # Idempotency: derive a request_key from (investigation, branch,
         # turn, prompts) and check the cache before the LLM call. If a

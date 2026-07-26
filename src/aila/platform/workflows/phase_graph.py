@@ -69,11 +69,12 @@ LoopBuilder = Callable[["PhaseSpec", str], HandlerFn]
 class PhaseSpec:
     """One coarse phase: a bounded adaptive loop with its own regime.
 
-    ``allowed_servers`` is the phase tool allowlist; ``max_turns`` caps the
-    phase; ``directive`` is the phase mission surfaced to the agent as a
-    ``_directive.phase_mission`` observable. The prompt family is selected
-    from the investigation-level ``strategy_family`` (there is no per-phase
-    prompt override today). Exactly one of ``next`` (static
+    ``strategy_family``, when set, overrides the prompt family for this
+    phase (the turn runner selects the phase's family instead of the
+    investigation-level one); None falls back to the investigation's
+    ``strategy_family``. ``allowed_servers`` is the phase tool allowlist;
+    ``max_turns`` caps the phase; ``directive`` is the phase mission
+    surfaced to the agent as a ``_directive.phase_mission`` observable. Exactly one of ``next`` (static
     edge) or ``router`` (dynamic edge) sets the exit; omit both to fall
     through to the terminal emit. ``entry_gate`` guards the phase (readiness
     / approval / custody); a denied gate routes to ``on_fallback`` (default
@@ -90,6 +91,7 @@ class PhaseSpec:
     """
 
     name: str
+    strategy_family: str | None = None
     allowed_servers: tuple[str, ...] | None = None
     max_turns: int | None = None
     directive: str | None = None
@@ -351,11 +353,12 @@ def make_dispatch_router(phases: tuple[PhaseSpec, ...]) -> HandlerFn:
 
     async def _handler(state_input: dict[str, Any], services: Any) -> StateResult:
         del services
-        # NOTE (RFC-13 wiring audit): ``_budget_exhausted`` is READ here but
-        # never SET anywhere in the platform today -- the input carrier does
-        # not receive it from any loop / caller. Treat this branch as dead
-        # code for the moment; leave the read in place so the wiring is
-        # obvious if/when a real budget mechanism lands.
+        # ``_budget_exhausted`` is set by the phase loop on its max_turns
+        # exit once the branch's cumulative turns reach the overall
+        # investigation cap (investigation_loop_base). The hub then emits
+        # instead of activating another phase inside this task, enforcing
+        # the overall cap within a single hub walk (not only across
+        # re-enqueues).
         if state_input.get("_budget_exhausted"):
             return StateResult(
                 next_state=EMIT_STATE,
