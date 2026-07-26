@@ -69,10 +69,11 @@ LoopBuilder = Callable[["PhaseSpec", str], HandlerFn]
 class PhaseSpec:
     """One coarse phase: a bounded adaptive loop with its own regime.
 
-    ``strategy_family`` selects the phase prompt via the version store;
     ``allowed_servers`` is the phase tool allowlist; ``max_turns`` caps the
     phase; ``directive`` is the phase mission surfaced to the agent as a
-    ``_directive.phase_mission`` observable. Exactly one of ``next`` (static
+    ``_directive.phase_mission`` observable. The prompt family is selected
+    from the investigation-level ``strategy_family`` (there is no per-phase
+    prompt override today). Exactly one of ``next`` (static
     edge) or ``router`` (dynamic edge) sets the exit; omit both to fall
     through to the terminal emit. ``entry_gate`` guards the phase (readiness
     / approval / custody); a denied gate routes to ``on_fallback`` (default
@@ -89,7 +90,6 @@ class PhaseSpec:
     """
 
     name: str
-    strategy_family: str | None = None
     allowed_servers: tuple[str, ...] | None = None
     max_turns: int | None = None
     directive: str | None = None

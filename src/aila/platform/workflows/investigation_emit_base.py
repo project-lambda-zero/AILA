@@ -681,8 +681,7 @@ def state_investigation_emit(
                 # Without this the outcome-review quorum and the ledger oracle
                 # stay disconnected -- no discovery ever becomes confirmed, so
                 # confirmed-trust phases (poc_development) never activate and
-                # replan requests never ratify. Lazy import mirrors the hub's
-                # break of the db_models load-time cycle.
+                # replan requests never ratify.
                 try:
                     if outcome_row is not None and investigation_id:
                         confirmed_ids = await LedgerService().confirm_branch_discoveries(
