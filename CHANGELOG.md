@@ -219,9 +219,25 @@ operator action.
   hop the graph route across related knowledge without any per-call opt-in.
   Each write adds one nearest-neighbour query; the entity pass is regex,
   no model cost. No migration.
+- Sibling-review quorum approves a draft finding on a MAJORITY of the
+  non-proposing branches (`max(2, ceil(N/2))`) instead of near-unanimous
+  agreement (`max(2, N-1)`), matching the documented formula. A lone
+  abstain or request_edit no longer makes approval mathematically
+  unreachable. The threshold is still derived from the static
+  non-proposing count, so stale-abandoned siblings cannot shrink it.
 
 ### Fixed
 
+- Sibling deliberation cycled until the auto-continue cap on any finding
+  that drew a split vote. Under near-unanimous quorum a single abstain or
+  request_edit made approval unreachable, so the outcome stayed draft and
+  auto-deliberation resurrected already-voted completed siblings on every
+  setup re-entry (turn count reset, prior messages deleted), producing no
+  new votes and no convergence. Auto-deliberation now leaves a completed
+  sibling completed when it has no unvoted pending draft, so a fully-
+  deliberated finding settles: the panel goes quiet, the investigation
+  completes, and an unapproved draft is held for operator review instead
+  of churning.
 - The shared search router derived a finding result's `module_id` from a
   hardcoded `"vulnerability"` literal even though the module was resolved
   by capability; it now reads the resolved module's id, so a second

@@ -152,3 +152,119 @@ async def test_spawn_inserts_reactivates_abandons_and_enqueues() -> None:
     assert {c["track"] for c in queue.calls} == {"vr"}
     assert all(c["group_id"] == "vr_auto_deliberation" for c in queue.calls)
     assert all("branch_id" in c["kwargs"] for c in queue.calls)
+
+
+async def _seed_completed_winner() -> tuple[str, str, str]:
+    """One completed persona branch (with a message) + a live primary."""
+    async with UnitOfWork() as uow:
+        ws = VRWorkspaceRecord(
+            name="ps2", slug="ps2", description="", theme="custom",
+            team_id="admin",
+        )
+        uow.session.add(ws)
+        await uow.session.flush()
+        tgt = VRTargetRecord(
+            workspace_id=ws.id, team_id="admin", display_name="t",
+            kind="android_apk",
+            descriptor_json=json.dumps({"apk_path": "/tmp/x.apk"}),  # noqa: S108
+            primary_language=None, secondary_languages_json="[]",
+            tags_json="[]", mcp_handles_json="{}", status="active",
+            capability_profile_json="{}",
+        )
+        uow.session.add(tgt)
+        await uow.session.flush()
+        inv = VRInvestigationRecord(
+            target_id=tgt.id, team_id="admin", kind="variant_hunt",
+            title="t", initial_question="q", status="running",
+            auto_pilot=False,
+            strategy_family="vulnerability_research.variant_hunt",
+            cost_budget_usd=50.0,
+        )
+        uow.session.add(inv)
+        await uow.session.flush()
+        primary = VRInvestigationBranchRecord(
+            investigation_id=inv.id, status="active", turn_count=0,
+            fork_reason="primary",
+        )
+        uow.session.add(primary)
+        await uow.session.flush()
+        noor = VRInvestigationBranchRecord(
+            investigation_id=inv.id, status="completed", turn_count=9,
+            fork_reason="auto_deliberation:noor",
+            persona_voice=PersonaVoice.NOOR.value,
+            closed_reason="terminal_submit:turn_9:direct_finding",
+        )
+        uow.session.add(noor)
+        await uow.session.flush()
+        uow.session.add(VRInvestigationMessageRecord(
+            investigation_id=inv.id, branch_id=noor.id,
+            sender_kind="engine", payload_kind="tool_call",
+        ))
+        await uow.session.commit()
+        return inv.id, primary.id, noor.id
+
+
+async def _never(_branch: object) -> bool:
+    return False
+
+
+async def _always(_branch: object) -> bool:
+    return True
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_completed_winner_not_reactivated_when_no_review_work() -> None:
+    # A completed branch with no unvoted pending draft must NOT be
+    # resurrected: leaving it completed is what lets a fully-deliberated
+    # investigation settle instead of churning to the auto-continue cap.
+    inv_id, primary_id, noor_id = await _seed_completed_winner()
+    result = await spawn_persona_siblings(
+        inv_id, primary_id, "admin",
+        siblings=(PersonaVoice.NOOR,),
+        branch_model=VRInvestigationBranchRecord,
+        inv_table="vr_investigations",
+        message_table="vr_investigation_messages",
+        task_fn=_dummy_task, track="vr", group_id="vr_auto_deliberation",
+        task_queue=_FakeQueue(),
+        strip_case_state=lambda raw: raw,
+        should_reactivate=_never,
+    )
+    assert result.reactivated == []
+    async with UnitOfWork() as uow:
+        noor = (await uow.session.exec(
+            select(VRInvestigationBranchRecord)
+            .where(VRInvestigationBranchRecord.id == noor_id),
+        )).first()
+        msgs = len((await uow.session.exec(
+            select(VRInvestigationMessageRecord)
+            .where(VRInvestigationMessageRecord.branch_id == noor_id),
+        )).all())
+    assert noor.status == "completed"
+    assert noor.turn_count == 9
+    assert msgs == 1
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_completed_winner_reactivated_when_review_pending() -> None:
+    # With review work pending (predicate True), the completed branch is
+    # reactivated fresh -- the deliberation path is preserved.
+    inv_id, primary_id, noor_id = await _seed_completed_winner()
+    result = await spawn_persona_siblings(
+        inv_id, primary_id, "admin",
+        siblings=(PersonaVoice.NOOR,),
+        branch_model=VRInvestigationBranchRecord,
+        inv_table="vr_investigations",
+        message_table="vr_investigation_messages",
+        task_fn=_dummy_task, track="vr", group_id="vr_auto_deliberation",
+        task_queue=_FakeQueue(),
+        strip_case_state=lambda raw: raw,
+        should_reactivate=_always,
+    )
+    assert result.reactivated == [noor_id]
+    async with UnitOfWork() as uow:
+        noor = (await uow.session.exec(
+            select(VRInvestigationBranchRecord)
+            .where(VRInvestigationBranchRecord.id == noor_id),
+        )).first()
+    assert noor.status == "active"
+    assert noor.turn_count == 0

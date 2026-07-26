@@ -10,10 +10,14 @@ import logging
 import os
 from typing import Any
 
+from sqlmodel import select as _select
+
 from aila.modules.vr._task_queue import default_task_queue
 from aila.modules.vr.contracts.branch import PersonaVoice
 from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
+    VRInvestigationOutcomeRecord,
+    VRInvestigationOutcomeReviewRecord,
     VRInvestigationRecord,
     VRTargetRecord,
 )
@@ -27,6 +31,7 @@ from aila.platform.agents.branch_pool import (
     _strip_rejected_from_state,
 )
 from aila.platform.services.knowledge import KnowledgeService
+from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.investigation_setup_base import (
     InvestigationStateBindings,
     InvestigationStateHooks,
@@ -124,6 +129,40 @@ async def _resolve_cve_intel(question: str) -> list[dict[str, Any]]:
         return []
 
 
+async def _has_unvoted_pending_draft(branch: Any) -> bool:
+    """True while a draft outcome exists that *branch* has not voted on.
+
+    Gate for reactivating a completed sibling during auto-deliberation.
+    A completed branch is only worth resurrecting when there is real
+    review work -- an unvoted pending draft. Once every eligible sibling
+    has voted (approve / reject / request_edit / abstain), reactivating
+    them just resets already-cast work and cycles the investigation
+    until the auto-continue cap. Returning False here lets a fully-
+    deliberated split finding settle: the panel goes quiet, the
+    investigation completes, and the unapproved draft is held for the
+    operator to review.
+    """
+    async with UnitOfWork() as uow:
+        draft_ids = (await uow.session.exec(
+            _select(VRInvestigationOutcomeRecord.id).where(
+                VRInvestigationOutcomeRecord.investigation_id
+                == branch.investigation_id,
+                VRInvestigationOutcomeRecord.state == "draft",
+                VRInvestigationOutcomeRecord.branch_id != branch.id,
+            ),
+        )).all()
+        if not draft_ids:
+            return False
+        voted = (await uow.session.exec(
+            _select(VRInvestigationOutcomeReviewRecord.outcome_id).where(
+                VRInvestigationOutcomeReviewRecord.reviewer_branch_id
+                == branch.id,
+                VRInvestigationOutcomeReviewRecord.outcome_id.in_(draft_ids),
+            ),
+        )).all()
+    return len(set(voted)) < len(set(draft_ids))
+
+
 async def _spawn_persona_siblings_and_enqueue(
     *,
     investigation_id: str,
@@ -154,6 +193,7 @@ async def _spawn_persona_siblings_and_enqueue(
         strip_case_state=lambda raw: _strip_rejected_from_state(
             _strip_directives_from_state(raw),
         ),
+        should_reactivate=_has_unvoted_pending_draft,
     )
 
 

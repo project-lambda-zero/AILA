@@ -160,30 +160,39 @@ class EditOutcomeResult:
 
 
 def compute_quorum(non_proposing_sibling_count: int) -> int:
-    """Approve threshold for a draft outcome.
+    """Approve threshold for a draft outcome: a majority of the non-
+    proposing branches, floor 2.
 
-    fix §148 -- derive K from the count of non-proposing branches
-    (a static investigation-level count), NOT from active-only siblings.
-    Stale-abandoned siblings used to reduce the denominator, so a single
-    approve vote could ship an outcome when 4 of 5 siblings had been
-    abandoned. New formula matches the spec: ``max(N_total_personas - 1, 2)``
-    where ``N_total_personas - 1`` is exactly the non-proposing count.
-    Floor of 2 prevents a single rogue approver from auto-shipping; the
-    no-active-voters fallback (later in evaluate_quorum) catches the
-    case where K is unreachable because every voter is dead.
+    K is derived from the STATIC non-proposing branch count (a fixed
+    investigation-level number), NOT from the shrinking active-sibling
+    count. Stale-abandoned siblings must not reduce the denominator: a
+    single approve vote could otherwise ship an outcome when most
+    siblings had abandoned. Taking a majority of the static count keeps
+    the bar honest without demanding unanimity -- a lone abstain or
+    request_edit no longer makes approval unreachable and stall the
+    deliberation until the auto-continue cap. Floor of 2 prevents a
+    single rogue approver from auto-shipping; the no-active-voters
+    fallback (later in evaluate_quorum) still catches the case where K
+    is unreachable because every voter is dead.
+
+    Matches the documented formula ``max(2, ceil(N/2))`` for N >= 1.
 
     >>> compute_quorum(0)  # single-branch investigation, no siblings
     0
-    >>> compute_quorum(2)  # 3-branch: 2 non-proposing siblings, K=2
+    >>> compute_quorum(1)  # 2-branch: 1 non-proposing, floor 2
     2
-    >>> compute_quorum(5)  # 6-branch: 5 non-proposing siblings, K=5
-    5
-    >>> compute_quorum(1)  # 2-branch: 1 non-proposing, K=2 (unreachable)
+    >>> compute_quorum(2)  # 3-branch: majority of 2, floor 2
     2
+    >>> compute_quorum(3)  # 4-branch: majority of 3 is 2
+    2
+    >>> compute_quorum(4)  # 5-branch: majority of 4 is 2
+    2
+    >>> compute_quorum(5)  # 6-branch: majority of 5 is 3
+    3
     """
     if non_proposing_sibling_count <= 0:
         return 0
-    return max(2, non_proposing_sibling_count)
+    return max(2, (non_proposing_sibling_count + 1) // 2)
 
 
 def _veto_reason(reject_count: int, veto_k: int) -> str:

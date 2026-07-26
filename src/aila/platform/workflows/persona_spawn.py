@@ -65,6 +65,7 @@ async def spawn_persona_siblings(
     group_id: str,
     task_queue: Any,
     strip_case_state: Callable[[str], str],
+    should_reactivate: Callable[[Any], Awaitable[bool]] | None = None,
 ) -> SiblingSpawnResult:
     """Spawn / reuse one branch per persona for ``investigation_id``.
 
@@ -140,7 +141,29 @@ async def spawn_persona_siblings(
                 # check; do NOT relax it. investigation_setup relies on
                 # this contract when it calls spawn_fn on every setup
                 # invocation for a RUNNING investigation.
-                if b.status in ("abandoned", "completed"):
+                _reactivate = b.status in ("abandoned", "completed")
+                if (
+                    _reactivate
+                    and b.status == "completed"
+                    and should_reactivate is not None
+                    and not await should_reactivate(b)
+                ):
+                    # Completed branch with no pending review work left --
+                    # leave it completed. Resurrecting it here (turn_count
+                    # reset, prior messages deleted) with nothing to review
+                    # is the deliberation churn: every setup re-entry reset
+                    # already-voted siblings, so a fully-deliberated split
+                    # finding never let the investigation settle (it cycled
+                    # until the auto_continue cap). The predicate returns
+                    # True only while an unvoted pending draft exists.
+                    _reactivate = False
+                    _log.info(
+                        "auto_deliberation: NOT reactivating completed %s "
+                        "branch %s -- no unvoted pending draft (deliberation "
+                        "complete)",
+                        b.persona_voice, b.id,
+                    )
+                if _reactivate:
                     b.status = "active"
                     b.closed_reason = ""
                     b.closed_at = None

@@ -29,6 +29,7 @@ from aila.platform.services.outcome_review import (
     OUTCOME_STATE_APPROVED,
     OUTCOME_STATE_DRAFT,
     OUTCOME_STATE_REJECTED,
+    VOTE_ABSTAIN,
     VOTE_APPROVE,
     VOTE_REJECT,
     evaluate_quorum,
@@ -104,22 +105,54 @@ async def _seed(
 
 async def test_active_voters_approve_to_quorum(test_db) -> None:
     del test_db
+    # Five non-proposing siblings -> majority K=3; three approvals ship it.
     outcome_id = await _seed(
         inv="inv-q-approve",
         proposer="p",
-        sibling_ids=["s1", "s2"],
-        votes=[("s1", VOTE_APPROVE), ("s2", VOTE_APPROVE)],
+        sibling_ids=["s1", "s2", "s3", "s4", "s5"],
+        votes=[
+            ("s1", VOTE_APPROVE),
+            ("s2", VOTE_APPROVE),
+            ("s3", VOTE_APPROVE),
+        ],
     )
     res = await evaluate_quorum(
         outcome_id, veto_k=1, audit_stage="source_audit", **_MODELS,
     )
-    assert res.quorum_k == 2
-    assert res.approve_count == 2
+    assert res.quorum_k == 3
+    assert res.approve_count == 3
     assert res.new_state == OUTCOME_STATE_APPROVED
     assert res.transition_occurred is True
-    assert res.transition_reason.startswith("approved_2_of_2")
+    assert res.transition_reason.startswith("approved_3_of_3")
     # The genuine dialectic path, NOT the dead-voter safety net.
     assert "auto_approved" not in res.transition_reason
+
+
+async def test_abstain_does_not_block_majority(test_db) -> None:
+    del test_db
+    # Regression: under the old unanimous rule (K = N-1) a single abstain
+    # made approval unreachable and stalled deliberation. With majority K,
+    # three approvals ship the finding even though two siblings abstained.
+    outcome_id = await _seed(
+        inv="inv-q-abstain",
+        proposer="p",
+        sibling_ids=["s1", "s2", "s3", "s4", "s5"],
+        votes=[
+            ("s1", VOTE_APPROVE),
+            ("s2", VOTE_APPROVE),
+            ("s3", VOTE_APPROVE),
+            ("s4", VOTE_ABSTAIN),
+            ("s5", VOTE_ABSTAIN),
+        ],
+    )
+    res = await evaluate_quorum(
+        outcome_id, veto_k=1, audit_stage="source_audit", **_MODELS,
+    )
+    assert res.quorum_k == 3
+    assert res.approve_count == 3
+    assert res.abstain_count == 2
+    assert res.new_state == OUTCOME_STATE_APPROVED
+    assert res.transition_occurred is True
 
 
 async def test_active_voters_reject_veto(test_db) -> None:
@@ -141,20 +174,21 @@ async def test_active_voters_reject_veto(test_db) -> None:
 
 async def test_active_voters_block_premature_approval(test_db) -> None:
     del test_db
-    # Three active siblings -> K=3; a single approve is short of quorum and
-    # the no-active-voters fallback must NOT fire while voters are alive.
+    # Five non-proposing siblings -> majority K=3; two approvals are short
+    # of quorum, so the finding stays draft (no premature ship) and the
+    # no-active-voters fallback must NOT fire while voters are alive.
     outcome_id = await _seed(
         inv="inv-q-hold",
         proposer="p",
-        sibling_ids=["s1", "s2", "s3"],
-        votes=[("s1", VOTE_APPROVE)],
+        sibling_ids=["s1", "s2", "s3", "s4", "s5"],
+        votes=[("s1", VOTE_APPROVE), ("s2", VOTE_APPROVE)],
     )
     res = await evaluate_quorum(
         outcome_id, veto_k=1, audit_stage="source_audit", **_MODELS,
     )
     assert res.quorum_k == 3
-    assert res.approve_count == 1
-    assert res.siblings_active == 3
+    assert res.approve_count == 2
+    assert res.siblings_active == 5
     assert res.new_state == OUTCOME_STATE_DRAFT
     assert res.transition_occurred is False
     assert "auto_approved" not in res.transition_reason
