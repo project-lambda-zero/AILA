@@ -38,7 +38,11 @@ from aila.platform.uow import UnitOfWork
 
 _log = logging.getLogger(__name__)
 
-__all__ = ["SiblingSpawnResult", "spawn_persona_siblings"]
+__all__ = [
+    "SiblingSpawnResult",
+    "spawn_persona_siblings",
+    "spawn_specialist_branch",
+]
 
 
 @dataclass(frozen=True)
@@ -273,3 +277,92 @@ async def spawn_persona_siblings(
             investigation_id, result.enqueued,
         )
     return result
+
+
+async def spawn_specialist_branch(
+    investigation_id: str,
+    primary_branch_id: str,
+    team_id: str | None,
+    *,
+    specialist_name: str,
+    branch_model: type[Any],
+    inv_table: str,
+    task_fn: Callable[..., Awaitable[Any]],
+    track: str,
+    group_id: str,
+    task_queue: Any,
+    strip_case_state: Callable[[str], str],
+) -> str | None:
+    """Spawn one on-demand specialist branch (``persona_voice`` = name).
+
+    Called by a module's setup for each ratified ``request_specialist``
+    capability (resolved to a registry specialist). Idempotent: if a branch
+    with this ``persona_voice`` already exists for the investigation (in any
+    non-abandoned state), returns its id without spawning, so re-running
+    setup does not fork duplicates. The branch's capability is resolved from
+    the specialist registry in setup (persona_voice -> capability), which
+    threads ``_branch_capability`` so the dispatch hub routes it to the
+    capability-scoped phases. Returns the branch id (existing or new).
+    """
+    async with UnitOfWork() as uow:
+        await uow.session.execute(
+            _sql_text(
+                f"SELECT id FROM {inv_table} WHERE id = :id FOR UPDATE"
+            ).bindparams(id=investigation_id),
+        )
+        existing = (await uow.session.exec(
+            _select(branch_model).where(
+                branch_model.investigation_id == investigation_id,
+                branch_model.persona_voice == specialist_name,
+                branch_model.status != "abandoned",
+            )
+        )).first()
+        if existing is not None:
+            return existing.id
+        parent = (await uow.session.exec(
+            _select(branch_model).where(branch_model.id == primary_branch_id)
+        )).first()
+        parent_case_state = (
+            (parent.case_state_json or "{}") if parent is not None else "{}"
+        )
+        child = branch_model(
+            investigation_id=investigation_id,
+            parent_branch_id=primary_branch_id,
+            status="active",
+            persona_voice=specialist_name,
+            fork_reason=f"specialist_request:{specialist_name}",
+            fork_at_turn=0,
+            case_state_json=strip_case_state(parent_case_state),
+            turn_count=0,
+            branch_cost_usd=0.0,
+        )
+        uow.session.add(child)
+        await uow.session.flush()
+        branch_id = child.id
+        await uow.commit()
+
+    try:
+        await task_queue.submit(
+            track=track,
+            fn=task_fn,
+            kwargs={
+                "investigation_id": investigation_id,
+                "branch_id": branch_id,
+            },
+            user_id="system",
+            group_id=group_id,
+            team_id=team_id,
+        )
+        _log.info(
+            "specialist spawn: %s branch %s for %s",
+            specialist_name, branch_id, investigation_id,
+        )
+    except (
+        WorkerUnreachableError, OSError, RuntimeError, ValueError, TypeError,
+    ) as exc:
+        _log.warning(
+            "specialist spawn: enqueue failed name=%s branch=%s err=%s "
+            "(branch row persists; a later setup pass can resubmit)",
+            specialist_name, branch_id, exc,
+        )
+    return branch_id

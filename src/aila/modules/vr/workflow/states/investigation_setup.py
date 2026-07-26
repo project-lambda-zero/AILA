@@ -31,6 +31,8 @@ from aila.platform.agents.branch_pool import (
     _strip_rejected_from_state,
 )
 from aila.platform.services.knowledge import KnowledgeService
+from aila.platform.services.oracle import Oracle
+from aila.platform.services.specialist_registry import SpecialistAgentRegistry
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.investigation_setup_base import (
     InvestigationStateBindings,
@@ -39,7 +41,10 @@ from aila.platform.workflows.investigation_setup_base import (
 from aila.platform.workflows.investigation_setup_base import (
     state_investigation_setup as _build_setup_state,
 )
-from aila.platform.workflows.persona_spawn import spawn_persona_siblings
+from aila.platform.workflows.persona_spawn import (
+    spawn_persona_siblings,
+    spawn_specialist_branch,
+)
 
 
 # Auto-deliberation toggle. When 1 (default), investigation_setup
@@ -195,6 +200,37 @@ async def _spawn_persona_siblings_and_enqueue(
         ),
         should_reactivate=_has_unvoted_pending_draft,
     )
+
+    # On-demand specialists: for each ratified request_specialist capability,
+    # resolve the registry specialist and spawn its branch. Idempotent per
+    # specialist (spawn_specialist_branch dedupes on persona_voice), so this
+    # runs safely on every setup pass. The spawned branch's persona_voice is
+    # the specialist name, which setup resolves back to _branch_capability so
+    # the hub routes it to the capability-scoped phases.
+    capabilities = await Oracle().ratified_specialist_capabilities(
+        investigation_id,
+    )
+    if capabilities:
+        registry = SpecialistAgentRegistry()
+        for capability in capabilities:
+            spec = await registry.find_by_capability("vr", capability)
+            if spec is None:
+                continue
+            await spawn_specialist_branch(
+                investigation_id,
+                primary_branch_id,
+                team_id,
+                specialist_name=spec.name,
+                branch_model=VRInvestigationBranchRecord,
+                inv_table="vr_investigations",
+                task_fn=run_vr_investigate,
+                track="vr",
+                group_id="vr_specialist",
+                task_queue=default_task_queue(),
+                strip_case_state=lambda raw: _strip_rejected_from_state(
+                    _strip_directives_from_state(raw),
+                ),
+            )
 
 
 _SETUP_BINDINGS = InvestigationStateBindings(

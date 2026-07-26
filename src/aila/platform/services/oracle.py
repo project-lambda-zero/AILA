@@ -257,7 +257,52 @@ class Oracle:
             # Replan carries no mechanical ledger effect; the dispatch hub
             # relaxes confirmed trust for one pass once a replan is ratified.
             return {"applied": True, "intent": intent}
+        if intent == "request_specialist":
+            # No ledger-side effect: spawning a specialist branch needs the
+            # module's record models + task queue, which the oracle does not
+            # hold. The module's setup reads ratified request_specialist
+            # requests (ratified_specialist_capabilities) and spawns the
+            # matching registry specialist. Recording it here keeps
+            # apply_all_ratified from raising on this intent.
+            return {
+                "applied": True, "intent": intent,
+                "capability": payload.get("target_capability"),
+            }
         raise OracleError(f"unknown request intent {intent!r}")
+
+    async def ratified_specialist_capabilities(
+        self,
+        investigation_id: str,
+        *,
+        quorum_k: int = 1,
+        session: AsyncSession | None = None,
+    ) -> list[str]:
+        """Target capabilities of ratified ``request_specialist`` requests.
+
+        A core branch files ``{intent: 'request_specialist',
+        target_capability: X}`` when a case needs a specialist eye; a
+        distinct approver (by convention the critic) ratifies it. This
+        returns each ratified request's ``target_capability`` so the
+        module's setup can resolve it to a registry specialist and spawn
+        that branch. Deduplicated, order-preserving.
+        """
+        requests = await self._ledger.read_general(
+            investigation_id, kinds=["request"], session=session,
+        )
+        caps: list[str] = []
+        for request in requests:
+            payload = request.get("payload") or {}
+            if payload.get("intent") != "request_specialist":
+                continue
+            capability = payload.get("target_capability")
+            if not capability or capability in caps:
+                continue
+            if await self.is_ratified(
+                investigation_id, int(request["id"]),
+                quorum_k=quorum_k, session=session,
+            ):
+                caps.append(str(capability))
+        return caps
 
     async def apply_all_ratified(
         self,
