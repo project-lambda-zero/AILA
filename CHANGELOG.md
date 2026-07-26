@@ -67,6 +67,20 @@ operator action.
   `capability`, and `trust` (confirmed or advisory). These fields are
   unused by the static `build_phase_workflow`, so the V1 and V2 graphs are
   unaffected.
+- Four vulnerability-research hub phases (RFC-13 #68): `taint_analysis`
+  traces each untrusted-input entry point to the sinks it reaches and
+  confirms the path is unsanitized; `dependency_audit` audits declared and
+  transitive dependencies for known-vulnerable versions and whether the
+  vulnerable code is reached; `crypto_audit` audits cryptographic misuse
+  (weak or broken primitives, static keys, IVs, and nonces, weak
+  randomness, unauthenticated encryption, and certificate or signature
+  validation); `fuzz_targeting` ranks the parsers, decoders, and
+  deserializers that consume untrusted bytes and specifies a harness for
+  each. Each is scoped to the target kinds it can operate on -- taint and
+  dependency to source repositories, crypto and fuzz to source and binary
+  targets -- so a source-repo investigation walks recon, source_audit,
+  taint_analysis, dependency_audit, crypto_audit, variant_hunt, then
+  fuzz_targeting.
 - Shared investigation ledger (RFC-13 #68, migration 102,
   `platform/services/ledger.py`): one append-only `investigation_ledger`
   table per investigation. Branches append discoveries, notes, and
@@ -259,6 +273,16 @@ operator action.
 
 ### Fixed
 
+- Dispatch-hub audit phases activate on the target's kind instead of
+  waiting for a shared-ledger discovery. Gating source_audit, variant_hunt,
+  binary_audit, and mobile_audit on discoveries alone stalled the hub when
+  recon posted none, and let a source-repo investigation walk into
+  binary_audit or mobile_audit, whose server allowlist blocks the source
+  path. Each audit phase is now scoped to the target payloads it can
+  operate on (source_audit to source repositories; variant_hunt to source
+  and binary; binary_audit to native binaries, archives, and images;
+  mobile_audit to Android and iOS packages); poc_development stays gated on
+  a quorum-confirmed finding.
 - `read_function` returns real source instead of looping when a function is
   absent from the index. After the class-rewrite and bare-name retries miss
   (the function simply was not captured by the indexer), the bridge now
