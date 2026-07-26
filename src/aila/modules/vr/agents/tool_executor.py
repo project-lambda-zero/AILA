@@ -67,11 +67,6 @@ class ToolExecutor(ToolExecutorHelpersBase):
     # tail of finished/stale ids.
     _INV_INDEX_CACHE_MAX: int = 2048
 
-    _BAD_INDEX_PLACEHOLDERS: frozenset[str] = frozenset({
-        "main", "master", "head", "trunk", "current", "latest",
-        "default", "tip", "primary", "this", "auto",
-    })
-
     # Merged-dispatch config (ToolExecutorHelpersBase.execute reads these).
     _TOOLRUN_EXAMPLE_JSON = (
         '{"tool": "audit_mcp.read_function", "args": {"name": "..."}}'
@@ -178,19 +173,25 @@ class ToolExecutor(ToolExecutorHelpersBase):
         investigation_id: str,
         args: dict[str, Any],
     ) -> dict[str, Any]:
-        """Auto-correct ``index_id`` for audit_mcp calls.
+        """Force ``index_id`` to the investigation's one resolved index.
 
-        Returns args unchanged when:
-          - the agent passed a non-placeholder string; OR
-          - the investigation has no resolvable index_id (caller's
-            target is a binary, an empty placeholder, or ingestion
-            never landed); OR
-          - the args.index_id already matches the resolved id.
+        A VR investigation is bound to exactly ONE audit_mcp index (its
+        primary source-repo target). The model has no way to know the
+        opaque index id (a hash) and routinely improvises placeholders
+        ('main', 'primary') or invents names ('code_graph') that bounce
+        back as ``Unknown index`` / ``not indexed`` -- a wasted turn. A
+        blocklist of known-bad placeholders was whack-a-mole against an
+        open set of hallucinations. Since the correct index is
+        deterministic per investigation, the executor ignores whatever the
+        model passed and substitutes the resolved id on every audit_mcp
+        call.
 
-        Returns args with ``index_id`` substituted when the agent
-        passed a known placeholder ('main', 'master', 'head', etc.)
-        or omitted it entirely. Logs INFO so the operator can audit
-        every auto-fix in the worker log.
+        Returns args unchanged only when:
+          - the investigation has no resolvable index_id (target is a
+            binary, an empty placeholder, or ingestion never landed); OR
+          - the model already passed exactly the resolved id.
+
+        Logs INFO on every substitution so the operator can audit it.
 
         Cache key: investigation_id. The mapping investigation -> index
         id never changes for the lifetime of an investigation, so a
@@ -200,15 +201,13 @@ class ToolExecutor(ToolExecutorHelpersBase):
         if not resolved:
             return args
         current = args.get("index_id")
-        if isinstance(current, str) and current and current.lower() not in self._BAD_INDEX_PLACEHOLDERS:
-            return args
         if current == resolved:
             return args
         new_args = dict(args)
         new_args["index_id"] = resolved
         _log.info(
-            "tool_executor: auto-corrected index_id inv=%s "
-            "from %r to %r (saves an LLM round-trip)",
+            "tool_executor: forced audit_mcp index_id inv=%s from %r to %r "
+            "(investigation is bound to one index; model value ignored)",
             investigation_id, current, resolved,
         )
         return new_args

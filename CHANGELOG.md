@@ -259,6 +259,15 @@ operator action.
 
 ### Fixed
 
+- audit_mcp tool calls now always use the investigation's one resolved
+  index. The executor previously rewrote only a hardcoded blocklist of
+  placeholder `index_id` values (`main`, `primary`, `head`, ...); a model
+  that invented any other value (`code_graph`, etc.) had it passed through
+  unchanged, producing `Unknown index` / `not indexed` errors and wasted
+  turns. A VR investigation is bound to exactly one audit_mcp index, so the
+  executor now forces that resolved index on every audit_mcp call and
+  ignores the model-supplied value entirely, eliminating the whole class of
+  wrong-index tool failures.
 - The investigation branch list (`/vr/investigations/{id}/branches`) and the
   branch SSE event no longer 500 when an investigation contains an on-demand
   specialist branch. `VRBranchSummary.persona_voice` was typed as the
