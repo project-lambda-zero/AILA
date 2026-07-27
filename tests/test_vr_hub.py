@@ -1,11 +1,19 @@
 """VR dispatch-hub structure + confirmed-gated poc activation (RFC-13 Phase 5)."""
 from __future__ import annotations
 
+import uuid
+
+from aila.modules.vr.db_models import (
+    VRInvestigationRecord,
+    VRTargetRecord,
+    VRWorkspaceRecord,
+)
 from aila.modules.vr.workflow.definitions_hub import (
     VR_HUB_PHASES,
     VR_INVESTIGATE_HUB,
 )
 from aila.platform.services.ledger import LedgerService
+from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.phase_graph import DISPATCH_STATE, make_dispatch_router
 
 
@@ -55,11 +63,39 @@ async def test_poc_activates_only_on_confirmed_finding(test_db) -> None:
 
 async def test_capability_routes_branch_to_its_phase(test_db) -> None:
     del test_db
-    inv = "inv-vr-cap"
+    inv = str(uuid.uuid4())
+    # source_audit is kind-gated on source_repo, so the investigation must
+    # have a real target row carrying that kind for the phase to activate.
+    async with UnitOfWork() as uow:
+        ws = VRWorkspaceRecord(
+            name="cap-ws", slug=f"cap-ws-{inv[:8]}", description="",
+            theme="custom", team_id="admin",
+        )
+        uow.session.add(ws)
+        await uow.session.flush()
+        target = VRTargetRecord(
+            workspace_id=ws.id, team_id="admin",
+            display_name="cap target", kind="source_repo",
+            descriptor_json="{}", primary_language="python",
+            secondary_languages_json="[]", tags_json="[]",
+            mcp_handles_json="{}", status="active",
+            capability_profile_json="{}",
+        )
+        uow.session.add(target)
+        await uow.session.flush()
+        uow.session.add(VRInvestigationRecord(
+            id=inv, target_id=target.id, team_id="admin",
+            kind="discovery", title="cap inv", initial_question="test",
+            status="running", auto_pilot=False,
+            strategy_family="vulnerability_research.discovery_research",
+            cost_budget_usd=50.0,
+        ))
+        await uow.session.commit()
     svc = LedgerService()
     await svc.append_general(inv, "b1", "discovery", {"surface": "parser"})
     router = make_dispatch_router(VR_HUB_PHASES)
-    # A source-audit branch, recon done: the discovery routes it to source_audit.
+    # A source-audit branch, recon done, on a source_repo target: the
+    # discovery routes it to source_audit.
     state = {
         "investigation_id": inv,
         "_branch_capability": "source-audit",
