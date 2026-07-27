@@ -281,6 +281,18 @@ operator action.
 
 ### Fixed
 
+- Scheduled automations acquire a cross-process occurrence lock and record
+  run-history, so two live worker processes no longer double-fire the same
+  scheduled run; execution degrades to a database unique constraint when the
+  lock backend is unavailable (issue #46).
+- Platform contract modules declare `__all__`, and the budget config and state
+  contracts reject undeclared fields; the obligation-adjudication contract
+  gained direct test coverage and a docstring stating the platform runtime
+  does not enforce it (issue #61).
+- The test database is bootstrapped through the production create-then-stamp
+  path, and a schema-parity test fails when a migration creates a table with
+  no model or when the stamped revision drifts from the on-disk head
+  (issue #62).
 - Confidence-gate consensus retries and the verify second-model call now
   attribute their token spend to the same team as the primary call. The team
   identifier was not threaded into the pipeline context, so those derived
