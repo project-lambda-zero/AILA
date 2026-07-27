@@ -9,14 +9,21 @@ code path :meth:`TaskQueue.submit` uses) BEFORE the DB flip. If enqueue
 fails (broker outage, malformed kwargs_json, empty fn_path) the row
 stays PAUSED so a retry can succeed later.
 
-#40-3 ``set_cancelled``: the pre-fix code flipped a non-terminal task
-to CANCELLED and committed without dropping ``arq:in-progress:<id>``,
+#40-3 / #63 ``set_cancelled``: the pre-fix code flipped a non-terminal
+task to CANCELLED and committed without dropping ``arq:in-progress:<id>``,
 so the worker slot stayed held until the cron reaper picked it up. It
 also missed ``DEAD_LETTER`` in its terminal set, so dead-lettered rows
 silently reverted to CANCELLED (erasing the poison-pill classification).
-The fix adds DEAD_LETTER to the terminal set and best-effort deletes
-the in-progress key after the flip commits, mirroring
-``worker._sweep_orphan_running_tasks``'s key-drop pattern.
+The #40-3 fix added DEAD_LETTER to the terminal set and best-effort
+deleted the in-progress key after the flip committed.
+
+#63 changes the contract again: ``set_cancelled`` no longer commits the
+caller's session, and the ARQ key drop moves to
+``finalize_cancel_side_effects``, which runs AFTER the caller commits.
+That closes a double-commit desync where an internal commit here
+hardened the task's CANCELLED state while a caller's follow-up commit
+could fail and leave a sibling row (e.g. investigation status) stuck.
+These tests exercise the two-step pattern explicitly.
 
 These tests patch the ARQ pool + the redis client so no live Redis is
 required. They assert BOTH the ARQ side-effect AND the DB status
@@ -303,11 +310,11 @@ async def test_set_queued_from_paused_skips_malformed_kwargs_json(
 
 
 @pytest.mark.asyncio
-async def test_set_cancelled_flips_status_and_drops_in_progress_key(
+async def test_set_cancelled_flips_status_and_finalize_drops_key(
     tmp_path, monkeypatch,
 ) -> None:
-    """Non-terminal row: DB flips to CANCELLED and the ARQ in-progress key
-    is dropped so the worker slot is released."""
+    """Non-terminal row: caller commits the staged flip; then
+    ``finalize_cancel_side_effects`` drops the ARQ in-progress key."""
     monkeypatch.setenv("AILA_PLATFORM_REDIS_URL", _REDIS_URL)
     with sqlite_db_env(tmp_path, "cancel_running") as (engine, _):
         with Session(engine) as s:
@@ -323,10 +330,16 @@ async def test_set_cancelled_flips_status_and_drops_in_progress_key(
                 result = await TaskRepository.set_cancelled(
                     adapter, task_id, _admin_auth(),
                 )
+                assert result is True
+                # #63: the caller now owns the commit. Without this the
+                # SQLAlchemy Session __exit__ rolls back the staged flip.
+                raw.commit()
 
-        assert result is True
+            # ARQ key drop runs AFTER the DB commit so a rollback does not
+            # orphan the worker slot.
+            await TaskRepository.finalize_cancel_side_effects(task_id)
 
-        # DB side-effect.
+        # DB side-effect: caller-committed flip is persisted.
         with Session(engine) as s:
             reloaded = s.get(TaskRecord, task_id)
             assert reloaded is not None
@@ -335,6 +348,45 @@ async def test_set_cancelled_flips_status_and_drops_in_progress_key(
         # ARQ side-effect: in-progress key dropped for this exact task id.
         client.delete.assert_awaited_once_with(f"{ARQ_IN_PROGRESS_PREFIX}{task_id}")
         client.aclose.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_set_cancelled_does_not_commit_caller_session(
+    tmp_path, monkeypatch,
+) -> None:
+    """#63: without a caller commit the staged flip MUST roll back.
+
+    Proves ``set_cancelled`` no longer commits internally. The status flip
+    lives only in the caller's transaction until the caller commits; if the
+    caller closes the session without committing, the row stays RUNNING.
+    """
+    monkeypatch.setenv("AILA_PLATFORM_REDIS_URL", _REDIS_URL)
+    with sqlite_db_env(tmp_path, "cancel_no_caller_commit") as (engine, _):
+        with Session(engine) as s:
+            task_id = _insert_task(s, status=TaskStatus.RUNNING)
+
+        client = _make_redis_client_mock()
+        with patch(
+            "aila.platform.tasks.queue.aioredis.Redis.from_url",
+            return_value=client,
+        ):
+            with Session(engine) as raw:
+                adapter = _SyncSessionAdapter(raw)
+                result = await TaskRepository.set_cancelled(
+                    adapter, task_id, _admin_auth(),
+                )
+                assert result is True
+                # Deliberately DO NOT commit -- Session __exit__ rolls back.
+
+        # DB: the row is still RUNNING because the caller never committed.
+        with Session(engine) as s:
+            reloaded = s.get(TaskRecord, task_id)
+            assert reloaded is not None
+            assert reloaded.status == TaskStatus.RUNNING
+
+        # No ARQ side-effect fired either -- the caller never invoked
+        # finalize_cancel_side_effects.
+        client.delete.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -362,6 +414,7 @@ async def test_set_cancelled_refuses_dead_letter_source(
                 result = await TaskRepository.set_cancelled(
                     adapter, task_id, _admin_auth(),
                 )
+                # False -> nothing to commit or finalize.
 
         assert result is False
         client.delete.assert_not_awaited()
@@ -395,6 +448,7 @@ async def test_set_cancelled_refuses_pre_existing_terminal_state(
                 result = await TaskRepository.set_cancelled(
                     adapter, task_id, _admin_auth(),
                 )
+                # False -> nothing to commit; caller does not finalize.
         assert result is False
         client.delete.assert_not_awaited()
         with Session(engine) as s:
@@ -420,6 +474,7 @@ async def test_set_cancelled_returns_false_for_missing_row(
                 result = await TaskRepository.set_cancelled(
                     adapter, "no-such-id", _admin_auth(),
                 )
+                # False -> nothing to commit; caller does not finalize.
         assert result is False
         client.delete.assert_not_awaited()
 
@@ -446,6 +501,12 @@ async def test_set_cancelled_still_flips_when_redis_unconfigured(
                 result = await TaskRepository.set_cancelled(
                     adapter, task_id, _admin_auth(),
                 )
+                assert result is True
+                raw.commit()
+
+            # No Redis URL -> finalize is a no-op; the DB commit above is
+            # what makes the flip visible.
+            await TaskRepository.finalize_cancel_side_effects(task_id)
 
         assert result is True
         client.delete.assert_not_awaited()
@@ -480,6 +541,12 @@ async def test_set_cancelled_survives_key_drop_failure(
                 result = await TaskRepository.set_cancelled(
                     adapter, task_id, _admin_auth(),
                 )
+                assert result is True
+                raw.commit()
+
+            # Even when the ARQ key drop raises the DB commit is already
+            # persisted; the reaper reconciles the orphan key later.
+            await TaskRepository.finalize_cancel_side_effects(task_id)
 
         assert result is True
         client.delete.assert_awaited_once_with(f"{ARQ_IN_PROGRESS_PREFIX}{task_id}")

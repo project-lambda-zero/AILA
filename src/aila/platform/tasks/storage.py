@@ -16,6 +16,17 @@ worker slots after cancel. The re-enqueue / key-drop paths here now go
 through :func:`aila.platform.tasks.queue._enqueue_arq_job` and
 :func:`aila.platform.tasks.queue._drop_arq_in_progress_key` so all
 task-side ARQ transitions live in one place.
+
+``set_cancelled`` DOES NOT commit the caller's session (#63). It flushes
+the pending status flip so the change is visible to subsequent reads on
+that session, and returns whether the transition was staged. The caller
+owns the transaction and MUST commit once atomically -- pairing the
+task flip with any co-mutated rows (e.g. an investigation row) so a
+failed commit cannot leave TaskRecord=CANCELLED while a sibling row
+keeps running. After a successful commit the caller invokes
+:meth:`TaskRepository.finalize_cancel_side_effects` to drop the ARQ
+``in-progress`` key. Splitting the two steps means the ARQ side-effect
+cannot fire ahead of a commit that ends up rolling back.
 """
 
 from __future__ import annotations
@@ -156,7 +167,7 @@ class TaskRepository:
 
     @staticmethod
     async def set_cancelled(session, task_id: str, auth: AuthContext) -> bool:
-        """Mark a non-terminal task as CANCELLED and drop its ARQ in-progress key.
+        """Stage a non-terminal task's CANCELLED transition on ``session``.
 
         Terminal states -- ``DONE`` / ``FAILED`` / ``CANCELLED`` / ``DEAD_LETTER``
         -- are refused (returns False). ``DEAD_LETTER`` is included because
@@ -165,14 +176,20 @@ class TaskRepository:
         (issue #40-3), so dead-lettered rows silently reverted to ``CANCELLED``
         and erased the poison-pill classification.
 
-        After the DB flip commits, ``arq:in-progress:<task_id>`` is
-        best-effort deleted via
-        :func:`aila.platform.tasks.queue._drop_arq_in_progress_key` -- the
-        previous code left the key in place, holding a worker slot until
-        the cron reaper picked it up (paired with ``allow_abort_jobs=True``
-        on ``WorkerSettings`` so a live executor drops the job on its next
-        heartbeat). A key-drop failure does NOT reverse the DB flip; the
-        reaper reconciles orphan keys on its next sweep.
+        Contract (#63): this method DOES NOT commit ``session``. It flushes
+        the status flip so the mutation is visible to subsequent reads on
+        this session, and returns ``True`` when the transition was staged.
+        The caller owns the transaction and MUST issue exactly one commit
+        that covers both the task flip and any co-mutated rows in the same
+        unit of work. This closes the previous double-commit desync where
+        an internal commit here hardened the task's CANCELLED state, then
+        the caller's follow-up commit could fail and leave a sibling row
+        (e.g. ``InvestigationRunRecord.status``) stuck in RUNNING.
+
+        The ARQ ``in-progress:<task_id>`` key drop is deliberately deferred
+        to :meth:`finalize_cancel_side_effects`, which the caller invokes
+        AFTER a successful commit. That ordering guarantees the ARQ side-
+        effect never fires ahead of a commit that then rolls back.
         """
         _terminal = {
             TaskStatus.DONE,
@@ -185,14 +202,30 @@ class TaskRepository:
             return False
         record.status = TaskStatus.CANCELLED
         session.add(record)
-        await session.commit()
+        # Flush so the change is visible to later reads on the same session
+        # (e.g. a caller re-selects the row after staging). The caller's
+        # commit persists it -- an exception before commit rolls it back.
+        await session.flush()
+        return True
+
+    @staticmethod
+    async def finalize_cancel_side_effects(task_id: str) -> None:
+        """Drop the ARQ ``in-progress:<task_id>`` key after a cancel commit.
+
+        The caller invokes this AFTER the commit that flipped the row to
+        CANCELLED, so a failed commit does not orphan the worker slot. A
+        raising redis client is caught by
+        :func:`aila.platform.tasks.queue._drop_arq_in_progress_key` (best-
+        effort) and does not surface an error -- the cron reaper reconciles
+        orphan keys on its next sweep. When ``AILA_PLATFORM_REDIS_URL`` is
+        unset the drop is skipped for the same reason.
+        """
         redis_url = _env_redis_url()
         if redis_url:
             await _drop_arq_in_progress_key(task_id, redis_url)
         else:
             _log.debug(
-                "set_cancelled: AILA_PLATFORM_REDIS_URL unset -- arq "
-                "in-progress key drop skipped for %s (reaper will "
-                "reconcile)", task_id,
+                "finalize_cancel_side_effects: AILA_PLATFORM_REDIS_URL "
+                "unset -- arq in-progress key drop skipped for %s (reaper "
+                "will reconcile)", task_id,
             )
-        return True

@@ -3917,7 +3917,15 @@ def create_forensics_router() -> APIRouter:
                     "already_terminal": True,
                 })
 
+            # #63: set_cancelled stages the TaskRecord flip on uow.session
+            # WITHOUT committing. The single uow.commit() below persists both
+            # the task flip and the investigation-row flip atomically, so a
+            # failed commit cannot leave TaskRecord=CANCELLED while
+            # InvestigationRunRecord stays RUNNING (the 3-sources-of-truth
+            # desync). ARQ in-progress key drop is deferred to run AFTER the
+            # commit so a rollback does not orphan the worker slot.
             task_cancelled = False
+            task_id_for_finalize: str | None = None
             if inv.task_id:
                 try:
                     task_cancelled = await TaskRepository.set_cancelled(
@@ -3928,12 +3936,21 @@ def create_forensics_router() -> APIRouter:
                         "cancel_investigation: task cancel failed inv=%s task=%s err=%s",
                         inv.id, inv.task_id, exc,
                     )
+                if task_cancelled:
+                    task_id_for_finalize = inv.task_id
 
             inv.status = InvestigationStatus.CANCELLED.value
             if not inv.final_answer:
                 inv.final_answer = "Cancelled by analyst."
             uow.session.add(inv)
             await uow.commit()
+
+        # Post-commit: drop the ARQ in-progress key. Runs outside the UoW so
+        # no pooled DB connection is held across the Redis round-trip (#63).
+        if task_id_for_finalize is not None:
+            await TaskRepository.finalize_cancel_side_effects(
+                task_id_for_finalize,
+            )
 
         return DataEnvelope(data={
             "investigation_id": investigation_id,

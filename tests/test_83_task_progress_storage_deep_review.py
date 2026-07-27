@@ -539,7 +539,8 @@ class TestTaskRepositorySetCancelled:
     """Prove set_cancelled marks non-terminal task as CANCELLED."""
 
     async def test_queued_to_cancelled(self, test_db) -> None:
-        """FILE-30: set_cancelled transitions QUEUED task to CANCELLED."""
+        """FILE-30 / #63: set_cancelled stages the QUEUED -> CANCELLED flip;
+        the caller commits so the transition persists across sessions."""
         from aila.platform.tasks.models import TaskRecord
         from aila.platform.tasks.storage import TaskRepository
 
@@ -548,15 +549,16 @@ class TestTaskRepositorySetCancelled:
 
         async with async_session_scope() as s:
             result = await TaskRepository.set_cancelled(s, task_id, auth)
-
-        assert result is True
+            assert result is True
+            # #63: set_cancelled no longer commits -- caller commits.
+            await s.commit()
 
         with session_scope() as s:
             rec = s.exec(select(TaskRecord).where(TaskRecord.id == task_id)).first()
             assert rec.status == "cancelled"
 
     async def test_running_to_cancelled(self, test_db) -> None:
-        """FILE-30: set_cancelled transitions RUNNING task to CANCELLED."""
+        """FILE-30: set_cancelled stages the RUNNING -> CANCELLED flip."""
         from aila.platform.tasks.storage import TaskRepository
 
         task_id = _create_task(status="running", group_id="operator")
@@ -564,6 +566,8 @@ class TestTaskRepositorySetCancelled:
 
         async with async_session_scope() as s:
             result = await TaskRepository.set_cancelled(s, task_id, auth)
+            if result:
+                await s.commit()
 
         assert result is True
 
@@ -680,7 +684,10 @@ class TestCrossUserIsolation:
         assert result is True
 
         async with async_session_scope() as s:
+            # #63: caller commits the staged cancel flip.
             result = await TaskRepository.set_cancelled(s, task_id, admin_auth)
+            if result:
+                await s.commit()
         assert result is True
 
 

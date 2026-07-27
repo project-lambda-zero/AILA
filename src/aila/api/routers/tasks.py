@@ -254,10 +254,21 @@ async def cancel_task(
     """
 
     async def _cancel() -> bool:
+        # #63: set_cancelled no longer commits its own session -- the caller
+        # owns the transaction and commits atomically. The ARQ in-progress
+        # key drop is deferred to finalize_cancel_side_effects, called after
+        # commit so a rolled-back commit cannot orphan the worker slot.
         async with async_session_scope() as session:
-            return await TaskRepository.set_cancelled(session, task_id, auth)
+            transitioned = await TaskRepository.set_cancelled(
+                session, task_id, auth,
+            )
+            if transitioned:
+                await session.commit()
+            return transitioned
 
     updated = await _cancel()
+    if updated:
+        await TaskRepository.finalize_cancel_side_effects(task_id)
     if not updated:
         # Distinguish 404 (not found/accessible) from 409 (already terminal)
         async def _exists() -> bool:

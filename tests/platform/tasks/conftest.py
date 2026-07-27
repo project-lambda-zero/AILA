@@ -173,5 +173,8 @@ class _SyncSessionAdapter:
     async def commit(self) -> None:
         self._s.commit()
 
+    async def flush(self) -> None:
+        self._s.flush()
+
     async def refresh(self, instance) -> None:
         self._s.refresh(instance)
