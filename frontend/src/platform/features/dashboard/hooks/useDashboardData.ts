@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 
-import { authorizedRequestJson, requestJson } from "@platform/api/http";
+import { authorizedRequestJson } from "@platform/api/http";
 
 // ---------------------------------------------------------------------------
 // Backend response types -- mirror src/aila/api/schemas/endpoints.py
@@ -75,12 +75,19 @@ export function useDashboardData() {
 /**
  * Fetches platform health status from GET /health.
  * Refreshes automatically every 30 seconds (health checks need faster cadence).
+ *
+ * #47: the dashboard is behind auth; the health call MUST go through the
+ * authorized request wrapper so the JWT bearer travels with the request.
+ * Previously an anonymous GET /health fired on every 30s tick from an
+ * authenticated page, defeating auth-visibility of a fetch that could
+ * enumerate infrastructure health from any origin.
+ *
  * Used by: HealthStatusWidget.
  */
 export function useHealthData() {
   const { data, isLoading, isError, error } = useQuery<HealthResponse>({
     queryKey: ["platform", "health"],
-    queryFn: () => requestJson<HealthResponse>("/health"),
+    queryFn: () => authorizedRequestJson<HealthResponse>("/health"),
     refetchInterval: 30_000,
     staleTime: 15_000,
   });

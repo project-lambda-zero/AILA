@@ -15,6 +15,38 @@ interface LegacyErrorPayload {
 export interface RequestJsonOptions extends Omit<RequestInit, "body"> {
   body?: BodyInit | object | null;
   token?: string;
+  /**
+   * #47 -- per-request wall-clock timeout in milliseconds.
+   *
+   * When `signal` is not provided, an `AbortSignal.timeout(timeoutMs)`
+   * is attached so a request that never returns cannot pin a browser
+   * connection slot indefinitely. When the caller passes their own
+   * `signal` (e.g. a react-query cancellation controller), `timeoutMs`
+   * is layered by combining both signals so cancellation still wins.
+   * Explicit `0` disables the timeout (needed for SSE `requestJson`
+   * consumers that live for the duration of the connection).
+   *
+   * Defaults to `DEFAULT_REQUEST_TIMEOUT_MS`.
+   */
+  timeoutMs?: number;
+}
+
+/** #47 -- default per-request timeout (30 seconds). Long enough for a
+ * heavy scan submit; short enough that a stalled TLS handshake cannot
+ * park a fetch forever. */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
+function resolveAbortSignal(
+  callerSignal: AbortSignal | null | undefined,
+  timeoutMs: number,
+): AbortSignal | undefined {
+  if (timeoutMs <= 0) return callerSignal ?? undefined;
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  if (!callerSignal) return timeoutSignal;
+  // AbortSignal.any composes cancellation deterministically: the first
+  // aborter wins with its own `reason`. Available on every browser
+  // matching the React 19 support matrix.
+  return AbortSignal.any([callerSignal, timeoutSignal]);
 }
 
 export interface BlobResponsePayload {
@@ -150,10 +182,16 @@ export async function requestJson<T>(
     headers.set("Authorization", `Bearer ${options.token}`);
   }
 
+  const signal = resolveAbortSignal(
+    options.signal,
+    options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+  );
+
   const response = await fetch(buildApiUrl(pathname), {
     ...options,
     body: normalizeRequestBody(options.body),
     headers,
+    signal,
   });
 
   if (!response.ok) {
@@ -181,10 +219,16 @@ export async function requestBlob(
     headers.set("Authorization", `Bearer ${options.token}`);
   }
 
+  const signal = resolveAbortSignal(
+    options.signal,
+    options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+  );
+
   const response = await fetch(buildApiUrl(pathname), {
     ...options,
     body: normalizeRequestBody(options.body),
     headers,
+    signal,
   });
 
   if (!response.ok) {

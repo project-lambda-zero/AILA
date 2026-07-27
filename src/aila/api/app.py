@@ -425,6 +425,13 @@ def create_app() -> FastAPI:
     from aila.api.middleware import CorrelationIdMiddleware
     application.add_middleware(CorrelationIdMiddleware)
 
+    # #47: security-headers baseline (CSP, nosniff, framing, referrer, COOP,
+    # CORP, permissions). Registered before CORS so it is inside the CORS
+    # wrapper -- CORS still owns the outermost response envelope and can
+    # inject Access-Control-* on preflight without clashing.
+    from aila.api.middleware import SecurityHeadersMiddleware
+    application.add_middleware(SecurityHeadersMiddleware)
+
     # #53: bind the caller's TeamContext to the ambient ContextVar for the
     # duration of the request so bare ``UnitOfWork()`` / ``async_session_scope()``
     # sites inherit tenant scope. Decode is silent -- the real auth layer

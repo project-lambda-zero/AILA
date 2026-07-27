@@ -6,7 +6,11 @@
  * Token is obtained from useAuthStore.getAccessToken() so it always uses
  * the current (possibly refreshed) token without re-rendering.
  *
- * Back-off schedule (ms): 1 000, 2 000, 4 000, 8 000, 16 000, 30 000 (max).
+ * Back-off schedule (ms): 1 000, 2 000, 4 000, 8 000, 16 000, 30 000 (max),
+ * with ±25% random jitter (#47) so a cluster of clients kicked off by a
+ * transient server failure do NOT re-storm the endpoint in lockstep. The
+ * jitter is applied per-step, not to the base step, so the attempt
+ * counter still climbs deterministically for tests / diagnostics.
  */
 import { useEffect, useRef, useState } from "react";
 
@@ -34,6 +38,21 @@ export interface UseSSEOptions {
 }
 
 const BACKOFF_STEPS_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000];
+// #47: ±25% jitter around the step; keeps the schedule shape while
+// spreading a synchronized reconnect burst across a ~half-step window.
+const BACKOFF_JITTER_FRACTION = 0.25;
+
+export function computeBackoffDelayMs(
+  attempt: number,
+  random: () => number = Math.random,
+): number {
+  const idx = Math.min(Math.max(attempt, 0), BACKOFF_STEPS_MS.length - 1);
+  const base = BACKOFF_STEPS_MS[idx];
+  const spread = base * BACKOFF_JITTER_FRACTION;
+  // random() -> [0, 1); scale to [-spread, +spread).
+  const jitter = (random() * 2 - 1) * spread;
+  return Math.max(0, Math.round(base + jitter));
+}
 
 /**
  * useSSE -- persistent SSE connection with reconnect back-off.
@@ -163,8 +182,7 @@ export function useSSE({
 
     function scheduleReconnect() {
       if (cancelled) return;
-      const backoff =
-        BACKOFF_STEPS_MS[Math.min(attemptRef.current, BACKOFF_STEPS_MS.length - 1)];
+      const backoff = computeBackoffDelayMs(attemptRef.current);
       attemptRef.current += 1;
       timerRef.current = setTimeout(() => {
         void connect();

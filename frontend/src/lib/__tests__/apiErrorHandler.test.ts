@@ -13,6 +13,16 @@ vi.mock("@/components/ui/sonner", () => ({
   Toaster: () => null,
 }));
 
+// Mock useAuthStore so the 401 branch can be exercised without a real
+// zustand store (and without triggering the location.assign redirect on
+// a jsdom window we cannot pre-set safely).
+const logout = vi.fn();
+vi.mock("@platform/auth/useAuthStore", () => ({
+  useAuthStore: {
+    getState: () => ({ logout }),
+  },
+}));
+
 import { apiErrorHandler } from "@/lib/apiErrorHandler";
 
 beforeEach(() => {
@@ -89,5 +99,41 @@ describe("apiErrorHandler", () => {
     apiErrorHandler(new Error("some regular error"));
     const [msg] = toastError.mock.calls[0];
     expect(msg).toBe("some regular error");
+  });
+
+  // ---- #47: 401 clears the session, 403 does NOT ------------------------
+
+  it("logs out on a 401 status (session invalid)", async () => {
+    apiErrorHandler({ status: 401, message: "Unauthorized" });
+    // The logout is scheduled from an inner async IIFE; flush microtasks.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(logout).toHaveBeenCalledTimes(1);
+    // A 401 short-circuits toast rendering -- it navigates instead.
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("does NOT log out on a 403 status (permission denied on live session)", async () => {
+    apiErrorHandler({
+      status: 403,
+      code: "FORBIDDEN",
+      message: "You lack the admin role for this operation",
+      hint: null,
+      trace_id: null,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(logout).not.toHaveBeenCalled();
+    // The user sees a real error toast instead.
+    expect(toastError).toHaveBeenCalledTimes(1);
+    const [msg] = toastError.mock.calls[0];
+    expect(msg).toBe("You lack the admin role for this operation");
+  });
+
+  it("still logs out on an auth-phrased error even without a status", async () => {
+    apiErrorHandler({ message: "invalid token" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(logout).toHaveBeenCalledTimes(1);
   });
 });

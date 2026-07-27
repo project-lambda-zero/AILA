@@ -37,4 +37,20 @@ describe("QueryClient (TanStack v5 cache wiring)", () => {
     expect(defaults.queries?.retry).toBe(1);
     expect(defaults.queries?.refetchOnWindowFocus).toBe(false);
   });
+
+  it("bounds the cache with an explicit gcTime + staleTime (#47)", () => {
+    const client = makeQueryClient();
+    const defaults = client.getDefaultOptions();
+    // The cache MUST NOT grow indefinitely; anything under 10 minutes is
+    // an acceptable bound for the security posture that motivated this.
+    const gcTime = defaults.queries?.gcTime;
+    expect(typeof gcTime).toBe("number");
+    expect(gcTime).toBeGreaterThan(0);
+    expect(gcTime).toBeLessThanOrEqual(10 * 60 * 1000);
+    // Similarly, a bounded staleTime prevents indefinite serve-from-cache
+    // of a value that a caller did not explicitly opt into pinning.
+    const staleTime = defaults.queries?.staleTime;
+    expect(typeof staleTime).toBe("number");
+    expect(staleTime).toBeGreaterThan(0);
+  });
 });
