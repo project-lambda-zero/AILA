@@ -17,6 +17,37 @@ from ..exceptions import AuthenticationError, TimeoutError, UpstreamError, Valid
 from .log_redact import redact_command_line
 
 
+def _apply_host_key_policy(
+    client: paramiko.SSHClient, payload: SSHIntegrationInput
+) -> None:
+    """Install a reject-unknown-host-key policy on ``client`` (#42).
+
+    Every SSH surface (pool + direct connect + upload + download)
+    routes host-key trust through this helper so the reject-by-default
+    rule cannot be reintroduced by drift on any single path.
+
+    An explicitly configured ``known_hosts_path`` is layered on top of
+    the system-default known_hosts via ``load_host_keys`` (called by
+    the surrounding caller) so an operator-declared trust file still
+    admits its hosts. When no ``known_hosts_path`` is configured the
+    client no longer silently AutoAdds the server's key on first
+    connect -- that is a MITM window on the first handshake against a
+    freshly registered host. Hosts the operator has previously
+    accepted into ``~/.ssh/known_hosts`` continue to connect because
+    every caller runs ``load_system_host_keys()`` before invoking
+    this helper; unknown hosts fail closed with a
+    ``paramiko.SSHException`` that surfaces as an ``UpstreamError``.
+
+    The ``payload`` parameter is intentionally accepted (even though it
+    is not read today) so any future policy variation -- e.g. a
+    strict-mode setting that also refuses TOFU on operator-supplied
+    known_hosts -- has a single seam to change without touching five
+    call sites again.
+    """
+    del payload  # currently uniform; kept for future policy variation.
+    client.set_missing_host_key_policy(paramiko.RejectPolicy())
+
+
 def _reject_unsafe_path(path: object, *, kind: str) -> None:
     """Reject empty or ``..``-traversal SFTP paths before any network call.
 
@@ -70,9 +101,7 @@ class SSHConnectionPool:
                 known_hosts_path = Path(payload.known_hosts_path).resolve()
                 if known_hosts_path.exists():
                     new_client.load_host_keys(str(known_hosts_path))
-                new_client.set_missing_host_key_policy(paramiko.RejectPolicy())
-            else:
-                new_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            _apply_host_key_policy(new_client, payload)
             new_client.connect(**connect_kwargs)
             self._pool[key] = new_client
             return new_client
@@ -165,12 +194,10 @@ class SSHService:
             if not known_hosts_path.exists():
                 raise ValidationError(f"Known hosts file {known_hosts_path} does not exist.")
             client.load_host_keys(str(known_hosts_path))
-        # Use AutoAddPolicy when no known_hosts_path is configured (lab/CTF default).
-        # When a known_hosts_path IS provided, enforce RejectPolicy so rogue hosts fail.
-        if payload.known_hosts_path:
-            client.set_missing_host_key_policy(paramiko.RejectPolicy())
-        else:
-            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        # #42: reject unknown host keys on every SSH surface. The helper
+        # centralizes the policy so a fifth site can't silently drift
+        # back to AutoAddPolicy.
+        _apply_host_key_policy(client, payload)
         try:
             client.connect(**connect_kwargs)
             transport = client.get_transport()
@@ -283,13 +310,10 @@ class SSHService:
             if not known_hosts_path.exists():
                 raise ValidationError(f"Known hosts file {known_hosts_path} does not exist.")
             client.load_host_keys(str(known_hosts_path))
-        # AutoAddPolicy for unconfigured known_hosts (lab default); RejectPolicy
-        # once an operator declares a trusted file. Identical policy plumbing
-        # to _run_command_blocking.
-        if payload.known_hosts_path:
-            client.set_missing_host_key_policy(paramiko.RejectPolicy())
-        else:
-            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        # #42: identical reject-by-default plumbing to
+        # _run_command_blocking so the full-triple variant cannot
+        # silently accept a first-connect key.
+        _apply_host_key_policy(client, payload)
         try:
             client.connect(**connect_kwargs)
             transport = client.get_transport()
@@ -512,12 +536,10 @@ class SSHService:
             if not known_hosts_path.exists():
                 raise ValidationError(f"Known hosts file {known_hosts_path} does not exist.")
             client.load_host_keys(str(known_hosts_path))
-        # Use AutoAddPolicy when no known_hosts_path is configured (lab/CTF default).
-        # When a known_hosts_path IS provided, enforce RejectPolicy so rogue hosts fail.
-        if payload.known_hosts_path:
-            client.set_missing_host_key_policy(paramiko.RejectPolicy())
-        else:
-            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        # #42: reject unknown host keys on the upload surface too --
+        # AutoAddPolicy on a fresh registration would let SFTP land on
+        # a MITM host before the caller could ever compare fingerprints.
+        _apply_host_key_policy(client, payload)
         try:
             client.connect(**connect_kwargs)
             SSHService._verify_fingerprint(client, payload)
@@ -591,15 +613,21 @@ class SSHService:
         connect_kwargs: dict,
     ) -> None:
         client = paramiko.SSHClient()
+        # Load the OS-default known_hosts alongside any operator-declared
+        # file so hosts an operator has previously trusted still connect
+        # once reject-by-default is in effect (#42). The upload path and
+        # both exec paths already do this; the download path used to
+        # silently AutoAdd on first connect and skip the system file.
+        client.load_system_host_keys()
         if payload.known_hosts_path:
             known_hosts_path = Path(payload.known_hosts_path)
             if not known_hosts_path.exists():
                 raise ValidationError(f"Known hosts file {known_hosts_path} does not exist.")
             client.load_host_keys(str(known_hosts_path))
-        if payload.known_hosts_path:
-            client.set_missing_host_key_policy(paramiko.RejectPolicy())
-        else:
-            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        # #42: reject unknown host keys on the download surface too --
+        # a first-connect AutoAdd here would exfiltrate the remote
+        # payload from a MITM host with the operator none the wiser.
+        _apply_host_key_policy(client, payload)
         try:
             client.connect(**connect_kwargs)
             SSHService._verify_fingerprint(client, payload)

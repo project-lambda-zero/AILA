@@ -11,7 +11,7 @@ import json
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from aila.platform.contracts import utc_now
 
@@ -49,17 +49,27 @@ def _truncate_to(content: str, original_chars: int, target_chars: int) -> str:
 
 class EvidenceSection(BaseModel):
     """One labeled piece of evidence shown to the LLM. ``char_count`` is
-    auto-computed from ``content``; any value passed in is overwritten."""
+    derived from ``content`` on every access -- it is NOT a writable
+    field, so a caller can't stamp ``char_count=0`` on a 60KB section
+    to slip past the ``max_total_chars`` budget (#52 evidence integrity).
+    Truncating an existing section still works: assign to ``content``
+    and ``char_count`` follows automatically. ``extra="forbid"`` prevents
+    a caller from smuggling ``char_count`` (or any other undeclared
+    field) through the constructor.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     title: str
     content: str
     source: str
     priority: int = 50
-    char_count: int = 0
     truncated: bool = False
 
-    def model_post_init(self, __context: Any) -> None:
-        self.char_count = len(self.content)
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def char_count(self) -> int:
+        return len(self.content)
 
 
 class BoundedEvidencePack(BaseModel):
@@ -231,6 +241,8 @@ class BoundedEvidencePack(BaseModel):
             return section
         original = section.char_count
         new_content = _truncate_to(section.content, original, self.max_chars_per_section)
+        # ``char_count`` is a computed field -- omit it from the
+        # constructor; it re-derives from the truncated content.
         return EvidenceSection(
             title=section.title,
             content=new_content,
@@ -272,7 +284,8 @@ class BoundedEvidencePack(BaseModel):
                 self.sections.pop(idx)
                 self.dropped.append(victim.title)
             else:
+                # ``char_count`` re-derives from the new content on the
+                # next access -- no explicit resync needed.
                 victim.content = victim.content[: target - len(suffix)] + suffix
-                victim.char_count = len(victim.content)
                 victim.truncated = True
         return True
