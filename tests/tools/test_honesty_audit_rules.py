@@ -1678,3 +1678,433 @@ class TestLedgerWriteBypass:
             "    return s.execute(pg_insert(InvestigationLedgerRecord).values())\n",
         )
         assert "ledger_write_bypass" not in _rules(_audit(src))
+
+
+# ---------------------------------------------------------------------------
+# Rule 52 -- fail_open_recovery_path (RFC-07)
+# ---------------------------------------------------------------------------
+
+
+class TestFailOpenRecoveryPath:
+    """Rule 52: a safety/rate-limit/verify/recovery/finalize function must
+    not return a permissive default from an except handler."""
+
+    def test_verify_returning_true_flagged(self, tmp_path: Path) -> None:
+        """``def verify_x(): try: ... except: return True`` fires -- True on
+        error is the fail-open answer for a verifier."""
+        src = _write(
+            tmp_path,
+            "aila/platform/llm/verify_gate.py",
+            "def verify_response(x):\n"
+            "    try:\n"
+            "        return check(x)\n"
+            "    except Exception:\n"
+            "        return True\n",
+        )
+        assert "fail_open_recovery_path" in _rules(_audit(src))
+
+    def test_rate_limit_returning_zero_flagged(self, tmp_path: Path) -> None:
+        """``def compute_defer(): try: ... except: return 0.0`` fires -- a
+        rate limiter defaulting to zero defer under DB pressure floods the
+        queue."""
+        src = _write(
+            tmp_path,
+            "aila/platform/tasks/rate_limit.py",
+            "def compute_defer(t):\n"
+            "    try:\n"
+            "        return t.reserved()\n"
+            "    except Exception:\n"
+            "        return 0.0\n",
+        )
+        assert "fail_open_recovery_path" in _rules(_audit(src))
+
+    def test_bare_return_flagged(self, tmp_path: Path) -> None:
+        """A bare ``return`` (implicit None) from a safety handler fires."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/safety.py",
+            "def safety_check(x):\n"
+            "    try:\n"
+            "        return _probe(x)\n"
+            "    except Exception:\n"
+            "        return\n",
+        )
+        assert "fail_open_recovery_path" in _rules(_audit(src))
+
+    def test_empty_list_flagged(self, tmp_path: Path) -> None:
+        """A recovery function returning [] on error hides a real failure."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/recovery.py",
+            "def recover(x):\n"
+            "    try:\n"
+            "        return _load(x)\n"
+            "    except Exception:\n"
+            "        return []\n",
+        )
+        assert "fail_open_recovery_path" in _rules(_audit(src))
+
+    def test_verify_returning_false_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """``return False`` from a verify handler is the CORRECT fail-
+        closed answer -- must NOT fire."""
+        src = _write(
+            tmp_path,
+            "aila/platform/llm/verify_gate.py",
+            "def verify_response(x):\n"
+            "    try:\n"
+            "        return check(x)\n"
+            "    except Exception:\n"
+            "        return False\n",
+        )
+        assert "fail_open_recovery_path" not in _rules(_audit(src))
+
+    def test_handler_that_logs_not_flagged(self, tmp_path: Path) -> None:
+        """A handler that logs the exception is surfacing a signal -- the
+        subsequent return-zero is legitimate sweep bookkeeping, not a
+        silent fail-open."""
+        src = _write(
+            tmp_path,
+            "aila/platform/tasks/sweep.py",
+            "import logging\n"
+            "_log = logging.getLogger(__name__)\n\n"
+            "def sweep_rows():\n"
+            "    try:\n"
+            "        return _run_sweep()\n"
+            "    except Exception as exc:\n"
+            "        _log.warning('sweep failed: %s', exc)\n"
+            "        return 0\n",
+        )
+        assert "fail_open_recovery_path" not in _rules(_audit(src))
+
+    def test_handler_that_reraises_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A handler that re-raises after cleanup is fail-closed by
+        design -- the rule must not fire."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/recovery.py",
+            "def recover(x):\n"
+            "    try:\n"
+            "        return _run(x)\n"
+            "    except Exception:\n"
+            "        _cleanup()\n"
+            "        raise\n",
+        )
+        assert "fail_open_recovery_path" not in _rules(_audit(src))
+
+    def test_non_recovery_function_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A function whose name does not signal recovery is out of scope
+        -- an ordinary ``compute_score`` may legitimately return 0 on a
+        parse failure without being fail-open."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/score.py",
+            "def compute_score(raw):\n"
+            "    try:\n"
+            "        return int(raw)\n"
+            "    except ValueError:\n"
+            "        return 0\n",
+        )
+        assert "fail_open_recovery_path" not in _rules(_audit(src))
+
+    def test_whitelist_suppresses(self, tmp_path: Path) -> None:
+        """A matching whitelist entry suppresses the finding."""
+        src = _write(
+            tmp_path,
+            "aila/platform/llm/verify_x.py",
+            "def verify_x(x):\n"
+            "    try:\n"
+            "        return check(x)\n"
+            "    except Exception:\n"
+            "        return True\n",
+        )
+        wl_path = tmp_path / "honesty_whitelist.py"
+        wl_path.write_text(
+            "HONESTY_WHITELIST = [\n"
+            "    (\n"
+            '        "aila/platform/llm/verify_x.py",\n'
+            '        "verify_x",\n'
+            '        "fail_open_recovery_path",\n'
+            "    ),\n"
+            "]\n",
+            encoding="utf-8",
+        )
+        findings = _audit(src, whitelist_path=wl_path)
+        assert not any(f.rule == "fail_open_recovery_path" for f in findings)
+
+
+# ---------------------------------------------------------------------------
+# Rule 53 -- close_without_infra_classification (RFC-07)
+# ---------------------------------------------------------------------------
+
+
+class TestCloseWithoutInfraClassification:
+    """Rule 53: a finalizer that closes an investigation as negative must
+    consult InfraDeathClassifier in the same function body."""
+
+    def test_finalize_calling_close_without_classifier_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A finalize-marked function calling close_investigation without
+        InfraDeathClassifier reference fires."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/finalizer.py",
+            "def finalize_run(inv):\n"
+            "    close_investigation(inv, reason='no_finding')\n"
+            "    return inv\n",
+        )
+        assert "close_without_infra_classification" in _rules(_audit(src))
+
+    def test_synthesize_no_finding_without_classifier_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """``synthesize_no_finding_outcomes`` without classifier reference
+        is the exact RFC-07 anti-pattern in malware finalizer."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/finalizer.py",
+            "def synthesize_no_finding_outcomes(inv):\n"
+            "    for branch in inv.branches:\n"
+            "        mark_no_finding(branch)\n"
+            "    return inv\n",
+        )
+        assert (
+            "close_without_infra_classification" in _rules(_audit(src))
+        )
+
+    def test_finalize_with_classifier_call_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A finalizer that calls InfraDeathClassifier.classify() is fine."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/finalizer.py",
+            "def finalize_run(inv):\n"
+            "    kind = InfraDeathClassifier().classify(inv)\n"
+            "    if kind == 'terminal':\n"
+            "        close_investigation(inv, reason='no_finding')\n"
+            "    return inv\n",
+        )
+        assert (
+            "close_without_infra_classification"
+            not in _rules(_audit(src))
+        )
+
+    def test_finalize_with_classifier_attribute_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A finalizer that references self.classifier (bound classifier
+        instance) is fine -- the classifier symbol appears in body ids."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/finalizer.py",
+            "class Finalizer:\n"
+            "    def __init__(self):\n"
+            "        self.InfraDeathClassifier = None\n"
+            "    def finalize_run(self, inv):\n"
+            "        _ = self.InfraDeathClassifier\n"
+            "        close_investigation(inv, reason='no_finding')\n"
+            "        return inv\n",
+        )
+        assert (
+            "close_without_infra_classification"
+            not in _rules(_audit(src))
+        )
+
+    def test_non_finalizer_calling_close_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A route handler / ordinary function calling close_investigation
+        is out of scope -- the rule targets finalize-marked names only."""
+        src = _write(
+            tmp_path,
+            "aila/api/routers/investigations.py",
+            "async def cancel(inv_id):\n"
+            "    close_investigation(inv_id, reason='operator_cancel')\n"
+            "    return {'ok': True}\n",
+        )
+        assert (
+            "close_without_infra_classification"
+            not in _rules(_audit(src))
+        )
+
+    def test_finalize_without_close_marker_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A finalize function that does not actually close anything (e.g.
+        it only emits a summary) is out of scope."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/finalizer.py",
+            "def finalize_run(inv):\n"
+            "    emit_summary(inv)\n"
+            "    return inv\n",
+        )
+        assert (
+            "close_without_infra_classification"
+            not in _rules(_audit(src))
+        )
+
+    def test_whitelist_suppresses(self, tmp_path: Path) -> None:
+        """A matching whitelist entry suppresses the finding."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/finalizer.py",
+            "def finalize_run(inv):\n"
+            "    close_investigation(inv, reason='no_finding')\n"
+            "    return inv\n",
+        )
+        wl_path = tmp_path / "honesty_whitelist.py"
+        wl_path.write_text(
+            "HONESTY_WHITELIST = [\n"
+            "    (\n"
+            '        "aila/platform/services/finalizer.py",\n'
+            '        "finalize_run",\n'
+            '        "close_without_infra_classification",\n'
+            "    ),\n"
+            "]\n",
+            encoding="utf-8",
+        )
+        findings = _audit(src, whitelist_path=wl_path)
+        assert not any(
+            f.rule == "close_without_infra_classification" for f in findings
+        )
+
+
+# ---------------------------------------------------------------------------
+# Rule 54 -- heal_without_journal (RFC-07)
+# ---------------------------------------------------------------------------
+
+
+class TestHealWithoutJournal:
+    """Rule 54: a heal-marked function that mutates run state must also
+    write a checkpointed recovery event."""
+
+    def test_reconcile_calling_flip_status_without_journal_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A reconcile function that flips status but writes no journal
+        entry fires the rule."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/reconciler.py",
+            "def reconcile_task(t):\n"
+            "    flip_status(t, 'failed')\n"
+            "    return t\n",
+        )
+        assert "heal_without_journal" in _rules(_audit(src))
+
+    def test_heal_calling_set_enabled_without_journal_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A heal-marked function that calls set_enabled without a
+        journal write fires."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/mcp_heal.py",
+            "async def heal_mcp(inst):\n"
+            "    await set_enabled(inst.id, False)\n"
+            "    return None\n",
+        )
+        assert "heal_without_journal" in _rules(_audit(src))
+
+    def test_reconcile_with_journal_write_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A reconcile that mutates state and then writes a journal event
+        via append_general is fine."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/reconciler.py",
+            "async def reconcile_task(svc, t):\n"
+            "    flip_status(t, 'failed')\n"
+            "    await svc.append_general(t.id, 'heal', 'reconciled', {})\n"
+            "    return t\n",
+        )
+        assert "heal_without_journal" not in _rules(_audit(src))
+
+    def test_heal_with_record_signal_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """``record_signal`` is a documented journal marker -- a heal
+        function that mutates state and calls record_signal is fine."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/heal.py",
+            "async def heal_downgrade(url):\n"
+            "    drop_lock(url)\n"
+            "    record_signal('heal', {'url': url})\n",
+        )
+        assert "heal_without_journal" not in _rules(_audit(src))
+
+    def test_heal_without_state_mutation_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A heal-marked function that does not actually mutate run state
+        (e.g. only reads and returns a report) is out of scope."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/heal.py",
+            "def heal_report(t):\n"
+            "    return {'ok': True, 'state': t.status}\n",
+        )
+        assert "heal_without_journal" not in _rules(_audit(src))
+
+    def test_non_heal_calling_flip_status_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A route handler that flips status is out of scope -- the rule
+        targets heal-marked names only."""
+        src = _write(
+            tmp_path,
+            "aila/api/routers/tasks.py",
+            "async def cancel(t_id):\n"
+            "    flip_status(t_id, 'cancelled')\n"
+            "    return {'ok': True}\n",
+        )
+        assert "heal_without_journal" not in _rules(_audit(src))
+
+    def test_reconciler_helper_file_exempt(
+        self, tmp_path: Path,
+    ) -> None:
+        """``platform/tasks/state_reconciler.py`` owns the mutation
+        primitives that higher-level heal paths compose; it is exempt so
+        the rule fires on the CALLER of these helpers, not the helpers
+        themselves."""
+        src = _write(
+            tmp_path,
+            "aila/platform/tasks/state_reconciler.py",
+            "async def reconcile(t):\n"
+            "    flip_status(t, 'failed')\n"
+            "    return t\n",
+        )
+        assert "heal_without_journal" not in _rules(_audit(src))
+
+    def test_whitelist_suppresses(self, tmp_path: Path) -> None:
+        """A matching whitelist entry suppresses the finding."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/reconciler.py",
+            "def reconcile_task(t):\n"
+            "    flip_status(t, 'failed')\n"
+            "    return t\n",
+        )
+        wl_path = tmp_path / "honesty_whitelist.py"
+        wl_path.write_text(
+            "HONESTY_WHITELIST = [\n"
+            "    (\n"
+            '        "aila/platform/services/reconciler.py",\n'
+            '        "reconcile_task",\n'
+            '        "heal_without_journal",\n'
+            "    ),\n"
+            "]\n",
+            encoding="utf-8",
+        )
+        findings = _audit(src, whitelist_path=wl_path)
+        assert not any(f.rule == "heal_without_journal" for f in findings)

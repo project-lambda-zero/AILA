@@ -24,6 +24,12 @@ from .config import LLMConfigProvider, LLMRouting
 from .cost import CostTracker
 from .errors import BudgetExceededError, ClassificationBlockedError, ConfidenceRejectedError, LLMDisabledError, LLMError
 from .gate import extract_confidence, make_gate_step
+from .health_router import (
+    EndpointHealth,
+    ModelHealthRouter,
+    get_default_health_router,
+    reset_default_health_router,
+)
 from .pipeline import PipelineRunner
 from .run_memory import RunMemory
 from .sanitize import register_injection_pattern, sanitize_input, sanitize_output
@@ -53,9 +59,11 @@ __all__ = [
     "ClassificationLevel",
     "ClassificationResult",
     "ConfidenceRejectedError",
+    "EndpointHealth",
     "EvidenceValidationReport",
     "EvidenceValidator",
     "LLMClient",
+    "ModelHealthRouter",
     "LLMConfigProvider",
     "LLMDisabledError",
     "LLMError",
@@ -67,6 +75,7 @@ __all__ = [
     "classify_messages",
     "compute_seal",
     "extract_confidence",
+    "get_default_health_router",
     "make_classify_step",
     "make_gate_step",
     "make_seal_step",
@@ -74,6 +83,7 @@ __all__ = [
     "make_verify_step",
     "register_injection_pattern",
     "register_pattern",
+    "reset_default_health_router",
     "sanitize_input",
     "sanitize_output",
     "sanitize_untrusted",

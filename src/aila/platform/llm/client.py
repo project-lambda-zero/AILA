@@ -85,16 +85,44 @@ _LAST_LLM_OK_AT: float = 0.0
 _LAST_LLM_ERROR_AT: float = 0.0
 
 
-def _record_llm_ok() -> None:
-    """Update the last-OK timestamp. Called inside the retry success path."""
+def _record_llm_ok(url: str | None = None) -> None:
+    """Update the last-OK timestamp and clear per-URL infra-health.
+
+    Called inside the retry success path. ``url`` is optional so pre-
+    RFC-07 callers that never learned the routed URL still work; the
+    per-URL health branch skips when no URL is supplied so the router
+    stays inert for those paths.
+    """
     global _LAST_LLM_OK_AT
     _LAST_LLM_OK_AT = _time_mod.monotonic()
+    if url:
+        # Deferred import: health_router imports nothing from this
+        # module, so a plain top-level import would be fine -- keeping
+        # it inline keeps the health-router hook one grep away from
+        # its call site and matches how the drift + cost hooks below
+        # thread their imports.
+        from .health_router import get_default_health_router
+        get_default_health_router().record_success(url)
 
 
-def _record_llm_error() -> None:
-    """Update the last-error timestamp. Called inside every retry catch."""
+def _record_llm_error(
+    url: str | None = None,
+    *,
+    kind: str = "unknown",
+) -> None:
+    """Update the last-error timestamp and mark ``url`` infra-unhealthy.
+
+    Called inside every retry catch. ``url`` and ``kind`` are optional so
+    pre-RFC-07 callers keep working; the per-URL router only wakes when
+    both are supplied. ``kind`` classifies the infra failure (timeout,
+    connect_refused, http_5xx, unknown); the router records every kind
+    as unhealthy but retains the label for diagnostics.
+    """
     global _LAST_LLM_ERROR_AT
     _LAST_LLM_ERROR_AT = _time_mod.monotonic()
+    if url:
+        from .health_router import get_default_health_router
+        get_default_health_router().record_infra_failure(url, kind)  # type: ignore[arg-type]
 
 
 def is_llm_recently_unhealthy(window_s: float = 600.0) -> bool:
@@ -1074,7 +1102,7 @@ class AilaLLMClient:
                 except _COST_TELEMETRY_ERRORS:
                     pass
 
-                _record_llm_ok()
+                _record_llm_ok(routing.base_url)
                 return _enrich_response(response, ctx)
             except LLMCancelledError:
                 # Cancellation surfaces from the tool loop (turn-boundary
@@ -1087,7 +1115,7 @@ class AilaLLMClient:
                 # this header on 429s -- it's the most accurate delay we
                 # can pick. Fallback to exponential backoff (capped at
                 # _RETRY_MAX_DELAY) when the header is missing.
-                _record_llm_error()
+                _record_llm_error(routing.base_url, kind="http_5xx")
                 if self._commit_gate_blocks_retry(
                     call_state, exc, attempt, routing.model_id
                 ):
@@ -1118,7 +1146,11 @@ class AilaLLMClient:
                 )
                 await asyncio.sleep(delay)
             except (APIConnectionError, APITimeoutError) as exc:
-                _record_llm_error()
+                _kind = (
+                    "timeout" if isinstance(exc, APITimeoutError)
+                    else "connect_refused"
+                )
+                _record_llm_error(routing.base_url, kind=_kind)
                 if self._commit_gate_blocks_retry(
                     call_state, exc, attempt, routing.model_id
                 ):
@@ -1135,7 +1167,7 @@ class AilaLLMClient:
                 await asyncio.sleep(delay)
             except LLMError as exc:
                 if exc.retryable:
-                    _record_llm_error()
+                    _record_llm_error(routing.base_url, kind="unknown")
                     if self._commit_gate_blocks_retry(
                         call_state, exc, attempt, routing.model_id
                     ):
@@ -1169,7 +1201,17 @@ class AilaLLMClient:
                 # (which subclasses openai.OpenAIError -> AILAError-adjacent
                 # RuntimeError); bare Exception was previously catching
                 # LLMCancelledError which must propagate untouched.
-                _record_llm_error()
+                # Best-effort classification: infer http_5xx from an
+                # HTTP status attribute when present so the router
+                # tags the failure with a useful label; fall back to
+                # ``unknown`` for the general leak set.
+                _status = getattr(exc, "status_code", None)
+                _kind = (
+                    "http_5xx"
+                    if isinstance(_status, int) and 500 <= _status < 600
+                    else "unknown"
+                )
+                _record_llm_error(routing.base_url, kind=_kind)
                 # Deferred import: aila.platform.services.__init__ pulls in
                 # ServiceFactory, which imports back into aila.platform.llm.
                 # Loading redact_secrets at runtime sidesteps the cycle.

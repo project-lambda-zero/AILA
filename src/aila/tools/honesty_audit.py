@@ -51,6 +51,11 @@ Detects thirty-six categories of structural dishonesty:
 47. raw_sql_platform_tables -- a module file issues raw SQL against a platform-owned task table (taskrecord, workflow_state_cursor); route through a platform lifecycle / TaskQueue service instead (RFC-05 Phase 6).
 48. platform_names_module -- a boundary-guarded file (api/, platform/, storage/) names a feature module: a .require("vulnerability") / .require_module("forensics") registry call, a ConfigRegistry-shape .get("vr", ...) read of a module namespace, or a runtime "aila.modules.<module>" string constant. Resolve domain data by capability via ModuleRegistry.first_with/all_with; the platform layer owns only the 'platform' config namespace (RFC-05 concerns a/g).
 49. agent_env_read -- a module agents/ file reads config via os.environ / os.getenv (attribute access or `from os import environ/getenv`) instead of platform ConfigRegistry; the RFC-03 lift removed every direct env read from module agent runtimes and this rule locks the closure in.
+50. static_node_mutation -- a WorkflowDefinition.states mapping is mutated (subscript / update / delete) after construction, reopening the frozen node set the dispatch hub relies on (RFC-13 #68).
+51. ledger_write_bypass -- investigation_ledger writes bypass LedgerService; the service owns idempotency + the append-only rule (RFC-13 #68).
+52. fail_open_recovery_path -- a safety / rate-limit / verify / recovery / finalizer function returns a permissive value (True / 0 / 0.0 / "" / [] / {} / bare return) from an ``except`` handler. The RFC-07 posture is fail-closed: return a conservative default and surface a signal (a bounded defer, mark-and-block, close-with-reason).
+53. close_without_infra_classification -- a finalizer that closes an investigation as a negative (a close_investigation / close_no_finding / synthesize_no_finding / finalize_negative call) does not consult InfraDeathClassifier in the same function body. An infra-death branch must be tagged as such, not silently recorded as a clean negative that vanishes from the operator's re-run queue.
+54. heal_without_journal -- a recovery function whose body mutates run state (set_enabled / flip_status / drop_lock / delete_cursor / re_enqueue) without also writing a checkpointed recovery event (LedgerService.append_general, record_signal, record_and_check, emit_recovery_event). Every heal must leave an audit trail so recovery is itself auditable.
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -874,6 +879,166 @@ _LEDGER_RECORD_NAME = "InvestigationLedgerRecord"
 _LEDGER_TABLE_NAME = "investigation_ledger"
 _LEDGER_INSERT_CALLABLES: frozenset[str] = frozenset({"insert", "pg_insert"})
 _LEDGER_SERVICE_PATH_SUFFIX = "platform/services/ledger.py"
+
+# ---------------------------------------------------------------------------
+# RFC-07 rule constants (rules 52-54).
+#
+# Every RFC-07 rule flips the codebase's failure posture from fail-open
+# (silence + permissive default) to fail-closed (surface + conservative
+# default). The constants below let a reviewer trace WHY a specific
+# function or callsite triggers a rule -- rename any set here and both
+# the rule and its tests move at once.
+# ---------------------------------------------------------------------------
+
+# Rule 52 -- fail_open_recovery_path. A function whose name signals a
+# safety, rate-limit, verify, or recovery contract must not return a
+# permissive default from an ``except`` handler; the conservative
+# default (a bounded defer, a fail-closed block, a mark-and-block) is
+# required. The name markers are matched case-insensitively as
+# substrings of the function name so ``verify_response``,
+# ``compute_investigation_defer``, ``check_rate_limit``,
+# ``run_recovery_pass``, ``synthesize_no_finding_outcomes``, etc all
+# match. The markers deliberately capture RFC-07's five documented
+# fail-open sites (queue defer, verify gate, pipeline post-call,
+# finalizer, SSE emit) plus the class of future paths any of the
+# above would grow into.
+_RECOVERY_FUNCTION_MARKERS: frozenset[str] = frozenset({
+    "verify", "recover", "recovery", "safety",
+    "rate_limit", "rate-limit", "ratelimit",
+    "compute_defer", "compute_investigation_defer",
+    "finalize", "finaliser", "finalizer",
+    "heal", "reconcile", "reap", "sweep", "guard",
+})
+
+# Rule 52 -- permissive default sentinel set. A return of any of these
+# from an ``except`` inside a recovery-marked function is a finding.
+# Bare ``return`` (None) is included via the ``val is None`` branch of
+# the check; bare ``True`` (permissive boolean) is caught by the
+# constant check. Numeric zero (0, 0.0) is fail-open for a rate-limiter
+# but not for a heal path returning ``count = 0`` -- the rule
+# distinguishes on the function-name marker, not on the value.
+_FAIL_OPEN_PERMISSIVE_CONSTANTS: tuple[object, ...] = (
+    True, 0, 0.0, "",
+)
+
+# Rule 53 -- close_without_infra_classification. A finalizer that closes
+# an investigation as a negative outcome without calling
+# :class:`InfraDeathClassifier` is a finding. The rule fires on a call
+# to a closer name marker inside a finalize-marked function body when
+# no ``InfraDeathClassifier`` reference appears in the same function.
+_INFRA_CLASSIFIER_NAME: str = "InfraDeathClassifier"
+_INFRA_CLASSIFIER_METHODS: frozenset[str] = frozenset({
+    "classify", "is_infra_death", "classify_close",
+})
+_FINALIZER_NAME_MARKERS: frozenset[str] = frozenset({
+    "finalize", "finalise",
+    "synthesize_no_finding", "synthesise_no_finding",
+    "close_investigation", "close_no_finding",
+})
+_CLOSE_CALLABLE_MARKERS: frozenset[str] = frozenset({
+    "close_investigation", "close_no_finding", "finalize_negative",
+    "mark_no_finding", "resolve_no_finding", "synthesize_no_finding",
+})
+
+# Rule 54 -- heal_without_journal. A recovery function that mutates run
+# state (a workflow_state_cursor row, a taskrecord row, an
+# arq:in-progress lock) without also writing a recovery event is a
+# finding. The journal is the LedgerService append_general call (see
+# rule 51) or a ``record_and_check``-style checkpoint. The rule fires
+# on a heal-marked function whose body contains a state-mutation
+# marker but no journal-write marker.
+_HEAL_FUNCTION_MARKERS: frozenset[str] = frozenset({
+    "heal", "reconcile", "reroute", "reenqueue", "re_enqueue",
+    "downgrade", "failover", "recover_state",
+})
+_STATE_MUTATION_MARKERS: frozenset[str] = frozenset({
+    "set_enabled", "set_status", "flip_status",
+    "update_status", "cancel_task", "drop_lock",
+    "delete_cursor", "purge_cursor",
+    "reenqueue", "re_enqueue",
+})
+# Journal-write markers: a call to any of these in the heal function's
+# body clears the finding. Kept intentionally short because a heal
+# path that does NOT record its action is the exact anti-pattern the
+# rule locks in; a valid heal spends one line on the journal.
+_JOURNAL_WRITE_MARKERS: frozenset[str] = frozenset({
+    "append_general", "append_ledger", "record_recovery",
+    "record_healed", "record_signal", "record_and_check",
+    "emit_recovery_event", "log_recovery",
+})
+# Files exempt from rule 54 because they ARE the journal implementation
+# (LedgerService itself) or the recovery-event emitter -- writing the
+# journal without also calling the journal would be circular.
+_JOURNAL_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
+    "platform/services/ledger.py",
+    "platform/services/resilience.py",
+    "platform/events/domain_events.py",
+    "platform/events/emitter.py",
+    "platform/llm/drift.py",
+    # The reconciler helper file owns the mutation primitives (delete
+    # cursor, flip status, drop lock) that the actual reconcile
+    # dispatch composes -- the helpers write the journal via their
+    # callers, not themselves.
+    "platform/tasks/state_reconciler.py",
+    "platform/tasks/cursor_reaper.py",
+    "platform/tasks/worker.py",
+    "platform/tasks/queue.py",
+    "platform/tasks/storage.py",
+)
+
+
+def _function_name_matches(name: str, markers: frozenset[str]) -> bool:
+    """Return True when any marker appears as a substring of ``name`` (case-insensitive).
+
+    Shared by rules 52-54 so the three name-marker checks agree on
+    matching semantics; a rename in one marker set never accidentally
+    changes matching for a sibling rule.
+    """
+    low = name.lower()
+    return any(marker in low for marker in markers)
+
+
+def _call_names_in_body(func: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    """Return the simple call-callee name set (Name.id or Attribute.attr) for the function body.
+
+    Rules 53 and 54 use this to check for the presence of a specific
+    call inside a function's body (an ``InfraDeathClassifier.classify``
+    for rule 53, a journal-write for rule 54). Walks the body only --
+    decorators and default values do not count.
+    """
+    names: set[str] = set()
+    for stmt in func.body:
+        for node in ast.walk(stmt):
+            if not isinstance(node, ast.Call):
+                continue
+            callee = node.func
+            if isinstance(callee, ast.Name):
+                names.add(callee.id)
+            elif isinstance(callee, ast.Attribute):
+                names.add(callee.attr)
+    return names
+
+
+def _identifier_names_in_body(
+    func: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> set[str]:
+    """Return every Name.id and Attribute.attr appearing in the function body.
+
+    Rule 53 uses this to detect an ``InfraDeathClassifier`` reference
+    anywhere in the finalizer body -- an instance passed via ``self``
+    or bound at construction still counts as "the classifier was
+    consulted" so a legitimate finalizer that owns a classifier field
+    does not trip the rule.
+    """
+    ids: set[str] = set()
+    for stmt in func.body:
+        for node in ast.walk(stmt):
+            if isinstance(node, ast.Name):
+                ids.add(node.id)
+            elif isinstance(node, ast.Attribute):
+                ids.add(node.attr)
+    return ids
+
 
 
 def _workflow_base_corpus(filepath: str) -> dict[str, str]:
@@ -2834,6 +2999,306 @@ class _HonestyVisitor(ast.NodeVisitor):
             and target.value.attr == "states"
         )
 
+    def _check_fail_open_recovery_path(self, tree: ast.Module) -> None:
+        """Rule 52: fail_open_recovery_path -- a recovery-marked function
+        returns a permissive default from an ``except`` handler.
+
+        The RFC-07 posture is fail-closed. A safety, rate-limit, verify,
+        finalize, heal, or reconcile function whose ``except`` block
+        returns True / 0 / 0.0 / "" / [] / {} / a bare ``return`` is
+        silently deciding the call succeeded when it did not -- the
+        rate-limiter passes zero defer under DB pressure, the verifier
+        marks unverified as passing, the finalizer records a fault as a
+        clean negative. Every one of those is an outage disguised as
+        success. Return the conservative default (a bounded defer, a
+        block, a close-with-reason) and log; do not return a permissive
+        value from an ``except``.
+
+        Scope: any Python source file. The rule fires ONLY when the
+        enclosing function's name matches one of
+        :data:`_RECOVERY_FUNCTION_MARKERS`; a helper whose name does not
+        signal a recovery contract is out of scope. The rule matches
+        the shape ``except ...: return <permissive>`` at any depth
+        inside the function body -- an ``except`` inside a nested
+        helper defined in the same function counts, but an ``except``
+        inside a nested inner function (a ``def`` two levels down)
+        does not because the inner function has its own name and
+        recovery-marker check applies to IT.
+
+        The audit tool itself is self-exempt: this file defines the
+        marker strings and would otherwise flag its own docstrings.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if normalized.endswith("tools/honesty_audit.py"):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef),
+            ):
+                continue
+            if not _function_name_matches(
+                node.name, _RECOVERY_FUNCTION_MARKERS,
+            ):
+                continue
+            for handler in self._enclosed_except_handlers(node):
+                # A handler that logs is already surfacing a signal, and a
+                # handler that re-raises is not returning at all -- either
+                # one clears the rule so a legitimate log-and-return-zero
+                # sweep (see cursor_reaper.sweep_orphan_crashed_cursors)
+                # is not flagged. The offending shape is the SILENT
+                # permissive return.
+                handler_ids = self._handler_identifiers(handler)
+                if handler_ids & _LOGGING_IDENTIFIERS:
+                    continue
+                if self._handler_reraises(handler):
+                    continue
+                offending = self._find_permissive_return(handler)
+                if offending is None:
+                    continue
+                self._emit(
+                    offending.lineno,
+                    "fail_open_recovery_path",
+                    (
+                        f"fail_open_recovery_path: function '{node.name}' "
+                        f"returns a permissive default from an except handler "
+                        "without logging or re-raising -- RFC-07 requires a "
+                        "fail-closed conservative default (bounded defer, "
+                        "mark-and-block, close-with-reason) and a surfaced "
+                        "signal, not a silent success"
+                    ),
+                )
+
+    @staticmethod
+    def _handler_identifiers(handler: ast.ExceptHandler) -> set[str]:
+        """Return every Name.id / Attribute.attr appearing in the handler body."""
+        ids: set[str] = set()
+        for stmt in handler.body:
+            for node in ast.walk(stmt):
+                if isinstance(node, ast.Name):
+                    ids.add(node.id)
+                elif isinstance(node, ast.Attribute):
+                    ids.add(node.attr)
+        return ids
+
+    @staticmethod
+    def _handler_reraises(handler: ast.ExceptHandler) -> bool:
+        """Return True when the handler body contains a raise statement."""
+        for stmt in handler.body:
+            for node in ast.walk(stmt):
+                if isinstance(node, ast.Raise):
+                    return True
+        return False
+
+    @staticmethod
+    def _enclosed_except_handlers(
+        func: ast.FunctionDef | ast.AsyncFunctionDef,
+    ) -> list[ast.ExceptHandler]:
+        """Yield every ExceptHandler inside ``func`` NOT under a nested def.
+
+        A nested ``def`` / ``async def`` / ``class`` inside the body
+        introduces a fresh name; the outer rule's recovery-marker
+        match should not leak into the nested scope. This mirrors the
+        :func:`_walk_returns_shallow` boundary used by rule 20.
+        """
+        handlers: list[ast.ExceptHandler] = []
+        for stmt in func.body:
+            handlers.extend(_HonestyVisitor._walk_except_shallow(stmt))
+        return handlers
+
+    @staticmethod
+    def _walk_except_shallow(node: ast.AST) -> list[ast.ExceptHandler]:
+        """Return every ExceptHandler in *node*'s subtree, stopping at nested defs."""
+        found: list[ast.ExceptHandler] = []
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, _NESTED_DEF_TYPES):
+                continue
+            if isinstance(child, ast.ExceptHandler):
+                found.append(child)
+            found.extend(_HonestyVisitor._walk_except_shallow(child))
+        return found
+
+    @staticmethod
+    def _find_permissive_return(
+        handler: ast.ExceptHandler,
+    ) -> ast.Return | None:
+        """Return the offending ast.Return in ``handler``, or None.
+
+        A ``return`` with no value (implicit None) or a return of any
+        constant in :data:`_FAIL_OPEN_PERMISSIVE_CONSTANTS` or an
+        empty dict / list / tuple / set literal counts as permissive.
+        A logged-then-return-conservative shape (e.g. an except block
+        that first logs then returns a non-permissive value) is fine.
+        Only returns AT the shallow top of the handler body count --
+        an ``except`` whose handler contains a raise / re-raise on
+        the primary path and a return only inside a nested branch
+        needs finer analysis; today the rule fires on any handler
+        whose primary body ends in a permissive return.
+        """
+        # Walk shallow -- a nested def inside the handler has its own
+        # scope and its own name-marker check.
+        for stmt in _HonestyVisitor._iter_handler_shallow(handler):
+            if not isinstance(stmt, ast.Return):
+                continue
+            val = stmt.value
+            if val is None:
+                return stmt
+            if isinstance(val, ast.Constant):
+                v = val.value
+                # Boolean False is the fail-closed answer for a verify /
+                # authorisation path ("not verified" / "not allowed");
+                # only True is permissive. Numeric zero, empty string,
+                # and True itself count as permissive.
+                if v is True:
+                    return stmt
+                if v is False or v is None:
+                    # v is None already handled by the top-level `val is
+                    # None` check; v is False is intentionally NOT a
+                    # finding (see docstring).
+                    if v is None:
+                        return stmt
+                    continue
+                # ``type(v) is int`` distinguishes 0 from False (0 == False
+                # is True in Python; the explicit type check prevents the
+                # False branch from bleeding into the 0 branch).
+                if type(v) is int and v == 0:
+                    return stmt
+                if type(v) is float and v == 0.0:
+                    return stmt
+                if type(v) is str and v == "":
+                    return stmt
+                continue
+            if isinstance(val, ast.Dict) and not val.keys:
+                return stmt
+            if (
+                isinstance(val, (ast.List, ast.Tuple, ast.Set))
+                and not val.elts
+            ):
+                return stmt
+        return None
+
+    @staticmethod
+    def _iter_handler_shallow(handler: ast.ExceptHandler):
+        """Yield every statement in ``handler`` body, stopping at nested defs."""
+        stack: list[ast.AST] = list(handler.body)
+        while stack:
+            stmt = stack.pop(0)
+            yield stmt
+            if isinstance(stmt, _NESTED_DEF_TYPES):
+                continue
+            stack.extend(ast.iter_child_nodes(stmt))
+
+    def _check_close_without_infra_classification(
+        self, tree: ast.Module,
+    ) -> None:
+        """Rule 53: close_without_infra_classification -- a finalizer
+        closes an investigation as a negative without consulting the
+        infra-death classifier.
+
+        A finalize-marked function (name in
+        :data:`_FINALIZER_NAME_MARKERS`) whose body calls a close
+        marker (:data:`_CLOSE_CALLABLE_MARKERS`) must also reference
+        :class:`InfraDeathClassifier` -- either as an import-visible
+        name, an ``InfraDeathClassifier.classify(...)`` call, or an
+        instance attribute of the enclosing service. Without that
+        reference the finalizer records an infra-killed branch as a
+        clean negative that disappears from the operator's re-run
+        queue (RFC-07 Motivation, malware investigation_finalizers
+        row).
+
+        The audit file names the markers and would otherwise flag
+        itself; the classifier's own home file (when it lands under
+        platform/services/) is exempted by naming the classifier
+        symbol in its own module.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if normalized.endswith("tools/honesty_audit.py"):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef),
+            ):
+                continue
+            if not _function_name_matches(
+                node.name, _FINALIZER_NAME_MARKERS,
+            ):
+                continue
+            body_calls = _call_names_in_body(node)
+            close_hits = body_calls & _CLOSE_CALLABLE_MARKERS
+            if not close_hits:
+                continue
+            body_ids = _identifier_names_in_body(node)
+            has_classifier = (
+                _INFRA_CLASSIFIER_NAME in body_ids
+                or bool(body_calls & _INFRA_CLASSIFIER_METHODS)
+            )
+            if has_classifier:
+                continue
+            self._emit(
+                node.lineno,
+                "close_without_infra_classification",
+                (
+                    f"close_without_infra_classification: finalizer "
+                    f"'{node.name}' calls {sorted(close_hits)!r} without "
+                    "consulting InfraDeathClassifier -- an infra-killed "
+                    "branch closed as a clean negative disappears from "
+                    "the operator's re-run queue (RFC-07)"
+                ),
+            )
+
+    def _check_heal_without_journal(self, tree: ast.Module) -> None:
+        """Rule 54: heal_without_journal -- a recovery function mutates run
+        state without writing a checkpointed recovery event.
+
+        A heal-marked function (name in
+        :data:`_HEAL_FUNCTION_MARKERS`) whose body calls any state-
+        mutation marker (:data:`_STATE_MUTATION_MARKERS`) must also
+        call a journal-write marker
+        (:data:`_JOURNAL_WRITE_MARKERS`). Otherwise the heal is
+        silent: the operator sees the run state change but has no
+        audit trail to reconstruct what fired the change or when.
+        RFC-07's contract is that recovery is itself auditable.
+
+        Files that OWN the journal / event / state-mutation
+        primitives are exempt via :data:`_JOURNAL_SELF_EXEMPT_SUFFIXES`
+        so the rule does not fire on the LedgerService itself or on
+        the low-level mutation helpers the higher-level heal paths
+        compose (the heal itself lives ABOVE those helpers and is
+        where the journal write belongs).
+        """
+        normalized = self.filename.replace("\\", "/")
+        if normalized.endswith("tools/honesty_audit.py"):
+            return
+        for suffix in _JOURNAL_SELF_EXEMPT_SUFFIXES:
+            if normalized.endswith(suffix):
+                return
+        for node in ast.walk(tree):
+            if not isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef),
+            ):
+                continue
+            if not _function_name_matches(
+                node.name, _HEAL_FUNCTION_MARKERS,
+            ):
+                continue
+            body_calls = _call_names_in_body(node)
+            mutation_hits = body_calls & _STATE_MUTATION_MARKERS
+            if not mutation_hits:
+                continue
+            if body_calls & _JOURNAL_WRITE_MARKERS:
+                continue
+            self._emit(
+                node.lineno,
+                "heal_without_journal",
+                (
+                    f"heal_without_journal: recovery function '{node.name}' "
+                    f"mutates run state via {sorted(mutation_hits)!r} but "
+                    "writes no recovery event (LedgerService.append_general, "
+                    "record_signal, record_and_check, or an equivalent "
+                    "journal-write). RFC-07 requires every heal to leave "
+                    "an audit trail"
+                ),
+            )
+
     def _check_ledger_write_encapsulation(self, tree: ast.Module) -> None:
         """Rule 51: ledger_write_bypass -- a direct write to the
         investigation_ledger table outside LedgerService (RFC-13 #68).
@@ -3085,6 +3550,13 @@ class HonestyAuditor:
         # (apply to all Python source files; ledger rule self-exempts).
         visitor._check_static_node_mutation(tree)
         visitor._check_ledger_write_encapsulation(tree)
+        # Rules 52-54: RFC-07 fail-closed posture, infra-death gating,
+        # heal-writes-journal. Every file is in scope; each rule
+        # self-exempts the files that would otherwise trip themselves
+        # by owning the primitives the rule locks in.
+        visitor._check_fail_open_recovery_path(tree)
+        visitor._check_close_without_infra_classification(tree)
+        visitor._check_heal_without_journal(tree)
         return visitor.findings
 
     def audit_directory(self, directory: Path) -> list[Finding]:

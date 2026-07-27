@@ -26,6 +26,12 @@ from .models import (
     TaskStatus,
 )
 from .queue import TaskQueue
+from .state_reconciler import (
+    ReconcileAction,
+    ReconcileReport,
+    StateReconciler,
+    TaskSignals,
+)
 from .template import platform_task
 
 _log = logging.getLogger(__name__)
@@ -40,11 +46,15 @@ _log = logging.getLogger(__name__)
 
 __all__ = [
     "ProgressEvent",
+    "ReconcileAction",
+    "ReconcileReport",
+    "StateReconciler",
     "TaskContext",
     "TaskExecutionContext",
     "TaskHandle",
     "TaskQueue",
     "TaskRecord",
+    "TaskSignals",
     "TaskStatus",
     "WorkflowMigratedError",
     "get_task_tuning",
