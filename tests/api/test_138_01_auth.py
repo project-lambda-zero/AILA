@@ -220,10 +220,11 @@ async def test_refresh_token_flow(auth_client, admin_user):
     assert resp.status_code == 200
     refresh_token = resp.json()["data"]["refresh_token"]
 
-    # Use refresh token to get new access token
+    # #36: refresh token is submitted in the JSON body (previously it was
+    # a URL query parameter that leaked into access logs and history).
     resp2 = await auth_client.post(
         "/auth/refresh/user",
-        params={"refresh_token": refresh_token},
+        json={"refresh_token": refresh_token},
     )
     assert resp2.status_code == 200, resp2.text
     data = resp2.json()["data"]

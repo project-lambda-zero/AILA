@@ -56,7 +56,9 @@ from aila.api.metrics import SILENT_FAILURE_TOTAL
 from aila.api.schemas.envelope import DataEnvelope
 from aila.api.schemas.users import (
     LoginRequest,
+    LogoutRequest,
     LogoutResponse,
+    RefreshTokenRequest,
     RevokeSessionResponse,
     TokenResponse,
     UserCreateRequest,
@@ -260,13 +262,20 @@ async def login(request: Request, body: LoginRequest) -> DataEnvelope[TokenRespo
 
 @limiter.limit("5/minute")
 @router.post("/auth/refresh/user", response_model=DataEnvelope[TokenResponse], summary="Refresh user access token")
-async def refresh_user_token(request: Request, refresh_token: str = Query(..., description="Refresh token JWT")) -> DataEnvelope[TokenResponse]:
+async def refresh_user_token(request: Request, body: RefreshTokenRequest) -> DataEnvelope[TokenResponse]:
     """Exchange a valid user refresh token for a new access token.
+
+    #36: the refresh token is read from the JSON request body -- previously
+    it was a ``?refresh_token=`` query parameter, which leaks the long-lived
+    credential into web-server access logs, browser history, and any proxy
+    that captures the request URI. Body-only closes that channel; a caller
+    still supplying the query parameter is rejected with 422.
 
     Validates the token signature, checks it is not revoked in RefreshTokenRecord,
     then issues a new access token. The refresh token is NOT rotated on each use
     (stateful revocation via revoked_at handles security).
     """
+    refresh_token = body.refresh_token
     settings = get_settings()
     import jwt as _jwt
 
@@ -322,8 +331,14 @@ async def refresh_user_token(request: Request, refresh_token: str = Query(..., d
 
 @limiter.limit("10/minute")
 @router.post("/auth/logout", response_model=DataEnvelope[LogoutResponse], summary="Logout -- revoke refresh token")
-async def logout(request: Request, refresh_token: str = Query(..., description="Refresh token to revoke")) -> DataEnvelope[LogoutResponse]:
-    """Revoke a user refresh token, invalidating further refresh attempts."""
+async def logout(request: Request, body: LogoutRequest) -> DataEnvelope[LogoutResponse]:
+    """Revoke a user refresh token, invalidating further refresh attempts.
+
+    #36: the token is read from the JSON body for the same reason described
+    in :func:`refresh_user_token` -- the query-parameter shape leaked the
+    refresh credential into access logs and browser history.
+    """
+    refresh_token = body.refresh_token
     token_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
     async with async_session_scope() as session:
         stmt = select(RefreshTokenRecord).where(RefreshTokenRecord.token_hash == token_hash)

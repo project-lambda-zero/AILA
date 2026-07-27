@@ -13,7 +13,9 @@ from pydantic import BaseModel, Field
 
 __all__ = [
     "LoginRequest",
+    "LogoutRequest",
     "LogoutResponse",
+    "RefreshTokenRequest",
     "RevokeSessionResponse",
     "TokenResponse",
     "UserCreateRequest",
@@ -28,6 +30,31 @@ class LoginRequest(BaseModel):
 
     username: str
     password: str
+
+
+class RefreshTokenRequest(BaseModel):
+    """Request body for POST /auth/refresh/user.
+
+    #36: the refresh token was previously accepted as a URL query
+    parameter, which leaked the long-lived credential into web-server
+    access logs, browser history, and any intermediary that captures
+    the request URI. Moving it to the JSON body keeps the token in the
+    request stream that TLS protects and that access loggers redact by
+    default.
+    """
+
+    refresh_token: str = Field(min_length=1)
+
+
+class LogoutRequest(BaseModel):
+    """Request body for POST /auth/logout.
+
+    #36: the refresh token was previously accepted as a URL query
+    parameter (same log/history leak as :class:`RefreshTokenRequest`);
+    accepted in the JSON body now.
+    """
+
+    refresh_token: str = Field(min_length=1)
 
 
 class TokenResponse(BaseModel):

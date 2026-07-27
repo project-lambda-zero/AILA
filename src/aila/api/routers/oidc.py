@@ -44,7 +44,7 @@ from aila.api.auth import (
     issue_user_refresh_token,
     require_role,
 )
-from aila.api.constants import JWT_ALGORITHM, ROLE_ADMIN
+from aila.api.constants import JWT_ALGORITHM, ROLE_ADMIN, ROLE_OPERATOR, VALID_ROLES
 from aila.api.limiter import limiter
 from aila.api.schemas.endpoints import OIDCAuthorizeResponse
 from aila.api.schemas.envelope import DataEnvelope
@@ -608,6 +608,31 @@ async def _verify_id_token(
     return claims
 
 
+def _resolve_oidc_role(claims: dict[str, Any]) -> str:
+    """Return the role for an auto-provisioned OIDC user from id_token claims.
+
+    #36: the previous implementation hardcoded ``role="operator"`` for every
+    OIDC auto-provisioned account, so an identity provider whose users are
+    intended to be admins or read-only saw every sign-in downgraded/upgraded
+    to the same fixed role. The RFC7643-style scalar ``role`` claim and the
+    ``roles`` array claim are the two shapes real IdPs (Azure AD, Google
+    Workspace via mapped attributes, generic Keycloak) emit; we accept both.
+    A claim whose value is not in :data:`VALID_ROLES` is rejected -- a
+    misconfigured or hostile IdP cannot invent a role by dropping an
+    arbitrary string into the token. ``ROLE_OPERATOR`` remains the safe
+    fallback when no claim is present.
+    """
+    claimed = claims.get("role")
+    if isinstance(claimed, str) and claimed in VALID_ROLES:
+        return claimed
+    roles = claims.get("roles")
+    if isinstance(roles, list):
+        for entry in roles:
+            if isinstance(entry, str) and entry in VALID_ROLES:
+                return entry
+    return ROLE_OPERATOR
+
+
 @router.get(
     "/callback",
     response_model=DataEnvelope[TokenResponse],
@@ -690,11 +715,19 @@ async def oidc_callback(
         if user is None:
             username = (name or email or oidc_sub).replace(" ", "_").lower()[:64]
             now = utc_now()
+            # #36: resolve the IdP-issued role from the id_token claims
+            # instead of hardcoding "operator" -- previously every OIDC
+            # sign-in was granted operator regardless of the identity
+            # provider's intent. Accept a scalar ``role`` claim or the
+            # first entry of a ``roles`` list; validate against VALID_ROLES
+            # so a hostile IdP cannot inject an unknown value; fall back to
+            # ``ROLE_OPERATOR`` when the claim is missing or invalid.
+            provisioned_role = _resolve_oidc_role(claims)
             user = UserRecord(
                 username=username,
                 email=email,
                 oidc_sub=oidc_sub,
-                role="operator",
+                role=provisioned_role,
                 # #36: bind the auto-provisioned user to the provider's
                 # configured team so it is scoped on first login. None keeps
                 # the prior behavior (god-tier, TEAM-06) but now explicitly.
