@@ -266,6 +266,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await close_redis_pool()
     except Exception:
         _log.warning("Redis pool close failed", exc_info=True)
+    # #44: close the LLM client's AsyncOpenAI pool so the underlying
+    # httpx.AsyncClient connection pool / TLS sessions release on
+    # process teardown instead of leaking to GC.
+    try:
+        platform = getattr(app.state, "platform", None)
+        runtime = getattr(platform, "_runtime", None) if platform is not None else None
+        llm_client = getattr(runtime, "runtime_model", None) if runtime is not None else None
+        aclose = getattr(llm_client, "aclose", None)
+        if aclose is not None:
+            await aclose()
+    except (OSError, RuntimeError, AttributeError):
+        _log.warning("AilaLLMClient aclose failed", exc_info=True)
     _log.info("AILA platform shutdown complete")
 
 

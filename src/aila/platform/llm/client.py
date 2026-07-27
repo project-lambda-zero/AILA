@@ -31,7 +31,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import sqlalchemy.exc
-from openai import APIConnectionError, APITimeoutError, AsyncOpenAI, RateLimitError
+from openai import (
+    APIConnectionError,
+    APIError,
+    APITimeoutError,
+    AsyncOpenAI,
+    RateLimitError,
+)
 from pydantic import BaseModel, ValidationError
 
 from ..exceptions import AILAError
@@ -396,7 +402,10 @@ class _AsyncOpenAIPool:
 
     ``AsyncOpenAI`` construction is synchronous, so :meth:`get` has no await
     point and is safe to call from concurrent coroutines on one event loop
-    without a lock.
+    without a lock. :meth:`aclose` closes every pooled client's underlying
+    ``httpx.AsyncClient`` and drops the entries; call it once from the
+    worker/API shutdown hook so the TLS pool does not leak on process
+    teardown (#44).
     """
 
     def __init__(self) -> None:
@@ -419,13 +428,52 @@ class _AsyncOpenAIPool:
             self._pool[key] = client
         return client
 
+    async def aclose(self) -> None:
+        """Close every pooled AsyncOpenAI and drop it from the registry.
+
+        Best-effort: a per-client close failure is logged and skipped so
+        one bad connection cannot block the rest of the shutdown sweep.
+        The pool becomes reusable after this call -- :meth:`get` will
+        rebuild any client on next demand -- but the intended use is
+        one-shot at process shutdown.
+        """
+        clients = list(self._pool.values())
+        self._pool.clear()
+        for client in clients:
+            try:
+                await client.close()
+            except (OSError, RuntimeError, AttributeError) as exc:
+                logger.debug("_AsyncOpenAIPool.aclose: close failed: %s", exc)
+
+
+@dataclass(slots=True)
+class _CallState:
+    """Per-attempt bookkeeping for the tool-executor idempotency guard.
+
+    ``tools_committed`` is incremented every time :meth:`_tool_loop`
+    completes a ``tool_executor()`` call (including the synthetic
+    tool-timeout result -- from the model's perspective a side effect
+    still "happened": the tool ran, produced observable I/O against the
+    MCP bridge, and any partial mutation stands). :meth:`_call_with_retry`
+    reads the counter on every exception path: if any tool has committed
+    in the current attempt, the retry is disabled and the failure is
+    surfaced as non-retryable so a transient upstream error does not
+    replay the tool loop against the same investigation and duplicate
+    messages / observables / MCP mutations (#44).
+    """
+
+    tools_committed: int = 0
+
 
 class AilaLLMClient:
     """Async-first LLM client with config-based routing and operational controls.
 
     Not a singleton -- instantiate with registry and secret_store references.
-    The client creates a fresh AsyncOpenAI per call to pick up runtime config
-    changes (base_url, api_key can change via ConfigRegistry/SecretStore).
+    Each instance owns a keyed :class:`_AsyncOpenAIPool` so repeated calls
+    reuse the same ``AsyncOpenAI`` (and therefore the underlying
+    ``httpx.AsyncClient`` connection pool). Call :meth:`aclose` on the
+    instance at worker/API shutdown to close every pooled connection --
+    without that the TLS pool leaks on process teardown (#44).
     """
 
     def __init__(
@@ -438,8 +486,21 @@ class AilaLLMClient:
         self.cost_tracker: Any = None  # Set by builder.py to CostTracker instance
         self.bus: Any = None  # Optional EventBus; set by builder.py for domain events
         # #44: reuse AsyncOpenAI clients across calls instead of building (and
-        # leaking) a fresh one per request.
+        # leaking) a fresh one per request. Closed via :meth:`aclose` from the
+        # worker/API shutdown hooks so the TLS pool does not survive teardown.
         self._client_pool = _AsyncOpenAIPool()
+
+    async def aclose(self) -> None:
+        """Close the pooled ``AsyncOpenAI`` clients (#44).
+
+        Safe to call more than once (subsequent calls close nothing) and
+        safe to skip in tests that never issued a real call (the pool is
+        empty). Wired into ``WorkerSettings.on_shutdown`` and the API
+        lifespan shutdown so the underlying ``httpx.AsyncClient``
+        connection pool releases its file descriptors and TLS sessions
+        instead of leaking until process exit.
+        """
+        await self._client_pool.aclose()
 
     @property
     def pipeline(self) -> PipelineRunner:
@@ -867,6 +928,13 @@ class AilaLLMClient:
         )
 
         last_error: Exception | None = None
+        # #44: per-attempt idempotency state. Recreated on every retry so
+        # attempt N never sees attempt N-1's counter. `_tool_loop`
+        # increments ``tools_committed`` after every executor call, and
+        # the exception handlers below downgrade any post-tool failure to
+        # non-retryable so the outer loop does not replay the tool_loop
+        # against the same investigation and duplicate side effects.
+        call_state = _CallState()
 
         for attempt in range(_MAX_RETRIES):
             # #44: abort promptly if the run was cancelled mid-retry. An
@@ -881,6 +949,12 @@ class AilaLLMClient:
                 raise LLMCancelledError(
                     f"run {run_id} cancelled during LLM retry (attempt {attempt + 1})"
                 )
+            # Reset per-attempt idempotency state at the top of each retry
+            # iteration so a fresh attempt starts with no committed side
+            # effects. The prior attempt either succeeded (already returned)
+            # or raised while ``tools_committed == 0`` (see the exception
+            # branches below).
+            call_state = _CallState()
             try:
                 response, ctx = await self._pipeline.run(
                     task_type=routing.task_type,
@@ -894,6 +968,8 @@ class AilaLLMClient:
                         "response_format": response_format,
                         "tools": tools,
                         "tool_executor": tool_executor,
+                        "run_id": run_id,
+                        "call_state": call_state,
                     },
                     run_id=run_id or "",
                     team_id=team_id or "",
@@ -1000,6 +1076,11 @@ class AilaLLMClient:
 
                 _record_llm_ok()
                 return _enrich_response(response, ctx)
+            except LLMCancelledError:
+                # Cancellation surfaces from the tool loop (turn-boundary
+                # cancel between tool steps). Propagate as-is: the engine's
+                # state handler treats this exit as clean.
+                raise
             except RateLimitError as exc:
                 # Honour Retry-After when the provider tells us how
                 # long to wait. NVIDIA NIM, OpenRouter, OpenAI all send
@@ -1007,6 +1088,10 @@ class AilaLLMClient:
                 # can pick. Fallback to exponential backoff (capped at
                 # _RETRY_MAX_DELAY) when the header is missing.
                 _record_llm_error()
+                if self._commit_gate_blocks_retry(
+                    call_state, exc, attempt, routing.model_id
+                ):
+                    raise self._wrap_non_retryable_after_commit(exc, call_state) from exc
                 last_error = exc
                 retry_after_s: float | None = None
                 resp = getattr(exc, "response", None)
@@ -1034,6 +1119,10 @@ class AilaLLMClient:
                 await asyncio.sleep(delay)
             except (APIConnectionError, APITimeoutError) as exc:
                 _record_llm_error()
+                if self._commit_gate_blocks_retry(
+                    call_state, exc, attempt, routing.model_id
+                ):
+                    raise self._wrap_non_retryable_after_commit(exc, call_state) from exc
                 last_error = exc
                 delay = min(_RETRY_BASE_DELAY * (2 ** attempt), _RETRY_MAX_DELAY)
                 logger.warning(
@@ -1047,6 +1136,10 @@ class AilaLLMClient:
             except LLMError as exc:
                 if exc.retryable:
                     _record_llm_error()
+                    if self._commit_gate_blocks_retry(
+                        call_state, exc, attempt, routing.model_id
+                    ):
+                        raise self._wrap_non_retryable_after_commit(exc, call_state) from exc
                     last_error = exc
                     delay = min(_RETRY_BASE_DELAY * (2 ** attempt), _RETRY_MAX_DELAY)
                     logger.warning(
@@ -1060,13 +1153,22 @@ class AilaLLMClient:
                 else:
                     # Non-retryable LLM errors (ClassificationBlockedError, etc.)
                     raise
-            except Exception as exc:
+            except (
+                APIError, OSError, RuntimeError, ValueError, TypeError,
+                AttributeError, KeyError, IndexError,
+                sqlalchemy.exc.SQLAlchemyError, AILAError,
+            ) as exc:
                 # Two-branch classification (issue #44 -- retry reliability):
                 # non-retryable provider errors (HTTP 4xx auth/malformed:
                 # 400/401/403/404/422) fail fast so a doomed request does not
                 # burn the retry budget or block the worker on backoff sleeps.
                 # Retryable failures (429, 5xx, connection reset, timeout,
                 # DNS) keep the historical retry+backoff behaviour.
+                # Exception list mirrors the realistic leak set from the
+                # cost-telemetry sweep plus the openai APIStatusError family
+                # (which subclasses openai.OpenAIError -> AILAError-adjacent
+                # RuntimeError); bare Exception was previously catching
+                # LLMCancelledError which must propagate untouched.
                 _record_llm_error()
                 # Deferred import: aila.platform.services.__init__ pulls in
                 # ServiceFactory, which imports back into aila.platform.llm.
@@ -1085,6 +1187,10 @@ class AilaLLMClient:
                         f"{redact_secrets(str(exc))}",
                         retryable=False,
                     ) from exc
+                if self._commit_gate_blocks_retry(
+                    call_state, exc, attempt, routing.model_id
+                ):
+                    raise self._wrap_non_retryable_after_commit(exc, call_state) from exc
                 last_error = exc
                 delay = min(_RETRY_BASE_DELAY * (2 ** attempt), _RETRY_MAX_DELAY)
                 logger.warning(
@@ -1104,6 +1210,58 @@ class AilaLLMClient:
             f"LLM API failed after {_MAX_RETRIES} retries: "
             f"{redact_secrets(str(last_error))}",
             retryable=True,
+        )
+
+    @staticmethod
+    def _commit_gate_blocks_retry(
+        call_state: _CallState,
+        exc: BaseException,
+        attempt: int,
+        model_id: str,
+    ) -> bool:
+        """Decide whether an exception at retry-attempt ``attempt`` may retry (#44).
+
+        Retrying is prohibited the moment ``call_state.tools_committed > 0``:
+        replaying the outer call rewinds to the first LLM turn, which
+        re-executes whatever tool_calls the model produces on that turn,
+        which duplicates MCP mutations / audit events / observables against
+        the same investigation. Callers translate a True return into a
+        non-retryable :class:`LLMError` via
+        :meth:`_wrap_non_retryable_after_commit` so the outer engine sees
+        a clean fail-fast and can decide (via cursor SSOT) whether the
+        whole task is retried at the queue layer.
+        """
+        if call_state.tools_committed <= 0:
+            return False
+        logger.warning(
+            "LLM idempotency guard: %d tool call(s) already committed in "
+            "attempt %d (model=%s, error=%s) -- refusing to replay the tool "
+            "loop; failing fast",
+            call_state.tools_committed,
+            attempt + 1,
+            model_id,
+            type(exc).__name__,
+        )
+        return True
+
+    @staticmethod
+    def _wrap_non_retryable_after_commit(
+        exc: BaseException, call_state: _CallState,
+    ) -> LLMError:
+        """Build the non-retryable :class:`LLMError` raised when a retry is
+        blocked by :meth:`_commit_gate_blocks_retry`.
+
+        ``retryable=False`` deliberately -- the tool loop's side effects
+        already committed, so replaying the outer call would duplicate
+        them. The queue layer can still restart the whole task via ARQ
+        job retry + workflow cursor SSOT if it wants to, but that path
+        replays messages fresh (no cached model output), which is the
+        correct recovery shape.
+        """
+        return LLMError(
+            f"LLM call failed after {call_state.tools_committed} tool call(s) "
+            f"already committed side effects: {type(exc).__name__}: {exc}",
+            retryable=False,
         )
 
     async def _inner_call(
@@ -1221,11 +1379,20 @@ class AilaLLMClient:
         response_format: dict[str, Any] | None,
         tools: list[dict[str, Any]] | None,
         tool_executor: Callable[[str, dict[str, Any]], Awaitable[str]] | None,
+        run_id: str | None = None,
+        call_state: _CallState | None = None,
     ) -> LLMResponse:
         """Execute a single API call, with optional tool loop.
 
         When tools are provided and the model responds with tool_calls,
         executes the tool loop up to routing.max_tool_steps iterations.
+
+        ``run_id`` and ``call_state`` are threaded through to :meth:`_tool_loop`
+        so the loop can (a) honour a mid-turn cancellation between tool steps
+        and (b) mark side-effect commitment for the outer
+        :meth:`_call_with_retry` idempotency guard (#44). Both default to None
+        for callers that bypass the pipeline (``_inner_call``), where no
+        outer-loop retry exists and side-effect replay is not a concern.
         """
         kwargs: dict[str, Any] = {
             "model": routing.model_id,
@@ -1268,6 +1435,14 @@ class AilaLLMClient:
 
         # Tool calling loop (per D-05-new)
         if tools and tool_executor and choice.finish_reason == "tool_calls":
+            # #44: cancellation check on the boundary between the first LLM
+            # turn and the tool loop. The retry-loop check ran before this
+            # call; a cancellation flipped during the provider round trip
+            # would otherwise proceed into tool execution and burn credits.
+            if run_id is not None and is_run_cancelled(run_id):
+                raise LLMCancelledError(
+                    f"run {run_id} cancelled before tool loop entry"
+                )
             return await self._tool_loop(
                 client=client,
                 routing=routing,
@@ -1277,6 +1452,8 @@ class AilaLLMClient:
                 tool_executor=tool_executor,
                 initial_choice=choice,
                 initial_usage=_extract_usage(completion),
+                run_id=run_id,
+                call_state=call_state,
             )
 
         content = choice.message.content or ""
@@ -1310,11 +1487,19 @@ class AilaLLMClient:
         tool_executor: Callable[[str, dict[str, Any]], Awaitable[str]],
         initial_choice: Any,
         initial_usage: dict[str, int],
+        run_id: str | None = None,
+        call_state: _CallState | None = None,
     ) -> LLMResponse:
         """Run the tool-calling loop until the model stops calling tools.
 
         Max iterations = routing.max_tool_steps.  If max_tool_steps is 0 or
         not set, tool calling is disabled -- returns whatever the model said.
+
+        ``run_id`` scopes the cancellation-token peek between steps so a
+        pause during a long tool chain aborts before the next tool fires
+        (#44). ``call_state`` records every completed executor call so the
+        outer retry loop refuses to replay tools whose side effects already
+        committed against the investigation (#44).
         """
         # Deferred import mirrors the sanitize_output pattern at the
         # bottom of this file -- keeps this module free of a top-level
@@ -1338,6 +1523,15 @@ class AilaLLMClient:
         choice = initial_choice
 
         for step in range(max_steps):
+            # #44: cancellation check between tool-loop steps. The retry-loop
+            # check catches a cancel before the LLM call; this check catches
+            # one flipped between the response landing and the next round of
+            # tool execution, so a paused investigation stops burning credits
+            # and does not commit further side effects.
+            if run_id is not None and is_run_cancelled(run_id):
+                raise LLMCancelledError(
+                    f"run {run_id} cancelled during tool loop (step {step + 1})"
+                )
             # Append assistant message with tool_calls
             assistant_msg: dict[str, Any] = {
                 "role": "assistant",
@@ -1397,12 +1591,23 @@ class AilaLLMClient:
                         tool_timeout_s,
                     )
                     # Platform-generated timeout notice; not third-party
-                    # content, so no fence needed.
+                    # content, so no fence needed. From the outer retry
+                    # loop's perspective a tool timeout still "committed" --
+                    # a partial MCP call may have already mutated remote
+                    # state, so ``call_state.tools_committed`` still ticks.
                     tool_content = json.dumps({
                         "error": "tool_timeout",
                         "tool": tc.function.name,
                         "timeout_s": tool_timeout_s,
                     })
+                # #44: mark side-effect commitment so a subsequent LLM
+                # failure in the same attempt cannot be retried without
+                # replaying this tool. ``call_state`` is None only for
+                # pipeline-bypass callers (``_inner_call`` -- gate consensus
+                # / verify second-model), where the outer retry loop does
+                # not run and replay is impossible by construction.
+                if call_state is not None:
+                    call_state.tools_committed += 1
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,

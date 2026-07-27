@@ -16,12 +16,19 @@ import pytest
 from openai import APIConnectionError, APITimeoutError
 from pydantic import BaseModel
 
+from aila.platform.llm.cancellation import (
+    LLMCancelledError,
+    cancel_for_investigation,
+    clear_for_investigation,
+    get_cancellation_token,
+)
 from aila.platform.llm.client import (
     AilaLLMClient,
     LLMResponse,
     _AsyncOpenAIPool,
     _extract_usage,
     _merge_usage,
+    _model_supports_temperature,
     _require_choice,
 )
 from aila.platform.llm.config import LLMConfigProvider, LLMRouting
@@ -677,3 +684,289 @@ class TestAsyncOpenAIPool:
         assert base is not rotated_key
         assert base is not other_url
         assert base is not other_timeout
+
+    @pytest.mark.asyncio
+    async def test_aclose_closes_all_and_empties_pool(self) -> None:
+        """aclose awaits every pooled client's close() and drops the entries so
+        the underlying httpx.AsyncClient releases connections on shutdown
+        instead of leaking to GC."""
+        pool = _AsyncOpenAIPool()
+        c1 = pool.get(api_key="sk-a", base_url="http://x", timeout_s=180.0)
+        c2 = pool.get(api_key="sk-b", base_url="http://x", timeout_s=180.0)
+        c1.close = AsyncMock()
+        c2.close = AsyncMock()
+        await pool.aclose()
+        assert c1.close.await_count == 1
+        assert c2.close.await_count == 1
+        # Post-close: a fresh get() rebuilds -- pool is not permanently poisoned.
+        assert pool.get(api_key="sk-a", base_url="http://x", timeout_s=180.0) is not c1
+
+    @pytest.mark.asyncio
+    async def test_aclose_swallows_per_client_failure(self) -> None:
+        """A single pooled client raising on close() must not block the others."""
+        pool = _AsyncOpenAIPool()
+        c_bad = pool.get(api_key="sk-a", base_url="http://x", timeout_s=180.0)
+        c_ok = pool.get(api_key="sk-b", base_url="http://x", timeout_s=180.0)
+        c_bad.close = AsyncMock(side_effect=RuntimeError("already closed"))
+        c_ok.close = AsyncMock()
+        await pool.aclose()
+        assert c_ok.close.await_count == 1  # not blocked by c_bad
+
+
+# ---------------------------------------------------------------------------
+# AilaLLMClient.aclose delegates to the pool (#44)
+# ---------------------------------------------------------------------------
+
+class TestClientAclose:
+    """The client exposes ``aclose`` so worker/API shutdown hooks release
+    the pooled ``AsyncOpenAI`` connections instead of leaking on GC."""
+
+    @pytest.mark.asyncio
+    async def test_aclose_delegates_to_pool(self, client: AilaLLMClient) -> None:
+        client._client_pool.aclose = AsyncMock()  # type: ignore[method-assign]
+        await client.aclose()
+        assert client._client_pool.aclose.await_count == 1  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# Temperature-rejection markers matched on boundaries, not substrings (#44)
+# ---------------------------------------------------------------------------
+
+class TestTemperatureMarkerBoundaries:
+    """The old ``marker in model_id`` test stripped temperature from any id that
+    happened to contain ``o1`` / ``o3`` / ``o4`` (``proto1``, ``audio1``,
+    ``proto3``). Match on alphanumeric boundaries so a substring collision no
+    longer silently drops the model's temperature."""
+
+    def test_real_o3_stripped(self) -> None:
+        assert _model_supports_temperature("o3") is False
+        assert _model_supports_temperature("o3-mini") is False
+        assert _model_supports_temperature("openai/o3-mini") is False
+
+    def test_substring_collision_not_stripped(self) -> None:
+        # These are non-o-series models that happen to contain the marker
+        # substring; the old ``in`` check falsely stripped temperature.
+        assert _model_supports_temperature("proto3") is True
+        assert _model_supports_temperature("audio1") is True
+        assert _model_supports_temperature("proto1-instruct") is True
+        assert _model_supports_temperature("o4mini") is True  # concatenated -- not the o4 family marker
+
+
+# ---------------------------------------------------------------------------
+# LLMResponse declares pipeline metadata fields (#44)
+# ---------------------------------------------------------------------------
+
+class TestLLMResponsePipelineFields:
+    """The dataclass is frozen + slots. Constructing with the pipeline metadata
+    kwargs (``classification`` / ``confidence`` / ``seal_id`` /
+    ``pipeline_metadata``) must not raise -- the moment a pipeline step wrote a
+    non-None value into the ctx and _enrich_response tried to construct with
+    those kwargs, the missing declaration used to TypeError in prod."""
+
+    def test_construct_with_all_pipeline_fields(self) -> None:
+        r = LLMResponse(
+            content="hello",
+            classification="safe",
+            confidence=0.87,
+            seal_id="seal-xyz",
+            pipeline_metadata={"evidence_validation": {"ok": True}},
+        )
+        assert r.classification == "safe"
+        assert r.confidence == 0.87
+        assert r.seal_id == "seal-xyz"
+        assert r.pipeline_metadata == {"evidence_validation": {"ok": True}}
+
+
+# ---------------------------------------------------------------------------
+# Cancellation checks around the retry / tool loop (#44)
+# ---------------------------------------------------------------------------
+
+class TestCancellationChecks:
+    """Retry-loop, pre-tool-loop, and per-tool-step cancellation guards so a
+    paused/cancelled investigation stops burning credits instead of waiting
+    out the retry schedule or the next tool call."""
+
+    @pytest.mark.asyncio
+    async def test_retry_loop_aborts_when_cancelled(
+        self, client: AilaLLMClient
+    ) -> None:
+        run_id = "inv-retry-cancel"
+        get_cancellation_token(run_id)
+        cancel_for_investigation(run_id)
+        try:
+            with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
+                mock_instance = AsyncMock()
+                mock_instance.chat.completions.create = AsyncMock(
+                    return_value=_make_completion(content="never returned"),
+                )
+                mock_oai.return_value = mock_instance
+                with pytest.raises(LLMCancelledError):
+                    await client.chat(
+                        "scoring",
+                        [{"role": "user", "content": "go"}],
+                        run_id=run_id,
+                    )
+        finally:
+            clear_for_investigation(run_id)
+
+    @pytest.mark.asyncio
+    async def test_tool_loop_step_check_aborts_between_tools(
+        self, client: AilaLLMClient
+    ) -> None:
+        """A cancellation flipped after the first LLM turn (which produced
+        tool_calls) is caught at the top of the tool loop's next step so no
+        tools fire against the cancelled investigation."""
+        run_id = "inv-tool-loop-cancel"
+        get_cancellation_token(run_id)
+        # Flip the token BEFORE the tool loop is invoked so its top-of-step
+        # peek fires first, before any executor runs.
+        cancel_for_investigation(run_id)
+
+        routing = LLMRouting(
+            model_id="test-model",
+            base_url="http://test",
+            api_key="sk-test",
+            max_tokens=256,
+            temperature=0.0,
+            max_tool_steps=5,
+            task_type="scoring",
+            tool_timeout_s=30.0,
+        )
+        tc = _make_tool_call("tc-cancel", "noop_tool", {})
+        initial_choice = _make_completion(
+            content="", finish_reason="tool_calls", tool_calls=[tc]
+        ).choices[0]
+
+        executor_calls: list[str] = []
+
+        async def executor(name: str, args: dict[str, Any]) -> str:
+            executor_calls.append(name)
+            return "{}"
+
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(
+            return_value=_make_completion(content="never returned"),
+        )
+
+        try:
+            with pytest.raises(LLMCancelledError):
+                await client._tool_loop(
+                    client=mock_client,
+                    routing=routing,
+                    messages=[{"role": "user", "content": "go"}],
+                    response_format=None,
+                    tools=[
+                        {
+                            "type": "function",
+                            "function": {"name": "noop_tool", "parameters": {}},
+                        }
+                    ],
+                    tool_executor=executor,
+                    initial_choice=initial_choice,
+                    initial_usage={},
+                    run_id=run_id,
+                )
+            # No tool ran because the cancel check fired at step 1's top.
+            assert executor_calls == []
+        finally:
+            clear_for_investigation(run_id)
+
+
+# ---------------------------------------------------------------------------
+# Retry idempotency -- side-effectful tools not replayed (#44)
+# ---------------------------------------------------------------------------
+
+class TestRetryIdempotency:
+    """Once a tool_executor call has committed in an attempt, any subsequent
+    transient failure must NOT retry the outer call -- doing so would re-issue
+    the same tool (or a new tool from a fresh model turn) and duplicate the
+    side effects."""
+
+    @pytest.mark.asyncio
+    async def test_post_tool_failure_does_not_replay_tools(self) -> None:
+        """First model turn issues tool_calls; the executor runs; the follow-up
+        model call raises APIConnectionError. The outer retry loop must give
+        up (retry disabled by the commit-gate) and surface a non-retryable
+        LLMError instead of replaying the whole attempt (which would fire the
+        executor a second time)."""
+        # max_tool_steps>0 required or the tool loop never runs.
+        store = FakeSecretStore({"openai_api_key": "sk-test"})
+        reg = FakeRegistry({"platform.llm_max_tool_steps_scoring": 5})
+        client = AilaLLMClient(registry=reg, secret_store=store)  # type: ignore[arg-type]
+        # tc-1 is what the model asks for; the executor records every call.
+        tc = _make_tool_call("tc-1", "side_effectful", {"cve": "CVE-1"})
+        first_response = _make_completion(
+            content="", finish_reason="tool_calls", tool_calls=[tc]
+        )
+        # After the tool runs, the next model round-trip fails transiently.
+        # A naive retry would restart the pipeline, replay _pipeline.run, and
+        # execute the same tool again.
+        executor_calls: list[dict[str, Any]] = []
+
+        async def executor(name: str, args: dict[str, Any]) -> str:
+            executor_calls.append({"name": name, "args": args})
+            return '{"severity": "CRITICAL"}'
+
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
+            mock_instance = AsyncMock()
+            # Turn 1 (initial) -> tool_calls; Turn 2 (post-tool) -> raise.
+            # Any further turn would indicate an unwanted retry.
+            mock_instance.chat.completions.create = AsyncMock(
+                side_effect=[
+                    first_response,
+                    APIConnectionError(request=MagicMock()),
+                    # Guard: if the retry gate fails and a replay happens, the
+                    # third call would land here. We assert it never does.
+                    _make_completion(content="unexpected replay success"),
+                ]
+            )
+            mock_oai.return_value = mock_instance
+
+            tools = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "side_effectful",
+                        "parameters": {},
+                    },
+                }
+            ]
+            with patch(
+                "aila.platform.llm.client.asyncio.sleep", new_callable=AsyncMock
+            ):
+                with pytest.raises(LLMError) as exc_info:
+                    await client.chat(
+                        "scoring",
+                        [{"role": "user", "content": "test"}],
+                        tools=tools,
+                        tool_executor=executor,
+                    )
+
+        # The commit-gate marks the wrapped error non-retryable so the ARQ
+        # layer sees a terminal failure and cursor SSOT decides recovery.
+        assert exc_info.value.retryable is False
+        assert "already committed" in str(exc_info.value)
+        # Executor fired exactly once; the retry did NOT replay the tool.
+        assert len(executor_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_pre_tool_failure_still_retries(
+        self, client: AilaLLMClient
+    ) -> None:
+        """A failure BEFORE any tool has run must remain retryable -- this is
+        the normal transient-error recovery path and is not gated."""
+        good = _make_completion(content="recovered")
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
+            mock_instance = AsyncMock()
+            mock_instance.chat.completions.create = AsyncMock(
+                side_effect=[APIConnectionError(request=MagicMock()), good]
+            )
+            mock_oai.return_value = mock_instance
+            with patch(
+                "aila.platform.llm.client.asyncio.sleep", new_callable=AsyncMock
+            ):
+                response = await client.chat(
+                    "scoring",
+                    [{"role": "user", "content": "test"}],
+                )
+        assert response.content == "recovered"

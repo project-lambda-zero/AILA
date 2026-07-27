@@ -933,6 +933,35 @@ async def _sweep_orphan_running_tasks(
             _log.debug("worker.reverse_sweep: client.aclose() failed: %s", exc)
 
 
+async def _on_shutdown(ctx: dict[str, Any]) -> None:
+    """Close the worker platform's LLM client connection pool (#44).
+
+    Every LLM call routes through the platform runtime's shared
+    ``AilaLLMClient``, which pools ``AsyncOpenAI`` (and therefore
+    ``httpx.AsyncClient``) instances keyed by (api_key, base_url,
+    timeout). Without an explicit close, the underlying TLS pool leaks
+    on worker teardown. Best-effort: unavailable-runtime and close
+    failures are logged so a partially-initialized worker still
+    shuts down cleanly.
+    """
+    del ctx
+    try:
+        from aila.platform.runtime.orchestrator import get_worker_platform
+
+        platform = await get_worker_platform()
+        runtime = getattr(platform, "_runtime", None)
+        client = getattr(runtime, "runtime_model", None) if runtime is not None else None
+        if client is None:
+            return
+        aclose = getattr(client, "aclose", None)
+        if aclose is None:
+            return
+        await aclose()
+        _log.info("ARQ on_shutdown: closed AilaLLMClient AsyncOpenAI pool")
+    except (OSError, RuntimeError, ImportError, AttributeError) as exc:
+        _log.warning("ARQ on_shutdown: LLM client aclose skipped: %s", exc)
+
+
 class WorkerSettings:
     """ARQ worker entry point (D-07..D-14)."""
 
@@ -954,5 +983,6 @@ class WorkerSettings:
     allow_abort_jobs = True
     health_check_interval = 60
     on_startup = staticmethod(_on_startup)
+    on_shutdown = staticmethod(_on_shutdown)
     on_job_start = staticmethod(_on_job_start)
     on_job_end = staticmethod(_on_job_end)
