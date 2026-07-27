@@ -26,8 +26,28 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from ..contracts._common import utc_now
+from ..llm.correlation import current_join_keys
 
 # --- Base ---
+
+
+def _default_correlation_id() -> str:
+    """Return the ambient investigation id (#39) as the domain-event correlation.
+
+    Reads the correlation ContextVar populated by the agent turn loop
+    (``aila.platform.llm.correlation.correlation_scope``). Events emitted
+    inside a correlation scope inherit the investigation id automatically
+    so the audit trail can be joined back to the investigation/branch/turn
+    that produced them. Events emitted outside any correlation scope carry
+    an empty string, preserving the previous ``correlation_id: str = ""``
+    default so callers that pass their own id are not surprised.
+
+    Callers may still override this by passing ``correlation_id=...`` at
+    construction time; the explicit value wins because the default factory
+    only runs when the field is unset.
+    """
+    investigation_id, _branch_id, _turn_number = current_join_keys()
+    return investigation_id or ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,7 +60,7 @@ class DomainEvent:
     timestamp: datetime = field(default_factory=utc_now)
     team_id: str | None = None
     source_module: str = ""
-    correlation_id: str = ""
+    correlation_id: str = field(default_factory=_default_correlation_id)
 
 
 # --- Payloads (Pydantic) ---

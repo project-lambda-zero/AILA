@@ -1,14 +1,23 @@
-"""Unit tests for issue #60 -- events/SSE lifecycle correctness.
+"""Unit tests for issues #39 and #60 -- events/SSE lifecycle correctness.
 
 Design source: .run/designs/DESIGN_automation_events_reporting.md, section
 "Issue #60 -- Events / SSE lifecycle". Findings addressed:
 
+- 39: Domain events carry a non-empty ``correlation_id`` when emitted
+  inside a ``correlation_scope``. The base ``DomainEvent`` reads the
+  ambient investigation id from the correlation ContextVar via a
+  ``default_factory`` so every subclass inherits the same behaviour
+  without touching call sites.
 - 60-1: EventEmitter fan-out: a failing destination must NOT starve
   subsequent destinations. Each failure is logged and counted.
 - 60-2: _redis_stream RedisError is no longer silently pass-swallowed.
   It becomes a RuntimeError so the drain isolation guard catches, logs,
   and counts it (verified indirectly via _DESTINATION_ISOLATION_ERRORS
   membership; live Redis is out of scope for a pure unit test).
+- 60-4: ``UserFanoutRegistry`` supports multiple concurrent SSE
+  subscribers per user id. Each subscribe() returns a fresh bounded
+  queue and emit() delivers to every live queue for that user, so a
+  second browser tab for the same user receives events independently.
 - SSE worker_stream lifecycle: bounded queue with drop-oldest on overflow,
   lifetime cap that emits a closing frame and exits, worker task cancelled
   AND awaited on generator exit (no zombie task after client disconnect).
@@ -26,12 +35,24 @@ from typing import Any
 
 import pytest
 
+from aila.platform.events.domain_events import (
+    AssessmentCompleted,
+    AssessmentCompletedPayload,
+    ConfigChanged,
+    ConfigChangedPayload,
+    LlmCallCompleted,
+    LlmCallCompletedPayload,
+    SystemRegistered,
+    SystemRegisteredPayload,
+)
 from aila.platform.events.emitter import (
     _DESTINATION_ISOLATION_ERRORS,
     EventEmitter,
     ThreadSafeEventEmitter,
 )
 from aila.platform.events.event import PlatformEvent
+from aila.platform.llm.correlation import correlation_scope
+from aila.platform.sse.user_fanout import QUEUE_MAXSIZE, UserFanoutRegistry
 from aila.platform.sse.worker_stream import stream_from_worker
 
 
@@ -383,3 +404,291 @@ class TestSseWorkerStreamLifecycle:
 
         await gen.aclose()
         await gen.aclose()  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Issue #39 -- Domain events inherit the ambient correlation id
+# ---------------------------------------------------------------------------
+
+
+class TestDomainEventCorrelationId:
+    """Domain events must carry the investigation id when emitted inside a
+    ``correlation_scope`` so the audit trail can be joined back to the
+    investigation/branch/turn that produced them (issue #39 gap: the
+    ``correlation_id`` field was hard-defaulted to ``""``)."""
+
+    def test_default_correlation_id_is_empty_outside_scope(self) -> None:
+        """No correlation set -> empty string, preserving prior default."""
+        event = LlmCallCompleted(
+            payload=LlmCallCompletedPayload(
+                model="m", tokens=1, cost=0.1, duration=0.5,
+            ),
+        )
+        assert event.correlation_id == ""
+
+    def test_domain_event_inherits_investigation_id_from_scope(self) -> None:
+        """Constructing a domain event inside a ``correlation_scope`` reads
+        the ambient investigation id via the ``default_factory``."""
+        with correlation_scope(
+            investigation_id="inv-42", branch_id="br-1", turn_number=3,
+        ):
+            event = LlmCallCompleted(
+                payload=LlmCallCompletedPayload(
+                    model="m", tokens=1, cost=0.1, duration=0.5,
+                ),
+            )
+        assert event.correlation_id == "inv-42"
+
+    def test_every_domain_event_subclass_inherits_correlation(self) -> None:
+        """The fix lives on the base class, so every subclass benefits."""
+        with correlation_scope(investigation_id="inv-abc"):
+            events = [
+                SystemRegistered(
+                    payload=SystemRegisteredPayload(system_id="s", hostname="h"),
+                ),
+                AssessmentCompleted(
+                    payload=AssessmentCompletedPayload(
+                        session_id="sess", score=0.9,
+                    ),
+                ),
+                ConfigChanged(
+                    payload=ConfigChangedPayload(
+                        namespace="ns", key="k", old_value="o", new_value="n",
+                    ),
+                ),
+                LlmCallCompleted(
+                    payload=LlmCallCompletedPayload(
+                        model="m", tokens=1, cost=0.1, duration=0.5,
+                    ),
+                ),
+            ]
+        assert [e.correlation_id for e in events] == ["inv-abc"] * 4
+
+    def test_explicit_correlation_id_overrides_ambient(self) -> None:
+        """An explicit ``correlation_id=`` argument wins over the ambient value
+        so callers that already know their correlation are not surprised."""
+        with correlation_scope(investigation_id="inv-ambient"):
+            event = SystemRegistered(
+                correlation_id="explicit-id",
+                payload=SystemRegisteredPayload(system_id="s", hostname="h"),
+            )
+        assert event.correlation_id == "explicit-id"
+
+    def test_scope_exit_restores_no_correlation(self) -> None:
+        """Domain events built after a ``correlation_scope`` returns do NOT
+        inherit the stale id (the ContextVar was reset)."""
+        with correlation_scope(investigation_id="inv-during"):
+            inside = LlmCallCompleted(
+                payload=LlmCallCompletedPayload(
+                    model="m", tokens=1, cost=0.1, duration=0.1,
+                ),
+            )
+        outside = LlmCallCompleted(
+            payload=LlmCallCompletedPayload(
+                model="m", tokens=1, cost=0.1, duration=0.1,
+            ),
+        )
+        assert inside.correlation_id == "inv-during"
+        assert outside.correlation_id == ""
+
+    def test_investigation_id_none_yields_empty(self) -> None:
+        """A scope with only branch/turn set (no investigation id) still
+        yields an empty correlation id because there is nothing to join on."""
+        with correlation_scope(branch_id="br-only", turn_number=1):
+            event = LlmCallCompleted(
+                payload=LlmCallCompletedPayload(
+                    model="m", tokens=1, cost=0.1, duration=0.1,
+                ),
+            )
+        assert event.correlation_id == ""
+
+
+# ---------------------------------------------------------------------------
+# Issue #60-4 -- Multi-subscriber SSE fan-out registry
+# ---------------------------------------------------------------------------
+
+
+class TestUserFanoutRegistryMultiTab:
+    """``UserFanoutRegistry`` must support multiple concurrent SSE
+    subscribers per user id. The prior single-queue registry at
+    ``aila.api.events`` handed the SAME queue to two tabs so events were
+    consumed by whichever tab called ``get`` first, and the first tab that
+    closed deleted the shared queue out from under the sibling. This
+    registry replaces that behaviour: every ``subscribe`` returns a fresh
+    queue and ``emit`` fans out to all of them."""
+
+    @pytest.mark.asyncio
+    async def test_subscribe_returns_fresh_queue_per_call(self) -> None:
+        """Two subscribe() calls for the same user return distinct queues."""
+        reg = UserFanoutRegistry()
+        q1 = await reg.subscribe("user-1")
+        q2 = await reg.subscribe("user-1")
+        assert q1 is not q2, (
+            "multi-tab breakage: subscribe() must return a fresh queue "
+            "per connection; sharing one queue means only one tab wins each event"
+        )
+        assert await reg.subscriber_count("user-1") == 2
+        assert await reg.user_count() == 1
+
+    @pytest.mark.asyncio
+    async def test_emit_fans_out_to_every_tab(self) -> None:
+        """emit() delivers the payload to EVERY subscribed queue for the user."""
+        reg = UserFanoutRegistry()
+        tab_a = await reg.subscribe("u1")
+        tab_b = await reg.subscribe("u1")
+        tab_c = await reg.subscribe("u1")
+
+        delivered = await reg.emit("u1", "hello")
+        assert delivered == 3
+
+        # Each tab has its own copy -- draining one must not empty the others.
+        assert tab_a.get_nowait() == "hello"
+        assert tab_b.get_nowait() == "hello"
+        assert tab_c.get_nowait() == "hello"
+        for tab in (tab_a, tab_b, tab_c):
+            assert tab.empty()
+
+    @pytest.mark.asyncio
+    async def test_emit_across_multiple_events_preserves_order_per_tab(self) -> None:
+        """Sequential emits arrive in order at every tab."""
+        reg = UserFanoutRegistry()
+        tab_a = await reg.subscribe("u1")
+        tab_b = await reg.subscribe("u1")
+
+        for i in range(5):
+            await reg.emit("u1", f"evt-{i}")
+
+        received_a = [tab_a.get_nowait() for _ in range(5)]
+        received_b = [tab_b.get_nowait() for _ in range(5)]
+        assert received_a == [f"evt-{i}" for i in range(5)]
+        assert received_b == [f"evt-{i}" for i in range(5)]
+
+    @pytest.mark.asyncio
+    async def test_cross_user_isolation(self) -> None:
+        """emit(u1, ...) never touches queues under u2."""
+        reg = UserFanoutRegistry()
+        u1_tab = await reg.subscribe("u1")
+        u2_tab = await reg.subscribe("u2")
+
+        await reg.emit("u1", "for-u1")
+
+        assert u1_tab.get_nowait() == "for-u1"
+        assert u2_tab.empty(), "u2 must not receive u1's event"
+
+    @pytest.mark.asyncio
+    async def test_unsubscribing_one_tab_leaves_sibling_live(self) -> None:
+        """Closing one tab must not orphan another tab's queue."""
+        reg = UserFanoutRegistry()
+        tab_a = await reg.subscribe("u1")
+        tab_b = await reg.subscribe("u1")
+
+        await reg.unsubscribe("u1", tab_a)
+
+        assert await reg.subscriber_count("u1") == 1
+        # sibling tab is still registered and still receives events
+        delivered = await reg.emit("u1", "post-close")
+        assert delivered == 1
+        assert tab_b.get_nowait() == "post-close"
+        # the closed tab's queue is unchanged (not written to)
+        assert tab_a.empty()
+
+    @pytest.mark.asyncio
+    async def test_last_unsubscribe_removes_user_entry(self) -> None:
+        """Dropping the last subscriber cleans the user id from the registry."""
+        reg = UserFanoutRegistry()
+        tab = await reg.subscribe("u1")
+        assert await reg.user_count() == 1
+        await reg.unsubscribe("u1", tab)
+        assert await reg.user_count() == 0
+        assert await reg.subscriber_count("u1") == 0
+
+    @pytest.mark.asyncio
+    async def test_emit_to_unknown_user_is_noop(self) -> None:
+        """Publishing to a user with no live subscribers is a silent no-op."""
+        reg = UserFanoutRegistry()
+        delivered = await reg.emit("ghost", "payload")
+        assert delivered == 0
+
+    @pytest.mark.asyncio
+    async def test_unsubscribe_unknown_queue_is_noop(self) -> None:
+        """Double-unsubscribe or unsubscribe of a foreign queue must not raise."""
+        reg = UserFanoutRegistry()
+        tab = await reg.subscribe("u1")
+        await reg.unsubscribe("u1", tab)
+        # second unsubscribe: silent no-op
+        await reg.unsubscribe("u1", tab)
+        # unknown queue on unknown user: silent no-op
+        await reg.unsubscribe("ghost", asyncio.Queue())
+
+    @pytest.mark.asyncio
+    async def test_slow_tab_does_not_stall_sibling(self) -> None:
+        """A queue-full tab is skipped with a warning; siblings still get the event.
+
+        This is the correctness fix for the shared-queue behaviour where a
+        slow consumer forced a backlog that other tabs then missed.
+        """
+        reg = UserFanoutRegistry(queue_maxsize=2)
+        slow_tab = await reg.subscribe("u1")
+        fast_tab = await reg.subscribe("u1")
+
+        # Fill both queues to the slow tab's limit.
+        assert await reg.emit("u1", "a") == 2
+        assert await reg.emit("u1", "b") == 2
+        # The fast tab drains -- the slow tab does not.
+        assert fast_tab.get_nowait() == "a"
+        assert fast_tab.get_nowait() == "b"
+
+        # Next emit: slow_tab is full (2/2), fast_tab has room again.
+        delivered = await reg.emit("u1", "c")
+        assert delivered == 1, (
+            "a full subscriber must be skipped so sibling delivery is not blocked"
+        )
+
+        # slow_tab keeps its two items; fast_tab received all three payloads.
+        assert [slow_tab.get_nowait() for _ in range(2)] == ["a", "b"]
+        assert slow_tab.empty()
+        assert fast_tab.get_nowait() == "c"
+        assert fast_tab.empty()
+
+    @pytest.mark.asyncio
+    async def test_default_queue_maxsize_matches_module_constant(self) -> None:
+        """Default maxsize is the exported constant so operator docs stay honest."""
+        reg = UserFanoutRegistry()
+        tab = await reg.subscribe("u1")
+        assert tab.maxsize == QUEUE_MAXSIZE
+
+    @pytest.mark.asyncio
+    async def test_zero_maxsize_rejected(self) -> None:
+        """Unbounded (or negative) per-subscriber queues would leak memory on a
+        stalled tab; the constructor refuses them."""
+        with pytest.raises(ValueError, match="queue_maxsize must be > 0"):
+            UserFanoutRegistry(queue_maxsize=0)
+        with pytest.raises(ValueError, match="queue_maxsize must be > 0"):
+            UserFanoutRegistry(queue_maxsize=-1)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_subscribe_unsubscribe_and_emit(self) -> None:
+        """Concurrent subscribe/unsubscribe/emit tasks do not lose events or
+        corrupt the subscriber list. Runs on a single event loop under the
+        registry's asyncio.Lock, which is the deployed threading model."""
+        reg = UserFanoutRegistry()
+        tabs: list[asyncio.Queue[str]] = []
+
+        async def add_tab() -> None:
+            tabs.append(await reg.subscribe("u1"))
+
+        await asyncio.gather(*(add_tab() for _ in range(10)))
+        assert await reg.subscriber_count("u1") == 10
+
+        delivered_counts = await asyncio.gather(
+            *(reg.emit("u1", f"e{i}") for i in range(5))
+        )
+        assert all(count == 10 for count in delivered_counts), (
+            "every emit must reach every tab even under concurrent scheduling"
+        )
+        for tab in tabs:
+            drained = [tab.get_nowait() for _ in range(5)]
+            assert sorted(drained) == [f"e{i}" for i in range(5)]
+
+        await asyncio.gather(*(reg.unsubscribe("u1", t) for t in tabs))
+        assert await reg.user_count() == 0
