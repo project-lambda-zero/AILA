@@ -24,7 +24,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select, update
 
@@ -55,6 +55,21 @@ __all__ = [
     "make_platform_namespace",
     "make_user_namespace",
 ]
+
+# HNSW ``ef_search`` at query time (issue #37): the pgvector default (40)
+# under-recalls on a growing corpus. 100 trades a little latency for
+# materially better recall on the cosine-distance retrieval paths.
+_HNSW_EF_SEARCH = 100
+
+
+def _advisory_lock_key(namespace: str, dedup_key: str) -> int:
+    """Stable signed 64-bit key for ``pg_advisory_xact_lock`` derived from the
+    dedup identity, so concurrent upserts of the same ``(namespace,
+    dedup_key)`` serialize instead of racing check-then-insert into duplicate
+    rows (issue #37).
+    """
+    digest = hashlib.sha256(f"{namespace}\x00{dedup_key}".encode()).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
 
 # RFC-12 default source_type stamped on the non-chunked store path when the
 # caller does not pass a ``kind`` hint. Prose is the dominant knowledge shape
@@ -486,6 +501,14 @@ class KnowledgeService:
         async with _session_or_new(session) as (sess, owns):
             existing_id: int | None = None
             if dedup_key is not None:
+                # Serialize concurrent upserts of the same dedup identity so
+                # the check-then-insert below cannot race into duplicate rows
+                # (issue #37). Transaction-scoped; released at commit.
+                await sess.exec(
+                    text("SELECT pg_advisory_xact_lock(:k)").bindparams(
+                        k=_advisory_lock_key(namespace, dedup_key),
+                    ),
+                )
                 stmt = select(KnowledgeEntryRecord.id).where(
                     KnowledgeEntryRecord.namespace == namespace,
                     KnowledgeEntryRecord.dedup_key == dedup_key,
@@ -687,6 +710,7 @@ class KnowledgeService:
         knowledge_graph dependency one-directional.
         """
         async with _session_or_new(session) as (sess, _owns):
+            await sess.exec(text(f"SET LOCAL hnsw.ef_search = {_HNSW_EF_SEARCH}"))
             stmt = (
                 select(
                     KnowledgeEntryRecord.id,
@@ -801,6 +825,7 @@ class KnowledgeService:
         candidate_limit = limit * 10
 
         async with _session_or_new(session) as (sess, owns):
+            await sess.exec(text(f"SET LOCAL hnsw.ef_search = {_HNSW_EF_SEARCH}"))
             # Build namespace filter
             ns_filters = self._build_namespace_filters(namespaces, namespace_patterns)
 

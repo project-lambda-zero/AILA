@@ -281,6 +281,10 @@ operator action.
 
 ### Fixed
 
+- Knowledge-base dedup upserts serialize on a Postgres transaction advisory
+  lock keyed by (namespace, dedup_key), closing the check-then-insert race
+  that could create duplicate entries under concurrent ingestion; retrieval
+  paths set hnsw.ef_search for better recall (issue #37).
 - The Idempotency-Key middleware namespaces its Redis cache by the caller's
   credential, so a key replayed by a different principal can no longer read
   another tenant's cached response (issue #57).
