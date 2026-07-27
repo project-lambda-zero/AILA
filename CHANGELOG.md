@@ -281,6 +281,32 @@ operator action.
 
 ### Fixed
 
+- Forensics child-table team isolation is enforced through a single documented
+  join contract instead of per-endpoint ad-hoc checks, and a completeness test
+  fails if a new project-scoped table ships without joining the contract
+  (issue #59).
+- The Alpine and Arch advisory tools run their blocking HTTP clients on a
+  worker thread instead of the event loop, so a slow advisory feed no longer
+  stalls concurrent investigation work (issue #64).
+- Domain events now carry the ambient investigation correlation id, so the
+  audit trail can tie each event to the turn that produced it; events emitted
+  outside a correlation scope keep an empty id (issue #39).
+- Server-sent events fan out to every live connection for a user, so a second
+  browser tab for the same account receives events instead of taking them from
+  the first, and closing one tab leaves the other live (issue #60).
+- SSH connections reject unknown host keys by default across every connection
+  surface instead of auto-adding them on first connect; hosts recorded in
+  known_hosts still connect (issue #42).
+- Evidence-pack section byte counts are derived from content on every access
+  and can no longer be set to understate a section's size and pass the pack's
+  total-size budget (issue #52).
+- A config value written in one process becomes visible to peer processes
+  within about a second through a Redis-backed invalidation counter, instead of
+  serving stale config for the full cache TTL; the registry degrades to the
+  prior TTL-only cache when Redis is unavailable (issue #56).
+- New workflow-run JSON columns are validated by a database check constraint
+  that rejects malformed JSON on insert and update while leaving existing rows
+  untouched (issue #45).
 - Knowledge-base dedup upserts serialize on a Postgres transaction advisory
   lock keyed by (namespace, dedup_key), closing the check-then-insert race
   that could create duplicate entries under concurrent ingestion; retrieval
