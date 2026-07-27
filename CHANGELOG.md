@@ -281,6 +281,12 @@ operator action.
 
 ### Fixed
 
+- Single-resource endpoints in the investigation module routers (branch,
+  outcome, workspace, target, project, finding, pattern, family, playbook,
+  and the message SSE stream) verify the caller's team owns the parent
+  investigation or workspace before returning or mutating a row, so a
+  cross-team identifier can no longer read or change another team's data;
+  admin retains cross-team access (issue #57).
 - API multi-tenant and credential-leak residuals in the auth surface are
   closed: shared saved filters are scoped to the caller's team instead of
   every team, auto-provisioned OIDC users receive the role from their
