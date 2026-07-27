@@ -281,6 +281,17 @@ operator action.
 
 ### Fixed
 
+- Team isolation is enforced across the investigation engine's database
+  access, not just the API surface. The team context is carried in an ambient
+  run scope set at each API request and each worker task, so bare UnitOfWork
+  usage, the service factory's services, and every database-backed tool filter
+  to the caller's team with no per-call-site plumbing; a caller with no team
+  (admin) retains global access. Report file paths are confined to the report
+  root, and audit-log entries take the actor identity from the authenticated
+  context instead of tool input (issue #53). This also closes the reporting
+  cache cross-team read: those cache queries now run under the ambient team
+  scope, so a team can no longer receive another team's cached report
+  (issue #48).
 - LLM client resilience: a retry after a tool call has already run no longer
   replays the side-effectful tool, so a transient failure mid-tool-loop cannot
   duplicate messages, observables, or MCP mutations; a cancelled investigation
