@@ -112,9 +112,9 @@ class UnroutablePayload(BaseModel):
 # Real Pydantic v2 discriminated union keyed on ``query_mode``: the tag selects
 # exactly one member instead of first-match guessing, so a dict can no longer
 # silently satisfy the wrong model (#61). Free-form module payloads (forensics,
-# hello_world, and _template dump arbitrary result dicts) carry no query_mode
-# and fall through to the ``dict[str, Any]`` arm on PlatformResponse rather than
-# being coerced into an unrelated member.
+# plus the reference and template modules, dump arbitrary result dicts) carry
+# no query_mode and fall through to the ``dict[str, Any]`` arm on
+# PlatformResponse rather than being coerced into an unrelated member.
 ModulePayload = Annotated[
     VulnSummaryPayload
     | VulnCountPayload

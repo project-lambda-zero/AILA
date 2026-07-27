@@ -223,8 +223,8 @@ class AILAPlatform:
             # Phase 2: module dispatch on a fresh, short-lived session so
             # the routing connection is already released while modules do
             # their (potentially slow) work. Modules manage their own
-            # commits inside the session -- see hello_world/vulnerability/
-            # forensics module.py for the canonical shape.
+            # commits inside the session -- see the vulnerability and
+            # forensics module.py files for the canonical shape.
             async with async_session_scope(self.settings) as dispatch_session:
                 dispatch_emitter = build_emitter(
                     session=dispatch_session,
