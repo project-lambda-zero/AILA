@@ -17,6 +17,15 @@ can only be drafted, not executed.
 Compilation failure is recorded against the attempt count and surfaced in
 the per-attempt log; it is not raised, so a single bad code emission
 cannot crash the workflow.
+
+Sandbox containment (fix #51). The ``Stay within /tmp/aila_vr/`` line in
+``system_poc_development.md`` is guidance to the LLM, NOT a security
+control. The runtime enforcement lives in :mod:`aila.modules.vr.tools.poc_runner`:
+``confine_remote_poc_path`` refuses any ``poc_path`` that is not absolute
+and under ``/tmp/aila_vr``, and every remote invocation is wrapped in
+``firejail`` -> ``unshare + setpriv`` -> ``ulimit`` (documented fallback
+chain) so a hallucinated ``requests.post(...)`` cannot reach the network
+and a hallucinated ``open('/etc/shadow')`` cannot exfiltrate host files.
 """
 from __future__ import annotations
 
@@ -30,6 +39,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from aila.modules.vr.tools.poc_runner import confine_remote_poc_path
 from aila.platform.llm.correlation import (
     correlation_scope,
     current_join_keys,
@@ -390,6 +400,23 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
             continue
 
         poc_path = compile_result.get("script_path") or compile_result.get("binary_path")
+        # fix #51 -- belt+suspenders confinement at the state boundary. The
+        # tool re-validates on _run entry, but a compile-result mutation
+        # (bug or tampering) should never reach the shell wrapper. Fail
+        # the attempt closed with an audit-visible outcome so the
+        # operator sees the escape attempt in the per-attempt log.
+        confinement_error = confine_remote_poc_path(str(poc_path or ""))
+        if confinement_error:
+            _log.warning(
+                "poc_development: compile_result poc_path escaped sandbox root: %s",
+                confinement_error,
+            )
+            history.append({
+                "attempt": attempt, "language": last_language,
+                "outcome": "poc_path_escaped_sandbox",
+                "detail": confinement_error,
+            })
+            continue
         run_result = await services.poc_runner.forward(
             action="run_poc",
             integration=integration,
