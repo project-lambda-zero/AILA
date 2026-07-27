@@ -19,6 +19,7 @@ import os
 import subprocess
 
 import pytest
+from sqlalchemy.exc import DBAPIError
 from sqlmodel import SQLModel
 
 import aila.modules.vr.db_models  # noqa: F401  -- populate SQLModel.metadata
@@ -136,13 +137,18 @@ async def storage_db(pg_url):
 
     The storage layer (ConfigRegistry.register/set/get, etc.) is async and runs
     against ``async_session_scope`` bound to ``AILA_DATABASE_URL`` (set to the
-    test DB by ``pg_url``). This fixture guarantees the schema exists and
-    isolates each test by truncating every table on teardown -- the Postgres
-    analogue of the api-suite ``test_db`` fixture (D-48/D-49: no SQLite).
+    test DB by ``pg_url``). Schema bootstrap goes through
+    ``tests/_db_bootstrap.py`` (create_all + ``alembic stamp head``) so this
+    fixture aligns with #62's requirement that the test schema be authoritative
+    to the migrations. Each test is isolated by truncating every table on
+    teardown -- the Postgres analogue of the api-suite ``test_db`` fixture
+    (D-48/D-49: no SQLite).
     """
+    from tests._db_bootstrap import bootstrap_test_database
+
+    bootstrap_test_database(pg_url)
+
     engine = get_async_engine()
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
 
     yield
 
@@ -150,5 +156,7 @@ async def storage_db(pg_url):
         for table in reversed(SQLModel.metadata.sorted_tables):
             try:
                 await conn.execute(table.delete())
-            except Exception:  # noqa: BLE001 -- best-effort per-test cleanup
+            except (OSError, RuntimeError, DBAPIError):
+                # Best-effort per-test cleanup: a missing table is fine
+                # (leftover from a mid-session bootstrap change).
                 pass
