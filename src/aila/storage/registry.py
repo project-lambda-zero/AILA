@@ -860,6 +860,17 @@ class SchemaRegistry:
             if "already exists" not in str(exc).lower():
                 raise
 
+    def create_all_with_connection(self, connection: object) -> None:
+        """Create registered tables bound to a live sync Connection.
+
+        Used by ``init_db`` inside ``conn.run_sync(...)`` on the async engine.
+        ``SQLModel.metadata.create_all`` accepts either an Engine or a
+        Connection as its bind, so this delegates to :meth:`create_all`.
+        ``checkfirst`` is on by default, so it is idempotent against an
+        already-migrated database -- existing tables are left untouched.
+        """
+        self.create_all(connection)
+
 
 def _cast_value(raw: str, field_info: Any) -> Any:
     """Cast a string value to the field's declared type.
