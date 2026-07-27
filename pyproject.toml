@@ -303,6 +303,10 @@ ignore = [
 # for legacy callers + tests; the imports are intentional re-exports.
 "src/aila/modules/vr/services/outcome_review.py" = ["F401"]
 "src/aila/modules/malware/services/outcome_review.py" = ["F401"]
+"src/aila/modules/forensics/services/outcome_review.py" = ["F401"]
+# Panel setup deferred-imports the panel task (breaks the setup <-> task
+# circular import cycle -- same pattern VR + malware use).
+"src/aila/modules/forensics/workflow/panel/setup.py" = ["PLC0415"]
 "src/aila/modules/vr/services/stall_recovery.py" = ["PLC0415"]
 "src/aila/modules/vr/services/target_analysis.py" = ["PLC0415"]
 "src/aila/modules/vr/workflow/definitions.py" = ["PLC0415"]

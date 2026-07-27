@@ -428,6 +428,12 @@ HONESTY_WHITELIST = [
     # module_id binding across 40+ callsites.
     ("malware/_task_queue.py", "default_task_queue", "consider inlining"),
     ("vr/_task_queue.py", "default_task_queue", "consider inlining"),
+    # forensics/_task_queue.default_task_queue: introduced in #18
+    # alongside the panel spine so persona_spawn (which enqueues sibling
+    # branch worker tasks) has a factory to bind ConfigRegistry +
+    # module_id at. Same public facade shape as vr / malware; inlining
+    # would scatter the module_id binding across every panel spawn site.
+    ("forensics/_task_queue.py", "default_task_queue", "consider inlining"),
     # contracts.target_stages.get: typed getattr facade exposed so
     # consumers don't reach into the StageDescriptor internals; the
     # ``return getattr(...)`` is the simplest signature that satisfies

@@ -6,9 +6,13 @@ Individual model definitions live in domain submodules.
 from __future__ import annotations
 
 from .artifact import ArtifactRecord, LeadRecord
+from .branch import ForensicsInvestigationBranchRecord
 from .directive import AnalystDirectiveRecord
 from .finding_suppression import FindingSuppressionRecord
 from .investigation import AgentStepRecord, InvestigationRunRecord, WriteUpRecord
+from .message import ForensicsInvestigationMessageRecord
+from .outcome import ForensicsInvestigationOutcomeRecord
+from .outcome_review import ForensicsInvestigationOutcomeReviewRecord
 from .project import ForensicsProjectRecord, ProjectEvidenceRecord
 from .question import AnswerCandidateRecord
 from .solid_evidence import SolidEvidenceRecord
@@ -31,6 +35,10 @@ __all__ = [
     "AnswerCandidateRecord",
     "ArtifactRecord",
     "FindingSuppressionRecord",
+    "ForensicsInvestigationBranchRecord",
+    "ForensicsInvestigationMessageRecord",
+    "ForensicsInvestigationOutcomeRecord",
+    "ForensicsInvestigationOutcomeReviewRecord",
     "ForensicsProjectRecord",
     "InvestigationRunRecord",
     "LeadRecord",
