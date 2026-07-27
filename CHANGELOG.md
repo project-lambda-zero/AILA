@@ -281,6 +281,12 @@ operator action.
 
 ### Fixed
 
+- LLM client resilience: a retry after a tool call has already run no longer
+  replays the side-effectful tool, so a transient failure mid-tool-loop cannot
+  duplicate messages, observables, or MCP mutations; a cancelled investigation
+  aborts before the next tool fires instead of burning credits through the
+  remaining retries; and the pooled HTTP client is released on worker and API
+  shutdown (issue #44).
 - Cancelling a task or investigation is atomic: the task-cancel repository
   helper no longer commits the caller's session mid-operation, so a failure
   while updating the sibling investigation row can no longer leave the task
