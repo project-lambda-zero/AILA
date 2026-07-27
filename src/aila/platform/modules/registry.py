@@ -36,6 +36,54 @@ class ModuleRegistry:
         self._modules[module.module_id] = module
         return module
 
+    def unregister(
+        self,
+        module_id: str,
+        *,
+        tool_registry: Any = None,
+    ) -> ModuleProtocol:
+        """Remove a module from the registry and return the removed instance (#41).
+
+        Symmetric inverse of ``register()``:
+
+        * Drops ``module_id`` from ``self._modules`` so subsequent calls to
+          ``modules``, ``capability_profiles()``, ``build_runtimes()``, and
+          ``require()`` no longer see the module.
+        * When ``tool_registry`` is supplied, also unregisters every tool key in
+          the module's ``required_tools()`` that is currently registered AND
+          that is not owned by the platform (per ``PLATFORM_TOOL_KEYS``). The
+          platform-owned keys are shared infrastructure -- removing them would
+          break every other module.
+
+        Routes declared via ``route_specs()`` stop being enumerated the moment
+        the module is dropped; the caller owns re-mounting the API surface
+        (routes are mounted at startup by ``_mount_module_routers``). Schema
+        classes pushed to ``SchemaRegistry`` and config namespaces registered
+        with ``ConfigRegistry`` are NOT withdrawn -- both map to persisted DB
+        state (tables, ``ConfigEntryRecord``, ``SeedVersionRecord``) whose
+        lifetime is the operator's responsibility, not the module registry's.
+
+        Raises KeyError when ``module_id`` is not currently registered.
+        """
+        if module_id not in self._modules:
+            available = ", ".join(sorted(self._modules))
+            raise KeyError(
+                f"Module {module_id!r} is not registered. Available: {available}."
+            )
+        module = self._modules.pop(module_id)
+        if tool_registry is not None:
+            # Local import matches build_runtimes() -- avoids the runtime.builder
+            # -> modules circular import at module top level.
+            from aila.platform.runtime.builder import PLATFORM_TOOL_KEYS
+
+            registered_keys = set(tool_registry.keys)
+            for tool_key in module.required_tools():
+                if tool_key in PLATFORM_TOOL_KEYS:
+                    continue
+                if tool_key in registered_keys:
+                    tool_registry.unregister(tool_key)
+        return module
+
     @property
     def modules(self) -> list[ModuleProtocol]:
         return list(self._modules.values())
