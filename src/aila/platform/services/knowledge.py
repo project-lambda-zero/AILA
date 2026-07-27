@@ -22,7 +22,7 @@ import json
 import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,6 +35,9 @@ from ...storage.registry import ConfigRegistry
 from .embedding import EmbeddingProvider, resolve_provider
 from .ingestor import DEFAULT_MAX_CHARS, Kind, KnowledgeIngestor
 from .knowledge_entities import extract_entities as extract_security_entities
+
+if TYPE_CHECKING:
+    from aila.api.auth import TeamContext
 
 # ``enrich_chunk`` is imported at call time inside ``store`` to break a
 # repo-wide import cycle: knowledge -> knowledge_enrichment ->
@@ -119,12 +122,20 @@ def _configured_embedding_model() -> str | None:
 
 
 @asynccontextmanager
-async def _session_or_new(session: AsyncSession | None) -> AsyncGenerator[tuple[AsyncSession, bool], None]:
-    """Yield (session, owns_session). If session is None, create a short-lived one."""
+async def _session_or_new(
+    session: AsyncSession | None,
+    team_context: TeamContext | None = None,
+) -> AsyncGenerator[tuple[AsyncSession, bool], None]:
+    """Yield (session, owns_session). If session is None, create a short-lived one.
+
+    ``team_context`` is threaded into ``async_session_scope`` on new-session
+    creation (#53) so factory-supplied tenant scope reaches every bare query.
+    When ``None`` the session scope falls back to the ambient TeamContext.
+    """
     if session is not None:
         yield session, False
     else:
-        async with async_session_scope() as new_session:
+        async with async_session_scope(team_context=team_context) as new_session:
             yield new_session, True
 
 
@@ -356,6 +367,7 @@ class KnowledgeService:
         provider: EmbeddingProvider | None = None,
         *,
         llm_client: Any | None = None,
+        team_context: TeamContext | None = None,
     ) -> None:
         self._provider = provider or resolve_provider(_configured_embedding_model())
         # Optional platform LLM client used only when a caller opts into
@@ -364,6 +376,10 @@ class KnowledgeService:
         # backward-compatible for the many callers that only ever store
         # non-chunked or non-enriched entries.
         self._llm_client = llm_client
+        # #53: factory-supplied tenant scope threaded through to every
+        # short-lived session opened by this service. When None, the
+        # ambient TeamContext still applies via async_session_scope.
+        self._team_context = team_context
 
     @property
     def provider(self) -> EmbeddingProvider:
@@ -498,7 +514,7 @@ class KnowledgeService:
         source_type = str(kind) if kind is not None else _DEFAULT_SOURCE_TYPE
         stamped_at = utc_now()
 
-        async with _session_or_new(session) as (sess, owns):
+        async with _session_or_new(session, self._team_context) as (sess, owns):
             existing_id: int | None = None
             if dedup_key is not None:
                 # Serialize concurrent upserts of the same dedup identity so
@@ -709,7 +725,7 @@ class KnowledgeService:
         proliferates. Imported lazily to keep the knowledge to
         knowledge_graph dependency one-directional.
         """
-        async with _session_or_new(session) as (sess, _owns):
+        async with _session_or_new(session, self._team_context) as (sess, _owns):
             await sess.exec(text(f"SET LOCAL hnsw.ef_search = {_HNSW_EF_SEARCH}"))
             stmt = (
                 select(
@@ -824,7 +840,7 @@ class KnowledgeService:
         query_embedding = self.embed(query)
         candidate_limit = limit * 10
 
-        async with _session_or_new(session) as (sess, owns):
+        async with _session_or_new(session, self._team_context) as (sess, owns):
             await sess.exec(text(f"SET LOCAL hnsw.ef_search = {_HNSW_EF_SEARCH}"))
             # Build namespace filter
             ns_filters = self._build_namespace_filters(namespaces, namespace_patterns)
@@ -1041,7 +1057,7 @@ class KnowledgeService:
         """
         if not ids:
             return {}
-        async with _session_or_new(session) as (sess, _owns):
+        async with _session_or_new(session, self._team_context) as (sess, _owns):
             stmt = select(
                 KnowledgeEntryRecord.id,
                 KnowledgeEntryRecord.namespace,
@@ -1077,7 +1093,7 @@ class KnowledgeService:
         """
         from sqlalchemy import delete as sa_delete
 
-        async with _session_or_new(session) as (sess, owns):
+        async with _session_or_new(session, self._team_context) as (sess, owns):
             conditions = [KnowledgeEntryRecord.namespace == namespace]
             if entry_id is not None:
                 conditions.append(KnowledgeEntryRecord.id == entry_id)

@@ -74,23 +74,29 @@ class ServiceFactory:
 
     @property
     def reports(self) -> ReportService:
-        """ReportService -- finding upserts, severity queries, report management."""
-        return ReportService()
+        """ReportService -- finding upserts, severity queries, report management.
+
+        #53: threads ``self._team_context`` so every short-lived session the
+        service opens (via its private ``_session_or_new``) is scoped to the
+        factory's tenant. When ``_team_context`` is ``None``, the underlying
+        ``async_session_scope`` still falls back to the ambient TeamContext.
+        """
+        return ReportService(team_context=self._team_context)
 
     @property
     def storage(self) -> StorageService:
-        """StorageService -- generic CRUD, artifact persistence."""
-        return StorageService()
+        """StorageService -- generic CRUD, artifact persistence (#53 team-scoped)."""
+        return StorageService(team_context=self._team_context)
 
     @property
     def systems(self) -> SystemService:
-        """SystemService -- managed system lifecycle."""
-        return SystemService()
+        """SystemService -- managed system lifecycle (#53 team-scoped)."""
+        return SystemService(team_context=self._team_context)
 
     @property
     def knowledge(self) -> KnowledgeService:
-        """KnowledgeService -- RAG retrieval, agent knowledge store."""
-        return KnowledgeService()
+        """KnowledgeService -- RAG retrieval, agent knowledge store (#53 team-scoped)."""
+        return KnowledgeService(team_context=self._team_context)
 
     def _get_config_registry(self) -> ConfigRegistry:
         """Return the memoized ConfigRegistry, building it on first access."""

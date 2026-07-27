@@ -506,5 +506,14 @@ HONESTY_WHITELIST = [
     # 7 single-action tools would require 7 separate registrations and
     # break the existing operator-side tool registry expectations.
     ("platform/mcp/bridges/audit_mcp.py", "'forward'", "action-dispatch branches"),
+
+    # Category (b): current_team_context() is the typed public accessor for
+    # the ambient TeamContext ContextVar (#53). Inlining ``_CURRENT_TEAM_CONTEXT.get()``
+    # at every call site would leak the private module-level ContextVar into
+    # the public API surface (async_session_scope, UnitOfWork, tests) and
+    # break the type contract -- the ContextVar stores ``object | None`` to
+    # avoid a circular import; the wrapper re-attaches the ``TeamContext``
+    # type. It is the single import boundary tests can monkeypatch.
+    ("platform/services/team_scope.py", "current_team_context", "inlining"),
 ]
 

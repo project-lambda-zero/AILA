@@ -36,18 +36,28 @@ from ..contracts.persist import PersistContract
 from ..events import PlatformEvent
 
 if TYPE_CHECKING:
+    from aila.api.auth import TeamContext
+
     from ..events import EventEmitter
 
 __all__ = ["SystemService"]
 
 
 @asynccontextmanager
-async def _session_or_new(session: AsyncSession | None) -> AsyncGenerator[tuple[AsyncSession, bool], None]:
-    """Yield (session, owns_session). If session is None, create a short-lived one."""
+async def _session_or_new(
+    session: AsyncSession | None,
+    team_context: TeamContext | None = None,
+) -> AsyncGenerator[tuple[AsyncSession, bool], None]:
+    """Yield (session, owns_session). If session is None, create a short-lived one.
+
+    ``team_context`` is threaded into ``async_session_scope`` on new-session
+    creation (#53) so factory-supplied tenant scope reaches every bare query.
+    When ``None`` the session scope falls back to the ambient TeamContext.
+    """
     if session is not None:
         yield session, False
     else:
-        async with async_session_scope() as new_session:
+        async with async_session_scope(team_context=team_context) as new_session:
             yield new_session, True
 
 
@@ -59,8 +69,17 @@ class SystemService:
     no emitter is injected, no event is emitted; the row still persists.
     """
 
-    def __init__(self, emitter: EventEmitter | None = None) -> None:
+    def __init__(
+        self,
+        emitter: EventEmitter | None = None,
+        *,
+        team_context: TeamContext | None = None,
+    ) -> None:
         self._emitter = emitter
+        # #53: factory-supplied tenant scope threaded through to every
+        # short-lived session opened by this service. When None, the
+        # ambient TeamContext still applies via async_session_scope.
+        self._team_context = team_context
 
     async def register_system(
         self,
@@ -78,7 +97,7 @@ class SystemService:
         emitter's audit_db destination is expected to share that session
         so the audit row rides the same transaction.
         """
-        async with _session_or_new(session) as (sess, owns):
+        async with _session_or_new(session, self._team_context) as (sess, owns):
             await PersistContract.upsert(sess, record)
             if owns:
                 await sess.commit()
@@ -98,7 +117,7 @@ class SystemService:
         after the delete (and after the short-lived commit when this
         service owns the session).
         """
-        async with _session_or_new(session) as (sess, owns):
+        async with _session_or_new(session, self._team_context) as (sess, owns):
             await sess.delete(record)
             if owns:
                 await sess.commit()
@@ -112,7 +131,7 @@ class SystemService:
         session: AsyncSession | None = None,
     ) -> list[SQLModel]:
         """List registered systems matching optional filters."""
-        async with _session_or_new(session) as (sess, owns):
+        async with _session_or_new(session, self._team_context) as (sess, owns):
             stmt = select(model_class)
             if filters:
                 stmt = stmt.where(*filters)
@@ -126,7 +145,7 @@ class SystemService:
         session: AsyncSession | None = None,
     ) -> SQLModel | None:
         """Fetch a single system by filter."""
-        async with _session_or_new(session) as (sess, owns):
+        async with _session_or_new(session, self._team_context) as (sess, owns):
             stmt = select(model_class).where(*filters)
             return (await sess.exec(stmt)).first()
 

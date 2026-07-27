@@ -433,8 +433,13 @@ def platform_task(
             # Deferred import: hooks.py imports template.py indirectly via
             # worker.py at boot, so a top-level import would form a cycle
             # during `aila.platform.tasks` package init.
+            from aila.api.auth import TeamContext
+            from aila.platform.services.team_scope import team_context_scope
             from aila.platform.tasks.hooks import _JobOutcome, _stash_outcome
-            from aila.platform.tasks.queue import _current_task_team_id
+            from aila.platform.tasks.queue import (
+                _current_task_team_id,
+                _current_task_user_id,
+            )
 
             job_id = str(ctx.get("job_id", ""))
             job_try = int(ctx.get("job_try", 1))
@@ -452,6 +457,19 @@ def platform_task(
             # through every worker submit site. Reset in finally so a worker
             # that runs many jobs never leaks one job's team into the next.
             _team_token = _current_task_team_id.set(team_id)
+            # #53: also expose the authenticated user_id so tools that write
+            # audit rows can bind identity to the caller instead of trusting
+            # agent-supplied strings (AuditLogTool).
+            _user_token = _current_task_user_id.set(user_id)
+            # #53: bind the ambient TeamContext for this task so bare
+            # ``UnitOfWork()`` / ``async_session_scope()`` opened inside the
+            # body auto-inherit tenant scope. team_id=None means an
+            # admin/system task (platform sweeps, cross-team reapers) and
+            # yields the god-tier bypass -- exactly today's behavior.
+            _team_ctx_cm = team_context_scope(
+                TeamContext(team_id=team_id, is_admin=team_id is None),
+            )
+            _team_ctx_cm.__enter__()
 
             try:
                 if definition is not None:
@@ -567,6 +585,8 @@ def platform_task(
                 )
                 raise
             finally:
+                _team_ctx_cm.__exit__(None, None, None)
+                _current_task_user_id.reset(_user_token)
                 _current_task_team_id.reset(_team_token)
 
         # Ensure ARQ's function-name resolution (ARQ builds a name->func map

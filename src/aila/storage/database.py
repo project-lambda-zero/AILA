@@ -149,13 +149,15 @@ async def async_session_scope(
         team_context: Optional TeamContext (typed as object to avoid circular
             imports).  When provided, set on session.info["team_context"] so
             the do_orm_execute listener and StorageService._stamp_team_id
-            can read it.
+            can read it. When ``None`` (#53), falls back to the ambient
+            :func:`current_team_context` so bare call sites inherit the
+            active request/task scope without threading it explicitly.
 
     Yields:
         An open AsyncSession.
     """
     # Lazy import to avoid circular: database -> platform.services -> storage -> database
-    from ..platform.services.team_scope import register_team_scope_listener
+    from ..platform.services.team_scope import current_team_context, register_team_scope_listener
 
     register_team_scope_listener()
     engine = get_async_engine(settings)
@@ -169,9 +171,13 @@ async def async_session_scope(
                 expire_on_commit=False,
             )
             _SESSION_FACTORIES[url] = factory
+    # #53: ambient fallback -- if the caller did not pass team_context
+    # explicitly, inherit the ambient set by the API middleware or the
+    # worker task wrapper. An unset ambient stays None (admin/global).
+    effective_ctx = team_context if team_context is not None else current_team_context()
     async with factory() as session:
-        if team_context is not None:
-            session.info["team_context"] = team_context
+        if effective_ctx is not None:
+            session.info["team_context"] = effective_ctx
         yield session
 
 

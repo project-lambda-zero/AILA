@@ -425,6 +425,13 @@ def create_app() -> FastAPI:
     from aila.api.middleware import CorrelationIdMiddleware
     application.add_middleware(CorrelationIdMiddleware)
 
+    # #53: bind the caller's TeamContext to the ambient ContextVar for the
+    # duration of the request so bare ``UnitOfWork()`` / ``async_session_scope()``
+    # sites inherit tenant scope. Decode is silent -- the real auth layer
+    # (require_user_or_api_key) still 401s on a bad or missing token.
+    from aila.api.middleware.team_context import TeamContextMiddleware
+    application.add_middleware(TeamContextMiddleware)
+
     # Idempotency middleware: replay cached POST responses for duplicate Idempotency-Key
     # headers (SEC-06). Uses shared Redis pool (OPS-01). Graceful degradation if pool unavailable.
     from aila.api.middleware.idempotency import IdempotencyMiddleware

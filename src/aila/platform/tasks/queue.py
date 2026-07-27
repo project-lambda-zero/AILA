@@ -66,6 +66,16 @@ _current_task_team_id: contextvars.ContextVar[str | None] = contextvars.ContextV
     "aila_current_task_team_id", default=None,
 )
 
+# #53: user_id of the currently-running task. Set alongside
+# ``_current_task_team_id`` from the running TaskRecord in the
+# ``@platform_task`` wrapper. Read by tools that need the authenticated
+# identity of the caller (AuditLogTool, follow-up submits) so an agent
+# cannot spoof ``user_id`` through tool input. Unset outside a task
+# execution (request handlers, cron); tool sites fall back to ``"system"``.
+_current_task_user_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "aila_current_task_user_id", default=None,
+)
+
 
 def _env_redis_url() -> str | None:
     """Return ``AILA_PLATFORM_REDIS_URL`` from the environment (None when unset).
