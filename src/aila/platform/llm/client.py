@@ -33,7 +33,6 @@ from typing import TYPE_CHECKING, Any
 import sqlalchemy.exc
 from openai import (
     APIConnectionError,
-    APIError,
     APITimeoutError,
     AsyncOpenAI,
     RateLimitError,
@@ -1185,22 +1184,29 @@ class AilaLLMClient:
                 else:
                     # Non-retryable LLM errors (ClassificationBlockedError, etc.)
                     raise
-            except (
-                APIError, OSError, RuntimeError, ValueError, TypeError,
-                AttributeError, KeyError, IndexError,
-                sqlalchemy.exc.SQLAlchemyError, AILAError,
-            ) as exc:
+            except LLMCancelledError:
+                # #44: a cancellation surfaced from inside the pipeline or
+                # provider call (not only the pre-attempt peek above) must
+                # propagate untouched -- never classified, wrapped, or
+                # retried. Guarded here so the broad classifier below can
+                # safely catch every provider exception.
+                raise
+            except Exception as exc:
                 # Two-branch classification (issue #44 -- retry reliability):
                 # non-retryable provider errors (HTTP 4xx auth/malformed:
                 # 400/401/403/404/422) fail fast so a doomed request does not
                 # burn the retry budget or block the worker on backoff sleeps.
                 # Retryable failures (429, 5xx, connection reset, timeout,
-                # DNS) keep the historical retry+backoff behaviour.
-                # Exception list mirrors the realistic leak set from the
-                # cost-telemetry sweep plus the openai APIStatusError family
-                # (which subclasses openai.OpenAIError -> AILAError-adjacent
-                # RuntimeError); bare Exception was previously catching
-                # LLMCancelledError which must propagate untouched.
+                # DNS) keep the historical retry+backoff behaviour. The catch
+                # is broad by design: third-party provider SDKs (Anthropic,
+                # Vertex, self-hosted proxies) raise their own exception
+                # classes that only carry a status_code attribute, so
+                # _is_retryable falls back to that attribute rather than an
+                # SDK-specific type. A narrower tuple dropped these agnostic
+                # exceptions on the floor (a 503 propagated raw instead of
+                # retrying). LLMCancelledError is re-raised by the guard
+                # above and asyncio.CancelledError is a BaseException, so
+                # neither is swallowed here.
                 # Best-effort classification: infer http_5xx from an
                 # HTTP status attribute when present so the router
                 # tags the failure with a useful label; fall back to
