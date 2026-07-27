@@ -21,6 +21,12 @@ module-specific table.
 """
 from __future__ import annotations
 
+from aila.platform.mcp.capability_registry import (
+    McpCapabilityRegistry,
+    ModuleDescriptorDeclaration,
+    default_capability_registry,
+    reset_default_capability_registry,
+)
 from aila.platform.mcp.client import (
     EmptyPoolError,
     InstancePool,
@@ -29,15 +35,25 @@ from aila.platform.mcp.client import (
     compact_tool_spec,
     resolve_instance,
 )
+from aila.platform.mcp.descriptor import (
+    McpServerDescriptor,
+    descriptors_from_static_specs,
+)
 from aila.platform.mcp.instance_catalog import McpInstanceCatalog, McpServerInstance
 
 __all__: list[str] = [
     "EmptyPoolError",
     "InstancePool",
+    "McpCapabilityRegistry",
     "McpClient",
     "McpInstanceCatalog",
+    "McpServerDescriptor",
     "McpServerInstance",
+    "ModuleDescriptorDeclaration",
     "ResolvedInstance",
     "compact_tool_spec",
+    "default_capability_registry",
+    "descriptors_from_static_specs",
+    "reset_default_capability_registry",
     "resolve_instance",
 ]

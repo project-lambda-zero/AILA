@@ -11,6 +11,10 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+from aila.platform.mcp.descriptor import (
+    McpServerDescriptor,
+    descriptors_from_static_specs,
+)
 from aila.platform.mcp.registry import McpRegistryServiceBase
 
 __all__ = [
@@ -18,6 +22,7 @@ __all__ = [
     "MODULE_CAPABILITIES",
     "SERVER_CAPABILITY_DEFAULTS",
     "McpRegistryService",
+    "get_descriptors",
 ]
 
 
@@ -94,3 +99,17 @@ class McpRegistryService(McpRegistryServiceBase):
 
     _module_id: ClassVar[str] = "vr"
     _servers: ClassVar[tuple[dict[str, str], ...]] = MCP_SERVERS
+
+
+def get_descriptors() -> tuple[McpServerDescriptor, ...]:
+    """Return the VR module's :class:`McpServerDescriptor` set.
+
+    Publishes ``MCP_SERVERS`` + ``SERVER_CAPABILITY_DEFAULTS`` through
+    :func:`aila.platform.mcp.descriptor.descriptors_from_static_specs`
+    so :class:`aila.platform.mcp.capability_registry.McpCapabilityRegistry`
+    can resolve every VR-declared server BY CAPABILITY (RFC-11 step 3)
+    without the platform hard-coding a per-module catalog. The VR
+    ``create_module()`` calls this on startup and hands the result to
+    ``default_capability_registry().declare_all('vr', ...)``.
+    """
+    return descriptors_from_static_specs(MCP_SERVERS, SERVER_CAPABILITY_DEFAULTS)

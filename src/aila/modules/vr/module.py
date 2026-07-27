@@ -24,6 +24,7 @@ from aila.platform.contracts.reasoning import (
     ReasoningDomainProfile,
     ReasoningStrategyDeclaration,
 )
+from aila.platform.mcp import default_capability_registry
 from aila.platform.modules import (
     ModuleCapabilityProfile,
     ModuleContext,
@@ -365,7 +366,26 @@ def _register_vr_periodic_sweeps() -> None:
 # `vr.finalize` sentinel for idempotency).
 
 
+def _declare_vr_mcp_descriptors() -> None:
+    """Publish VR's MCP descriptors to the platform capability registry.
+
+    RFC-11 step 3 -- the module DECLARES its servers by capability so
+    every platform caller can resolve a server BY CAPABILITY, never by
+    module name. Delegated to :func:`services.mcp_registry.descriptors`
+    which adapts the existing ``MCP_SERVERS`` + ``SERVER_CAPABILITY_
+    DEFAULTS`` declaration into the frozen descriptor shape. Idempotent:
+    :meth:`aila.platform.mcp.capability_registry.McpCapabilityRegistry.declare_all`
+    supersedes the previous record per ``(module_scope, name)``.
+    """
+    from .services.mcp_registry import get_descriptors as _vr_mcp_get_descriptors
+
+    default_capability_registry().declare_all(
+        MODULE_ID, _vr_mcp_get_descriptors(),
+    )
+
+
 def create_module() -> ModuleProtocol:
     """Return a new VRModule instance for the platform module loader."""
     _register_vr_periodic_sweeps()
+    _declare_vr_mcp_descriptors()
     return VRModule()
