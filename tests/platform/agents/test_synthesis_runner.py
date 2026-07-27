@@ -75,6 +75,7 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
 )
 from aila.platform.agents.synthesis_runner import (
+    _SYNTHESIZABLE_STATUSES,
     SynthesisRunnerBase,
     synthesis_confidence,
 )
@@ -522,6 +523,20 @@ class TestForceHooks:
         # state to preserve).
         running = type("Row", (), {"status": InvestigationStatus.RUNNING.value})()
         assert agent._should_flip_investigation_status(running) is True
+
+    def test_completed_is_synthesizable(self) -> None:
+        """Regression guard: the dispatch hub finalises the investigation
+        through the emit state BEFORE the async synthesis task runs, so
+        COMPLETED must be synthesizable or synthesis never fires under the
+        hub and the raw last-writer answer stays as the headline. Only the
+        three live/terminal-success states qualify -- PAUSED / FAILED /
+        ABANDONED stay excluded so a pause/abandon mid-flight still aborts
+        the synthesis write (fix \u00a7160).
+        """
+        assert InvestigationStatus.COMPLETED.value in _SYNTHESIZABLE_STATUSES
+        assert InvestigationStatus.CREATED.value in _SYNTHESIZABLE_STATUSES
+        assert InvestigationStatus.RUNNING.value in _SYNTHESIZABLE_STATUSES
+        assert len(_SYNTHESIZABLE_STATUSES) == 3
 
 
 # --------------------------------------------------------------------- #

@@ -273,6 +273,20 @@ operator action.
 
 ### Fixed
 
+- Synthesis now runs on multi-phase investigations, so the consolidated
+  verdict addresses the investigation's actual question instead of one
+  narrow phase's scoped answer. The dispatch hub finalises an
+  investigation through the emit state (hub_stalled with no fresh outcome
+  id) before the asynchronous synthesis task runs, and two gates blocked
+  it there: the emit synthesis trigger fired only when a fresh outcome id
+  was present, and the synthesis runner refused any non-live
+  investigation. Both are fixed -- the emit trigger also fires on terminal
+  completion, and COMPLETED is now a synthesizable status (PAUSED /
+  FAILED / ABANDONED stay excluded so a pause or abandon mid-run still
+  aborts the write). Without this, a source-repo investigation that walked
+  several audit phases surfaced the last phase's answer (for example a
+  crypto-audit negative) as the headline instead of the consolidated panel
+  verdict.
 - Draft-outcome reviewers are now shown the finding they vote on. The
   submit-block review directive listed each pending draft by id, kind,
   and confidence only, and the emit-time review notice showed the first

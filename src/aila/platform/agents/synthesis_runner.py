@@ -68,15 +68,22 @@ __all__ = ["SynthesisRunnerBase", "synthesis_confidence"]
 
 _log = logging.getLogger(__name__)
 
-# Investigation statuses that mean "still alive -- synthesis may write".
-# Anything outside this set (PAUSED / COMPLETED / FAILED / ABANDONED) means
-# the operator or another agent closed the investigation while the LLM
-# call was in flight; UoW 2 aborts in that case (fix §160). Subclasses
-# that need a different alive-set override _should_force_resynthesize
-# per-run instead of rebinding this frozen constant.
-_ALIVE_STATUSES: frozenset[str] = frozenset({
+# Investigation statuses on which synthesis may write its consolidated
+# outcome. CREATED / RUNNING are the live states; COMPLETED is included
+# because the dispatch hub finalises the investigation through the emit
+# state (hub_stalled / branch_already_terminal, outcome_id=None) BEFORE
+# the async synthesis task runs, so a terminal-success investigation must
+# still accept the panel consolidation -- otherwise synthesis never fires
+# under the hub and the raw last-writer answer stays as the headline.
+# PAUSED / FAILED / ABANDONED stay excluded: those mean the operator or
+# another agent closed the investigation against synthesis's will while
+# an LLM call was in flight, and UoW 2 aborts the write in that case
+# (fix §160). Subclasses that need a different set override
+# _should_force_resynthesize per-run instead of rebinding this constant.
+_SYNTHESIZABLE_STATUSES: frozenset[str] = frozenset({
     InvestigationStatus.CREATED.value,
     InvestigationStatus.RUNNING.value,
+    InvestigationStatus.COMPLETED.value,
 })
 
 
@@ -324,7 +331,7 @@ class SynthesisRunnerBase(ABC):
             # COMPLETED investigation without aborting on the alive gate.
             if (
                 not self._should_force_resynthesize()
-                and inv_row.status not in _ALIVE_STATUSES
+                and inv_row.status not in _SYNTHESIZABLE_STATUSES
             ):
                 _log.info(
                     "%s aborted inv=%s -- status=%s no longer alive "

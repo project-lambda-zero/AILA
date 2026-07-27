@@ -749,7 +749,20 @@ def state_investigation_emit(
         # (all_outcomes). The finalize chokepoint additionally catches the other
         # three (rejected_quorum, wall_clock_idle_grace, all_terminal_no_outcome)
         # which previously raced across three separate reaper paths.
-        if outcome_id is not None:
+        # fix -- fire on a fresh submit (outcome_id) OR on any terminal
+        # completion. Under the dispatch hub a branch reaches this state
+        # via hub_stalled / branch_already_terminal with outcome_id=None
+        # even though it already submitted into the shared canonical
+        # panel during its phase loop, so gating on outcome_id alone
+        # skipped synthesis for every multi-phase investigation and left
+        # the raw last-writer answer as the headline. _maybe_trigger_synthesis
+        # self-gates on panel completeness + the panel_summary idempotency
+        # marker, so calling it on a terminal emit with no fresh outcome_id
+        # is safe (it no-ops until every expected branch has contributed).
+        if (
+            outcome_id is not None
+            or final_status == InvestigationStatus.COMPLETED.value
+        ):
             try:
                 await _maybe_trigger_synthesis(investigation_id)
             except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
