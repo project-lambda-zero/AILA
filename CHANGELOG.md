@@ -19,6 +19,14 @@ operator action.
 
 ### Added
 
+- Config resolution transparency in the platform config API and admin screen.
+  `GET /config` now returns, per entry, the effective value the system resolves
+  to (environment variable > stored value > schema default), the resolution
+  source, the overriding environment-variable name, and the schema default,
+  alongside the stored value. The admin config screen shows the effective value,
+  a source badge, an environment-override indicator, the stored fallback, and a
+  caution when editing a value an environment variable currently overrides.
+  Secret values stay redacted for non-admin callers across every value field.
 - On-demand specialist spawn + CRUD API for the specialist-agent registry.
   A core branch asks the oracle for a specialist (`request_specialist`
   ledger request, target capability); a distinct branch (the critic)

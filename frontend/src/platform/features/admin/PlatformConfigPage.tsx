@@ -35,6 +35,12 @@ interface ConfigEntry {
   value: string;
   value_type: string;
   updated_at: string | null;
+  env_key: string;
+  env_value: string | null;
+  default_value: string | null;
+  effective_value: string;
+  effective_source: "env" | "db" | "default";
+  overridden_by_env: boolean;
 }
 
 interface ConfigListResponse {
@@ -135,6 +141,14 @@ function EditRowForm({ entry, onSave, onCancel, isPending }: EditRowFormProps) {
       className="flex items-start gap-2 flex-wrap"
       onSubmit={handleSubmit}
     >
+      {entry.overridden_by_env && (
+        <div className="w-full rounded-[4px] border border-medium/40 bg-medium/10 px-4 py-3 font-mono text-xs text-medium">
+          Overridden by env var{" "}
+          <code className="font-mono">{entry.env_key}</code>. Saving updates
+          the stored fallback; the live value stays env-sourced until the
+          variable is unset.
+        </div>
+      )}
       <div className="flex flex-col gap-1 min-w-[140px]">
         <Input
           aria-label="Config value"
@@ -223,15 +237,39 @@ function NamespaceGroup({
               />
             );
           }
-          const v = String(entry.value);
-          const display = v.length > 60 ? `${v.slice(0, 60)}…` : v;
+          const eff = String(entry.effective_value);
+          const effDisplay = eff.length > 60 ? `${eff.slice(0, 60)}…` : eff;
+          const stored = String(entry.value);
+          const storedDisplay =
+            stored.length > 60 ? `${stored.slice(0, 60)}…` : stored;
           return (
-            <span
-              className="font-mono text-xs text-text"
-              title={v.length > 60 ? v : undefined}
-            >
-              {display}
-            </span>
+            <div className="flex flex-col gap-0.5 min-w-0">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span
+                  className="font-mono text-xs text-text truncate"
+                  title={eff.length > 60 ? eff : undefined}
+                >
+                  {effDisplay}
+                </span>
+                {entry.overridden_by_env && (
+                  <AilaBadge
+                    severity="info"
+                    size="sm"
+                    title={entry.env_key}
+                  >
+                    env
+                  </AilaBadge>
+                )}
+              </div>
+              {entry.overridden_by_env && (
+                <span
+                  className="font-mono text-xs text-text-muted truncate"
+                  title={stored.length > 60 ? stored : undefined}
+                >
+                  stored: {storedDisplay}
+                </span>
+              )}
+            </div>
           );
         },
       },
@@ -244,6 +282,21 @@ function NamespaceGroup({
           return (
             <AilaBadge severity={valueTypeSeverity(vt)} size="sm">
               {vt}
+            </AilaBadge>
+          );
+        },
+      },
+      {
+        id: "source",
+        header: "Source",
+        enableSorting: false,
+        cell: ({ row }) => {
+          const source = row.original.effective_source;
+          const severity =
+            source === "env" ? "info" : source === "default" ? "neutral" : "low";
+          return (
+            <AilaBadge severity={severity} size="sm">
+              {source}
             </AilaBadge>
           );
         },

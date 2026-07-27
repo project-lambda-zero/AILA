@@ -26,13 +26,20 @@ from dataclasses import dataclass as _dc_dataclass
 from typing import Any
 
 from pydantic import BaseModel
+from pydantic_core import PydanticUndefined
 from sqlmodel import select
 
 from ..platform.contracts._common import utc_now
 from .database import async_session_scope, session_scope
 from .db_models import ConfigEntryRecord
 
-__all__ = ["ConfigRegistry", "DynamicKeyFamily", "SchemaRegistry", "is_secret_config_key"]
+__all__ = [
+    "ConfigRegistry",
+    "ConfigResolution",
+    "DynamicKeyFamily",
+    "SchemaRegistry",
+    "is_secret_config_key",
+]
 
 _log = logging.getLogger(__name__)
 
@@ -76,6 +83,25 @@ class _ResolvedField:
 
     annotation: type
     default: Any
+
+
+@_dc_dataclass(frozen=True)
+class ConfigResolution:
+    """Snapshot of how a config key resolves right now.
+
+    Mirrors the ``get``/``get_sync`` precedence (env var > DB row > schema
+    default) without hitting the DB itself -- the caller supplies ``db_value``
+    from the ``ConfigEntryRecord`` row it already holds. Consumers use this to
+    render the effective value plus the raw env/DB/default contributions so an
+    operator can see WHICH source is live and what the stored fallback is.
+    """
+
+    env_key: str
+    env_value: str | None
+    db_value: str | None
+    default_value: str | None
+    effective_value: str
+    source: str  # 'env' | 'db' | 'default'
 
 
 # Security-relevant config key prefixes that trigger audit logging on change (D-11).
@@ -294,6 +320,63 @@ class ConfigRegistry:
             )
             return default_val
         return None
+
+    def describe_resolution(
+        self, namespace: str, key: str, *, db_value: str | None
+    ) -> ConfigResolution:
+        """Return the raw env/DB/default contributions and the effective value.
+
+        Mirrors ``get``/``get_sync`` precedence exactly (env var > DB row >
+        schema default) but performs NO DB read: the caller passes ``db_value``
+        (the ``ConfigEntryRecord.value`` it already holds, or None when there
+        is no row). Response builders use this to surface WHICH source is live
+        alongside the stored fallback -- the transparency that ``get`` hides.
+        """
+        env_key = f"AILA_{namespace.upper()}_{key.upper()}"
+        env_value = os.environ.get(env_key)
+
+        field_info = self._resolve_field(namespace, key)
+        default_value: str | None = None
+        if field_info is not None:
+            raw_default = getattr(field_info, "default", None)
+            if raw_default is not None and raw_default is not PydanticUndefined:
+                default_value = str(raw_default)
+
+        if env_value is not None:
+            return ConfigResolution(
+                env_key=env_key,
+                env_value=env_value,
+                db_value=db_value,
+                default_value=default_value,
+                effective_value=env_value,
+                source="env",
+            )
+        if db_value is not None:
+            return ConfigResolution(
+                env_key=env_key,
+                env_value=None,
+                db_value=db_value,
+                default_value=default_value,
+                effective_value=db_value,
+                source="db",
+            )
+        if default_value is not None:
+            return ConfigResolution(
+                env_key=env_key,
+                env_value=None,
+                db_value=None,
+                default_value=default_value,
+                effective_value=default_value,
+                source="default",
+            )
+        return ConfigResolution(
+            env_key=env_key,
+            env_value=None,
+            db_value=None,
+            default_value=None,
+            effective_value="",
+            source="default",
+        )
 
     async def set(self, namespace: str, key: str, value: str) -> None:
         """Persist value to DB after type-validating against registered schema.
