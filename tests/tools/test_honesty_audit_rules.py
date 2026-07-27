@@ -1416,6 +1416,173 @@ class TestPlatformNamesModule:
         )
         assert "platform_names_module" not in _rules(_audit(src))
 
+    # ------------------------------------------------------------------
+    # Sub-check (b): ConfigRegistry-style .get("<module-id>", ...) call
+    # welds a boundary-guarded layer to a specific module's config.
+    # ------------------------------------------------------------------
+
+    def test_config_registry_get_module_ns_in_api_flagged(self, tmp_path: Path) -> None:
+        """ConfigRegistry().get("vr", ...) in api/ names a module namespace."""
+        src = _write(
+            tmp_path,
+            "aila/api/routers/dashboard.py",
+            "from aila.storage.registry import ConfigRegistry\n"
+            "async def f():\n"
+            '    return await ConfigRegistry().get("vr", "audit_mcp_url")\n',
+        )
+        findings = [f for f in _audit(src) if f.rule == "platform_names_module"]
+        assert findings, "expected a platform_names_module finding for ConfigRegistry().get('vr', ...)"
+        assert any(".get('vr', ...)" in f.message for f in findings)
+
+    def test_registry_get_module_ns_in_platform_flagged(self, tmp_path: Path) -> None:
+        """registry.get("vulnerability", key) in platform/ names a module namespace."""
+        src = _write(
+            tmp_path,
+            "aila/platform/tasks/report_tasks.py",
+            "async def f(registry):\n"
+            '    return await registry.get("vulnerability", "threshold")\n',
+        )
+        assert "platform_names_module" in _rules(_audit(src))
+
+    def test_registry_get_module_ns_in_storage_flagged(self, tmp_path: Path) -> None:
+        """registry.get("malware", key) in storage/ names a module namespace."""
+        src = _write(
+            tmp_path,
+            "aila/storage/thing.py",
+            "async def f(registry):\n"
+            '    return await registry.get("malware", "track")\n',
+        )
+        assert "platform_names_module" in _rules(_audit(src))
+
+    def test_registry_get_platform_ns_not_flagged(self, tmp_path: Path) -> None:
+        """registry.get("platform", ...) is the correct pattern for boundary layers."""
+        src = _write(
+            tmp_path,
+            "aila/platform/llm/config.py",
+            "async def f(registry):\n"
+            '    return await registry.get("platform", "llm_default_model")\n',
+        )
+        assert "platform_names_module" not in _rules(_audit(src))
+
+    def test_registry_get_dynamic_module_id_not_flagged(self, tmp_path: Path) -> None:
+        """registry.get(self._module_id, key) is the RFC-05 pattern; not a literal."""
+        src = _write(
+            tmp_path,
+            "aila/platform/mcp/registry.py",
+            "class T:\n"
+            "    async def f(self, registry, spec):\n"
+            '        return await registry.get(self._module_id, spec["config_key"])\n',
+        )
+        assert "platform_names_module" not in _rules(_audit(src))
+
+    def test_dict_get_non_module_string_not_flagged(self, tmp_path: Path) -> None:
+        """A .get("platform", ...) or .get("anything-else", ...) is silent."""
+        src = _write(
+            tmp_path,
+            "aila/api/routers/dashboard.py",
+            "def f(mapping):\n"
+            '    return mapping.get("nonmodule", None)\n',
+        )
+        assert "platform_names_module" not in _rules(_audit(src))
+
+    def test_get_module_ns_in_module_file_not_flagged(self, tmp_path: Path) -> None:
+        """A module reading its OWN namespace is the sanctioned pattern."""
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/workflow/services.py",
+            "async def f(registry):\n"
+            '    return await registry.get("vr", "cap_max_findings")\n',
+        )
+        assert "platform_names_module" not in _rules(_audit(src))
+
+    # ------------------------------------------------------------------
+    # Sub-check (c): a runtime "aila.modules.<id>" string constant in a
+    # boundary-guarded file hard-codes a module path.
+    # ------------------------------------------------------------------
+
+    def test_runtime_aila_modules_literal_in_platform_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/tasks/foo.py",
+            '_PATH = "aila.modules.vulnerability.tasks.scan"\n',
+        )
+        assert "platform_names_module" in _rules(_audit(src))
+
+    def test_runtime_aila_modules_literal_whole_string_flagged(self, tmp_path: Path) -> None:
+        """A bare 'aila.modules.vr' literal (no dotted suffix) also fires."""
+        src = _write(
+            tmp_path,
+            "aila/platform/thing.py",
+            '_ID = "aila.modules.vr"\n',
+        )
+        assert "platform_names_module" in _rules(_audit(src))
+
+    def test_runtime_aila_modules_literal_in_api_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/api/routers/dashboard.py",
+            'ROUTE = "aila.modules.forensics.api"\n',
+        )
+        assert "platform_names_module" in _rules(_audit(src))
+
+    def test_docstring_mentioning_aila_modules_not_flagged(self, tmp_path: Path) -> None:
+        """A docstring that describes an aila.modules.* path is prose, not a constant."""
+        src = _write(
+            tmp_path,
+            "aila/platform/tasks/queue.py",
+            '"""Task queue.\n\n'
+            'Example: aila.modules.vulnerability.tasks.scan\n'
+            '"""\n'
+            'def foo():\n'
+            '    """Extract module_id: aila.modules.X -> X."""\n'
+            '    return None\n',
+        )
+        assert "platform_names_module" not in _rules(_audit(src))
+
+    def test_bare_aila_modules_literal_not_flagged(self, tmp_path: Path) -> None:
+        """'aila.modules' (no submodule) is the discovery-bootstrap identifier."""
+        src = _write(
+            tmp_path,
+            "aila/platform/tasks/worker.py",
+            'import aila.modules\n'
+            '_PKG_NAME = "aila.modules"\n',
+        )
+        assert "platform_names_module" not in _rules(_audit(src))
+
+    def test_aila_modules_literal_in_module_file_not_flagged(self, tmp_path: Path) -> None:
+        """Runtime aila.modules.<id> literal in a module file is out of rule 48's scope."""
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/services/paths.py",
+            '_SELF = "aila.modules.vr.tasks.run"\n',
+        )
+        assert "platform_names_module" not in _rules(_audit(src))
+
+    def test_non_module_aila_dotted_literal_not_flagged(self, tmp_path: Path) -> None:
+        """A string that starts with aila.modules.<not-a-module-id> is silent."""
+        src = _write(
+            tmp_path,
+            "aila/platform/tasks/foo.py",
+            '_PATH = "aila.modules.not_a_real_module.thing"\n',
+        )
+        assert "platform_names_module" not in _rules(_audit(src))
+
+    def test_whitelist_suppresses_platform_names_module(self, tmp_path: Path) -> None:
+        """A whitelist entry suppresses the extended sub-checks the same as (a)."""
+        src = _write(
+            tmp_path,
+            "aila/platform/tasks/foo.py",
+            'PATH = "aila.modules.vulnerability.tasks.scan"\n',
+        )
+        wl = _write(
+            tmp_path,
+            "honesty_whitelist.py",
+            'HONESTY_WHITELIST = [\n'
+            '    ("platform/tasks/foo.py", "<module>", "platform_names_module"),\n'
+            ']\n',
+        )
+        assert "platform_names_module" not in _rules(_audit(src, wl))
+
 
 # ---------------------------------------------------------------------------
 # Rule 50 -- static_node_mutation (RFC-13 #68)

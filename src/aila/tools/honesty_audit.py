@@ -49,7 +49,7 @@ Detects thirty-six categories of structural dishonesty:
 45. module_prefix_in_platform_tool_name -- a platform MCP bridge hard-codes a module-prefixed tool name literal (name = "vr.audit_mcp_bridge"); derive the name from a constructor module_id instead (RFC-05 concern b).
 46. platform_owns_event_vocabulary -- an event class under platform/events/ carries module-domain vocabulary (scan/finding/investigation or a module id) in its class name or event_type; the platform owns only generic infrastructure events (RFC-05 concern c).
 47. raw_sql_platform_tables -- a module file issues raw SQL against a platform-owned task table (taskrecord, workflow_state_cursor); route through a platform lifecycle / TaskQueue service instead (RFC-05 Phase 6).
-48. platform_names_module -- a boundary-guarded file (api/, platform/, storage/) resolves a specific feature module by naming its id in a .require("vulnerability") / .require_module("forensics") call; resolve domain data by capability via ModuleRegistry.first_with/all_with instead (RFC-05 concerns a/g).
+48. platform_names_module -- a boundary-guarded file (api/, platform/, storage/) names a feature module: a .require("vulnerability") / .require_module("forensics") registry call, a ConfigRegistry-shape .get("vr", ...) read of a module namespace, or a runtime "aila.modules.<module>" string constant. Resolve domain data by capability via ModuleRegistry.first_with/all_with; the platform layer owns only the 'platform' config namespace (RFC-05 concerns a/g).
 49. agent_env_read -- a module agents/ file reads config via os.environ / os.getenv (attribute access or `from os import environ/getenv`) instead of platform ConfigRegistry; the RFC-03 lift removed every direct env read from module agent runtimes and this rule locks the closure in.
 
 Usage (CLI):
@@ -299,11 +299,45 @@ _RAW_SQL_PLATFORM_TABLE_RE = _re.compile(
 )
 
 # Rule 48 -- platform_names_module. Feature module ids a boundary-guarded file
-# must never name in a registry require(...) call. The platform resolves domain
-# data by capability (ModuleRegistry.first_with/all_with), never by module id.
+# must never name: not in a registry require(...) call, not as the namespace
+# argument of a ConfigRegistry-shape .get(...) read, and not as a runtime
+# "aila.modules.<module>" string constant. The platform resolves domain data by
+# capability (ModuleRegistry.first_with/all_with) and owns only the 'platform'
+# config namespace; every other namespace belongs to a specific module.
 _DOMAIN_MODULE_IDS = frozenset(
     {"vulnerability", "forensics", "malware", "vr", "hello_world"}
 )
+
+# Rule 48 sub-check (c): match "aila.modules.<domain-module-id>" or
+# "aila.modules.<id>.<subpath>" appearing as a runtime string constant.
+# Bare "aila.modules" (used by the discovery bootstrap in
+# platform/tasks/worker.py) is intentionally not matched because it names
+# no specific module. Docstring constants are skipped separately.
+_AILA_MODULES_PATH_LITERAL_RE = _re.compile(
+    r"^aila\.modules\.(vulnerability|forensics|malware|vr|hello_world)(\.|$)"
+)
+
+
+def _collect_docstring_constant_ids(tree: ast.Module) -> frozenset[int]:
+    """Return the ``id()`` of every ast.Constant that lives in docstring position.
+
+    A docstring is the first statement of a Module / ClassDef / FunctionDef /
+    AsyncFunctionDef body when that statement is ``ast.Expr(value=ast.Constant(str))``.
+    Callers use the resulting id-set to skip docstring string constants during
+    a walk without re-parsing.
+    """
+    docstring_ids: set[int] = set()
+    for parent in ast.walk(tree):
+        body = getattr(parent, "body", None)
+        if not isinstance(body, list) or not body:
+            continue
+        first = body[0]
+        if not isinstance(first, ast.Expr):
+            continue
+        val = first.value
+        if isinstance(val, ast.Constant) and isinstance(val.value, str):
+            docstring_ids.add(id(val))
+    return frozenset(docstring_ids)
 
 
 def _event_type_string_literal(stmt: ast.stmt) -> str | None:
@@ -1547,32 +1581,77 @@ class _HonestyVisitor(ast.NodeVisitor):
                     )
 
     def _check_platform_names_module(self, tree: ast.Module) -> None:
-        """Rule 48: platform_names_module -- a boundary-guarded file resolves a
-        specific feature module by naming its id.
+        """Rule 48: platform_names_module -- a boundary-guarded file names a
+        specific feature module.
 
-        A ``.require("vulnerability")`` / ``.require_module("forensics")`` call
-        welds the platform or API layer to one module. Resolve domain data by
-        capability instead (ModuleRegistry.first_with / all_with) so the layer
-        names no module. Dynamic (variable) arguments are not flagged.
+        Three sub-checks that all fire under the same rule name so a single
+        whitelist entry handles them uniformly:
+
+        (a) ``.require("<module>")`` / ``.require_module("<module>")`` welds
+            the platform or API layer to one module by id. Resolve domain data
+            by capability (ModuleRegistry.first_with / all_with) instead.
+        (b) ``.get("<module>", ...)`` where the first arg is a domain module
+            id catches the ConfigRegistry-shape read
+            ``ConfigRegistry().get("vr", "audit_mcp_url")``. Boundary-guarded
+            layers own only the ``"platform"`` config namespace; every other
+            namespace belongs to a specific module. A dynamic ``self._module_id``
+            argument (the RFC-05 pattern) is not a literal and never fires.
+        (c) A runtime string constant matching ``aila.modules.<module>`` (or
+            a longer dotted path under it) hard-codes a module path in a layer
+            that is supposed to name no module. Docstring string constants are
+            skipped so descriptive prose in a docstring never fires.
+
+        All sub-checks skip dynamic (variable) arguments; only literal string
+        constants that name a real module id in ``_DOMAIN_MODULE_IDS`` fire.
         """
+        docstring_ids = _collect_docstring_constant_ids(tree)
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
+            if isinstance(node, ast.Call):
+                func = node.func
+                if not isinstance(func, ast.Attribute):
+                    continue
+                if func.attr in ("require", "require_module"):
+                    if not node.args or not isinstance(node.args[0], ast.Constant):
+                        continue
+                    value = node.args[0].value
+                    if not isinstance(value, str) or value not in _DOMAIN_MODULE_IDS:
+                        continue
+                    self._emit(
+                        node.lineno,
+                        "platform_names_module",
+                        f"platform_names_module: .{func.attr}({value!r}) names a feature "
+                        f"module -- resolve by capability via "
+                        f"ModuleRegistry.first_with/all_with instead",
+                    )
+                    continue
+                if func.attr == "get":
+                    if not node.args or not isinstance(node.args[0], ast.Constant):
+                        continue
+                    value = node.args[0].value
+                    if not isinstance(value, str) or value not in _DOMAIN_MODULE_IDS:
+                        continue
+                    self._emit(
+                        node.lineno,
+                        "platform_names_module",
+                        f"platform_names_module: .get({value!r}, ...) reads a "
+                        f"feature-module config namespace from a boundary-guarded "
+                        f"layer -- platform/api/storage own only the 'platform' "
+                        f"namespace; move the read into the owning module or "
+                        f"pass the module_id through a constructor parameter",
+                    )
                 continue
-            func = node.func
-            if not isinstance(func, ast.Attribute) or func.attr not in ("require", "require_module"):
-                continue
-            if not node.args or not isinstance(node.args[0], ast.Constant):
-                continue
-            value = node.args[0].value
-            if not isinstance(value, str) or value not in _DOMAIN_MODULE_IDS:
-                continue
-            self._emit(
-                node.lineno,
-                "platform_names_module",
-                f"platform_names_module: .{func.attr}({value!r}) names a feature "
-                f"module -- resolve by capability via "
-                f"ModuleRegistry.first_with/all_with instead",
-            )
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if id(node) in docstring_ids:
+                    continue
+                if _AILA_MODULES_PATH_LITERAL_RE.match(node.value):
+                    self._emit(
+                        node.lineno,
+                        "platform_names_module",
+                        f"platform_names_module: string constant {node.value!r} "
+                        f"names an 'aila.modules.<module>' path at runtime -- "
+                        f"boundary-guarded layers never hard-code a module path; "
+                        f"derive the target through the ModuleRegistry instead",
+                    )
 
     def _check_import_boundary(self, tree: ast.Module, module_id: str) -> None:
         """Rule: import_boundary.
