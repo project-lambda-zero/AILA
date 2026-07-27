@@ -281,6 +281,9 @@ operator action.
 
 ### Fixed
 
+- The Idempotency-Key middleware namespaces its Redis cache by the caller's
+  credential, so a key replayed by a different principal can no longer read
+  another tenant's cached response (issue #57).
 - Specialist investigation branches (spawned on demand for a capability
   such as variant hunting or cryptography) no longer emit a per-turn
   routing error. The branch `persona_voice` contract is an open string,
