@@ -281,6 +281,19 @@ operator action.
 
 ### Fixed
 
+- Task-engine correctness: a status flip that means a job is runnable
+  (requeue-failed, resume-from-paused) now also enqueues the job to the
+  queue instead of leaving it to be reaped; task functions are registered
+  and enqueued under a fully-qualified module-scoped name so two modules
+  declaring a same-named task can no longer route to the wrong body;
+  cancel covers the dead-letter terminal; the conflict-retry backoff uses
+  the correct 0-indexed interval; task-list and DAG-validation queries are
+  bounded; and dead reaper code was removed (issue #40).
+- The workflow-run route, short-memory, and summary JSON columns are stored
+  as JSONB instead of text, so they are queryable and shape-checked at the
+  database while reads and writes go through native objects uniformly across
+  the async and sync database drivers; existing substring matching over the
+  route JSON is preserved (issue #45).
 - Team isolation is enforced across the investigation engine's database
   access, not just the API surface. The team context is carried in an ambient
   run scope set at each API request and each worker task, so bare UnitOfWork
