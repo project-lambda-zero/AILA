@@ -281,6 +281,16 @@ operator action.
 
 ### Fixed
 
+- Runtime orchestration correctness: a routing failure no longer masks the
+  original error during run finalization; each domain error (authentication,
+  rate limit, not found, validation, upstream, timeout) now returns its own
+  HTTP status instead of a blanket 500, so clients can distinguish and retry
+  correctly; the platform timeout error was renamed so it no longer shadows
+  the builtin; platform initialization is single and idempotent behind a
+  lazily created lock; and the rate limiter bounds wait time instead of
+  accumulating unbounded debt under burst. The request orchestrator no longer
+  pins a pooled database connection across the multi-second LLM routing call
+  and module dispatch (issue #54, issue #63).
 - A forensics helper script that exits non-zero is surfaced as an explicit
   failure (an ok flag plus an error marker in stderr) instead of reading as
   empty-output success, and the fuzz-crash scraper rejects symlinks that
