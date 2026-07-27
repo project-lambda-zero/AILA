@@ -190,6 +190,7 @@ def make_verify_step(
                 tools=None,
                 tool_executor=None,
                 run_id=ctx.get("run_id") or None,
+                team_id=ctx.get("team_id") or None,
             )
 
             second_content = second_resp.content if second_resp.content else ""

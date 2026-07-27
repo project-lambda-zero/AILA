@@ -896,6 +896,7 @@ class AilaLLMClient:
                         "tool_executor": tool_executor,
                     },
                     run_id=run_id or "",
+                    team_id=team_id or "",
                 )
                 # Cost recording AFTER successful call (Phase 122)
                 if self.cost_tracker is not None:

@@ -172,6 +172,7 @@ async def _run_consensus(
     original_score: float,
     medium_threshold: float,
     run_id: str | None = None,
+    team_id: str | None = None,
 ) -> tuple[Any, float] | None:
     """Run consensus retry calls and compute majority vote.
 
@@ -232,6 +233,7 @@ async def _run_consensus(
                 tools=None,
                 tool_executor=None,
                 run_id=run_id,
+                team_id=team_id,
             )
             content = resp.content if resp.content else ""
             finish_reason = resp.finish_reason if resp.finish_reason else ""
@@ -331,6 +333,7 @@ def make_gate_step(
                 original_score=score,
                 medium_threshold=medium,
                 run_id=ctx.get("run_id") or None,
+                team_id=ctx.get("team_id") or None,
             )
 
             if result is not None:

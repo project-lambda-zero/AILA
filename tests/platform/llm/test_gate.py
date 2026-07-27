@@ -90,11 +90,20 @@ class FakeCallFn:
         tools: Any = None,
         tool_executor: Any = None,
         run_id: Any = None,
+        team_id: Any = None,
     ) -> LLMResponse:
         # gate._run_consensus calls inner_call(routing=, messages=,
-        # response_format=None, tools=None, tool_executor=None, run_id=...)
-        # No ``client`` kwarg -- it's baked into inner_call closure upstream.
-        self._calls.append({"routing": routing, "messages": messages})
+        # response_format=None, tools=None, tool_executor=None, run_id=...,
+        # team_id=...). No ``client`` kwarg -- baked into the inner_call
+        # closure upstream.
+        self._calls.append(
+            {
+                "routing": routing,
+                "messages": messages,
+                "run_id": run_id,
+                "team_id": team_id,
+            }
+        )
         resp = self._responses[self._index % len(self._responses)]
         self._index += 1
         return resp
@@ -878,6 +887,49 @@ class TestGatePipelineIntegration:
         assert response is not primary_response
         assert response is consensus_winner
         assert "high quality" in response.content
+
+    @pytest.mark.asyncio
+    async def test_consensus_inherits_run_and_team_id_from_pipeline(
+        self, routing: LLMRouting
+    ) -> None:
+        """run_id + team_id thread run() -> ctx -> gate -> consensus inner call (#38)."""
+        config = FakeConfigProvider({
+            "llm_pipeline_gate_reject_threshold_scoring": 0.1,
+            "llm_pipeline_gate_medium_threshold_scoring": 0.6,
+            "llm_pipeline_gate_high_threshold_scoring": 0.9,
+            "llm_pipeline_gate_consensus_retries_scoring": 1,
+        })
+        runner = PipelineRunner(config_provider=config)
+
+        primary_response = LLMResponse(
+            content=json.dumps({"text": "low", "confidence_score": 0.3}),
+            model="test-model",
+            finish_reason="stop",
+        )
+        retry = LLMResponse(
+            content=json.dumps({"text": "still low", "confidence_score": 0.3}),
+            model="test-model",
+            finish_reason="stop",
+        )
+        consensus_call_fn = FakeCallFn([retry])
+        runner.register("gate", make_gate_step(config, consensus_call_fn, emitter=None))
+
+        async def primary_call_fn(**kwargs: Any) -> LLMResponse:
+            return primary_response
+
+        await runner.run(
+            task_type="scoring",
+            messages=[{"role": "user", "content": "score this"}],
+            routing=routing,
+            call_fn=primary_call_fn,
+            call_kwargs={},
+            run_id="run-42",
+            team_id="team-xyz",
+        )
+
+        assert len(consensus_call_fn._calls) == 1
+        assert consensus_call_fn._calls[0]["run_id"] == "run-42"
+        assert consensus_call_fn._calls[0]["team_id"] == "team-xyz"
 
     @pytest.mark.asyncio
     async def test_medium_flagged_enriches_response(self, routing: LLMRouting) -> None:

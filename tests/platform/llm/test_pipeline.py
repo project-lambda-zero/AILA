@@ -161,7 +161,7 @@ class TestPassthroughNoSteps:
 
         call_fn.assert_called_once_with()
         assert response.content == "direct"
-        assert ctx == {"task_type": "scoring", "run_id": ""}
+        assert ctx == {"task_type": "scoring", "run_id": "", "team_id": ""}
 
 
 # ---------------------------------------------------------------------------
