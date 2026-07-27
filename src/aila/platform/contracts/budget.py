@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
     "BudgetConfig",
@@ -16,6 +16,8 @@ class BudgetConfig(BaseModel):
     wall-clock work spent in long-running tools (decompilation, symbolic
     execution, scans). Extensions add fixed increments to both ceilings.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     max_turns: int = 30
     max_tool_time_seconds: float = 14400.0  # 4 hours
@@ -33,6 +35,8 @@ class BudgetState(BaseModel):
     mutation is the caller's responsibility (typically owned by a single
     workflow run).
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     config: BudgetConfig = Field(default_factory=BudgetConfig)
     turns_used: int = 0

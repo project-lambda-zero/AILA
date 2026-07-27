@@ -33,6 +33,7 @@ __all__ = [
     "LedgerWrite",
     "ObservablesDict",
     "RejectedHypothesis",
+    "ResolvedHypothesis",
 ]
 
 ReasoningAction = Literal[
