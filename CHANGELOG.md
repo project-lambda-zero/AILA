@@ -19,6 +19,16 @@ operator action.
 
 ### Added
 
+- Budget-aware context assembly in the platform reasoning engine (RFC-24,
+  first increment): an agent's turn context is assembled in priority tiers
+  under an optional token budget, evicting or summarizing lower-priority
+  tiers when the budget is tight while never dropping pinned directives or
+  operator steering. With no budget configured (the default) the assembled
+  context is byte-identical to before (issue #24).
+- Module lifecycle and frontend extensibility: the module registry can
+  unregister a module (removing its routes and tools), and the frontend
+  discovers module UI specs dynamically instead of from a hardcoded list, so
+  a missing module package no longer breaks the shell build (issue #41).
 - Config resolution transparency in the platform config API and admin screen.
   `GET /config` now returns, per entry, the effective value the system resolves
   to (environment variable > stored value > schema default), the resolution
