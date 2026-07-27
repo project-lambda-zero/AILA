@@ -295,6 +295,12 @@ operator action.
 
 ### Fixed
 
+- LLM-generated proof-of-concept code runs inside an isolation layer (firejail
+  or a namespace sandbox with no network, dropped capabilities, and
+  no-new-privileges, falling back to resource limits when neither is present)
+  and only from within the confined remote working directory, instead of
+  running over SSH with resource limits alone; C proof-of-concepts compile
+  with sanitizers for reliable crash attribution (issue #51).
 - Task-engine correctness: a status flip that means a job is runnable
   (requeue-failed, resume-from-paused) now also enqueues the job to the
   queue instead of leaving it to be reaped; task functions are registered
