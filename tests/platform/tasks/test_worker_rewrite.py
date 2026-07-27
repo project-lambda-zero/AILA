@@ -29,11 +29,15 @@ def test_worker_settings_shape() -> None:
 
     # functions non-empty (registry bootstrap registered run_platform_handle)
     assert len(WorkerSettings.functions) > 0
-    # Every entry is a registry-wrapped coroutine OR a legacy ARQ callable.
-    # For the @platform_task-decorated ones, they must be present in the
-    # registry's all_functions() list.
-    registry_fns = set(_REGISTRY.all_functions())
-    assert any(fn in registry_fns for fn in WorkerSettings.functions), (
+    # #40-5: ``all_functions()`` returns ``arq.worker.Function`` objects
+    # keyed by the fully-qualified registry name. Compare by ``.name``
+    # since Function isn't hashable / equatable.
+    registry_names = {fn.name for fn in _REGISTRY.all_functions()}
+    settings_names = {
+        getattr(fn, "name", None) or getattr(fn, "__qualname__", None)
+        for fn in WorkerSettings.functions
+    }
+    assert registry_names & settings_names, (
         "WorkerSettings.functions should include @platform_task-wrapped callables"
     )
 

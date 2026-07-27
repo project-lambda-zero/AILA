@@ -53,13 +53,39 @@ _log = logging.getLogger(__name__)
 class TaskRepository:
     """Scoped DB queries for TaskRecord. Admin sees all; others see their group_id only."""
 
+    # #40-6: default page size for ``list_for_user``. The historical
+    # implementation loaded EVERY row visible to the caller before
+    # returning them to the API, which for admin/system callers on a
+    # long-lived deployment is an unbounded scan. Callers can page by
+    # bumping ``offset`` in ``LIST_PAGE_SIZE``-wide steps; the hard cap
+    # ``LIST_PAGE_MAX`` protects the DB from a single request asking for
+    # everything.
+    LIST_PAGE_SIZE: int = 200
+    LIST_PAGE_MAX: int = 1000
+
     @staticmethod
     async def list_for_user(
         session,
         auth: AuthContext,
         track: str | None = None,
         status: str | None = None,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[TaskRecord]:
+        """Return tasks visible to ``auth``, newest first, page-bounded.
+
+        ``limit`` defaults to ``LIST_PAGE_SIZE`` and is silently capped at
+        ``LIST_PAGE_MAX`` (#40-6). ``offset`` is clamped at 0. A negative
+        or zero ``limit`` falls back to the default page size so a
+        misconfigured caller cannot ask for zero rows and rely on the API
+        layer to "just work".
+        """
+        effective_limit = limit if (limit is not None and limit > 0) else TaskRepository.LIST_PAGE_SIZE
+        if effective_limit > TaskRepository.LIST_PAGE_MAX:
+            effective_limit = TaskRepository.LIST_PAGE_MAX
+        effective_offset = max(0, int(offset))
+
         stmt = select(TaskRecord)
         if auth.role != ROLE_ADMIN:
             stmt = stmt.where(TaskRecord.group_id == auth.role)
@@ -75,6 +101,7 @@ class TaskRepository:
         # top -- without this the running scan is buried behind hundreds of
         # older terminal rows.
         stmt = stmt.order_by(TaskRecord.created_at.desc())  # type: ignore[attr-defined]
+        stmt = stmt.limit(effective_limit).offset(effective_offset)
         result = await session.exec(stmt)
         return list(result.all())
 
@@ -140,8 +167,13 @@ class TaskRepository:
                 "leaving PAUSED", task_id, exc,
             )
             return False
-        fn_short = record.fn_path.rsplit(".", 1)[-1] if record.fn_path else ""
-        if not fn_short or not record.track:
+        # #40-5: enqueue with the fully-qualified ``fn_path``. ARQ's
+        # function map is keyed on the qualified registry name
+        # (``_Registry.all_functions``); the historical bare
+        # ``__qualname__`` would silently miss on any cross-module bare-name
+        # collision (CLAUDE.md #19), routing the resumed task id to whichever
+        # module was loaded last.
+        if not record.fn_path or not record.track:
             _log.warning(
                 "set_queued_from_paused: task %s missing fn_path / track -- "
                 "leaving PAUSED", task_id,
@@ -150,7 +182,7 @@ class TaskRepository:
         enqueued = await _enqueue_arq_job(
             track=record.track,
             task_id=task_id,
-            fn_short=fn_short,
+            fn_name=record.fn_path,
             kwargs=task_kwargs,
             redis_url=redis_url,
         )

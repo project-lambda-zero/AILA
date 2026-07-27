@@ -113,17 +113,37 @@ def _record_to_response(record: TaskRecord) -> TaskResponse:
 async def list_tasks(
     track: str | None = Query(default=None, description="Filter by task track"),
     task_status: str | None = Query(default=None, alias="status", description="Filter by status"),
+    limit: int = Query(
+        default=TaskRepository.LIST_PAGE_SIZE,
+        ge=1,
+        le=TaskRepository.LIST_PAGE_MAX,
+        description="Page size (#40-6: bounded to keep the API from full-table scans)",
+    ),
+    offset: int = Query(
+        default=0,
+        ge=0,
+        description="Row offset for pagination",
+    ),
     auth: AuthContext = Depends(require_user_or_api_key),
 ) -> TaskListResponse:
     """Return all tasks visible to the authenticated user.
 
     Admin role sees all tasks. Other roles see only tasks in their group_id.
     Optional track and status query parameters narrow the result set.
+    Pagination is bounded by ``TaskRepository.LIST_PAGE_MAX`` (#40-6) so a
+    long-lived deployment cannot force a full-table load through the API.
     """
 
     async def _query() -> list[TaskRecord]:
         async with async_session_scope() as session:
-            return await TaskRepository.list_for_user(session, auth, track=track, status=task_status)
+            return await TaskRepository.list_for_user(
+                session,
+                auth,
+                track=track,
+                status=task_status,
+                limit=limit,
+                offset=offset,
+            )
 
     records = await _query()
     return TaskListResponse(

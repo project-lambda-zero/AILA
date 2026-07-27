@@ -96,18 +96,24 @@ def _env_redis_url() -> str | None:
 async def _enqueue_arq_job(
     track: str,
     task_id: str,
-    fn_short: str,
+    fn_name: str,
     kwargs: dict[str, object],
     redis_url: str,
     defer_seconds: float = 0.0,
 ) -> bool:
     """Enqueue an ARQ job using the same conventions as ``TaskQueue.submit``.
 
-    ``fn_short`` is the last segment of the fully-qualified ``fn_path`` --
-    ARQ resolves function names by ``__qualname__`` (see the @platform_task
-    wrapper). ``kwargs`` are forwarded verbatim; ``defer_seconds`` mirrors
-    the ``_defer_by`` scheduling argument. Returns True on success, False
-    when Redis is unreachable or the enqueue raises.
+    ``fn_name`` is the fully-qualified registry name
+    ``{fn.__module__}.{fn.__qualname__}`` -- the same value stored in
+    ``TaskRecord.fn_path`` and used as the ARQ ``Function.name`` key by
+    :meth:`aila.platform.tasks.template._Registry.all_functions` (#40-5).
+    Passing the bare ``__qualname__`` here would inherit the cross-module
+    collision documented in CLAUDE.md #19: two modules registering the same
+    bare name would silently overwrite one another in ARQ's function map,
+    so the queue would dispatch the right job id but run the wrong body.
+    ``kwargs`` are forwarded verbatim; ``defer_seconds`` mirrors the
+    ``_defer_by`` scheduling argument. Returns True on success, False when
+    Redis is unreachable or the enqueue raises.
 
     Shared by:
     - :meth:`TaskQueue._arq_enqueue_async` (initial submit path).
@@ -130,7 +136,7 @@ async def _enqueue_arq_job(
         }
         if defer_seconds > 0:
             enqueue_kwargs["_defer_by"] = timedelta(seconds=defer_seconds)
-        await pool.enqueue_job(fn_short, **enqueue_kwargs)
+        await pool.enqueue_job(fn_name, **enqueue_kwargs)
         return True
     except Exception as exc:
         # Redis / arq errors surface heterogeneously (RedisError, OSError,
@@ -594,8 +600,12 @@ class TaskQueue:
                         "leaving status=failed", task.id, exc,
                     )
                     continue
-                fn_short = task.fn_path.rsplit(".", 1)[-1] if task.fn_path else ""
-                if not fn_short or not task.track:
+                # #40-5: enqueue with the fully-qualified ``fn_path``. ARQ's
+                # function map is now keyed on the qualified registry name
+                # (``_Registry.all_functions``), so the historical bare
+                # ``__qualname__`` would miss whenever two modules shared a
+                # callable name -- see CLAUDE.md #19.
+                if not task.fn_path or not task.track:
                     _log.warning(
                         "requeue_failed: task %s missing fn_path / track -- "
                         "leaving status=failed", task.id,
@@ -604,7 +614,7 @@ class TaskQueue:
                 enqueued = await _enqueue_arq_job(
                     track=task.track,
                     task_id=task.id,
-                    fn_short=fn_short,
+                    fn_name=task.fn_path,
                     kwargs=task_kwargs,
                     redis_url=redis_url,
                 )
@@ -659,11 +669,43 @@ class TaskQueue:
                 "Modules may only submit their own functions."
             )
 
+    # #40-6: hard ceiling on the DAG-cycle scan. A cycle would have to lie
+    # inside the live task graph, so scoping to non-terminal statuses
+    # (WAITING/QUEUED/RUNNING/PAUSED) is both correct and small enough to
+    # keep the scan bounded. The extra LIMIT is defence-in-depth against a
+    # pathological blast radius (e.g. thousands of paused rows waiting on
+    # operator resume). If the incoming edge or one of its deps is not in
+    # the loaded slice, the topological sort still catches any cycle that
+    # touches ``new_task_id``'s reachable set from the loaded rows; a
+    # cycle wholly outside that set cannot include the new edge.
+    _VALIDATE_DAG_SCAN_LIMIT: int = 10_000
+
     async def _validate_dag(self, new_task_id: str, depends_on: list[str]) -> None:
-        """Raise ValueError if adding this dependency edge creates a cycle in the task DAG."""
+        """Raise ValueError if adding this dependency edge creates a cycle in the task DAG.
+
+        The historical implementation loaded EVERY ``TaskRecord`` in the
+        database (#40-6); on a long-lived deployment with hundreds of
+        thousands of terminal rows that was an O(N) scan per new task with
+        deps. The scan is now scoped to non-terminal statuses (the only
+        rows that can participate in a live dependency cycle) and capped
+        by ``_VALIDATE_DAG_SCAN_LIMIT``.
+        """
         graph: dict[str, set[str]] = {}
         async with async_session_scope() as session:
-            records = (await session.exec(select(TaskRecord))).all()
+            records = (await session.exec(
+                select(TaskRecord)
+                .where(
+                    TaskRecord.status.in_(  # type: ignore[union-attr]
+                        [
+                            TaskStatus.WAITING,
+                            TaskStatus.QUEUED,
+                            TaskStatus.RUNNING,
+                            TaskStatus.PAUSED,
+                        ],
+                    ),
+                )
+                .limit(self._VALIDATE_DAG_SCAN_LIMIT)
+            )).all()
             for r in records:
                 deps: list[str] = json.loads(r.depends_on_json) if r.depends_on_json else []
                 graph[r.id] = set(deps)
@@ -770,15 +812,15 @@ class TaskQueue:
             pool = await create_pool(settings)
             try:
                 queue_key = ARQ_QUEUE_KEY_TEMPLATE.format(track=track)
-                # Phase 179: ARQ looks up functions by __qualname__. The
-                # @platform_task wrapper preserves the decorated function's
-                # own __qualname__, so ``fn_path``'s last segment is the
-                # ARQ function name. Payload kwargs are passed as-is; the
-                # wrapper constructs TaskContext from the ARQ ctx dict and
-                # the TaskRecord row.
-                arq_fn_name = fn_path.rsplit(".", 1)[-1]
+                # #40-5: ARQ registers each ``@platform_task`` under its
+                # fully-qualified ``{fn.__module__}.{fn.__qualname__}``
+                # registry name (see ``_Registry.all_functions``). Enqueue
+                # under that same key so two modules that share a bare
+                # callable name (CLAUDE.md #19) cannot cross-dispatch --
+                # the right task id would otherwise resolve to whichever
+                # module was imported last.
                 await pool.enqueue_job(
-                    arq_fn_name,
+                    fn_path,
                     _queue_name=queue_key,
                     _job_id=task_id,
                     **kwargs,
@@ -827,11 +869,14 @@ class TaskQueue:
         gate to avoid one investigation monopolising the worker pool.
         """
         _ = fn_module, user_id  # retained in signature for callers
-        arq_fn_name = fn_path.rsplit(".", 1)[-1]
+        # #40-5: pass the fully-qualified ``fn_path`` -- ARQ's Function map
+        # is keyed on the same qualified name via ``_Registry.all_functions``,
+        # so the bare ``__qualname__`` would miss on any dual-module bare-name
+        # collision (CLAUDE.md #19).
         return await _enqueue_arq_job(
             track=track,
             task_id=task_id,
-            fn_short=arq_fn_name,
+            fn_name=fn_path,
             kwargs=kwargs,
             redis_url=redis_url,
             defer_seconds=defer_seconds,

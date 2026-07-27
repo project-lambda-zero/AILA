@@ -523,27 +523,30 @@ async def _enqueue_dependents(completed_task_id: str) -> None:
         pool = await _create_pool(_RedisSettings.from_dsn(redis_url))
         for rec in promoted_records:
             try:
-                fn_short = (
-                    rec.fn_path.rsplit(".", 1)[-1]
-                    if rec.fn_path else None
-                )
-                if not fn_short or not rec.track:
+                # #40-5: enqueue with the fully-qualified ``fn_path``. ARQ's
+                # function map is keyed on the qualified registry name
+                # (``_Registry.all_functions``); the historical bare
+                # ``__qualname__`` inherited the cross-module collision from
+                # CLAUDE.md #19 -- two modules sharing a callable name would
+                # silently route the dependent to whichever module was
+                # loaded last.
+                if not rec.fn_path or not rec.track:
                     _log.warning(
-                        "_enqueue_dependents: skipping %s (fn=%s track=%s)",
-                        rec.id, fn_short, rec.track,
+                        "_enqueue_dependents: skipping %s (fn_path=%s track=%s)",
+                        rec.id, rec.fn_path, rec.track,
                     )
                     continue
                 kwargs = json.loads(rec.kwargs_json) if rec.kwargs_json else {}
                 queue_key = ARQ_QUEUE_KEY_TEMPLATE.format(track=rec.track)
                 await pool.enqueue_job(
-                    fn_short,
+                    rec.fn_path,
                     _queue_name=queue_key,
                     _job_id=rec.id,
                     **kwargs,
                 )
                 _log.info(
-                    "_enqueue_dependents: enqueued dependent %s to %s",
-                    rec.id, queue_key,
+                    "_enqueue_dependents: enqueued dependent %s to %s (fn=%s)",
+                    rec.id, queue_key, rec.fn_path,
                 )
             except (OSError, RuntimeError, ValueError, TypeError) as exc:
                 _log.warning(

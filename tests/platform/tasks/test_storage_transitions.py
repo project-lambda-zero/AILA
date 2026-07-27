@@ -117,8 +117,9 @@ def _insert_task(
 async def test_set_queued_from_paused_enqueues_and_flips(
     tmp_path, monkeypatch,
 ) -> None:
-    """Happy path: ``pool.enqueue_job`` fires with the row's fn short-name,
-    queue key, job id, and kwargs; status flips PAUSED -> QUEUED."""
+    """Happy path: ``pool.enqueue_job`` fires with the row's fully-
+    qualified ``fn_path`` (#40-5), queue key, job id, and kwargs;
+    status flips PAUSED -> QUEUED."""
     monkeypatch.setenv("AILA_PLATFORM_REDIS_URL", _REDIS_URL)
     with sqlite_db_env(tmp_path, "resume_ok") as (engine, _):
         with Session(engine) as s:
@@ -146,7 +147,10 @@ async def test_set_queued_from_paused_enqueues_and_flips(
         # ARQ side-effect: enqueue call issued with the right shape.
         pool.enqueue_job.assert_awaited_once()
         call = pool.enqueue_job.await_args
-        assert call.args == ("some_fn",)
+        # #40-5: enqueue key is the fully-qualified fn_path (ARQ registry
+        # name), not the bare __qualname__; the bare form inherited the
+        # cross-module collision documented in CLAUDE.md #19.
+        assert call.args == ("aila.platform.tasks.queue.some_fn",)
         assert call.kwargs["_queue_name"] == ARQ_QUEUE_KEY_TEMPLATE.format(track="platform")
         assert call.kwargs["_job_id"] == task_id
         assert call.kwargs["foo"] == "bar"

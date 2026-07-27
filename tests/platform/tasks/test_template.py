@@ -134,16 +134,25 @@ def test_sync_function_rejected() -> None:
             return {}
 
 
-def test_all_functions_returns_wrapped_coroutines() -> None:
+def test_all_functions_returns_arq_functions_keyed_on_qualified_name() -> None:
     @platform_task(track="vulnerability", module_id="vulnerability")
     async def wrapped_task(ctx: TaskContext, **kwargs: Any) -> dict[str, Any]:
         return {}
 
-    # ``wrapped_task`` is the wrapper returned by the decorator, not the
-    # original body; ``all_functions()`` must return exactly that object.
+    # #40-5: ``all_functions()`` returns ``arq.worker.Function`` wrappers whose
+    # ``name`` is the fully-qualified registry key
+    # ``{fn.__module__}.{fn.__qualname__}`` -- the same value stored in
+    # ``TaskRecord.fn_path`` and used by every enqueue call site. Wrapping
+    # with an explicit name prevents the cross-module ``__name__``
+    # collision documented in CLAUDE.md #19: two modules each defining
+    # e.g. ``run_target_analysis`` would otherwise clobber one another in
+    # ARQ's internal function map.
     fns = _REGISTRY.all_functions()
     assert len(fns) == 1
-    assert fns[0] is wrapped_task
+    fn = fns[0]
+    expected_name = f"{wrapped_task.__module__}.{wrapped_task.__qualname__}"
+    assert fn.name == expected_name
+    assert fn.coroutine is wrapped_task
 
 
 # --- Wrapper execution -----------------------------------------------------

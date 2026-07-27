@@ -36,7 +36,9 @@ from typing import Any, cast
 
 import sqlalchemy as sa
 import structlog
+from arq.worker import Function as _ArqFunction
 from arq.worker import Retry
+from arq.worker import func as _arq_func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlmodel import select
 
@@ -128,10 +130,23 @@ class _Registry:
     def get_task(self, name: str) -> PlatformTask | None:
         return self._tasks.get(name)
 
-    def all_functions(self) -> list[_ArqJob]:
-        # Return wrapped coroutines in a stable insertion order so ARQ's
-        # function-name -> function map is deterministic across restarts.
-        return [t.fn for t in self._tasks.values()]
+    def all_functions(self) -> list[_ArqFunction]:
+        # Return ``arq.worker.Function`` objects keyed on the fully-qualified
+        # ``{fn.__module__}.{fn.__qualname__}`` registry name so ARQ's
+        # internal function map cannot collide across modules that happen to
+        # share a bare callable name (CLAUDE.md #19, #40-5). Without the
+        # explicit ``name=`` override ARQ would fall back to
+        # ``coroutine.__qualname__`` (bare), and a second module defining
+        # e.g. ``run_target_analysis`` would silently overwrite the first --
+        # the queue dispatches the right job id but the wrong module's body
+        # would execute.
+        #
+        # Order is preserved from ``dict.values()`` so ARQ's ``functions``
+        # map is deterministic across restarts.
+        return [
+            _arq_func(t.fn, name=t.name, timeout=t.timeout_s, max_tries=t.max_tries)
+            for t in self._tasks.values()
+        ]
 
     @property
     def tasks(self) -> list[PlatformTask]:

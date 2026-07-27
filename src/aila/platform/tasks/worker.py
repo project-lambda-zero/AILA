@@ -175,19 +175,21 @@ async def _sweep_orphan_queued_tasks() -> None:
         # PRIMARY decision is the per-track membership above.
         present_in_arq: set[str] = set().union(*present_by_track.values()) if present_by_track else set()
 
-        # Find candidate DB rows: QUEUED rows that are past the boot-time
-        # grace window. fix §45 -- at boot the api_router may have INSERTed
-        # the row but not yet pushed to ARQ Redis (ZADD races the INSERT
-        # commit). Skipping rows younger than 10s prevents the boot sweep
-        # against reaping legitimate in-flight submissions.
+        # Find candidate DB rows: QUEUED rows that are past the recency
+        # window. fix §45 -- at boot the api_router may have INSERTed the
+        # row but not yet pushed to ARQ Redis (ZADD races the INSERT
+        # commit). The 60s ``recency_cutoff`` is the boot-time grace: any
+        # row satisfying ``created_at < recency_cutoff`` is at least 60s
+        # old, so the earlier 10s ``boot_grace_cutoff`` guard (#40-7) was
+        # redundant with -- and strictly dominated by -- this one. The 60s
+        # window is still tighter than the ARQ ZADD race, so no legitimate
+        # in-flight submission can be false-reaped.
         recency_cutoff = utc_now() - timedelta(seconds=60)
-        boot_grace_cutoff = utc_now() - timedelta(seconds=10)
         async with async_session_scope() as session:
             rows = (await session.exec(
                 select(TaskRecord).where(
                     TaskRecord.status == TaskStatus.QUEUED,
                     TaskRecord.created_at < recency_cutoff,
-                    TaskRecord.created_at < boot_grace_cutoff,
                 )
             )).all()
             reaped = 0

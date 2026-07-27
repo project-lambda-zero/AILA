@@ -9,9 +9,9 @@ enqueues via the shared ``_enqueue_arq_job`` helper (the same code path
 enqueue fails stay 'failed' so the caller can retry.
 
 These tests patch the ARQ pool so no live Redis is required. They
-assert BOTH the ARQ side-effect (enqueue call issued with the right
-fn short-name / queue key / job id / kwargs) AND the DB status
-transition.
+assert BOTH the ARQ side-effect (enqueue call issued with the fully-
+qualified ``fn_path`` per #40-5, queue key, job id, kwargs) AND the DB
+status transition.
 """
 from __future__ import annotations
 
@@ -121,9 +121,12 @@ async def test_requeue_failed_enqueues_and_flips_status(tmp_path, monkeypatch) -
         # with the expected shape.
         pool.enqueue_job.assert_awaited_once()
         call = pool.enqueue_job.await_args
-        assert call.args == ("some_fn",), (
-            "requeue_failed must pass the trailing segment of fn_path as the ARQ "
-            "function name (short __qualname__)"
+        # #40-5: enqueue with the fully-qualified fn_path so cross-module
+        # bare-name collisions (CLAUDE.md #19) cannot route the requeued
+        # task id to the wrong module's body.
+        assert call.args == ("aila.platform.tasks.queue.some_fn",), (
+            "requeue_failed must pass the fully-qualified fn_path as the ARQ "
+            "function name (registry key, not bare __qualname__)"
         )
         assert call.kwargs["_queue_name"] == ARQ_QUEUE_KEY_TEMPLATE.format(track="platform")
         assert call.kwargs["_job_id"] == task_id
