@@ -281,6 +281,11 @@ operator action.
 
 ### Fixed
 
+- A forensics helper script that exits non-zero is surfaced as an explicit
+  failure (an ok flag plus an error marker in stderr) instead of reading as
+  empty-output success, and the fuzz-crash scraper rejects symlinks that
+  resolve outside the storage root so they cannot leak arbitrary host file
+  content into a report (issue #58).
 - Single-resource endpoints in the investigation module routers (branch,
   outcome, workspace, target, project, finding, pattern, family, playbook,
   and the message SSE stream) verify the caller's team owns the parent
