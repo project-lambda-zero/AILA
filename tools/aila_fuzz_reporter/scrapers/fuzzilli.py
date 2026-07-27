@@ -39,10 +39,32 @@ def _safe_crash_files(directory: Path) -> list[Path]:
 
     A fuzz output directory is untrusted input. A symlink planted there would
     otherwise be dereferenced and its target's bytes read into a crash record
-    (an exfiltration path). Reject symlinks (lstat, no follow), non-regular
-    entries, and files above the hard size cap.
+    (an exfiltration path). Finding 58-4
+    (``.run/designs/DESIGN_injection_evidence.md`` section 3.4) requires
+    two guards, applied in order:
+
+    1. lstat + ``S_ISLNK`` -- drop symlinks before ``resolve()`` follows
+       them, so a symlink escaping the storage root never triggers a
+       filesystem read.
+    2. ``resolve()`` + ``is_relative_to(root)`` -- belt-and-suspenders
+       containment check. Catches the case where a non-symlink entry
+       still resolves outside the storage root (e.g. a mount point,
+       hardlink into another volume, or a future filesystem quirk
+       ``iterdir()`` might yield outside ``directory``).
+
+    ``directory`` may itself be inside a symlinked path (a legitimate
+    operator layout); the containment check therefore resolves BOTH
+    sides so a symlinked storage root does not spuriously reject every
+    entry.
     """
     if not directory.is_dir():
+        return []
+    try:
+        resolved_root = directory.resolve(strict=False)
+    except OSError:
+        _log.warning(
+            "fuzz_scrape_reject_root path=%s reason=root_resolve_error", directory
+        )
         return []
     safe: list[Path] = []
     for entry in directory.iterdir():
@@ -60,6 +82,17 @@ def _safe_crash_files(directory: Path) -> list[Path]:
         if lst.st_size > _MAX_REPRODUCER_HARD_CAP:
             _log.warning(
                 "fuzz_scrape_reject path=%s reason=too_large size=%d", entry, lst.st_size
+            )
+            continue
+        try:
+            resolved_entry = entry.resolve(strict=False)
+        except OSError:
+            _log.warning("fuzz_scrape_reject path=%s reason=resolve_error", entry)
+            continue
+        if not resolved_entry.is_relative_to(resolved_root):
+            _log.warning(
+                "fuzz_scrape_reject path=%s reason=escapes_root resolved=%s root=%s",
+                entry, resolved_entry, resolved_root,
             )
             continue
         safe.append(entry)

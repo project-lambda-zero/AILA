@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import tempfile
 
 from aila.config import Settings
 from aila.platform.exceptions import AILAError
 from aila.platform.tools import Tool
+
+_log = logging.getLogger(__name__)
 
 TOOL_ALIAS = "script_executor"
 CAPABILITY = "Upload and execute agent-generated Python scripts on the analyzer machine via SSH."
@@ -54,11 +57,21 @@ class ScriptExecutorTool(Tool):
             analyzer_os: Target OS -- ``"linux"`` or ``"windows"``.
 
         Returns:
-            Dict with 'stdout', 'stderr', 'exit_code', 'script_hash'. The
-            ``exit_code`` is the real remote exit status; a script that
-            calls ``sys.exit(3)`` yields ``exit_code=3`` (previously the
-            success branch hard-coded ``0`` and the failure branch
-            hard-coded ``1``).
+            Dict with 'stdout', 'stderr', 'exit_code', 'script_hash',
+            'ok', 'error'. The ``exit_code`` is the real remote exit
+            status; a script that calls ``sys.exit(3)`` yields
+            ``exit_code=3`` (previously the success branch hard-coded
+            ``0`` and the failure branch hard-coded ``1``).
+
+            ``ok`` is ``exit_code == 0``. When ``ok`` is False, ``error``
+            names the failure (``"script exited nonzero (exit_code=N)"``)
+            and, if the remote wrote no stderr, ``stderr`` is populated
+            with a ``[SCRIPT FAILED exit=N] ...`` marker so a downstream
+            LLM cannot mistake ``{stdout: '', stderr: '', exit_code: N}``
+            for a clean-run-with-no-output. Finding 58-3
+            (``.run/designs/DESIGN_injection_evidence.md`` section 3.3):
+            the tool must never let a nonzero exit look like success to
+            an agent that reads only stdout / stderr.
 
         Raises:
             AILAError: Connection-level failures propagate --
@@ -141,11 +154,34 @@ class ScriptExecutorTool(Tool):
             stdout, stderr, exit_code = await ssh.run_command_full(
                 integration, exec_cmd, timeout_seconds=effective_timeout,
             )
+            ok = exit_code == 0
+            error: str | None = None
+            if not ok:
+                error = f"script exited nonzero (exit_code={exit_code})"
+                # A remote script that ran and exited nonzero without
+                # writing to stderr would otherwise reach the LLM as
+                # ``{stdout: '', stderr: '', exit_code: N}`` -- three
+                # empty-looking fields plus a numeric code the model may
+                # skim past. Populate stderr with an unmistakable
+                # marker so the failure text is present in the field the
+                # LLM most reliably attends to.
+                if not stderr.strip():
+                    stderr = (
+                        f"[SCRIPT FAILED exit={exit_code}] script exited nonzero "
+                        "with no stderr output; check stdout for a partial write "
+                        "or an early sys.exit before print()."
+                    )
+                _log.warning(
+                    "script_executor: remote exit=%s stderr_tail=%r script_hash=%s",
+                    exit_code, stderr[-200:], script_hash,
+                )
             return {
                 "stdout": stdout,
                 "stderr": stderr,
                 "exit_code": exit_code,
                 "script_hash": script_hash,
+                "ok": ok,
+                "error": error,
             }
         finally:
             # Cleanup must not mask a real failure from the run above.
@@ -158,8 +194,7 @@ class ScriptExecutorTool(Tool):
             try:
                 await ssh.run_command(integration, cleanup_cmd, timeout_seconds=10.0)
             except (OSError, TimeoutError, ConnectionError, RuntimeError, AILAError):
-                import logging as _logging
-                _logging.getLogger(__name__).debug("Script cleanup failed for %s", remote_path, exc_info=True)
+                _log.debug("Script cleanup failed for %s", remote_path, exc_info=True)
 
 
 def create_tool(settings: Settings) -> ScriptExecutorTool:

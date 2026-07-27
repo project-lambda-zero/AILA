@@ -23,6 +23,18 @@ script never ran"). These tests lock the new behaviour so a future
 edit cannot silently regress to the old exit-code-lies-on-nonzero
 shape.
 
+Explicit-failure fields
+-----------------------
+A follow-on fix (still finding 58-3) added ``ok`` and ``error`` fields
+to the returned dict and populates ``stderr`` with a
+``[SCRIPT FAILED exit=N] ...`` marker when the remote exits nonzero
+with empty stderr. Without those, ``{stdout: '', stderr: '',
+exit_code: 3}`` reaches the LLM as three empty-looking fields plus a
+numeric code the model may skim past, letting the agent misread a
+failed script as a clean run with no output. These tests lock those
+fields in place so a future edit cannot silently regress to a
+failure-invisible-to-the-agent shape.
+
 Mocking strategy
 ----------------
 The SSH layer is mocked with :class:`unittest.mock.AsyncMock` on the
@@ -138,8 +150,81 @@ async def test_forward_returns_exit_code_zero_on_clean_exit() -> None:
         "stderr": "",
         "exit_code": 0,
         "script_hash": result["script_hash"],
+        "ok": True,
+        "error": None,
     }
     assert isinstance(result["script_hash"], str) and len(result["script_hash"]) == 16
+
+
+async def test_forward_flags_ok_false_and_error_string_on_nonzero_exit() -> None:
+    """Nonzero exit populates ``ok=False`` and ``error`` with the exit code.
+
+    A downstream LLM that reads the tool result as ``{stdout: '',
+    stderr: '', exit_code: 3}`` may skim past the numeric field and
+    treat the empty stdout as a clean-run-with-no-output. The
+    ``ok``/``error`` pair is the explicit signal that fixes finding 58-3:
+    a failed script MUST be unmistakably marked as failed.
+    """
+    ssh = _mock_ssh(full_result=("partial stdout", "broken", 7))
+    tool = ScriptExecutorTool(settings=None)
+    with _patch_get_ssh_service(ssh):
+        result = await tool.forward(
+            script_content=_SCRIPT,
+            integration=_INTEGRATION,
+            analyzer_os="linux",
+        )
+    assert result["ok"] is False
+    assert result["exit_code"] == 7
+    assert result["error"] == "script exited nonzero (exit_code=7)"
+    # Existing non-empty stderr is preserved verbatim; the tool does not
+    # overwrite a real diagnostic from the script itself.
+    assert result["stderr"] == "broken"
+    assert result["stdout"] == "partial stdout"
+
+
+async def test_forward_populates_empty_stderr_with_failure_marker() -> None:
+    """Nonzero exit + empty stderr -> stderr carries a ``[SCRIPT FAILED exit=N]`` marker.
+
+    The specific failure mode finding 58-3 names: a syntax-errored or
+    early-``sys.exit()`` script produces ``{stdout: '', stderr: '',
+    exit_code: N}``. The LLM sees three empty-looking fields plus a
+    number. Populating stderr with an explicit marker line closes that
+    gap so the failure text lands in the field the model attends to.
+    """
+    ssh = _mock_ssh(full_result=("", "", 2))
+    tool = ScriptExecutorTool(settings=None)
+    with _patch_get_ssh_service(ssh):
+        result = await tool.forward(
+            script_content=_SCRIPT,
+            integration=_INTEGRATION,
+            analyzer_os="linux",
+        )
+    assert result["ok"] is False
+    assert result["exit_code"] == 2
+    assert result["stdout"] == ""
+    assert "[SCRIPT FAILED exit=2]" in result["stderr"]
+    # The marker names the actual failure so the LLM cannot read
+    # "empty output" as "clean run".
+    assert "nonzero" in result["stderr"].lower()
+
+
+async def test_forward_does_not_overwrite_whitespace_only_stderr_marker_check() -> None:
+    """Whitespace-only stderr is treated as empty for the marker path.
+
+    A remote script that wrote a lone newline before exiting nonzero
+    should still get the marker: whitespace-only stderr is
+    indistinguishable from no stderr for an LLM reading the field.
+    """
+    ssh = _mock_ssh(full_result=("", "   \n", 1))
+    tool = ScriptExecutorTool(settings=None)
+    with _patch_get_ssh_service(ssh):
+        result = await tool.forward(
+            script_content=_SCRIPT,
+            integration=_INTEGRATION,
+            analyzer_os="linux",
+        )
+    assert result["ok"] is False
+    assert "[SCRIPT FAILED exit=1]" in result["stderr"]
 
 
 async def test_forward_reraises_authentication_error() -> None:
