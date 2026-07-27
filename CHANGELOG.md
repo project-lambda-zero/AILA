@@ -19,6 +19,11 @@ operator action.
 
 ### Added
 
+- The platform/module boundary (RFC-05) is enforced by the honesty audit:
+  platform and API code can no longer read a feature module's config
+  namespace by literal, name a module through a runtime aila.modules string,
+  or reach into module internals. The concrete de-welding landed in earlier
+  RFC-05 work; these rules lock it against regression (issue #30).
 - The forensics module runs investigations through a role panel (researcher,
   critic, implementer) with a sibling-review quorum on findings, built on the
   shared platform investigation engine, instead of a single self-directed
