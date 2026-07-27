@@ -20,10 +20,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
 import time
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass as _dc_dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
@@ -44,12 +47,71 @@ __all__ = [
 _log = logging.getLogger(__name__)
 
 
+# Cross-process invalidation defaults (#56). Any process that ``set``s a
+# config value INCRs ``_INVALIDATION_VERSION_KEY`` on Redis; peer processes
+# poll that counter (throttled to ``_VERSION_POLL_INTERVAL_S``) and drop
+# cache entries populated below the current version. Redis absence collapses
+# to the pre-existing TTL-only cache -- no crash, no regression.
+_INVALIDATION_VERSION_KEY: str = "aila:config:invalidation_version"
+_VERSION_POLL_INTERVAL_S: float = 1.0
+
+# Infra failure modes the invalidation path degrades on. Redis client errors
+# subclass RedisError; socket connect/timeout failures are OSError subclasses.
+# redis is an optional dependency, so its base is folded in only when present.
+try:  # pragma: no cover - optional dependency probe
+    from redis.exceptions import RedisError as _RedisError
+
+    _REDIS_ERRORS: tuple[type[BaseException], ...] = (OSError, _RedisError)
+except ImportError:  # pragma: no cover
+    _REDIS_ERRORS = (OSError,)
+
+
+class _Missing:
+    """Sentinel distinguishing "never resolved" from "resolved to None".
+
+    Used for the lazy sync Redis client: the first ``get_sync`` call attempts
+    to build a client from ``AILA_PLATFORM_REDIS_URL``; both success (a
+    client) and failure (None) are cached so subsequent calls don't re-import
+    ``redis`` or re-resolve the env var.
+    """
+
+    __slots__ = ()
+
+
+_MISSING = _Missing()
+
+
+class _AsyncRedisLike(Protocol):
+    """Minimal async Redis surface the invalidation path uses.
+
+    Both ``redis.asyncio.Redis`` and lightweight test fakes satisfy it. Kept
+    narrow so tests can inject an in-memory client without pulling redis-py.
+    """
+
+    async def get(self, key: str) -> Any: ...
+    async def incr(self, key: str) -> int: ...
+
+
+class _SyncRedisLike(Protocol):
+    """Sync twin of :class:`_AsyncRedisLike` for :meth:`ConfigRegistry.get_sync`."""
+
+    def get(self, key: str) -> Any: ...
+    def incr(self, key: str) -> int: ...
+
+
 @_dc_dataclass
 class _CacheEntry:
-    """Single cached config value with monotonic expiry timestamp."""
+    """Single cached config value with monotonic expiry + invalidation version.
+
+    ``version_at_populate`` is the cross-process invalidation counter observed
+    the moment this entry was cached. When the current Redis-stored version
+    exceeds it, a peer process has ``set()``-ted a config since we cached, so
+    the entry is treated as expired regardless of ``expires_at`` (#56).
+    """
 
     value: Any
     expires_at: float
+    version_at_populate: int = 0
 
 
 @_dc_dataclass(frozen=True)
@@ -151,14 +213,53 @@ def _hash_config_change(old_value: object, new_value: str) -> str:
 class ConfigRegistry:
     """Central registry for module config schemas. Thread-safe for reads; callers
     are responsible for not calling register() concurrently (registration happens
-    at startup, single-threaded)."""
+    at startup, single-threaded).
 
-    def __init__(self, emitter: Any = None, cache_ttl: float = 60.0) -> None:
+    Cross-process cache invalidation (#56): a ``set()`` in one worker
+    ``INCR``s a Redis-backed version counter; peer workers poll that counter
+    (throttled to ``version_poll_interval``) on the next ``get()`` /
+    ``get_sync()`` and treat entries populated below the current version as
+    stale, refetching from the DB. When Redis is unreachable or unconfigured
+    the mechanism degrades silently to the pre-existing TTL-only cache --
+    freshness bounded by ``cache_ttl`` seconds, same as before.
+
+    Tests inject fake Redis clients via ``redis_async_ctx_factory`` /
+    ``redis_sync_client_factory`` to drive the invalidation deterministically
+    without a live broker.
+    """
+
+    def __init__(
+        self,
+        emitter: Any = None,
+        cache_ttl: float = 60.0,
+        *,
+        redis_async_ctx_factory: (
+            Callable[[], AbstractAsyncContextManager[_AsyncRedisLike]] | None
+        ) = None,
+        redis_sync_client_factory: Callable[[], _SyncRedisLike | None] | None = None,
+        invalidation_key: str = _INVALIDATION_VERSION_KEY,
+        version_poll_interval: float = _VERSION_POLL_INTERVAL_S,
+    ) -> None:
         self._schemas: dict[str, type[BaseModel]] = {}
         self._emitter = emitter
         self._cache_ttl = cache_ttl
         self._cache: dict[tuple[str, str], _CacheEntry] = {}
         self._cache_lock = asyncio.Lock()
+        # Cross-process invalidation state (#56). ``_known_version`` is what
+        # this process last observed for the shared Redis counter;
+        # ``_known_version_polled_at`` throttles the Redis GET so a hot get
+        # loop doesn't fan out one Redis round-trip per call.
+        self._redis_async_ctx_factory = redis_async_ctx_factory
+        self._redis_sync_client_factory = redis_sync_client_factory
+        self._invalidation_key = invalidation_key
+        self._version_poll_interval = version_poll_interval
+        self._known_version: int = 0
+        # -inf forces the first get to fetch the current version (no stale
+        # window before the first poll).
+        self._known_version_polled_at: float = -math.inf
+        # Lazily-built sync redis.Redis client (from AILA_PLATFORM_REDIS_URL);
+        # cached per-instance so repeated get_sync() calls reuse the socket.
+        self._sync_redis_client: _SyncRedisLike | None | _Missing = _MISSING
 
     def _is_security_relevant(self, key: str) -> bool:
         """Check if a config key is security-relevant for audit logging (D-11, D-13).
@@ -169,6 +270,184 @@ class ConfigRegistry:
         if any(key.startswith(p) for p in _SECURITY_KEY_PREFIXES):
             return True
         return "_fail_mode_" in key
+
+    # ------------------------------------------------------------------
+    # Cross-process invalidation helpers (#56)
+    # ------------------------------------------------------------------
+
+    def _resolve_async_redis_ctx(
+        self,
+    ) -> AbstractAsyncContextManager[_AsyncRedisLike] | None:
+        """Return an async CM yielding a Redis client, or None if unavailable.
+
+        Preference order: constructor-injected factory (used by tests) >
+        platform ``get_redis()`` pool. Any exception during resolution is
+        swallowed -- Redis absence must NOT crash a config read.
+        """
+        if self._redis_async_ctx_factory is not None:
+            try:
+                return self._redis_async_ctx_factory()
+            except (OSError, RuntimeError):
+                _log.debug(
+                    "ConfigRegistry: injected async redis factory raised",
+                    exc_info=True,
+                )
+                return None
+        try:
+            from ..platform.services.redis_pool import get_redis, pool_available
+        except ImportError:
+            _log.debug(
+                "ConfigRegistry: redis_pool not importable", exc_info=True
+            )
+            return None
+        if not pool_available():
+            return None
+        try:
+            return get_redis()
+        except (OSError, RuntimeError):
+            _log.debug("ConfigRegistry: get_redis() raised", exc_info=True)
+            return None
+
+    def _resolve_sync_redis_client(self) -> _SyncRedisLike | None:
+        """Return a sync Redis client, or None if unavailable. Cached per instance.
+
+        Preference: constructor-injected factory > ``redis.Redis.from_url`` on
+        ``AILA_PLATFORM_REDIS_URL``. A resolved None is cached so the second
+        get_sync doesn't re-attempt the import + env read on every call.
+        """
+        if self._redis_sync_client_factory is not None:
+            try:
+                return self._redis_sync_client_factory()
+            except (OSError, RuntimeError):
+                _log.debug(
+                    "ConfigRegistry: injected sync redis factory raised",
+                    exc_info=True,
+                )
+                return None
+        if not isinstance(self._sync_redis_client, _Missing):
+            return self._sync_redis_client
+        url = os.environ.get("AILA_PLATFORM_REDIS_URL", "").strip()
+        if not url:
+            self._sync_redis_client = None
+            return None
+        try:
+            import redis
+
+            client = redis.Redis.from_url(
+                url,
+                socket_connect_timeout=2.0,
+                socket_timeout=2.0,
+                decode_responses=False,
+            )
+        except (ImportError, OSError, RuntimeError, ValueError):
+            _log.debug(
+                "ConfigRegistry: sync redis client build failed", exc_info=True
+            )
+            self._sync_redis_client = None
+            return None
+        self._sync_redis_client = client
+        return client
+
+    @staticmethod
+    def _coerce_version(raw: Any) -> int | None:
+        """Parse Redis GET result into an int. Handles bytes/str/None uniformly.
+
+        Returns None on any parse failure -- callers keep last-known version.
+        """
+        if raw is None:
+            return 0
+        if isinstance(raw, (bytes, bytearray)):
+            try:
+                raw = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                _log.debug(
+                    "ConfigRegistry: version key bytes are not valid utf-8",
+                    exc_info=True,
+                )
+                return None
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            _log.debug("ConfigRegistry: version key value %r is not an int", raw)
+            return None
+
+    async def _current_version_async(self) -> int:
+        """Return the current cross-process invalidation counter, throttled.
+
+        Skips the Redis GET when the last poll is within
+        ``version_poll_interval`` seconds. On Redis absence / failure returns
+        the last-known version (never raises).
+        """
+        now = time.monotonic()
+        if (now - self._known_version_polled_at) < self._version_poll_interval:
+            return self._known_version
+        ctx = self._resolve_async_redis_ctx()
+        if ctx is None:
+            # Nothing to poll; mark polled so we don't spin trying to resolve.
+            self._known_version_polled_at = now
+            return self._known_version
+        try:
+            async with ctx as client:
+                raw = await client.get(self._invalidation_key)
+        except _REDIS_ERRORS:
+            _log.debug(
+                "ConfigRegistry: async version poll failed", exc_info=True
+            )
+            self._known_version_polled_at = now
+            return self._known_version
+        version = self._coerce_version(raw)
+        if version is not None:
+            self._known_version = version
+        self._known_version_polled_at = now
+        return self._known_version
+
+    def _current_version_sync(self) -> int:
+        """Sync twin of :meth:`_current_version_async`."""
+        now = time.monotonic()
+        if (now - self._known_version_polled_at) < self._version_poll_interval:
+            return self._known_version
+        client = self._resolve_sync_redis_client()
+        if client is None:
+            self._known_version_polled_at = now
+            return self._known_version
+        try:
+            raw = client.get(self._invalidation_key)
+        except _REDIS_ERRORS:
+            _log.debug(
+                "ConfigRegistry: sync version poll failed", exc_info=True
+            )
+            self._known_version_polled_at = now
+            return self._known_version
+        version = self._coerce_version(raw)
+        if version is not None:
+            self._known_version = version
+        self._known_version_polled_at = now
+        return self._known_version
+
+    async def _bump_version_async(self) -> int:
+        """Publish an invalidation signal via ``INCR`` on the shared key.
+
+        Called from :meth:`set` after a successful DB write. Redis absence /
+        failure is logged and swallowed -- the local ``set`` still succeeded
+        and peer processes will drop stale entries when their TTL elapses,
+        matching the pre-#56 behavior.
+        """
+        ctx = self._resolve_async_redis_ctx()
+        if ctx is None:
+            return self._known_version
+        try:
+            async with ctx as client:
+                new_version_raw = await client.incr(self._invalidation_key)
+        except _REDIS_ERRORS:
+            _log.debug(
+                "ConfigRegistry: async version bump failed", exc_info=True
+            )
+            return self._known_version
+        parsed = self._coerce_version(new_version_raw)
+        if parsed is not None:
+            self._known_version = parsed
+            self._known_version_polled_at = time.monotonic()
+        return self._known_version
 
     def _resolve_field(self, namespace: str, key: str) -> Any:
         """Resolve a key to a field descriptor for casting/validation.
@@ -222,7 +501,12 @@ class ConfigRegistry:
         """Resolve: env var > cache > DB value > schema default.
         Env var format: AILA_{NAMESPACE}_{KEY} uppercased.
         Returns the value cast to the schema field's type, or raw string if
-        no schema is registered for namespace."""
+        no schema is registered for namespace.
+
+        Cross-process invalidation (#56): the throttled Redis version poll
+        happens BEFORE the cache read; a fresher version drops the entry
+        (treated as a cache miss) forcing a DB refetch.
+        """
         env_name = f"AILA_{namespace.upper()}_{key.upper()}"
         env_val = os.environ.get(env_name)
 
@@ -231,12 +515,21 @@ class ConfigRegistry:
         if env_val is not None:
             return _cast_value(env_val, field_info)
 
+        # #56: fetch current cross-process version (throttled). A newer
+        # version than what our entry was tagged with means a peer worker
+        # set() the key since we cached -- treat the entry as expired.
+        current_version = await self._current_version_async()
+
         # Check cache (D-06: LRU with TTL)
         cache_key = (namespace, key)
         async with self._cache_lock:
             entry = self._cache.get(cache_key)
-            if entry is not None and time.monotonic() < entry.expires_at:
-                return entry.value
+            if entry is not None:
+                if entry.version_at_populate < current_version:
+                    # Cross-process invalidation: peer wrote after we cached.
+                    self._cache.pop(cache_key, None)
+                elif time.monotonic() < entry.expires_at:
+                    return entry.value
 
         # Cache miss or expired -- fetch from DB
         async with async_session_scope() as session:
@@ -253,6 +546,7 @@ class ConfigRegistry:
                     self._cache[cache_key] = _CacheEntry(
                         value=value,
                         expires_at=time.monotonic() + self._cache_ttl,
+                        version_at_populate=current_version,
                     )
                 return value
 
@@ -263,6 +557,7 @@ class ConfigRegistry:
                 self._cache[cache_key] = _CacheEntry(
                     value=default_val,
                     expires_at=time.monotonic() + self._cache_ttl,
+                    version_at_populate=current_version,
                 )
             return default_val
         return None
@@ -292,10 +587,19 @@ class ConfigRegistry:
         if env_val is not None:
             return _cast_value(env_val, field_info)
 
+        # #56: cross-process invalidation check. Sync path uses a lazy
+        # ``redis.Redis`` client from AILA_PLATFORM_REDIS_URL; failure or
+        # absence keeps the last-known version (TTL fallback).
+        current_version = self._current_version_sync()
+
         cache_key = (namespace, key)
         entry = self._cache.get(cache_key)
-        if entry is not None and time.monotonic() < entry.expires_at:
-            return entry.value
+        if entry is not None:
+            if entry.version_at_populate < current_version:
+                # Cross-process invalidation: peer wrote after we cached.
+                self._cache.pop(cache_key, None)
+            elif time.monotonic() < entry.expires_at:
+                return entry.value
 
         with session_scope() as session:
             row = session.exec(
@@ -309,6 +613,7 @@ class ConfigRegistry:
                 self._cache[cache_key] = _CacheEntry(
                     value=value,
                     expires_at=time.monotonic() + self._cache_ttl,
+                    version_at_populate=current_version,
                 )
                 return value
 
@@ -317,6 +622,7 @@ class ConfigRegistry:
             self._cache[cache_key] = _CacheEntry(
                 value=default_val,
                 expires_at=time.monotonic() + self._cache_ttl,
+                version_at_populate=current_version,
             )
             return default_val
         return None
@@ -431,6 +737,11 @@ class ConfigRegistry:
         async with self._cache_lock:
             self._cache.pop((namespace, key), None)
 
+        # #56: broadcast the invalidation to peer processes. Redis absence
+        # falls back to the pre-#56 behavior: local set() succeeded, peers
+        # will pick up the change when their per-key TTL (cache_ttl) elapses.
+        await self._bump_version_async()
+
         # Emit audit event AFTER successful write (D-12, D-14)
         if self._emitter is not None and self._is_security_relevant(key):
             from ..platform.events.event import PlatformEvent
@@ -472,8 +783,14 @@ class ConfigRegistry:
         return result
 
     async def warm_cache(self) -> None:
-        """Pre-populate cache from all registered config values. Call at startup per D-06."""
+        """Pre-populate cache from all registered config values. Call at startup per D-06.
+
+        Tags every entry with the current cross-process invalidation version
+        (#56) so a warmed cache is subject to the same peer-write drop as
+        entries populated by :meth:`get`.
+        """
         all_values = await self.all_entries_by_namespace()
+        current_version = await self._current_version_async()
         expires_at = time.monotonic() + self._cache_ttl
         async with self._cache_lock:
             for namespace_name, entries in all_values.items():
@@ -481,6 +798,7 @@ class ConfigRegistry:
                     self._cache[(namespace_name, key_name)] = _CacheEntry(
                         value=value,
                         expires_at=expires_at,
+                        version_at_populate=current_version,
                     )
 
     async def all_entries(self) -> list[dict[str, Any]]:
