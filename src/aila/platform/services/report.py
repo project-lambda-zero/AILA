@@ -7,7 +7,6 @@ When session is None, creates a short-lived session via async_session_scope (SDA
 
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
@@ -314,14 +313,13 @@ def _title_from_run(run: Any) -> str:
 def _extract_target_from_run(run: Any) -> list[str]:
     """Derive the scanned target hosts from a run's route_json blob.
 
-    Returns an empty list when the route_json is malformed or does not
-    declare a target -- callers treat this as "fleet-wide".
+    #45: ``route_json`` is a JSONB column that returns a ``dict`` uniformly
+    through SQLAlchemy on both drivers (asyncpg async, psycopg sync). The
+    defensive ``isinstance(..., dict)`` guard handles legacy in-memory
+    fixtures that still assign a raw string or ``None`` -- callers treat a
+    missing/malformed payload as "fleet-wide" and return an empty list.
     """
-    raw = getattr(run, "route_json", None) or "{}"
-    try:
-        decoded = json.loads(raw)
-    except (ValueError, TypeError):
-        return []
+    decoded = getattr(run, "route_json", None)
     if not isinstance(decoded, dict):
         return []
     target = decoded.get("target")
@@ -336,12 +334,12 @@ def _extract_target_from_run(run: Any) -> list[str]:
 
 
 def _decode_metadata(run: Any) -> dict[str, Any]:
-    """Return a dict of metadata for the detail response."""
-    raw = getattr(run, "route_json", None) or "{}"
-    try:
-        decoded = json.loads(raw)
-    except (ValueError, TypeError):
-        decoded = {}
+    """Return a dict of metadata for the detail response.
+
+    #45: ``route_json`` is JSONB -- SQLAlchemy hands us the parsed ``dict``
+    uniformly. Non-dict values (legacy fixtures) collapse to an empty route.
+    """
+    decoded = getattr(run, "route_json", None)
     meta: dict[str, Any] = {
         "action_id": getattr(run, "action_id", ""),
         "module_id": getattr(run, "module_id", ""),

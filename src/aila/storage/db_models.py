@@ -143,9 +143,23 @@ class WorkflowRunRecord(TeamScopedMixin, SQLModel, table=True):
     action_id: str = Field(default="", sa_column=Column("intent", Text))
     module_id: str = Field(default="", sa_column=Column("module_id", Text, server_default="", index=True))
     status: str = Field(default="running")
-    route_json: str = Field(default="{}", sa_column=Column(Text))
-    short_memory_json: str = Field(default="{}", sa_column=Column(Text))
-    summary_json: str = Field(default="{}", sa_column=Column(Text))
+    # #45: JSONB (migration 106). SQLAlchemy owns dict<->jsonb serialization
+    # uniformly across the asyncpg (async) and psycopg (sync) drivers, so
+    # callers read and write plain ``dict`` on both engines. Legacy in-Text
+    # rows are converted by migration 106 (malformed -> ``{}`` via the
+    # ``aila_is_valid_json`` helper installed by migration 104).
+    route_json: dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column("route_json", JSONB, nullable=False, server_default="{}"),
+    )
+    short_memory_json: dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column("short_memory_json", JSONB, nullable=False, server_default="{}"),
+    )
+    summary_json: dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column("summary_json", JSONB, nullable=False, server_default="{}"),
+    )
     report_path: str | None = None
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
     completed_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))

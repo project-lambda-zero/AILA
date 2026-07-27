@@ -37,8 +37,8 @@ def _run(
         query_text="scan fleet",
         action_id="",
         status=status,
-        route_json="{}",
-        summary_json="{}",
+        route_json={},  # #45: JSONB
+        summary_json={},  # #45: JSONB
         completed_at=completed_at,
         team_id=team_id,
     )

@@ -97,7 +97,8 @@ async def test_finalize_run_with_none_route_does_not_raise() -> None:
     assert session.commits == 1
     assert run_record.status == "failed"
     assert run_record.module_id == ""  # None-route -> empty string, not crash
-    assert run_record.route_json == "{}"
+    # #45: route_json is JSONB and orchestrator assigns dicts directly.
+    assert run_record.route_json == {}
 
 
 @pytest.mark.asyncio

@@ -282,7 +282,8 @@ async def seeded_run(test_db):
         action_id="vulnerability.analyze",
         module_id="vulnerability",
         status="completed",
-        route_json='{"target": "web01"}',
+        # #45: route_json is JSONB; SQLAlchemy owns dict<->jsonb serialization.
+        route_json={"target": "web01"},
         created_at=utc_now(),
         completed_at=utc_now(),
     )

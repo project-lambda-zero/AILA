@@ -48,17 +48,33 @@ def _make_run(
     run_id: str = "run-1",
     status: str = "completed",
     action_id: str = "",
-    route_json: str = "{}",
-    summary_json: str = "{}",
+    route_json: dict[str, Any] | str | None = None,
+    summary_json: dict[str, Any] | str | None = None,
     completed_at: datetime | None = None,
 ) -> WorkflowRunRecord:
+    # #45: the columns are JSONB; SQLAlchemy would double-encode a str payload
+    # against the JSONB bind processor, so we normalise str -> dict here to
+    # keep the terse ``json.dumps({...})`` call sites in the existing tests
+    # valid without touching every callsite. A bad string collapses to ``{}``
+    # (mirroring the historical Text-column tolerance).
+    def _as_dict(value: dict[str, Any] | str | None) -> dict[str, Any]:
+        if value is None:
+            return {}
+        if isinstance(value, dict):
+            return value
+        try:
+            loaded = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return loaded if isinstance(loaded, dict) else {}
+
     return WorkflowRunRecord(
         id=run_id,
         query_text="test query",
         action_id=action_id,
         status=status,
-        route_json=route_json,
-        summary_json=summary_json,
+        route_json=_as_dict(route_json),
+        summary_json=_as_dict(summary_json),
         completed_at=completed_at or datetime.now(UTC),
     )
 
@@ -153,6 +169,13 @@ def _mock_store(
 
 
 class TestParseJsonObject:
+    # #45: JSONB path -- SQLAlchemy hands the caller a dict directly, and the
+    # helper must round-trip that unchanged.
+    def test_dict_payload_returned_verbatim(self):
+        assert _parse_json_object({"key": "value"}) == {"key": "value"}
+
+    # Legacy string tolerance -- in-memory fixtures still pass json.dumps(...)
+    # rather than a dict; the shim keeps them working.
     def test_valid_json_dict(self):
         assert _parse_json_object('{"key": "value"}') == {"key": "value"}
 

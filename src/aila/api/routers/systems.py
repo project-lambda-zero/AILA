@@ -7,6 +7,7 @@ List endpoint returns enriched items with connectivity, tags, scan status, and t
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import time as _time
@@ -14,6 +15,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy import Text, cast
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import func, select
 
@@ -163,10 +165,14 @@ async def _build_scan_map(session: object, system_names: list[str]) -> dict[str,
         _log.debug("scan_map query failed", exc_info=True)
         return {}
 
-    # Group by system name match (string-contains, same trade-off as get_system)
+    # Group by system name match (string-contains, same trade-off as
+    # get_system). #45: ``route_json`` is now JSONB and arrives as a dict via
+    # SQLAlchemy on both drivers; serialize it back to text so the substring
+    # semantics are byte-identical to the pre-JSONB ``Text``-column behavior.
     result: dict[str, tuple[object, str | None]] = {}
     for run in all_runs:
-        route = run.route_json or ""
+        payload = run.route_json if isinstance(run.route_json, dict) else {}
+        route = json.dumps(payload) if payload else ""
         for name in system_names:
             if name in route:
                 existing = result.get(name)
@@ -500,8 +506,11 @@ async def get_system(
             if record is None:
                 return None, 0, {}
 
+            # #45: ``route_json`` is JSONB. Cast to Text server-side so the
+            # substring-contains predicate keeps byte-identical semantics to
+            # the pre-JSONB Text column (D-12 pattern).
             stmt = select(WorkflowRunRecord).where(
-                WorkflowRunRecord.route_json.contains(record.name)  # type: ignore[attr-defined]  # SQLModel column expression
+                cast(WorkflowRunRecord.route_json, Text).contains(record.name)  # type: ignore[attr-defined]  # SQLModel column expression
             )
             scan_count = len((await session.exec(stmt)).all())
 
@@ -621,7 +630,12 @@ async def get_system_scans(
                 return None, []
             stmt = select(WorkflowRunRecord).order_by(WorkflowRunRecord.created_at.desc())  # type: ignore[attr-defined]  # SQLModel column expression
             all_runs = list((await session.exec(stmt)).all())
-            matching = [r for r in all_runs if sys_record.name in (r.route_json or "")]
+            # #45: JSONB round-trip through json.dumps preserves the pre-JSONB
+            # substring-match semantics (route_json arrives as a dict).
+            matching = [
+                r for r in all_runs
+                if sys_record.name in json.dumps(r.route_json if isinstance(r.route_json, dict) else {})
+            ]
             return sys_record, matching
 
     sys_record, runs = await _query()

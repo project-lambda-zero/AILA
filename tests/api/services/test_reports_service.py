@@ -41,7 +41,9 @@ def _make_run(
     status: str = "completed",
     target: str | None = "web01",
 ) -> WorkflowRunRecord:
-    route = f'{{"target": "{target}"}}' if target else "{}"
+    # #45: route_json is JSONB and SQLAlchemy owns dict<->jsonb serialization,
+    # so assemble the dict directly rather than the pre-JSONB string literal.
+    route: dict[str, object] = {"target": target} if target else {}
     return WorkflowRunRecord(
         id=run_id,
         query_text=query_text,

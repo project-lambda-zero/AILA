@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -390,29 +389,28 @@ async def _finalize_run(
         # None guards precede attribute access on every branch (#54 finding).
         selected_module: str | None = route.selected_module if route is not None else None
         route_action_id: str = route.action_id if route is not None else ""
-        route_json: str = route.model_dump_json() if route is not None else "{}"
+        # #45: three columns are JSONB (migration 106). SQLAlchemy owns
+        # dict<->jsonb serialization uniformly across asyncpg and psycopg,
+        # so we assign dicts directly rather than building JSON strings.
+        route_payload: dict[str, Any] = route.model_dump(mode="json") if route is not None else {}
 
         run_record.status = status
-        run_record.route_json = route_json
+        run_record.route_json = route_payload
         response_payload = dict(response.module_payload) if response else {}
         artifacts = dict(run_state.artifacts)
         if response:
             artifacts.update(response.artifacts)
-        run_record.short_memory_json = json.dumps(
-            {
-                "run_state": run_state.model_dump(mode="json"),
-                "error": error,
-            }
-        )
-        run_record.summary_json = json.dumps(
-            {
-                "action_id": (response.action_id if response else route_action_id),
-                "module_id": selected_module,
-                "module_payload": response_payload,
-                "artifacts": artifacts,
-                "error": error,
-            }
-        )
+        run_record.short_memory_json = {
+            "run_state": run_state.model_dump(mode="json"),
+            "error": error,
+        }
+        run_record.summary_json = {
+            "action_id": (response.action_id if response else route_action_id),
+            "module_id": selected_module,
+            "module_payload": response_payload,
+            "artifacts": artifacts,
+            "error": error,
+        }
         # None guard precedes attribute access; ``or ""`` coerces the empty
         # (or None) selected_module to a stable empty string so downstream
         # readers get a consistent value on unroutable / failed runs.

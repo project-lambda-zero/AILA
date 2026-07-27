@@ -515,21 +515,23 @@ def _find_target_report(target_reports: list[TargetReportReference], target: str
 
 
 def _module_id(run: WorkflowRunRecord) -> str | None:
+    # #45: route_json / summary_json are JSONB; SQLAlchemy hands us dicts on
+    # both the async (asyncpg) and sync (psycopg) engines uniformly. The
+    # ``_parse_json_object`` shim below still coerces legacy raw-string
+    # fixtures so unit tests that pass ``json.dumps(...)`` keep working.
     route_payload = _parse_json_object(run.route_json)
-    if isinstance(route_payload, dict):
-        selected_module = route_payload.get("selected_module")
-        if isinstance(selected_module, str):
-            normalized_module_id = selected_module.strip()
-            if normalized_module_id:
-                return normalized_module_id
+    selected_module = route_payload.get("selected_module")
+    if isinstance(selected_module, str):
+        normalized_module_id = selected_module.strip()
+        if normalized_module_id:
+            return normalized_module_id
 
     summary_payload = _parse_json_object(run.summary_json)
-    if isinstance(summary_payload, dict):
-        summary_module_id = summary_payload.get("module_id")
-        if isinstance(summary_module_id, str):
-            normalized_module_id = summary_module_id.strip()
-            if normalized_module_id:
-                return normalized_module_id
+    summary_module_id = summary_payload.get("module_id")
+    if isinstance(summary_module_id, str):
+        normalized_module_id = summary_module_id.strip()
+        if normalized_module_id:
+            return normalized_module_id
 
     action_id = str(run.action_id or "").strip()
     if "." in action_id:
@@ -539,13 +541,23 @@ def _module_id(run: WorkflowRunRecord) -> str | None:
     return None
 
 
-def _parse_json_object(payload: str | None) -> dict[str, object]:
-    try:
-        loaded = json.loads(payload or "{}")
-    except json.JSONDecodeError:
-        return {}
-    if isinstance(loaded, dict):
-        return loaded
+def _parse_json_object(payload: object) -> dict[str, object]:
+    """Coerce a JSONB column value (or a legacy JSON string) to a plain dict.
+
+    #45 (this file's callers): ``WorkflowRunRecord.route_json`` and
+    ``.summary_json`` are JSONB and arrive as ``dict`` via SQLAlchemy.  A
+    string-typed ``payload`` is still tolerated so in-memory test fixtures
+    that assign ``json.dumps({...})`` don't need a lockstep rewrite.
+    """
+    if isinstance(payload, dict):
+        return payload
+    if isinstance(payload, str):
+        try:
+            loaded = json.loads(payload or "{}")
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(loaded, dict):
+            return loaded
     return {}
 
 
