@@ -5305,6 +5305,29 @@ def create_vr_router() -> APIRouter:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Investigation {investigation_id} not found.",
             )
+        # #57: cross-check that the outcome actually belongs to this
+        # investigation. Without this the URL's investigation_id would
+        # only prove the caller owns some investigation while the
+        # outcome_id could point at another team's outcome, letting a
+        # caller cast a vote on a cross-team draft. Mirror the shape
+        # used by promote_outcome_to_finding above.
+        async with UnitOfWork() as uow:
+            oc = (await uow.session.exec(
+                select(VRInvestigationOutcomeRecord)
+                .where(VRInvestigationOutcomeRecord.id == outcome_id)
+                .where(
+                    VRInvestigationOutcomeRecord.investigation_id
+                    == investigation_id,
+                ),
+            )).first()
+        if oc is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"Outcome {outcome_id} not found on investigation "
+                    f"{investigation_id}."
+                ),
+            )
         from .services.outcome_review import (
             OUTCOME_STATE_APPROVED,
             evaluate_quorum,
@@ -5388,6 +5411,26 @@ def create_vr_router() -> APIRouter:
         from .db_models import VRInvestigationOutcomeReviewRecord
 
         async with UnitOfWork() as uow:
+            # #57: cross-check the outcome-to-investigation link before
+            # returning reviews. Without this a caller who owns any
+            # investigation could probe reviews on any team's outcome
+            # by supplying a foreign outcome_id in the URL.
+            oc = (await uow.session.exec(
+                select(VRInvestigationOutcomeRecord)
+                .where(VRInvestigationOutcomeRecord.id == outcome_id)
+                .where(
+                    VRInvestigationOutcomeRecord.investigation_id
+                    == investigation_id,
+                ),
+            )).first()
+            if oc is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"Outcome {outcome_id} not found on investigation "
+                        f"{investigation_id}."
+                    ),
+                )
             rows = (await uow.session.exec(
                 select(VRInvestigationOutcomeReviewRecord)
                 .where(
