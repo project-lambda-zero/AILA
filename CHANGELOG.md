@@ -281,6 +281,18 @@ operator action.
 
 ### Fixed
 
+- Specialist investigation branches (spawned on demand for a capability
+  such as variant hunting or cryptography) no longer emit a per-turn
+  routing error. The branch `persona_voice` contract is an open string,
+  but the persona-to-task-type router still cast every voice through the
+  fixed six-persona enum and logged a failure for any specialist voice.
+  The router now coerces unknown voices to the default routing without
+  raising, so specialist branches route cleanly and the log is quiet.
+- An empty-choices response from the LLM gateway now raises a clear,
+  retryable provider error instead of an opaque list-index error. The
+  chat and tool-loop paths indexed the first completion choice without
+  checking that the provider returned any, so a gateway that dropped a
+  turn surfaced as an unhelpful IndexError.
 - Synthesis now runs on multi-phase investigations, so the consolidated
   verdict addresses the investigation's actual question instead of one
   narrow phase's scoped answer. The dispatch hub finalises an

@@ -63,21 +63,38 @@ PERSONA_ROLE_MAP: dict[PersonaVoice, PersonaRole] = {
 }
 
 
+def _as_known_voice(persona: PersonaVoice | str) -> PersonaVoice | None:
+    """Coerce a persona to a known core :class:`PersonaVoice`, or ``None``.
+
+    The branch ``persona_voice`` contract is an open string: specialist
+    agents carry their capability (``variant``, ``crypto``, ...) as the
+    voice, and the hub routes them by that capability. Such voices are not
+    in the fixed 6-persona table, so an unrecognized voice is an expected
+    fallback to the default routing -- not an error. Returns the enum
+    member for a core voice, else ``None``.
+    """
+    if isinstance(persona, PersonaVoice):
+        return persona
+    try:
+        return PersonaVoice(persona)
+    except ValueError:
+        _log.debug("open-set persona_voice %r -- using default routing", persona)
+        return None
+
+
 def persona_to_role(persona: PersonaVoice | str | None) -> PersonaRole | None:
     """Map a :class:`PersonaVoice` (or its string form) to a :class:`PersonaRole`.
 
     Returns ``None`` for the synthetic voices (``unspecified``,
-    ``merge_result``, ``fork_unnamed``), unknown strings, or ``None``.
+    ``merge_result``, ``fork_unnamed``), open-set specialist voices,
+    unknown strings, or ``None``.
     """
     if persona is None:
         return None
-    if isinstance(persona, str):
-        try:
-            persona = PersonaVoice(persona)
-        except ValueError as exc:
-            _log.warning("FAILED reason=%s", exc)
-            return None
-    return PERSONA_ROLE_MAP.get(persona)
+    member = _as_known_voice(persona)
+    if member is None:
+        return None
+    return PERSONA_ROLE_MAP.get(member)
 
 
 class PersonaRouter:
@@ -106,15 +123,12 @@ class PersonaRouter:
         default = cls.default_task_type
         if persona is None:
             return default
-        if isinstance(persona, str):
-            try:
-                persona = PersonaVoice(persona)
-            except ValueError as exc:
-                _log.warning("FAILED reason=%s", exc)
-                return default
+        member = _as_known_voice(persona)
+        if member is None:
+            return default
         if cls.persona_task_type:
-            return cls.persona_task_type.get(persona, default)
-        role = PERSONA_ROLE_MAP.get(persona)
+            return cls.persona_task_type.get(member, default)
+        role = PERSONA_ROLE_MAP.get(member)
         if role is None:
             return default
         return cls.role_task_type.get(role, default)

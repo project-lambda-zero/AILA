@@ -44,6 +44,12 @@ class TestResolveTaskType:
     def test_unknown_string_falls_back_to_default(self) -> None:
         assert resolve_task_type("nobody") == "vulnerability_research.audit"
 
+    def test_open_set_specialist_voice_falls_back(self) -> None:
+        # Specialist branches carry their capability as the voice (e.g. 'variant');
+        # the router treats an open-set voice as an expected fallback, never raises.
+        assert resolve_task_type("variant") == "vulnerability_research.audit"
+        assert persona_to_role("variant") is None
+
     def test_researcher_personas_route_to_researcher_task_type(self) -> None:
         assert (
             resolve_task_type(PersonaVoice.HALVAR)

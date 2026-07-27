@@ -22,6 +22,7 @@ from aila.platform.llm.client import (
     _AsyncOpenAIPool,
     _extract_usage,
     _merge_usage,
+    _require_choice,
 )
 from aila.platform.llm.config import LLMConfigProvider, LLMRouting
 from aila.platform.llm.errors import LLMError
@@ -33,6 +34,24 @@ from aila.platform.llm.errors import LLMError
 class ScoringOutput(BaseModel):
     score: float
     reasoning: str
+
+
+class TestRequireChoice:
+    """_require_choice guards empty provider responses (no opaque IndexError)."""
+
+    def test_empty_choices_raises_retryable(self) -> None:
+        completion = MagicMock()
+        completion.choices = []
+        with pytest.raises(LLMError) as exc_info:
+            _require_choice(completion, "hadi")
+        assert exc_info.value.retryable is True
+        assert "no choices" in str(exc_info.value).lower()
+
+    def test_non_empty_returns_first_choice(self) -> None:
+        sentinel = object()
+        completion = MagicMock()
+        completion.choices = [sentinel, object()]
+        assert _require_choice(completion, "hadi") is sentinel
 
 
 # ---------------------------------------------------------------------------

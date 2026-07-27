@@ -1263,7 +1263,7 @@ class AilaLLMClient:
                 completion.usage.completion_tokens or 0
             )
 
-        choice = completion.choices[0]
+        choice = _require_choice(completion, routing.model_id)
 
         # Tool calling loop (per D-05-new)
         if tools and tool_executor and choice.finish_reason == "tool_calls":
@@ -1443,7 +1443,7 @@ class AilaLLMClient:
                     completion.usage.completion_tokens or 0
                 )
 
-            choice = completion.choices[0]
+            choice = _require_choice(completion, routing.model_id)
             step_usage = _extract_usage(completion)
             accumulated_usage = _merge_usage(accumulated_usage, step_usage)
 
@@ -1641,6 +1641,23 @@ def _merge_usage(a: dict[str, int], b: dict[str, int]) -> dict[str, int]:
         "completion_tokens": a.get("completion_tokens", 0) + b.get("completion_tokens", 0),
         "total_tokens": a.get("total_tokens", 0) + b.get("total_tokens", 0),
     }
+
+
+def _require_choice(completion: Any, model_id: str) -> Any:
+    """Return the first completion choice, or raise a clear retryable error.
+
+    Multi-model gateways occasionally return a completion with an empty
+    ``choices`` list (an upstream model dropped the turn). Indexing
+    ``choices[0]`` blind turns that into an opaque ``IndexError``; this
+    names the real condition and the model so the retry loop and logs are
+    actionable.
+    """
+    if not completion.choices:
+        raise LLMError(
+            f"LLM provider returned no choices (model={model_id})",
+            retryable=True,
+        )
+    return completion.choices[0]
 
 
 def _enrich_response(response: LLMResponse, ctx: dict[str, Any]) -> LLMResponse:
