@@ -317,6 +317,11 @@ operator action.
 
 ### Fixed
 
+- The LLM retry loop now retries a transient upstream failure (503 and
+  other 5xx) raised by a provider SDK that carries only a status_code
+  attribute, instead of propagating it raw on the first attempt. A
+  non-retryable 4xx still fails fast and cancellation still propagates
+  untouched (issue #44).
 - Frontend data-layer security hardening: a Content-Security-Policy and
   companion security headers are sent on every response; a 401 logs the user
   out while a 403 no longer force-logs-out; server-sent-event reconnect uses
