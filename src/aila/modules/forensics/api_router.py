@@ -6,6 +6,17 @@ and rate limiting per MODULE_STANDARD and MODULE_AI_CONTEXT rules.
 
 All list/get endpoints enforce team_id scoping via ``_team_filter`` to
 prevent cross-tenant data leaks (aligned with cost/automation routers).
+
+Project-scoped child tables (investigations, agent steps, write-ups,
+answer candidates, analyst directives, finding suppressions, solid
+evidence, artifacts, leads, project evidence) do NOT carry a ``team_id``
+column. Their team scope is derived transitively via the parent row in
+``forensics_projects``. The single source of truth for that join contract
+lives in ``aila.modules.forensics.db_models.team_scope``
+(:data:`PROJECT_SCOPED_CHILDREN` +
+:func:`require_project_ownership` +
+:func:`load_project_for_team`); the closure ``_require_project_ownership``
+below is a thin adapter over the contract's sync helper.
 """
 from __future__ import annotations
 
@@ -814,13 +825,16 @@ def create_forensics_router() -> APIRouter:
         return stmt
 
     def _require_project_ownership(project: Any, auth: AuthContext) -> None:
-        """Raise 403 if the project belongs to a different team."""
-        record_team = getattr(project, "team_id", None)
-        if auth.team_id is not None and record_team != auth.team_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Project is not owned by your team.",
-            )
+        """Raise 403 if the project belongs to a different team.
+
+        Thin adapter over
+        :func:`aila.modules.forensics.db_models.require_project_ownership`
+        (the module-level formal join contract). Kept as a closure so
+        endpoint bodies remain grep-friendly.
+        """
+        from aila.modules.forensics.db_models import require_project_ownership
+
+        require_project_ownership(project, auth.team_id)
 
     @router.post(
         "/projects",

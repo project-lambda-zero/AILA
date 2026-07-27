@@ -12,8 +12,20 @@ from .investigation import AgentStepRecord, InvestigationRunRecord, WriteUpRecor
 from .project import ForensicsProjectRecord, ProjectEvidenceRecord
 from .question import AnswerCandidateRecord
 from .solid_evidence import SolidEvidenceRecord
+from .team_scope import (
+    PROJECT_ID_COLUMN,
+    PROJECT_SCOPED_CHILDREN,
+    TEAM_ID_COLUMN,
+    TEAM_SCOPED_PARENT,
+    load_project_for_team,
+    require_project_ownership,
+)
 
 __all__ = [
+    "PROJECT_ID_COLUMN",
+    "PROJECT_SCOPED_CHILDREN",
+    "TEAM_ID_COLUMN",
+    "TEAM_SCOPED_PARENT",
     "AgentStepRecord",
     "AnalystDirectiveRecord",
     "AnswerCandidateRecord",
@@ -25,4 +37,6 @@ __all__ = [
     "ProjectEvidenceRecord",
     "SolidEvidenceRecord",
     "WriteUpRecord",
+    "load_project_for_team",
+    "require_project_ownership",
 ]
