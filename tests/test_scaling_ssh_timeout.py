@@ -6,7 +6,7 @@ Contract update
 dispatches the blocking paramiko work through ``asyncio.to_thread``. Callers
 that used to invoke it synchronously must ``await`` it. The channel-timeout
 plumbing tested below (``channel.settimeout``, re-raise of ``builtins.TimeoutError``
-as ``aila.platform.exceptions.TimeoutError``) is unchanged in shape, but the
+as ``aila.platform.exceptions.AILATimeoutError``) is unchanged in shape, but the
 platform re-raise message was rewritten to "... idle >{timeout}s with no output ..."
 instead of the old "timed out" wording.
 """
@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from aila.platform.exceptions import AILATimeoutError as PlatformTimeoutError
 from aila.platform.services.ssh import SSHService
 
 _INTEGRATION = {
@@ -127,8 +128,6 @@ async def test_socket_timeout_reraises_as_platform_timeout_error():
 
     mock_client = MagicMock()
     mock_client.exec_command.return_value = (None, mock_stdout, mock_stderr)
-
-    from aila.platform.exceptions import TimeoutError as PlatformTimeoutError
 
     with patch("paramiko.SSHClient", return_value=mock_client):
         with pytest.raises(PlatformTimeoutError, match=r"idle >5\.0s"):

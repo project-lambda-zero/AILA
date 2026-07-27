@@ -9,7 +9,7 @@ from typing import Any
 import sqlalchemy.exc
 
 from ...config import get_settings, init_directories
-from ...storage.database import async_session_scope, init_db
+from ...storage.database import async_session_scope
 from ...storage.db_models import WorkflowRunRecord
 from ...storage.memory import PermanentMemoryStore, append_run_event
 from ...storage.report_store import ReportArtifactStore
@@ -31,17 +31,35 @@ _log = logging.getLogger(__name__)
 
 
 _WORKER_PLATFORM: AILAPlatform | None = None
-_WORKER_PLATFORM_LOCK: asyncio.Lock = asyncio.Lock()
+# #54 fix: create the asyncio.Lock lazily inside the running loop. Binding
+# ``asyncio.Lock()`` at import time issued a DeprecationWarning on 3.10+ and
+# risked a loop-mismatch RuntimeError under uvloop when the worker and web
+# event loops differed.
+_WORKER_PLATFORM_LOCK: asyncio.Lock | None = None
+
+
+def _get_worker_platform_lock() -> asyncio.Lock:
+    """Return the module-level init lock, creating it lazily on first use.
+
+    Called from the running event loop so ``asyncio.Lock()`` binds to a live
+    loop. Safe against the ``None -> Lock()`` race in async code because the
+    creation is a synchronous assignment between two ``is None`` reads and
+    the event loop only advances at ``await`` points.
+    """
+    global _WORKER_PLATFORM_LOCK
+    if _WORKER_PLATFORM_LOCK is None:
+        _WORKER_PLATFORM_LOCK = asyncio.Lock()
+    return _WORKER_PLATFORM_LOCK
 
 
 async def get_worker_platform(
     app_settings: ApplicationSettings | None = None,
- ) -> AILAPlatform:
+) -> AILAPlatform:
     """Return the process-local worker platform, initializing it on first use."""
     global _WORKER_PLATFORM
     if _WORKER_PLATFORM is not None:
         return _WORKER_PLATFORM
-    async with _WORKER_PLATFORM_LOCK:
+    async with _get_worker_platform_lock():
         if _WORKER_PLATFORM is None:
             platform = AILAPlatform(settings=app_settings or get_settings())
             await platform._ensure_initialized()
@@ -80,30 +98,52 @@ class AILAPlatform:
         self._initialized = runtime is not None
         self.router: ModuleRouter | None = None
         self.progress_callback = progress_callback
+        # #54 fix: per-instance init lock guards concurrent handle() calls on
+        # a fresh platform. Created lazily inside the running loop (see
+        # ``_ensure_initialized``) so the Lock binds to the correct loop and
+        # never dangles at import time.
+        self._init_lock: asyncio.Lock | None = None
 
     async def _ensure_initialized(self) -> None:
-        """Lazily initialize the platform runtime and router on first use."""
+        """Lazily initialize the platform runtime and router on first use.
+
+        Single-flight behind ``self._init_lock`` so concurrent ``handle()``
+        callers on a fresh :class:`AILAPlatform` build one runtime, not one
+        per caller (#54). ``build_platform_runtime`` already calls
+        ``init_db`` internally with the correct ``ApplicationSettings`` and
+        ``schema_registry``; the orchestrator no longer duplicates that
+        call (which previously passed ``PlatformSettings`` where
+        ``ApplicationSettings`` was expected and, thanks to the
+        ``_INITIALIZED_URLS`` fast-path, would race the builder's
+        schema-registry init to first-write on cold start).
+        """
         if self._initialized:
             return
-        await init_db(self.settings)
-        self._runtime = await build_platform_runtime(
-            app_settings=self.app_settings,
-            platform_settings=self.settings,
-        )
-        # CFG-02: Re-resolve settings with operator-configured values now available
-        if self._runtime.config_registry is not None:
-            resolved_config = await self._runtime.config_registry.all_entries_by_namespace()
-            self.settings = build_platform_settings(
-                self.app_settings, resolved_config=resolved_config
+        if self._init_lock is None:
+            self._init_lock = asyncio.Lock()
+        async with self._init_lock:
+            # Second check inside the lock: a concurrent caller may have
+            # completed initialization while we were waiting for the lock.
+            if self._initialized:
+                return
+            self._runtime = await build_platform_runtime(
+                app_settings=self.app_settings,
+                platform_settings=self.settings,
             )
-        self.router = ModuleRouter(
-            module_registry=self._runtime.module_registry,
-            model=self._runtime.runtime_model,
-            minimum_confidence=self.settings.routing_min_confidence,
-            memory_store=self.memory_store,
-            decision_cache_ttl_hours=self.settings.routing_decision_cache_ttl_hours,
-        )
-        self._initialized = True
+            # CFG-02: Re-resolve settings with operator-configured values now available
+            if self._runtime.config_registry is not None:
+                resolved_config = await self._runtime.config_registry.all_entries_by_namespace()
+                self.settings = build_platform_settings(
+                    self.app_settings, resolved_config=resolved_config
+                )
+            self.router = ModuleRouter(
+                module_registry=self._runtime.module_registry,
+                model=self._runtime.runtime_model,
+                minimum_confidence=self.settings.routing_min_confidence,
+                memory_store=self.memory_store,
+                decision_cache_ttl_hours=self.settings.routing_decision_cache_ttl_hours,
+            )
+            self._initialized = True
 
     @property
     def runtime(self) -> PlatformRuntime:
@@ -143,24 +183,32 @@ class AILAPlatform:
         # request team; god-tier and CLI leave it None (#36).
         run_record.team_id = team_id
         run_state = RunState(run_id=run_record.id, query=query)
+        progress_cb = progress_callback or self.progress_callback
 
-        async with async_session_scope(self.settings) as session:
-            emitter = build_emitter(
-                session=session,
-                run_state=run_state,
-                progress_callback=progress_callback or self.progress_callback,
-            )
-            execution_context = ModuleExecutionContext(
-                memory_store=self.memory_store,
-                report_artifact_store=self.report_artifact_store,
-                progress_callback=progress_callback or self.progress_callback,
-                emitter=emitter,
-            )
-            try:
-                route = await self.router.route(session, query)
+        # #63 fix: split the previous single ``async with async_session_scope``
+        # spanning routing + module dispatch + finalize into three short
+        # sessions. A pooled DB connection is no longer pinned across the
+        # multi-second module-dispatch phase or across ``_finalize_run``; each
+        # phase acquires a connection, commits, and releases it back to the
+        # pool before the next phase starts. Routing still holds its own
+        # session across the LLM round-trip inside ``router.route`` -- that
+        # is local to the routing package and out of the orchestrator's
+        # file domain -- but the connection is released the moment routing
+        # returns instead of lingering for the whole request.
+        try:
+            # Phase 1: routing. The DecisionCache write inside
+            # ``router.route`` uses ``commit=False``; commit here so the
+            # cache row survives the scope exit.
+            async with async_session_scope(self.settings) as routing_session:
+                routing_emitter = build_emitter(
+                    session=routing_session,
+                    run_state=run_state,
+                    progress_callback=progress_cb,
+                )
+                route = await self.router.route(routing_session, query)
                 run_state.route = route
                 run_record.action_id = route.action_id
-                emitter.emit(PlatformEvent(
+                routing_emitter.emit(PlatformEvent(
                     stage="routing",
                     action="route",
                     key="routed",
@@ -171,9 +219,28 @@ class AILAPlatform:
                     ),
                     run_id=run_record.id,
                 ))
+                await routing_session.commit()
+
+            # Phase 2: module dispatch on a fresh, short-lived session so
+            # the routing connection is already released while modules do
+            # their (potentially slow) work. Modules manage their own
+            # commits inside the session -- see hello_world/vulnerability/
+            # forensics module.py for the canonical shape.
+            async with async_session_scope(self.settings) as dispatch_session:
+                dispatch_emitter = build_emitter(
+                    session=dispatch_session,
+                    run_state=run_state,
+                    progress_callback=progress_cb,
+                )
+                execution_context = ModuleExecutionContext(
+                    memory_store=self.memory_store,
+                    report_artifact_store=self.report_artifact_store,
+                    progress_callback=progress_cb,
+                    emitter=dispatch_emitter,
+                )
                 response = await _dispatch_module_request(
                     runtime=self.runtime,
-                    session=session,
+                    session=dispatch_session,
                     action_id=route.action_id,
                     run_id=run_record.id,
                     run_state=run_state,
@@ -181,24 +248,50 @@ class AILAPlatform:
                     module_payload=request_payload,
                     module_options=request_options,
                 )
-                await _finalize_run(session, run_record, run_state, "completed", response)
-                if not debug:
-                    response = response.model_copy(update={"state_history": []})
-                return response
-            except Exception as exc:
-                error_payload = {
-                    "type": type(exc).__name__,
-                    "message": str(exc),
-                }
-                emitter.emit(PlatformEvent(
-                    stage="routing",
-                    action="fail",
-                    key="failed",
-                    message=f"{error_payload['type']}: {error_payload['message']}",
-                    run_id=run_record.id,
-                ))
-                await _finalize_run(session, run_record, run_state, "failed", None, error=error_payload)
-                raise
+
+            # Phase 3: persist the run record. Fresh session so a slow
+            # finalize write cannot pin a connection during dispatch.
+            async with async_session_scope(self.settings) as finalize_session:
+                await _finalize_run(finalize_session, run_record, run_state, "completed", response)
+
+            if not debug:
+                response = response.model_copy(update={"state_history": []})
+            return response
+        except Exception as exc:
+            error_payload = {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            }
+            # Persist the failure record on a fresh session so the caller's
+            # exception is preserved verbatim even if the previous phase's
+            # session/connection is already broken. Any error here is logged
+            # and swallowed so ``raise`` re-surfaces the original exception
+            # (#54: _finalize_run must never mask the original error).
+            try:
+                async with async_session_scope(self.settings) as failure_session:
+                    failure_emitter = build_emitter(
+                        session=failure_session,
+                        run_state=run_state,
+                        progress_callback=progress_cb,
+                    )
+                    failure_emitter.emit(PlatformEvent(
+                        stage="routing",
+                        action="fail",
+                        key="failed",
+                        message=f"{error_payload['type']}: {error_payload['message']}",
+                        run_id=run_record.id,
+                    ))
+                    await _finalize_run(
+                        failure_session, run_record, run_state, "failed",
+                        None, error=error_payload,
+                    )
+            except (OSError, RuntimeError, ValueError, TypeError, AttributeError):
+                _log.exception(
+                    "Failed to persist failure record for run %s; "
+                    "original exception %s will still propagate.",
+                    run_record.id, type(exc).__name__,
+                )
+            raise
 
 
 async def _dispatch_module_request(
@@ -281,41 +374,81 @@ async def _finalize_run(
     module, payload, artifacts, error), and completed_at timestamp. Called for
     both successful and failed runs so every handle() call always produces a
     persisted WorkflowRunRecord.
+
+    #54 fix: every ``run_state.route`` dereference now guards ``run_state.route
+    is None`` BEFORE reading an attribute (previous code parsed as
+    ``selected_module or ("" if route else "")``, dereferencing ``.selected_module``
+    on the None branch and raising ``AttributeError`` inside the caller's
+    ``except`` handler -- which shadowed the original routing exception).
+    The whole persistence step is also wrapped in a broad guard: this helper
+    must never raise back into the orchestrator's error-path ``except`` block
+    because that path is running under an already-active caller exception and
+    a second raise would replace it. All failures are logged and swallowed.
     """
-    run_record.status = status
-    run_record.route_json = run_state.route.model_dump_json() if run_state.route else "{}"
-    response_payload = dict(response.module_payload) if response else {}
-    artifacts = dict(run_state.artifacts)
-    if response:
-        artifacts.update(response.artifacts)
-    run_record.short_memory_json = json.dumps(
-        {
-            "run_state": run_state.model_dump(mode="json"),
-            "error": error,
-        }
-    )
-    run_record.summary_json = json.dumps(
-        {
-            "action_id": (response.action_id if response else (run_state.route.action_id if run_state.route else "")),
-            "module_id": run_state.route.selected_module if run_state.route else None,
-            "module_payload": response_payload,
-            "artifacts": artifacts,
-            "error": error,
-        }
-    )
-    run_record.module_id = run_state.route.selected_module or "" if run_state.route else ""
-    run_record.report_path = _primary_report_path(artifacts)
-    run_record.completed_at = utc_now()
+    try:
+        route = run_state.route
+        # None guards precede attribute access on every branch (#54 finding).
+        selected_module: str | None = route.selected_module if route is not None else None
+        route_action_id: str = route.action_id if route is not None else ""
+        route_json: str = route.model_dump_json() if route is not None else "{}"
+
+        run_record.status = status
+        run_record.route_json = route_json
+        response_payload = dict(response.module_payload) if response else {}
+        artifacts = dict(run_state.artifacts)
+        if response:
+            artifacts.update(response.artifacts)
+        run_record.short_memory_json = json.dumps(
+            {
+                "run_state": run_state.model_dump(mode="json"),
+                "error": error,
+            }
+        )
+        run_record.summary_json = json.dumps(
+            {
+                "action_id": (response.action_id if response else route_action_id),
+                "module_id": selected_module,
+                "module_payload": response_payload,
+                "artifacts": artifacts,
+                "error": error,
+            }
+        )
+        # None guard precedes attribute access; ``or ""`` coerces the empty
+        # (or None) selected_module to a stable empty string so downstream
+        # readers get a consistent value on unroutable / failed runs.
+        run_record.module_id = (selected_module if route is not None else "") or ""
+        run_record.report_path = _primary_report_path(artifacts)
+        run_record.completed_at = utc_now()
+    except (AttributeError, TypeError, ValueError) as exc:
+        # Payload assembly failed (e.g. an unexpected route shape). Log and
+        # bail -- the caller's original exception must remain the one that
+        # propagates.
+        _log.warning(
+            "Failed to assemble run record payload for run %s: %s",
+            run_record.id, exc, exc_info=True,
+        )
+        return
+
     try:
         await session.merge(run_record)
         await session.commit()
     except sqlalchemy.exc.SQLAlchemyError:
-        await session.rollback()
+        try:
+            await session.rollback()
+        except sqlalchemy.exc.SQLAlchemyError:
+            _log.warning(
+                "Rollback failed for run record %s during finalize",
+                run_record.id, exc_info=True,
+            )
+            return
         try:
             await session.merge(run_record)
             await session.commit()
         except sqlalchemy.exc.SQLAlchemyError:
-            _log.warning("Failed to finalize run record %s after rollback", run_record.id, exc_info=True)
+            _log.warning(
+                "Failed to finalize run record %s after rollback",
+                run_record.id, exc_info=True,
+            )
 
 
 def _primary_report_path(artifacts: dict[str, str]) -> str | None:

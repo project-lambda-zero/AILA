@@ -38,8 +38,8 @@ from aila.platform.exceptions import (
     NotFoundError,
     RateLimitError,
     RouterError,
+    AILATimeoutError,
     SSHConnectionFailedError,
-    TimeoutError,
     UpstreamError,
     ValidationError,
     WorkerUnreachableError,
@@ -59,7 +59,7 @@ _D20_MAPPING = [
     (NotFoundError, "NOT_FOUND_ERROR", 404),
     (ValidationError, "VALIDATION_ERROR", 422),
     (UpstreamError, "UPSTREAM_ERROR", 502),
-    (TimeoutError, "TIMEOUT_ERROR", 504),
+    (AILATimeoutError, "TIMEOUT_ERROR", 504),
 ]
 
 

@@ -13,7 +13,7 @@ from ...storage.database import async_session_scope
 from ...storage.secrets import SecretStore
 from ..config import PlatformSettings
 from ..contracts.platform import RegisteredSystem, SSHIntegrationInput
-from ..exceptions import AuthenticationError, TimeoutError, UpstreamError, ValidationError
+from ..exceptions import AILATimeoutError, AuthenticationError, UpstreamError, ValidationError
 from .log_redact import redact_command_line
 
 
@@ -246,7 +246,7 @@ class SSHService:
         never ran -- authentication rejection (:class:`AuthenticationError`),
         host-key verification failures, transport errors
         (:class:`UpstreamError`), and idle timeouts
-        (:class:`aila.platform.exceptions.TimeoutError`). Those propagate
+        (:class:`aila.platform.exceptions.AILATimeoutError`). Those propagate
         because they are not "the script exited nonzero", they are "the
         script never ran".
 
@@ -362,7 +362,8 @@ class SSHService:
             # IDLE timeout: paramiko resets the timer on every recv() so a
             # slow-but-steady stream (dissect on a huge disk) never trips it.
             # A genuine hang (zero bytes for N seconds) raises
-            # builtins.TimeoutError. Identical semantics to _exec_command.
+            # builtins.TimeoutError which we translate into the platform
+            # AILATimeoutError. Identical semantics to _exec_command.
             if timeout_seconds is not None:
                 stdout.channel.settimeout(timeout_seconds)
             try:
@@ -379,7 +380,7 @@ class SSHService:
                 grace_deadline = _time.monotonic() + 30.0
                 while not stdout.channel.exit_status_ready():
                     if _time.monotonic() > grace_deadline:
-                        raise TimeoutError(
+                        raise AILATimeoutError(
                             f"SSH command for {payload.name} ({payload.host}) closed "
                             f"its streams but did not emit an exit status within 30s "
                             f"(command likely detached a child). Command: {redact_command_line(command)[:200]}"
@@ -387,7 +388,7 @@ class SSHService:
                     _time.sleep(0.1)
                 exit_code = stdout.channel.recv_exit_status()
             except builtins.TimeoutError as exc:
-                raise TimeoutError(
+                raise AILATimeoutError(
                     f"SSH command for {payload.name} ({payload.host}) idle "
                     f">{timeout_seconds}s with no output. Command: {redact_command_line(command)[:200]}"
                 ) from exc
@@ -440,7 +441,7 @@ class SSHService:
                 grace_deadline = _time.monotonic() + 30.0
                 while not stdout.channel.exit_status_ready():
                     if _time.monotonic() > grace_deadline:
-                        raise TimeoutError(
+                        raise AILATimeoutError(
                             f"SSH command for {payload.name} ({payload.host}) closed "
                             f"its streams but did not emit an exit status within 30s "
                             f"(command likely detached a child). Command: {redact_command_line(command)[:200]}"
@@ -448,7 +449,7 @@ class SSHService:
                     _time.sleep(0.1)
                 exit_code = stdout.channel.recv_exit_status()
             except builtins.TimeoutError as exc:
-                raise TimeoutError(
+                raise AILATimeoutError(
                     f"SSH command for {payload.name} ({payload.host}) idle "
                     f">{timeout_seconds}s with no output. Command: {redact_command_line(command)[:200]}"
                 ) from exc

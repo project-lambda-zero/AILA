@@ -4,12 +4,12 @@ from typing import ClassVar
 
 __all__ = [
     "AILAError",
+    "AILATimeoutError",
     "AuthenticationError",
     "RateLimitError",
     "NotFoundError",
     "ValidationError",
     "UpstreamError",
-    "TimeoutError",
     # Phase 176a: typed exception taxonomy with ClassVar code + http_status (D-10b, D-20).
     "MissingApiKeyError",
     "SSHConnectionFailedError",
@@ -91,11 +91,19 @@ class UpstreamError(AILAError):
     user_message: ClassVar[str] = "An upstream dependency failed."
 
 
-class TimeoutError(AILAError):
+class AILATimeoutError(AILAError):
     """Raised when an external call exceeds its configured deadline.
 
     Covers SSH command timeouts and HTTP request timeouts on provider calls.
     Maps to HTTP 504 at the API layer.
+
+    Renamed from ``TimeoutError`` (#54): the previous name shadowed the
+    builtin :class:`TimeoutError` inside modules that imported this class,
+    so ``asyncio.wait_for``'s builtin ``TimeoutError`` and this platform
+    error compared unequal, and ``except TimeoutError`` in one file could
+    silently miss the other. Every raise/except site now uses this
+    disambiguated name; the builtin remains available for pure timeout
+    detection.
     """
 
     code: ClassVar[str] = "TIMEOUT_ERROR"
