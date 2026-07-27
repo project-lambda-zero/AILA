@@ -281,6 +281,11 @@ operator action.
 
 ### Fixed
 
+- Confidence-gate consensus retries and the verify second-model call now
+  attribute their token spend to the same team as the primary call. The team
+  identifier was not threaded into the pipeline context, so those derived
+  calls recorded cost rows with no team and escaped per-team budget
+  accounting (issue #38).
 - Forensics child-table team isolation is enforced through a single documented
   join contract instead of per-endpoint ad-hoc checks, and a completeness test
   fails if a new project-scoped table ships without joining the contract
