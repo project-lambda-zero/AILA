@@ -281,6 +281,13 @@ operator action.
 
 ### Fixed
 
+- API multi-tenant and credential-leak residuals in the auth surface are
+  closed: shared saved filters are scoped to the caller's team instead of
+  every team, auto-provisioned OIDC users receive the role from their
+  id_token claims instead of a fixed operator role, and the user refresh
+  token is sent in the request body instead of the URL query string where
+  it leaked into access logs and browser history (the query-parameter form
+  is now rejected) (issue #36).
 - Scheduled automations acquire a cross-process occurrence lock and record
   run-history, so two live worker processes no longer double-fire the same
   scheduled run; execution degrades to a database unique constraint when the
