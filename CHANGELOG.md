@@ -19,6 +19,16 @@ operator action.
 
 ### Added
 
+- Self-healing runtime (RFC-07): a ToolRouter reroutes a capability call to
+  another healthy instance on infra failure and disables an instance after
+  repeated failures; a StateReconciler deterministically heals drift across
+  the task status, workflow cursor, and in-progress lock; a ModelHealthRouter
+  routes around infra-unhealthy endpoints with a recovery cooldown. All three
+  are inert on the happy path, so dispatch and routing are unchanged when
+  nothing is failing, and no process, gateway config, or model alias is
+  altered. Three honesty rules enforce that recovery paths log or re-raise,
+  no-finding closures classify infra death, and healing paths journal their
+  state mutations (issue #31).
 - Hot-pluggable MCP integration foundation (RFC-11): a config-driven generic
   McpClient plus a capability registry resolve a server by advertised
   capability (android_audit, binary_audit, source_audit) rather than by a
