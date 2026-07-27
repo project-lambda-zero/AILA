@@ -295,6 +295,13 @@ operator action.
 
 ### Fixed
 
+- Frontend data-layer security hardening: a Content-Security-Policy and
+  companion security headers are sent on every response; a 401 logs the user
+  out while a 403 no longer force-logs-out; server-sent-event reconnect uses
+  jittered back-off; post-login redirects pass a same-origin allowlist; an
+  idle timeout clears the session; and the client query cache is bounded so
+  sensitive data is not retained indefinitely. Migrating tokens to httpOnly
+  cookies remains a scoped follow-up (issue #47).
 - LLM-generated proof-of-concept code runs inside an isolation layer (firejail
   or a namespace sandbox with no network, dropped capabilities, and
   no-new-privileges, falling back to resource limits when neither is present)
