@@ -281,6 +281,11 @@ operator action.
 
 ### Fixed
 
+- Cancelling a task or investigation is atomic: the task-cancel repository
+  helper no longer commits the caller's session mid-operation, so a failure
+  while updating the sibling investigation row can no longer leave the task
+  cancelled while the investigation stays running; the queue in-progress key
+  is dropped after the transaction commits (issue #63).
 - Runtime orchestration correctness: a routing failure no longer masks the
   original error during run finalization; each domain error (authentication,
   rate limit, not found, validation, upstream, timeout) now returns its own
