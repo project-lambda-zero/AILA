@@ -24,7 +24,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from aila.api.auth import AuthContext, require_user_or_api_key
-from aila.api.events import get_user_queue, release_user_queue
+from aila.api.events import subscribe_user, unsubscribe_user
 from aila.api.limiter import limiter
 from aila.api.metrics import ACTIVE_SSE
 
@@ -91,11 +91,11 @@ async def stream_events(
         # 60-6: ACTIVE_SSE gauge tracks live SSE connections. The outer
         # try/finally guarantees .dec() runs on every exit path (normal
         # completion, client disconnect, or an exception raised by
-        # get_user_queue before the inner try is entered).
+        # subscribe_user before the inner try is entered).
         ACTIVE_SSE.inc()
         elapsed = 0.0
         try:
-            queue = await get_user_queue(auth.user_id)
+            queue = await subscribe_user(auth.user_id)
             next_ping = float(PING_INTERVAL_S)
 
             try:
@@ -130,7 +130,7 @@ async def stream_events(
                 # Client disconnected mid-stream -- clean exit
                 pass
             finally:
-                await release_user_queue(auth.user_id)
+                await unsubscribe_user(auth.user_id, queue)
                 _log.debug("SSE stream closed for user %s (elapsed=%.0fs)", auth.user_id, elapsed)
         finally:
             ACTIVE_SSE.dec()
