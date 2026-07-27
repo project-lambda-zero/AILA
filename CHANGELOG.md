@@ -19,6 +19,13 @@ operator action.
 
 ### Added
 
+- Hot-pluggable MCP integration foundation (RFC-11): a config-driven generic
+  McpClient plus a capability registry resolve a server by advertised
+  capability (android_audit, binary_audit, source_audit) rather than by a
+  bespoke bridge class, and modules declare their servers to the platform.
+  One server is routed through the generic client as a behavior-preserving
+  proof; the existing bridges remain intact and in use, and no live server
+  URL, port, or process is changed (issue #35).
 - The platform/module boundary (RFC-05) is enforced by the honesty audit:
   platform and API code can no longer read a feature module's config
   namespace by literal, name a module through a runtime aila.modules string,
