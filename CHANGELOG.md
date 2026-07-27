@@ -19,6 +19,10 @@ operator action.
 
 ### Added
 
+- The forensics module runs investigations through a role panel (researcher,
+  critic, implementer) with a sibling-review quorum on findings, built on the
+  shared platform investigation engine, instead of a single self-directed
+  think-act-observe loop (issue #18).
 - Budget-aware context assembly in the platform reasoning engine (RFC-24,
   first increment): an agent's turn context is assembled in priority tiers
   under an optional token budget, evicting or summarizing lower-priority
