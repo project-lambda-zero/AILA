@@ -275,6 +275,15 @@ class ReasoningPromptContext(BaseModel):
     domain_profile: str = "generic"
     operator_steering: ReasoningOperatorSteering = Field(default_factory=ReasoningOperatorSteering)
     strategy_family: ReasoningStrategyFamily = "generic"
+    # RFC-24: cap the assembled user-prompt token count. 0 = unlimited
+    # (preserves the historical unbounded concat). ``system_prompt_tokens``
+    # accounts for the caller's separately-sent system message so the
+    # assembler leaves budget for it. Both values are approximate token
+    # counts using ``estimate_tokens`` (len // 4) -- the same heuristic
+    # ``turn_runner.PROMPT_SIZE_DIAG`` already reports on, so an operator
+    # tuning the budget can compare it against the size-diag log directly.
+    context_budget_tokens: int = 0
+    system_prompt_tokens: int = 0
 
 
 class LedgerWrite(BaseModel):

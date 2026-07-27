@@ -19,6 +19,11 @@ from aila.platform.contracts.reasoning import (
 )
 from aila.platform.exceptions import ValidationError
 from aila.platform.llm.client import AilaLLMClient
+from aila.platform.services.context_assembler import (
+    ContextAssembler,
+    ContextSection,
+    ContextTier,
+)
 
 # fix §132 -- imports first, then module-level statements (PEP 8 / E402).
 _log = logging.getLogger(__name__)
@@ -178,6 +183,10 @@ class CyberReasoningEngine:
         # on first lookup to avoid repeated registry round-trips.
         self._config_registry = config_registry
         self._profile_override_cache: dict[str, ReasoningDomainProfile | None] = {}
+        # RFC-24 assembler: reused across every build_user_prompt call.
+        # Instances are stateless between assemble() calls so one per
+        # engine (rather than one per turn) is fine.
+        self._prompt_assembler = ContextAssembler()
 
     def resolve_domain_profile(self, domain_id: str) -> ReasoningDomainProfile:
         """Return the reasoning profile for ``domain_id``.
@@ -709,21 +718,75 @@ class CyberReasoningEngine:
     def build_user_prompt(self, context: ReasoningPromptContext) -> str:
         """Build the user-prompt payload for one reasoning turn.
 
+        Routes the prompt through the RFC-24 tiered assembler so a
+        ``context.context_budget_tokens > 0`` fits the assembled body
+        to that budget while preserving the pinned tier (system
+        framing, operator steering, kill directives). ``0`` disables
+        the budget and produces the historical unbounded concat --
+        every existing caller (module-owned prompt builders that do
+        not set the budget field yet) sees byte-identical output.
+
         This moves prompt framing out of individual modules so every future
         cyber domain shares one turn contract and one operator-facing context
         layout, while still allowing modules to provide domain evidence and
         artifacts.
         """
-        n_evidence = context.evidence_listing.count("\n") + 1 if context.evidence_listing.strip() else 0
-        n_artifacts = context.artifacts.count("\n== ") if context.artifacts else 0
-        parts: list[str] = [
+        sections = self._prompt_sections(context)
+        assembled = self._prompt_assembler.assemble(
+            sections,
+            budget_tokens=context.context_budget_tokens,
+            reserved_tokens=context.system_prompt_tokens,
+        )
+        return assembled.text
+
+    def _prompt_sections(
+        self, context: ReasoningPromptContext,
+    ) -> list[ContextSection]:
+        """Break the per-turn prompt into RFC-24 tier-tagged sections.
+
+        Tier assignments:
+
+        * ``PINNED`` -- turn/question header, domain + strategy pin,
+          operator steering, project-kind directive, and the trailing
+          response contract instruction. These are the operator- and
+          engine-authoritative pieces RFC-24 marks as never-evicted.
+        * ``LIVE`` -- the case model (live hypotheses + retained tool
+          readings; already capped by ``absorb`` / ``render_case_model``).
+        * ``RECENT`` -- evidence directory listing, on-project
+          artifacts, and the last-turns transcript. These fall away
+          (summary first, then drop) when the budget is tight;
+          each one carries a short ``summary`` so a budget-pressured
+          turn keeps a cue rather than a hole.
+        """
+        n_evidence = (
+            context.evidence_listing.count("\n") + 1
+            if context.evidence_listing.strip()
+            else 0
+        )
+        n_artifacts = (
+            context.artifacts.count("\n== ")
+            if context.artifacts
+            else 0
+        )
+
+        sections: list[ContextSection] = []
+
+        header_lines = [
             f"Turn {context.turn}/{context.max_turns}. User question:",
             context.question,
             "",
             f"Reasoning domain profile: {context.domain_profile}",
             f"Preferred strategy family: {context.strategy_family}",
-            "",
         ]
+        sections.append(
+            ContextSection(
+                tier=ContextTier.PINNED,
+                label="header",
+                body="\n".join(header_lines),
+                droppable=False,
+            )
+        )
+
         steering = context.operator_steering
         if (
             steering.confirmed_facts
@@ -732,47 +795,114 @@ class CyberReasoningEngine:
             or steering.required_artifacts
             or steering.pinned_strategy_family is not None
         ):
-            parts.append("OPERATOR STEERING:")
+            steering_lines: list[str] = ["OPERATOR STEERING:"]
             if steering.pinned_strategy_family is not None:
-                parts.append(f"  pinned_strategy_family = {steering.pinned_strategy_family}")
+                steering_lines.append(
+                    f"  pinned_strategy_family = {steering.pinned_strategy_family}"
+                )
             for fact in steering.confirmed_facts:
-                parts.append(f"  confirmed_fact = {fact}")
+                steering_lines.append(f"  confirmed_fact = {fact}")
             for rejected in steering.disproved_hypotheses:
-                parts.append(f"  disproved_hypothesis = {rejected}")
+                steering_lines.append(f"  disproved_hypothesis = {rejected}")
             for artifact in steering.required_artifacts:
-                parts.append(f"  required_artifact = {artifact}")
+                steering_lines.append(f"  required_artifact = {artifact}")
             for item in steering.guidance:
-                parts.append(f"  guidance = {item}")
-            parts.append("")
+                steering_lines.append(f"  guidance = {item}")
+            sections.append(
+                ContextSection(
+                    tier=ContextTier.PINNED,
+                    label="operator_steering",
+                    body="\n".join(steering_lines),
+                    droppable=False,
+                )
+            )
+
         if context.project_kind == "raw_directory":
-            parts.extend([
-                "PROJECT KIND: raw_directory",
-                (
-                    "The evidence directory is a real filesystem on the analyzer (rootfs "
-                    "/ loose-files). There is no disk image. Do NOT call dissect.target, "
-                    "volatility3, or tshark. Read files directly by absolute path using "
-                    "cat / Get-Content / Python open(). Treat every file in the listing as "
-                    "already accessible on the analyzer filesystem."
+            sections.append(
+                ContextSection(
+                    tier=ContextTier.PINNED,
+                    label="project_kind_directive",
+                    body=(
+                        "PROJECT KIND: raw_directory\n"
+                        "The evidence directory is a real filesystem on the analyzer (rootfs "
+                        "/ loose-files). There is no disk image. Do NOT call dissect.target, "
+                        "volatility3, or tshark. Read files directly by absolute path using "
+                        "cat / Get-Content / Python open(). Treat every file in the listing as "
+                        "already accessible on the analyzer filesystem."
+                    ),
+                    droppable=False,
+                )
+            )
+
+        evidence_body = (
+            f"Evidence directory: {context.evidence_dir}\n"
+            f"Evidence files on disk ({n_evidence}):\n"
+            + (context.evidence_listing or "(no evidence catalogued)")
+        )
+        sections.append(
+            ContextSection(
+                tier=ContextTier.RECENT,
+                label="evidence",
+                body=evidence_body,
+                summary=(
+                    f"Evidence directory: {context.evidence_dir} "
+                    f"({n_evidence} files -- listing elided for budget)"
                 ),
-                "",
-            ])
-        parts.extend([
-            f"Evidence directory: {context.evidence_dir}",
-            f"Evidence files on disk ({n_evidence}):",
-            context.evidence_listing or "(no evidence catalogued)",
-            "",
-            "Case model so far:",
-            context.case_model,
-            "",
-            f"Artefacts already collected on this project ({n_artifacts} records):",
-            context.artifacts or "(no artefacts collected yet)",
-            "",
-            "Transcript (last turns):",
-            context.previous or "(no previous turns)",
-            "",
-            "Return a single JSON object matching the response contract.",
-        ])
-        return "\n".join(parts)
+            )
+        )
+
+        case_body = "Case model so far:\n" + (context.case_model or "")
+        sections.append(
+            ContextSection(
+                tier=ContextTier.LIVE,
+                label="case_model",
+                body=case_body,
+                # Summarisation of the case model would paraphrase
+                # observables and violate the RFC-24 file:line-anchor
+                # guardrail. Under extreme pressure we drop the case
+                # model rather than paraphrase it -- but that only
+                # happens after every RECENT section is already dropped.
+            )
+        )
+
+        artifacts_body = (
+            f"Artefacts already collected on this project ({n_artifacts} records):\n"
+            + (context.artifacts or "(no artefacts collected yet)")
+        )
+        sections.append(
+            ContextSection(
+                tier=ContextTier.RECENT,
+                label="artifacts",
+                body=artifacts_body,
+                summary=(
+                    f"Artefacts on project: {n_artifacts} records "
+                    "(listing elided for budget)"
+                ),
+            )
+        )
+
+        transcript_body = "Transcript (last turns):\n" + (
+            context.previous or "(no previous turns)"
+        )
+        sections.append(
+            ContextSection(
+                tier=ContextTier.RECENT,
+                label="transcript",
+                body=transcript_body,
+                summary="Transcript (last turns): elided for budget",
+            )
+        )
+
+        sections.append(
+            ContextSection(
+                tier=ContextTier.PINNED,
+                label="response_contract",
+                body="Return a single JSON object matching the response contract.",
+                droppable=False,
+            )
+        )
+
+        return sections
 
     def select_strategy_family(
         self,

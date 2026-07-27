@@ -3,6 +3,13 @@
 from __future__ import annotations
 
 from .audit import record_audit_event
+from .context_assembler import (
+    AssembledContext,
+    ContextAssembler,
+    ContextSection,
+    ContextTier,
+    PinnedOverflowError,
+)
 from .embedding import BGEProvider, EmbeddingProvider, MiniLMProvider, resolve_provider
 from .factory import ServiceFactory
 from .http import build_http_client
@@ -17,13 +24,18 @@ from .storage import StorageService
 from .system import SystemService
 
 __all__ = [
+    "AssembledContext",
     "BGEProvider",
+    "ContextAssembler",
+    "ContextSection",
+    "ContextTier",
     "CyberReasoningEngine",
     "EmbeddingProvider",
     "KnowledgeService",
     "LedgerService",
     "MiniLMProvider",
     "Oracle",
+    "PinnedOverflowError",
     "ReasoningGraphService",
     "ReportService",
     "SSHService",
