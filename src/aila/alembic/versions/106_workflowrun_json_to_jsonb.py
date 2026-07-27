@@ -92,7 +92,8 @@ def upgrade() -> None:
         op.execute(
             f"ALTER TABLE {_TABLE} "
             f"ALTER COLUMN {column} TYPE jsonb "
-            f"USING (CASE WHEN aila_is_valid_json({column}) "
+            f"USING (CASE WHEN {column} IS NULL THEN '{{}}'::jsonb "
+            f"WHEN aila_is_valid_json({column}) "
             f"THEN {column}::jsonb "
             f"ELSE '{{}}'::jsonb END)"
         )
