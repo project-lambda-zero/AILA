@@ -6,6 +6,14 @@ croniter, and submits due jobs through the platform TaskQueue.
 
 Called by: CLI command or periodic trigger (e.g., ARQ cron job).
 Depends on: AutomationRegistry (action resolution), TaskQueue (job submission).
+
+Issue #46 cross-process safety (added 2026-07-27): each due occurrence
+is guarded by a distributed lock (``platform/automation/lock.py``,
+Redis SET NX PX) AND recorded in ``automation_run_records`` with a
+``UNIQUE(schedule_id, occurrence_at)`` constraint. The lock is the
+fast path; the DB unique constraint is the second-order backstop that
+kicks in when Redis is unavailable so exactly one runner process
+executes any given occurrence regardless of worker replica count.
 """
 from __future__ import annotations
 
@@ -14,6 +22,9 @@ __all__ = ["AutomationRunner"]
 import asyncio
 import json
 import logging
+import os
+import socket
+import uuid
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -22,7 +33,16 @@ from croniter import CroniterError, croniter
 from sqlmodel import select
 from sqlmodel.sql.expression import SelectOfScalar
 
-from aila.platform.automation.models import AutomationScheduleRecord
+from aila.platform.automation.lock import (
+    AutomationOccurrenceLock,
+    LockBackendUnavailableError,
+    acquire_occurrence_lock,
+    release_occurrence_lock,
+)
+from aila.platform.automation.models import (
+    AutomationRunRecord,
+    AutomationScheduleRecord,
+)
 from aila.platform.automation.registry import AutomationRegistry
 from aila.platform.exceptions import AILAError
 from aila.platform.tasks.queue import TaskQueue
@@ -75,10 +95,9 @@ _SCHEDULE_ISOLATION_ERRORS: tuple[type[BaseException], ...] = (
 class AutomationRunner:
     """Evaluate enabled automation schedules and submit due jobs.
 
-    The runner is stateless between tick() calls -- all state lives in the
-    database (AutomationScheduleRecord.last_run_at). This makes it safe
-    to call tick() from multiple processes without double-firing, since
-    TaskQueue dedup (SEC-07) catches identical submissions.
+    The runner is stateless between tick() calls -- all state lives in
+    the database (AutomationScheduleRecord.last_run_at plus the
+    per-occurrence AutomationRunRecord rows).
 
     Finding 46-3 (overlap guard): concurrent tick() calls on the same
     runner instance are serialized via an asyncio.Lock. A tick that finds
@@ -95,6 +114,24 @@ class AutomationRunner:
     at-most-once semantics on submit failure for the previous
     at-least-twice pathology (slow submit + next tick + same row still
     marked not-yet-run -> two ARQ jobs for one intended fire).
+
+    Issue #46 cross-process exactly-once: two runner processes ticking
+    the same schedule at the same wall-clock instant would each pass
+    the intra-process overlap guard AND the same-transaction
+    ``SELECT ... FOR UPDATE SKIP LOCKED`` (that row-lock is only held
+    for the duration of the SELECT). Each due occurrence is therefore
+    guarded by two layers:
+
+      1. Redis ``SET NX PX`` on ``automation:lock:{schedule}:{epoch}``
+         (``platform/automation/lock.py``) -- the fast path.
+      2. ``UNIQUE(schedule_id, occurrence_at)`` on the
+         ``automation_run_records`` row inserted at run start -- the
+         backstop that also serves as run-history and takes over when
+         the Redis backend is unavailable (documented degrade path).
+
+    Every attempted execution writes an ``AutomationRunRecord`` with
+    ``started_at`` / ``finished_at`` / ``outcome`` so a missed or
+    duplicated run is observable.
     """
 
     def __init__(self, registry: AutomationRegistry, task_queue: TaskQueue) -> None:
@@ -107,6 +144,13 @@ class AutomationRunner:
         # "attached to a different loop" trap when tests instantiate a
         # runner per test-loop).
         self._tick_lock: asyncio.Lock | None = None
+        # Stable per-process identifier stamped on every run-record so an
+        # operator inspecting automation_run_records can tell WHICH
+        # replica served a given occurrence. hostname:pid:uuid8 is
+        # unique across replicas AND across restarts.
+        self._runner_id: str = (
+            f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+        )
 
     async def tick(self) -> int:
         """Evaluate all enabled schedules. Return count of jobs submitted.
@@ -165,6 +209,73 @@ class AutomationRunner:
                 )
                 continue
 
+            # Issue #46: compute a stable occurrence bucket so two
+            # runners racing on the same tick derive the same lock key
+            # AND the same UNIQUE(schedule_id, occurrence_at) row. The
+            # bucket is the last cron-scheduled instant at or before
+            # now; both racing processes see the same value as long as
+            # their clocks agree to within one cron tick.
+            occurrence_at = self._occurrence_bucket(schedule, now)
+
+            # First barrier: Redis SET NX PX. Winner proceeds; loser
+            # skips silently (the peer that holds the lock is running
+            # this occurrence). LockBackendUnavailable is the documented
+            # degrade path -- we fall through to the DB-level unique
+            # constraint on automation_run_records as the second barrier.
+            lock_handle: AutomationOccurrenceLock | None = None
+            lock_backend_up = True
+            try:
+                lock_handle = await acquire_occurrence_lock(
+                    schedule.id, occurrence_at,
+                )
+            except LockBackendUnavailableError as exc:
+                lock_backend_up = False
+                _log.info(
+                    "automation lock backend unavailable for schedule=%s occurrence=%s: %s -- "
+                    "degrading to automation_run_records unique-constraint claim",
+                    schedule.id, occurrence_at.isoformat(), exc,
+                )
+
+            if lock_backend_up and lock_handle is None:
+                # Peer runner holds the occurrence lock. The peer will
+                # write the run-record; nothing to do here.
+                _log.info(
+                    "automation occurrence held by peer -- skipping schedule=%s occurrence=%s",
+                    schedule.id, occurrence_at.isoformat(),
+                )
+                continue
+
+            # Second barrier: INSERT into automation_run_records. The
+            # UNIQUE(schedule_id, occurrence_at) constraint means the
+            # race resolves atomically at the DB level even when the
+            # Redis lock was unavailable. Loser sees IntegrityError and
+            # skips this occurrence.
+            try:
+                run_record_id = await self._start_run_record(
+                    schedule.id, occurrence_at, now,
+                )
+            except sqlalchemy.exc.IntegrityError:
+                _log.info(
+                    "automation occurrence already claimed in run-history -- skipping "
+                    "schedule=%s occurrence=%s (peer INSERT won the unique-constraint race)",
+                    schedule.id, occurrence_at.isoformat(),
+                )
+                if lock_handle is not None:
+                    await release_occurrence_lock(lock_handle)
+                continue
+            except sqlalchemy.exc.SQLAlchemyError:
+                # A non-integrity DB error at run-record insert is a
+                # genuine failure of the storage layer; log and skip the
+                # occurrence so the tick keeps processing later
+                # schedules (finding 46-4 isolation shape).
+                _log.exception(
+                    "Failed to insert automation_run_records row for schedule=%s occurrence=%s",
+                    schedule.id, occurrence_at.isoformat(),
+                )
+                if lock_handle is not None:
+                    await release_occurrence_lock(lock_handle)
+                continue
+
             try:
                 kwargs = json.loads(schedule.action_kwargs_json)
                 kwargs["target_name"] = schedule.target_name
@@ -200,12 +311,18 @@ class AutomationRunner:
                     updated_at=now,
                 )
 
+                await self._finish_run_record(
+                    run_record_id,
+                    outcome=f"submitted:{handle.task_id}",
+                    task_id=handle.task_id,
+                )
+
                 submitted += 1
                 _log.info(
                     "Automation fired: schedule=%s action=%s task=%s",
                     schedule.id, schedule.action_id, handle.task_id,
                 )
-            except _SCHEDULE_ISOLATION_ERRORS:
+            except _SCHEDULE_ISOLATION_ERRORS as exc:
                 # Finding 46-4: isolate one schedule's failure so later
                 # schedules in the same tick are still processed. The
                 # isolation tuple mirrors the emitter destination
@@ -228,6 +345,23 @@ class AutomationRunner:
                         "Failed to update error status for schedule %s",
                         schedule.id,
                     )
+                # Record the failure on the run-history row so a missed
+                # execution is observable even when the schedule row's
+                # last_run_result was clobbered by a peer's later fire.
+                try:
+                    await self._finish_run_record(
+                        run_record_id,
+                        outcome=f"error:{type(exc).__name__}",
+                        task_id=None,
+                    )
+                except sqlalchemy.exc.SQLAlchemyError:
+                    _log.debug(
+                        "Failed to finalize error run-history row for schedule %s",
+                        schedule.id,
+                    )
+            finally:
+                if lock_handle is not None:
+                    await release_occurrence_lock(lock_handle)
 
         return submitted
 
@@ -257,6 +391,98 @@ class AutomationRunner:
             rec.updated_at = updated_at
             session.add(rec)
             await session.commit()
+
+    async def _start_run_record(
+        self,
+        schedule_id: str,
+        occurrence_at: datetime,
+        started_at: datetime,
+    ) -> str:
+        """Insert the run-history row that claims this occurrence.
+
+        Raises ``IntegrityError`` when a peer runner has already
+        inserted a row for the same ``(schedule_id, occurrence_at)``
+        tuple -- the caller treats that as "another process owns this
+        occurrence, skip". Returns the new row's id on success so the
+        caller can pass it to ``_finish_run_record`` when the submit
+        completes.
+        """
+        record = AutomationRunRecord(
+            schedule_id=schedule_id,
+            occurrence_at=occurrence_at,
+            started_at=started_at,
+            outcome="running",
+            runner_id=self._runner_id,
+        )
+        async with async_session_scope() as session:
+            session.add(record)
+            # The commit is where a UNIQUE(schedule_id, occurrence_at)
+            # collision surfaces as IntegrityError; the caller catches
+            # it and skips the occurrence.
+            await session.commit()
+        return record.id
+
+    @staticmethod
+    async def _finish_run_record(
+        run_record_id: str,
+        *,
+        outcome: str,
+        task_id: str | None,
+    ) -> None:
+        """Finalize a run-history row with finished_at + outcome + task_id.
+
+        Raises SQLAlchemyError on DB failure; callers decide whether to
+        propagate or swallow. Not a staticmethod on purpose -- callers
+        can pass ``self._finish_run_record`` as a bound method to future
+        helpers without capturing a wrapping ``lambda``.
+        """
+        async with async_session_scope() as session:
+            rec = (await session.exec(
+                select(AutomationRunRecord)
+                .where(AutomationRunRecord.id == run_record_id)
+            )).one()
+            rec.finished_at = datetime.now(UTC)
+            rec.outcome = outcome
+            rec.task_id = task_id
+            session.add(rec)
+            await session.commit()
+
+    @staticmethod
+    def _occurrence_bucket(
+        schedule: AutomationScheduleRecord, now: datetime,
+    ) -> datetime:
+        """Return the last cron-scheduled instant at or before ``now`` in UTC.
+
+        Two runner processes that call ``tick()`` at the same wall-clock
+        instant MUST derive the same bucket so the distributed lock key
+        AND the ``UNIQUE(schedule_id, occurrence_at)`` row collide
+        instead of appearing to be distinct occurrences. ``get_prev`` on
+        the schedule's timezone-adjusted ``now`` gives that guarantee
+        without depending on the schedule's own ``last_run_at`` (which
+        the winner may already have advanced by the time the loser
+        reads it).
+
+        Falls back to ``now`` if croniter cannot compute a previous fire
+        for any reason -- the classify-parse-failure guard above the
+        due-check already disables malformed schedules, so this is
+        belt-and-suspenders for a cron that somehow parses but has no
+        past.
+        """
+        tz = AutomationRunner._resolve_timezone(schedule.cron_timezone)
+        now_local = now.astimezone(tz)
+        try:
+            cron = croniter(schedule.cron_expression, now_local)
+            prev_fire = cron.get_prev(datetime)
+        except _SCHEDULE_PARSE_ERRORS:
+            # A cron that parsed at classify time but fails get_prev
+            # (extremely unusual, e.g. an intentionally empty schedule)
+            # gets bucketed to ``now`` -- that keeps the lock key
+            # stable within one tick without pretending the schedule
+            # has a past.
+            return now.astimezone(UTC)
+        if prev_fire.tzinfo is None:
+            prev_fire = prev_fire.replace(tzinfo=tz)
+        return prev_fire.astimezone(UTC)
 
     @staticmethod
     def _due_schedules_stmt() -> SelectOfScalar[AutomationScheduleRecord]:
