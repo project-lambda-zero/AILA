@@ -332,6 +332,14 @@ operator action.
 
 ### Fixed
 
+- The audit_mcp read_lines bridge tool now resolves a file whose basename
+  uniquely identifies one file in the indexed tree even when the caller
+  passed the wrong directory prefix, instead of returning a not-found
+  error. The not-found error's Android/JADX package-rename hint is now
+  shown only for actual JADX-decompiled indexes (it was printed for every
+  target, misleading callers on Python, C, and Go repositories), and the
+  nearest-path suggestions now include a bounded whole-tree basename
+  search.
 - A vulnerability-research investigation now shows an outcome's polarity
   (finding / no finding / inconclusive) directly in the synthesis section,
   on every outcome row, and in the investigations list. A no-finding
