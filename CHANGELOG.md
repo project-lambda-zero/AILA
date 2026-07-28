@@ -19,6 +19,14 @@ operator action.
 
 ### Added
 
+- At an investigation's final verdict, a no-finding or inconclusive
+  result whose panel recommended further discoveries now automatically
+  spawns one follow-up discovery investigation that takes over those
+  recommendations as its mandate, instead of dead-ending. The take-over
+  is a platform primitive any module can bind (wired for vulnerability
+  research); it is depth-capped, budget-halved with a floor, and
+  idempotent, so it self-terminates and a small-budget run never
+  spawns.
 - The vulnerability-research module generates a long-form narrative
   writeup for an investigation, mirroring the malware module: a
   chronological story (persona panel, hypotheses, the tool-driven audit,
