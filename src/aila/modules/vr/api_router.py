@@ -754,6 +754,52 @@ def _target_summary(record: Any) -> VRTargetSummary:
     )
 
 
+def _derive_outcome_polarity(
+    outcome_kind: str,
+    payload: dict,
+) -> Literal["finding", "no_finding", "inconclusive"] | None:
+    """Reduce a primary outcome to its user-visible polarity.
+
+    Precedence, applied in order:
+
+    1. The verifier verdict, when present at ``payload['verifier_report']
+       ['verdict']``. ``'confirmed'`` collapses to ``'finding'`` and
+       ``'refuted'`` collapses to ``'no_finding'`` regardless of the
+       outcome_kind that was written (the verifier's judgement wins
+       over the finalizer's initial call).
+    2. ``outcome_kind == 'direct_finding'`` -> ``'finding'``.
+    3. ``outcome_kind == 'audit_memo'`` combined with
+       ``payload['verdict'] == 'no_finding'`` -> ``'no_finding'``
+       (the shape written by ``_build_vr_no_finding_payload`` in
+       ``services.investigation_finalizers``).
+    4. Everything else, including an ``audit_memo`` without the
+       ``no_finding`` verdict marker and every non-finding outcome
+       kind (assessment_report, variant_hunt_order, ...), collapses to
+       ``'inconclusive'``.
+
+    Callers pass an empty ``outcome_kind`` when there is no primary
+    outcome at all; the helper returns ``None`` in that case so the
+    UI can tell "no outcome yet" apart from "an outcome landed but
+    it's genuinely inconclusive". Both list and single builders
+    additionally guard the call with ``if primary is not None`` so
+    the empty-kind branch is defensive.
+    """
+    if not outcome_kind:
+        return None
+    verifier_report = payload.get("verifier_report")
+    if isinstance(verifier_report, dict):
+        verifier_verdict = verifier_report.get("verdict")
+        if verifier_verdict == "confirmed":
+            return "finding"
+        if verifier_verdict == "refuted":
+            return "no_finding"
+    if outcome_kind == "direct_finding":
+        return "finding"
+    if outcome_kind == "audit_memo" and payload.get("verdict") == "no_finding":
+        return "no_finding"
+    return "inconclusive"
+
+
 def _investigation_summary(
     record: Any,
     branch_count: int = 0,
@@ -762,6 +808,7 @@ def _investigation_summary(
     primary_outcome_kind: str | None = None,
     primary_outcome_confidence: str | None = None,
     primary_outcome_verdict_head: str | None = None,
+    primary_outcome_polarity: Literal["finding", "no_finding", "inconclusive"] | None = None,
     verifier_verdict: str | None = None,
     verifier_confidence: float | None = None,
     live_cost_usd: float | None = None,
@@ -772,8 +819,15 @@ def _investigation_summary(
     set ``workspace_id`` from this path (callers that need it join it
     separately). ``live_cost_usd`` overrides the stored
     ``cost_actual_usd`` when provided.
+
+    ``primary_outcome_polarity`` is injected via ``model_copy`` after
+    the shared platform builder returns, because the shared builder
+    also projects the malware summary contract (which does not carry
+    this field). Keeping polarity out of the platform builder avoids
+    breaking malware's ``extra='forbid'`` summary at serialization
+    time.
     """
-    return build_investigation_summary(
+    summary = build_investigation_summary(
         record,
         summary_cls=VRInvestigationSummary,
         branch_count=branch_count,
@@ -785,6 +839,9 @@ def _investigation_summary(
         verifier_verdict=verifier_verdict,
         verifier_confidence=verifier_confidence,
         live_cost_usd=live_cost_usd,
+    )
+    return summary.model_copy(
+        update={"primary_outcome_polarity": primary_outcome_polarity},
     )
 
 
@@ -3906,6 +3963,7 @@ def create_vr_router() -> APIRouter:
                 verdict_head: str | None = None
                 verifier_verdict: str | None = None
                 verifier_confidence: float | None = None
+                primary_outcome_polarity: Literal["finding", "no_finding", "inconclusive"] | None = None
                 if primary is not None:
                     try:
                         payload = _json.loads(primary.payload_json or "{}")
@@ -3922,6 +3980,9 @@ def create_vr_router() -> APIRouter:
                         vc = vr.get("confidence")
                         if isinstance(vc, (int, float)):
                             verifier_confidence = float(vc)
+                    primary_outcome_polarity = _derive_outcome_polarity(
+                        primary.outcome_kind, payload,
+                    )
                 items.append(_investigation_summary(
                     r,
                     branch_count=br_counts.get(r.id, 0),
@@ -3930,6 +3991,7 @@ def create_vr_router() -> APIRouter:
                     primary_outcome_kind=primary.outcome_kind if primary else None,
                     primary_outcome_confidence=primary.confidence if primary else None,
                     primary_outcome_verdict_head=verdict_head or None,
+                    primary_outcome_polarity=primary_outcome_polarity,
                     verifier_verdict=verifier_verdict,
                     verifier_confidence=verifier_confidence,
                 ))
@@ -4005,6 +4067,7 @@ def create_vr_router() -> APIRouter:
             primary_outcome_kind: str | None = None
             primary_outcome_confidence: str | None = None
             primary_outcome_verdict_head: str | None = None
+            primary_outcome_polarity: Literal["finding", "no_finding", "inconclusive"] | None = None
             verifier_verdict: str | None = None
             verifier_confidence: float | None = None
             if inv.primary_outcome_id:
@@ -4035,6 +4098,9 @@ def create_vr_router() -> APIRouter:
                         vc = vr.get("confidence")
                         if isinstance(vc, (int, float)):
                             verifier_confidence = float(vc)
+                    primary_outcome_polarity = _derive_outcome_polarity(
+                        primary.outcome_kind, payload,
+                    )
 
         # Live cost -- sum LLMCostRecord by run_id (which the reasoning
         # engine threads as the investigation id). The stored
@@ -4053,6 +4119,7 @@ def create_vr_router() -> APIRouter:
             primary_outcome_kind=primary_outcome_kind,
             primary_outcome_confidence=primary_outcome_confidence,
             primary_outcome_verdict_head=primary_outcome_verdict_head,
+            primary_outcome_polarity=primary_outcome_polarity,
             verifier_verdict=verifier_verdict,
             verifier_confidence=verifier_confidence,
             live_cost_usd=live_cost,

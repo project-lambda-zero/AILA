@@ -405,6 +405,20 @@ export interface VRInvestigationSummary {
   primary_outcome_kind?: string | null;
   primary_outcome_confidence?: string | null;
   primary_outcome_verdict_head?: string | null;
+  /**
+   * Polarity of the primary outcome. Backend derivation contract (mirror
+   * of `OutcomePolarityBadge`'s `outcomePolarity`):
+   *   1. `payload.verifier_report.verdict === 'confirmed'` -> `finding`
+   *      `payload.verifier_report.verdict === 'refuted'` -> `no_finding`
+   *   2. `outcome_kind === 'direct_finding'` -> `finding`
+   *   3. `outcome_kind === 'audit_memo' && payload.verdict === 'no_finding'`
+   *      -> `no_finding`
+   *   4. otherwise -> `inconclusive`
+   * `null` when there is no primary outcome. Investigation list uses this
+   * directly; the detail page prefers to re-derive from the full payload
+   * (which is present there) so a stale summary can't lie.
+   */
+  primary_outcome_polarity?: "finding" | "no_finding" | "inconclusive" | null;
   verifier_verdict?: string | null;
   verifier_confidence?: number | null;
   linked_campaign_ids: string[];

@@ -29,6 +29,7 @@ import {
 } from "@/components/aila/StaggeredList";
 
 import { OutcomeKindBadge, outcomeKindSeverity } from "../components/OutcomeKindBadge";
+import { OutcomePolarityBadge } from "../components/OutcomePolarityBadge";
 import { DeleteButton } from "../components/DeleteButton";
 import {
   useCreateInvestigation,
@@ -111,6 +112,20 @@ function verdictTextColor(verdict?: string | null): string {
   if (verdict === "refuted") return "#f0a8c7";
   return "var(--color-text-muted)";
 }
+
+// Inline label + color for the compact "\u00b7 <polarity>" fragment inside
+// the row-header span (which is color-locked to the status dot). A nested
+// span with an override color renders the polarity in its own hue without
+// leaking into siblings. Colors mirror OutcomePolarityBadge's semantic
+// vocabulary (finding=danger, no_finding=success, inconclusive=warning).
+const POLARITY_INLINE: Record<
+  "finding" | "no_finding" | "inconclusive",
+  { label: string; color: string }
+> = {
+  finding: { label: "finding", color: "#f0a8c7" },
+  no_finding: { label: "no finding", color: "#97dbbe" },
+  inconclusive: { label: "inconclusive", color: "#f0c97a" },
+};
 
 // ─────────────────────────────────────────────────────────────────────
 // InvestigationCard -- one investigation per row, ~80px tall.
@@ -226,7 +241,14 @@ function InvestigationCard({
             {isRunning && inv.message_count > 0 && (
               <span className="text-text-muted ml-1">
                 · {inv.message_count} turns
-                {inv.primary_outcome_kind ? " · has finding" : ""}
+                {inv.primary_outcome_polarity && (
+                  <span
+                    style={{ color: POLARITY_INLINE[inv.primary_outcome_polarity].color }}
+                  >
+                    {" · "}
+                    {POLARITY_INLINE[inv.primary_outcome_polarity].label}
+                  </span>
+                )}
               </span>
             )}
           </span>
@@ -262,6 +284,9 @@ function InvestigationCard({
             <Bug className="h-3 w-3" weight="bold" />
             {findingsCount}
           </span>
+        )}
+        {inv.primary_outcome_polarity && (
+          <OutcomePolarityBadge polarity={inv.primary_outcome_polarity} />
         )}
         {inv.primary_outcome_kind && (
           <AilaBadge

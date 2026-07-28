@@ -28,6 +28,10 @@ import { KpiTile } from "@/components/aila/KpiTile";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { OutcomeKindBadge, outcomeKindSeverity, outcomeKindLabel } from "../components/OutcomeKindBadge";
+import {
+  OutcomePolarityBadge,
+  outcomePolarity,
+} from "../components/OutcomePolarityBadge";
 import { DeleteButton } from "../components/DeleteButton";
 import { ExportReportButton } from "../components/ExportReportButton";
 import { ReenqueuePicker } from "../components/ReenqueuePicker";
@@ -1430,13 +1434,17 @@ function PrimaryOutcomeCard({
         borderColor: vr?.verdict ? `color-mix(in srgb, ${verdictColor} 40%, var(--color-border))` : "var(--color-accent)",
       }}
     >
-      {/* Crown ribbon at the top */}
+      {/* Crown ribbon at the top -- polarity sits next to the crown so it's
+       *  the first thing the operator sees before any prose. */}
       <div className="flex items-center justify-between gap-2 mb-3">
         <div className="inline-flex items-center gap-2">
           <Crown weight="fill" size={14} className="text-accent" />
           <span className="text-3xs font-mono uppercase tracking-cyber-sm text-accent">
             Primary · Synthesis
           </span>
+          <OutcomePolarityBadge
+            polarity={outcomePolarity(o.outcome_kind, o.payload)}
+          />
         </div>
         <AilaBadge
           severity={dispatchColor[o.dispatch_status] ?? "info"}
@@ -1574,6 +1582,9 @@ function CompactOutcomeRow({
           <PersonaAvatar voice={persona} size={18} />
         )}
         <span className="ml-auto inline-flex items-center gap-1.5 flex-shrink-0">
+          <OutcomePolarityBadge
+            polarity={outcomePolarity(o.outcome_kind, o.payload)}
+          />
           <span className="text-3xs font-mono text-text-muted uppercase tracking-wide">
             {humanConfidence(o.confidence)}
           </span>

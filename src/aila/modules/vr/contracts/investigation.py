@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -118,6 +119,7 @@ class VRInvestigationSummary(BaseModel):
     primary_outcome_kind: str | None = None
     primary_outcome_confidence: str | None = None
     primary_outcome_verdict_head: str | None = None
+    primary_outcome_polarity: Literal["finding", "no_finding", "inconclusive"] | None = None
     verifier_verdict: str | None = None
     verifier_confidence: float | None = None
     linked_campaign_ids: list[str] = Field(default_factory=list)
