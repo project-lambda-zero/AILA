@@ -324,6 +324,13 @@ operator action.
 
 ### Fixed
 
+- A vulnerability-research investigation now shows an outcome's polarity
+  (finding / no finding / inconclusive) directly in the synthesis section,
+  on every outcome row, and in the investigations list. A no-finding
+  result (an audit memo whose verdict is no_finding, or a refuted
+  finding) is distinguishable at a glance instead of reading like a
+  finding; the list no longer labels every primary outcome "has
+  finding".
 - The LLM retry loop now retries a transient upstream failure (503 and
   other 5xx) raised by a provider SDK that carries only a status_code
   attribute, instead of propagating it raw on the first attempt. A
