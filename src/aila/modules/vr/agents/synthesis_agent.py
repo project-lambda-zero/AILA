@@ -274,3 +274,33 @@ class SynthesisAgent(SynthesisRunnerBase):
         reviews: list[dict[str, Any]],
     ) -> str:
         return _render_panel(panel, reviews)
+
+    def _update_payload_extras(
+        self,
+        payload: dict[str, Any],
+        parsed: BaseModel,
+    ) -> None:
+        """Persist the synthesiser's ``recommended_next_actions`` list.
+
+        The base ``_commit_synthesis`` writes ``panel_summary`` with
+        ``narrative`` + ``personas`` + ``synthesized_at``; the parsed
+        LLM response also carries a ``recommended_next_actions`` list
+        (the panel's structured hand-off of what to audit next), but
+        that list would otherwise live only inside the markdown
+        narrative. The follow-up-discovery take-over service reads
+        ``payload['panel_summary']['recommended_next_actions']`` to
+        decide whether to spawn a child investigation, so we promote
+        the structured field back onto the panel_summary here.
+
+        No-op when the LLM produced an empty list -- the follow-up
+        primitive's own emptiness guard is the last line of defence,
+        but writing ``[]`` would be write amplification without a
+        readable-state change.
+        """
+        recs = getattr(parsed, "recommended_next_actions", None) or []
+        if not recs:
+            return
+        panel_summary = payload.get("panel_summary")
+        if not isinstance(panel_summary, dict):
+            return
+        panel_summary["recommended_next_actions"] = [str(r) for r in recs]

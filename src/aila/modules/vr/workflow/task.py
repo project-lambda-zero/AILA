@@ -45,6 +45,7 @@ from aila.modules.vr.enrichment.workers import (
 from aila.modules.vr.reporting.pdf_report import _collect_facts
 from aila.modules.vr.reporting.poc_writer import PocWriter
 from aila.modules.vr.services import TargetAnalysisService
+from aila.modules.vr.services.followup_discovery import maybe_spawn_vr_followup
 from aila.modules.vr.services.fuzz_service import FuzzCampaignService
 from aila.modules.vr.workflow.definitions import VR_INVESTIGATE_V1, VR_NDAY_V1
 from aila.modules.vr.workflow.definitions_hub import VR_INVESTIGATE_HUB
@@ -78,6 +79,8 @@ _TASK_TRANSIENT: tuple[type[BaseException], ...] = (
     ConnectionError,
     httpx.HTTPError,
 )
+
+_log = logging.getLogger(__name__)
 
 __all__ = [
     "run_capability_profile_build",
@@ -393,7 +396,27 @@ async def run_vr_synthesis(
     """
     del ctx
     agent = SynthesisAgent(investigation_id=investigation_id)
-    return await agent.run()
+    result = await agent.run()
+    # Autonomous take-over of the panel's recommended further
+    # discoveries. Gated on the primitive (only fires on
+    # ``no_finding`` / ``inconclusive`` polarity + non-empty
+    # recommendations + depth cap + budget floor + idempotency), so
+    # calling it unconditionally is safe -- every skip returns a
+    # ``{'status': 'skipped', 'reason': ...}`` dict. A follow-up
+    # failure MUST NOT fail the synthesis task itself: the panel_summary
+    # is already committed, the operator surface has already updated,
+    # and the follow-up chain is a best-effort autonomy layer on top.
+    if isinstance(result, dict) and result.get("status") == "ok":
+        try:
+            followup = await maybe_spawn_vr_followup(investigation_id)
+        except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
+            _log.warning(
+                "run_vr_synthesis follow-up spawn failed inv=%s err=%s",
+                investigation_id, exc,
+            )
+            followup = {"status": "failed", "reason": f"{type(exc).__name__}"}
+        result["followup"] = followup
+    return result
 
 
 @platform_task(

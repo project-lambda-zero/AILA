@@ -31,6 +31,7 @@ from aila.api.deps import get_task_queue
 from aila.api.limiter import limiter
 from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
 from aila.modules.vr.services.mcp_call_logger import record_call
+from aila.modules.vr.services.outcome_polarity import derive_outcome_polarity
 from aila.platform.contracts import utc_now
 from aila.platform.contracts.auth import AuthContext, require_auth
 from aila.platform.services.factory import ServiceFactory
@@ -754,50 +755,16 @@ def _target_summary(record: Any) -> VRTargetSummary:
     )
 
 
-def _derive_outcome_polarity(
-    outcome_kind: str,
-    payload: dict,
-) -> Literal["finding", "no_finding", "inconclusive"] | None:
-    """Reduce a primary outcome to its user-visible polarity.
-
-    Precedence, applied in order:
-
-    1. The verifier verdict, when present at ``payload['verifier_report']
-       ['verdict']``. ``'confirmed'`` collapses to ``'finding'`` and
-       ``'refuted'`` collapses to ``'no_finding'`` regardless of the
-       outcome_kind that was written (the verifier's judgement wins
-       over the finalizer's initial call).
-    2. ``outcome_kind == 'direct_finding'`` -> ``'finding'``.
-    3. ``outcome_kind == 'audit_memo'`` combined with
-       ``payload['verdict'] == 'no_finding'`` -> ``'no_finding'``
-       (the shape written by ``_build_vr_no_finding_payload`` in
-       ``services.investigation_finalizers``).
-    4. Everything else, including an ``audit_memo`` without the
-       ``no_finding`` verdict marker and every non-finding outcome
-       kind (assessment_report, variant_hunt_order, ...), collapses to
-       ``'inconclusive'``.
-
-    Callers pass an empty ``outcome_kind`` when there is no primary
-    outcome at all; the helper returns ``None`` in that case so the
-    UI can tell "no outcome yet" apart from "an outcome landed but
-    it's genuinely inconclusive". Both list and single builders
-    additionally guard the call with ``if primary is not None`` so
-    the empty-kind branch is defensive.
-    """
-    if not outcome_kind:
-        return None
-    verifier_report = payload.get("verifier_report")
-    if isinstance(verifier_report, dict):
-        verifier_verdict = verifier_report.get("verdict")
-        if verifier_verdict == "confirmed":
-            return "finding"
-        if verifier_verdict == "refuted":
-            return "no_finding"
-    if outcome_kind == "direct_finding":
-        return "finding"
-    if outcome_kind == "audit_memo" and payload.get("verdict") == "no_finding":
-        return "no_finding"
-    return "inconclusive"
+# Private-alias re-export of the polarity helper.
+#
+# The reducer moved to ``vr/services/outcome_polarity.py`` so the
+# follow-up-discovery take-over service (and any other non-router
+# consumer) can pull it without dragging in the FastAPI router.
+# ``_derive_outcome_polarity`` is preserved as a module-level name so
+# both list/single summary builders below and the polarity test module
+# (``tests/modules/vr/test_outcome_polarity.py``) keep working
+# unchanged.
+_derive_outcome_polarity = derive_outcome_polarity
 
 
 def _investigation_summary(

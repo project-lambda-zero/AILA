@@ -307,6 +307,7 @@ ignore = [
 # Panel setup deferred-imports the panel task (breaks the setup <-> task
 # circular import cycle -- same pattern VR + malware use).
 "src/aila/modules/forensics/workflow/panel/setup.py" = ["PLC0415"]
+"src/aila/modules/vr/services/followup_discovery.py" = ["PLC0415"]
 "src/aila/modules/vr/services/stall_recovery.py" = ["PLC0415"]
 "src/aila/modules/vr/services/target_analysis.py" = ["PLC0415"]
 "src/aila/modules/vr/workflow/definitions.py" = ["PLC0415"]
