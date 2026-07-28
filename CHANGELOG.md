@@ -19,6 +19,13 @@ operator action.
 
 ### Added
 
+- The vulnerability-research module generates a long-form narrative
+  writeup for an investigation, mirroring the malware module: a
+  chronological story (persona panel, hypotheses, the tool-driven audit,
+  disagreements, and the final finding / patch-present / no-finding
+  verdict) generated on demand in one of five voices and three lengths,
+  stored beside the structured synthesis and rendered with a chapter
+  table of contents on the investigation detail page.
 - Self-healing runtime (RFC-07): a ToolRouter reroutes a capability call to
   another healthy instance on infra failure and disables an instance after
   repeated failures; a StateReconciler deterministically heals drift across
