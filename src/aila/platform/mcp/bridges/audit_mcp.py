@@ -101,6 +101,107 @@ def _resolve_jadx_prefixes(root: Path, file_path: str) -> Path | None:
     return cursor
 
 
+# Bounded whole-tree basename fallback -- see _search_by_basename.
+#
+# Prunes trees that never carry indexed source: VCS metadata, package
+# manager caches, Python bytecode caches, and JADX ``resources/`` mirror
+# (which is reached via the RESOURCES_FALLBACK path in _read_lines_local,
+# not via the basename walker).
+_WALK_SKIP_DIRS: frozenset[str] = frozenset({
+    ".git", "node_modules", "__pycache__", ".svn", ".hg", "resources",
+})
+
+
+def _search_by_basename(
+    root: Path, leaf: str, *, cap: int = 12, max_scan: int = 60000,
+) -> list[str]:
+    """Bounded ``os.walk`` under ``root`` collecting repo-relative POSIX
+    paths whose basename equals ``leaf``.
+
+    Prunes :data:`_WALK_SKIP_DIRS` in place so heavy trees (npm
+    dependencies, VCS metadata, JADX ``resources/`` mirror) don't
+    balloon the scan. Stops at ``cap`` matches or after scanning
+    ``max_scan`` files -- guaranteed bounded so a browser-sized index
+    (~500k+ files) can never hang the fallback. Wraps the walk in
+    ``except OSError`` and returns whatever was already collected on
+    failure. Empty ``leaf`` short-circuits to ``[]``.
+    """
+    if not leaf:
+        return []
+    root_str = str(root)
+    matches: list[str] = []
+    scanned = 0
+    try:
+        for dirpath, dirnames, filenames in os.walk(root_str):
+            dirnames[:] = [d for d in dirnames if d not in _WALK_SKIP_DIRS]
+            for name in filenames:
+                scanned += 1
+                if name == leaf:
+                    rel = os.path.relpath(
+                        os.path.join(dirpath, name), root_str,
+                    ).replace("\\", "/")
+                    matches.append(rel)
+                    if len(matches) >= cap:
+                        return matches
+                if scanned >= max_scan:
+                    return matches
+    except OSError as exc:
+        logging.getLogger(__name__).warning(
+            "_search_by_basename: walk aborted at %s (leaf=%r): %s",
+            root, leaf, exc,
+        )
+    return matches
+
+
+def _looks_like_jadx(root: Path) -> bool:
+    """Return True iff ``root`` looks like a JADX / Android decompile.
+
+    JADX writes decompiled Java/Kotlin under ``sources/`` and Android
+    resources under ``resources/``; the operator may index either the
+    workdir root (both dirs one level down) or ``sources/`` itself
+    (p-prefixed package dirs as direct children). Any of those three
+    signals -- ``resources/``, ``sources/``, or a child dir matching
+    :data:`_JADX_PREFIX_RE` -- flips this to True at ``root`` or one
+    level down. On ``OSError`` (unreadable root) return False rather
+    than propagating; the JADX package-rename sentence is a hint, not
+    a correctness gate.
+    """
+
+    def _child_signals_jadx(entry: Path) -> bool:
+        name = entry.name
+        if name in ("resources", "sources"):
+            return True
+        if _JADX_PREFIX_RE.match(name):
+            return True
+        return False
+
+    try:
+        for entry in root.iterdir():
+            if not entry.is_dir():
+                continue
+            if _child_signals_jadx(entry):
+                return True
+            # One level down.
+            try:
+                for sub in entry.iterdir():
+                    if not sub.is_dir():
+                        continue
+                    if _child_signals_jadx(sub):
+                        return True
+            except OSError as exc:
+                logging.getLogger(__name__).debug(
+                    "_looks_like_jadx: iterdir failed for %s: %s",
+                    entry, exc,
+                )
+                continue
+    except OSError as exc:
+        logging.getLogger(__name__).debug(
+            "_looks_like_jadx: iterdir failed for %s: %s", root, exc,
+        )
+        return False
+    return False
+
+
 def _suggest_nearest_paths(
     root: Path, file_path: str, max_suggestions: int = 6,
 ) -> list[str]:
@@ -1542,32 +1643,79 @@ class AuditMcpBridgeTool(Tool):
                     abs_path = rewritten
                     file_path = new_rel
                 else:
-                    # Build a "did you mean" suggestion by walking
-                    # backwards to the deepest existing ancestor and
-                    # listing its children that share the requested
-                    # leaf name (with JADX prefix stripped).
-                    suggestions = await asyncio.to_thread(
-                        _suggest_nearest_paths, Path(root), file_path,
+                    # Whole-tree basename fallback. The agent grabbed
+                    # the leaf right from semantic_search but guessed
+                    # the directory prefix wrong (e.g. asked for
+                    # ``src/llm_sandbox/interactive.py`` when the file
+                    # is at ``llm_sandbox/interactive.py``). If the
+                    # leaf uniquely identifies ONE file under the
+                    # index root, transparently resolve to it and
+                    # fall through to the read path -- same shape as
+                    # the JADX rewrite above. Multiple matches or
+                    # zero matches keep the error, and the JADX
+                    # package-rename sentence is gated on whether the
+                    # index actually looks like a JADX decompile.
+                    leaf = file_path.replace("\\", "/").rsplit("/", 1)[-1]
+                    hits = await asyncio.to_thread(
+                        _search_by_basename, Path(root), leaf,
                     )
-                    hint = (
-                        f" NEAREST INDEXED PATHS: {', '.join(suggestions)}"
-                        if suggestions
-                        else (
-                            " No similar path exists in the index. "
-                            "Use semantic_search to find the correct file."
+                    auto_resolved = False
+                    if len(hits) == 1:
+                        cand = Path(root) / hits[0]
+                        if await asyncio.to_thread(cand.is_file):
+                            logging.getLogger(__name__).info(
+                                "read_lines BASENAME_REWRITE %s -> %s",
+                                file_path, hits[0],
+                            )
+                            abs_path = cand
+                            file_path = hits[0]
+                            auto_resolved = True
+                    if not auto_resolved:
+                        # Build a "did you mean" suggestion by merging
+                        # whole-tree basename hits (may be zero or
+                        # many) with the deepest-existing-ancestor
+                        # fuzzy scan. Dedupe while preserving order.
+                        suggestions = await asyncio.to_thread(
+                            _suggest_nearest_paths, Path(root), file_path,
                         )
-                    )
-                    return {
-                        "status": "error",
-                        "error": (
-                            f"read_lines: file not found: {file_path} "
-                            f"(resolved to {abs_path}). JADX renames "
-                            f"colliding package names (e.g. ``ui`` → "
-                            f"``p182ui``, ``do`` → ``p23do``); the path "
-                            f"in semantic_search output is the on-disk "
-                            f"path, USE IT VERBATIM.{hint}"
-                        ),
-                    }
+                        merged: list[str] = []
+                        seen: set[str] = set()
+                        for item in [*hits, *suggestions]:
+                            if item and item not in seen:
+                                merged.append(item)
+                                seen.add(item)
+                        hint = (
+                            f" NEAREST INDEXED PATHS: {', '.join(merged)}"
+                            if merged
+                            else (
+                                " No similar path exists in the index. "
+                                "Use semantic_search to find the correct file."
+                            )
+                        )
+                        is_jadx = await asyncio.to_thread(
+                            _looks_like_jadx, Path(root),
+                        )
+                        if is_jadx:
+                            guidance = (
+                                "JADX renames colliding package names "
+                                "(e.g. ``ui`` \u2192 ``p182ui``, "
+                                "``do`` \u2192 ``p23do``); the path "
+                                "in semantic_search output is the "
+                                "on-disk path, USE IT VERBATIM."
+                            )
+                        else:
+                            guidance = (
+                                "The path in semantic_search output "
+                                "is the on-disk path, USE IT VERBATIM."
+                            )
+                        return {
+                            "status": "error",
+                            "error": (
+                                f"read_lines: file not found: {file_path} "
+                                f"(resolved to {abs_path}). {guidance}"
+                                f"{hint}"
+                            ),
+                        }
 
         def _read_all_lines(path: Path) -> list[str]:
             with path.open("r", encoding="utf-8", errors="replace") as f:
