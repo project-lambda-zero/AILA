@@ -413,6 +413,7 @@ HONESTY_WHITELIST = [
     ("malware/workflow/task.py", "http_client_in_module", "import httpx"),
     ("vr/agents/auto_steering.py", "http_client_in_module", "import httpx"),
     ("vr/agents/claim_verifier.py", "http_client_in_module", "import httpx"),
+    ("vr/agents/narrative_agent.py", "http_client_in_module", "import httpx"),
     ("vr/agents/pattern_extractor.py", "http_client_in_module", "import httpx"),
     ("vr/agents/synthesis_agent.py", "http_client_in_module", "import httpx"),
     ("vr/agents/tool_executor.py", "http_client_in_module", "import httpx"),

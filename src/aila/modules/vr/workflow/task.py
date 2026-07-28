@@ -24,6 +24,10 @@ from aila.modules.vr._task_queue import (
     enqueue_downstream_target_stages,
 )
 from aila.modules.vr.agents.claim_verifier import ClaimVerifierAgent
+from aila.modules.vr.agents.narrative_agent import (
+    NarrativeAgent,
+    NarrativeOptions,
+)
 from aila.modules.vr.agents.outcome_dispatcher import OutcomeDispatcher
 from aila.modules.vr.agents.synthesis_agent import SynthesisAgent
 from aila.modules.vr.contracts.evidence_ref import EvidenceRefList
@@ -80,7 +84,9 @@ __all__ = [
     "run_function_ranking",
     "run_fuzz_campaign_launch",
     "run_target_analysis",
+    "run_vr_claim_verifier",
     "run_vr_investigate",
+    "run_vr_narrative",
     "run_vr_nday",
     "run_vr_outcome_dispatch",
     "run_vr_synthesis",
@@ -387,6 +393,46 @@ async def run_vr_synthesis(
     """
     del ctx
     agent = SynthesisAgent(investigation_id=investigation_id)
+    return await agent.run()
+
+
+@platform_task(
+    track="vr",
+    module_id="vr",
+    max_tries=2,
+    timeout_s=900.0,  # 15 min -- one long-form LLM call + DB writes
+    # Retries only on transport-class transients. An LLM 5xx / DB blip
+    # is worth one retry; an LLM-disabled-by-operator, structured-
+    # parse failure, or state-corruption KeyError is not (mirrors the
+    # rationale on run_vr_synthesis above).
+    retriable_on=_TASK_TRANSIENT,
+)
+async def run_vr_narrative(
+    ctx: TaskContext,
+    investigation_id: str,
+    options: dict[str, Any] | None = None,
+    **_: Any,
+) -> dict[str, Any]:
+    """Generate the long-form narrative writeup for one investigation.
+
+    Separate artifact from :func:`run_vr_synthesis` -- the narrative
+    is a chronological vulnerability-research story stored under
+    ``payload["investigation_narrative"]`` on the canonical outcome,
+    alongside (not replacing) ``payload["panel_summary"]`` from the
+    synthesis path.
+
+    Reachable from ``POST /vr/investigations/{id}/narrative`` with
+    optional ``options`` carrying tone / length / focus knobs.
+    Idempotent without ``options.force``: skips when a narrative is
+    already present on the canonical outcome.
+    """
+    del ctx
+    opts = NarrativeOptions()
+    if options:
+        for key in ("force", "tone", "length", "operator_focus"):
+            if key in options:
+                setattr(opts, key, options[key])
+    agent = NarrativeAgent(investigation_id=investigation_id, options=opts)
     return await agent.run()
 
 

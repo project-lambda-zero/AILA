@@ -1200,3 +1200,63 @@ export function useMasvsAudit(targetId: string) {
     },
   });
 }
+
+// ─── Investigation narrative writeup ────────────────────────────────────
+//
+// A separate long-form artifact from the structured synthesis: a
+// vulnerability-research story that walks the persona panel
+// (halvar / maddie / renzo), the competing hypotheses, the tool-driven
+// audit (semantic_search / taint_paths_to / read_function / decompiled
+// functions), the cross-persona disagreements + rejections, and the
+// FINAL VERDICT (confirmed finding / patch-present / no_finding).
+//
+// Persisted under `payload.investigation_narrative` on the canonical
+// outcome row (referenced by `primary_outcome_id`, else the earliest
+// outcome). Lives ALONGSIDE `panel_summary` -- never replaces it.
+// Idempotent without `force`: the endpoint returns the queued task id
+// but does not overwrite an existing narrative unless `force=true`.
+
+export type NarrativeTone =
+  | "blog"
+  | "incident_report"
+  | "thriller"
+  | "academic"
+  | "casual";
+export type NarrativeLength = "short" | "standard" | "long";
+
+export interface NarrativeOptions {
+  force?: boolean;
+  tone?: NarrativeTone;
+  length?: NarrativeLength;
+  operator_focus?: string;
+}
+
+/** Generate a long-form narrative writeup for one VR investigation.
+ *  Separate artifact from the structured panel synthesis -- stored
+ *  under ``payload.investigation_narrative`` on the canonical outcome
+ *  row alongside (not replacing) ``payload.panel_summary``. */
+export function useGenerateVRNarrative(investigationId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (opts: NarrativeOptions = {}) =>
+      authorizedRequestJson<Envelope<Record<string, unknown>>>(
+        `/vr/investigations/${encodeURIComponent(investigationId)}/narrative`,
+        { method: "POST", body: JSON.stringify(opts) },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["vr", "investigation-outcomes", investigationId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["vr", "investigation", investigationId],
+      });
+      toast.success(
+        "Narrative writeup queued -- the panel populates when " +
+          "generation finishes (~30-90s depending on tone + length).",
+      );
+    },
+    onError: (err: Error) => {
+      toast.error(`Narrative generation failed: ${err.message}`);
+    },
+  });
+}

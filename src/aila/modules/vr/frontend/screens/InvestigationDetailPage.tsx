@@ -33,6 +33,10 @@ import { ExportReportButton } from "../components/ExportReportButton";
 import { ReenqueuePicker } from "../components/ReenqueuePicker";
 import { LiveDot } from "../components/LiveDot";
 import { SteeringDrawer } from "../components/SteeringDrawer";
+import {
+  VRNarrativeControls,
+  type InvestigationNarrative,
+} from "../components/VRNarrativeControls";
 import { TurnCard } from "../components/TurnCard";
 import { WorkflowStepper } from "../components/WorkflowStepper";
 import { HypothesisDetailRail } from "../components/HypothesisDetailRail";
@@ -908,6 +912,12 @@ export function InvestigationDetailPage() {
                 promoteMut={promoteMut}
               />
             )}
+            {primaryOutcome && (
+              <VRNarrativeControls
+                investigationId={invId}
+                narrative={readNarrative(primaryOutcome.payload)}
+              />
+            )}
             {otherOutcomes.length > 0 && (
               <ul className="space-y-1.5">
                 {otherOutcomes.map((o) => {
@@ -1334,6 +1344,37 @@ function readVerifier(payload: Record<string, unknown> | undefined) {
   return (payload?.verifier_report as
     | { verdict?: string; confidence?: number; summary?: string; counter_evidence?: string }
     | undefined) ?? undefined;
+}
+
+/** Extract the long-form narrative writeup from a canonical outcome
+ *  payload. The narrative task (`run_vr_narrative`) persists under
+ *  `payload.investigation_narrative` alongside `panel_summary`; a
+ *  body-less or missing entry means the operator has not generated
+ *  one yet. Returns `null` in that case so the controls render an
+ *  empty state. */
+function readNarrative(
+  payload: Record<string, unknown> | undefined,
+): InvestigationNarrative | null {
+  const n = payload?.investigation_narrative as
+    | {
+        title?: string;
+        body?: string;
+        chapter_outline?: string[];
+        tone_used?: string;
+        generated_at?: string;
+        narrative_words?: number;
+      }
+    | undefined;
+  if (!n || typeof n.body !== "string" || !n.body.trim()) return null;
+  return {
+    title: n.title ?? "(untitled writeup)",
+    body: n.body,
+    chapter_outline: Array.isArray(n.chapter_outline) ? n.chapter_outline : [],
+    tone_used: n.tone_used ?? "blog",
+    generated_at: n.generated_at ?? "",
+    narrative_words:
+      typeof n.narrative_words === "number" ? n.narrative_words : 0,
+  };
 }
 
 function VerifierBanner({ vr }: { vr: ReturnType<typeof readVerifier> }) {

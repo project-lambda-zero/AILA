@@ -16,7 +16,7 @@ import json as _json
 import logging
 import os as _os
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
@@ -131,7 +131,11 @@ from .db_models import (
     VRInvestigationOutcomeRecord,
     VRInvestigationRecord,
 )
-from .workflow.task import run_vr_claim_verifier, run_vr_investigate
+from .workflow.task import (
+    run_vr_claim_verifier,
+    run_vr_investigate,
+    run_vr_narrative,
+)
 
 # SSE polling cadence for the messages stream -- 1s feels live without
 # hammering the DB. Heartbeat every 15s keeps proxies from idling out.
@@ -281,6 +285,58 @@ class _ProposalAcceptResponse(BaseModel):
     dictionary_written: bool
     auto_launched: bool
     build_log: str
+
+
+class VRNarrativeRequest(BaseModel):
+    """Body for the narrative-writeup endpoint.
+
+    The narrative is a SEPARATE artifact from the structured
+    synthesis -- a long-form chronological vulnerability-research
+    writeup suitable for a blog post, incident writeup, RE thriller,
+    academic paper, or casual community post. Stored under
+    ``payload['investigation_narrative']`` on the canonical outcome
+    row alongside (not replacing) ``panel_summary``.
+
+    Module-scoped so the ``VRNarrativeRequest | None`` forward
+    reference on the route handler resolves against module globals
+    at OpenAPI schema-generation time (see ``_ReenqueueBody`` for
+    the full rationale on why nested-in-factory request models
+    break ``/openapi.json``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    force: bool = False
+    """Re-run and overwrite when a narrative is already present on
+    the canonical outcome. Defaults False so a repeat POST is a
+    no-op; the frontend passes True on operator-driven regenerate."""
+
+    tone: Literal[
+        "blog",
+        "incident_report",
+        "thriller",
+        "academic",
+        "casual",
+    ] = "blog"
+    """Voice the narrative writes in.
+      ``blog``            -- mid-friction blog-post voice, second
+                            person asides, technical but readable;
+                            the default
+      ``incident_report`` -- vulnerability-research writeup;
+                            chronological, evidence-cited, no
+                            flourishes
+      ``thriller``        -- pulpy reverse-engineering long-read
+                            voice; tension + reveal beats; for
+                            community writeups
+      ``academic``        -- conference-paper voice; passive,
+                            citation-dense, structured abstract ->
+                            body -> discussion
+      ``casual``          -- discord / mastodon thread voice;
+                            lower formality, still technically
+                            precise
+    """
+    length: Literal["short", "standard", "long"] = "standard"
+    operator_focus: str = Field(default="", max_length=2000)
 
 
 def _summary_from_record(
@@ -4105,6 +4161,75 @@ def create_vr_router() -> APIRouter:
             "canonical_outcome_id": oc.id,
             "cleared_prior_report": had_prior,
         }
+
+    @router.post(
+        "/investigations/{investigation_id}/narrative",
+        response_model=DataEnvelope[dict[str, Any]],
+        status_code=status.HTTP_202_ACCEPTED,
+        summary=(
+            "Enqueue the long-form vulnerability-research narrative "
+            "writeup for one investigation. Separate artifact from the "
+            "structured synthesis -- the narrative is a chronological "
+            "story stored under ``payload['investigation_narrative']`` "
+            "on the canonical outcome, alongside (not replacing) "
+            "``panel_summary``. Idempotent without ``force``; poll "
+            "the canonical outcome for "
+            "``payload.investigation_narrative.generated_at`` to "
+            "detect completion."
+        ),
+    )
+    @limiter.limit("10/minute")
+    async def trigger_narrative(
+        request: Request,
+        investigation_id: str,
+        body: VRNarrativeRequest | None = None,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[dict[str, Any]]:
+        """Enqueue the long-form narrative writeup for one investigation.
+
+        Body fields map to :class:`NarrativeOptions`. Defaults are
+        ``force=False`` + ``tone='blog'`` + ``length='standard'`` --
+        the frontend passes ``force=True`` on operator-driven
+        regenerate. Returns the queued task id; poll the canonical
+        outcome for
+        ``payload.investigation_narrative.generated_at`` to detect
+        completion.
+        """
+        del request
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == investigation_id,
+                    ),
+                    VRInvestigationRecord, auth,
+                ),
+            )).first()
+            if inv is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Investigation {investigation_id} not found.",
+                )
+            team_id = inv.team_id
+
+        opts = body or VRNarrativeRequest()
+        task_handle = await default_task_queue().submit(
+            track="vr",
+            fn=run_vr_narrative,
+            kwargs={
+                "investigation_id": investigation_id,
+                "options": opts.model_dump(),
+            },
+            user_id=auth.user_id,
+            group_id="vr_narrative_manual",
+            team_id=team_id,
+        )
+        return DataEnvelope(data={
+            "investigation_id": investigation_id,
+            "task_id": task_handle.task_id,
+            "options": opts.model_dump(),
+            "queued_at": utc_now().isoformat(),
+        })
 
     class PromoteOutcomeResponse(BaseModel):
         """Result of promoting an assessment_report -> direct_finding."""
