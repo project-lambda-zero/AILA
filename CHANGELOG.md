@@ -304,6 +304,16 @@ operator action.
 
 ### Changed
 
+- The per-turn reasoning prompt is assembled by the budget-driven
+  RFC-24 ContextAssembler instead of hand-concatenated, and the fixed
+  render display caps (former hypothesis / scratchpad / tool-reading
+  counts) are removed. A config-resolved token budget
+  (reasoning_context_budget_tokens, default 180000) governs the live
+  window by tier priority: operator directives, the contract, and kill
+  criteria are pinned and never dropped, while lower-priority content is
+  trimmed to fit and remains recall-able from durable history. VR and
+  malware route through this path; forensics already did and picks up
+  the default budget automatically, so no prompt is unbounded.
 - The default investigation panel is the 3-role spine -- halvar (researcher,
   primary), maddie (critic), renzo (implementer) -- instead of the former
   fixed 6 personas. Configurable via `vr.core_persona_siblings` (falls back
