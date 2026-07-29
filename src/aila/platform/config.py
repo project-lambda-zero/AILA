@@ -265,3 +265,19 @@ class PlatformConfigSchema(BaseModel):
     reasoning_max_observables: int = 400
     reasoning_recall_pinned_max: int = 8
 
+    # RFC-24 per-turn user-prompt token budget applied by
+    # ``CyberReasoningEngine.build_user_prompt``. Sized against a 200K
+    # context-window baseline (Claude 3.5 / 4.x) so that the assembled
+    # user prompt, the caller's system prompt (typically 5-10K), the
+    # tool-catalogue payload the LLM gateway may append, and the
+    # completion (~8K) all fit without hitting the model window.
+    # NEVER treated as unbounded: when a caller (VR / forensics /
+    # malware) sets ``ReasoningPromptContext.context_budget_tokens`` to
+    # 0 the engine resolves this cap and applies it, so removing the
+    # historical render_case_model display caps cannot regress into an
+    # unbounded prompt. Operator can widen or narrow via
+    # ``PUT /config/platform/reasoning_context_budget_tokens`` without
+    # a redeploy; a value <= 0 disables the safety net (the prompt
+    # runs unbounded again) and is intended for tests only.
+    reasoning_context_budget_tokens: int = 180_000
+

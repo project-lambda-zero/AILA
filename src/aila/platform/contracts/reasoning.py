@@ -6,6 +6,7 @@ from typing import Annotated, Any, Literal
 from pydantic import (
     AfterValidator,
     BaseModel,
+    ConfigDict,
     Field,
     field_validator,
     model_validator,
@@ -263,6 +264,14 @@ class ReasoningDomainProfile(BaseModel):
 class ReasoningPromptContext(BaseModel):
     """Normalized prompt inputs for one reasoning turn."""
 
+    # ``prebuilt_sections`` carries an already-tiered section list built
+    # by a module-specific prompt builder (VR / malware). It holds
+    # :class:`ContextSection` dataclass instances, which are not Pydantic
+    # models -- ``arbitrary_types_allowed`` lets Pydantic accept them
+    # without a validator, and ``exclude=True`` keeps them out of any
+    # ``model_dump`` serialization (they are not persisted anywhere).
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     turn: int
     max_turns: int
     question: str
@@ -275,15 +284,29 @@ class ReasoningPromptContext(BaseModel):
     domain_profile: str = "generic"
     operator_steering: ReasoningOperatorSteering = Field(default_factory=ReasoningOperatorSteering)
     strategy_family: ReasoningStrategyFamily = "generic"
-    # RFC-24: cap the assembled user-prompt token count. 0 = unlimited
-    # (preserves the historical unbounded concat). ``system_prompt_tokens``
-    # accounts for the caller's separately-sent system message so the
-    # assembler leaves budget for it. Both values are approximate token
-    # counts using ``estimate_tokens`` (len // 4) -- the same heuristic
-    # ``turn_runner.PROMPT_SIZE_DIAG`` already reports on, so an operator
-    # tuning the budget can compare it against the size-diag log directly.
+    # RFC-24: cap the assembled user-prompt token count. 0 or a negative
+    # value tells ``CyberReasoningEngine.build_user_prompt`` to resolve
+    # the platform-configured default (``reasoning_context_budget_tokens``)
+    # so the caller can never accidentally produce an unbounded prompt
+    # after ``render_case_model``'s hardcoded display caps were removed.
+    # ``system_prompt_tokens`` accounts for the caller's separately-sent
+    # system message so the assembler leaves budget for it. Both values
+    # are approximate token counts using ``estimate_tokens`` (len // 4)
+    # -- the same heuristic ``turn_runner.PROMPT_SIZE_DIAG`` already
+    # reports on, so an operator tuning the budget can compare it
+    # against the size-diag log directly.
     context_budget_tokens: int = 0
     system_prompt_tokens: int = 0
+    # Module-provided tiered section list. When set, the engine bypasses
+    # its built-in section generator (``_prompt_sections``) and feeds
+    # these directly into the assembler. Modules with domain-specific
+    # prompt shapes (VR: operator messages + directives + target snapshot
+    # + CVE intel + patterns + case_model + prior/sibling + tools; malware
+    # mirrors VR minus the CVE-intel block) build their own list and pass
+    # it in, still routed through the shared budget-driven pipeline. The
+    # ``list[Any]`` typing lets the field carry ``ContextSection``
+    # dataclass instances without importing the service layer up here.
+    prebuilt_sections: list[Any] | None = Field(default=None, exclude=True)
 
 
 class LedgerWrite(BaseModel):

@@ -657,3 +657,111 @@ def test_json_safe_observables_pass() -> None:
     )
     assert state.observables["_reject_count"] == 3
     assert state.observables["_pending"]["blocked_at_turn"] == 2
+
+
+# ----------------------------------------------------------------------
+# Acceptance (c): render_case_model no longer applies the 7 hardcoded
+# display caps (hyp_ceiling=60 / scratchpad_ceiling=150 /
+# scratchpad_preview=240 / index_ceiling=400 / recent_full_count=12 /
+# recent_full_cap=4000 / index_firstline_cap=80). Every hypothesis,
+# every tool reading, and every scratchpad entry now renders in full;
+# the RFC-24 ContextAssembler sizes the LIVE section against a real
+# token budget instead. Trimmed content stays recall-able through the
+# durable message history (see absorb path).
+# ----------------------------------------------------------------------
+
+
+def test_render_case_model_renders_all_hypotheses_past_former_60_cap() -> None:
+    """Former hyp_ceiling=60 truncated live hypothesis lists; renders now
+    emit every hypothesis (RFC-24 budget layer decides fit)."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    case_state = ReasoningCaseState(
+        hypotheses=[Hypothesis(id=f"H{i}", claim=f"claim {i}") for i in range(120)],
+    )
+
+    rendered = engine.render_case_model(case_state)
+
+    for i in range(120):
+        assert f"H{i}: claim {i}" in rendered, (
+            f"hypothesis {i} missing -- former hyp_ceiling still capping"
+        )
+    # No overflow note.
+    assert "rendering ceiling" not in rendered
+
+
+def test_render_case_model_renders_all_scratchpad_full_body_past_former_150_240() -> None:
+    """Former caps: scratchpad_ceiling=150 (drop past 150 keys) and
+    scratchpad_preview=240 (per-value truncation). Neither applies now:
+    every agent-set key renders with its full value."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    long_value = "X" * 500  # > former 240 preview
+    observables: dict[str, object] = {
+        f"scratch_key_{i}": long_value for i in range(160)  # > former 150 ceiling
+    }
+    case_state = ReasoningCaseState(observables=observables)
+
+    rendered = engine.render_case_model(case_state)
+
+    # Every key surfaces.
+    for i in range(160):
+        assert f"scratch_key_{i} = " in rendered, (
+            f"scratchpad key {i} missing -- former scratchpad_ceiling still capping"
+        )
+    # Full value renders (no 240-char truncation).
+    assert long_value in rendered
+    # Header total reflects the full count.
+    assert "agent scratchpad (160 total)" in rendered
+    # No overflow note.
+    assert "scratchpad rendering ceiling" not in rendered
+
+
+def test_render_case_model_renders_all_tool_readings_past_former_400_12_4000() -> None:
+    """Former caps: index_ceiling=400 (drop past 400 tool keys),
+    recent_full_count=12 (only last 12 in full-body block), and
+    recent_full_cap=4000 (per-body preview truncation). Removed:
+    every tool key renders in full both in the INDEX and in the
+    full-body block; large bodies render verbatim so file:line
+    anchors survive."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    # 450 tool readings past the former 400 index ceiling. Each body
+    # is 4500 chars past the former 4000 full-body preview cap so we
+    # can also assert per-body cap removal on the last one.
+    big_body = "BODY_LINE_1\nBODY_LINE_2\n" + ("Z" * 4500)
+    observables: dict[str, object] = {
+        f"audit_mcp.read_function.k{i}": big_body for i in range(450)
+    }
+    case_state = ReasoningCaseState(observables=observables)
+
+    rendered = engine.render_case_model(case_state)
+
+    # Every key surfaces in the INDEX (past former 400 cap).
+    for i in (0, 200, 399, 400, 449):
+        assert f"audit_mcp.read_function.k{i}" in rendered, (
+            f"tool key {i} missing -- former index_ceiling still capping"
+        )
+    # Header total reflects the full count.
+    assert "tool readings INDEX (450 total" in rendered
+    # No overflow note.
+    assert "indexing ceiling" not in rendered
+    # Full-body section: keys past former 12-recent window render in
+    # full without the "preview; recall this key" tail.
+    assert "[preview; recall this key for full body]" not in rendered
+    # Body is preserved verbatim (past former 4000 cap).
+    assert ("Z" * 4500) in rendered
+
+
+def test_render_case_model_first_line_preview_uncapped() -> None:
+    """Former index_firstline_cap=80: the INDEX line's preview was
+    cropped to 80 chars. Removed: the first line renders verbatim so
+    an operator scanning the INDEX sees the full label."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    long_first_line = "first-line marker: " + ("F" * 300)  # > former 80 cap
+    case_state = ReasoningCaseState(
+        observables={"audit_mcp.k": long_first_line + "\nsecond line"},
+    )
+
+    rendered = engine.render_case_model(case_state)
+
+    assert long_first_line in rendered, (
+        "first-line preview truncated -- former index_firstline_cap still capping"
+    )

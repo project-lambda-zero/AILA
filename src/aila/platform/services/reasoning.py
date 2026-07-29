@@ -26,6 +26,7 @@ from aila.platform.services.context_assembler import (
     ContextAssembler,
     ContextSection,
     ContextTier,
+    PinnedOverflowError,
 )
 
 # fix §132 -- imports first, then module-level statements (PEP 8 / E402).
@@ -76,6 +77,21 @@ _DEFAULT_MAX_AGENT_KEYS_TOTAL: int = 150
 # pin list grow unbounded. Same config-registry-with-fallback pattern as
 # ``_DEFAULT_MAX_AGENT_KEYS_TOTAL`` above.
 _DEFAULT_RECALL_PINNED_MAX: int = 8
+
+# Fallback per-turn user-prompt token budget applied by
+# ``build_user_prompt`` when the caller passes 0/None and no
+# ConfigRegistry is wired (narrow unit tests that construct the engine
+# without a registry). Production paths resolve the live value via
+# ``self._resolve_platform_int("reasoning_context_budget_tokens", ...)``
+# and the schema default matches this literal so byte-for-byte behaviour
+# is preserved for callers that never override. Sized against a
+# 200K-context model with generous headroom (system prompt + tool
+# payload + completion); see the schema field
+# ``PlatformConfigSchema.reasoning_context_budget_tokens`` docstring
+# to tune it. NEVER unbounded on production callers -- the entire
+# reason this constant exists is that removing the render_case_model
+# display caps cannot regress into an unbounded prompt.
+_DEFAULT_CONTEXT_BUDGET_TOKENS: int = 180_000
 
 # Marker body injected under a recalled key when the durable message
 # history cannot supply the body (no fetcher wired, or the fetcher
@@ -602,30 +618,28 @@ class CyberReasoningEngine:
           top and is skipped from the scratchpad partition so it is not
           rendered twice.
 
-        Retrieval model (replaces the previous blind ``tool_obs[-80:]`` /
-        ``agent_obs[-15:]`` slice):
+        Retrieval model:
 
-        * Tool readings INDEX (all, up to ceiling 400) always renders --
-          one compact line per key with size + first-line preview.
-        * Tool readings shown IN FULL = the last 12 tool_obs keys by
-          insertion order UNION the keys in ``_recall.pinned``. Recalled
-          keys render uncapped; recent-only keys cap at 4000 chars and
-          are flagged so the agent knows it can pull the full body via
-          ``action="recall"``. A key in both renders once, in the
-          recalled (uncapped) form.
-        * Agent scratchpad renders ALL agent-set keys up to ceiling 150,
-          each value previewed at 240 chars.
+        * Tool readings INDEX renders every tool key -- one compact
+          line per key with size + first-line preview.
+        * Tool readings shown IN FULL = every tool_obs key by insertion
+          order UNION every key in ``_recall.pinned``. Recalled keys
+          are flagged as such; a key in both renders once, in the
+          recalled form. Bodies render verbatim so file:line anchors
+          survive.
+        * Agent scratchpad renders every agent-set key with its full
+          value.
+
+        The historical render-time truncation ceilings (hypotheses,
+        scratchpad, tool index, tool full-body preview) are gone: the
+        RFC-24 ``ContextAssembler`` now sizes the LIVE section against
+        a real token budget resolved from
+        ``platform.reasoning_context_budget_tokens``, and the recall
+        action rehydrates evicted keys from the durable message history
+        (see ``absorb``), so lossy display caps at this layer would only
+        drop content the assembler already knows how to fit or the
+        recall path already knows how to bring back.
         """
-        # Render ceilings + preview caps -- centralised so the frozen
-        # spec's numbers appear once each.
-        hyp_ceiling = 60
-        scratchpad_ceiling = 150
-        scratchpad_preview = 240
-        index_ceiling = 400
-        recent_full_count = 12
-        recent_full_cap = 4000
-        index_firstline_cap = 80
-
         parts: list[str] = []
         if self._has_contract(case_state.contract):
             parts.append("Contract:")
@@ -646,7 +660,7 @@ class CyberReasoningEngine:
                 header_suffix = "  (aging - prefer closing over adding)"
             parts.append(f"Live hypotheses ({live_count}):{header_suffix}")
             current_turn = case_state.current_turn or 0
-            for hypothesis in case_state.hypotheses[:hyp_ceiling]:
+            for hypothesis in case_state.hypotheses:
                 age_marker = ""
                 if hypothesis.opened_at_turn and current_turn:
                     age = current_turn - hypothesis.opened_at_turn
@@ -661,11 +675,6 @@ class CyberReasoningEngine:
                     parts.append(f"      why: {hypothesis.why_plausible}")
                 if hypothesis.kill_criterion:
                     parts.append(f"      kill: {hypothesis.kill_criterion}")
-            if live_count > hyp_ceiling:
-                parts.append(
-                    f"  ... and {live_count - hyp_ceiling} more live hypotheses "
-                    f"(rendering ceiling {hyp_ceiling}; close some)"
-                )
         else:
             parts.append("Live hypotheses: (propose 2-3 this turn)")
 
@@ -745,7 +754,7 @@ class CyberReasoningEngine:
                 f"Observables -- tool readings INDEX ({index_total} total -- "
                 f"emit action=\"recall\" with recall_keys=[...] to pull full bodies):"
             )
-            for key, value in tool_obs[:index_ceiling]:
+            for key, value in tool_obs:
                 body = str(value)
                 nlines = body.count("\n") + 1
                 ntok = len(body) // 4
@@ -755,93 +764,141 @@ class CyberReasoningEngine:
                     if stripped:
                         first_line = stripped
                         break
-                if len(first_line) > index_firstline_cap:
-                    first_line = first_line[:index_firstline_cap]
                 parts.append(
                     f"  - {key}  ({nlines} lines / ~{ntok} tok)  {first_line}"
                 )
-            if index_total > index_ceiling:
-                parts.append(
-                    f"  ... and {index_total - index_ceiling} more tool readings "
-                    f"(indexing ceiling {index_ceiling})"
-                )
 
-            # Full-body section: recent recent_full_count keys by
-            # insertion order UNION the pinned set. Recalled keys
-            # render uncapped; recent-only keys cap at recent_full_cap
-            # chars with a preview tail so the agent knows a recall is
-            # available. A key in both renders once in the recalled form.
-            recent_keys = [k for k, _ in tool_obs[-recent_full_count:]]
+            # Full-body section: every tool_obs key by insertion order
+            # UNION the pinned set. A key in both renders once in the
+            # recalled form so the agent sees the recall lineage. Bodies
+            # render VERBATIM -- file:line anchors survive, and the
+            # RFC-24 assembler decides whether the whole LIVE section
+            # fits the token budget; a recalled key evicted by the
+            # storage cap still rehydrates from the durable message
+            # history via ``absorb``'s recall path.
             pinned_set = set(pinned_keys)
-            # Order the full section as: recalled first (pinned order),
-            # then recent keys not already pinned (insertion order).
             full_render_order: list[tuple[str, bool]] = [
                 (k, True) for k in pinned_keys
             ]
-            for k in recent_keys:
+            for k, _ in tool_obs:
                 if k not in pinned_set:
                     full_render_order.append((k, False))
             if full_render_order:
                 parts.append(
-                    "Observables -- tool readings shown in full (recent 12 + recalled):"
+                    "Observables -- tool readings shown in full:"
                 )
                 for key, is_recalled in full_render_order:
                     body = str(tool_obs_map.get(key, ""))
-                    if is_recalled:
-                        parts.append(f"  - {key} =")
-                        parts.append(body)
-                    else:
-                        if len(body) > recent_full_cap:
-                            body = (
-                                body[:recent_full_cap]
-                                + "\n... [preview; recall this key for full body]"
-                            )
-                        parts.append(f"  - {key} =")
-                        parts.append(body)
+                    marker = " [recalled]" if is_recalled else ""
+                    parts.append(f"  - {key}{marker} =")
+                    parts.append(body)
 
         if agent_obs:
             scratchpad_total = len(agent_obs)
             parts.append(
                 f"Observables -- agent scratchpad ({scratchpad_total} total):"
             )
-            for key, value in agent_obs[:scratchpad_ceiling]:
-                preview = str(value)
-                if len(preview) > scratchpad_preview:
-                    preview = preview[:scratchpad_preview] + " ..."
-                parts.append(f"  - {key} = {preview}")
-            if scratchpad_total > scratchpad_ceiling:
-                parts.append(
-                    f"  ... and {scratchpad_total - scratchpad_ceiling} more "
-                    f"scratchpad keys (rendering ceiling {scratchpad_ceiling})"
-                )
+            for key, value in agent_obs:
+                parts.append(f"  - {key} = {value}")
 
         if not tool_obs and not agent_obs:
             parts.append("Observables: (none yet)")
 
         return "\n".join(parts)
 
+    def resolve_context_budget_tokens(self) -> int:
+        """Return the platform-configured per-turn user-prompt budget.
+
+        Reads ``platform.reasoning_context_budget_tokens`` through
+        :meth:`_resolve_platform_int` -- a missing registry, missing
+        key, or non-numeric value falls back to
+        :data:`_DEFAULT_CONTEXT_BUDGET_TOKENS` (matches the schema
+        default so byte-for-byte behaviour is preserved).
+
+        A non-positive resolved value (operator explicitly wrote 0 or a
+        negative number, e.g. to disable the safety net during a local
+        test) is coerced back to :data:`_DEFAULT_CONTEXT_BUDGET_TOKENS`
+        so ``build_user_prompt`` never routes a caller through the
+        assembler with an unbounded budget. The assembler itself
+        interprets ``budget_tokens <= 0`` as unlimited; the whole
+        reason this helper exists is that removing
+        ``render_case_model``'s display caps cannot regress into an
+        unbounded prompt on production callers.
+
+        Callers can thread the resolved value into
+        ``ReasoningPromptContext.context_budget_tokens`` so the budget
+        applied is explicit at the caller boundary; the engine itself
+        uses this helper as the fallback when a caller passes ``0``.
+        """
+        raw = self._resolve_platform_int(
+            "reasoning_context_budget_tokens", _DEFAULT_CONTEXT_BUDGET_TOKENS,
+        )
+        if raw <= 0:
+            return _DEFAULT_CONTEXT_BUDGET_TOKENS
+        return raw
+
     def build_user_prompt(self, context: ReasoningPromptContext) -> str:
         """Build the user-prompt payload for one reasoning turn.
 
-        Routes the prompt through the RFC-24 tiered assembler so a
-        ``context.context_budget_tokens > 0`` fits the assembled body
-        to that budget while preserving the pinned tier (system
-        framing, operator steering, kill directives). ``0`` disables
-        the budget and produces the historical unbounded concat --
-        every existing caller (module-owned prompt builders that do
-        not set the budget field yet) sees byte-identical output.
+        Routes the prompt through the RFC-24 tiered assembler so the
+        assembled body fits a real token budget while preserving the
+        pinned tier (system framing, operator steering, kill directives).
 
-        This moves prompt framing out of individual modules so every future
-        cyber domain shares one turn contract and one operator-facing context
-        layout, while still allowing modules to provide domain evidence and
-        artifacts.
+        Budget resolution:
+
+        * ``context.context_budget_tokens > 0`` -- honoured verbatim.
+          Callers that already resolved a budget (VR threads the
+          platform-configured value; tests pin a specific size) pass
+          it explicitly.
+        * ``context.context_budget_tokens <= 0`` -- the engine falls
+          back to :meth:`resolve_context_budget_tokens`. This is the
+          safety net for forensics and any other caller still passing
+          the default. After ``render_case_model``'s hardcoded display
+          caps were removed, an unbounded budget would let a busy
+          case_state produce an arbitrarily large prompt; the fallback
+          keeps every caller bounded by the same platform config.
+
+        Section source:
+
+        * ``context.prebuilt_sections`` set -- VR / malware pass their
+          own tiered section list; the engine's built-in
+          ``_prompt_sections`` (the forensics-style header + evidence
+          + case_model + transcript layout) is skipped.
+        * ``context.prebuilt_sections is None`` -- forensics and other
+          domain-generic callers use the built-in section generator.
+
+        Raises :class:`PinnedOverflowError` when the PINNED tier alone
+        exceeds the resolved budget. That is a real operational signal
+        -- either operator-authoritative content grew past the model
+        window or the configured budget is too small for the deployment.
+        The engine logs at ERROR before re-raising so an operator sees
+        the exact numbers in the worker log; silently truncating
+        operator steering would violate the RFC-24 guardrail.
         """
-        sections = self._prompt_sections(context)
-        assembled = self._prompt_assembler.assemble(
-            sections,
-            budget_tokens=context.context_budget_tokens,
-            reserved_tokens=context.system_prompt_tokens,
-        )
+        if context.prebuilt_sections is not None:
+            sections = list(context.prebuilt_sections)
+        else:
+            sections = self._prompt_sections(context)
+        if context.context_budget_tokens > 0:
+            budget_tokens = context.context_budget_tokens
+        else:
+            budget_tokens = self.resolve_context_budget_tokens()
+        try:
+            assembled = self._prompt_assembler.assemble(
+                sections,
+                budget_tokens=budget_tokens,
+                reserved_tokens=context.system_prompt_tokens,
+            )
+        except PinnedOverflowError:
+            _log.exception(
+                "reasoning: pinned tier overflowed context budget "
+                "(budget=%d, reserved=%d); operator-authoritative sections "
+                "cannot be dropped -- widen platform.reasoning_context_"
+                "budget_tokens or shrink pinned inputs (operator steering / "
+                "active directives / target snapshot / tool catalog)",
+                budget_tokens, context.system_prompt_tokens,
+            )
+            raise
         return assembled.text
 
     def _prompt_sections(

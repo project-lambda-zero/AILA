@@ -366,3 +366,225 @@ def test_build_user_prompt_zero_budget_matches_historical_shape() -> None:
         i for i, ln in enumerate(lines) if ln.startswith("Evidence directory:")
     )
     assert steer_idx < ev_idx
+
+
+# --------------------------------------------------------------------------- #
+# module-shape prebuilt_sections + config-resolved default budget
+# --------------------------------------------------------------------------- #
+
+
+def _vr_shape_sections(
+    *,
+    directive: str = "",
+    case_model: str = "observables: (none)",
+    tools_body: str = "# Available tools\naudit_mcp.read_function(name: str [required])",
+    priors: str = "",
+    siblings: str = "",
+) -> list[ContextSection]:
+    """Build the exact tiered section list VR emits after the routing
+    change: PINNED operator/directive/header/target/tools/instruction,
+    LIVE case_model, RECENT priors/siblings.
+
+    Kept local so the test asserts the shared assembler behaviour
+    against the SAME tier map VR's ``_build_user_prompt`` uses; a
+    future drift between the two would surface as a test failure.
+    """
+    sections: list[ContextSection] = [
+        ContextSection(
+            tier=ContextTier.PINNED,
+            label="operator_messages",
+            body="# *** OPERATOR STEERING -- MANDATORY OVERRIDE ***\nMSG-1: run",
+            droppable=False,
+        ),
+    ]
+    if directive:
+        sections.append(ContextSection(
+            tier=ContextTier.PINNED,
+            label="active_directives",
+            body=directive,
+            droppable=False,
+        ))
+    sections.append(ContextSection(
+        tier=ContextTier.PINNED,
+        label="investigation_header",
+        body="# Investigation\n\nQuestion: is CVE-2026-1234 exploitable?",
+        droppable=False,
+    ))
+    sections.append(ContextSection(
+        tier=ContextTier.PINNED,
+        label="target_snapshot",
+        body="# Primary target snapshot\nkind: source_repo",
+        droppable=False,
+    ))
+    sections.append(ContextSection(
+        tier=ContextTier.LIVE,
+        label="case_model",
+        body="# Current case state\n\n" + case_model,
+    ))
+    if priors:
+        sections.append(ContextSection(
+            tier=ContextTier.RECENT,
+            label="prior_submissions",
+            body=priors,
+            summary="# Prior submissions: elided for budget",
+        ))
+    if siblings:
+        sections.append(ContextSection(
+            tier=ContextTier.RECENT,
+            label="sibling_context",
+            body=siblings,
+            summary="# Sibling deliberations: elided for budget",
+        ))
+    sections.append(ContextSection(
+        tier=ContextTier.PINNED,
+        label="available_tools",
+        body=tools_body,
+        droppable=False,
+    ))
+    sections.append(ContextSection(
+        tier=ContextTier.PINNED,
+        label="instruction",
+        body="# Instruction\n\nProduce the next reasoning turn as a JSON object per the system prompt schema.",
+        droppable=False,
+    ))
+    return sections
+
+
+def _vr_context(
+    sections: list[ContextSection], budget: int = 0,
+) -> ReasoningPromptContext:
+    return ReasoningPromptContext(
+        turn=3,
+        max_turns=30,
+        question="is CVE-2026-1234 exploitable?",
+        prebuilt_sections=sections,
+        context_budget_tokens=budget,
+    )
+
+
+def test_vr_shape_large_budget_preserves_every_section_in_order() -> None:
+    """Acceptance (a): a VR-shaped ReasoningPromptContext assembled
+    with a large budget contains every section in insertion order --
+    materially equivalent to the pre-change hand-rolled f-string."""
+    engine = CyberReasoningEngine(_NullLLMClient())  # type: ignore[arg-type]
+    sections = _vr_shape_sections(
+        directive="# *** ACTIVE DIRECTIVES ***\ndirective: pivot to xssdrop.c:412",
+        case_model="Live hypotheses (1):\n  - H1: CVE-2026-1234 hits parse_frame",
+        priors="# Prior submissions\nAssessmentReport (medium)",
+        siblings="# Sibling deliberations\nMaddie: agrees with H1",
+    )
+    ctx = _vr_context(sections, budget=100_000)
+
+    prompt = engine.build_user_prompt(ctx)
+
+    # Every section renders at full body.
+    expected_labels = [
+        "# *** OPERATOR STEERING -- MANDATORY OVERRIDE ***",
+        "# *** ACTIVE DIRECTIVES ***",
+        "# Investigation",
+        "# Primary target snapshot",
+        "# Current case state",
+        "# Prior submissions",
+        "# Sibling deliberations",
+        "# Available tools",
+        "# Instruction",
+    ]
+    for label in expected_labels:
+        assert label in prompt, f"missing block: {label!r}"
+
+    # Insertion order matches the historical concatenation.
+    positions = [prompt.index(label) for label in expected_labels]
+    assert positions == sorted(positions), (
+        f"section order drifted: {positions}"
+    )
+
+
+def test_vr_shape_small_budget_keeps_pinned_drops_or_summarizes_recent() -> None:
+    """Acceptance (b): under budget pressure, PINNED (operator,
+    directives, header, target, tools, instruction) survive intact
+    while RECENT (priors, siblings) drop or fall back to summary --
+    operator-authoritative and kill-criterion content is NEVER
+    truncated."""
+    engine = CyberReasoningEngine(_NullLLMClient())  # type: ignore[arg-type]
+    heavy_priors = "# Prior submissions\n" + "P" * 4000  # ~1000 tokens
+    heavy_siblings = "# Sibling deliberations\n" + "S" * 4000  # ~1000 tokens
+    heavy_case = "# Current case state -- heavy\n" + "L" * 4000  # ~1000 tokens
+    sections = _vr_shape_sections(
+        directive="# *** ACTIVE DIRECTIVES ***\nkill hypothesis when parse_frame returns 0",
+        case_model=heavy_case,
+        priors=heavy_priors,
+        siblings=heavy_siblings,
+    )
+    # Tight budget: keeps pinned tier + drops or summarises RECENT.
+    ctx = _vr_context(sections, budget=400)
+
+    prompt = engine.build_user_prompt(ctx)
+
+    # PINNED tier survives verbatim.
+    assert "# *** OPERATOR STEERING -- MANDATORY OVERRIDE ***" in prompt
+    assert "# *** ACTIVE DIRECTIVES ***" in prompt
+    assert "kill hypothesis when parse_frame returns 0" in prompt
+    assert "# Investigation" in prompt
+    assert "# Primary target snapshot" in prompt
+    assert "# Available tools" in prompt
+    assert "# Instruction" in prompt
+    # RECENT tier is elided: either dropped outright or swapped for
+    # its summary. Either way, the heavy body must be gone.
+    assert "PPPPPPPPP" not in prompt
+    assert "SSSSSSSSS" not in prompt
+
+
+def test_build_user_prompt_zero_budget_applies_config_default() -> None:
+    """Acceptance (d): a caller passing ``context_budget_tokens=0``
+    still gets a real budget applied -- forensics + malware + any
+    hand-build path that still runs through ``build_user_prompt``
+    cannot regress into an unbounded prompt after
+    ``render_case_model``'s display caps were removed."""
+    engine = CyberReasoningEngine(_NullLLMClient())  # type: ignore[arg-type]
+    # Force a small budget through the platform config -- proves the
+    # engine reads the config and uses it as the fallback (rather
+    # than silently defaulting to unbounded on zero).
+    class _StubRegistry:
+        def get_sync(self, namespace: str, key: str) -> object:
+            assert namespace == "platform"
+            if key == "reasoning_context_budget_tokens":
+                return 400
+            return None
+
+    engine._config_registry = _StubRegistry()  # type: ignore[attr-defined]
+
+    heavy_priors = "# Prior submissions\n" + "P" * 4000
+    sections = _vr_shape_sections(priors=heavy_priors)
+    ctx = _vr_context(sections, budget=0)
+
+    prompt = engine.build_user_prompt(ctx)
+
+    # Prompt fits the config-resolved fallback budget (400 tokens),
+    # confirming zero != unbounded. The heavy priors block is
+    # elided; PINNED content survives.
+    assert estimate_tokens(prompt) <= 400
+    assert "# *** OPERATOR STEERING -- MANDATORY OVERRIDE ***" in prompt
+    assert "PPPPPPPPP" not in prompt
+
+
+def test_build_user_prompt_default_budget_fallback_when_no_registry() -> None:
+    """Regression: with no ConfigRegistry wired (narrow unit-test
+    construction), the engine falls back to the module-level
+    ``_DEFAULT_CONTEXT_BUDGET_TOKENS`` constant. Small VR prompts
+    still assemble in full because the default (180K) dwarfs them.
+    """
+    from aila.platform.services.reasoning import (
+        _DEFAULT_CONTEXT_BUDGET_TOKENS,
+    )
+
+    engine = CyberReasoningEngine(_NullLLMClient())  # type: ignore[arg-type]
+    assert engine.resolve_context_budget_tokens() == _DEFAULT_CONTEXT_BUDGET_TOKENS
+    ctx = _vr_context(_vr_shape_sections(), budget=0)
+
+    prompt = engine.build_user_prompt(ctx)
+
+    # Small prompt fits comfortably; every PINNED block survives.
+    assert "# *** OPERATOR STEERING -- MANDATORY OVERRIDE ***" in prompt
+    assert "# Investigation" in prompt
+    assert "# Available tools" in prompt
+    assert "# Instruction" in prompt

@@ -71,6 +71,7 @@ from aila.platform.contracts import utc_now
 from aila.platform.contracts.reasoning import (
     ReasoningCaseState,
     ReasoningContract,
+    ReasoningPromptContext,
     ReasoningTurnDecision,
 )
 from aila.platform.mcp.adapters import (
@@ -84,6 +85,10 @@ from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 from aila.platform.prompts import LoadedPrompt, PromptNotFoundError, PromptRegistry
 from aila.platform.prompts.pinning import resolve_pinned_prompt
 from aila.platform.prompts.version_store import PromptVersionStore
+from aila.platform.services.context_assembler import (
+    ContextSection,
+    ContextTier,
+)
 from aila.platform.services.reasoning import CyberReasoningEngine
 from aila.platform.uow import UnitOfWork
 
@@ -529,16 +534,44 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         sibling_context: list[dict[str, Any]] | None = None,
         applicable_patterns: list[dict[str, Any]] | None = None,
     ) -> str:
-        """Render the per-turn user prompt.
+        """Render the per-turn user prompt through the RFC-24 tiered
+        assembler.
 
-        Compact + structured. Includes the investigation question,
-        a target-snapshot block (kind, language, descriptor,
-        applicable MCP servers, ranked candidates), the current case
-        state model, turn counter, any pending operator messages
-        (M3.R-6), an External-CVE-intel block, and a target-kind-
-        filtered tool catalog. Render order is deliberate -- target
-        first so the agent grounds on what's actually being audited
-        before it picks tools.
+        Assembles the same content the previous hand-rolled f-string
+        emitted -- operator messages, active directives, investigation
+        header, target snapshot, CVE intel, applicable patterns, case
+        model, prior submissions, sibling context, available tools,
+        instruction -- but tags each block with a
+        :class:`ContextTier` so the platform assembler can fit the
+        prompt to the platform-configured token budget when the case
+        state grows past a comfortable size.
+
+        Tier assignment:
+
+        * ``PINNED`` -- operator messages, active directives, the
+          investigation header (title + kind + question + target),
+          the target snapshot, the available-tools catalog, and the
+          trailing instruction line. These are operator-authoritative
+          or hard preconditions for the agent to produce a valid
+          decision; the assembler NEVER drops them, and a genuinely
+          oversized PINNED tier surfaces as
+          :class:`PinnedOverflowError` at the engine boundary.
+        * ``LIVE`` -- the rendered case model (contract + live
+          hypotheses + tool-reading INDEX + full-body tool readings +
+          agent scratchpad + ledger board). ``render_case_model`` no
+          longer applies display caps; the whole block either fits
+          or drops as one, and trimmed tool bodies remain reachable
+          through the recall action's durable-history backing.
+        * ``RECENT`` -- CVE intel, applicable patterns, prior
+          submissions, sibling context. All carry a short summary
+          fallback so a tight budget keeps a breadcrumb for the
+          agent rather than dropping the block outright.
+
+        Section INSERTION ORDER matches the historical concatenation
+        (operator -> directives -> header -> target -> CVE -> patterns
+        -> case_model -> priors -> siblings -> tools -> instruction)
+        so operators reading raw prompts see the same top-to-bottom
+        layout they always have.
         """
         case_model = self._engine.render_case_model(case_state)
         secondary_refs = json.loads(inv.secondary_target_refs_json or "[]")
@@ -546,26 +579,17 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             ", ".join(str(r) for r in secondary_refs) if secondary_refs else "(none)"
         )
 
-        operator_section = _render_operator_messages_section(
-            pending_operator_messages or [],
-        )
-        directive_section = _render_active_directives_section(case_state)
-        cve_intel_section = _render_cve_intel_section(cve_intel or [])
-        target_section = _render_target_snapshot_section(target_snapshot or {})
-        prior_submissions_section = _render_prior_submissions_section(
-            prior_outcomes or [], inv.kind,
-        )
-        sibling_section = _render_sibling_context_section(
-            sibling_context or [],
-            this_persona=branch.persona_voice,
-        )
-        pattern_section = _render_pattern_section(applicable_patterns or [])
+        pending_ops = pending_operator_messages or []
+        cve_entries = cve_intel or []
+        priors = prior_outcomes or []
+        siblings = sibling_context or []
+        patterns = applicable_patterns or []
         target_kind = (target_snapshot or {}).get("kind")
         primary_language = (target_snapshot or {}).get("primary_language")
-        return (
-            f"{operator_section}"
-            f"{directive_section}"
-            f"# Investigation\n\n"
+
+        header_body = (
+            "# Investigation\n"
+            "\n"
             f"Title: {inv.title}\n"
             f"Kind: {inv.kind}\n"
             f"Question: {inv.initial_question}\n"
@@ -573,21 +597,139 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             f"Secondary targets: {secondary_str}\n"
             f"Strategy: {inv.strategy_family}\n"
             f"Turn: {turn}\n"
-            f"Branch: {branch.id} (persona: {branch.persona_voice or 'none'})\n"
-            f"\n"
-            f"{target_section}"
-            f"{cve_intel_section}"
-            f"{pattern_section}"
-            f"# Current case state\n\n"
-            f"{case_model}\n"
-            f"\n"
-            f"{prior_submissions_section}"
-            f"{sibling_section}"
-            f"{_render_available_tools_section(target_kind, tool_specs, primary_language)}"
-            f"# Instruction\n\n"
-            f"Produce the next reasoning turn as a JSON object per the "
-            f"system prompt schema."
+            f"Branch: {branch.id} (persona: {branch.persona_voice or 'none'})"
         )
+
+        sections: list[ContextSection] = []
+
+        operator_section = _render_operator_messages_section(pending_ops)
+        if operator_section:
+            sections.append(ContextSection(
+                tier=ContextTier.PINNED,
+                label="operator_messages",
+                body=operator_section.rstrip("\n"),
+                droppable=False,
+            ))
+
+        directive_section = _render_active_directives_section(case_state)
+        if directive_section:
+            sections.append(ContextSection(
+                tier=ContextTier.PINNED,
+                label="active_directives",
+                body=directive_section.rstrip("\n"),
+                droppable=False,
+            ))
+
+        sections.append(ContextSection(
+            tier=ContextTier.PINNED,
+            label="investigation_header",
+            body=header_body,
+            droppable=False,
+        ))
+
+        target_section = _render_target_snapshot_section(target_snapshot or {})
+        if target_section:
+            sections.append(ContextSection(
+                tier=ContextTier.PINNED,
+                label="target_snapshot",
+                body=target_section.rstrip("\n"),
+                droppable=False,
+            ))
+
+        cve_intel_section = _render_cve_intel_section(cve_entries)
+        if cve_intel_section:
+            sections.append(ContextSection(
+                tier=ContextTier.RECENT,
+                label="cve_intel",
+                body=cve_intel_section.rstrip("\n"),
+                summary=(
+                    f"# External CVE intel: {len(cve_entries)} entries "
+                    "elided for budget (recall via prior context if needed)"
+                ),
+            ))
+
+        pattern_section = _render_pattern_section(patterns)
+        if pattern_section:
+            sections.append(ContextSection(
+                tier=ContextTier.RECENT,
+                label="applicable_patterns",
+                body=pattern_section.rstrip("\n"),
+                summary=(
+                    f"# Applicable patterns: {len(patterns)} entries "
+                    "elided for budget"
+                ),
+            ))
+
+        sections.append(ContextSection(
+            tier=ContextTier.LIVE,
+            label="case_model",
+            body="# Current case state\n\n" + case_model,
+            # No summary: paraphrasing observables would violate the
+            # RFC-24 file:line-anchor guardrail. Trimmed tool bodies
+            # remain reachable through the recall action's durable
+            # message-history backing (see reasoning.py absorb path),
+            # so a dropped case_model is not lossy across turns.
+        ))
+
+        prior_submissions_section = _render_prior_submissions_section(
+            priors, inv.kind,
+        )
+        if prior_submissions_section:
+            sections.append(ContextSection(
+                tier=ContextTier.RECENT,
+                label="prior_submissions",
+                body=prior_submissions_section.rstrip("\n"),
+                summary=(
+                    f"# Prior submissions: {len(priors)} on file "
+                    "(elided for budget)"
+                ),
+            ))
+
+        sibling_section = _render_sibling_context_section(
+            siblings, this_persona=branch.persona_voice,
+        )
+        if sibling_section:
+            sections.append(ContextSection(
+                tier=ContextTier.RECENT,
+                label="sibling_context",
+                body=sibling_section.rstrip("\n"),
+                summary=(
+                    f"# Sibling deliberations: {len(siblings)} sibling "
+                    "branches (elided for budget)"
+                ),
+            ))
+
+        tools_body = _render_available_tools_section(
+            target_kind, tool_specs, primary_language,
+        )
+        if tools_body:
+            sections.append(ContextSection(
+                tier=ContextTier.PINNED,
+                label="available_tools",
+                body=tools_body.rstrip("\n"),
+                droppable=False,
+            ))
+
+        sections.append(ContextSection(
+            tier=ContextTier.PINNED,
+            label="instruction",
+            body=(
+                "# Instruction\n"
+                "\n"
+                "Produce the next reasoning turn as a JSON object per the "
+                "system prompt schema."
+            ),
+            droppable=False,
+        ))
+
+        context = ReasoningPromptContext(
+            turn=turn,
+            max_turns=turn,
+            question=inv.initial_question,
+            prebuilt_sections=sections,
+            context_budget_tokens=self._engine.resolve_context_budget_tokens(),
+        )
+        return self._engine.build_user_prompt(context)
 
     # Wall-clock TTL for operator messages. Previously computed as
     # _OPERATOR_MESSAGE_TTL_TURNS * 240s assuming each turn ≈ 4min --
