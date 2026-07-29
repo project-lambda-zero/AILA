@@ -332,6 +332,14 @@ operator action.
 
 ### Fixed
 
+- A reasoning turn whose structured output is not valid JSON is now
+  repaired across a bounded number of attempts (each retry shows the
+  model the verbatim validation error plus the partial JSON it produced)
+  before the turn is given up, instead of consuming the turn on the
+  first malformed response.
+- An agent that calls a tool name not in the catalog now gets a nearest-
+  name suggestion ("Did you mean: ...?") in the error, instead of only a
+  generic "re-read the available tools" message.
 - The audit_mcp read_lines bridge tool now resolves a file whose basename
   uniquely identifies one file in the indexed tree even when the caller
   passed the wrong directory prefix, instead of returning a not-found
