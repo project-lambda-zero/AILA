@@ -203,6 +203,20 @@ class VRConfigSchema(ModuleConfigBase):
             "draft never assembles quorum, burning its whole turn budget."
         ),
     )
+    sibling_open_hyp_reject_cap: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Consecutive no_finding / inconclusive submit rejections on a "
+            "branch while a sibling still holds a live hypothesis no branch "
+            "has rejected. Above the cap the gate forces the submit through, "
+            "stamping ``payload.sibling_open_hyp_advisory`` with the sibling "
+            "branch id(s) + open hypothesis id(s) so the operator can audit "
+            "the closure gap. Without this cap a branch that genuinely has "
+            "nothing left to hunt could be blocked forever by a slow "
+            "sibling that never resolves its own hypothesis."
+        ),
+    )
     tool_executor_hard_block_repeat: int = Field(
         default=3,
         ge=1,

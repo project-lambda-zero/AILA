@@ -19,6 +19,20 @@ operator action.
 
 ### Added
 
+- Terminal-convergence gates stop an investigation panel from closing
+  prematurely or thrashing. A no-finding or inconclusive submission is
+  blocked while a sibling branch still holds a live hypothesis no branch
+  has rejected, so the scope is not declared clean while a peer holds a
+  live lead. A hypothesis left open past a configurable turn threshold
+  raises a directive naming it and requiring the agent to resolve,
+  reject, or explicitly defer it that turn. A new not_ready review vote
+  lets a reviewer decline to ship a sibling's draft with a stated
+  blocker, recording the reason without a stalling abstain or a
+  premature approve/reject; a panel where every recorded response is
+  not_ready stays open pending evidence instead of falling silent. The
+  staleness threshold and the sibling-gate force-through cap are
+  config-tunable, and the audit prompt documents the recall protocol
+  that backs lossless working-set trims.
 - Reasoning-agent recall is now lossless: when an agent recalls a tool
   finding whose body was evicted from the live working set, the body is
   retrieved from durable message history instead of being gone for good.

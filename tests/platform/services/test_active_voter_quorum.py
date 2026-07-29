@@ -31,6 +31,7 @@ from aila.platform.services.outcome_review import (
     OUTCOME_STATE_REJECTED,
     VOTE_ABSTAIN,
     VOTE_APPROVE,
+    VOTE_NOT_READY,
     VOTE_REJECT,
     evaluate_quorum,
 )
@@ -218,3 +219,140 @@ async def test_active_voters_block_premature_approval(test_db) -> None:
     assert res.new_state == OUTCOME_STATE_DRAFT
     assert res.transition_occurred is False
     assert "auto_approved" not in res.transition_reason
+
+
+# ----------------------------------------------------------------------
+# #6 convergence fix -- ``not_ready`` is a first-class vote that
+# records a blocker without moving approve or reject quorum. When
+# every non-proposing sibling responds not_ready and no active voter
+# remains, the draft stays in DRAFT with a ``blocked_pending_evidence``
+# reason (NOT the ``held_for_operator_no_active_voters`` operator-hold
+# banner that fires when the panel is genuinely silent).
+# ----------------------------------------------------------------------
+
+
+async def test_not_ready_records_without_moving_quorum(test_db) -> None:
+    """Two approvals + three not_ready responses: not_ready is tallied
+    but does not add to approve_count, so with K=3 the draft stays in
+    DRAFT (no premature ship on a chorus of pending-evidence votes)."""
+    del test_db
+    outcome_id = await _seed(
+        inv="inv-q-notready-partial",
+        proposer="p",
+        sibling_ids=["s1", "s2", "s3", "s4", "s5"],
+        votes=[
+            ("s1", VOTE_APPROVE),
+            ("s2", VOTE_APPROVE),
+            ("s3", VOTE_NOT_READY),
+            ("s4", VOTE_NOT_READY),
+            ("s5", VOTE_NOT_READY),
+        ],
+    )
+    res = await evaluate_quorum(
+        outcome_id, veto_k=1, audit_stage="source_audit", **_MODELS,
+    )
+    assert res.quorum_k == 3
+    assert res.approve_count == 2
+    assert res.not_ready_count == 3
+    # State stays DRAFT: not_ready never adds to approve or reject.
+    assert res.new_state == OUTCOME_STATE_DRAFT
+    assert res.transition_occurred is False
+
+
+async def test_all_siblings_not_ready_blocked_pending_evidence(
+    test_db,
+) -> None:
+    """All non-proposing siblings vote not_ready (and are already
+    completed so no active voters remain): draft stays in DRAFT with
+    the ``blocked_pending_evidence`` reason -- NOT the operator-hold
+    banner. This is the panel actively signaling "waiting on
+    evidence", not a dead-panel needing operator intervention."""
+    del test_db
+    outcome_id = await _seed(
+        inv="inv-q-notready-all",
+        proposer="p",
+        sibling_ids=["s1", "s2", "s3"],
+        votes=[
+            ("s1", VOTE_NOT_READY),
+            ("s2", VOTE_NOT_READY),
+            ("s3", VOTE_NOT_READY),
+        ],
+        sibling_status="completed",
+    )
+    res = await evaluate_quorum(
+        outcome_id, veto_k=1, audit_stage="source_audit", **_MODELS,
+    )
+    assert res.not_ready_count == 3
+    assert res.siblings_active == 0
+    assert res.new_state == OUTCOME_STATE_DRAFT
+    assert res.transition_occurred is False
+    assert "blocked_pending_evidence" in res.transition_reason
+    assert "held_for_operator" not in res.transition_reason
+    assert "auto_approved" not in res.transition_reason
+
+
+async def test_mixed_abstain_and_not_ready_falls_back_to_operator_hold(
+    test_db,
+) -> None:
+    """Some siblings abstain + some not_ready + no active voters =
+    the panel is not uniformly signaling pending-evidence, so the
+    fallback stays with ``held_for_operator_no_active_voters`` (with
+    ``not_ready`` surfaced in the reason)."""
+    del test_db
+    outcome_id = await _seed(
+        inv="inv-q-notready-mixed",
+        proposer="p",
+        sibling_ids=["s1", "s2", "s3"],
+        votes=[
+            ("s1", VOTE_ABSTAIN),
+            ("s2", VOTE_NOT_READY),
+            ("s3", VOTE_NOT_READY),
+        ],
+        sibling_status="completed",
+    )
+    res = await evaluate_quorum(
+        outcome_id, veto_k=1, audit_stage="source_audit", **_MODELS,
+    )
+    assert res.abstain_count == 1
+    assert res.not_ready_count == 2
+    assert res.new_state == OUTCOME_STATE_DRAFT
+    assert res.transition_occurred is False
+    assert "held_for_operator" in res.transition_reason
+    assert "not_ready=2" in res.transition_reason
+    assert "blocked_pending_evidence" not in res.transition_reason
+
+
+async def test_not_ready_does_not_close_branch(test_db) -> None:
+    """A not_ready vote leaves the draft in DRAFT and DOES NOT
+    trigger sibling halt (which only fires on APPROVED). Belt-and-
+    suspenders regression -- the sibling halt loop only runs on
+    APPROVED transitions, and DRAFT never touches sibling.status."""
+    del test_db
+    outcome_id = await _seed(
+        inv="inv-q-notready-branch",
+        proposer="p",
+        sibling_ids=["s1", "s2", "s3"],
+        votes=[("s1", VOTE_NOT_READY)],
+    )
+    res = await evaluate_quorum(
+        outcome_id, veto_k=1, audit_stage="source_audit", **_MODELS,
+    )
+    assert res.new_state == OUTCOME_STATE_DRAFT
+    assert res.transition_occurred is False
+    # And confirm the sibling rows are still active on the DB side
+    # (the halt loop should NOT have fired).
+    async with UnitOfWork() as uow:
+        from sqlmodel import select as _sel
+        rows = (await uow.session.exec(
+            _sel(VRInvestigationBranchRecord).where(
+                VRInvestigationBranchRecord.investigation_id
+                == "inv-q-notready-branch",
+            ),
+        )).all()
+    for row in rows:
+        if row.id == "p":
+            continue
+        # Sibling rows created active; the halt path never ran.
+        assert row.status == "active", (
+            f"sibling {row.id} incorrectly halted on a not_ready vote"
+        )

@@ -55,6 +55,7 @@ from aila.modules.vr.db_models import (
 )
 from aila.modules.vr.services.config_helpers import get_int
 from aila.modules.vr.services.mcp_call_logger import record_call
+from aila.modules.vr.services.outcome_polarity import derive_outcome_polarity
 from aila.modules.vr.services.outcome_review import (
     OUTCOME_STATE_APPROVED,
     OUTCOME_STATE_DRAFT,
@@ -191,6 +192,9 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         self._variant_hunt_reject_cap = await get_int("variant_hunt_reject_cap")
         self._unresolved_hyp_reject_cap = await get_int("unresolved_hyp_reject_cap")
         self._draft_pending_reject_cap = await get_int("draft_pending_reject_cap")
+        self._sibling_open_hyp_reject_cap = await get_int(
+            "sibling_open_hyp_reject_cap",
+        )
 
     async def _build_recall_fetcher(
         self, recall_keys: list[str],
@@ -259,6 +263,24 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                 decision=decision, case_state=case_state, turn_number=turn_number,
             )
         return decision
+
+    def _review_vote_and_comment(self, decision: Any) -> tuple[str, str]:
+        """Resolve the effective (vote, comment) for an outcome review.
+
+        Overrides the platform default so ``not_ready`` is recognized as
+        a first-class VR review vote: the comment (or ``reasoning``
+        fallback) is treated as the STATED BLOCKER and rides on the
+        review row so operators + the proposing branch can read why
+        this branch declined to approve or reject yet. Empty blocker
+        is preserved verbatim (not downgraded) because the
+        not_ready-recorded directive stamped by the runner already
+        surfaces the missing blocker on the next prompt.
+        """
+        raw_vote = decision.review_vote or "abstain"
+        raw_comment = (decision.review_comment or decision.reasoning or "").strip()
+        if raw_vote == "not_ready":
+            return ("not_ready", raw_comment)
+        return (raw_vote, raw_comment)
 
     async def _dispatch_approved_outcome(self, outcome_id: str) -> None:
         # Deferred import: workflow.task imports the researcher module.
@@ -1158,6 +1180,228 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                 "_unresolved_hyp_gate_reject_count": new_reject_count,
             },
         })
+
+    def _maybe_reject_no_finding_while_sibling_open_hyp(
+        self,
+        *,
+        decision: ReasoningTurnDecision,
+        case_state: ReasoningCaseState,
+        sibling_context: list[dict[str, Any]] | None,
+        turn_number: int,
+    ) -> ReasoningTurnDecision:
+        """Intercept a terminal ``no_finding`` / ``inconclusive`` submit
+        while a sibling still holds a live hypothesis no branch has
+        rejected.
+
+        Shipping a no-finding while a sibling is actively hunting a
+        vector this branch hasn't disproved is exactly the divergence
+        the panel exists to catch: one persona says "nothing here" and
+        closes out, another persona is one turn from confirming a
+        finding. The premature no-finding then wins by first-mover and
+        the whole investigation collapses to that verdict.
+
+        Fires only when:
+          - ``decision.action == "submit"`` (terminal), AND
+          - ``derive_outcome_polarity(outcome_kind, payload)`` is
+            ``'no_finding'`` or ``'inconclusive'``. Findings pass
+            through unconditionally -- the sibling can still veto via
+            the review flow, but the panel does not block a positive
+            finding on a sibling's un-refuted hunt.
+
+        Rejected-id set = this branch's rejected[] ids + every
+        sibling's rejected[] ids + ids the CURRENT decision rejects
+        (so the agent can close out its own leftovers in the same
+        turn it submits). A sibling live id that appears in that set
+        is considered "disproved by SOMEONE" and doesn't block the
+        submit; sibling ids that no branch has rejected DO block it.
+
+        Force-through after ``self._sibling_open_hyp_reject_cap``
+        consecutive rejections (schema default 3): stamp
+        ``payload.sibling_open_hyp_advisory`` with the sibling ids +
+        hypothesis ids so the operator can audit the closure gap,
+        then let the submit through so a slow sibling that never
+        resolves its own hypothesis doesn't hold this branch forever.
+
+        Same shape as the unresolved-hyp / variant-hunt / draft-pending
+        gates: pass clears counter + directive, reject swaps to
+        non-terminal placeholder, force-through stamps the payload.
+        """
+        outcome_kind = self._terminal_outcome_kind(decision)
+        payload = self._outcome_payload(decision)
+        polarity = derive_outcome_polarity(outcome_kind.value, payload)
+        if polarity not in ("no_finding", "inconclusive"):
+            # Finding-polarity submit -- the panel review flow, not this
+            # gate, handles sibling disagreement on a positive finding.
+            self._clear_sibling_open_hyp_gate_state(case_state)
+            return decision
+
+        siblings = sibling_context or []
+        # Union of every rejected id anyone knows about: this branch's
+        # rejected[], each sibling's rejected[], and the ids the
+        # current decision is rejecting.
+        rejected_ids: set[str] = {
+            r.id for r in case_state.rejected if r.id
+        }
+        for r in decision.rejected:
+            if r.id:
+                rejected_ids.add(r.id)
+        for sib in siblings:
+            for rej in sib.get("rejected") or []:
+                rid = rej.get("id") if isinstance(rej, dict) else None
+                if isinstance(rid, str) and rid:
+                    rejected_ids.add(rid)
+
+        # Every sibling live id not in that union blocks the submit.
+        open_by_sibling: list[tuple[str, str, str, str]] = []
+        for sib in siblings:
+            branch_id = str(sib.get("branch_id") or "?")
+            persona = str(sib.get("persona_voice") or "?")
+            for hyp in sib.get("hypotheses") or []:
+                hid = hyp.get("id") if isinstance(hyp, dict) else None
+                claim = hyp.get("claim") if isinstance(hyp, dict) else None
+                if not (isinstance(hid, str) and hid):
+                    continue
+                if hid in rejected_ids:
+                    continue
+                open_by_sibling.append((
+                    branch_id, persona, hid,
+                    (claim or "")[:180] if isinstance(claim, str) else "",
+                ))
+
+        if not open_by_sibling:
+            self._clear_sibling_open_hyp_gate_state(case_state)
+            return decision
+
+        prior_rejects = int(
+            case_state.observables.get("_sibling_open_hyp_reject_count", 0) or 0,
+        )
+        new_reject_count = prior_rejects + 1
+
+        if new_reject_count > self._sibling_open_hyp_reject_cap:
+            _log.warning(
+                "sibling_open_hyp submit FORCED THROUGH after %d rejections "
+                "inv=%s branch=%s turn=%d -- %d open sibling hypotheses: %s",
+                prior_rejects, self.investigation_id, self.branch_id,
+                turn_number, len(open_by_sibling),
+                [(bid[:8], hid) for bid, _, hid, _ in open_by_sibling[:10]],
+            )
+            new_payload = dict(payload)
+            new_payload["sibling_open_hyp_advisory"] = {
+                "open_count": len(open_by_sibling),
+                "open": [
+                    {
+                        "sibling_branch_id": bid,
+                        "sibling_persona": persona,
+                        "hypothesis_id": hid,
+                        "claim": claim,
+                    }
+                    for bid, persona, hid, claim in open_by_sibling[:50]
+                ],
+                "forced_through_after_rejects": prior_rejects,
+            }
+            self._clear_sibling_open_hyp_gate_state(case_state)
+            return decision.model_copy(update={"payload": new_payload})
+
+        _log.info(
+            "sibling_open_hyp submit REJECTED inv=%s branch=%s turn=%d "
+            "rejects=%d/%d -- %d open sibling hypotheses across %d branch(es)",
+            self.investigation_id, self.branch_id, turn_number,
+            new_reject_count, self._sibling_open_hyp_reject_cap,
+            len(open_by_sibling),
+            len({bid for bid, _, _, _ in open_by_sibling}),
+        )
+
+        # Compact per-sibling directive listing (cap at 10 entries to
+        # keep the prompt section bounded; the sibling deliberations
+        # section renders the rest).
+        directive_lines = [
+            "*** SUBMIT REJECTED - SIBLING STILL HUNTING ***",
+            (
+                f"Rejection {new_reject_count}/{self._sibling_open_hyp_reject_cap} "
+                "on this branch."
+            ),
+            "",
+            (
+                f"You attempted a {polarity} submit while "
+                f"{len(open_by_sibling)} live hypothesis(es) held by "
+                "other branch(es) have NOT been rejected by any branch. "
+                "Shipping a no-finding now overrides those sibling threads "
+                "by first-mover; the panel exists so that never happens."
+            ),
+            "",
+            "OPEN SIBLING HYPOTHESES:",
+        ]
+        for bid, persona, hid, claim in open_by_sibling[:10]:
+            directive_lines.append(
+                f"  - sibling={persona} branch={bid[:8]} id={hid}: {claim}",
+            )
+        if len(open_by_sibling) > 10:
+            directive_lines.append(
+                f"  ... and {len(open_by_sibling) - 10} more",
+            )
+        directive_lines.extend([
+            "",
+            "REQUIRED for your next decision: for EACH open id above,",
+            "EITHER",
+            "  (a) confirm the vector on your own audit and revise your",
+            "      submit to a finding (or an assessment_report that",
+            "      cites the sibling's evidence),",
+            "  (b) refute it with source-citing evidence and add the id",
+            "      to your `decision.rejected[]` this turn (a rejection",
+            "      any branch can post is enough -- rejected_ids is a",
+            "      union across branches),",
+            "  (c) coordinate: post a shared-ledger note (or IRC-style",
+            "      observable) asking the sibling to resolve on its own",
+            "      turn, then keep working. Do NOT submit no-finding",
+            "      until (a) or (b) lands.",
+            "",
+            (
+                f"After {self._sibling_open_hyp_reject_cap} rejections on this branch "
+                "the submit is FORCED THROUGH with sibling_open_hyp_advisory"
+            ),
+            "stamped on the payload listing the still-open sibling ids so",
+            "the operator can audit the closure gap. Don't burn through",
+            "your safety budget when a one-line rejection settles it.",
+        ])
+
+        case_state.observables["_sibling_open_hyp_reject_count"] = new_reject_count
+        case_state.observables["_directive.sibling_open_hyp_block"] = "\n".join(
+            directive_lines,
+        )
+
+        rejected_command_text = (
+            "[SIBLING OPEN HYP GATE: submit rejected -- see "
+            "_directive.sibling_open_hyp_block]\n"
+            "Original submit attempt:\n"
+            + (payload.get("answer") or "(no answer)")[:1000]
+        )
+        return decision.model_copy(update={
+            "action": "tool_run",
+            "command": "",
+            "answer": rejected_command_text,
+            "payload": {
+                **payload,
+                "_sibling_open_hyp_gate_rejected": True,
+                "_sibling_open_hyp_gate_reject_count": new_reject_count,
+                "_sibling_open_hyp_open_count": len(open_by_sibling),
+            },
+        })
+
+    @staticmethod
+    def _clear_sibling_open_hyp_gate_state(
+        case_state: ReasoningCaseState,
+    ) -> None:
+        """Drop the sibling-open-hyp gate's counter + directive from
+        ``case_state.observables``.
+
+        Called on every gate-pass branch (finding-polarity submit / no
+        open sibling hypothesis) and after a force-through, matching
+        the pass-branch cleanup pattern used by the other submit gates.
+        """
+        case_state.observables.pop("_sibling_open_hyp_reject_count", None)
+        case_state.observables.pop(
+            "_directive.sibling_open_hyp_block", None,
+        )
 
     async def _maybe_reject_submit_when_draft_pending(
         self,

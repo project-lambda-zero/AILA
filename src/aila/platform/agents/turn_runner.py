@@ -317,6 +317,26 @@ class AgentTurnRunnerBase:
         del inv, case_state, turn_number
         return decision
 
+    def _maybe_reject_no_finding_while_sibling_open_hyp(
+        self,
+        *,
+        decision: Any,
+        case_state: Any,
+        sibling_context: list[dict[str, Any]] | None,
+        turn_number: int,
+    ) -> Any:
+        """Gate a terminal no-finding submit on sibling closure. Default: allow.
+
+        VR overrides this to block a no_finding / inconclusive submit
+        while a sibling still holds a live hypothesis that no branch has
+        rejected -- the panel's dialectic requires the branch to
+        confirm, refute, or coordinate before shipping a closure that
+        would override a still-live sibling thread. Modules without
+        that panel semantics (malware today) leave the default.
+        """
+        del case_state, sibling_context, turn_number
+        return decision
+
     def _review_vote_and_comment(self, decision: Any) -> tuple[str, str]:
         """Resolve the effective (vote, comment) for an outcome review.
 
@@ -645,6 +665,22 @@ class AgentTurnRunnerBase:
                 turn_number=turn_number,
             )
 
+        # Sibling-open-hyp gate (#4 convergence fix): block a terminal
+        # no_finding / inconclusive submit while a sibling holds a live
+        # hypothesis id no branch has rejected. Runs AFTER the
+        # unresolved-hyp gate because that gate operates on THIS
+        # branch's live hypotheses; this gate closes the cross-branch
+        # loop by looking at sibling_context (already loaded above,
+        # passed here without a second DB round-trip). Default hook
+        # on non-panel modules is a no-op.
+        if decision.action == "submit":
+            decision = self._maybe_reject_no_finding_while_sibling_open_hyp(
+                decision=decision,
+                case_state=case_state,
+                sibling_context=sibling_context,
+                turn_number=turn_number,
+            )
+
         decision = self._maybe_reject_fanout_submit(
             decision=decision,
             inv=inv,
@@ -700,6 +736,37 @@ class AgentTurnRunnerBase:
             case_state, decision, turn_number=turn_number,
             fetch_observable_body=recall_fetcher,
         )
+
+        # Not-ready directive stamp (#6 convergence fix): when the
+        # agent records a ``not_ready`` review, expose the stated
+        # blocker on the NEXT turn's prompt via
+        # ``_directive.draft_not_ready_recorded`` so operators + the
+        # branch itself can see why the sibling declined to approve /
+        # reject yet. Stamped BEFORE the case_state UoW so it rides
+        # the same commit; the vote row itself is upserted after the
+        # UoW closes (see the ``submit_outcome_review`` block below).
+        # A no-op on any other action + on modules whose
+        # ``_review_vote_and_comment`` overrides never emit not_ready.
+        if (
+            decision.action == "submit_outcome_review"
+            and decision.review_outcome_id
+        ):
+            _early_vote, _early_comment = self._review_vote_and_comment(decision)
+            if _early_vote == "not_ready":
+                blocker = (_early_comment or "").strip() or "(no blocker recorded)"
+                new_case_state.observables[
+                    "_directive.draft_not_ready_recorded"
+                ] = (
+                    "*** NOT_READY VOTE RECORDED ***\n"
+                    f"You voted not_ready on outcome {decision.review_outcome_id} "
+                    "with blocker:\n"
+                    f"  {blocker[:400]}\n\n"
+                    "This response counts you as having responded to the "
+                    "draft but does NOT move approve or reject quorum. Revisit "
+                    "the outcome once the evidence named in the blocker has "
+                    "landed (upgrade to approve/reject then), or continue "
+                    "investigating."
+                )
 
         payload_kind, payload = self._decision_to_message_payload(decision)
         terminal = decision.action == "submit"

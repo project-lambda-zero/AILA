@@ -221,3 +221,58 @@ class TestSummarizeOutcomeForReview:
         assert summarize(None) == "(empty draft payload)"
         assert summarize("") == "(empty draft payload)"
         assert summarize("not json at all") == "(empty draft payload)"
+
+
+class TestNotReadyVoteContract:
+    """#6 convergence fix -- ``not_ready`` is a first-class review
+    vote both on the API-facing ``VROutcomeReviewCreate`` shape and on
+    the researcher-facing ``ReasoningTurnDecision`` shape. Contract
+    tests ensure a typo in either surface fails here, not at runtime.
+    """
+
+    def test_review_create_accepts_not_ready(self) -> None:
+        from aila.modules.vr.contracts.outcome import VROutcomeReviewCreate
+
+        row = VROutcomeReviewCreate(
+            reviewer_branch_id="b1",
+            vote="not_ready",
+            comment="awaiting audit_mcp read_function for parse_uri",
+        )
+        assert row.vote == "not_ready"
+        assert "parse_uri" in row.comment
+
+    def test_review_create_rejects_unknown_vote(self) -> None:
+        from aila.modules.vr.contracts.outcome import VROutcomeReviewCreate
+
+        with pytest.raises(ValidationError):
+            VROutcomeReviewCreate(
+                reviewer_branch_id="b1", vote="maybe", comment="?",
+            )
+
+    def test_reasoning_decision_review_vote_accepts_not_ready(self) -> None:
+        d = ReasoningTurnDecision(
+            reasoning="blocked on evidence",
+            action="submit_outcome_review",
+            review_outcome_id="outcome-xyz",
+            review_vote="not_ready",
+            review_comment="need MASVS-STORAGE-2 evidence",
+        )
+        assert d.review_vote == "not_ready"
+
+    def test_platform_valid_votes_include_not_ready(self) -> None:
+        """The platform kernel enforces the vote alphabet via
+        ``_VALID_VOTES``; not_ready MUST be in the frozenset or
+        ``upsert_review`` refuses the row with 'unknown vote'."""
+        from aila.platform.services import outcome_review as _svc
+
+        assert "not_ready" in _svc._VALID_VOTES
+        assert _svc.VOTE_NOT_READY == "not_ready"
+
+    def test_vr_binding_re_exports_not_ready(self) -> None:
+        """The VR binding re-exports the constant so module callers
+        that historically imported ``VOTE_*`` off the binding pick up
+        the new value without touching platform imports."""
+        from aila.modules.vr.services import outcome_review as _vr
+
+        assert "VOTE_NOT_READY" in _vr.__all__
+        assert _vr.VOTE_NOT_READY == "not_ready"

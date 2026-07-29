@@ -362,14 +362,19 @@ class ReasoningTurnDecision(BaseModel):
     # Sibling-corroborated draft outcome review (vr draft workflow).
     # When ``action == "submit_outcome_review"`` the agent MUST set
     # ``review_outcome_id`` (the draft being reviewed) and ``review_vote``
-    # (approve | reject | request_edit | abstain). ``review_comment``
-    # carries the rationale that the operator sees on the outcome
-    # detail card; if absent, ``reasoning`` is used as a fallback.
+    # (approve | reject | request_edit | abstain | not_ready).
+    # ``review_comment`` carries the rationale that the operator sees on
+    # the outcome detail card; if absent, ``reasoning`` is used as a
+    # fallback. ``not_ready`` MUST carry a stated blocker in
+    # ``review_comment`` (the reason the branch cannot yet approve or
+    # reject); it does NOT move approve or reject quorum but records
+    # that the branch responded so the draft is not held for operator
+    # purely because it never assembled quorum.
     # Suggested payload edits ride on the existing ``payload`` dict
     # so the schema doesn't grow another free-form field.
     review_outcome_id: str | None = None
     review_vote: Literal[
-        "approve", "reject", "request_edit", "abstain",
+        "approve", "reject", "request_edit", "abstain", "not_ready",
     ] | None = None
     review_comment: str | None = None
     # ``edit_outcome`` action: directly merge ``edit_patches`` into a
@@ -520,8 +525,8 @@ class ReasoningTurnDecision(BaseModel):
         if not self.review_vote:
             raise ValueError(
                 "action='submit_outcome_review' requires `review_vote` "
-                "in {approve, reject, request_edit, abstain}. Got: "
-                f"{self.review_vote!r}."
+                "in {approve, reject, request_edit, abstain, not_ready}. "
+                f"Got: {self.review_vote!r}."
             )
         return self
 

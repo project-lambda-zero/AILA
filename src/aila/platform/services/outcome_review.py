@@ -87,6 +87,7 @@ __all__ = [
     "OUTCOME_STATE_REJECTED",
     "VOTE_ABSTAIN",
     "VOTE_APPROVE",
+    "VOTE_NOT_READY",
     "VOTE_REJECT",
     "VOTE_REQUEST_EDIT",
     "EditOutcomeResult",
@@ -112,8 +113,19 @@ VOTE_APPROVE = "approve"
 VOTE_REJECT = "reject"
 VOTE_REQUEST_EDIT = "request_edit"
 VOTE_ABSTAIN = "abstain"
+# ``not_ready`` is a first-class vote: the reviewer branch acknowledges
+# the draft but declines to approve or reject yet, carrying a stated
+# blocker in ``review.comment``. It does NOT move approve or reject
+# quorum (mirror of abstain in that regard) BUT it counts as a
+# response, so a draft where every non-proposing sibling voted
+# not_ready is held in DRAFT with a ``blocked_pending_evidence`` reason
+# rather than the ``held_for_operator_no_active_voters`` fallback that
+# would otherwise fire when quorum never assembles.
+VOTE_NOT_READY = "not_ready"
 
-_VALID_VOTES = frozenset({VOTE_APPROVE, VOTE_REJECT, VOTE_REQUEST_EDIT, VOTE_ABSTAIN})
+_VALID_VOTES = frozenset({
+    VOTE_APPROVE, VOTE_REJECT, VOTE_REQUEST_EDIT, VOTE_ABSTAIN, VOTE_NOT_READY,
+})
 
 
 def summarize_outcome_for_review(
@@ -206,6 +218,11 @@ class QuorumOutcome:
     siblings_active: int
     transition_occurred: bool
     transition_reason: str = ""
+    # RFC-04 (#6): not_ready is a first-class vote (records a
+    # blocker without moving approve or reject quorum). Defaults to 0
+    # so callers that ignore it round-trip byte-identically with the
+    # pre-#6 shape.
+    not_ready_count: int = 0
 
 
 @dataclass(slots=True)
@@ -744,6 +761,16 @@ async def evaluate_quorum(
             1 for r in reviews if r.vote == VOTE_REQUEST_EDIT
         )
         abstain_count = sum(1 for r in reviews if r.vote == VOTE_ABSTAIN)
+        not_ready_count = sum(1 for r in reviews if r.vote == VOTE_NOT_READY)
+        # ``total_recorded`` = every persisted response from a
+        # non-proposing sibling. Used below to distinguish the
+        # all-siblings-said-not_ready case from the truly-no-voters
+        # fallback so the operator-hold banner does not fire when the
+        # panel is actively signaling "pending evidence".
+        total_recorded = (
+            approve_count + reject_count + request_edit_count
+            + abstain_count + not_ready_count
+        )
 
         # Count siblings that exist to review (any non-proposing branch
         # in the same investigation). Closed branches still count as
@@ -816,11 +843,31 @@ async def evaluate_quorum(
             # the operator reviews the undispatched draft. The single-branch
             # no-siblings case (quorum_k == 0) above still auto-approves,
             # because there genuinely is no one to vote.
-            transition_reason = (
-                f"held_for_operator_no_active_voters_"
-                f"approve={approve_count}_reject={reject_count}_"
-                f"abstain={abstain_count}_k={quorum_k}"
-            )
+            #
+            # RFC-04 (#6) exception: when every recorded sibling response
+            # is ``not_ready``, the panel is explicitly signaling "I have
+            # a blocker, revisit when evidence lands". That is a live
+            # deliberation state, not a dead-panel-needs-operator state,
+            # so keep the draft in DRAFT with a ``blocked_pending_evidence``
+            # reason instead of the operator-hold banner. The draft stays
+            # visible to the panel; siblings can upgrade their vote to
+            # approve or reject once they have the evidence named in the
+            # blocker.
+            if (
+                total_recorded >= 1
+                and not_ready_count == total_recorded
+            ):
+                transition_reason = (
+                    f"blocked_pending_evidence_"
+                    f"not_ready={not_ready_count}_k={quorum_k}"
+                )
+            else:
+                transition_reason = (
+                    f"held_for_operator_no_active_voters_"
+                    f"approve={approve_count}_reject={reject_count}_"
+                    f"abstain={abstain_count}_not_ready={not_ready_count}_"
+                    f"k={quorum_k}"
+                )
 
         # Reject veto: requires ``veto_k`` concurring rejects before the
         # state flips. Evaluated BEFORE the approve branch so a quorum
@@ -897,6 +944,7 @@ async def evaluate_quorum(
         reject_count=reject_count,
         request_edit_count=request_edit_count,
         abstain_count=abstain_count,
+        not_ready_count=not_ready_count,
         quorum_k=quorum_k,
         siblings_active=len(active_siblings),
         transition_occurred=transition_occurred,

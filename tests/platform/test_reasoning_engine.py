@@ -765,3 +765,139 @@ def test_render_case_model_first_line_preview_uncapped() -> None:
     assert long_first_line in rendered, (
         "first-line preview truncated -- former index_firstline_cap still capping"
     )
+
+
+# ----------------------------------------------------------------------
+# #3 convergence fix -- hypothesis staleness directive. absorb() reads
+# ``platform.reasoning_hyp_stale_turns`` and writes
+# ``_directive.stale_hypotheses`` naming any live hypothesis whose age
+# (current_turn - opened_at_turn) has crossed the threshold. Nudge-only
+# (never auto-rejects). Clears on the same call when no stale ids
+# remain so a resolved directive never lingers.
+# ----------------------------------------------------------------------
+
+
+def _noop_decision() -> ReasoningTurnDecision:
+    return ReasoningTurnDecision(
+        reasoning="noop",
+        action="reasoning",
+        provenance=EvidenceProvenance(),
+    )
+
+
+def test_absorb_stale_hypothesis_sets_stale_directive_at_default_threshold() -> None:
+    """A hypothesis opened at turn 1 that has aged 8 turns (default
+    threshold) triggers ``_directive.stale_hypotheses``."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    initial = ReasoningCaseState(
+        hypotheses=[
+            Hypothesis(id="h_old", claim="long-lived vector", opened_at_turn=1),
+            Hypothesis(id="h_new", claim="just proposed", opened_at_turn=8),
+        ],
+    )
+
+    merged = engine.absorb(initial, _noop_decision(), turn_number=9)
+
+    directive = merged.observables.get("_directive.stale_hypotheses")
+    assert isinstance(directive, str) and directive
+    assert "h_old" in directive
+    assert "long-lived vector" in directive
+    assert "alive 8 turns" in directive
+    # h_new is age=1, well under threshold -- must NOT be flagged.
+    assert "h_new" not in directive
+    # Contract check: directive names actionable next steps.
+    assert "(a) resolve" in directive
+    assert "(b) explicitly defer" in directive
+
+
+def test_absorb_fresh_hypotheses_do_not_set_stale_directive() -> None:
+    """When every live hypothesis is younger than the threshold, the
+    directive MUST NOT be set (and any prior stamp MUST clear)."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    initial = ReasoningCaseState(
+        hypotheses=[
+            Hypothesis(id="h_a", claim="a", opened_at_turn=5),
+            Hypothesis(id="h_b", claim="b", opened_at_turn=6),
+        ],
+    )
+
+    merged = engine.absorb(initial, _noop_decision(), turn_number=7)
+
+    assert "_directive.stale_hypotheses" not in merged.observables
+
+
+def test_absorb_stale_directive_clears_when_hypothesis_resolved() -> None:
+    """When the offending hypothesis is rejected on this turn, the
+    directive stamped previously MUST clear (no scolding for closed
+    work)."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    initial = ReasoningCaseState(
+        hypotheses=[
+            Hypothesis(id="h_old", claim="long", opened_at_turn=1),
+        ],
+        observables={
+            "_directive.stale_hypotheses": "prior stale banner",
+        },
+    )
+    decision = ReasoningTurnDecision(
+        reasoning="disproved by source read",
+        action="reasoning",
+        provenance=EvidenceProvenance(),
+        rejected=[
+            RejectedHypothesis(
+                id="h_old",
+                claim="long",
+                reason="source-read shows path guarded",
+            ),
+        ],
+    )
+
+    merged = engine.absorb(initial, decision, turn_number=12)
+
+    assert "_directive.stale_hypotheses" not in merged.observables
+    assert not any(h.id == "h_old" for h in merged.hypotheses)
+
+
+def test_absorb_stale_threshold_resolves_from_platform_registry() -> None:
+    """Operator override lowers the threshold: a hypothesis of age 4
+    now trips the directive even though the schema default (8) would
+    let it pass."""
+    registry = _FakeConfigRegistry(
+        {("platform", "reasoning_hyp_stale_turns"): 4},
+    )
+    engine = CyberReasoningEngine(
+        _FakeLLMClient(_FakeResponse("{}")),  # type: ignore[arg-type]
+        config_registry=registry,
+    )
+    initial = ReasoningCaseState(
+        hypotheses=[
+            Hypothesis(id="h_mid", claim="aging fast", opened_at_turn=2),
+        ],
+    )
+
+    merged = engine.absorb(initial, _noop_decision(), turn_number=6)
+
+    directive = merged.observables.get("_directive.stale_hypotheses")
+    assert isinstance(directive, str) and "h_mid" in directive
+    assert "alive 4 turns" in directive
+
+
+def test_absorb_stale_threshold_zero_disables_directive() -> None:
+    """``reasoning_hyp_stale_turns <= 0`` disables the directive so a
+    stress-mode override can silence the nudge."""
+    registry = _FakeConfigRegistry(
+        {("platform", "reasoning_hyp_stale_turns"): 0},
+    )
+    engine = CyberReasoningEngine(
+        _FakeLLMClient(_FakeResponse("{}")),  # type: ignore[arg-type]
+        config_registry=registry,
+    )
+    initial = ReasoningCaseState(
+        hypotheses=[
+            Hypothesis(id="h_ancient", claim="very old", opened_at_turn=1),
+        ],
+    )
+
+    merged = engine.absorb(initial, _noop_decision(), turn_number=100)
+
+    assert "_directive.stale_hypotheses" not in merged.observables

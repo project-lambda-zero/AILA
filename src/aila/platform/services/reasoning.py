@@ -88,10 +88,19 @@ _DEFAULT_RECALL_PINNED_MAX: int = 8
 # 200K-context model with generous headroom (system prompt + tool
 # payload + completion); see the schema field
 # ``PlatformConfigSchema.reasoning_context_budget_tokens`` docstring
-# to tune it. NEVER unbounded on production callers -- the entire
+# NEVER unbounded on production callers -- the entire
 # reason this constant exists is that removing the render_case_model
 # display caps cannot regress into an unbounded prompt.
 _DEFAULT_CONTEXT_BUDGET_TOKENS: int = 180_000
+
+# Fallback staleness threshold (in turns) at which absorb writes the
+# ``_directive.stale_hypotheses`` observable naming a live hypothesis
+# so the agent resolves it, rejects it, or explicitly defers with a
+# reason on this turn. Production paths resolve the live value via
+# ``self._resolve_platform_int("reasoning_hyp_stale_turns", ...)``; the
+# schema default matches this literal so behavior is preserved for
+# callers that never override. A value <= 0 disables the directive.
+_DEFAULT_HYP_STALE_TURNS: int = 8
 
 # Marker body injected under a recalled key when the durable message
 # history cannot supply the body (no fetcher wired, or the fetcher
@@ -586,6 +595,59 @@ class CyberReasoningEngine:
             evict_n = len(agent_keys) - max_agent_keys_total
             for k in agent_keys[:evict_n]:
                 observables.pop(k, None)
+
+        # Staleness directive: any live hypothesis whose age
+        # (current_turn - opened_at_turn) has crossed the platform
+        # threshold gets called out under ``_directive.stale_hypotheses``
+        # so the agent resolves it, rejects it, or explicitly defers
+        # this turn instead of letting it linger and block convergence.
+        # Directive-only nudge (never auto-rejects) so a genuinely slow
+        # lead is not dropped by a timer. Cleared on the same call when
+        # no stale live hypotheses remain, so a resolved directive never
+        # persists into a later turn.
+        effective_turn = turn_number or case_state.current_turn
+        stale_threshold = self._resolve_platform_int(
+            "reasoning_hyp_stale_turns", _DEFAULT_HYP_STALE_TURNS,
+        )
+        stale: list[tuple[str, str, int]] = []
+        if stale_threshold > 0 and effective_turn > 0:
+            for h in merged_live:
+                if not h.opened_at_turn:
+                    continue
+                age = effective_turn - h.opened_at_turn
+                if age >= stale_threshold:
+                    stale.append((h.id or "?", h.claim, age))
+        if stale:
+            lines = [
+                "*** STALE LIVE HYPOTHESES ***",
+                (
+                    f"{len(stale)} live hypothesis(es) have been open for "
+                    f">= {stale_threshold} turns without a resolution:"
+                ),
+                "",
+            ]
+            for hid, claim, age in stale:
+                lines.append(f"  - {hid}: {claim[:200]} [alive {age} turns]")
+            lines.extend([
+                "",
+                "This turn you MUST for EACH id above pick one:",
+                "  (a) resolve it: add it to `decision.rejected[]` with a",
+                "      concrete evidence-citing reason (file:line, tool",
+                "      output, or a sibling's rejection you concur with),",
+                "      OR fold it into a submit whose answer names the id",
+                "      and shows the settling evidence.",
+                "  (b) explicitly defer: keep it live and post a",
+                "      one-sentence reason in `reasoning` naming the",
+                "      concrete blocker (e.g. \"waiting on read_function",
+                "      body from audit_mcp\"). Silent aging keeps the",
+                "      panel from converging.",
+            ])
+            observables["_directive.stale_hypotheses"] = "\n".join(lines)
+        else:
+            # Clear on the same call so a resolved directive never
+            # persists into a later turn (would otherwise scold the
+            # agent for a stale id it already closed).
+            observables.pop("_directive.stale_hypotheses", None)
 
         return ReasoningCaseState(
             contract=contract,

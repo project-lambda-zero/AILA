@@ -754,3 +754,282 @@ class TestRenderTargetSnapshotSectionAndroidApk:
 
         assert "audit_mcp_decompiled_index_id=idx-zzz" in rendered
         assert "audit_mcp_decompiled_indexed_at=2026-06-08T11:00:00+00:00" in rendered
+
+
+# ----------------------------------------------------------------------
+# #4 convergence fix -- sibling-open-hypothesis gate. A terminal
+# no_finding / inconclusive submit is blocked while any sibling still
+# holds a live hypothesis id no branch has rejected. Passes on a
+# finding-polarity submit, on "all sibling hyps rejected", and once the
+# consecutive-rejection cap is exceeded (force-through stamps the
+# advisory).
+# ----------------------------------------------------------------------
+
+
+def _no_finding_submit_decision() -> ReasoningTurnDecision:
+    """Terminal audit_memo submit with verdict=no_finding -- derives
+    to polarity='no_finding' via the outcome_polarity helper."""
+    return ReasoningTurnDecision(
+        reasoning="nothing found on my branch",
+        action="submit",
+        expected_observation="terminal",
+        answer="branch is clear",
+        confidence="medium",
+        payload={"verdict": "no_finding"},
+    )
+
+
+def _finding_submit_decision() -> ReasoningTurnDecision:
+    """Terminal submit with strong confidence -- derives to
+    outcome_kind=direct_finding + polarity='finding'."""
+    return ReasoningTurnDecision(
+        reasoning="found the bug",
+        action="submit",
+        expected_observation="terminal",
+        answer="heap OOB on strcpy at foo:42",
+        confidence="strong",
+    )
+
+
+def _make_researcher_with_cap(cap: int) -> HonestVulnResearcher:
+    """Build a researcher instance for direct gate-method invocation.
+
+    The gate is pure over its arguments (no DB, no engine) so a
+    bare-bones construction is enough; caps normally set by
+    :meth:`_load_turn_config` are stamped manually here.
+    """
+    researcher = HonestVulnResearcher(
+        reasoning_engine=SimpleNamespace(),  # type: ignore[arg-type]
+        investigation_id="inv-gate",
+        branch_id="b-under-test",
+    )
+    researcher._sibling_open_hyp_reject_cap = cap  # noqa: SLF001 -- test-only manual init
+    return researcher
+
+
+class TestSiblingOpenHypGate:
+    def test_finding_polarity_bypasses_gate(self) -> None:
+        """A finding-polarity submit is NEVER blocked by this gate --
+        panel review handles sibling disagreement on a positive finding.
+        Sibling still has a live unresolved hypothesis, but the submit
+        is a finding, so the gate passes."""
+        researcher = _make_researcher_with_cap(3)
+        case_state = ReasoningCaseState()
+        sibling_context = [{
+            "branch_id": "b-sibling",
+            "persona_voice": "maddie",
+            "hypotheses": [{"id": "h_live", "claim": "still hunting"}],
+            "rejected": [],
+        }]
+
+        result = researcher._maybe_reject_no_finding_while_sibling_open_hyp(
+            decision=_finding_submit_decision(),
+            case_state=case_state,
+            sibling_context=sibling_context,
+            turn_number=5,
+        )
+
+        assert result.action == "submit"
+        assert "_directive.sibling_open_hyp_block" not in case_state.observables
+        assert "_sibling_open_hyp_reject_count" not in case_state.observables
+
+    def test_no_finding_with_sibling_open_hyp_blocks(self) -> None:
+        """A no_finding submit while a sibling holds a live hypothesis
+        no branch has rejected: gate swaps to non-terminal and stamps
+        ``_directive.sibling_open_hyp_block`` naming the sibling +
+        hypothesis, plus increments the reject counter."""
+        researcher = _make_researcher_with_cap(3)
+        case_state = ReasoningCaseState()
+        sibling_context = [{
+            "branch_id": "b-maddie",
+            "persona_voice": "maddie",
+            "hypotheses": [
+                {"id": "h_race", "claim": "TOCTOU on rename"},
+            ],
+            "rejected": [],
+        }]
+
+        result = researcher._maybe_reject_no_finding_while_sibling_open_hyp(
+            decision=_no_finding_submit_decision(),
+            case_state=case_state,
+            sibling_context=sibling_context,
+            turn_number=3,
+        )
+
+        assert result.action == "tool_run"
+        assert result.command == ""
+        directive = case_state.observables.get("_directive.sibling_open_hyp_block")
+        assert isinstance(directive, str)
+        assert "h_race" in directive
+        assert "TOCTOU on rename" in directive
+        assert "maddie" in directive
+        assert case_state.observables["_sibling_open_hyp_reject_count"] == 1
+        # Original answer is preserved verbatim inside the rejected
+        # command text so an audit can reconstruct the intent.
+        assert "branch is clear" in (result.answer or "")
+
+    def test_no_finding_when_all_sibling_hyps_rejected_passes(self) -> None:
+        """Sibling's live hypothesis id appears in this branch's
+        rejected[] (a cross-branch rejection is enough): gate passes
+        the submit and clears any prior directive stamp."""
+        researcher = _make_researcher_with_cap(3)
+        case_state = ReasoningCaseState(
+            rejected=[
+                RejectedHypothesis(
+                    id="h_race",
+                    claim="TOCTOU on rename",
+                    reason="path guarded by O_NOFOLLOW at foo:42",
+                ),
+            ],
+            observables={
+                # Simulate a prior gate rejection that should clear.
+                "_directive.sibling_open_hyp_block": "prior banner",
+                "_sibling_open_hyp_reject_count": 2,
+            },
+        )
+        sibling_context = [{
+            "branch_id": "b-maddie",
+            "persona_voice": "maddie",
+            "hypotheses": [
+                {"id": "h_race", "claim": "TOCTOU on rename"},
+            ],
+            "rejected": [],
+        }]
+
+        result = researcher._maybe_reject_no_finding_while_sibling_open_hyp(
+            decision=_no_finding_submit_decision(),
+            case_state=case_state,
+            sibling_context=sibling_context,
+            turn_number=3,
+        )
+
+        assert result.action == "submit"
+        assert "_directive.sibling_open_hyp_block" not in case_state.observables
+        assert "_sibling_open_hyp_reject_count" not in case_state.observables
+
+    def test_force_through_after_cap_stamps_advisory(self) -> None:
+        """Above ``_sibling_open_hyp_reject_cap`` consecutive rejections,
+        the submit is FORCED THROUGH with
+        ``payload.sibling_open_hyp_advisory`` naming the open sibling
+        ids so the operator can audit the closure gap."""
+        cap = 3
+        researcher = _make_researcher_with_cap(cap)
+        # Prior rejects already at the cap -> next call goes over.
+        case_state = ReasoningCaseState(
+            observables={"_sibling_open_hyp_reject_count": cap},
+        )
+        sibling_context = [{
+            "branch_id": "b-maddie",
+            "persona_voice": "maddie",
+            "hypotheses": [
+                {"id": "h_race", "claim": "TOCTOU"},
+            ],
+            "rejected": [],
+        }]
+
+        result = researcher._maybe_reject_no_finding_while_sibling_open_hyp(
+            decision=_no_finding_submit_decision(),
+            case_state=case_state,
+            sibling_context=sibling_context,
+            turn_number=15,
+        )
+
+        assert result.action == "submit", (
+            "force-through should keep the terminal submit intact"
+        )
+        advisory = result.payload.get("sibling_open_hyp_advisory")
+        assert isinstance(advisory, dict)
+        assert advisory["open_count"] == 1
+        assert advisory["forced_through_after_rejects"] == cap
+        assert advisory["open"][0]["sibling_branch_id"] == "b-maddie"
+        assert advisory["open"][0]["hypothesis_id"] == "h_race"
+        # Force-through path clears the counter + directive so the next
+        # panel iteration starts fresh.
+        assert "_sibling_open_hyp_reject_count" not in case_state.observables
+        assert "_directive.sibling_open_hyp_block" not in case_state.observables
+
+    def test_this_turn_rejected_id_closes_gate(self) -> None:
+        """The current turn's ``decision.rejected[]`` counts as a
+        rejection for the union -- a branch can close its OWN turn's
+        leftover in the same turn it submits."""
+        researcher = _make_researcher_with_cap(3)
+        case_state = ReasoningCaseState()
+        sibling_context = [{
+            "branch_id": "b-maddie",
+            "persona_voice": "maddie",
+            "hypotheses": [{"id": "h_race", "claim": "TOCTOU"}],
+            "rejected": [],
+        }]
+        decision = _no_finding_submit_decision().model_copy(update={
+            "rejected": [
+                RejectedHypothesis(
+                    id="h_race", claim="TOCTOU",
+                    reason="guard added at foo:42",
+                ),
+            ],
+        })
+
+        result = researcher._maybe_reject_no_finding_while_sibling_open_hyp(
+            decision=decision,
+            case_state=case_state,
+            sibling_context=sibling_context,
+            turn_number=4,
+        )
+
+        assert result.action == "submit"
+        assert "_directive.sibling_open_hyp_block" not in case_state.observables
+
+
+class TestReviewVoteAndCommentNotReady:
+    """#6 convergence fix -- VR override of ``_review_vote_and_comment``
+    recognises ``not_ready`` as a first-class vote and preserves the
+    blocker verbatim as the review comment."""
+
+    def _researcher(self) -> HonestVulnResearcher:
+        return HonestVulnResearcher(
+            reasoning_engine=SimpleNamespace(),  # type: ignore[arg-type]
+            investigation_id="inv-vote",
+            branch_id="b-vote",
+        )
+
+    def test_not_ready_preserves_blocker(self) -> None:
+        decision = SimpleNamespace(
+            review_vote="not_ready",
+            review_comment="awaiting audit_mcp read_function for parse_uri",
+            reasoning="see review_comment",
+        )
+        vote, comment = self._researcher()._review_vote_and_comment(decision)
+        assert vote == "not_ready"
+        assert comment == "awaiting audit_mcp read_function for parse_uri"
+
+    def test_not_ready_falls_back_to_reasoning(self) -> None:
+        """When ``review_comment`` is empty the reasoning body carries
+        the blocker; the override still labels the vote not_ready."""
+        decision = SimpleNamespace(
+            review_vote="not_ready",
+            review_comment="",
+            reasoning="need MASVS-STORAGE-2 evidence before I can approve",
+        )
+        vote, comment = self._researcher()._review_vote_and_comment(decision)
+        assert vote == "not_ready"
+        assert comment == "need MASVS-STORAGE-2 evidence before I can approve"
+
+    def test_approve_vote_still_uses_default_flow(self) -> None:
+        """Regression guard: adding not_ready must not change the
+        approve / reject / abstain paths."""
+        decision = SimpleNamespace(
+            review_vote="approve",
+            review_comment="corroborated",
+            reasoning="see the shared ledger note",
+        )
+        vote, comment = self._researcher()._review_vote_and_comment(decision)
+        assert vote == "approve"
+        assert comment == "corroborated"
+
+    def test_empty_vote_defaults_to_abstain(self) -> None:
+        decision = SimpleNamespace(
+            review_vote=None, review_comment=None, reasoning="",
+        )
+        vote, comment = self._researcher()._review_vote_and_comment(decision)
+        assert vote == "abstain"
+        assert comment == ""

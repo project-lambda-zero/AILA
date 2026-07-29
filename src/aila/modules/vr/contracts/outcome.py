@@ -120,8 +120,14 @@ class VROutcomeReviewCreate(BaseModel):
 
     reviewer_branch_id: str = Field(min_length=1, max_length=64)
     vote: str = Field(
-        pattern=r"^(approve|reject|request_edit|abstain)$",
-        description="approve | reject | request_edit | abstain",
+        pattern=r"^(approve|reject|request_edit|abstain|not_ready)$",
+        description=(
+            "approve | reject | request_edit | abstain | not_ready. "
+            "``not_ready`` records a stated blocker in ``comment`` "
+            "without moving approve or reject quorum, so a branch can "
+            "decline to ship a sibling's draft without a stalling "
+            "abstain or a premature approve/reject."
+        ),
     )
     comment: str = Field(default="", max_length=4096)
     suggested_edits: dict[str, Any] = Field(default_factory=dict)
