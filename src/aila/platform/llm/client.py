@@ -360,6 +360,27 @@ _MAX_RETRIES = max(1, int(os.environ.get("AILA_LLM_MAX_RETRIES", "3")))
 _RETRY_BASE_DELAY = max(0.1, float(os.environ.get("AILA_LLM_RETRY_BASE_DELAY_S", "1.0")))
 _RETRY_MAX_DELAY = max(_RETRY_BASE_DELAY, float(os.environ.get("AILA_LLM_RETRY_MAX_DELAY_S", "30.0")))
 
+# chat_structured() correction-loop budget. TIGHT BY DESIGN.
+#
+# Background: VR reasoning turns feed the model's JSON output straight into
+# ``run_turn`` -- a single malformed response used to burn the whole ARQ
+# task-attempt because chat_structured() offered exactly ONE correction
+# retry before raising ``LLMError(retryable=False)``. Symptom on VR
+# investigation timelines: "previous turn produced invalid JSON" followed
+# by a cold re-enqueue with the workflow cursor rewound to the last
+# durable checkpoint.
+#
+# The bound stays small (default 3 total attempts) so a truly stuck model
+# still fails fast into the outer ARQ retry -- the worker never spins on
+# doomed JSON correction. Each retry embeds the verbatim pydantic
+# ``ValidationError`` text and, when available, the partial JSON that was
+# extracted, so the model sees exactly which field it botched instead of
+# a generic "try again" nudge. This is per-call (chat_structured); the
+# outer ``_MAX_RETRIES`` still gates provider-side transient failures.
+_STRUCTURED_JSON_MAX_ATTEMPTS = max(
+    1, int(os.environ.get("AILA_LLM_STRUCTURED_JSON_MAX_ATTEMPTS", "3"))
+)
+
 # HTTP status codes that stay retryable even though they land in the 4xx
 # range: request-timeout (408), too-early (425), and rate-limit (429).
 # Everything else in 4xx (auth, permission, malformed request, not-found,
@@ -731,10 +752,16 @@ class AilaLLMClient:
         1. Generates JSON schema from the Pydantic model class
         2. Calls chat_json() with that schema
         3. Parses and validates the response into a model instance
-        4. Returns LLMResponse with the validated model as .parsed and JSON as .content
+        4. Returns LLMResponse with valid JSON as .content
 
-        On parse failure, retries once with an explicit "fix your JSON" prompt
-        (per LLM-10).
+        On parse or schema-validation failure, retries with an escalating
+        correction prompt bounded by ``_STRUCTURED_JSON_MAX_ATTEMPTS``
+        (env override ``AILA_LLM_STRUCTURED_JSON_MAX_ATTEMPTS``, default 3
+        total attempts). Every retry after the first embeds the verbatim
+        pydantic ``ValidationError`` text and, when the model at least
+        produced parseable JSON, the extracted partial payload -- so the
+        model sees exactly which field is wrong instead of a generic
+        "try again with the schema" nudge.
 
         Args:
             task_type: Routing key.
@@ -746,84 +773,100 @@ class AilaLLMClient:
             team_id: Optional team identifier for cost record scoping (Phase 175).
             max_output_tokens: Optional per-call cap on completion tokens
                 (passed through to chat_json; never raises above the
-                routing-resolved cap). fix §309.
+                routing-resolved cap). fix \u00a7309.
 
         Returns:
-            LLMResponse where content is valid JSON and .parsed is the model instance.
+            LLMResponse where content is valid JSON.
 
         Raises:
-            LLMError: On permanent errors or validation failure after retry.
+            LLMError: On permanent errors or validation failure after every
+                attempt in the bounded correction loop.
+            LLMCancelledError: If the run was cancelled between correction
+                attempts (#44).
             BudgetExceededError: If budget ceiling exceeded for the run.
         """
         schema = model_class.model_json_schema()
-        response = await self.chat_json(
-            task_type,
-            messages,
-            schema,
-            tools=tools,
-            tool_executor=tool_executor,
-            run_id=run_id,
-            team_id=team_id,
-            max_output_tokens=max_output_tokens,
-        )
+        accumulated_usage: dict[str, int] = {}
+        prior_content: str = ""
+        prior_error_text: str = ""
+        prior_partial_json: str | None = None
 
-        if response.disabled:
-            return response
+        for attempt in range(_STRUCTURED_JSON_MAX_ATTEMPTS):
+            # #44: cancellation peek between correction attempts. chat_json's
+            # own retry loop honours the token too; this catches a cancel
+            # that flipped between the previous correction call and the
+            # next one so the run does not burn a fresh provider round-trip.
+            if run_id is not None and is_run_cancelled(run_id):
+                raise LLMCancelledError(
+                    f"run {run_id} cancelled during chat_structured "
+                    f"(attempt {attempt + 1}/{_STRUCTURED_JSON_MAX_ATTEMPTS})"
+                )
 
-        # Try to parse into model
-        parsed = self._parse_model(response.content, model_class)
-        if parsed is not None:
-            return LLMResponse(
-                content=response.content,
-                model=response.model,
-                usage=response.usage,
-                disabled=False,
-                finish_reason=response.finish_reason,
-            )
-
-        # Retry with correction prompt
-        logger.warning(
-            "chat_structured: initial parse failed for %s, retrying with correction",
-            model_class.__name__,
-        )
-        retry_messages = list(messages) + [
-            {"role": "assistant", "content": response.content},
-            {
-                "role": "user",
-                "content": (
-                    f"Your previous response was not valid JSON matching the schema. "
-                    f"Please respond with ONLY valid JSON matching this schema:\n"
+            if attempt == 0:
+                attempt_messages = messages
+            else:
+                partial_block = (
+                    f"\n\nYour extracted JSON before validation was:\n{prior_partial_json}"
+                    if prior_partial_json else ""
+                )
+                correction = (
+                    f"Your previous response failed to produce a valid "
+                    f"instance of {model_class.__name__}.\n\n"
+                    f"Validation error (verbatim):\n{prior_error_text}"
+                    f"{partial_block}\n\n"
+                    f"Respond with ONLY valid JSON matching this schema:\n"
                     f"{json.dumps(schema, indent=2)}"
-                ),
-            },
-        ]
-        retry_response = await self.chat_json(
-            task_type,
-            retry_messages,
-            schema,
-            tools=tools,
-            tool_executor=tool_executor,
-            run_id=run_id,
-            team_id=team_id,
-            max_output_tokens=max_output_tokens,
-        )
+                )
+                attempt_messages = list(messages) + [
+                    {"role": "assistant", "content": prior_content},
+                    {"role": "user", "content": correction},
+                ]
 
-        if retry_response.disabled:
-            return retry_response
-
-        parsed = self._parse_model(retry_response.content, model_class)
-        if parsed is None:
-            raise LLMError(
-                f"Failed to parse LLM response into {model_class.__name__} after retry",
-                retryable=False,
+            response = await self.chat_json(
+                task_type,
+                attempt_messages,
+                schema,
+                tools=tools,
+                tool_executor=tool_executor,
+                run_id=run_id,
+                team_id=team_id,
+                max_output_tokens=max_output_tokens,
             )
 
-        return LLMResponse(
-            content=retry_response.content,
-            model=retry_response.model,
-            usage=_merge_usage(response.usage, retry_response.usage),
-            disabled=False,
-            finish_reason=retry_response.finish_reason,
+            if response.disabled:
+                return response
+
+            accumulated_usage = (
+                _merge_usage(accumulated_usage, response.usage)
+                if accumulated_usage else response.usage
+            )
+
+            parsed, error_text, partial_json = self._parse_model_verbose(
+                response.content, model_class
+            )
+            if parsed is not None:
+                return LLMResponse(
+                    content=response.content,
+                    model=response.model,
+                    usage=accumulated_usage,
+                    disabled=False,
+                    finish_reason=response.finish_reason,
+                )
+
+            logger.warning(
+                "chat_structured: attempt %d/%d failed for %s -- %s",
+                attempt + 1, _STRUCTURED_JSON_MAX_ATTEMPTS, model_class.__name__,
+                (error_text or "unparseable").replace("\n", " | ")[:400],
+            )
+
+            prior_content = response.content
+            prior_error_text = error_text or "response was not valid JSON matching the schema"
+            prior_partial_json = partial_json
+
+        raise LLMError(
+            f"Failed to parse LLM response into {model_class.__name__} "
+            f"after {_STRUCTURED_JSON_MAX_ATTEMPTS} attempts",
+            retryable=False,
         )
 
     # ----- sync wrappers (per D-03) -----
@@ -1796,6 +1839,52 @@ class AilaLLMClient:
                 str(exc).replace("\n", " | ")[:600],
             )
             return None
+
+    @staticmethod
+    def _parse_model_verbose(
+        content: str,
+        model_class: type[BaseModel],
+    ) -> tuple[BaseModel | None, str | None, str | None]:
+        """Parse ``content`` into ``model_class`` and return diagnostics on failure.
+
+        Returns a triple ``(parsed, error_text, partial_json)``:
+
+        * On success -- ``(model_instance, None, None)``.
+        * On JSON decode failure -- ``(None, str(exc), None)``. The model
+          did not even produce parseable JSON, so there is no partial to
+          feed back.
+        * On schema validation failure -- ``(None, str(validation_exc),
+          pretty_partial_json)``. The verbatim ``ValidationError`` string
+          is preserved (pydantic's own message names each failing field
+          and its reason) and the extracted JSON is round-tripped through
+          ``json.dumps`` so the correction prompt shows exactly what the
+          model produced.
+
+        Called by ``chat_structured``'s bounded correction loop; the
+        simpler ``_parse_model`` stays for call sites that only care
+        whether the response parsed.
+        """
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError as exc:
+            logger.warning(
+                "_parse_model_verbose: JSON decode failed for %s -- %s. head=%r",
+                model_class.__name__, exc, content[:200],
+            )
+            return None, str(exc), None
+        try:
+            return model_class.model_validate(data), None, None
+        except ValidationError as exc:
+            logger.warning(
+                "_parse_model_verbose: schema validation failed for %s -- %s",
+                model_class.__name__,
+                str(exc).replace("\n", " | ")[:600],
+            )
+            try:
+                partial = json.dumps(data, indent=2, default=str)[:4000]
+            except (TypeError, ValueError):
+                partial = None
+            return None, str(exc), partial
 
 
 def _make_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:

@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import subprocess
+import sys
 import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,6 +19,7 @@ import pytest
 from openai import APIConnectionError, APITimeoutError
 from pydantic import BaseModel
 
+import aila.platform.llm.client as client_mod
 from aila.platform.llm.cancellation import (
     LLMCancelledError,
     cancel_for_investigation,
@@ -266,6 +270,150 @@ class TestChatStructured:
 
         parsed = ScoringOutput.model_validate_json(response.content)
         assert parsed.score == 7.0
+
+    @pytest.mark.asyncio
+    async def test_recovers_on_final_attempt_within_cap(
+        self,
+        client: AilaLLMClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """With cap=3, first two attempts malformed, third valid -> recover.
+
+        Verifies the bounded correction loop actually runs to the Nth
+        attempt (not just the historical single-retry).
+        """
+        cap = 3
+        monkeypatch.setattr(client_mod, "_STRUCTURED_JSON_MAX_ATTEMPTS", cap)
+
+        bad_1 = '{"score": "nope", "reasoning": 1}'
+        bad_2 = '{"score": null, "reasoning": null}'
+        good = json.dumps({"score": 4.5, "reasoning": "eventual truth"})
+        completions = [
+            _make_completion(content=bad_1),
+            _make_completion(content=bad_2),
+            _make_completion(content=good),
+        ]
+
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
+            mock_instance = AsyncMock()
+            mock_instance.chat.completions.create = AsyncMock(side_effect=completions)
+            mock_oai.return_value = mock_instance
+
+            response = await client.chat_structured(
+                "scoring",
+                [{"role": "user", "content": "score"}],
+                ScoringOutput,
+            )
+
+            assert mock_instance.chat.completions.create.await_count == cap
+
+        parsed = ScoringOutput.model_validate_json(response.content)
+        assert parsed.score == 4.5
+        # Accumulated usage across all attempts (each stub returns 10+5=15).
+        assert response.usage["total_tokens"] == cap * 15
+
+    @pytest.mark.asyncio
+    async def test_raises_after_exactly_cap_on_all_malformed(
+        self,
+        client: AilaLLMClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """All N attempts malformed -> raise LLMError(retryable=False) after N."""
+        cap = 3
+        monkeypatch.setattr(client_mod, "_STRUCTURED_JSON_MAX_ATTEMPTS", cap)
+
+        bad = '{"score": "not_a_number", "reasoning": 123}'
+        completions = [_make_completion(content=bad) for _ in range(cap)]
+
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
+            mock_instance = AsyncMock()
+            mock_instance.chat.completions.create = AsyncMock(side_effect=completions)
+            mock_oai.return_value = mock_instance
+
+            with pytest.raises(LLMError) as exc_info:
+                await client.chat_structured(
+                    "scoring",
+                    [{"role": "user", "content": "score"}],
+                    ScoringOutput,
+                )
+
+            # Exactly N calls -- no more, no less.
+            assert mock_instance.chat.completions.create.await_count == cap
+
+        assert exc_info.value.retryable is False
+        assert "ScoringOutput" in str(exc_info.value)
+        assert str(cap) in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_correction_prompt_embeds_verbatim_error_and_partial(
+        self,
+        client: AilaLLMClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Correction turn injects the pydantic ValidationError text verbatim
+        and the extracted partial JSON, so the model can fix the specific
+        field rather than reguess the whole schema.
+        """
+        monkeypatch.setattr(client_mod, "_STRUCTURED_JSON_MAX_ATTEMPTS", 2)
+
+        # Parseable JSON, wrong shape -- ValidationError with a partial payload.
+        bad = json.dumps({"score": "not_a_number", "reasoning": 123})
+        good = json.dumps({"score": 8.0, "reasoning": "corrected"})
+
+        captured_messages: list[list[dict[str, Any]]] = []
+
+        async def _fake_create(**kwargs: Any) -> MagicMock:
+            captured_messages.append(list(kwargs["messages"]))
+            if len(captured_messages) == 1:
+                return _make_completion(content=bad)
+            return _make_completion(content=good)
+
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
+            mock_instance = AsyncMock()
+            mock_instance.chat.completions.create = AsyncMock(side_effect=_fake_create)
+            mock_oai.return_value = mock_instance
+
+            await client.chat_structured(
+                "scoring",
+                [{"role": "user", "content": "score"}],
+                ScoringOutput,
+            )
+
+        assert len(captured_messages) == 2
+        # The correction turn appends the assistant's bad reply + a user
+        # correction. Find the user correction message.
+        second_turn = captured_messages[1]
+        correction_user = next(
+            m for m in second_turn if m["role"] == "user" and "Validation error" in m["content"]
+        )
+        # Verbatim pydantic error text carries the field name + failure reason.
+        assert "score" in correction_user["content"]
+        # The prompt exposes the extracted partial JSON so the model sees
+        # exactly what it produced.
+        assert "not_a_number" in correction_user["content"]
+        # And it names the model class explicitly.
+        assert "ScoringOutput" in correction_user["content"]
+
+    def test_env_override_controls_attempt_cap(self) -> None:
+        """AILA_LLM_STRUCTURED_JSON_MAX_ATTEMPTS controls the cap at import.
+
+        The constant is read at module import time (same pattern as
+        _MAX_RETRIES). This test spawns a fresh interpreter under a
+        patched env so the read is exercised end-to-end without
+        corrupting the parent process's already-imported client module
+        (reloading the module would rebind LLMResponse and break every
+        subsequent isinstance() check in this test file).
+        """
+        env = {**os.environ, "AILA_LLM_STRUCTURED_JSON_MAX_ATTEMPTS": "7"}
+        result = subprocess.run(
+            [
+                sys.executable, "-c",
+                "import aila.platform.llm.client as m; "
+                "print(m._STRUCTURED_JSON_MAX_ATTEMPTS)",
+            ],
+            check=True, capture_output=True, text=True, env=env,
+        )
+        assert result.stdout.strip() == "7"
 
 
 # ---------------------------------------------------------------------------
