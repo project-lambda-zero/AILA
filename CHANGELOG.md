@@ -19,6 +19,14 @@ operator action.
 
 ### Added
 
+- Reasoning-agent recall is now lossless: when an agent recalls a tool
+  finding whose body was evicted from the live working set, the body is
+  retrieved from durable message history instead of being gone for good.
+  Tool-result bodies are persisted keyed by their observable id, so an
+  eviction only trims the live prompt window and never loses
+  information. The working-set size limits (agent-key, observable, and
+  recall-pin caps) move to the platform config namespace with their
+  previous values as defaults, so they are tunable rather than hardcoded.
 - At an investigation's final verdict, a no-finding or inconclusive
   result whose panel recommended further discoveries now automatically
   spawns one follow-up discovery investigation that takes over those
