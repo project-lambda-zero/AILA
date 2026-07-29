@@ -39,6 +39,7 @@ from aila.platform.mcp.adapters import (
     registered_tools,
 )
 from aila.platform.uow import UnitOfWork
+from aila.storage.registry import ConfigRegistry
 
 __all__ = ["ToolExecutorHelpersBase"]
 
@@ -54,6 +55,21 @@ _MALFORMED_TOOL_RUN_MARKER: str = "Malformed tool_run"
 # (error envelopes, async in-progress values, unknown strings) is treated
 # as an executor-visible error.
 _SUCCESS_STATUSES: frozenset[str] = frozenset({"ready", "completed", "ok"})
+
+# Reserved payload key that carries the observable-key -> body mapping
+# alongside the kind-specific payload fields. Every successful tool
+# result written via :meth:`_persist_result_and_observables` embeds a
+# copy of the string-valued ``observables_delta`` under this key so the
+# durable message row is a self-describing lookup of the same body the
+# reasoning engine merged into ``case_state.observables``. The recall
+# action reads back through this key to rehydrate observables that the
+# ``_MAX_OBSERVABLES`` cap evicted from the live case_state.
+#
+# Payload-kind shapes are not strictly typed per :class:`PayloadKind`
+# (frontend renderers branch on ``payload_kind`` and consume the fields
+# they know), so an extra reserved key is safe -- existing renderers
+# ignore it and no schema migration is needed.
+_OBSERVABLE_BODIES_KEY: str = "_observable_bodies"
 
 
 class ToolExecutorHelpersBase:
@@ -71,7 +87,14 @@ class ToolExecutorHelpersBase:
     _message_model: type
     _branch_model: type
 
-    # Cap on observables dict size (directives + recall pins always kept).
+    # Fallback cap on observables dict size (directives + recall pins
+    # always kept). Production paths resolve the live value via
+    # ConfigRegistry under the ``platform`` namespace
+    # (``reasoning_max_observables``); this literal is the fallback used
+    # only when the registry is unreachable or the schema field is
+    # missing (e.g. narrow unit tests that call
+    # :meth:`_apply_observables_delta` directly without a
+    # cap argument).
     _MAX_OBSERVABLES: int = 400
 
     # Domain read-tool fallback; subclasses override with their tools.
@@ -125,13 +148,35 @@ class ToolExecutorHelpersBase:
     ) -> str:
         """Write the tool result message AND merge observables in ONE UoW.
 
-        fix §203 -- was two separate transactions. A concurrent reader
+        fix \u00a7203 -- was two separate transactions. A concurrent reader
         (operator UI streaming inv messages, or a sibling branch reading
         case_state mid-flight) could observe one half of the update
         without the other. Single UoW eliminates the gap.
 
+        Also embeds the ``observables_delta`` string values under the
+        reserved :data:`_OBSERVABLE_BODIES_KEY` payload key so the
+        durable message row is a key-retrievable lookup of the same
+        body the reasoning engine merges into ``case_state.observables``.
+        The recall action reads back through this mapping to rehydrate
+        observables that the storage cap evicted from the live case
+        state -- without this durable copy the recall fetcher had
+        nothing to fetch from.
+
+        Only string-valued deltas are embedded (the adapter-produced
+        tool-reading bodies are strings today; non-string values fall
+        outside the recall contract and are ignored). Written to a
+        shallow-copied payload so the caller's dict is not mutated.
+
         Returns the new message id.
         """
+        cap = await self._resolve_max_observables()
+        durable_bodies = {
+            str(k): v for k, v in (observables_delta or {}).items()
+            if isinstance(v, str) and v
+        }
+        persisted_payload = dict(payload)
+        if durable_bodies:
+            persisted_payload[_OBSERVABLE_BODIES_KEY] = durable_bodies
         async with UnitOfWork() as uow:
             msg = self._message_model(
                 investigation_id=investigation_id,
@@ -139,7 +184,7 @@ class ToolExecutorHelpersBase:
                 sender_kind=SenderKind.ENGINE.value,
                 sender_id="tool_executor",
                 payload_kind=payload_kind.value,
-                payload_json=json.dumps(payload),
+                payload_json=json.dumps(persisted_payload),
                 at_turn=at_turn,
                 evidence_refs_json="[]",
             )
@@ -158,7 +203,7 @@ class ToolExecutorHelpersBase:
                     )
                 else:
                     branch.case_state_json = self._apply_observables_delta(
-                        branch.case_state_json, observables_delta,
+                        branch.case_state_json, observables_delta, cap=cap,
                     )
                     branch.updated_at = utc_now()
                     uow.session.add(branch)
@@ -344,17 +389,25 @@ class ToolExecutorHelpersBase:
     @classmethod
     def _apply_observables_delta(
         cls, case_state_json: str | None, delta: dict[str, Any],
+        *, cap: int | None = None,
     ) -> str:
         """Merge ``delta`` into the observables of ``case_state_json``
         and return the new JSON string.
 
-        Preserves §259 insertion order and caps the result at
-        :attr:`_MAX_OBSERVABLES` entries (directives always kept). Pure
-        helper -- does no I/O -- so it can run inside any UoW.
+        Preserves \u00a7259 insertion order and caps the result at ``cap``
+        entries (directives always kept). ``cap=None`` falls back to
+        :attr:`_MAX_OBSERVABLES` -- the pre-config-ification default --
+        so unit tests that call this helper directly still see the old
+        400-entry ceiling without wiring a ConfigRegistry. Production
+        callers resolve ``cap`` via :meth:`_resolve_max_observables`
+        so an operator ``PUT /config/platform/reasoning_max_observables``
+        override lands on the next merge without a worker restart.
+        Pure helper -- does no I/O -- so it can run inside any UoW.
         """
+        effective_cap = cap if cap is not None else cls._MAX_OBSERVABLES
         try:
             case_state = json.loads(case_state_json or "{}")
-        # fix §258 -- also catch TypeError so a corrupted column
+        # fix \u00a7258 -- also catch TypeError so a corrupted column
         # (e.g. integer or null where a JSON string is expected)
         # never wedges the merge.
         except (json.JSONDecodeError, TypeError):
@@ -369,9 +422,10 @@ class ToolExecutorHelpersBase:
         # out from under the render layer; ``_ledger.board`` is the shared
         # ledger digest the render layer expects each turn), drop the
         # OLDEST non-reserved keys by dict insertion order (Python 3.7+
-        # guarantees insertion order in dicts).
-        if len(observables) > cls._MAX_OBSERVABLES:
-            # fix \u00a7259 -- preserve original key insertion order so the
+        # guarantees insertion order in dicts). A non-positive cap
+        # disables the trim entirely (operator opt-out for a debug run).
+        if effective_cap > 0 and len(observables) > effective_cap:
+            # fix \\u00a7259 -- preserve original key insertion order so the
             # prompt-rendering position of every kept key stays stable
             # across turns.
             reserved_keys = {
@@ -383,7 +437,7 @@ class ToolExecutorHelpersBase:
             non_reserved_keys = [
                 k for k in observables if k not in reserved_keys
             ]
-            keep_n = max(0, cls._MAX_OBSERVABLES - len(reserved_keys))
+            keep_n = max(0, effective_cap - len(reserved_keys))
             kept_non_reserved_keys = set(non_reserved_keys[-keep_n:])
             kept_or_reserved = reserved_keys | kept_non_reserved_keys
             observables = {
@@ -392,6 +446,27 @@ class ToolExecutorHelpersBase:
             }
         case_state["observables"] = observables
         return json.dumps(case_state)
+
+    async def _resolve_max_observables(self) -> int:
+        """Resolve the per-branch observables cap via ConfigRegistry.
+
+        Reads ``platform.reasoning_max_observables`` (schema-registered
+        with a default matching :attr:`_MAX_OBSERVABLES`). Falls back to
+        the class attribute on any registry failure so a broken registry
+        never blocks a tool result from persisting.
+        """
+        try:
+            raw = await ConfigRegistry().get(
+                "platform", "reasoning_max_observables",
+            )
+        except (OSError, RuntimeError, ValueError, TypeError, SQLAlchemyError):
+            return self._MAX_OBSERVABLES
+        if raw is None:
+            return self._MAX_OBSERVABLES
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return self._MAX_OBSERVABLES
 
     async def _merge_observables(
         self,
@@ -406,6 +481,7 @@ class ToolExecutorHelpersBase:
         """
         if not delta:
             return
+        cap = await self._resolve_max_observables()
         async with UnitOfWork() as uow:
             branch = (await uow.session.exec(
                 _select(self._branch_model).where(
@@ -419,7 +495,7 @@ class ToolExecutorHelpersBase:
                 )
                 return
             branch.case_state_json = self._apply_observables_delta(
-                branch.case_state_json, delta,
+                branch.case_state_json, delta, cap=cap,
             )
             branch.updated_at = utc_now()
             uow.session.add(branch)

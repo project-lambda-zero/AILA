@@ -443,12 +443,11 @@ class ToolExecutor(ToolExecutorHelpersBase):
         )
 
 
-    # Cap on case_state.observables size. Each tool call typically
-    # adds 1-2 keys; long investigations accumulate observable entries
-    # fast and an unbounded map balloons the case_state_json blob into
-    # megabytes. ``_directive.*`` and ``_recall.*`` keys are reserved
-    # namespaces kept regardless of count -- steering directives and
-    # recall-pinned entries must survive eviction.
-    _MAX_OBSERVABLES: int = 400
+    # ``_MAX_OBSERVABLES`` is not overridden here: the base class reads
+    # the live value from ConfigRegistry under the ``platform`` namespace
+    # (``reasoning_max_observables``, schema default 400 matches the
+    # historical VR value). An operator override via PUT /config lands
+    # on the next merge without a worker restart, and drift between the
+    # platform default and the module override is eliminated.
 
 

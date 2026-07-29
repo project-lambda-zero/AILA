@@ -410,6 +410,240 @@ def test_turn_decision_rejects_non_json_observable() -> None:
         )
 
 
+# ----------------------------------------------------------------------
+# Recall durable-history backing (STEP 2). The absorb() recall branch
+# accepts a module-supplied ``fetch_observable_body`` callable and uses
+# it to rehydrate any pinned key that has already been evicted from the
+# live observables. When no fetcher is wired (malware/forensics today),
+# the branch injects a short not-available marker so the render layer
+# still surfaces the recall attempt instead of dropping it silently.
+# ----------------------------------------------------------------------
+
+
+def _recall_decision(*keys: str) -> ReasoningTurnDecision:
+    return ReasoningTurnDecision(
+        reasoning="pull those bodies back",
+        action="recall",
+        recall_keys=list(keys),
+        provenance=EvidenceProvenance(),
+    )
+
+
+def test_absorb_recall_present_key_no_rehydrate() -> None:
+    """When the recalled key IS still in live observables, the fetcher
+    is not consulted and the existing body stays put -- recall on a
+    live key is a pure pin operation."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    calls: list[str] = []
+
+    def _boom(key: str) -> str | None:
+        calls.append(key)
+        raise AssertionError(f"fetcher must not be consulted for live key {key!r}")
+
+    initial = ReasoningCaseState(
+        observables={"audit_mcp.read_function.source.foo": "int foo() { return 1; }"},
+    )
+    merged = engine.absorb(
+        initial,
+        _recall_decision("audit_mcp.read_function.source.foo"),
+        fetch_observable_body=_boom,
+    )
+
+    assert merged.observables["audit_mcp.read_function.source.foo"] == "int foo() { return 1; }"
+    assert merged.observables["_recall.pinned"] == ["audit_mcp.read_function.source.foo"]
+    assert calls == []
+
+
+def test_absorb_recall_evicted_key_rehydrates_from_fetcher() -> None:
+    """When the recalled key is ABSENT from live observables, the
+    fetcher rehydrates it and absorb re-injects the returned body under
+    the same key so the render layer can render it full."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    history = {
+        "audit_mcp.read_function.source.foo": "int foo(void) { return 42; }",
+        "audit_mcp.read_function.source.bar": "void bar(int x) { }",
+    }
+    seen: list[str] = []
+
+    def _fake_fetcher(key: str) -> str | None:
+        seen.append(key)
+        return history.get(key)
+
+    initial = ReasoningCaseState()
+    merged = engine.absorb(
+        initial,
+        _recall_decision(
+            "audit_mcp.read_function.source.foo",
+            "audit_mcp.read_function.source.bar",
+        ),
+        fetch_observable_body=_fake_fetcher,
+    )
+
+    assert merged.observables["audit_mcp.read_function.source.foo"] == "int foo(void) { return 42; }"
+    assert merged.observables["audit_mcp.read_function.source.bar"] == "void bar(int x) { }"
+    assert merged.observables["_recall.pinned"] == [
+        "audit_mcp.read_function.source.foo",
+        "audit_mcp.read_function.source.bar",
+    ]
+    assert seen == [
+        "audit_mcp.read_function.source.foo",
+        "audit_mcp.read_function.source.bar",
+    ]
+
+
+def test_absorb_recall_fetcher_none_result_injects_marker() -> None:
+    """When the fetcher returns None for a key (durable history has no
+    hit), absorb injects a short marker under the key so the render
+    layer surfaces the recall attempt instead of silently dropping it."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+
+    def _empty_fetcher(_key: str) -> str | None:
+        return None
+
+    merged = engine.absorb(
+        ReasoningCaseState(),
+        _recall_decision("audit_mcp.read_function.source.missing"),
+        fetch_observable_body=_empty_fetcher,
+    )
+
+    marker = merged.observables["audit_mcp.read_function.source.missing"]
+    assert "recall" in marker.lower()
+    assert "not available" in marker.lower() or "not retrievable" in marker.lower()
+    assert merged.observables["_recall.pinned"] == ["audit_mcp.read_function.source.missing"]
+
+
+def test_absorb_recall_no_fetcher_wired_degrades_gracefully() -> None:
+    """Malware/forensics-style engine construction (no fetcher wired):
+    a recall of an absent key MUST NOT crash. Absorb injects the
+    not-available marker under the pinned key."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+
+    merged = engine.absorb(
+        ReasoningCaseState(),
+        _recall_decision("audit_mcp.read_function.source.orphan"),
+        # No fetch_observable_body -- default None, current malware/forensics behavior.
+    )
+
+    marker = merged.observables["audit_mcp.read_function.source.orphan"]
+    assert isinstance(marker, str)
+    assert marker != ""
+    assert "recall" in marker.lower()
+    assert merged.observables["_recall.pinned"] == ["audit_mcp.read_function.source.orphan"]
+
+
+def test_absorb_recall_fetcher_raises_falls_back_to_marker() -> None:
+    """A misbehaving fetcher (raises an expected class) MUST NOT crash
+    the turn -- absorb catches the error and injects the marker."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+
+    def _raising(_key: str) -> str | None:
+        raise RuntimeError("DB connection reset")
+
+    merged = engine.absorb(
+        ReasoningCaseState(),
+        _recall_decision("audit_mcp.read_function.source.broken"),
+        fetch_observable_body=_raising,
+    )
+
+    marker = merged.observables["audit_mcp.read_function.source.broken"]
+    assert isinstance(marker, str) and marker
+    assert "recall" in marker.lower()
+
+
+# ----------------------------------------------------------------------
+# STEP 3 -- storage caps resolve via ConfigRegistry under the platform
+# namespace with the schema defaults preserved when no registry is
+# wired.
+# ----------------------------------------------------------------------
+
+
+class _FakeConfigRegistry:
+    """Minimal ConfigRegistry stub: dict-backed sync reads for tests."""
+
+    def __init__(self, values: dict[tuple[str, str], object] | None = None) -> None:
+        self._values = dict(values or {})
+
+    def get_sync(self, namespace: str, key: str) -> object:
+        return self._values.get((namespace, key))
+
+
+def test_absorb_agent_key_cap_defaults_to_150() -> None:
+    """No config registry wired -> the schema default (150) applies."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    seed = {f"scratch_{i}": i for i in range(200)}
+    initial = ReasoningCaseState(observables=seed)
+    merged = engine.absorb(
+        initial,
+        ReasoningTurnDecision(
+            reasoning="noop",
+            action="reasoning",
+            provenance=EvidenceProvenance(),
+        ),
+    )
+    agent_keys = [k for k in merged.observables if not k.startswith(("audit_mcp", "ida_headless", "_directive.", "_recall."))]
+    assert len(agent_keys) == 150
+
+
+def test_absorb_agent_key_cap_resolves_from_platform_registry() -> None:
+    """Wire a ConfigRegistry that returns 25 -> absorb enforces 25."""
+    registry = _FakeConfigRegistry(
+        {("platform", "reasoning_max_agent_keys_total"): 25},
+    )
+    engine = CyberReasoningEngine(
+        _FakeLLMClient(_FakeResponse("{}")),  # type: ignore[arg-type]
+        config_registry=registry,
+    )
+    seed = {f"scratch_{i}": i for i in range(80)}
+    initial = ReasoningCaseState(observables=seed)
+    merged = engine.absorb(
+        initial,
+        ReasoningTurnDecision(
+            reasoning="noop",
+            action="reasoning",
+            provenance=EvidenceProvenance(),
+        ),
+    )
+    agent_keys = [k for k in merged.observables if not k.startswith(("audit_mcp", "ida_headless", "_directive.", "_recall."))]
+    assert len(agent_keys) == 25
+
+
+def test_absorb_recall_pinned_cap_defaults_to_8() -> None:
+    """No config wired -> pinned working set caps at 8."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    # Prior state already has 5 pins.
+    initial = ReasoningCaseState(
+        observables={
+            "_recall.pinned": [f"audit_mcp.old_pin.{i}" for i in range(5)],
+        },
+    )
+    merged = engine.absorb(
+        initial,
+        _recall_decision(*(f"audit_mcp.new_pin.{i}" for i in range(6))),
+    )
+    assert len(merged.observables["_recall.pinned"]) == 8
+    # Newest arrivals win.
+    assert merged.observables["_recall.pinned"][-1] == "audit_mcp.new_pin.5"
+
+
+def test_absorb_recall_pinned_cap_resolves_from_platform_registry() -> None:
+    """Registry override 3 -> pinned working set trims to 3."""
+    registry = _FakeConfigRegistry(
+        {("platform", "reasoning_recall_pinned_max"): 3},
+    )
+    engine = CyberReasoningEngine(
+        _FakeLLMClient(_FakeResponse("{}")),  # type: ignore[arg-type]
+        config_registry=registry,
+    )
+    merged = engine.absorb(
+        ReasoningCaseState(),
+        _recall_decision(*(f"audit_mcp.k{i}" for i in range(10))),
+    )
+    assert len(merged.observables["_recall.pinned"]) == 3
+    assert merged.observables["_recall.pinned"] == [
+        "audit_mcp.k7", "audit_mcp.k8", "audit_mcp.k9",
+    ]
+
+
 def test_json_safe_observables_pass() -> None:
     # The shapes the reasoning loop actually stores: strings, ints,
     # nested json-dicts, and lists all round-trip cleanly.

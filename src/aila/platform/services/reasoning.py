@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from typing import Any
+
+from sqlalchemy.exc import SQLAlchemyError
 
 from aila.platform.contracts.reasoning import (
     ReasoningCaseState,
@@ -54,15 +57,34 @@ _TOOL_PREFIXES: tuple[str, ...] = (
     "_recall.",
 )
 
-# Hard cap on agent-self-set observable keys across all turns. Anything
-# past this point gets LRU-evicted by insertion order; tool / directive
-# / _recall.pinned keys are preserved by the partition in
-# render_case_model and live separately from this cap. Bumped 50 -> 150
-# alongside the recall-action redesign: the 262K-context runtime no
-# longer needs the old overflow-defense cap, and scratchpad now renders
-# whole up to a 150-key ceiling so the eviction threshold matches the
-# render ceiling.
-_MAX_AGENT_KEYS_TOTAL: int = 150
+# Fallback hard cap on agent-self-set observable keys across all turns
+# when no ConfigRegistry is wired (constructed without one, e.g. narrow
+# unit tests). Production paths resolve the live value via
+# ``self._config_registry.get_sync("platform", "reasoning_max_agent_keys_total")``
+# (schema default matches this literal so byte-for-byte behaviour is
+# preserved). Anything past the resolved cap is LRU-evicted by insertion
+# order; tool / directive / _recall.pinned keys are preserved by the
+# partition in render_case_model and live separately from this cap.
+# Bumped 50 -> 150 alongside the recall-action redesign: the 262K-context
+# runtime no longer needs the old overflow-defense cap, and scratchpad
+# now renders whole up to a 150-key ceiling so the eviction threshold
+# matches the render ceiling.
+_DEFAULT_MAX_AGENT_KEYS_TOTAL: int = 150
+
+# Fallback recall pin working-set cap. ``absorb`` keeps the most-recent
+# N recall pins so an agent can re-recall any turn without letting the
+# pin list grow unbounded. Same config-registry-with-fallback pattern as
+# ``_DEFAULT_MAX_AGENT_KEYS_TOTAL`` above.
+_DEFAULT_RECALL_PINNED_MAX: int = 8
+
+# Marker body injected under a recalled key when the durable message
+# history cannot supply the body (no fetcher wired, or the fetcher
+# returned None). Keeps the render pipeline consistent -- the agent
+# always sees SOMETHING under a pinned key rather than a silent drop.
+_RECALL_MISSING_MARKER: str = (
+    "[recall: body not available in message history -- "
+    "try a fresh tool_run to re-derive]"
+)
 
 # Reasoning strategy families and domain profiles are module-owned: each
 # module publishes them through ModuleProtocol.reasoning_strategies() and
@@ -339,14 +361,58 @@ class CyberReasoningEngine:
                 )
         return ReasoningTurnDecision.model_validate(raw)
 
+    def _resolve_platform_int(
+        self, key: str, default: int,
+    ) -> int:
+        """Read a platform-namespace int cap via ConfigRegistry.
+
+        Reads under the ``platform`` namespace (the platform layer
+        owns only this namespace per RFC-05); a missing registry, a
+        DB / cache failure, or a non-numeric value all fall back to
+        ``default`` so absorb never crashes on config drift. Cached
+        transparently by ConfigRegistry itself; a fresh call per turn
+        is cheap.
+        """
+        if self._config_registry is None:
+            return default
+        try:
+            raw = self._config_registry.get_sync("platform", key)
+        except (OSError, RuntimeError, ValueError, TypeError, SQLAlchemyError):
+            return default
+        if raw is None:
+            return default
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return default
+
     def absorb(
         self,
         case_state: ReasoningCaseState,
         decision: ReasoningTurnDecision,
         *,
         turn_number: int = 0,
+        fetch_observable_body: Callable[[str], str | None] | None = None,
     ) -> ReasoningCaseState:
-        """Merge a turn decision into cumulative reasoning state."""
+        """Merge a turn decision into cumulative reasoning state.
+
+        ``fetch_observable_body`` is a module-supplied sync callable that
+        returns the durable body for an observable key that is no longer
+        in the live ``case_state.observables`` (evicted by the storage
+        cap). The recall branch calls it for every pinned key that is
+        absent and re-injects the returned body so a stale pin
+        rehydrates from the DB message history instead of silently
+        dropping. When the callable returns ``None`` -- or when no
+        callable is wired (malware / forensics today) -- a short
+        \"not available\" marker is injected under the pinned key so
+        the render layer still surfaces the recall attempt to the agent
+        rather than swallowing it.
+
+        The platform layer names no module here: the callable is opaque
+        (module can preload from its own message table, or wrap any
+        other store) and the injected marker is a plain string with no
+        module-specific vocabulary.
+        """
         contract = case_state.contract
         if decision.contract is not None and not self._has_contract(case_state.contract):
             contract = decision.contract
@@ -431,11 +497,44 @@ class CyberReasoningEngine:
                     continue
                 seen.add(key)
                 merged_pinned.append(key)
-            # Keep the most-recent 8 (newest arrivals stay; agent can
-            # re-recall an evicted key any turn).
-            if len(merged_pinned) > 8:
-                merged_pinned = merged_pinned[-8:]
+            # Keep the most-recent N pins (newest arrivals stay; agent
+            # can re-recall an evicted key any turn). Cap is
+            # config-resolved via the platform namespace so an operator
+            # can widen or narrow the working set without a redeploy.
+            recall_pinned_max = self._resolve_platform_int(
+                "reasoning_recall_pinned_max", _DEFAULT_RECALL_PINNED_MAX,
+            )
+            if recall_pinned_max > 0 and len(merged_pinned) > recall_pinned_max:
+                merged_pinned = merged_pinned[-recall_pinned_max:]
             observables["_recall.pinned"] = merged_pinned
+            # Recall durable-history backing: for every pinned key not in
+            # the live observables (evicted by the storage cap, or newly
+            # recalled by an agent that never saw it live), try to
+            # rehydrate the body from the module-supplied fetcher. Missing
+            # bodies get a short marker so the render layer still shows
+            # the recall attempt instead of dropping the pin silently.
+            for key in merged_pinned:
+                if key in observables:
+                    continue
+                fetched: str | None = None
+                if fetch_observable_body is not None:
+                    try:
+                        fetched = fetch_observable_body(key)
+                    except (OSError, RuntimeError, ValueError, TypeError) as exc:
+                        # A misbehaving fetcher must not crash the turn;
+                        # log at INFO with the exception class so the
+                        # operator can correlate and fall back to the
+                        # not-available marker.
+                        _log.info(
+                            "absorb: recall fetcher raised for key=%r "
+                            "(%s: %s); injecting not-available marker",
+                            key, type(exc).__name__, exc,
+                        )
+                        fetched = None
+                if isinstance(fetched, str) and fetched:
+                    observables[key] = fetched
+                else:
+                    observables[key] = _RECALL_MISSING_MARKER
         # Cap agent-self-set observables to keep case_state bounded:
         #   (1) max 10 NEW keys per turn (anti-spam)
         #   (2) block writes to tool / directive / _recall namespaces
@@ -456,13 +555,19 @@ class CyberReasoningEngine:
                 break
             observables[key] = v
             accepted += 1
-        # Enforce total-cap on agent-set keys.
+        # Enforce total-cap on agent-set keys. Cap is config-resolved via
+        # the platform namespace so an operator can widen or narrow the
+        # working set without a redeploy; the schema default matches the
+        # pre-config-ification literal so behaviour is preserved.
+        max_agent_keys_total = self._resolve_platform_int(
+            "reasoning_max_agent_keys_total", _DEFAULT_MAX_AGENT_KEYS_TOTAL,
+        )
         agent_keys = [
             k for k in observables
             if not any(k.startswith(p) for p in _TOOL_PREFIXES)
         ]
-        if len(agent_keys) > _MAX_AGENT_KEYS_TOTAL:
-            evict_n = len(agent_keys) - _MAX_AGENT_KEYS_TOTAL
+        if max_agent_keys_total > 0 and len(agent_keys) > max_agent_keys_total:
+            evict_n = len(agent_keys) - max_agent_keys_total
             for k in agent_keys[:evict_n]:
                 observables.pop(k, None)
 

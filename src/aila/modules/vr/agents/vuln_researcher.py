@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -185,6 +186,62 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         self._variant_hunt_reject_cap = await get_int("variant_hunt_reject_cap")
         self._unresolved_hyp_reject_cap = await get_int("unresolved_hyp_reject_cap")
         self._draft_pending_reject_cap = await get_int("draft_pending_reject_cap")
+
+    async def _build_recall_fetcher(
+        self, recall_keys: list[str],
+    ) -> Callable[[str], str | None] | None:
+        """Rehydrate recalled observable bodies from the VR message store.
+
+        Reads the branch's message rows and pulls the reserved
+        ``_observable_bodies`` payload key that
+        :meth:`ToolExecutorHelpersBase._persist_result_and_observables`
+        writes on every successful tool result. The pre-load scan is
+        scoped to the requested ``recall_keys`` -- once every key has a
+        hit, the walk stops early -- so a recall of 3 keys on a
+        1000-message branch typically touches only the last few rows.
+
+        Returns ``dict.get`` (a sync callable) so the platform absorb
+        branch can rehydrate observables without an await; recall keys
+        the message history cannot satisfy simply return ``None`` and
+        absorb injects a short not-available marker under them.
+        """
+        wanted = {k for k in recall_keys if isinstance(k, str) and k}
+        if not wanted:
+            return None
+        hydrated: dict[str, str] = {}
+        # Newest first so recent bodies win when the same key was
+        # written across multiple turns; the loop breaks as soon as every
+        # requested key has been resolved.
+        async with UnitOfWork() as uow:
+            rows = (await uow.session.exec(
+                _select(VRInvestigationMessageRecord)
+                .where(VRInvestigationMessageRecord.branch_id == self.branch_id)
+                .order_by(VRInvestigationMessageRecord.created_at.desc())
+            )).all()
+        for row in rows:
+            if not wanted:
+                break
+            try:
+                payload = json.loads(row.payload_json or "{}")
+            except (ValueError, TypeError):
+                continue
+            bodies = payload.get("_observable_bodies")
+            if not isinstance(bodies, dict):
+                continue
+            # Copy only the keys we still need; skip empties / non-strings.
+            for key in list(wanted):
+                body = bodies.get(key)
+                if isinstance(body, str) and body:
+                    hydrated[key] = body
+                    wanted.discard(key)
+        if not hydrated:
+            # A branch that never wrote _observable_bodies (backfilled
+            # investigation from before this landed, or a fresh branch
+            # whose messages predate any tool result) -- return None so
+            # absorb emits the not-available marker instead of pretending
+            # we tried.
+            return None
+        return hydrated.get
 
     def _extra_user_prompt_kwargs(self) -> dict[str, Any]:
         return {"cve_intel": self._cve_intel}

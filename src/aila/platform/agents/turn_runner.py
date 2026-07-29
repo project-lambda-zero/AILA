@@ -30,6 +30,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -121,6 +122,33 @@ class AgentTurnRunnerBase:
         ConfigRegistry override this to stash them as instance attributes so
         the (sync) gate methods read a resolved value without an await.
         """
+
+    async def _build_recall_fetcher(
+        self, recall_keys: list[str],
+    ) -> Callable[[str], str | None] | None:
+        """Return a sync fetcher that rehydrates recalled observable bodies.
+
+        The runner calls this immediately before :meth:`CyberReasoningEngine.absorb`
+        whenever the agent emits ``action=\"recall\"``. The returned callable
+        is invoked (synchronously, inside ``absorb``) for every pinned key
+        that is no longer in the live ``case_state.observables`` and
+        must return the durable body or ``None`` when the key is not
+        retrievable from history.
+
+        Default: ``None`` (no fetcher). Modules whose ``_message_model``
+        payload rows carry a ``_observable_bodies`` mapping (written by
+        :meth:`ToolExecutorHelpersBase._persist_result_and_observables`)
+        override this to pre-load the requested keys and return a sync
+        closure. ``None`` degrades gracefully -- absorb injects a short
+        \"not available\" marker so the render layer still surfaces the
+        recall attempt without crashing.
+
+        ``recall_keys`` is the exact list from the current decision;
+        subclasses may narrow the DB scan to just the requested keys
+        rather than loading every message on the branch.
+        """
+        del recall_keys
+        return None
 
     def _extra_user_prompt_kwargs(self) -> dict[str, Any]:
         """Per-module extra kwargs merged into the user-prompt build.
@@ -650,7 +678,28 @@ class AgentTurnRunnerBase:
                 "script_content": "",
             })
 
-        new_case_state = self._engine.absorb(case_state, decision, turn_number=turn_number)
+        # Recall durable-history backing. When the agent recalls a key
+        # that is no longer in the live observables (evicted by the
+        # storage cap), ask the module for a sync closure that reads the
+        # body from the DB message history. absorb() consumes the closure
+        # inside its recall branch and rehydrates the pinned observables;
+        # ``None`` (the platform default) degrades to a short marker so
+        # the render layer still surfaces the recall attempt. The build
+        # is scoped to the exact recall_keys so the pre-load can narrow
+        # its DB scan.
+        recall_fetcher: Callable[[str], str | None] | None = None
+        if (
+            decision.action == "recall"
+            and decision.recall_keys
+        ):
+            recall_fetcher = await self._build_recall_fetcher(
+                list(decision.recall_keys),
+            )
+
+        new_case_state = self._engine.absorb(
+            case_state, decision, turn_number=turn_number,
+            fetch_observable_body=recall_fetcher,
+        )
 
         payload_kind, payload = self._decision_to_message_payload(decision)
         terminal = decision.action == "submit"

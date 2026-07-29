@@ -252,3 +252,16 @@ class PlatformConfigSchema(BaseModel):
     smtp_ca_bundle_path: str = ""
     smtp_use_implicit_tls: bool = False
 
+    # Reasoning / observable storage caps (platform-owned data structures).
+    # Live under the platform namespace because ``CyberReasoningEngine`` and
+    # the shared ``ToolExecutorHelpersBase`` are platform code; a module never
+    # names these keys. Defaults preserve the pre-config-ification behaviour
+    # (agent scratchpad ceiling 150, per-branch observables ceiling 400,
+    # recall-pin working set 8) so an operator with no override sees no drift.
+    # The caps only trim the LIVE case_state window -- the recall action
+    # rehydrates evicted keys from the durable message history, so shrinking
+    # them is safe.
+    reasoning_max_agent_keys_total: int = 150
+    reasoning_max_observables: int = 400
+    reasoning_recall_pinned_max: int = 8
+
