@@ -13,6 +13,7 @@ pivot-history parsing stay module-side.
 """
 from __future__ import annotations
 
+import difflib
 import json
 import logging
 from typing import Any
@@ -35,6 +36,7 @@ from aila.platform.mcp.adapters import (
     AdapterContext,
     get_adapter,
     get_read_tools,
+    registered_tools,
 )
 from aila.platform.uow import UnitOfWork
 
@@ -596,6 +598,29 @@ class ToolExecutorHelpersBase:
                 f"target. Re-read the # Available tools section in the "
                 f"prompt -- only tools listed there will execute."
             )
+            # Nearest-name hint: build the '<server>.<tool>' catalog from
+            # the adapter registry, narrow it to the servers this call
+            # site is actually allowed to dispatch (module allowlist +
+            # any phase-graph narrowing -- same gates enforced above),
+            # then difflib the requested identifier against that filtered
+            # set. Mirrors the kwarg-suggestion style used at
+            # src/aila/platform/mcp/bridges/audit_mcp.py:1327-1352.
+            catalog = registered_tools()
+            if self._AGENT_ALLOWED_SERVERS is not None:
+                catalog = [
+                    t for t in catalog
+                    if t.split(".", 1)[0] in self._AGENT_ALLOWED_SERVERS
+                ]
+            if phase_allowed_servers is not None:
+                catalog = [
+                    t for t in catalog
+                    if t.split(".", 1)[0] in phase_allowed_servers
+                ]
+            matches = difflib.get_close_matches(
+                f"{server_id}.{tool_name}", catalog, n=3, cutoff=0.5,
+            )
+            if matches:
+                err += f" Did you mean: {', '.join(matches)}?"
             msg_id = await self._write_error_message(
                 investigation_id, branch_id, err, at_turn,
             )
