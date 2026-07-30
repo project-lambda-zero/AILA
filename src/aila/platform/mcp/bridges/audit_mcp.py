@@ -1459,16 +1459,32 @@ class AuditMcpBridgeTool(Tool):
         Required kwargs: index_id, file_path, start, end.
         Optional: max_lines (cap, default 500, hard ceiling 1500).
         """
+        # Signature-error suffix. Mirrors the ``_validate_kwargs``
+        # "Valid params: [...]. Required: [...]." shape so the
+        # tool_execution classifier can recognize the shared
+        # ``missing required kwarg`` / ``must be integers`` /
+        # ``invalid range`` / ``must be 1-indexed`` /
+        # ``exceeds file length`` substrings and let the repeat-
+        # failure circuit breaker fire on identical malformed calls.
+        _valid_params = "['end', 'file_path', 'index_id', 'max_lines', 'start']"
+        _required_params = "['file_path', 'index_id']"
+
+        def _sig_error(msg: str, *, with_required: bool = True) -> dict:
+            parts = [
+                f"audit_mcp.read_lines rejected: {msg}.",
+                f"Valid params: {_valid_params}.",
+            ]
+            if with_required:
+                parts.append(f"Required: {_required_params}.")
+            return {"status": "error", "error": " ".join(parts)}
+
         index_id = str(kwargs.get("index_id") or "").strip()
         file_path = str(kwargs.get("file_path") or "").strip()
         try:
             start = int(kwargs.get("start") or 0)
             end = int(kwargs.get("end") or 0)
         except (TypeError, ValueError):
-            return {
-                "status": "error",
-                "error": "read_lines: start and end must be integers",
-            }
+            return _sig_error("start and end must be integers")
         try:
             max_lines = int(kwargs.get("max_lines") or 500)
         except (TypeError, ValueError):
@@ -1476,16 +1492,23 @@ class AuditMcpBridgeTool(Tool):
         max_lines = min(max(1, max_lines), 1500)
 
         if not index_id or not file_path:
-            return {
-                "status": "error",
-                "error": "read_lines: index_id and file_path are required",
-            }
+            missing = [
+                name
+                for name, value in (
+                    ("index_id", index_id),
+                    ("file_path", file_path),
+                )
+                if not value
+            ]
+            return _sig_error(
+                f"missing required kwarg(s) {sorted(missing)}",
+                with_required=False,
+            )
         if start < 1 or end < start:
-            return {
-                "status": "error",
-                "error": f"read_lines: invalid range start={start} end={end} "
-                          "(must be 1-indexed, end >= start)",
-            }
+            return _sig_error(
+                f"invalid range start={start} end={end} "
+                "(must be 1-indexed, end >= start)",
+            )
         requested = end - start + 1
         if requested > max_lines:
             end = start + max_lines - 1
@@ -1728,10 +1751,9 @@ class AuditMcpBridgeTool(Tool):
 
         total = len(all_lines)
         if start > total:
-            return {
-                "status": "error",
-                "error": f"read_lines: start={start} exceeds file length {total}",
-            }
+            return _sig_error(
+                f"start={start} exceeds file length {total}",
+            )
         actual_end = min(end, total)
         slice_lines = all_lines[start - 1:actual_end]
         content = "".join(slice_lines)

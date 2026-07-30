@@ -16,13 +16,12 @@ import pytest
 
 from aila.platform.mcp.bridges import audit_mcp as bridge_mod
 from aila.platform.mcp.bridges.audit_mcp import (
-    AuditMcpBridgeTool,
     _JADX_PREFIX_RE,
     _WALK_SKIP_DIRS,
+    AuditMcpBridgeTool,
     _looks_like_jadx,
     _search_by_basename,
 )
-
 
 # ---------------------------------------------------------------------------
 # _search_by_basename
@@ -337,3 +336,140 @@ class TestReadLinesResolution:
         })
         assert result["status"] == "error"
         assert "exceeds file length" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# Structured signature errors -- feed the tool_execution classifier so the
+# repeat-failure circuit breaker fires on identical malformed calls.
+# ---------------------------------------------------------------------------
+
+
+class TestReadLinesSignatureErrors:
+    async def test_missing_index_id_flags_missing_required_kwarg(
+        self, tmp_path: Path,
+    ) -> None:
+        (tmp_path / "a.py").write_text("x\n", encoding="utf-8")
+        tool = _make_bridge(tmp_path)
+        result = await tool._read_lines_local({
+            "file_path": "a.py",
+            "start": 1,
+            "end": 1,
+        })
+        assert result["status"] == "error"
+        err = result["error"]
+        assert "missing required kwarg" in err
+        assert "'index_id'" in err
+        assert "audit_mcp.read_lines rejected" in err
+        assert "Valid params" in err
+
+    async def test_missing_file_path_flags_missing_required_kwarg(
+        self, tmp_path: Path,
+    ) -> None:
+        tool = _make_bridge(tmp_path)
+        result = await tool._read_lines_local({
+            "index_id": "idx1",
+            "start": 1,
+            "end": 1,
+        })
+        assert result["status"] == "error"
+        err = result["error"]
+        assert "missing required kwarg" in err
+        assert "'file_path'" in err
+
+    async def test_missing_both_lists_both_kwargs(
+        self, tmp_path: Path,
+    ) -> None:
+        tool = _make_bridge(tmp_path)
+        result = await tool._read_lines_local({
+            "start": 1,
+            "end": 1,
+        })
+        assert result["status"] == "error"
+        err = result["error"]
+        assert "missing required kwarg" in err
+        # sorted list -> file_path before index_id.
+        assert "['file_path', 'index_id']" in err
+
+    async def test_non_integer_start_flags_must_be_integers(
+        self, tmp_path: Path,
+    ) -> None:
+        (tmp_path / "a.py").write_text("x\n", encoding="utf-8")
+        tool = _make_bridge(tmp_path)
+        result = await tool._read_lines_local({
+            "index_id": "idx1",
+            "file_path": "a.py",
+            "start": "one",
+            "end": 3,
+        })
+        assert result["status"] == "error"
+        err = result["error"]
+        assert "must be integers" in err
+        assert "audit_mcp.read_lines rejected" in err
+        assert "Required:" in err
+
+    async def test_non_integer_end_flags_must_be_integers(
+        self, tmp_path: Path,
+    ) -> None:
+        (tmp_path / "a.py").write_text("x\n", encoding="utf-8")
+        tool = _make_bridge(tmp_path)
+        result = await tool._read_lines_local({
+            "index_id": "idx1",
+            "file_path": "a.py",
+            "start": 1,
+            "end": [3],
+        })
+        assert result["status"] == "error"
+        assert "must be integers" in result["error"]
+
+    async def test_zero_start_flags_invalid_range_and_1_indexed(
+        self, tmp_path: Path,
+    ) -> None:
+        (tmp_path / "a.py").write_text("x\n", encoding="utf-8")
+        tool = _make_bridge(tmp_path)
+        result = await tool._read_lines_local({
+            "index_id": "idx1",
+            "file_path": "a.py",
+            "start": 0,
+            "end": 5,
+        })
+        assert result["status"] == "error"
+        err = result["error"]
+        assert "invalid range" in err
+        assert "must be 1-indexed" in err
+        assert "start=0" in err
+        assert "end=5" in err
+
+    async def test_end_below_start_flags_invalid_range(
+        self, tmp_path: Path,
+    ) -> None:
+        (tmp_path / "a.py").write_text("x\n", encoding="utf-8")
+        tool = _make_bridge(tmp_path)
+        result = await tool._read_lines_local({
+            "index_id": "idx1",
+            "file_path": "a.py",
+            "start": 10,
+            "end": 5,
+        })
+        assert result["status"] == "error"
+        err = result["error"]
+        assert "invalid range" in err
+        assert "must be 1-indexed" in err
+
+    async def test_start_past_eof_flags_exceeds_file_length(
+        self, tmp_path: Path,
+    ) -> None:
+        (tmp_path / "tiny.py").write_text("only\n", encoding="utf-8")
+        tool = _make_bridge(tmp_path)
+        result = await tool._read_lines_local({
+            "index_id": "idx1",
+            "file_path": "tiny.py",
+            "start": 500,
+            "end": 501,
+        })
+        assert result["status"] == "error"
+        err = result["error"]
+        assert "exceeds file length" in err
+        assert "start=500" in err
+        assert "audit_mcp.read_lines rejected" in err
+        assert "Valid params" in err
+        assert "Required:" in err

@@ -364,6 +364,21 @@ operator action.
 
 ### Fixed
 
+- Repeated malformed tool calls now trip the repeat-failure circuit
+  breaker instead of retry-storming. The audit_mcp read_lines bridge
+  tool previously rejected missing required kwargs, non-integer line
+  numbers, inverted or zero-based ranges, and offsets past end-of-file
+  with terse messages the contract-error classifier could not
+  categorize, so the anti-retry breaker never fired and a branch could
+  re-issue the identical malformed call five or more times. read_lines
+  now returns a structured error naming the valid params and required
+  kwargs (mirroring the existing kwarg validator), and the classifier
+  recognizes missing-required and out-of-range value errors as
+  breaker-eligible classes, so the branch is redirected after two
+  repeats. The audit prompt now states each common tool's exact
+  required kwargs (read_lines, read_function, semantic_search and
+  find_related top_k, the search_* pattern arg) and points at the
+  per-turn tool catalog as the authoritative signature source.
 - A reasoning turn whose structured output is not valid JSON is now
   repaired across a bounded number of attempts (each retry shows the
   model the verbatim validation error plus the partial JSON it produced)

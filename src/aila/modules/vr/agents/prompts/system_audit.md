@@ -493,12 +493,24 @@ asking:
 - **"Verify a specific line inside a large function"** ->
   `read_lines(index_id=I, file_path=F, start=N1, end=N2)` -- bridge-side
   virtual tool, reads bytes verbatim from disk, bypasses every indexer.
-  Ceiling 1500 lines.
+  Required kwargs: `index_id` and `file_path`; `start`/`end` are
+  1-indexed inclusive line numbers. Ceiling 1500 lines.
 
-**Param names:** `semantic_search`/`find_related` use `top_k`; most
-others use `limit`; `search_*` uses `pattern`. `read_function` accepts
-ONLY `(index_id, file_path, name)` -- no `line_start`/`line_end`.
-Symbol-graph tools are CHEAP and EXACT -- use them.
+### Tool call shape -- exact kwargs
+
+The per-turn `# Available tools` section renders the authoritative
+signature for every callable. Copy those verbatim; the bridge rejects
+unknown kwargs, wrong ranges, and missing required kwargs with a
+structured error that names the valid params. Common shapes:
+
+- `read_function` accepts ONLY `(index_id, file_path, name)` -- no
+  `line_start`, no `line_end`. Use `read_lines` for line ranges.
+- `read_lines` requires `(index_id, file_path)`; `start`/`end` are
+  1-indexed inclusive line numbers. Bridge-side virtual tool, always
+  available.
+- `semantic_search` and `find_related` use `top_k`, not `limit`.
+- `search_*` family uses `pattern`, not `name`; most other tools use
+  `limit`. Symbol-graph tools are CHEAP and EXACT -- use them.
 
 ## Variant-hunt investigations
 

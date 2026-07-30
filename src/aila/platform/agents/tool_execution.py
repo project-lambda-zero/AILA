@@ -85,6 +85,10 @@ def classify_contract_error(text: str) -> str | None:
                           TypeError about an unexpected keyword
       - "missing_kwarg"  -- required kwarg not provided
       - "type_mismatch"  -- wrong type passed
+      - "bad_arg_value" -- arg VALUE is out of range / wrong shape
+                          (bad line range, non-integer, offset past
+                          EOF); varying the value keeps failing so the
+                          error-class breaker should fire.
       - "resource_not_found" -- agent is passing a path / id /
                           identifier the tool cannot resolve. Once
                           an APK / index / file lookup misses, the
@@ -106,10 +110,22 @@ def classify_contract_error(text: str) -> str | None:
         or "got an unexpected keyword" in low
     ):
         return "unknown_kwarg"
-    if "missing required" in low or "missing 1 required" in low:
+    if (
+        "missing required" in low
+        or "missing 1 required" in low
+        or " is required" in low
+        or " are required" in low
+    ):
         return "missing_kwarg"
     if "type mismatch" in low or "argument of type" in low:
         return "type_mismatch"
+    if (
+        "invalid range" in low
+        or "must be 1-indexed" in low
+        or "must be integers" in low
+        or "exceeds file length" in low
+    ):
+        return "bad_arg_value"
     if (
         "filenotfounderror" in low
         or "no such file or directory" in low

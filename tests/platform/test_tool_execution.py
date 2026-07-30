@@ -64,6 +64,24 @@ def test_classify_missing_kwarg() -> None:
     assert classify_contract_error(
         "missing 1 required positional argument: 'name'",
     ) == "missing_kwarg"
+    assert classify_contract_error(
+        "audit_mcp.read_lines rejected: missing required kwarg(s) ['file_path', 'index_id'].",
+    ) == "missing_kwarg"
+    assert classify_contract_error(
+        "index_id and file_path are required",
+    ) == "missing_kwarg"
+
+
+def test_classify_bad_arg_value() -> None:
+    assert classify_contract_error(
+        "read_lines: invalid range start=0 end=5 (must be 1-indexed, end >= start)",
+    ) == "bad_arg_value"
+    assert classify_contract_error(
+        "read_lines: start and end must be integers",
+    ) == "bad_arg_value"
+    assert classify_contract_error(
+        "read_lines: start=9999 exceeds file length 1200",
+    ) == "bad_arg_value"
 
 
 def test_classify_type_mismatch() -> None:
