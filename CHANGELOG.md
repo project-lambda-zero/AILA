@@ -388,6 +388,15 @@ operator action.
 
 ### Fixed
 
+- APK ingestion now indexes the decompiled source tree on Windows and no
+  longer aborts the pipeline when the optional MobSF scan is unavailable.
+  The unified staging directory linked the jadx output with a directory
+  symlink, which the indexer's directory walk skips, so the entire
+  decompiled tree was invisible and an audit reported no supported
+  languages; staging now uses a directory junction, which the walk
+  descends. Separately, an unavailable MobSF scan is skipped rather than
+  raised, which previously cancelled the parallel ingestion group before
+  the decompiled-index stage ran.
 - The taint-flow view no longer reports zero paths for reachable sinks.
   The audit_mcp taint_paths_to adapter read the paths from keys that the
   server never returns; the server reports call chains under

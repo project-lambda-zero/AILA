@@ -437,8 +437,21 @@ def _build_unified_staging(
     """
     staging = _DEFAULT_APK_WORKDIR / f"apk-unified-{apk_sha[:16]}"
     if staging.exists():
+        # Tear down prior entries WITHOUT recursing into them. A junction
+        # child must be removed as a link (os.rmdir drops the junction,
+        # not its target); shutil.rmtree would descend the junction and
+        # delete the REAL jadx / apktool tree it points at.
         import shutil as _shutil
-        _shutil.rmtree(staging, ignore_errors=True)
+        for child in staging.iterdir():
+            try:
+                if child.is_symlink():
+                    child.unlink()
+                else:
+                    os.rmdir(child)  # junction link, or empty dir
+            except OSError:
+                # Real (copied) directory -- no reparse point back into
+                # the source, so a recursive delete is safe here.
+                _shutil.rmtree(child, ignore_errors=True)
     staging.mkdir(parents=True, exist_ok=True)
     if java_dir:
         _link_dir(Path(java_dir), staging / "java")
@@ -456,38 +469,39 @@ def _build_unified_staging(
 def _link_dir(source: Path, target: Path) -> None:
     """Cross-platform directory junction.
 
-    Windows: ``mklink /J`` via ``subprocess`` is the standard but
-    operator banned subprocess.run -- we use ``_winapi.CreateJunction``
-    when available (Python 3.13+ exposes it under ctypes.windll.kernel32)
-    via ``os.symlink`` with ``target_is_directory=True``. When that
-    fails (no developer-mode + no admin) we fall back to bulk copy via
-    ``shutil.copytree`` -- slower one-time, then the staging dir persists.
-    POSIX: ``os.symlink`` always works.
+    Windows uses a directory junction (via the winapi CreateJunction
+    primitive), NOT a directory symlink: the indexer's directory walk
+    descends into junctions but skips directory symlinks, so a symlink
+    would hide the whole source tree. Junctions also need neither admin
+    rights nor developer mode. If junction creation fails the code falls
+    back to a bulk copy, which is slower once but always walkable. On
+    POSIX a plain symlink is walked fine and is used directly.
     """
     if not source.exists():
         return
-    try:
-        os.symlink(source, target, target_is_directory=True)
-        return
-    except (OSError, NotImplementedError):
-        # Symlink failed -- Windows often denies non-admin symlinks.
-        # Fall through to junction or copy.
-        pass
     if os.name == "nt":
-        # Try Windows native junction via ctypes (no subprocess).
+        # Windows: create a JUNCTION, never a directory symlink. The
+        # indexer's recursive directory walk treats a junction as an
+        # ordinary folder and descends into it, but skips a directory
+        # symlink -- a symlinked source tree yields ZERO files to the
+        # indexer, which then reports no supported languages. Junctions
+        # need neither admin rights nor developer mode.
         try:
-            import ctypes
-            kernel32 = ctypes.windll.kernel32
-            kernel32.CreateSymbolicLinkW.restype = ctypes.c_ubyte
-            # SYMBOLIC_LINK_FLAG_DIRECTORY=0x1, ALLOW_UNPRIVILEGED=0x2
-            ok = kernel32.CreateSymbolicLinkW(
-                str(target), str(source), 0x3,
+            import _winapi
+            _winapi.CreateJunction(str(source), str(target))
+            return
+        except (OSError, ValueError, AttributeError, ImportError) as exc:
+            _log.warning(
+                "unified-staging junction %s -> %s failed (%s); "
+                "falling back to copy", target, source, type(exc).__name__,
             )
-            if ok:
-                return
-        except OSError:
+    else:
+        try:
+            os.symlink(source, target, target_is_directory=True)
+            return
+        except (OSError, NotImplementedError):
             pass
-    # Last-resort: copy. Slower but always works.
+    # Last-resort: copy. Slower but always walkable by the indexer.
     import shutil as _shutil
     _shutil.copytree(source, target, symlinks=False, dirs_exist_ok=False)
 
@@ -1279,9 +1293,26 @@ class TargetAnalysisService:
         )
         if not isinstance(resp, dict) or resp.get("status") == "error":
             err = resp.get("error") if isinstance(resp, dict) else resp
-            raise TargetAnalysisError(
-                f"android-mcp.mobsf_scan failed: {err}",
+            # MobSF is optional enrichment (see docstring). When the scan
+            # cannot run -- MobSF service down, key absent from the
+            # android-mcp process env, or the APK rejected -- treat it as
+            # a SKIP, not a hard failure. INDEX_DECOMPILED (required by
+            # every downstream audit) runs AFTER this stage in
+            # _analyze_android_apk's gather; raising here propagates out
+            # of the gather and starves the index the audit depends on.
+            # Record the reason on the row and continue.
+            _log.warning(
+                "vr.android.mobsf_scan target=%s skipped (scan "
+                "unavailable: %s)", target_id, str(err)[:200],
             )
+            await self._merge_handles_locked(target_id, {
+                "android_mcp_mobsf_scan": {
+                    "skipped": True,
+                    "reason": f"MobSF scan unavailable: {str(err)[:300]}",
+                    "prompt_safe": False,
+                },
+            })
+            return
         artifact_ref = _write_target_artifact(
             target_id, "mobsf_scan", resp,
         )
