@@ -174,7 +174,7 @@ def _load_target_artifact_payload(
 
 
 def _static_summary_digest_fields(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Extract the small inline digest from an androguard summary.
+    """Extract the small inline digest from the composed static summary.
 
     Carries the scalars an api_router / masvs-seed call would project
     plus pre-computed list counts so the projection layer never has
@@ -199,48 +199,22 @@ def _static_summary_digest_fields(payload: Mapping[str, Any]) -> dict[str, Any]:
         value = payload.get(key)
         if isinstance(value, list):
             digest[f"{key}_count"] = len(value)
-    return digest
-
-
-def _mobsf_digest_fields(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Extract the operator-display digest from a MobSF scan response.
-
-    The full MobSF scan is multi-MB and must never enter LLM prompts
-    (PIPELINE_ONLY_TOOLS -- see ``android_mcp_bridge._PIPELINE_ONLY_TOOLS``
-    comment). The inline digest carries only fields safe to show on
-    the target overview / PDF cover (security score + tracker count +
-    per-severity finding buckets); everything else lives in the
-    artifact file behind ``prompt_safe=False``.
-    """
-    digest: dict[str, Any] = {}
-    if payload.get("skipped"):
-        digest["skipped"] = True
-        if payload.get("reason") is not None:
-            digest["reason"] = payload["reason"]
-        return digest
-    if payload.get("security_score") is not None:
-        digest["security_score"] = payload["security_score"]
-    trackers = payload.get("trackers")
-    if isinstance(trackers, Mapping):
-        detected = trackers.get("detected_trackers")
-        if detected is not None:
-            digest["trackers_detected"] = detected
-    buckets = {"high": 0, "warning": 0, "info": 0, "good": 0, "secure": 0}
-    for section_key in (
-        "code_analysis", "manifest_analysis",
-        "android_api", "network_security",
-    ):
-        section = payload.get(section_key)
-        if isinstance(section, dict):
-            for finding in section.values():
-                if isinstance(finding, dict):
-                    sev = str(
-                        finding.get("severity") or finding.get("status") or "",
-                    ).lower()
-                    if sev in buckets:
-                        buckets[sev] += 1
-    if any(buckets.values()):
-        digest["findings_by_severity"] = buckets
+    # Pass through the in-repo native-analysis + SBOM sub-summaries so the
+    # apk_static seed builder can render them for NATIVE / SBOM checks.
+    # native_analysis is already bounded (lib + symbol caps in
+    # native_analysis.py); the SBOM component list is trimmed here so the
+    # inline digest carried in mcp_handles_json stays small.
+    native = payload.get("native_analysis")
+    if isinstance(native, dict):
+        digest["native_analysis"] = native
+    sbom = payload.get("sbom")
+    if isinstance(sbom, dict):
+        trimmed = dict(sbom)
+        comps = trimmed.get("components")
+        if isinstance(comps, list) and len(comps) > 60:
+            trimmed["components"] = comps[:60]
+            trimmed["truncated"] = True
+        digest["sbom"] = trimmed
     return digest
 
 
@@ -378,13 +352,17 @@ _LEGACY_STAGES: frozenset[StageName] = frozenset({
     StageName.CAPABILITY_PROFILE,
     StageName.FUNCTION_RANKING,
 })
+# MOBSF_SCAN is intentionally absent: MobSF is no longer run. The
+# StageName enum keeps the value for backward-compatible deserialization
+# of existing rows, but it is never in any kind's applicable set, so
+# ``_skip_inapplicable_stages`` marks it DONE-skipped and the roll-up
+# converges without it.
 _ANDROID_STAGES: frozenset[StageName] = frozenset({
     StageName.APK_DECODE,
     StageName.JADX_DECOMPILE,
     StageName.REACT_NATIVE_EXTRACT,
     StageName.INDEX_DECOMPILED,
     StageName.STATIC_SUMMARY,
-    StageName.MOBSF_SCAN,
 })
 
 
@@ -775,8 +753,7 @@ class TargetAnalysisService:
         On a typical APK:
           - APK_DECODE        ~30s   (apktool)
           - JADX_DECOMPILE    5-15min
-          - STATIC_SUMMARY    ~30s   (androguard)
-          - MOBSF_SCAN        5-30min (optional, skipped if no API key)
+          - STATIC_SUMMARY    ~30s   (in-repo: manifest + signing + native + sbom)
           - INDEX_DECOMPILED  varies (audit-mcp index of jadx output)
 
         Sequential wall-clock: ~50min worst case.
@@ -811,20 +788,23 @@ class TargetAnalysisService:
                 target_id, StageName.REACT_NATIVE_EXTRACT,
                 self._android_react_native_extract,
             ),
-            self._run_android_stage(
-                target_id, StageName.STATIC_SUMMARY, self._android_static_summary,
-            ),
-            self._run_android_stage(
-                target_id, StageName.MOBSF_SCAN, self._android_mobsf_scan,
-            ),
         )
-        # GROUP 2: unified index over BOTH the jadx Java tree AND the
-        # React Native decompile (when present). Personas see ONE
-        # index_id whose semantic_search / read_function / callers_of
-        # span both languages -- no per-language index juggling at the
-        # bridge or in the system prompt.
-        await self._run_android_stage(
-            target_id, StageName.INDEX_DECOMPILED, self._android_index_decompiled,
+        # GROUP 2: stages that consume group-1 outputs. INDEX_DECOMPILED
+        # unifies the jadx Java tree + the React Native decompile into ONE
+        # audit-mcp index. STATIC_SUMMARY is composed in-repo and reads
+        # APK_DECODE's decoded AndroidManifest.xml (plus signing / native
+        # / SBOM straight from the APK), so it moved out of group 1 to
+        # here where the apktool output is guaranteed present. The two are
+        # independent, so fan them out.
+        await asyncio.gather(
+            self._run_android_stage(
+                target_id, StageName.INDEX_DECOMPILED,
+                self._android_index_decompiled,
+            ),
+            self._run_android_stage(
+                target_id, StageName.STATIC_SUMMARY,
+                self._android_static_summary,
+            ),
         )
 
     async def _merge_handles_locked(
@@ -1203,19 +1183,74 @@ class TargetAnalysisService:
         current_handles: dict[str, Any],
         tracker: StageTracker,
     ) -> None:
-        del current_handles, tracker  # dispatch contract; consumed by sibling stages
+        del tracker  # dispatch contract; state owned by _run_android_stage
         apk_path = self._resolve_apk_path(descriptor)
-        resp = await self._android_mcp.forward(
-            action="androguard_summary", apk_path=apk_path,
+        # androguard is not used. The static summary is composed in-repo:
+        # apktool's decoded text AndroidManifest.xml supplies package /
+        # version / permissions / exported components / sdk; the APK
+        # signing block supplies certificates + scheme; a LIEF pass over
+        # the bundled native libraries supplies hardening + JNI surface;
+        # and a component inventory supplies the SBOM. Runs after
+        # APK_DECODE so the decoded manifest is on disk.
+        from aila.modules.vr.apk_static.apk_manifest import parse_manifest
+        from aila.modules.vr.apk_static.apk_signing import parse_signing
+        from aila.modules.vr.apk_static.native_analysis import (
+            analyze_apk_natives,
         )
-        if not isinstance(resp, dict) or resp.get("status") == "error":
-            err = resp.get("error") if isinstance(resp, dict) else resp
+        from aila.modules.vr.apk_static.sbom import build_sbom
+
+        decoded_dir = current_handles.get("android_mcp_decoded_dir")
+        if not isinstance(decoded_dir, str) or not decoded_dir:
             raise TargetAnalysisError(
-                f"android-mcp.androguard_summary failed: {err}",
+                "static_summary needs the APK_DECODE output_dir "
+                "(android_mcp_decoded_dir); the apktool stage did not run.",
             )
-        # fix §268 -- the full androguard summary (manifest XML, full
-        # permission list, every certificate fingerprint, every
-        # exported-component class name) can hit 1-2 MB on real APKs.
+        manifest = await asyncio.to_thread(parse_manifest, decoded_dir)
+        signing = await asyncio.to_thread(parse_signing, apk_path)
+        native = await asyncio.to_thread(analyze_apk_natives, apk_path)
+        sbom = await asyncio.to_thread(build_sbom, apk_path, native)
+
+        native_libs = [
+            lib["path"] for lib in native.get("libraries", [])
+            if isinstance(lib, dict) and lib.get("path")
+        ]
+        resp: dict[str, Any] = {
+            "package": manifest.get("package", ""),
+            "version_name": manifest.get("version_name", ""),
+            "version_code": manifest.get("version_code", ""),
+            "min_sdk": manifest.get("min_sdk", ""),
+            "target_sdk": manifest.get("target_sdk", ""),
+            "compile_sdk": manifest.get("compile_sdk", ""),
+            "application_class": manifest.get("application_class", ""),
+            "main_activity": manifest.get("main_activity", ""),
+            "permissions": manifest.get("permissions", []),
+            "dangerous_permissions": manifest.get("dangerous_permissions", []),
+            "exported_activities": manifest.get("exported_activities", []),
+            "exported_services": manifest.get("exported_services", []),
+            "exported_receivers": manifest.get("exported_receivers", []),
+            "exported_providers": manifest.get("exported_providers", []),
+            "exported_components": manifest.get("exported_components", []),
+            "debuggable": manifest.get("debuggable"),
+            "allow_backup": manifest.get("allow_backup"),
+            "uses_cleartext_traffic": manifest.get("uses_cleartext_traffic"),
+            "network_security_config": manifest.get(
+                "network_security_config", "",
+            ),
+            "custom_schemes": manifest.get("custom_schemes", []),
+            "deep_link_hosts": manifest.get("deep_link_hosts", []),
+            "certificates": signing.get("certificates", []),
+            "signing_scheme": signing.get("signing_scheme", ""),
+            "signing_schemes": signing.get("schemes", []),
+            "native_libs": native_libs,
+            "native_analysis": native,
+            "sbom": sbom,
+            "summary_source": "in-repo",
+        }
+        if manifest.get("error"):
+            resp["manifest_error"] = manifest["error"]
+        # The full static summary (permission list, every certificate,
+        # every exported-component class name, per-library native detail)
+        # can be large on real APKs.
         # Embedding it verbatim in ``mcp_handles_json`` made every
         # /vr/targets list request parse + serialize the blob, and
         # bloated worker logs that echo the row state. Persist to a
@@ -1243,100 +1278,6 @@ class TargetAnalysisService:
             "artifact=%s size=%d",
             target_id, package,
             len(resp.get("permissions") or []),
-            artifact_ref["_artifact_path"], artifact_ref["_artifact_size"],
-        )
-
-    async def _android_mobsf_scan(
-        self,
-        target_id: str,
-        descriptor: dict[str, Any],
-        current_handles: dict[str, Any],
-        tracker: StageTracker,
-    ) -> None:
-        """MobSF static scan. Skipped when MOBSF_API_KEY is unset.
-
-        fix §269 -- MobSF output is multi-MB (every code/manifest
-        finding plus tracker fingerprints plus the original mapped
-        APK upload metadata) and is required off-policy for
-        LLM prompts (see ``android_mcp_bridge._PIPELINE_ONLY_TOOLS``
-        comment). Persist the full payload to
-        ``VR_TARGET_ARTIFACT_DIR/{target_id}/mobsf_scan.json`` and
-        keep an inline digest + pointer with an explicit
-        ``prompt_safe=False`` marker so any future prompt-builder
-        that lands on this key has an unambiguous denial in shape.
-        """
-        del current_handles, tracker  # dispatch contract; consumed by sibling stages
-        mobsf_api_key = os.environ.get("MOBSF_API_KEY", "").strip()
-        if not mobsf_api_key:
-            _log.info(
-                "vr.android.mobsf_scan target=%s skipped (MOBSF_API_KEY unset)",
-                target_id,
-            )
-            # fix §240 -- locked merge.
-            # Skipped stage stays inline (no artifact written) -- the
-            # ``skipped``/``reason`` fields are operator-display only
-            # and tiny enough to keep on the row. ``prompt_safe=False``
-            # still applies in case a future renderer treats skipped
-            # MobSF as a value to project.
-            await self._merge_handles_locked(target_id, {
-                "android_mcp_mobsf_scan": {
-                    "skipped": True,
-                    "reason": "MOBSF_API_KEY env var not set on the AILA host",
-                    "prompt_safe": False,
-                },
-            })
-            return
-
-        apk_path = self._resolve_apk_path(descriptor)
-        resp = await self._android_mcp.forward(
-            action="mobsf_scan", apk_path=apk_path, _agent_bypass=True,
-        )
-        if not isinstance(resp, dict) or resp.get("status") == "error":
-            err = resp.get("error") if isinstance(resp, dict) else resp
-            # MobSF is optional enrichment (see docstring). When the scan
-            # cannot run -- MobSF service down, key absent from the
-            # android-mcp process env, or the APK rejected -- treat it as
-            # a SKIP, not a hard failure. INDEX_DECOMPILED (required by
-            # every downstream audit) runs AFTER this stage in
-            # _analyze_android_apk's gather; raising here propagates out
-            # of the gather and starves the index the audit depends on.
-            # Record the reason on the row and continue.
-            _log.warning(
-                "vr.android.mobsf_scan target=%s skipped (scan "
-                "unavailable: %s)", target_id, str(err)[:200],
-            )
-            await self._merge_handles_locked(target_id, {
-                "android_mcp_mobsf_scan": {
-                    "skipped": True,
-                    "reason": f"MobSF scan unavailable: {str(err)[:300]}",
-                    "prompt_safe": False,
-                },
-            })
-            return
-        artifact_ref = _write_target_artifact(
-            target_id, "mobsf_scan", resp,
-        )
-        digest = _mobsf_digest_fields(resp)
-        inline_ref: dict[str, Any] = {
-            **artifact_ref,
-            **digest,
-            # Explicit prompt-safe marker -- load-bearing for D-100.
-            # MobSF output must NEVER reach LLM prompts. The marker
-            # makes intent unmistakable for the prompt builder and
-            # any future tool that surfaces the inline handle.
-            "prompt_safe": False,
-        }
-        scan_hash = resp.get("_scan_hash")
-        if scan_hash is not None:
-            inline_ref["_scan_hash"] = scan_hash
-        # fix §240 -- locked merge so parallel group-1 stages don't
-        # overwrite each other's disjoint keys.
-        await self._merge_handles_locked(
-            target_id, {"android_mcp_mobsf_scan": inline_ref},
-        )
-        _log.info(
-            "vr.android.mobsf_scan target=%s scan_hash=%s artifact=%s size=%d",
-            target_id, scan_hash,
             artifact_ref["_artifact_path"], artifact_ref["_artifact_size"],
         )
 

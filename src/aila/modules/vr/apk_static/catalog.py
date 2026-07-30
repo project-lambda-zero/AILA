@@ -24,6 +24,9 @@ from aila.modules.vr.apk_static._checks_extractor import (
 from aila.modules.vr.apk_static._checks_manifest import (
     CHECKS as _MANIFEST_CHECKS,
 )
+from aila.modules.vr.apk_static._checks_native_sbom import (
+    CHECKS as _NATIVE_SBOM_CHECKS,
+)
 from aila.modules.vr.apk_static._checks_secrets_crypto_net import (
     CHECKS as _SECRETS_CHECKS,
 )
@@ -53,5 +56,6 @@ APK_STATIC_CHECKS: tuple[ApkStaticCheck, ...] = (
     *_WEBVIEW_CHECKS,
     *_DESER_CHECKS,
     *_CHAINS_CHECKS,
+    *_NATIVE_SBOM_CHECKS,
     *_EXTRACTOR_CHECKS,
 )

@@ -467,7 +467,7 @@ CHECKS: tuple[ApkStaticCheck, ...] = (
             "flag getIntent().get*Extra values that reach a "
             "SharedPreferences.Editor, database, HTTP client, or "
             "Runtime.exec without an allow-list check.",
-            "Cross-check the androguard summary receivers section for "
+            "Cross-check the static summary receivers section for "
             "android:permission on the receiver; a missing "
             "signature-level permission is the finding.",
         ),
@@ -506,7 +506,7 @@ CHECKS: tuple[ApkStaticCheck, ...] = (
             "and the generated Stub subclasses; read_function each AIDL "
             "method and check whether checkCallingPermission, "
             "checkCallingUid, or Binder.getCallingUid gates the work.",
-            "Cross-check the androguard summary services section for "
+            "Cross-check the static summary services section for "
             "android:permission on the declaration; absent permission "
             "plus no in-method caller check is the finding.",
         ),

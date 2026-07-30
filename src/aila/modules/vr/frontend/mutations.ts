@@ -1215,7 +1215,7 @@ export function useMasvsAudit(targetId: string) {
  *  `vr/api_router.py::dispatch_apk_static_audit` and the STATIC row count
  *  in `vr/apk_static/catalog.py`. */
 export const APK_STATIC_DEFAULT_CHILD_BUDGET_USD = 30;
-export const APK_STATIC_CHECK_COUNT_ESTIMATE = 80;
+export const APK_STATIC_CHECK_COUNT_ESTIMATE = 86;
 
 export interface ApkStaticAuditDispatchResult {
   parent_investigation_id: string;

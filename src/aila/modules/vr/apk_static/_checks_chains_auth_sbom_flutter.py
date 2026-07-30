@@ -404,7 +404,7 @@ CHECKS: tuple[ApkStaticCheck, ...] = (
             "class layout and function bodies."
         ),
         verification_steps=(
-            "read the ingestion androguard summary and list every lib/<abi>/*.so "
+            "read the ingestion static summary and list every lib/<abi>/*.so "
             "entry; a co-occurrence of libapp.so and libflutter.so under one or "
             "more ABI directories (arm64-v8a, armeabi-v7a, x86_64) confirms the "
             "app is Flutter.",

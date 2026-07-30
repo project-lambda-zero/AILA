@@ -22,7 +22,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from aila.modules.vr.apk_static.models import ApkStaticCheck
+from aila.modules.vr.apk_static.models import ApkStaticCheck, ApkStaticGroup
 
 __all__ = [
     "ApkStaticSeedBuilder",
@@ -101,8 +101,10 @@ class ApkStaticSeedBuilder:
         )
         cwe_block = ", ".join(check.cwe) or "(none)"
         masvs_block = ", ".join(check.masvs_refs) or "(none)"
+        evidence_block = _group_evidence_block(check, static_summary)
 
         return _PROMPT_TEMPLATE.format(
+            evidence_block=evidence_block,
             check_id=check.id,
             group=check.group.value,
             title=check.title.strip(),
@@ -118,6 +120,83 @@ class ApkStaticSeedBuilder:
             cwe_block=cwe_block,
             masvs_block=masvs_block,
         )
+
+
+def _group_evidence_block(
+    check: ApkStaticCheck,
+    static_summary: Mapping[str, Any],
+) -> str:
+    """Render the pre-extracted evidence a NATIVE / SBOM check needs.
+
+    The native and SBOM checks are answered from data the ingestion
+    pipeline computes (LIEF over the bundled ``.so`` files, a component
+    inventory), not from the jadx tree the audit_mcp tools reach. That
+    data rides on ``static_summary`` under ``native_analysis`` / ``sbom``;
+    this helper renders the relevant slice directly into the child prompt
+    so the auditor reasons over real facts instead of guessing. Returns
+    an empty string for every other group.
+    """
+    if check.group is ApkStaticGroup.NATIVE:
+        na = static_summary.get("native_analysis")
+        if not isinstance(na, Mapping) or not na.get("present"):
+            return (
+                "\n## Native analysis\n\nNo native libraries were found in "
+                "this APK (no lib/<abi>/*.so). This check is a clean "
+                "negative unless the audit surfaces native code elsewhere.\n"
+            )
+        lines = [
+            "\n## Native analysis (LIEF over lib/<abi>/*.so)\n",
+            f"libraries: {na.get('lib_count')} | abis: "
+            f"{', '.join(na.get('abis') or [])}\n",
+        ]
+        for lib in (na.get("libraries") or []):
+            if not isinstance(lib, Mapping):
+                continue
+            if lib.get("error"):
+                lines.append(f"- {lib.get('path')}: ({lib['error']})")
+                continue
+            vh = lib.get("version_hints") or {}
+            vh_s = (
+                "; vers=" + ", ".join(f"{k}={v}" for k, v in vh.items())
+                if vh else ""
+            )
+            env = lib.get("jni_env_calls") or []
+            unsafe = lib.get("unsafe_libc_imports") or []
+            extra = ""
+            if env:
+                extra += f"; jni_env={', '.join(env)}"
+            if unsafe:
+                extra += f"; unsafe_libc={', '.join(unsafe)}"
+            lines.append(
+                f"- {lib.get('path')}: nx={lib.get('nx')} pie={lib.get('pie')} "
+                f"relro={lib.get('relro')} canary={lib.get('stack_canary')} "
+                f"fortify={lib.get('fortify')} stripped={lib.get('stripped')} "
+                f"jni_exports={lib.get('jni_export_count')}{vh_s}{extra}",
+            )
+        gaps = na.get("hardening_gaps") or []
+        if gaps:
+            lines.append("\nhardening gaps:")
+            lines.extend(f"  - {g}" for g in gaps)
+        return "\n".join(lines) + "\n"
+    if check.group is ApkStaticGroup.SBOM:
+        sb = static_summary.get("sbom")
+        if not isinstance(sb, Mapping):
+            return ""
+        lines = [
+            "\n## Component inventory (static SBOM)\n",
+            f"components: {sb.get('component_count')} | frameworks: "
+            f"{', '.join(sb.get('frameworks') or []) or 'none'}\n",
+        ]
+        for comp in (sb.get("components") or []):
+            if not isinstance(comp, Mapping):
+                continue
+            ver = comp.get("version") or "?"
+            lines.append(
+                f"- [{comp.get('type')}] {comp.get('name')} {ver} "
+                f"(from {comp.get('source')})",
+            )
+        return "\n".join(lines) + "\n"
+    return ""
 
 
 def _text_or_unknown(value: object) -> str:
@@ -157,7 +236,7 @@ after the evidence below is examined; cite `file:line` for every claim.
 ## Verification steps
 
 {steps_block}
-
+{evidence_block}
 ## Evidence hints (seed `mcp__audit_mcp_semantic_search` / `search_functions` / `search_constants`)
 
 {hints_block}

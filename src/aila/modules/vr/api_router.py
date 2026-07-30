@@ -673,6 +673,14 @@ def _target_summary(record: Any) -> VRTargetSummary:
                     digest[count_key] = len(v)
                 elif isinstance(static_full.get(count_key), int):
                     digest[count_key] = static_full[count_key]
+            # Forward the in-repo native-analysis + SBOM sub-summaries so
+            # the apk_static seed builder can render them for NATIVE /
+            # SBOM checks. Both are bounded upstream (native_analysis.py
+            # caps, digest trims the SBOM component list).
+            for sub_key in ("native_analysis", "sbom"):
+                sub = static_full.get(sub_key)
+                if isinstance(sub, dict):
+                    digest[sub_key] = sub
             overview["static_summary"] = digest
 
         # mobsf_scan digest: bucket-count summary. The full report is at

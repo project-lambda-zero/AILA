@@ -603,7 +603,7 @@ CHECKS: tuple[ApkStaticCheck, ...] = (
             "api.appsflyer.com, sentry.io, api.amplitude.com, "
             "api.mixpanel.com) and version-string constants exposed "
             "by each SDK.",
-            "Cross-check with the androguard summary permissions list: "
+            "Cross-check with the static summary permissions list: "
             "SDKs that need INTERNET, ACCESS_NETWORK_STATE, "
             "READ_PHONE_STATE, or a foreground-service permission "
             "confirm reachability.",

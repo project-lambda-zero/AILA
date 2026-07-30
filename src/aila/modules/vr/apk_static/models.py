@@ -5,7 +5,7 @@ investigation against a decompiled Android APK. Unlike a MASVS *control*
 (a broad compliance requirement, some of which cannot be answered from an
 APK at all), a check names a definite evidence source the ingestion
 pipeline already produces (AndroidManifest, jadx-decompiled Java tree,
-androguard summary, ``res/``, ``assets/``) or a named extractor stage the
+static summary, ``res/``, ``assets/``) or a named extractor stage the
 pipeline would need.
 
 The catalog (in ``catalog.py``) holds a tuple of ``ApkStaticCheck``

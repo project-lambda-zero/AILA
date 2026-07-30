@@ -30,11 +30,11 @@ operator action.
   WebView, data storage, IPC, injection sinks, deserialization, dynamic
   code loading, resilience presence, privacy identifiers, dependency CVE
   exposure, high-yield exploit chains such as intent redirection and
-  deep-link-to-WebView, and local biometric authentication). The catalog
-  ships 88 checks: 80 static checks are dispatched, and 8 checks that
-  need a future extraction stage (native library analysis, Flutter
-  Dart-AOT decompile, full software bill of materials, and Play
-  data-safety comparison) are catalogued but not dispatched. This complements
+  deep-link-to-WebView, local biometric authentication, native-library
+  hardening / JNI surface / vulnerable-version fingerprint, and a
+  bundled-component inventory (SBOM)). The catalog ships 87 checks: 86
+  static checks are dispatched, and one Flutter Dart-AOT check is
+  catalogued for a later android_mcp extraction stage. This complements
   the MASVS audit with sharp, evidence-backed checks that each carry a
   definite source location, rather than broad compliance controls; every
   check maps to CWE and OWASP MASVS v2.1.0 ids. The dispatcher is
@@ -342,6 +342,15 @@ operator action.
 
 ### Changed
 
+- The APK static summary (package, version, permissions, exported
+  components, certificates, SDK levels) is composed in-repo rather than
+  by androguard: the manifest fields come from apktool's decoded
+  AndroidManifest.xml, certificates and signing scheme from the APK
+  signing block, native-library detail from a LIEF pass, and a component
+  inventory from Gradle / Maven / native markers. The summary shape is
+  unchanged, so the audit dispatchers, PDF report, and target overview
+  are unaffected. The native-library and SBOM checks, previously
+  roadmap-only, now dispatch as static checks against this data.
 - The per-turn reasoning prompt is assembled by the budget-driven
   RFC-24 ContextAssembler instead of hand-concatenated, and the fixed
   render display caps (former hypothesis / scratchpad / tool-reading
@@ -386,17 +395,20 @@ operator action.
   unreachable. The threshold is still derived from the static
   non-proposing count, so stale-abandoned siblings cannot shrink it.
 
+### Removed
+
+- androguard and MobSF are no longer part of the APK analysis pipeline.
+  The APK static summary is composed in-repo instead (see Changed), and
+  MobSF scanning is dropped entirely.
+
 ### Fixed
 
-- APK ingestion now indexes the decompiled source tree on Windows and no
-  longer aborts the pipeline when the optional MobSF scan is unavailable.
-  The unified staging directory linked the jadx output with a directory
+- APK ingestion now indexes the decompiled source tree on Windows. The
+  unified staging directory linked the jadx output with a directory
   symlink, which the indexer's directory walk skips, so the entire
   decompiled tree was invisible and an audit reported no supported
   languages; staging now uses a directory junction, which the walk
-  descends. Separately, an unavailable MobSF scan is skipped rather than
-  raised, which previously cancelled the parallel ingestion group before
-  the decompiled-index stage ran.
+  descends.
 - The taint-flow view no longer reports zero paths for reachable sinks.
   The audit_mcp taint_paths_to adapter read the paths from keys that the
   server never returns; the server reports call chains under

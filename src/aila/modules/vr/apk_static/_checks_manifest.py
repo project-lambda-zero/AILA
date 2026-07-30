@@ -24,7 +24,7 @@ CHECKS: tuple[ApkStaticCheck, ...] = (
             "<application> element.",
             "Inspect the android:debuggable attribute: absent or \"false\" is "
             "a pass, \"true\" is a finding.",
-            "Cross-check the androguard summary manifest_analysis section when "
+            "Cross-check the static summary manifest_analysis section when "
             "present.",
         ),
         relevant_apis=("android:debuggable", "ApplicationInfo.FLAG_DEBUGGABLE"),
@@ -200,7 +200,7 @@ CHECKS: tuple[ApkStaticCheck, ...] = (
         ),
         verification_steps=(
             "Read AndroidManifest.xml and record the android:minSdkVersion "
-            "declared on <uses-sdk>, or the value from the androguard "
+            "declared on <uses-sdk>, or the value from the static "
             "summary when no <uses-sdk> element is present.",
             "If minSdk is below 24, note Janus (CVE-2017-13156) applicability "
             "and cross-reference the signing scheme check.",
@@ -404,7 +404,7 @@ CHECKS: tuple[ApkStaticCheck, ...] = (
             "v2 and v3 (Android 7.0 and 9.0 respectively) at minimum."
         ),
         verification_steps=(
-            "Inspect the androguard summary certificates block, or read "
+            "Inspect the static summary certificates block, or read "
             "META-INF/ in the raw APK, to record which of v1/v2/v3/v4 are "
             "present.",
             "If only v1 is present, record a finding.",
@@ -445,7 +445,7 @@ CHECKS: tuple[ApkStaticCheck, ...] = (
             "Confirm the APK-SIGNING-V1-ONLY check has fired: only v1 "
             "signing present, no v2/v3 block.",
             "Read AndroidManifest.xml and record android:minSdkVersion from "
-            "<uses-sdk>, or the androguard summary equivalent.",
+            "<uses-sdk>, or the static summary equivalent.",
             "If minSdk<24 AND v1-only, both Janus preconditions are met -- "
             "record a finding.",
             "Confirm the app is a release build (see APK-MANIFEST-DEBUGGABLE "
@@ -477,7 +477,7 @@ CHECKS: tuple[ApkStaticCheck, ...] = (
             "over the app on the same signing identity."
         ),
         verification_steps=(
-            "Read the androguard summary certificates block and record the "
+            "Read the static summary certificates block and record the "
             "signing cert Subject and Issuer.",
             "Flag any signer whose Subject or Issuer contains "
             "\"CN=Android Debug\" or matches the SDK debug key fingerprint "
@@ -513,7 +513,7 @@ CHECKS: tuple[ApkStaticCheck, ...] = (
             "algorithms."
         ),
         verification_steps=(
-            "Read the androguard summary certificates block and record the "
+            "Read the static summary certificates block and record the "
             "signature_algorithm field for every signer.",
             "Flag any signer whose algorithm is MD5withRSA, SHA1withRSA, "
             "MD2withRSA, or another SHA-1 or MD-family variant.",
@@ -547,7 +547,7 @@ CHECKS: tuple[ApkStaticCheck, ...] = (
             "is not managed and is a candidate for silent replacement."
         ),
         verification_steps=(
-            "Read the androguard summary certificates block and record "
+            "Read the static summary certificates block and record "
             "Subject, Issuer, notBefore, and notAfter for every signer.",
             "Flag any signer whose notAfter is in the past or within the "
             "next 12 months.",
