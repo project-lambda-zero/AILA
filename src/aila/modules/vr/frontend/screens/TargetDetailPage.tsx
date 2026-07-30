@@ -13,9 +13,12 @@ import {
 import { DeleteButton } from "../components/DeleteButton";
 import { UploadDropzone } from "../components/UploadDropzone";
 import {
+  APK_STATIC_CHECK_COUNT_ESTIMATE,
+  APK_STATIC_DEFAULT_CHILD_BUDGET_USD,
   MASVS_DEFAULT_CHILD_BUDGET_USD,
   MASVS_L1_CONTROL_COUNT_ESTIMATE,
   useAnalyzeTarget,
+  useApkStaticAudit,
   useDeleteTarget,
   useMasvsAudit,
   useRankTarget,
@@ -794,6 +797,71 @@ function MasvsAuditCard({
           {masvsMut.isPending
             ? "Dispatching…"
             : `Run MASVS audit (~$${estimatedTotal})`}
+        </button>
+      </div>
+    </AilaCard>
+  );
+}
+
+/** APK static-analysis dispatcher card. Sibling of MasvsAuditCard,
+ * gated identically (android_apk + STATIC_SUMMARY populated). Fans one
+ * child investigation per STATIC catalog check -- sharp, evidence-backed
+ * checks with a definite file:line source, complementary to the broader
+ * MASVS compliance audit. Idempotent on (target, catalog version). */
+function ApkStaticAuditCard({
+  targetId,
+  packageLabel,
+}: {
+  targetId: string;
+  packageLabel: string | null;
+}) {
+  const apkMut = useApkStaticAudit(targetId);
+  const estimatedTotal =
+    APK_STATIC_DEFAULT_CHILD_BUDGET_USD * APK_STATIC_CHECK_COUNT_ESTIMATE;
+  const packageDisplay = packageLabel ?? "this APK";
+
+  const handleClick = () => {
+    const ok = window.confirm(
+      `Dispatch APK static-analysis audit against ${packageDisplay}?\n\n` +
+        `\u2248 ${APK_STATIC_CHECK_COUNT_ESTIMATE} child investigations, ` +
+        `~$${APK_STATIC_DEFAULT_CHILD_BUDGET_USD} budget each ` +
+        `(~$${estimatedTotal} total expected spend).\n\n` +
+        "Each child runs the full vuln_researcher scout / critic / " +
+        "verifier chain against one concrete static check. The " +
+        "dispatcher is idempotent -- re-clicking with an active audit " +
+        "for this catalog version returns the existing parent.",
+    );
+    if (!ok) return;
+    apkMut.mutate();
+  };
+
+  return (
+    <AilaCard techBorder glow>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="flex-1 min-w-0">
+          <h2 className="text-sm font-semibold text-foreground">
+            APK static audit
+          </h2>
+          <p className="text-xs text-text-muted mt-1">
+            Run the APK static-analysis check catalog against this APK.
+            Fans out \u2248 {APK_STATIC_CHECK_COUNT_ESTIMATE} parallel child
+            investigations (one per concrete static check -- manifest,
+            secrets, crypto, WebView, IPC, storage, exploit chains),
+            each driving the standard vuln_researcher workflow against
+            the jadx-decompiled tree. Estimated total spend \u2248 $
+            {estimatedTotal} (~${APK_STATIC_DEFAULT_CHILD_BUDGET_USD}
+            per child \u00d7 {APK_STATIC_CHECK_COUNT_ESTIMATE} checks).
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={handleClick}
+          disabled={apkMut.isPending}
+          className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 shrink-0"
+        >
+          {apkMut.isPending
+            ? "Dispatching\u2026"
+            : `Run APK static audit (~$${estimatedTotal})`}
         </button>
       </div>
     </AilaCard>
@@ -1646,6 +1714,23 @@ export function TargetDetailPage() {
         && target.apk_overview?.static_summary
         && Object.keys(target.apk_overview.static_summary).length > 0 && (
         <MasvsAuditCard
+          targetId={target.id}
+          packageLabel={
+            typeof target.apk_overview.static_summary.package === "string"
+              ? (target.apk_overview.static_summary.package as string)
+              : target.android_package_name ?? null
+          }
+        />
+      )}
+
+      {/* APK static-analysis dispatcher. Same gate as the MASVS card:
+          android_apk targets whose ingestion reached STATIC_SUMMARY.
+          Complementary to MASVS -- sharp, evidence-backed static checks
+          rather than broad compliance controls. */}
+      {target.kind === "android_apk"
+        && target.apk_overview?.static_summary
+        && Object.keys(target.apk_overview.static_summary).length > 0 && (
+        <ApkStaticAuditCard
           targetId={target.id}
           packageLabel={
             typeof target.apk_overview.static_summary.package === "string"

@@ -51,6 +51,7 @@ from ._task_queue import default_task_queue
 from .agents.outcome_dispatcher import OutcomeDispatcher
 from .contracts import (
     AnalysisState,
+    ApkStaticAuditDispatchResponse,
     BranchStatus,
     CampaignStatus,
     CrashSeverity,
@@ -3453,6 +3454,334 @@ def create_vr_router() -> APIRouter:
                 child_investigation_ids=child_ids,
                 total_controls=len(l1_controls),
                 masvs_spec_version=CATALOG_VERSION,
+                cost_budget_total_usd=total_budget_usd,
+                enqueue_errors=enqueue_errors,
+            ),
+        )
+
+    @router.post(
+        "/targets/{target_id}/apk-static-audit",
+        response_model=DataEnvelope[ApkStaticAuditDispatchResponse],
+        status_code=status.HTTP_201_CREATED,
+        summary=(
+            "Dispatch an APK static-analysis audit against an "
+            "android_apk target. Creates one parent VRInvestigation "
+            "(kind=apk_static_audit) + one child VRInvestigation per "
+            "STATIC catalog check (kind=audit). Each child carries a "
+            "verification prompt built from the check's evidence hints."
+        ),
+    )
+    @limiter.limit("6/minute")
+    async def dispatch_apk_static_audit(
+        request: Request,
+        target_id: str,
+        response: Response,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[ApkStaticAuditDispatchResponse]:
+        """Fan one APK static audit out into per-check child investigations.
+
+        Mirrors the MASVS dispatcher: refuses with 409 when the target is
+        not an ``android_apk`` or when ``STATIC_SUMMARY`` has not yet
+        populated ``apk_overview.static_summary``. Only
+        :attr:`ApkStaticMode.STATIC` catalog checks are dispatched --
+        EXTRACTOR checks depend on a pipeline stage not yet built and are
+        skipped so no child is asked a question the current pipeline
+        cannot answer.
+
+        Idempotency: an existing active parent (``kind=apk_static_audit``,
+        status CREATED / RUNNING / PAUSED) whose pinned
+        ``apk_static_spec_version`` matches the current
+        :data:`APK_STATIC_CATALOG_VERSION` is returned verbatim with
+        ``idempotent_reuse=True`` and HTTP 200. Terminal parents do not
+        block a fresh dispatch.
+
+        Enqueue is throttled the same way as the MASVS batch (shared
+        ``MASVS_AUDIT_BATCH_SIZE`` knob -- the constraint is the shared
+        LLM proxy, not the catalog): only the first batch of children is
+        submitted here, the rest are deferred and the parent reconciler
+        enqueues them as slots free.
+        """
+        import json as _json
+
+        from aila.api.deps import get_task_queue
+        from aila.modules.vr.apk_static import (
+            APK_STATIC_CATALOG_VERSION,
+            APK_STATIC_CHECKS,
+            ApkStaticMode,
+            ApkStaticSeedBuilder,
+        )
+
+        from .db_models import (
+            VRInvestigationBranchRecord,
+            VRInvestigationRecord,
+            VRTargetRecord,
+        )
+        from .workflow.task import run_vr_investigate
+
+        async with UnitOfWork() as uow:
+            target = (await uow.session.exec(
+                _team_filter(
+                    select(VRTargetRecord).where(
+                        VRTargetRecord.id == target_id,
+                    ),
+                    VRTargetRecord, auth,
+                ),
+            )).first()
+            if target is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"Target {target_id} not found or not owned by "
+                        "your team."
+                    ),
+                )
+            if target.kind != TargetKind.ANDROID_APK.value:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Target {target_id} kind is {target.kind!r}; APK "
+                        "static audit applies to android_apk targets only."
+                    ),
+                )
+
+            target_summary = _target_summary(target)
+            apk_overview = target_summary.apk_overview
+            static_summary: dict[str, Any] = {}
+            if isinstance(apk_overview, dict):
+                maybe_static = apk_overview.get("static_summary")
+                if isinstance(maybe_static, dict):
+                    static_summary = maybe_static
+            if not static_summary:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Target {target_id} has not completed the "
+                        "STATIC_SUMMARY ingestion stage; the APK static "
+                        "dispatcher needs the package / version / "
+                        "decompiled-index cells before fanning out."
+                    ),
+                )
+
+            _active_parent_statuses = (
+                InvestigationStatus.CREATED.value,
+                InvestigationStatus.RUNNING.value,
+                InvestigationStatus.PAUSED.value,
+            )
+            candidate_parents = (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord)
+                    .where(VRInvestigationRecord.target_id == target.id)
+                    .where(
+                        VRInvestigationRecord.kind
+                        == InvestigationKind.APK_STATIC_AUDIT.value,
+                    )
+                    .where(
+                        VRInvestigationRecord.parent_investigation_id.is_(
+                            None,
+                        ),
+                    )
+                    .where(
+                        VRInvestigationRecord.status.in_(
+                            _active_parent_statuses,
+                        ),
+                    )
+                    .order_by(VRInvestigationRecord.created_at.desc()),
+                    VRInvestigationRecord, auth,
+                ),
+            )).all()
+            existing_parent: VRInvestigationRecord | None = None
+            for candidate in candidate_parents:
+                try:
+                    refs = _json.loads(
+                        candidate.secondary_target_refs_json or "[]",
+                    )
+                except ValueError:
+                    continue
+                if not isinstance(refs, list):
+                    continue
+                for ref in refs:
+                    if (
+                        isinstance(ref, dict)
+                        and ref.get("apk_static_spec_version")
+                        == APK_STATIC_CATALOG_VERSION
+                    ):
+                        existing_parent = candidate
+                        break
+                if existing_parent is not None:
+                    break
+            if existing_parent is not None:
+                existing_children = (await uow.session.exec(
+                    select(VRInvestigationRecord)
+                    .where(
+                        VRInvestigationRecord.parent_investigation_id
+                        == existing_parent.id,
+                    )
+                    .order_by(VRInvestigationRecord.created_at.asc()),
+                )).all()
+                response.status_code = status.HTTP_200_OK
+                return DataEnvelope(
+                    data=ApkStaticAuditDispatchResponse(
+                        parent_investigation_id=existing_parent.id,
+                        child_investigation_ids=[
+                            c.id for c in existing_children
+                        ],
+                        total_checks=len(existing_children),
+                        apk_static_spec_version=APK_STATIC_CATALOG_VERSION,
+                        cost_budget_total_usd=existing_parent.cost_budget_usd,
+                        enqueue_errors={},
+                        idempotent_reuse=True,
+                    ),
+                )
+
+            static_checks = tuple(
+                c for c in APK_STATIC_CHECKS
+                if c.mode == ApkStaticMode.STATIC
+            )
+            if not static_checks:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=(
+                        "APK static catalog has zero STATIC checks; "
+                        "refusing to dispatch an empty audit. Check "
+                        "aila.modules.vr.apk_static.catalog."
+                        "APK_STATIC_CHECKS."
+                    ),
+                )
+
+            package_label = static_summary.get("package")
+            if (
+                not isinstance(package_label, str)
+                or not package_label.strip()
+            ):
+                package_label = target.display_name
+            child_budget_usd = 30.0
+            total_budget_usd = child_budget_usd * len(static_checks)
+
+            parent = VRInvestigationRecord(
+                target_id=target.id,
+                team_id=auth.team_id,
+                secondary_target_refs_json=_json.dumps(
+                    [{"apk_static_spec_version": APK_STATIC_CATALOG_VERSION}],
+                ),
+                kind=InvestigationKind.APK_STATIC_AUDIT.value,
+                title=f"APK static audit: {package_label}",
+                initial_question=(
+                    f"APK static audit batch parent -- {len(static_checks)} "
+                    "child investigations dispatched, one per STATIC "
+                    f"catalog check (catalog {APK_STATIC_CATALOG_VERSION}). "
+                    "See child investigations for per-check evidence and "
+                    "findings."
+                ),
+                status=InvestigationStatus.CREATED.value,
+                auto_pilot=False,
+                strategy_family="vulnerability_research.apk_static_audit",
+                cost_budget_usd=total_budget_usd,
+            )
+            uow.session.add(parent)
+            await uow.session.flush()
+
+            child_ids: list[str] = []
+            for check in static_checks:
+                child_title = f"APK {check.id}: {check.title[:200]}"
+                child_question = ApkStaticSeedBuilder.build(
+                    check,
+                    apk_overview if isinstance(apk_overview, dict) else None,
+                )
+                child = VRInvestigationRecord(
+                    target_id=target.id,
+                    team_id=auth.team_id,
+                    parent_investigation_id=parent.id,
+                    secondary_target_refs_json=_json.dumps([
+                        {
+                            "apk_static_check_id": check.id,
+                            "apk_static_spec_version": (
+                                APK_STATIC_CATALOG_VERSION
+                            ),
+                        },
+                    ]),
+                    kind=InvestigationKind.AUDIT.value,
+                    title=child_title[:255],
+                    initial_question=child_question,
+                    status=InvestigationStatus.CREATED.value,
+                    auto_pilot=True,
+                    strategy_family=_KIND_DEFAULT_STRATEGY[
+                        InvestigationKind.AUDIT
+                    ],
+                    cost_budget_usd=child_budget_usd,
+                )
+                uow.session.add(child)
+                await uow.session.flush()
+                child_ids.append(child.id)
+
+                primary_branch = VRInvestigationBranchRecord(
+                    investigation_id=child.id,
+                    status=BranchStatus.ACTIVE.value,
+                    fork_reason="primary",
+                    persona_voice=PersonaVoice.HALVAR.value,
+                )
+                uow.session.add(primary_branch)
+
+            await uow.session.commit()
+            await uow.session.refresh(parent)
+
+        # Throttled enqueue -- identical rationale to the MASVS batch: a
+        # full fan-out of ~80 children streaming through the shared LLM
+        # proxy at once OOMs it. Only MASVS_AUDIT_BATCH_SIZE children go
+        # in now; the parent reconciler enqueues the rest as slots free.
+        try:
+            _batch_size_raw = int(
+                _os.environ.get("MASVS_AUDIT_BATCH_SIZE", "5"),
+            )
+        except ValueError:
+            _batch_size_raw = 5
+        apk_batch_size = max(1, min(_batch_size_raw, len(child_ids)))
+        initial_batch = child_ids[:apk_batch_size]
+        deferred = child_ids[apk_batch_size:]
+
+        enqueue_errors: dict[str, str] = {}
+        try:
+            task_queue = get_task_queue("vr", request)
+        except HTTPException as exc:
+            err_msg = f"task queue unavailable: {exc.detail}"
+            _log.warning(
+                "APK static audit %s could not acquire the vr task queue: "
+                "%s; all %d children remain in CREATED status awaiting "
+                "/re-enqueue.", parent.id, exc.detail, len(child_ids),
+            )
+            enqueue_errors = {cid: err_msg for cid in child_ids}
+        else:
+            for cid in initial_batch:
+                try:
+                    await task_queue.submit(
+                        track="vr",
+                        fn=run_vr_investigate,
+                        kwargs={"investigation_id": cid},
+                        user_id=auth.user_id,
+                        group_id=auth.role,
+                        team_id=auth.team_id,
+                    )
+                except (OSError, RuntimeError, HTTPException) as exc:
+                    err_msg = f"failed to enqueue: {exc}"
+                    enqueue_errors[cid] = err_msg
+                    _log.warning(
+                        "APK static audit %s child %s failed to enqueue: "
+                        "%s", parent.id, cid, exc,
+                    )
+            if deferred:
+                _log.info(
+                    "APK static audit %s batched: enqueued %d/%d children, "
+                    "%d deferred (parent reconciler enqueues as slots free). "
+                    "batch_size=%d via MASVS_AUDIT_BATCH_SIZE env.",
+                    parent.id, len(initial_batch), len(child_ids),
+                    len(deferred), apk_batch_size,
+                )
+
+        return DataEnvelope(
+            data=ApkStaticAuditDispatchResponse(
+                parent_investigation_id=parent.id,
+                child_investigation_ids=child_ids,
+                total_checks=len(static_checks),
+                apk_static_spec_version=APK_STATIC_CATALOG_VERSION,
                 cost_budget_total_usd=total_budget_usd,
                 enqueue_errors=enqueue_errors,
             ),

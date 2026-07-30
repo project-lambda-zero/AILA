@@ -105,6 +105,17 @@ _TERMINAL_STATUSES: frozenset[str] = frozenset(
     ),
 )
 
+# Batch-parent kinds this reconciler owns. The roll-up and batch-refill
+# logic is kind-agnostic (it counts children by parent_investigation_id
+# and enqueues deferred children), so both audit-batch kinds -- MASVS
+# and APK static -- ride the same sweep. Adding a kind here is all it
+# takes for its parents to transition CREATED -> RUNNING -> COMPLETED
+# and for its deferred children to be throttled-enqueued.
+_BATCH_PARENT_KINDS: tuple[str, ...] = (
+    InvestigationKind.MASVS_AUDIT.value,
+    InvestigationKind.APK_STATIC_AUDIT.value,
+)
+
 
 class PauseReason:
     """Canonical values this reconciler writes to ``pause_reason``.
@@ -279,7 +290,7 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
         await uow.session.exec(
             select(inv.id, tgt.id)
             .join(tgt, tgt.id == inv.target_id)
-            .where(inv.kind == InvestigationKind.MASVS_AUDIT.value)
+            .where(inv.kind.in_(_BATCH_PARENT_KINDS))
             .where(inv.parent_investigation_id.is_(None))
             .where(inv.status.in_((
                 InvestigationStatus.CREATED.value,
@@ -897,8 +908,7 @@ async def _cascade_terminal_to_deferred_children(
             inv.parent_investigation_id.in_(
                 select(parent_alias.c.id)
                 .where(
-                    parent_alias.c.kind
-                    == InvestigationKind.MASVS_AUDIT.value,
+                    parent_alias.c.kind.in_(_BATCH_PARENT_KINDS),
                 )
                 .where(parent_alias.c.status.in_(_TERMINAL_STATUSES)),
             ),
@@ -1000,7 +1010,7 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
         parent_rows = (
             await uow.session.exec(
                 select(inv.id, inv.status)
-                .where(inv.kind == InvestigationKind.MASVS_AUDIT.value)
+                .where(inv.kind.in_(_BATCH_PARENT_KINDS))
                 .where(inv.parent_investigation_id.is_(None))
                 .where(
                     inv.status.in_(

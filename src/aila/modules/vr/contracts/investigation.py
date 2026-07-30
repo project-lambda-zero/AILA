@@ -36,12 +36,14 @@ class InvestigationKind(StrEnum):
     """What kind of investigation this is.
 
     DISCOVERY/VARIANT_HUNT/TRIAGE/N_DAY/AUDIT drive default strategy +
-    budget through ``_KIND_DEFAULT_STRATEGY``. MASVS_AUDIT is a
-    batch-orchestration tag carried only by the parent investigation in
-    a MASVS audit -- its children are regular ``AUDIT`` investigations
-    that run the standard vuln_researcher dispatch unchanged. The
-    parent's ``strategy_family`` is set explicitly by the MASVS
-    dispatcher; it never resolves through the default-strategy map.
+    budget through ``_KIND_DEFAULT_STRATEGY``. MASVS_AUDIT and
+    APK_STATIC_AUDIT are batch-orchestration tags carried only by the
+    parent investigation in an audit batch -- their children are regular
+    ``AUDIT`` investigations that run the standard vuln_researcher
+    dispatch unchanged. The parent's ``strategy_family`` is set
+    explicitly by the dispatcher; it never resolves through the
+    default-strategy map. Both batch kinds are reconciled by the same
+    ``sweep_masvs_audit_parents`` cron (kind-agnostic roll-up + refill).
     """
 
     DISCOVERY = "discovery"
@@ -50,6 +52,7 @@ class InvestigationKind(StrEnum):
     N_DAY = "n_day"
     AUDIT = "audit"
     MASVS_AUDIT = "masvs_audit"
+    APK_STATIC_AUDIT = "apk_static_audit"
 
 
 class VRInvestigationCreate(BaseModel):

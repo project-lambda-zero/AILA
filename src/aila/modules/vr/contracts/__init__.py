@@ -5,6 +5,9 @@ Barrel re-export only. Model definitions live in domain submodules.
 from __future__ import annotations
 
 from .advisory import CVSSVector, CWEMapping, VRAdvisory
+from .apk_static import (
+    ApkStaticAuditDispatchResponse,
+)
 from .audit_memo import (
     AuditMemoCreate,
     AuditMemoScope,
@@ -180,6 +183,7 @@ __all__ = [
     "VRInvestigationTargetAttach",
     "VRInvestigationTargetDetach",
     "VRInvestigationTargetSummary",
+    "ApkStaticAuditDispatchResponse",
     "MasvsAuditAggregate",
     "MasvsAuditDispatchResponse",
     "MasvsControlVerdict",

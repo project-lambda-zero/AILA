@@ -1201,6 +1201,79 @@ export function useMasvsAudit(targetId: string) {
   });
 }
 
+// --- APK static audit ---
+// POST /vr/targets/{id}/apk-static-audit fans one batch into one parent
+// VRInvestigation (kind=apk_static_audit) plus one child per STATIC
+// catalog check (kind=audit). Same dispatcher shape as the MASVS audit --
+// idempotent on (target, catalog version): an active parent returns HTTP
+// 200 + idempotent_reuse=true; fresh dispatches return HTTP 201. Per-child
+// ARQ submit failures land in `enqueue_errors` keyed by child id.
+
+/** Frontend-side estimate for the pre-confirm "expected spend" UI. The
+ *  backend is authoritative -- `cost_budget_total_usd` in the response
+ *  carries the real total. Keep in sync with `child_budget_usd` in
+ *  `vr/api_router.py::dispatch_apk_static_audit` and the STATIC row count
+ *  in `vr/apk_static/catalog.py`. */
+export const APK_STATIC_DEFAULT_CHILD_BUDGET_USD = 30;
+export const APK_STATIC_CHECK_COUNT_ESTIMATE = 80;
+
+export interface ApkStaticAuditDispatchResult {
+  parent_investigation_id: string;
+  /** One id per dispatched child investigation, in catalog order.
+   *  `child_investigation_ids.length === total_checks` always. */
+  child_investigation_ids: string[];
+  total_checks: number;
+  /** Catalog snapshot pinned on the parent (e.g. "1.0.0-aila"). */
+  apk_static_spec_version: string;
+  /** Sum of every child investigation's cost_budget_usd. */
+  cost_budget_total_usd: number;
+  /** Per-child submit failures keyed by child id. Empty on the happy
+   *  path and always empty on an idempotent reuse. */
+  enqueue_errors: Record<string, string>;
+  /** True when the dispatcher matched an existing active parent and
+   *  returned its ids without fanning a fresh batch. */
+  idempotent_reuse: boolean;
+}
+
+export function useApkStaticAudit(targetId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      authorizedRequestJson<Envelope<ApkStaticAuditDispatchResult>>(
+        `/vr/targets/${encodeURIComponent(targetId)}/apk-static-audit`,
+        { method: "POST" },
+      ),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "target", targetId] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "investigations"] });
+      queryClient.invalidateQueries({
+        queryKey: ["vr", "investigations-for-target", targetId],
+      });
+      const r = result.data;
+      const parentShort = r.parent_investigation_id.slice(0, 8);
+      const failedCount = Object.keys(r.enqueue_errors).length;
+      if (r.idempotent_reuse) {
+        toast.info(
+          `APK static audit already in progress: ${r.total_checks} checks, parent ${parentShort}`,
+        );
+      } else if (failedCount > 0) {
+        toast.warning(
+          `APK static audit dispatched (${r.total_checks} checks) -- ${failedCount} child${
+            failedCount === 1 ? "" : "ren"
+          } failed to enqueue, retry via /re-enqueue`,
+        );
+      } else {
+        toast.success(
+          `APK static audit dispatched: ${r.total_checks} checks (catalog ${r.apk_static_spec_version}, ~$${r.cost_budget_total_usd.toFixed(0)} budget)`,
+        );
+      }
+    },
+    onError: (err: Error) => {
+      toast.error(`APK static audit failed: ${err.message}`);
+    },
+  });
+}
+
 // ─── Investigation narrative writeup ────────────────────────────────────
 //
 // A separate long-form artifact from the structured synthesis: a

@@ -19,6 +19,30 @@ operator action.
 
 ### Added
 
+- An APK static-analysis audit: a catalog of concrete, statically-
+  answerable checks plus a dispatcher that fans one investigation per
+  check against an android_apk target. The endpoint
+  `POST /vr/targets/{id}/apk-static-audit` creates one parent
+  investigation plus one child per static check, each child running the
+  standard scout / critic / verifier chain
+  against a single check (manifest posture, signing, dangerous
+  permissions, hardcoded secrets, cryptography, network and TLS config,
+  WebView, data storage, IPC, injection sinks, deserialization, dynamic
+  code loading, resilience presence, privacy identifiers, dependency CVE
+  exposure, high-yield exploit chains such as intent redirection and
+  deep-link-to-WebView, and local biometric authentication). The catalog
+  ships 88 checks: 80 static checks are dispatched, and 8 checks that
+  need a future extraction stage (native library analysis, Flutter
+  Dart-AOT decompile, full software bill of materials, and Play
+  data-safety comparison) are catalogued but not dispatched. This complements
+  the MASVS audit with sharp, evidence-backed checks that each carry a
+  definite source location, rather than broad compliance controls; every
+  check maps to CWE and OWASP MASVS v2.1.0 ids. The dispatcher is
+  idempotent on the target plus catalog version and throttles enqueue
+  through the same batch reconciler that governs the MASVS audit, so a
+  large fan-out does not overwhelm the model proxy. A dispatch control on
+  the target detail page surfaces the audit for android_apk targets whose
+  ingestion has reached the static-summary stage.
 - Terminal-convergence gates stop an investigation panel from closing
   prematurely or thrashing. A no-finding or inconclusive submission is
   blocked while a sibling branch still holds a live hypothesis no branch
