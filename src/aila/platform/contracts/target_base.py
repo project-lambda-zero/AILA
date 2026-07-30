@@ -176,7 +176,7 @@ class TargetSummaryBase(BaseModel):
         description=(
             "For kind=android_apk only. Projected from mcp_handles_json "
             "after the 5-stage pipeline completes (APK_DECODE -> JADX_DECOMPILE "
-            "-> INDEX_DECOMPILED -> STATIC_SUMMARY -> MOBSF_SCAN). None when "
+            "-> INDEX_DECOMPILED -> STATIC_SUMMARY). None when "
             "kind != android_apk OR the pipeline hasn't progressed far enough "
             "to write any handles."
         ),

@@ -272,4 +272,3 @@ class StageName(StrEnum):
     REACT_NATIVE_EXTRACT = "react_native_extract"
     INDEX_DECOMPILED = "index_decompiled"
     STATIC_SUMMARY = "static_summary"
-    MOBSF_SCAN = "mobsf_scan"

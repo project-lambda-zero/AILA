@@ -95,9 +95,9 @@ class VRConfigSchema(ModuleConfigBase):
         default="http://127.0.0.1:18823",
         description=(
             "Base URL for the android-mcp Android APK audit server. The "
-            "platform delegates ALL apktool/jadx/androguard/MobSF work to "
+            "platform delegates ALL apktool/jadx/androguard work to "
             "this server (D-33). Point at the workstation that owns the "
-            "Android SDK build-tools + MobSF instance."
+            "Android SDK build-tools."
         ),
     )
 

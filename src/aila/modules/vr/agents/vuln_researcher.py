@@ -490,12 +490,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             apk_path = descriptor.get("apk_path")
             if isinstance(apk_path, str) and apk_path:
                 handles["android_mcp_apk_path"] = apk_path
-        # Hard rule: MobSF output NEVER enters LLM prompts.
-        # Even the digest form is forbidden -- agents should query
-        # android_mcp.mobsf_scan as a tool when they need it, not have
-        # it preloaded into context. Strip the key entirely.
         if kind_str == "android_apk":
-            handles.pop("android_mcp_mobsf_scan", None)
             static_full = handles.get("android_mcp_static_summary")
             if isinstance(static_full, dict) and static_full:
                 # fix §268 -- ``android_mcp_static_summary`` now stores a
@@ -1857,14 +1852,14 @@ def _mcp_family_rule_for_kind(
             parts.append(
                 "For APK-specific facts -- manifest, permissions, "
                 "signing certificates, behaviour classification, "
-                "MobSF / drozer / LIEF / YARA -- "
+                "drozer / LIEF / YARA -- "
                 f"use **android_mcp** with `apk_path=\"{apk_path}\"`."
             )
         else:
             parts.append(
                 "For APK-specific facts -- manifest, permissions, "
                 "signing certificates, behaviour classification, "
-                "MobSF / drozer / LIEF / YARA -- "
+                "drozer / LIEF / YARA -- "
                 "use **android_mcp**. The bridge resolves the APK "
                 "path from the target descriptor automatically."
             )
@@ -2290,7 +2285,7 @@ _BINARY_KINDS = frozenset({
 })
 # F-2: android_apk targets need BOTH bridges -- android_mcp for the
 # APK-specific surface (manifest, permissions, signing, behaviour
-# classification, MobSF, drozer, etc.) AND audit_mcp for source-graph
+# classification, drozer, etc.) AND audit_mcp for source-graph
 # queries against the jadx-decompiled Java tree (the index_id lands in
 # mcp_handles_json.audit_mcp_decompiled_index_id from F-3).
 _ANDROID_KINDS = frozenset({"android_apk"})
@@ -2317,7 +2312,7 @@ def _applicable_servers_for_kind(target_kind: str | None) -> set[str]:
     if k in _ANDROID_KINDS:
         # APKs ship Java/Kotlin source (audit_mcp via jadx index) AND
         # APK-specific facets (android_mcp: manifest / permissions /
-        # signing / MobSF / etc.) AND native libraries in lib/<abi>/
+        # signing / etc.) AND native libraries in lib/<abi>/
         # (ida_headless: the Huawei UCS credential .so, anti-tamper
         # .so, Frida-resistant crypto .so etc.). Excluding ida_
         # headless previously forced agents to either skip native

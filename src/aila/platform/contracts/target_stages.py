@@ -61,7 +61,6 @@ class TargetAnalysisStages(BaseModel):
     react_native_extract: StageStatus = Field(default_factory=StageStatus)
     index_decompiled: StageStatus = Field(default_factory=StageStatus)
     static_summary: StageStatus = Field(default_factory=StageStatus)
-    mobsf_scan: StageStatus = Field(default_factory=StageStatus)
 
     def get(self, stage: StageName) -> StageStatus:
         return getattr(self, stage.value)

@@ -469,7 +469,7 @@ _ARCH_CONTROLS: tuple[MasvsControl, ...] = (
             "secure coding standard in implementation, SAST in CI/CD, signed "
             "release in deployment, CVE monitoring in maintenance).",
             "Check CI/CD pipeline for security gates: SAST tool (Semgrep, "
-            "MobSF, Snyk Code), dependency scanner (Dependabot, Snyk, OWASP "
+            "Snyk Code), dependency scanner (Dependabot, Snyk, OWASP "
             "Dependency-Check), signed release config. Absence is a finding.",
             "Check release / hotfix history for security patch SLA -- verify "
             "the team has shipped a security patch within 30 days of a known "
@@ -481,7 +481,6 @@ _ARCH_CONTROLS: tuple[MasvsControl, ...] = (
             "SDLC",
             "CI_CD",
             "Semgrep",
-            "MobSF",
             "Snyk",
             "Dependabot",
             "Dependency-Check",

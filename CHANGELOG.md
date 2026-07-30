@@ -400,6 +400,14 @@ operator action.
 - androguard and MobSF are no longer part of the APK analysis pipeline.
   The APK static summary is composed in-repo instead (see Changed), and
   MobSF scanning is dropped entirely.
+- The MobSF scan stage is removed platform-wide. The shared
+  `MOBSF_SCAN` stage identifier and the `mobsf_scan` field on the target
+  analysis-stage record are gone, the malware module no longer runs a
+  MobSF stage either, and the `mobsf_scan` tool is no longer declared on
+  the android-mcp bridge. Existing target rows that persisted a
+  `mobsf_scan` stage key load unchanged: the stage record ignores
+  unknown keys, so no database migration is required. The target detail
+  and report surfaces no longer render a MobSF section.
 
 ### Fixed
 

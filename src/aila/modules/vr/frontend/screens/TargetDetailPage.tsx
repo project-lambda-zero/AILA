@@ -83,7 +83,7 @@ function analysisLabel(state: AnalysisState, kind: TargetKind): string {
     return "Uploading + analyzing in IDA…";
   }
   if (kind === "android_apk") {
-    return "APK_DECODE → JADX_DECOMPILE → INDEX_DECOMPILED → STATIC_SUMMARY → MOBSF_SCAN…";
+    return "APK_DECODE → JADX_DECOMPILE → INDEX_DECOMPILED → STATIC_SUMMARY…";
   }
   return "Uploading + analyzing…";
 }
@@ -464,14 +464,12 @@ function NotesTab({ targetId }: { targetId: string }) {
 }
 
 /** Per-bucket renderer for the apk_overview projection. The static
- * summary and mobsf scan are passed-through dicts from androguard +
- * MobSF; we read only the keys we recognise and defensively skip
- * anything else so an upstream tool version bump doesn't crash the
- * page.
+ * summary is a passed-through dict from androguard; we read only the
+ * keys we recognise and defensively skip anything else so an upstream
+ * tool version bump doesn't crash the page.
  */
 function AndroidApkOverview({ overview }: { overview: ApkOverview }) {
   const summary = (overview.static_summary ?? {}) as Record<string, unknown>;
-  const mobsf = (overview.mobsf_scan ?? {}) as Record<string, unknown>;
 
   const asStringArray = (v: unknown): string[] => {
     if (!Array.isArray(v)) return [];
@@ -510,9 +508,6 @@ function AndroidApkOverview({ overview }: { overview: ApkOverview }) {
     ? (summary.certificates as Array<Record<string, unknown>>)
     : [];
   const signingScheme = asString(summary.signing_scheme);
-
-  const mobsfSkipped = mobsf.skipped === true;
-  const mobsfReason = asString(mobsf.reason);
 
   return (
     <AilaCard techBorder glow>
@@ -709,27 +704,6 @@ function AndroidApkOverview({ overview }: { overview: ApkOverview }) {
         </dl>
       </div>
 
-      {/* MobSF block. Two states: ran and produced issues, or skipped
-          (no API key). */}
-      <div>
-        <h3 className="text-xs font-semibold text-foreground mb-1">MobSF</h3>
-        {mobsfSkipped ? (
-          <p className="text-xs text-text-muted">
-            Skipped: {mobsfReason ?? "MOBSF_API_KEY not set on the AILA host"}.
-          </p>
-        ) : Object.keys(mobsf).length === 0 ? (
-          <p className="text-xs text-text-muted">Not run.</p>
-        ) : (
-          <details>
-            <summary className="text-xs text-text-muted cursor-pointer">
-              show raw scan
-            </summary>
-            <pre className="text-[10px] font-mono text-text-muted whitespace-pre-wrap overflow-x-auto mt-2 max-h-60 overflow-y-auto">
-              {JSON.stringify(mobsf, null, 2)}
-            </pre>
-          </details>
-        )}
-      </div>
     </AilaCard>
   );
 }

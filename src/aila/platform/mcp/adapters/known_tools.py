@@ -227,8 +227,6 @@ ANDROID_MCP_TOOLS: frozenset[str] = frozenset({
     "jadx_decompile",
     # androguard static analysis
     "androguard_summary",
-    # MobSF orchestration
-    "mobsf_scan",
     # Signing-scheme verification
     "verify_apk_signing",
     # Component / permission auditing

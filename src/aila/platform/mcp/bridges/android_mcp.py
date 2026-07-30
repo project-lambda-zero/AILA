@@ -11,15 +11,15 @@ adb, plus composite handlers) at the URL configured by the
 Scope: this bridge is the ONLY place where AILA's VR module touches the
 android-mcp HTTP surface. The ``TargetAnalysisService`` android branch
 (PRD §C-20 + F-3) uses it to drive the APK_DECODE / JADX_DECOMPILE /
-STATIC_SUMMARY / MOBSF_SCAN stages against an uploaded APK. (The fifth
-stage, INDEX_DECOMPILED, is driven through the audit-mcp bridge, not
-this one, since it calls audit-mcp's ``index_codebase`` on the jadx
-output rather than an android-mcp tool.)
+STATIC_SUMMARY stages against an uploaded APK. (INDEX_DECOMPILED is
+driven through the audit-mcp bridge, not this one, since it calls
+audit-mcp's ``index_codebase`` on the jadx output rather than an
+android-mcp tool.)
 
-Timeout: ``ANDROID_MCP_TIMEOUT`` env var, default 1800 s (30 min -- covers
-MobSF static scan upper bound; per-stage StageTracker timeouts in
-``services/stage_tracker.py`` apply a tighter bound where each individual
-tool runs faster). The bridge timeout is the absolute network ceiling;
+Timeout: ``ANDROID_MCP_TIMEOUT`` env var, default 1800 s (30 min);
+per-stage StageTracker timeouts in ``services/stage_tracker.py`` apply a
+tighter bound where each individual tool runs faster). The bridge
+timeout is the absolute network ceiling;
 the stage tracker timeout is the per-stage budget.
 
 Deliberately slim compared to ``AuditMcpBridgeTool`` -- no pre-warm
@@ -114,16 +114,15 @@ def _compact_spec(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-# Pipeline-only tools -- the 5-stage target ingestion (APK_DECODE,
-# JADX_DECOMPILE, INDEX_DECOMPILED, STATIC_SUMMARY, MOBSF_SCAN) runs
-# these ONCE at target create time via TargetAnalysisService. By the
-# time an investigation turn fires, the results live in
+# Pipeline-only tools -- the target ingestion (APK_DECODE,
+# JADX_DECOMPILE, INDEX_DECOMPILED, STATIC_SUMMARY) runs these ONCE at
+# target create time via TargetAnalysisService. By the time an
+# investigation turn fires, the results live in
 # vr_targets._mcp_handles_json + the audit_mcp index id, queryable via
 # cheap read tools. Letting the agent re-invoke them is:
 #   - wasteful (re-decoding the same APK every time)
-#   - error-prone (apktool refuses to overwrite without -f; mobsf has
-#     to re-upload + re-scan; jadx burns minutes per call)
-#   - off-policy (mobsf output must never reach prompts per operator)
+#   - error-prone (apktool refuses to overwrite without -f; jadx burns
+#     minutes per call)
 #
 # Hidden from the agent-visible catalog. TargetAnalysisService still
 # calls them directly via bridge.forward(action=...) -- the denylist is
@@ -295,7 +294,6 @@ _PIPELINE_ONLY_TOOLS: frozenset[str] = frozenset((
     "apktool_decode",
     "jadx_decompile",
     "react_native_extract",
-    "mobsf_scan",
 ))
 
 # Each tool here REQUIRES a host CLI on PATH. When the CLI is missing
@@ -350,7 +348,7 @@ class AndroidMcpBridgeTool(Tool):
 
     description = (
         "android-mcp Android APK audit bridge. Supports apktool_decode, "
-        "jadx_decompile, androguard_summary, mobsf_scan, drozer_scan_apk, "
+        "jadx_decompile, androguard_summary, drozer_scan_apk, "
         "lief_so analyze, yara_scan_dir, "
         "apksigner verify, objection patchapk / explore, frida helpers, "
         "adb facade, plus composite verify_capabilities / "
@@ -448,8 +446,7 @@ class AndroidMcpBridgeTool(Tool):
 
         Args:
             action: android-mcp tool name (e.g. ``apktool_decode``,
-                ``jadx_decompile``, ``androguard_summary``,
-                ``mobsf_scan``).
+                ``jadx_decompile``, ``androguard_summary``).
             **kwargs: Parameters forwarded as JSON body fields.
 
         Returns:
@@ -628,8 +625,8 @@ class AndroidMcpBridgeTool(Tool):
                 ctx["status"] = "pending"
             elif payload_status == "error":
                 # Tool handler returned a structured error envelope itself
-                # (e.g. mobsf_scan when MOBSF_API_KEY missing before B-14's
-                # RuntimeError unification). Honor it.
+                # (e.g. a tool handler returning a structured error envelope).
+                # Honor it.
                 ctx["status"] = "error"
                 err = payload.get("error") if isinstance(payload, dict) else None
                 if isinstance(err, str):

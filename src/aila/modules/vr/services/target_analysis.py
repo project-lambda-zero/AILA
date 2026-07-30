@@ -78,9 +78,9 @@ _POLL_INTERVAL_SECONDS = 3.0
 # up on the next call without a worker restart.
 
 
-# fix §268, §269 -- artifact-file storage for the heavy android-mcp
-# stage outputs (androguard summary + MobSF scan). The full payloads
-# (40KB-2MB each) used to live inline in ``mcp_handles_json`` where
+# fix §268 -- artifact-file storage for the heavy android-mcp
+# static-summary output. The full payload (40KB-2MB) used to live
+# inline in ``mcp_handles_json`` where
 # every read of the row paid the parse cost. They now live in a
 # content-addressed JSON file under
 # ``VR_TARGET_ARTIFACT_DIR/{target_id}/{name}.json``; only a small
@@ -132,9 +132,8 @@ def _load_target_artifact_payload(
 ) -> Mapping[str, Any]:
     """Resolve an inline handle reference to its full JSON payload.
 
-    ``handle_value`` is the value stored under one of the heavy
-    android-mcp keys (``android_mcp_static_summary``,
-    ``android_mcp_mobsf_scan``). Two shapes are supported:
+    ``handle_value`` is the value stored under a heavy android-mcp
+    key (``android_mcp_static_summary``). Two shapes are supported:
 
     * **Pointer form** (current): a dict carrying ``_artifact_path``
       plus any pre-computed digest fields. The JSON file at
@@ -144,7 +143,7 @@ def _load_target_artifact_payload(
       digest fields they can render.
     * **Legacy inline form**: a dict that already holds the full
       payload. Returned as-is. Covers rows ingested before the
-      §268 / §269 cutover.
+      §268 cutover.
 
     Non-mapping input returns an empty mapping.
     """
@@ -352,11 +351,6 @@ _LEGACY_STAGES: frozenset[StageName] = frozenset({
     StageName.CAPABILITY_PROFILE,
     StageName.FUNCTION_RANKING,
 })
-# MOBSF_SCAN is intentionally absent: MobSF is no longer run. The
-# StageName enum keeps the value for backward-compatible deserialization
-# of existing rows, but it is never in any kind's applicable set, so
-# ``_skip_inapplicable_stages`` marks it DONE-skipped and the roll-up
-# converges without it.
 _ANDROID_STAGES: frozenset[StageName] = frozenset({
     StageName.APK_DECODE,
     StageName.JADX_DECOMPILE,
@@ -580,9 +574,9 @@ class TargetAnalysisService:
 
         Dispatches by target kind:
 
-        * ``android_apk`` → drives the five android-mcp stages
+        * ``android_apk`` → drives the android-mcp stages
           (APK_DECODE / JADX_DECOMPILE / INDEX_DECOMPILED /
-          STATIC_SUMMARY / MOBSF_SCAN)
+          STATIC_SUMMARY)
           sequentially, each under its own StageTracker. See
           :meth:`_analyze_android_apk`.
         * All other kinds → run the legacy INGESTION stage (clone /
@@ -743,9 +737,9 @@ class TargetAnalysisService:
     async def _analyze_android_apk(self, target_id: str) -> None:
         """Drive the android-mcp + audit-mcp ingestion stages.
 
-        fix §240 -- wall-clock optimisation: the four stages that take an
+        fix §240 -- wall-clock optimisation: the stages that take an
         APK path as their sole input are independent (apktool, jadx,
-        androguard, MobSF run against the same file with disjoint output
+        androguard run against the same file with disjoint output
         keys) so we fan them out via ``asyncio.gather``.
         INDEX_DECOMPILED depends on JADX_DECOMPILE writing
         ``android_mcp_decompiled_dir`` and runs sequentially after.

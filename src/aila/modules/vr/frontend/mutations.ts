@@ -476,9 +476,9 @@ export function useCreateTarget() {
  *  2. content-addresses the bytes (SHA-256) to
  *     `~/.android-mcp/uploads/<team>/<sha>.apk`
  *  3. creates a VRTargetRecord with kind=android_apk
- *  4. auto-enqueues the five-stage ingestion
+ *  4. auto-enqueues the ingestion pipeline
  *     (APK_DECODE -> JADX_DECOMPILE -> INDEX_DECOMPILED ->
- *      STATIC_SUMMARY -> MOBSF_SCAN). */
+ *      STATIC_SUMMARY). */
 export function useUploadApkTarget() {
   const queryClient = useQueryClient();
   return useMutation({

@@ -771,7 +771,6 @@ def _append_findings_highlights(
 
 def _append_apk_intelligence(
     story: list[Any],
-    target: VRTargetSummary,
     static_summary: Mapping[str, Any],
     handles: Mapping[str, Any] | None,
     styles: dict[str, ParagraphStyle],
@@ -791,7 +790,7 @@ def _append_apk_intelligence(
     _append_section_h1(story, "APK Intelligence", styles)
     story.append(Paragraph(
         "What the audit looked at: package identity, signing chain, "
-        "manifest declarations, native code, third-party trackers.",
+        "manifest declarations, native code.",
         styles["body"],
     ))
     story.append(Spacer(1, 0.15 * inch))
@@ -810,27 +809,6 @@ def _append_apk_intelligence(
     full_static = load_target_artifact_payload(static_handle)
     if not full_static:
         full_static = static_summary if isinstance(static_summary, Mapping) else {}
-
-    # fix §269 -- ``android_mcp_mobsf_scan`` now stores a pointer with
-    # ``prompt_safe=False`` plus a small digest (security_score,
-    # trackers_detected, findings_by_severity); the full multi-MB
-    # report lives in ``target_artifacts/{target_id}/mobsf_scan.json``.
-    # The PDF tracker / native-libs / findings tables need the FULL
-    # payload, so resolve through the artifact loader. Legacy
-    # inline-full form (rows ingested pre-§269) passes through
-    # untouched.
-    mobsf_handle = (
-        handles.get("android_mcp_mobsf_scan") if isinstance(handles, Mapping) else None
-    )
-    mobsf = load_target_artifact_payload(mobsf_handle)
-    if not mobsf:
-        mobsf = (
-            (target.apk_overview or {}).get("mobsf_scan")
-            if isinstance(target.apk_overview, Mapping)
-            else None
-        )
-    if not isinstance(mobsf, Mapping):
-        mobsf = {}
 
     def _kv_section(title_text: str, rows: list[tuple[str, str]]) -> None:
         if not rows:
@@ -940,37 +918,6 @@ def _append_apk_intelligence(
                 ", ".join(sorted(set(libs))),
             ))
         _kv_section("Native Libraries", nat_rows)
-
-    # MOBSF SCAN
-    mobsf_rows: list[tuple[str, str]] = []
-    if mobsf.get("security_score") is not None:
-        mobsf_rows.append(("Security score", f"{mobsf['security_score']}/100"))
-    trackers = mobsf.get("trackers_detected")
-    if trackers is not None:
-        mobsf_rows.append(("Trackers detected", str(trackers)))
-    raw_trackers = (
-        mobsf.get("trackers", {}).get("trackers")
-        if isinstance(mobsf.get("trackers"), Mapping)
-        else None
-    )
-    if isinstance(raw_trackers, list) and raw_trackers:
-        names = [
-            str(t.get("name") or t)
-            for t in raw_trackers
-            if t is not None
-        ]
-        if names:
-            mobsf_rows.append((
-                f"Tracker names ({len(names)})",
-                ", ".join(sorted(set(names))[:20]) + ("  …" if len(set(names)) > 20 else ""),
-            ))
-    buckets = mobsf.get("findings_by_severity")
-    if isinstance(buckets, Mapping):
-        bucket_strs = [f"{k}: {v}" for k, v in buckets.items() if v]
-        if bucket_strs:
-            mobsf_rows.append(("MobSF findings", ", ".join(bucket_strs)))
-    if mobsf_rows:
-        _kv_section("MobSF Static Scan", mobsf_rows)
 
 
 
@@ -1442,7 +1389,7 @@ def build_pdf(
 
     _append_cover(story, aggregate, target, static_summary, styles)
     _append_findings_highlights(story, aggregate, styles)
-    _append_apk_intelligence(story, target, static_summary, handles, styles)
+    _append_apk_intelligence(story, static_summary, handles, styles)
     story.append(PageBreak())
     _append_executive_summary(story, aggregate, styles)
     _append_group_sections(story, aggregate, styles)

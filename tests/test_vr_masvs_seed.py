@@ -46,7 +46,6 @@ _APK_OVERVIEW = {
         "permissions": [],
         "native_libs": [],
     },
-    "mobsf_scan": {"skipped": True, "reason": "no_api_key"},
 }
 
 

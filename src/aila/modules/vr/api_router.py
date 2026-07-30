@@ -616,16 +616,9 @@ def _target_summary(record: Any) -> VRTargetSummary:
         # Pull each handle if present. Order mirrors the pipeline so an
         # operator can see how far the chain has progressed.
         overview: dict[str, Any] = {}
-        # Per-key projection. NOTE: android_mcp_mobsf_scan (the raw MobSF
-        # report) is intentionally NOT projected verbatim -- it's a
-        # multi-MB JSON blob that bloated vuln_researcher prompts to >1M
-        # tokens per turn and OOM'd the LLM proxy. Instead we surface a
-        # one-line summary (count + severity buckets) that fits the prompt
-        # context. Operators can still query the full report via
-        # GET /vr/targets/{id}/mobsf-report (NOT YET IMPLEMENTED -- read
-        # _mcp_handles_json.android_mcp_mobsf_scan directly from DB for
-        # now). Same for android_mcp_static_summary: project the digest,
-        # not the full androguard dump.
+        # Per-key projection. android_mcp_static_summary is projected as
+        # a digest (see below) rather than the full androguard dump so
+        # the payload stays small enough for the prompt context.
         for handle_key, out_key in (
             ("android_mcp_apk_sha256", "sha256"),
             ("android_mcp_decoded_dir", "decoded_dir"),
@@ -682,46 +675,6 @@ def _target_summary(record: Any) -> VRTargetSummary:
                 if isinstance(sub, dict):
                     digest[sub_key] = sub
             overview["static_summary"] = digest
-
-        # mobsf_scan digest: bucket-count summary. The full report is at
-        # most operator-facing -- agents don't need it in every prompt.
-        #
-        # fix §269 -- ``android_mcp_mobsf_scan`` now stores a pointer
-        # to ``target_artifacts/{target_id}/mobsf_scan.json`` plus a
-        # pre-computed digest (``security_score``, ``trackers_detected``,
-        # ``findings_by_severity``) and an explicit ``prompt_safe=False``.
-        # The legacy inline-full form (rows ingested pre-§269) is still
-        # accepted -- we recompute the buckets when no pre-computed
-        # digest is present.
-        mobsf_full = handles.get("android_mcp_mobsf_scan") or {}
-        if isinstance(mobsf_full, dict) and mobsf_full:
-            if mobsf_full.get("skipped"):
-                overview["mobsf_scan"] = {"skipped": True, "reason": mobsf_full.get("reason", "")}
-            elif "_artifact_path" in mobsf_full:
-                projected: dict[str, Any] = {}
-                if mobsf_full.get("security_score") is not None:
-                    projected["security_score"] = mobsf_full["security_score"]
-                if mobsf_full.get("trackers_detected") is not None:
-                    projected["trackers_detected"] = mobsf_full["trackers_detected"]
-                buckets = mobsf_full.get("findings_by_severity")
-                if isinstance(buckets, dict):
-                    projected["findings_by_severity"] = buckets
-                overview["mobsf_scan"] = projected
-            else:
-                buckets = {"high": 0, "warning": 0, "info": 0, "good": 0, "secure": 0}
-                for section_key in ("code_analysis", "manifest_analysis", "android_api", "network_security"):
-                    section = mobsf_full.get(section_key)
-                    if isinstance(section, dict):
-                        for finding in section.values():
-                            if isinstance(finding, dict):
-                                sev = (finding.get("severity") or finding.get("status") or "").lower()
-                                if sev in buckets:
-                                    buckets[sev] += 1
-                overview["mobsf_scan"] = {
-                    "security_score": mobsf_full.get("security_score"),
-                    "trackers_detected": mobsf_full.get("trackers", {}).get("detected_trackers") if isinstance(mobsf_full.get("trackers"), dict) else None,
-                    "findings_by_severity": buckets,
-                }
 
         if overview:
             apk_overview = overview
@@ -2580,7 +2533,7 @@ def create_vr_router() -> APIRouter:
 
         For ``kind=android_apk`` targets the call resets every
         applicable APK stage (APK_DECODE / JADX_DECOMPILE /
-        INDEX_DECOMPILED / STATIC_SUMMARY / MOBSF_SCAN) back to
+        INDEX_DECOMPILED / STATIC_SUMMARY) back to
         PENDING -- leaving any stage currently RUNNING untouched so
         the reaper owns it -- and re-enqueues
         ``run_target_analysis`` on the vr worker queue. The
@@ -2638,7 +2591,6 @@ def create_vr_router() -> APIRouter:
                 StageName.JADX_DECOMPILE,
                 StageName.INDEX_DECOMPILED,
                 StageName.STATIC_SUMMARY,
-                StageName.MOBSF_SCAN,
             )
             reset_count = 0
             for stage_name in android_stage_names:
@@ -2911,7 +2863,7 @@ def create_vr_router() -> APIRouter:
             "`ANDROID_MCP_UPLOAD_DIR`), creates a VRTargetRecord with "
             "kind=android_apk and an apk_path descriptor, and auto-enqueues "
             "the APK_DECODE / JADX_DECOMPILE / INDEX_DECOMPILED / "
-            "STATIC_SUMMARY / MOBSF_SCAN ingestion stages."
+            "STATIC_SUMMARY ingestion stages."
         ),
     )
     @limiter.limit("10/minute")
@@ -2932,7 +2884,7 @@ def create_vr_router() -> APIRouter:
         on a different volume without symlink tricks.
 
         Per-stage ingestion (APK_DECODE / JADX_DECOMPILE / INDEX_DECOMPILED
-        / STATIC_SUMMARY / MOBSF_SCAN) is dispatched via
+        / STATIC_SUMMARY) is dispatched via
         ``run_target_analysis``; ``TargetAnalysisService.analyze()`` routes
         ``android_apk`` through ``_analyze_android_apk`` so each stage runs
         under its own ``StageTracker`` and persists handles in
