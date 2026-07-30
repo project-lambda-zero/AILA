@@ -522,6 +522,39 @@ class TestAdaptTaintPathsTo:
         out = adapt_taint_paths_to({"paths": []}, ctx)
         assert "(no taint paths)" in out.observables_delta["audit_mcp.taint_paths_to.taint.exec"]
 
+    def test_reads_entrypoint_paths_and_path_count(self) -> None:
+        # Real audit-mcp shape: call chains live under ``entrypoint_paths``
+        # (list-of-lists) with an authoritative ``path_count``. The adapter
+        # previously read only ``paths`` / ``results`` / ``taint_paths`` and
+        # so reported 0 for every real result.
+        raw = {
+            "sink": "create_test_session",
+            "is_tainted": False,
+            "path_count": 7,
+            "caller_count": 5,
+            "exploitable": False,
+            "entrypoint_paths": [
+                ["m:main", "m:test_backend", "m:create_test_session"],
+                ["m:main", "m:test_resource", "m:create_test_session"],
+            ],
+        }
+        ctx = _ctx(
+            server="audit_mcp", tool="taint_paths_to",
+            name="create_test_session",
+        )
+        out = adapt_taint_paths_to(raw, ctx)
+        assert out.payload_kind == PayloadKind.TAINT_FLOW
+        # authoritative path_count, NOT len(entrypoint_paths)
+        assert out.payload["total"] == 7
+        assert out.payload["caller_count"] == 5
+        assert out.payload["sink"] == "create_test_session"
+        obs = out.observables_delta[
+            "audit_mcp.taint_paths_to.taint.create_test_session"
+        ]
+        assert "7 path(s)" in obs
+        # the call chain is rendered, not skipped as a non-dict
+        assert "m:main" in obs and "create_test_session" in obs
+
 
 class TestAdaptDefUse:
     def test_basic(self) -> None:

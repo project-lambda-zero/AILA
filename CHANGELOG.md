@@ -364,6 +364,14 @@ operator action.
 
 ### Fixed
 
+- The taint-flow view no longer reports zero paths for reachable sinks.
+  The audit_mcp taint_paths_to adapter read the paths from keys that the
+  server never returns; the server reports call chains under
+  entrypoint_paths with an authoritative path_count plus is_tainted,
+  caller_count, direct_callers, and exploitable. The adapter now reads
+  those fields, renders each entrypoint-to-sink call chain, and surfaces
+  the reachability flags, so a sink with N entrypoint paths shows N
+  instead of 0.
 - Repeated malformed tool calls now trip the repeat-failure circuit
   breaker instead of retry-storming. The audit_mcp read_lines bridge
   tool previously rejected missing required kwargs, non-integer line
