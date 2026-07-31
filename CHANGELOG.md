@@ -455,6 +455,20 @@ operator action.
 
 ### Fixed
 
+- Call-graph queries resolve interface and dependency-injection dispatch.
+  A call through a field whose declared type is an interface (a
+  DI-injected collaborator, the common shape in obfuscated Android /
+  Kotlin) is left unresolved by the parser, so the resolved call graph
+  reported the target method as having zero callers even when it was
+  called -- and an agent could wrongly read that as dead code. The
+  audit_mcp bridge now requests interface/DI-dispatch resolution on
+  callers_of and callees_of by default, so those callers surface (tagged
+  as name-matched, inferred confidence). When a query still returns
+  nothing, the zero-result hint now names the remaining cause (a call the
+  parser dropped entirely, such as a qualified-this receiver in a nested
+  or coroutine class) and points at a textual source search instead of
+  implying the target is uncalled. The resolution itself ships in the
+  audit-mcp graph engine; this change wires the platform bridge to it.
 - A specialist request is now recorded once per capability instead of
   once per filing. A panel branch files a request_specialist ledger entry
   when a case needs an expert eye; the same capability was re-filed every

@@ -48,6 +48,14 @@ _XREF_ACTIONS = frozenset({
     "callers_of", "callees_of", "ancestors_of", "reachable_from",
 })
 
+# xref tools whose audit-mcp signature accepts ``include_virtual`` (direct
+# callers/callees only; the transitive ancestors_of/reachable_from walk the
+# resolved adjacency and do not take the flag). The bridge forces it on so a
+# call-graph query surfaces callers that reach the target through an
+# unresolved receiver expression (``this.field.method``) -- interface / DI
+# dispatch that the parser could not bind to a concrete node.
+_VIRTUAL_ACTIONS = frozenset({"callers_of", "callees_of"})
+
 
 # JADX p-prefix rewriter -- see _resolve_jadx_prefixes docstring.
 _JADX_PREFIX_RE = re.compile(r"^p[0-9A-F]+(.+)$")
@@ -636,6 +644,14 @@ class AuditMcpBridgeTool(Tool):
         # before the real call dispatches. Without this, the agent's
         # first 4 tool calls each pay a separate ~30s cold-build cost
         # on different workers (round-robin distribution).
+        # Force interface/DI-dispatch resolution on for direct call-graph
+        # queries. audit-mcp defaults include_virtual=True server-side; set
+        # it explicitly so the behavior is pinned regardless of server
+        # default drift. The agent can still pass include_virtual=False for
+        # strictly statically-resolved edges.
+        if action in _VIRTUAL_ACTIONS and "include_virtual" not in normalized_kwargs:
+            normalized_kwargs["include_virtual"] = True
+
         index_id = normalized_kwargs.get("index_id")
         if isinstance(index_id, str) and index_id:
             await self._ensure_prewarmed(index_id)
@@ -958,17 +974,28 @@ class AuditMcpBridgeTool(Tool):
                         index_id=normalized_kwargs.get("index_id") or "",
                         name=str(normalized_kwargs["name"]),
                     )
+                    virt = action in _VIRTUAL_ACTIONS
                     note_lines = [
                         f"audit_mcp.{action}({normalized_kwargs['name']!r}) "
-                        f"returned 0 results. Two possibilities:",
+                        f"returned 0 results"
+                        + (
+                            " (interface / DI-dispatch name-matching was "
+                            "already applied)" if virt else ""
+                        )
+                        + ". Likely causes:",
                         "  (a) the symbol does not exist in this index "
                         "(hallucinated name, or in a sibling repo not "
                         "indexed alongside the primary target);",
-                        "  (b) the call-graph indexer missed this "
-                        "function's edges in this direction. Fall back "
-                        "to read_function() to see the body and grep "
-                        "for calls directly, OR run semantic_search() "
-                        "to find the body via embedding.",
+                        "  (b) the call site exists in source but the parser "
+                        "dropped the edge entirely -- e.g. a call through a "
+                        "qualified-this receiver in a nested / anonymous "
+                        "class or a coroutine state machine, which no "
+                        "call-graph query can surface. Confirm textually "
+                        "with search_source(pattern=r'\\."
+                        + str(normalized_kwargs['name'])
+                        + r"\s*\(') or read the suspected caller with "
+                        "read_lines(). Do NOT treat 0 callers as proof of "
+                        "dead code on an Android / Kotlin target.",
                     ]
                     if suggestions:
                         note_lines.append(
