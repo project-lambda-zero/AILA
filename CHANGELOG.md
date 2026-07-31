@@ -455,6 +455,16 @@ operator action.
 
 ### Fixed
 
+- A specialist request is now recorded once per capability instead of
+  once per filing. A panel branch files a request_specialist ledger entry
+  when a case needs an expert eye; the same capability was re-filed every
+  turn while waiting for a distinct approver, by more than one branch, and
+  again by the spawned specialist itself, so the shared ledger filled with
+  duplicate request rows. The request write now carries a capability-
+  scoped idempotency key, so repeat filings collapse to one row through
+  the ledger's uniqueness constraint. Ratification and spawning are
+  unchanged (both already deduplicated), and distinct capabilities keep
+  distinct rows.
 - The audit_mcp index-id auto-correction now fires for APK investigations.
   An android_apk target stores its unified jadx/React index under a
   different handle key than a source-repo target; the tool executor's

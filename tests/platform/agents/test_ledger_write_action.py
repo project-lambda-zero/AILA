@@ -202,3 +202,87 @@ async def test_agent_self_approval_skipped(test_db) -> None:
         await AgentTurnRunnerBase._post_ledger_approvals(me, decision, uow.session)
         await uow.session.commit()
     assert await Oracle().is_ratified(inv, request) is False  # distinct-approver rule
+
+
+def _specialist_request(capability: str, reason: str) -> ReasoningTurnDecision:
+    return ReasoningTurnDecision(
+        reasoning="need a specialist",
+        ledger_writes=[LedgerWrite(kind="request", payload={
+            "intent": "request_specialist",
+            "target_capability": capability,
+            "reason": reason,
+        })],
+    )
+
+
+async def test_request_specialist_deduped_per_capability(test_db) -> None:
+    """The same capability filed by two branches across two turns with
+    different reason wording collapses to one request row."""
+    del test_db
+    inv = "inv-reqspec-dedup"
+    maddie = SimpleNamespace(investigation_id=inv, branch_id="branch-maddie")
+    halvar = SimpleNamespace(investigation_id=inv, branch_id="branch-halvar")
+    async with UnitOfWork() as uow:
+        await AgentTurnRunnerBase._post_ledger_writes(
+            maddie, _specialist_request("binary-audit", "need native lib check"),
+            3, uow.session, ReasoningCaseState(),
+        )
+        await uow.session.commit()
+    async with UnitOfWork() as uow:
+        await AgentTurnRunnerBase._post_ledger_writes(
+            halvar, _specialist_request("binary-audit", "different wording, same cap"),
+            7, uow.session, ReasoningCaseState(),
+        )
+        await uow.session.commit()
+    reqs = [r for r in await LedgerService().read_general(inv) if r["kind"] == "request"]
+    assert len(reqs) == 1
+    assert reqs[0]["payload"]["target_capability"] == "binary-audit"
+    # The first author's request is the surviving row (approvals target it).
+    assert reqs[0]["author_branch_id"] == "branch-maddie"
+
+
+async def test_request_specialist_distinct_capabilities_both_recorded(test_db) -> None:
+    """Different capabilities keep distinct rows -- dedup is per capability,
+    not a blanket cap on specialist requests."""
+    del test_db
+    inv = "inv-reqspec-multi"
+    me = SimpleNamespace(investigation_id=inv, branch_id="branch-x")
+    decision = ReasoningTurnDecision(
+        reasoning="need two",
+        ledger_writes=[
+            LedgerWrite(kind="request", payload={
+                "intent": "request_specialist", "target_capability": "binary-audit"}),
+            LedgerWrite(kind="request", payload={
+                "intent": "request_specialist", "target_capability": "crypto"}),
+        ],
+    )
+    async with UnitOfWork() as uow:
+        await AgentTurnRunnerBase._post_ledger_writes(
+            me, decision, 1, uow.session, ReasoningCaseState(),
+        )
+        await uow.session.commit()
+    caps = sorted(
+        r["payload"]["target_capability"]
+        for r in await LedgerService().read_general(inv) if r["kind"] == "request"
+    )
+    assert caps == ["binary-audit", "crypto"]
+
+
+async def test_non_specialist_request_keeps_per_turn_key(test_db) -> None:
+    """A request that is not a request_specialist is untouched: two distinct
+    turns still append two rows (only an exact same-turn retry dedups)."""
+    del test_db
+    inv = "inv-reqspec-other"
+    me = SimpleNamespace(investigation_id=inv, branch_id="branch-y")
+    for turn in (1, 2):
+        decision = ReasoningTurnDecision(
+            reasoning="x",
+            ledger_writes=[LedgerWrite(kind="request", payload={"intent": "replan"})],
+        )
+        async with UnitOfWork() as uow:
+            await AgentTurnRunnerBase._post_ledger_writes(
+                me, decision, turn, uow.session, ReasoningCaseState(),
+            )
+            await uow.session.commit()
+    reqs = [r for r in await LedgerService().read_general(inv) if r["kind"] == "request"]
+    assert len(reqs) == 2

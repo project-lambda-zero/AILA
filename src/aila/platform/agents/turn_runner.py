@@ -261,12 +261,8 @@ class AgentTurnRunnerBase:
             kind = write.kind
             if in_recon and kind == "note":
                 kind = "discovery"
-            payload_hash = hashlib.sha256(
-                json.dumps(write.payload, sort_keys=True).encode()
-            ).hexdigest()[:16]
-            idem = (
-                f"{self.branch_id}:{turn_number}:{index}:"
-                f"{kind}:{payload_hash}"
+            idem = AgentTurnRunnerBase._ledger_write_idem_key(
+                write, kind, self.branch_id, turn_number, index,
             )
             await service.append_general(
                 self.investigation_id,
@@ -276,6 +272,36 @@ class AgentTurnRunnerBase:
                 idempotency_key=idem,
                 session=session,
             )
+
+    @staticmethod
+    def _ledger_write_idem_key(
+        write: Any, kind: str, branch_id: str, turn_number: int, index: int,
+    ) -> str:
+        """Idempotency key for one ledger write.
+
+        A ``request_specialist`` is deduped per (investigation, capability).
+        The specialist mechanism spawns exactly one branch per capability
+        and the oracle dedups ratified capabilities, so the same request
+        re-filed across turns, by a different branch, or by the spawned
+        specialist itself is pure noise on the shared ledger. A stable
+        capability-scoped key collapses every such filing to one row
+        through the ledger's ``UNIQUE(investigation_id, idempotency_key)``
+        constraint (``append_general`` conflicts are no-ops that return the
+        existing id). Every other write keeps the per-turn key, which dedups
+        only an ARQ retry of the same turn.
+        """
+        payload = write.payload or {}
+        if (
+            write.kind == "request"
+            and payload.get("intent") == "request_specialist"
+        ):
+            capability = str(payload.get("target_capability") or "").strip()
+            if capability:
+                return f"request_specialist:{capability}"
+        payload_hash = hashlib.sha256(
+            json.dumps(write.payload, sort_keys=True).encode()
+        ).hexdigest()[:16]
+        return f"{branch_id}:{turn_number}:{index}:{kind}:{payload_hash}"
 
     async def _post_ledger_approvals(
         self,
