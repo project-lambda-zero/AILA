@@ -444,6 +444,18 @@ operator action.
 
 ### Fixed
 
+- The audit_mcp index-id auto-correction now fires for APK investigations.
+  An android_apk target stores its unified jadx/React index under a
+  different handle key than a source-repo target; the tool executor's
+  resolver read only the source-repo key, so for APK audits it resolved
+  nothing and never injected the correct index id. When the model omitted
+  or improvised the opaque index hash -- routine, since it is not
+  human-memorable -- the call reached the bridge without a valid index and
+  was blocked as missing a required argument, wasting the turn. Every
+  audit_mcp call from an APK investigation was affected; source-repo
+  investigations were not. The resolver now falls back to the APK index
+  handle, so the safety net corrects APK calls the same way it already
+  corrected source-repo calls.
 - The periodic task reaper no longer cancels a running investigation whose
   arq in-progress lock is present but whose heartbeat is stale.
   `heartbeat_at` is written per workflow state transition, not

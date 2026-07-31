@@ -64,6 +64,32 @@ def _seed() -> tuple[str, str]:
     return inv_id, branch_id
 
 
+def _seed_with_handles(kind: str, handles: dict) -> str:
+    """Seed the FK chain with a target of ``kind`` carrying ``handles``.
+
+    Returns the investigation id so ``_resolve_index_id`` can walk
+    investigation -> target -> mcp_handles_json.
+    """
+    suffix = uuid4().hex[:8]
+    ws_id = f"ws-{suffix}"
+    tgt_id = f"tgt-{suffix}"
+    inv_id = f"inv-{suffix}"
+    with session_scope() as sess:
+        sess.add(VRWorkspaceRecord(id=ws_id, name="ws", slug=ws_id))
+        sess.flush()
+        sess.add(VRTargetRecord(
+            id=tgt_id, workspace_id=ws_id, display_name="tgt", kind=kind,
+            mcp_handles_json=json.dumps(handles),
+        ))
+        sess.flush()
+        sess.add(VRInvestigationRecord(
+            id=inv_id, target_id=tgt_id, title="seed", kind="discovery",
+            strategy_family="vulnerability_research.discovery_research",
+        ))
+        sess.commit()
+    return inv_id
+
+
 def _make_executor() -> tuple[ToolExecutor, _FakeBridge, _FakeBridge, _FakeBridge]:
     ida, audit, android = _FakeBridge(), _FakeBridge(), _FakeBridge()
     return ToolExecutor(ida=ida, audit_mcp=audit, android_mcp=android), ida, audit, android
@@ -310,6 +336,53 @@ async def test_persist_result_and_observables_writes_and_merges(test_db) -> None
         branch = sess.get(VRInvestigationBranchRecord, branch_id)
         state = json.loads(branch.case_state_json or "{}")
         assert state["observables"]["finding.candidate"] == "strcpy"
+
+
+@pytest.mark.asyncio
+async def test_resolve_index_id_reads_android_decompiled_handle(test_db) -> None:
+    """An android_apk target stores its audit-mcp index under
+    ``audit_mcp_decompiled_index_id`` (target_analysis._android_index_decompiled).
+
+    Regression: the resolver only read ``audit_mcp_index_id`` so it returned
+    empty for APK audits, the auto-inject safety net never fired, and every
+    audit_mcp call from an APK investigation was blocked as ``missing
+    required ['index_id']``.
+    """
+    del test_db
+    inv_id = _seed_with_handles(
+        "android_apk", {"audit_mcp_decompiled_index_id": "idx-apk-1"},
+    )
+    executor, *_ = _make_executor()
+    assert await executor._resolve_index_id(inv_id) == "idx-apk-1"
+
+
+@pytest.mark.asyncio
+async def test_maybe_correct_index_id_injects_android_index(test_db) -> None:
+    """Pre-dispatch correction forces the resolved android index onto an
+    audit_mcp call whose index_id the model omitted."""
+    del test_db
+    inv_id = _seed_with_handles(
+        "android_apk", {"audit_mcp_decompiled_index_id": "idx-apk-2"},
+    )
+    executor, *_ = _make_executor()
+    corrected = await executor._maybe_correct_index_id(inv_id, {"query": "crypto"})
+    assert corrected["index_id"] == "idx-apk-2"
+
+
+@pytest.mark.asyncio
+async def test_resolve_index_id_prefers_source_repo_handle(test_db) -> None:
+    """When both handle keys are present the source_repo key wins; the
+    android key is only a fallback."""
+    del test_db
+    inv_id = _seed_with_handles(
+        "source_repo",
+        {
+            "audit_mcp_index_id": "idx-src",
+            "audit_mcp_decompiled_index_id": "idx-apk",
+        },
+    )
+    executor, *_ = _make_executor()
+    assert await executor._resolve_index_id(inv_id) == "idx-src"
 
 
 def test_apply_observables_delta_merges_and_caps() -> None:

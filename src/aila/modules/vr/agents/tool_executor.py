@@ -228,10 +228,19 @@ class ToolExecutor(ToolExecutorHelpersBase):
         return resolved
 
     async def _resolve_index_id(self, investigation_id: str) -> str:
-        """Resolve investigation -> primary target -> audit_mcp_index_id.
+        """Resolve investigation -> primary target -> audit-mcp index id.
 
-        Returns empty string when no source-repo target / no audit-mcp
-        index for this investigation.
+        A source_repo target stores the index under
+        ``audit_mcp_index_id``; an android_apk target stores the unified
+        jadx/React index under ``audit_mcp_decompiled_index_id`` (see
+        target_analysis._android_index_decompiled). Both are checked so the
+        auto-inject safety net also fires for APK audits -- otherwise the
+        model's omitted / placeholder index_id is never corrected and the
+        audit_mcp bridge blocks every call as ``missing required
+        ['index_id']``.
+
+        Returns empty string when no analyzed target / no audit-mcp index
+        exists for this investigation.
         """
         cache = self._inv_index_id_cache
         if investigation_id in cache:
@@ -258,7 +267,11 @@ class ToolExecutor(ToolExecutorHelpersBase):
                 handles = json.loads(target.mcp_handles_json or "{}")
             except (ValueError, TypeError):
                 handles = {}
-            resolved = str(handles.get("audit_mcp_index_id") or "")
+            resolved = str(
+                handles.get("audit_mcp_index_id")
+                or handles.get("audit_mcp_decompiled_index_id")
+                or ""
+            )
             return self._cache_index_id(investigation_id, resolved)
         except (SQLAlchemyError, OSError, RuntimeError, ImportError, AttributeError, ValueError, TypeError) as exc:
             # fix §253 -- broadened from (OSError, RuntimeError, ImportError,
