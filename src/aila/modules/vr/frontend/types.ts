@@ -340,6 +340,11 @@ export type BranchStatus =
 
 export type PersonaVoice =
   | "halvar" | "maddie" | "yuki" | "renzo" | "noor" | "wei"
+  // On-demand specialist agents (backend specialist_registry _BUILTINS
+  // "vr"): named panelists spawned when a case needs an expert eye.
+  // persona_voice is an open string server-side, but these are the
+  // built-ins the UI ships dedicated swatches for.
+  | "snake" | "jak" | "kratos" | "lara"
   // Phase E §177/§178/§180 -- synthetic voices written by branch_manager
   // when no agent persona is meaningful. Backend's PersonaVoice enum
   // gained these values + alembic 064 sets the column DEFAULT to

@@ -355,6 +355,17 @@ operator action.
 
 ### Changed
 
+- On-demand specialist agents are named panelists instead of capability
+  slugs. A panel can pull in an expert branch (reverse engineering,
+  mobile, exploit development, variant hunt, crypto) when a case needs
+  one; those branches previously rendered as the bare capability slug
+  ("re", "mobile", ...) next to the named core spine (Halvar, Maddie,
+  Renzo). Each built-in specialist now carries a distinct name so every
+  voice on the board reads the same way, with its own label and avatar in
+  the branch list and outcome views. Routing is unchanged: dispatch keys
+  off the specialist's capability, which is untouched. A migration renames
+  the seeded registry rows and any branch already spawned under an old
+  name; a specialist a user renamed through the CRUD API keeps its name.
 - The apk_static audit (evidence-backed checks with concrete source
   locations) is the primary APK audit on the target detail page; the
   MASVS compliance audit stays available but is presented as the

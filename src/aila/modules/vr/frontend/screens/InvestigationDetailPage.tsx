@@ -148,6 +148,12 @@ const PERSONA_META: Partial<
   yuki:    { color: "#8ec5ff", bg: "color-mix(in srgb, #8ec5ff 16%, transparent)", initial: "Y", label: "Yuki"   },
   noor:    { color: "#f0c97a", bg: "color-mix(in srgb, #f0c97a 16%, transparent)", initial: "N", label: "Noor"   },
   wei:     { color: "#7bdfd3", bg: "color-mix(in srgb, #7bdfd3 16%, transparent)", initial: "W", label: "Wei"    },
+  // On-demand specialist agents (specialist_registry _BUILTINS "vr"):
+  // named panelists spawned when a case needs an expert eye.
+  snake:   { color: "#8faf6a", bg: "color-mix(in srgb, #8faf6a 16%, transparent)", initial: "S", label: "Snake"  },
+  jak:     { color: "#e0a86a", bg: "color-mix(in srgb, #e0a86a 16%, transparent)", initial: "J", label: "Jak"    },
+  kratos:  { color: "#d97a7a", bg: "color-mix(in srgb, #d97a7a 16%, transparent)", initial: "K", label: "Kratos" },
+  lara:    { color: "#c7a25c", bg: "color-mix(in srgb, #c7a25c 16%, transparent)", initial: "L", label: "Lara"   },
   default: { color: "#9aa0a6", bg: "color-mix(in srgb, #9aa0a6 16%, transparent)", initial: "?", label: "Branch" },
 };
 

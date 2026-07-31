@@ -98,21 +98,27 @@ class SpecialistAgentCreate(BaseModel):
 
 # Built-in defaults per module. Capabilities match the dispatch phases so a
 # fresh install already routes; users extend or disable these via CRUD.
+#
+# Names are iconic PlayStation 1/2-era characters, chosen so a spawned
+# specialist reads as a distinct named panelist alongside the core spine
+# (halvar / maddie / renzo), not a bare capability slug. The ``name`` is
+# display + persona_voice only; routing keys off ``capability``, so a name
+# can change without touching the request or dispatch path.
 _BUILTINS: dict[str, tuple[dict[str, str], ...]] = {
     "vr": (
-        {"name": "re", "capability": "binary-audit",
+        {"name": "snake", "capability": "binary-audit",
          "description": "Reverse-engineering specialist: disassembly, decompilation, binary internals."},
-        {"name": "mobile", "capability": "mobile-audit",
+        {"name": "jak", "capability": "mobile-audit",
          "description": "Mobile specialist: Android/iOS app internals, platform APIs."},
-        {"name": "exploit-dev", "capability": "exploit-dev",
+        {"name": "kratos", "capability": "exploit-dev",
          "description": "Exploit-development specialist: turn a confirmed finding into a working PoC."},
-        {"name": "variant", "capability": "variant-hunt",
+        {"name": "lara", "capability": "variant-hunt",
          "description": "Variant-hunt specialist: find sibling instances of a confirmed bug pattern."},
     ),
     "malware": (
-        {"name": "re", "capability": "re",
+        {"name": "alucard", "capability": "re",
          "description": "Reverse-engineering specialist: unpacking, deobfuscation, image reconstruction."},
-        {"name": "crypto", "capability": "crypto",
+        {"name": "vincent", "capability": "crypto",
          "description": "Crypto/config specialist: config extraction, key/algorithm recovery."},
     ),
 }
