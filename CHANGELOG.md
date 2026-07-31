@@ -444,6 +444,14 @@ operator action.
 
 ### Fixed
 
+- The android decode stages (APK decode, jadx decompile, React Native
+  extract) run sequentially instead of concurrently. Each spawns a heavy
+  JVM subprocess on the single android-mcp host; the previous parallel
+  fan-out caused CPU / memory / disk contention that pushed every stage
+  past its timeout, and a timed-out android-mcp call leaves a worker
+  thread that cannot be killed, so repeated timeouts saturated the pool.
+  Running one stage at a time gives each full machine resources and, in
+  practice, finishes faster than the contended fan-out.
 - Android ingestion stage timeouts raised to 30 minutes for APK decode,
   jadx decompile, and React Native extract. The previous 5-15 minute caps
   pre-empted apktool and jadx on mid-size APKs -- the single-worker
