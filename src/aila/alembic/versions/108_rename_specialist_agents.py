@@ -16,7 +16,7 @@ Data-only migration -- no schema change. Rows a user renamed via the
 CRUD API no longer match the old name and are left untouched. A fresh DB
 that never seeded the defaults updates zero rows.
 
-Revision ID: 108_rename_specialist_agent_names
+Revision ID: 108_rename_specialist_agents
 Revises:     107_forensics_panel_tables
 Create Date: 2026-07-31
 """
@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from alembic import op
 
-revision: str = "108_rename_specialist_agent_names"
+revision: str = "108_rename_specialist_agents"
 down_revision: str | None = "107_forensics_panel_tables"
 branch_labels: tuple[str, ...] | None = None
 depends_on: tuple[str, ...] | None = None
