@@ -599,7 +599,7 @@ def _target_summary(record: Any) -> VRTargetSummary:
     uploaded_filename = handles.get("uploaded_filename")
     if not isinstance(uploaded_filename, str):
         uploaded_filename = None
-    # PRD §C-21: surface the androguard-discovered package name so the
+    # PRD §C-21: surface the discovered package name so the
     # TargetsPage row label can fall back to it once STATIC_SUMMARY
     # finishes. Storage shape set by services/target_analysis._android_static_summary.
     android_package_name = handles.get("android_mcp_package_name")
@@ -617,7 +617,7 @@ def _target_summary(record: Any) -> VRTargetSummary:
         # operator can see how far the chain has progressed.
         overview: dict[str, Any] = {}
         # Per-key projection. android_mcp_static_summary is projected as
-        # a digest (see below) rather than the full androguard dump so
+        # a digest (see below) rather than the full static-summary dump so
         # the payload stays small enough for the prompt context.
         for handle_key, out_key in (
             ("android_mcp_apk_sha256", "sha256"),
@@ -634,7 +634,7 @@ def _target_summary(record: Any) -> VRTargetSummary:
                 overview[out_key] = value
 
         # static_summary digest: keep only the load-bearing fields. The full
-        # androguard output (34KB+ per-package metadata) is excessive to
+        # static summary (large per-package metadata) is excessive to
         # include in every LLM turn.
         #
         # fix §268 -- `android_mcp_static_summary` now stores a pointer

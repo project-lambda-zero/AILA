@@ -1,4 +1,4 @@
-"""Unit tests for the in-repo APK static extractors that replaced androguard.
+"""Unit tests for the in-repo APK static extractors (manifest, signing, native, SBOM).
 
 Covers the classification logic of the native analyzer (pure over a stub
 LIEF binary), the SBOM inventory over a synthetic APK zip, and the
@@ -12,11 +12,11 @@ import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
-from aila.modules.vr.apk_static.native_analysis import (
+from aila.platform.apk.native_analysis import (
     analyze_apk_natives,
     classify_binary,
 )
-from aila.modules.vr.apk_static.sbom import build_sbom
+from aila.platform.apk.sbom import build_sbom
 
 
 class _Seg:

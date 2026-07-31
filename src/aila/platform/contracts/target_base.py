@@ -164,8 +164,8 @@ class TargetSummaryBase(BaseModel):
         default=None,
         description=(
             "For kind=android_apk only: the Android application package id "
-            "(e.g. 'com.examplecorp.selfservis') discovered by android-mcp's "
-            "androguard_summary during STATIC_SUMMARY. None until that stage "
+            "(e.g. 'com.examplecorp.selfservis') populated from the in-repo "
+            "static summary during STATIC_SUMMARY. None until that stage "
             "completes. Projected from mcp_handles_json.android_mcp_package_name "
             "-- never settable directly. Frontend uses this as the row "
             "label once it is populated."

@@ -493,7 +493,7 @@ class TestFetchToolSpecs:
             android_calls.append("hit")
             return [
                 {"name": "apktool_decode", "params": [], "required": []},
-                {"name": "androguard_summary", "params": [], "required": []},
+                {"name": "drozer_scan_apk", "params": [], "required": []},
                 {"name": "verify_capabilities", "params": [], "required": []},
             ]
 
@@ -517,7 +517,7 @@ class TestFetchToolSpecs:
         # Each bridge contributes its full filtered catalog.
         android_names = {s["name"] for s in out["android_mcp"]}
         assert "apktool_decode" in android_names
-        assert "androguard_summary" in android_names
+        assert "drozer_scan_apk" in android_names
         assert "verify_capabilities" in android_names
         audit_names = {s["name"] for s in out["audit_mcp"]}
         assert "semantic_search" in audit_names

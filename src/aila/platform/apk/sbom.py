@@ -90,7 +90,7 @@ def build_sbom(
     """Assemble a static component inventory for one APK.
 
     ``native_analysis`` is the companion
-    :func:`aila.modules.vr.apk_static.native_analysis.analyze_apk_natives`
+    :func:`aila.platform.apk.native_analysis.analyze_apk_natives`
     result; when supplied, native sonames and version hints are folded in
     without re-parsing the ELFs. Never raises on a malformed member.
     """

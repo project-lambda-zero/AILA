@@ -464,7 +464,7 @@ function NotesTab({ targetId }: { targetId: string }) {
 }
 
 /** Per-bucket renderer for the apk_overview projection. The static
- * summary is a passed-through dict from androguard; we read only the
+ * summary is the in-repo static summary; we read only the
  * keys we recognise and defensively skip anything else so an upstream
  * tool version bump doesn't crash the page.
  */
@@ -516,8 +516,8 @@ function AndroidApkOverview({ overview }: { overview: ApkOverview }) {
       </h2>
 
       {/* Package metadata block. Two-column grid keeps scan-the-list ergonomic
-          for the operator. Hyphen renders when androguard didn't surface a
-          field (older APK or pipeline incomplete). */}
+          for the operator. Hyphen renders when the static summary didn't
+          surface a field (older APK or pipeline incomplete). */}
       <dl className="grid grid-cols-2 gap-3 text-sm mb-4">
         <div>
           <dt className="text-text-muted text-xs">Package</dt>

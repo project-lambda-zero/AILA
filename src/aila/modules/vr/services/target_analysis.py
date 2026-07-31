@@ -739,10 +739,10 @@ class TargetAnalysisService:
 
         fix §240 -- wall-clock optimisation: the stages that take an
         APK path as their sole input are independent (apktool, jadx,
-        androguard run against the same file with disjoint output
-        keys) so we fan them out via ``asyncio.gather``.
-        INDEX_DECOMPILED depends on JADX_DECOMPILE writing
-        ``android_mcp_decompiled_dir`` and runs sequentially after.
+        react-native extract run against the same file with disjoint
+        output keys) so we fan them out via ``asyncio.gather``.
+        INDEX_DECOMPILED and STATIC_SUMMARY depend on APK_DECODE /
+        JADX_DECOMPILE outputs and run in group 2.
 
         On a typical APK:
           - APK_DECODE        ~30s   (apktool)
@@ -1179,19 +1179,19 @@ class TargetAnalysisService:
     ) -> None:
         del tracker  # dispatch contract; state owned by _run_android_stage
         apk_path = self._resolve_apk_path(descriptor)
-        # androguard is not used. The static summary is composed in-repo:
+        # The static summary is composed in-repo:
         # apktool's decoded text AndroidManifest.xml supplies package /
         # version / permissions / exported components / sdk; the APK
         # signing block supplies certificates + scheme; a LIEF pass over
         # the bundled native libraries supplies hardening + JNI surface;
         # and a component inventory supplies the SBOM. Runs after
         # APK_DECODE so the decoded manifest is on disk.
-        from aila.modules.vr.apk_static.apk_manifest import parse_manifest
-        from aila.modules.vr.apk_static.apk_signing import parse_signing
-        from aila.modules.vr.apk_static.native_analysis import (
+        from aila.platform.apk import (
             analyze_apk_natives,
+            build_sbom,
+            parse_manifest,
+            parse_signing,
         )
-        from aila.modules.vr.apk_static.sbom import build_sbom
 
         decoded_dir = current_handles.get("android_mcp_decoded_dir")
         if not isinstance(decoded_dir, str) or not decoded_dir:

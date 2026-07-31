@@ -185,7 +185,7 @@ def test_render_case_model_partitions_tool_observables_across_three_mcp_servers(
     """G-8: tool keys from all three MCP servers (audit_mcp, ida_headless,
     android_mcp) must land in the uncapped "tool readings" bucket -- not
     the 15-key agent scratchpad bucket. Without this, android_mcp tool
-    observations (e.g. ``android_mcp.androguard_summary.apk_path=...``)
+    observations (e.g. ``android_mcp.jadx_decompile.apk_path=...``)
     get evicted alongside agent scratchpad keys and the agent re-issues
     APK static-summary calls it already paid for.
     """
@@ -194,7 +194,7 @@ def test_render_case_model_partitions_tool_observables_across_three_mcp_servers(
         observables={
             "audit_mcp.read_function.name=Foo": "fn body",
             "ida_headless.decompile.address=0x1234": "decompiled",
-            "android_mcp.androguard_summary.apk_path=/tmp/x.apk": "perms+certs",
+            "android_mcp.jadx_decompile.apk_path=/tmp/x.apk": "perms+certs",
             "audit_mcp:legacy_colon_form": "still tool",
             "android_mcp:legacy_colon_form": "still tool",
             "_directive.pivot": "must not appear",
@@ -211,7 +211,7 @@ def test_render_case_model_partitions_tool_observables_across_three_mcp_servers(
     # section; the current format puts the key and its body on separate lines.
     assert "audit_mcp.read_function.name=Foo" in rendered
     assert "ida_headless.decompile.address=0x1234" in rendered
-    assert "android_mcp.androguard_summary.apk_path=/tmp/x.apk" in rendered
+    assert "android_mcp.jadx_decompile.apk_path=/tmp/x.apk" in rendered
     assert "audit_mcp:legacy_colon_form" in rendered
     assert "android_mcp:legacy_colon_form" in rendered
     assert "fn body" in rendered

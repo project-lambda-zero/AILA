@@ -278,6 +278,7 @@ ignore = [
 # catch is an explicit observation point.
 "src/aila/platform/mcp/call_logger.py" = ["BLE001"]
 "src/aila/modules/malware/services/stall_recovery.py" = ["PLC0415"]
+"src/aila/modules/malware/services/target_analysis.py" = ["PLC0415"]
 "src/aila/modules/malware/workflow/definitions.py" = ["PLC0415"]
 # finalize + investigation_emit / _setup keep targeted deferred imports of
 # `workflow.task` symbols (run_malware_investigate / run_malware_synthesis /
@@ -288,7 +289,7 @@ ignore = [
 "src/aila/modules/malware/workflow/states/investigation_loop.py" = ["PLC0415", "PLW0603"]
 "src/aila/modules/malware/workflow/states/investigation_setup.py" = ["PLC0415", "PLW0603"]
 "src/aila/modules/vr/_task_queue.py" = ["PLC0415"]
-"src/aila/modules/vr/apk_static/native_analysis.py" = ["PLC0415"]
+"src/aila/platform/apk/native_analysis.py" = ["PLC0415"]
 "src/aila/modules/vr/agents/auto_steering.py" = ["BLE001", "PLW0603"]
 "src/aila/modules/vr/agents/outcome_dispatcher.py" = ["PLC0415"]
 "src/aila/modules/vr/agents/synthesis_agent.py" = ["PLC0415"]

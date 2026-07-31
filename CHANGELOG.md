@@ -350,7 +350,9 @@ operator action.
   inventory from Gradle / Maven / native markers. The summary shape is
   unchanged, so the audit dispatchers, PDF report, and target overview
   are unaffected. The native-library and SBOM checks, previously
-  roadmap-only, now dispatch as static checks against this data.
+  roadmap-only, now dispatch as static checks against this data. Both the
+  VR and malware modules use the same extractors, which live in a shared
+  `aila.platform.apk` package rather than inside a module.
 - The per-turn reasoning prompt is assembled by the budget-driven
   RFC-24 ContextAssembler instead of hand-concatenated, and the fixed
   render display caps (former hypothesis / scratchpad / tool-reading
@@ -408,6 +410,15 @@ operator action.
   `mobsf_scan` stage key load unchanged: the stage record ignores
   unknown keys, so no database migration is required. The target detail
   and report surfaces no longer render a MobSF section.
+- androguard is removed platform-wide. The malware module's APK static
+  summary is now composed in-repo (apktool manifest, APK signing block,
+  a LIEF native-library pass, and a component inventory) exactly like the
+  VR module, so no module calls the android-mcp `androguard_summary` tool
+  and the bridge no longer declares it. The four in-repo extractors moved
+  to a shared `aila.platform.apk` package so both modules compose the
+  same static-summary shape without importing each other. The malware APK
+  STATIC_SUMMARY stage now runs after APK_DECODE (it reads the decoded
+  manifest) instead of alongside it.
 
 ### Fixed
 

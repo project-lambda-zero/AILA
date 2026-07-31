@@ -2,7 +2,7 @@
 
 Sibling of :class:`AuditMcpBridgeTool` (for source-graph audits) and
 :class:`IDABridgeTool` (for binary disassembly). The android-mcp server
-exposes Android-specific tools (apktool, jadx, androguard, MobSF, drozer,
+exposes Android-specific tools (apktool, jadx, drozer,
 LIEF, YARA-over-decompiled, apksigner, objection, frida,
 adb, plus composite handlers) at the URL configured by the
 ``ANDROID_MCP_URL`` env var or ``vr.android_mcp_url`` config key. Default
@@ -348,7 +348,7 @@ class AndroidMcpBridgeTool(Tool):
 
     description = (
         "android-mcp Android APK audit bridge. Supports apktool_decode, "
-        "jadx_decompile, androguard_summary, drozer_scan_apk, "
+        "jadx_decompile, drozer_scan_apk, "
         "lief_so analyze, yara_scan_dir, "
         "apksigner verify, objection patchapk / explore, frida helpers, "
         "adb facade, plus composite verify_capabilities / "
@@ -363,11 +363,11 @@ class AndroidMcpBridgeTool(Tool):
     output_type = "object"
     skip_forward_signature_validation = True
 
-    # Default network timeout (seconds). MobSF static scans dominate
-    # the upper end at ~30 min -- anything longer is the stage-tracker's
+    # Default network timeout (seconds). Long-running static scans
+    # dominate the upper end -- anything longer is the stage-tracker's
     # job to reap. Per-stage StageTracker timeouts (apktool 600 s, jadx
-    # 900 s, static-summary 300 s, mobsf 1800 s) are tighter; this is
-    # only the absolute network ceiling for one HTTP call.
+    # 900 s, static-summary 300 s) are tighter; this is only the
+    # absolute network ceiling for one HTTP call.
     _DEFAULT_TIMEOUT_S: float = 1800.0
 
     # Cached tool catalog. None until first ``list_tool_specs()`` call;
@@ -446,7 +446,7 @@ class AndroidMcpBridgeTool(Tool):
 
         Args:
             action: android-mcp tool name (e.g. ``apktool_decode``,
-                ``jadx_decompile``, ``androguard_summary``).
+                ``jadx_decompile``).
             **kwargs: Parameters forwarded as JSON body fields.
 
         Returns:
@@ -461,10 +461,8 @@ class AndroidMcpBridgeTool(Tool):
         # ran exactly once during ingestion (TargetAnalysisService);
         # results are persisted on vr_targets._mcp_handles_json +
         # audit_mcp index id. Letting the agent retry them wastes
-        # minutes per call (mobsf re-uploads + re-scans, jadx
-        # re-decompiles 14k classes), risks corrupting the canonical
-        # output, and by design mobsf output MUST NOT
-        # reach prompts.
+        # minutes per call (jadx re-decompiles 14k classes) and risks
+        # corrupting the canonical output.
         #
         # Observed live on one investigation: yuki + 5 siblings looped 50+
         # turns each calling apktool_decode with invented `focus=`
@@ -715,10 +713,10 @@ class AndroidMcpBridgeTool(Tool):
         # Observed before the fix: bridge silently downgraded
         # to empty catalog -> validator passed every agent kwarg
         # through unchecked -> android-mcp raised TypeError on every
-        # call (`androguard_summary() got an unexpected keyword
+        # call (`jadx_decompile() got an unexpected keyword
         # argument 'index_id'`, `find_secrets()` rejecting `apk_path`,
         # etc.) -> tool_executor HARD-BLOCK after 3 failures per tool
-        # per branch. Diagnosed on inv <inv-uuid> turn 23+ at 01:36:44.
+        # per branch.
         if isinstance(raw, dict):
             inner = raw.get("tools")
             if isinstance(inner, list):
@@ -746,12 +744,11 @@ class AndroidMcpBridgeTool(Tool):
         # produces a spec with required=[] / properties={} that the
         # validator cannot reject anything against.
         #
-        # Diagnosed 2026-06-14 on inv <inv-uuid>: agent was firing
-        # `androguard_summary()` without `apk_path` (75x), calling
-        # `find_secrets(apk_path=...)` when the tool actually wants
-        # `decompiled_dir` (9x), missing `device_serial`+`service` on
-        # adb_dumpsys (75x), etc. All would have been caught by the
-        # validator if the schemas had been loaded.
+        # Observed live: agent was firing `jadx_decompile()` without
+        # `apk_path`, calling `find_secrets(apk_path=...)` when the tool
+        # actually wants `decompiled_dir`, missing `device_serial`+
+        # `service` on adb_dumpsys, etc. All would have been caught by
+        # the validator if the schemas had been loaded.
         #
         # Fetch every schema in parallel via asyncio.gather to keep
         # cold-start under 1s. On per-tool fetch failure, fall back to

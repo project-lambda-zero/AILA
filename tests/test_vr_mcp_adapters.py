@@ -77,7 +77,7 @@ class TestRegistry:
         assert "android_mcp" in KNOWN_TOOLS
         assert len(IDA_HEADLESS_TOOLS) >= 80
         assert len(AUDIT_MCP_TOOLS) >= 50
-        assert len(ANDROID_MCP_TOOLS) >= 22
+        assert len(ANDROID_MCP_TOOLS) >= 20
 
     def test_registered_tools_includes_all_known(self) -> None:
         from aila.platform.mcp.adapters.known_tools import _ALWAYS_SUPPRESS
@@ -223,18 +223,18 @@ class TestAndroidMcpDispatch:
         # this to surface "no such tool" instead of a silent 404.
         assert get_adapter("android_mcp", "bogus_handler") is None
 
-    def test_androguard_summary_parses_as_android_mcp_call(self) -> None:
+    def test_jadx_decompile_parses_as_android_mcp_call(self) -> None:
         command = json.dumps({
-            "tool": "android_mcp.androguard_summary",
+            "tool": "android_mcp.jadx_decompile",
             "args": {"apk_path": "/tmp/sample.apk"},
         })
         parsed = parse_command(command)
         assert parsed is not None
         tool_id, args = parsed
-        assert tool_id == "android_mcp.androguard_summary"
+        assert tool_id == "android_mcp.jadx_decompile"
         server_id, _, tool_name = tool_id.partition(".")
         assert server_id == "android_mcp"
-        assert tool_name == "androguard_summary"
+        assert tool_name == "jadx_decompile"
         assert args == {"apk_path": "/tmp/sample.apk"}
 
     def test_tool_executor_registers_android_mcp_bridge(self) -> None:

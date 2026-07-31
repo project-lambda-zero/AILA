@@ -179,7 +179,7 @@ function KindIcon({ kind }: { kind: TargetKind }) {
 }
 
 // Row label resolver. For `android_apk` targets, once STATIC_SUMMARY
-// completes the androguard-discovered package name is the most useful
+// completes the discovered package name is the most useful
 // identifier (`com.examplecorp.selfservis` beats whatever the operator
 // typed for `display_name`). Falls back to `display_name` for every
 // other kind, and for `android_apk` rows whose static summary hasn't

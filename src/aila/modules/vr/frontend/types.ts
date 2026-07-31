@@ -171,7 +171,7 @@ export interface VRTargetCreate {
 /** APK-specific projection from mcp_handles_json. Each field is
  * optional because the pipeline writes them in stages -- the operator
  * sees what's ready as it appears. `static_summary` is passed through
- * as an opaque record because it varies by androguard version and the
+ * as an opaque record because it varies by APK and the
  * renderer reads only the keys it recognises (defensive parsing). */
 export interface ApkOverview {
   sha256?: string;

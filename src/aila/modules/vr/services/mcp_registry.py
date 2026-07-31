@@ -53,9 +53,9 @@ MCP_SERVERS: tuple[dict[str, str], ...] = (
         "id": "android_mcp",
         "name": "android-mcp",
         "description": (
-            "Android APK audit MCP. Owns apktool/jadx decoding, androguard "
-            "static analysis, signing-scheme verification, "
-            "native-lib hardening, and composite mobile risk scoring."
+            "Android APK audit MCP. Owns apktool/jadx decoding, "
+            "signing-scheme verification, native-lib hardening, and "
+            "composite mobile risk scoring."
         ),
         "env_var": "ANDROID_MCP_URL",
         "config_key": "android_mcp_url",
