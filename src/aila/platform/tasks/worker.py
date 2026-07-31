@@ -298,6 +298,7 @@ async def reaper(ctx: dict[str, object]) -> None:
         await _sweep_orphan_running_tasks(
             grace_seconds=_REAPER_CRON_GRACE_S,
             reap_null_heartbeat=False,
+            trust_present_lock=True,
         )
     except Exception as exc:
         _log.warning("reaper: orphan running-task sweep failed: %s", exc, exc_info=True)
@@ -673,6 +674,8 @@ async def _workflow_cursor_is_resumable(session: Any, task_id: str) -> bool:
 async def _sweep_orphan_running_tasks(
     grace_seconds: int = 30,
     reap_null_heartbeat: bool = True,
+    *,
+    trust_present_lock: bool = False,
 ) -> None:
     """Reap orphan tasks at startup using the same rules as the cron reaper,
     PLUS a reverse sweep that catches tasks whose ARQ lock was already
@@ -732,6 +735,21 @@ async def _sweep_orphan_running_tasks(
                 #   (2) heartbeat older than startup cutoff → prior worker died
                 #   (3) no heartbeat AND started_at older than the same cutoff
                 lock_exists = await client.exists(f"{ARQ_IN_PROGRESS_PREFIX}{rec.id}")
+                if lock_exists and trust_present_lock:
+                    # Cron mode: a present ARQ in-progress lock means arq
+                    # still owns this job. Because heartbeat_at updates only
+                    # per workflow state transition (engine._commit_transition),
+                    # a job parked in one long state -- a multi-minute
+                    # reasoning turn or a slow decode -- looks stale even
+                    # though it keeps running. Reaping such a job drops its
+                    # lock and re-enqueues it, letting arq run the same job
+                    # id twice (a KeyError on arq's own cleanup). The
+                    # reverse sweep handles lock-absent orphans only; a
+                    # leaked lock expires at the arq job timeout and a later
+                    # sweep reaps it once the lock has gone. Lock-present
+                    # staleness stays with _reconcile_orphan_arq_locks (24h
+                    # threshold).
+                    continue
                 if lock_exists and hb is not None and hb > stale_cutoff:
                     # Lock present AND heartbeat is fresh -- legit, peer owns it.
                     continue

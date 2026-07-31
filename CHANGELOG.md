@@ -444,6 +444,17 @@ operator action.
 
 ### Fixed
 
+- The periodic task reaper no longer cancels a running investigation whose
+  arq in-progress lock is present but whose heartbeat is stale.
+  `heartbeat_at` is written per workflow state transition, not
+  continuously, so a job in one long state (a multi-minute reasoning turn
+  or a slow decode) went stale while still running; the reverse-sweep then
+  deleted its lock and re-enqueued it, letting arq re-dispatch the same job
+  id -- which collided on arq's per-job bookkeeping (`KeyError`) and ran
+  the investigation twice. The cron reverse-sweep now trusts a present
+  lock and acts only on lock-absent orphans (its stated purpose); a
+  genuinely leaked lock still expires at the arq job timeout and is reaped
+  by a later sweep. Startup crash-recovery is unchanged.
 - The android decode stages (APK decode, jadx decompile, React Native
   extract) run sequentially instead of concurrently. Each spawns a heavy
   JVM subprocess on the single android-mcp host; the previous parallel
