@@ -775,6 +775,21 @@ export interface MasvsControlVerdict {
   primary_outcome_id: string | null;
   reason: string | null;
   evidence_locations: MasvsEvidenceLocation[];
+  /** Panel-summary projection carried from the child investigation's
+   *  canonical outcome (`payload.panel_summary`). All three fields are
+   *  optional -- historical rows written before the synthesis-scope
+   *  contract was introduced omit them, and the aggregate leaves them
+   *  unset for children that never resolved a panel_summary (timeout,
+   *  cost cap, no primary outcome). */
+  /** What the panel examined before the verdict: the control under
+   *  audit, the code surface inspected, and the evidence base. */
+  scope?: string | null;
+  /** One-sentence headline verdict written by the synthesizer. */
+  headline?: string | null;
+  /** Up to 12 bullet points merged from the child synthesis'
+   *  points_of_agreement + points_of_disagreement (disagreement rows
+   *  are prefixed with ``Disagreement: `` by the aggregator). */
+  key_points?: string[];
 }
 
 export interface MasvsAuditAggregate {
@@ -785,4 +800,69 @@ export interface MasvsAuditAggregate {
   verdicts: MasvsControlVerdict[];
   by_group: Partial<Record<MasvsGroup, MasvsControlVerdict[]>>;
   summary_counts: Partial<Record<MasvsVerdict, number>>;
+}
+
+// ─── APK static-analysis audit aggregate (mirrors MASVS shape) ────────
+//
+// Wire schema matching ``aila.modules.vr.contracts.apk_static``. The
+// endpoint ``GET /vr/targets/{id}/apk-static-audit-aggregate`` returns
+// ``DataEnvelope<ApkStaticAuditAggregate>`` once the parent
+// ``kind=apk_static_audit`` investigation exists. Verdict + group string
+// unions mirror the enums on the backend; keep them in sync when adding
+// new values to either side.
+//
+// NOTE: These types are landed ahead of the full aggregate SCREEN --
+// downstream shell code (dispatcher, list types) needs the shape
+// available for type-checking. Rendering the per-check table is
+// tracked as a follow-up phase.
+
+export type ApkStaticVerdict = MasvsVerdict;
+
+export type ApkStaticGroup =
+  | "MANIFEST"
+  | "SECRETS"
+  | "WEBVIEW"
+  | "STORAGE"
+  | "IPC"
+  | "CRYPTO"
+  | "NETWORK"
+  | "NATIVE"
+  | "SBOM"
+  | "CHAINS"
+  | "AUTH_LOCAL"
+  | "DESERIALIZATION"
+  | "CODELOAD"
+  | "RESILIENCE"
+  | "PRIVACY"
+  | "FLUTTER";
+
+export interface ApkStaticEvidenceLocation {
+  file: string;
+  function: string;
+}
+
+export interface ApkStaticControlVerdict {
+  /** ApkStaticCheck.id -- e.g. ``APK-MANIFEST-DEBUGGABLE``. */
+  control_id: string;
+  verdict: ApkStaticVerdict;
+  confidence: number;
+  child_investigation_id: string;
+  primary_outcome_id: string | null;
+  reason: string | null;
+  evidence_locations: ApkStaticEvidenceLocation[];
+  /** See :func:`MasvsControlVerdict.scope`. Optional for the same
+   *  historical-compat reason. */
+  scope?: string | null;
+  headline?: string | null;
+  key_points?: string[];
+}
+
+export interface ApkStaticAuditAggregate {
+  parent_id: string;
+  target_id: string;
+  apk_static_spec_version: string;
+  generated_at: string; // ISO 8601 UTC
+  verdicts: ApkStaticControlVerdict[];
+  by_group: Partial<Record<ApkStaticGroup, ApkStaticControlVerdict[]>>;
+  summary_counts: Partial<Record<ApkStaticVerdict, number>>;
 }

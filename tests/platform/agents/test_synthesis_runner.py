@@ -107,6 +107,7 @@ class _Config:
 
 
 _VR_CANNED = VRSynthesisResponse(
+    scope="Reviewed the InferMaps type-confusion hypothesis against the cited src call sites.",
     headline_verdict="Panel converged on a real TypeConfusion in InferMaps.",
     points_of_agreement=["Halvar + Maddie both cite src/foo.cc:120"],
     points_of_disagreement=["Renzo dissents on exploitability"],
@@ -121,6 +122,7 @@ _MW_CANNED = MalwareSynthesisResponse(
         "Brand string AsyncRAT in .rsrc UTF-16LE config block; "
         "matches Renzo IOCs; matches Wei capability cluster."
     ),
+    scope="Enumerated the family-attribution surface: the .rsrc UTF-16LE config block and import table.",
     headline_verdict=(
         "AsyncRAT sample -- credential theft + persistent backdoor. "
         "Stage 1 fetch to evil.example.com. Quarantine + pivot."

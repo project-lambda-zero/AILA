@@ -19,6 +19,19 @@ operator action.
 
 ### Added
 
+- Reasoning synthesis records an explicit audit scope. Each consolidated
+  panel verdict now opens with what was examined -- the control or check
+  under audit, the code surface inspected, and the evidence base -- so a
+  reader knows the coverage before the verdict instead of only seeing a
+  one-line conclusion. The scope is carried on the synthesis output and
+  promoted onto the investigation panel summary for both the
+  vulnerability-research and malware synthesisers.
+- An apk_static audit aggregate surface: `GET
+  /vr/targets/{id}/apk-static-audit-aggregate` returns per-check verdicts
+  grouped by apk_static group, mirroring the MASVS aggregate. Each verdict
+  row carries the child synthesis scope, headline, and key points, plus
+  the evidence locations, so the aggregate is self-describing per check
+  rather than a bare pass/fail list.
 - An APK static-analysis audit: a catalog of concrete, statically-
   answerable checks plus a dispatcher that fans one investigation per
   check against an android_apk target. The endpoint
@@ -342,6 +355,15 @@ operator action.
 
 ### Changed
 
+- The apk_static audit (evidence-backed checks with concrete source
+  locations) is the primary APK audit on the target detail page; the
+  MASVS compliance audit stays available but is presented as the
+  secondary path.
+- Audit aggregate verdict rows carry the child synthesis scope, headline,
+  and key points (merged agreement and named disagreement) rather than
+  only a terse agent summary, so the per-control view reports what was
+  examined and why, not just the verdict. Rows from older outcomes with
+  no panel summary keep the compact layout.
 - The APK static summary (package, version, permissions, exported
   components, certificates, SDK levels) is composed in-repo rather than
   by androguard: the manifest fields come from apktool's decoded
@@ -422,6 +444,12 @@ operator action.
 
 ### Fixed
 
+- Android ingestion stage timeouts raised to 30 minutes for APK decode,
+  jadx decompile, and React Native extract. The previous 5-15 minute caps
+  pre-empted apktool and jadx on mid-size APKs -- the single-worker
+  android-mcp serializes the parallel decode stages, so a stage can wait
+  behind its siblings and exceed a tight budget -- leaving the target
+  stuck at a failed decode with the static summary never running.
 - Application `aila.*` loggers are no longer disabled when a migration
   runs in-process. The Alembic environment called `fileConfig` with the
   default `disable_existing_loggers=True`, which silently disabled every

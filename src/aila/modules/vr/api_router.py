@@ -51,6 +51,7 @@ from ._task_queue import default_task_queue
 from .agents.outcome_dispatcher import OutcomeDispatcher
 from .contracts import (
     AnalysisState,
+    ApkStaticAuditAggregate,
     ApkStaticAuditDispatchResponse,
     BranchStatus,
     CampaignStatus,
@@ -4022,6 +4023,125 @@ def create_vr_router() -> APIRouter:
             # race between the lookup above and the aggregate query
             # (parent deleted mid-request) surfaces as 404 so the
             # caller gets the same shape as the up-front guard.
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=str(exc),
+            ) from exc
+
+        return DataEnvelope(data=aggregate)
+
+    @router.get(
+        "/targets/{target_id}/apk-static-audit-aggregate",
+        response_model=DataEnvelope[ApkStaticAuditAggregate],
+        summary=(
+            "Return the structured APK static-analysis audit aggregate "
+            "as JSON. Mirrors the MASVS aggregate endpoint: one verdict "
+            "row per child investigation, grouped by APK static group, "
+            "with verifier confidence and evidence links. Partial "
+            "aggregates are valid -- children still in flight render "
+            "as INCONCLUSIVE."
+        ),
+    )
+    @limiter.limit("30/minute")
+    async def get_apk_static_audit_aggregate(
+        request: Request,
+        target_id: str,
+        audit_id: str = Query(
+            ...,
+            description=(
+                "Parent VRInvestigation id (kind=apk_static_audit) "
+                "returned by "
+                "POST /vr/targets/{target_id}/apk-static-audit."
+            ),
+        ),
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[ApkStaticAuditAggregate]:
+        """Return the JSON aggregate for ``audit_id`` under ``target_id``.
+
+        Refuses with the same shape as the MASVS aggregate endpoint so a
+        frontend can rely on consistent error semantics across the two
+        audit surfaces:
+
+        * **404** when the target is not visible to the caller's team,
+          when the parent investigation does not exist, or when it
+          exists but points at a different target (defensive guard
+          against pasted audit ids under the wrong target context).
+        * **409** when the parent exists but its ``kind`` is not
+          ``apk_static_audit`` -- the collector is specific to APK
+          static batches.
+
+        Aggregation is forwarded to :func:`collect_apk_static_findings`.
+        The endpoint does *not* materialize a PDF -- the APK static PDF
+        renderer lands in a later phase and will consume the same
+        aggregate.
+        """
+        del request
+
+        from aila.modules.vr.apk_static.aggregate import (
+            collect_apk_static_findings,
+        )
+
+        from .db_models import VRInvestigationRecord, VRTargetRecord
+
+        async with UnitOfWork() as uow:
+            target = (await uow.session.exec(
+                _team_filter(
+                    select(VRTargetRecord).where(
+                        VRTargetRecord.id == target_id,
+                    ),
+                    VRTargetRecord, auth,
+                ),
+            )).first()
+            if target is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"Target {target_id} not found or not owned "
+                        "by your team."
+                    ),
+                )
+            parent = (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == audit_id,
+                    ),
+                    VRInvestigationRecord, auth,
+                ),
+            )).first()
+            if parent is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"APK static audit {audit_id} not found or not "
+                        "owned by your team."
+                    ),
+                )
+            if parent.kind != InvestigationKind.APK_STATIC_AUDIT.value:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Investigation {audit_id} kind={parent.kind!r}; "
+                        "APK static aggregate requires a parent "
+                        "investigation with kind='apk_static_audit'."
+                    ),
+                )
+            if parent.target_id != target_id:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"APK static audit {audit_id} does not belong "
+                        f"to target {target_id}."
+                    ),
+                )
+
+        try:
+            aggregate = await collect_apk_static_findings(audit_id)
+        except ValueError as exc:
+            # collect_apk_static_findings re-validates parent kind /
+            # existence; a race between the lookup above and the
+            # aggregate query (parent deleted mid-request) surfaces as
+            # 404 so the caller gets the same shape as the up-front
+            # guard.
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=str(exc),

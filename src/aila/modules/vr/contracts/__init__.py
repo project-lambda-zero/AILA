@@ -6,7 +6,9 @@ from __future__ import annotations
 
 from .advisory import CVSSVector, CWEMapping, VRAdvisory
 from .apk_static import (
+    ApkStaticAuditAggregate,
     ApkStaticAuditDispatchResponse,
+    ApkStaticControlVerdict,
 )
 from .audit_memo import (
     AuditMemoCreate,
@@ -95,6 +97,7 @@ from .masvs import (
     MasvsAuditAggregate,
     MasvsAuditDispatchResponse,
     MasvsControlVerdict,
+    MasvsEvidenceLocation,
     MasvsVerdict,
 )
 from .message import (
@@ -183,11 +186,15 @@ __all__ = [
     "VRInvestigationTargetAttach",
     "VRInvestigationTargetDetach",
     "VRInvestigationTargetSummary",
+    "ApkStaticAuditAggregate",
     "ApkStaticAuditDispatchResponse",
+    "ApkStaticControlVerdict",
     "MasvsAuditAggregate",
     "MasvsAuditDispatchResponse",
     "MasvsControlVerdict",
+    "MasvsEvidenceLocation",
     "MasvsVerdict",
+
     "MitigationFlags",
     "OperatorIntent",
     "OutcomeConfidence",

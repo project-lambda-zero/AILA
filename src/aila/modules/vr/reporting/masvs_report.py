@@ -1220,9 +1220,47 @@ def _append_control_subsection(
     #     miss + LLM down) we fall back to 2b.
     if verdict.report_section:
         _render_report_section_block(story, verdict.report_section, styles)
+    elif verdict.scope or verdict.headline or verdict.key_points:
+        # 2b. SYNTHESIS SURFACE -- child investigation's panel_summary
+        #     projected onto the aggregate row: what the audit examined
+        #     (scope), the panel's one-line conclusion (headline), and
+        #     the supporting bullets (points_of_agreement +
+        #     'Disagreement: '-prefixed points_of_disagreement). Preferred
+        #     over the raw agent_summary because a reader gets both
+        #     coverage AND conclusion without walking a paragraph.
+        if verdict.scope:
+            story.append(Spacer(1, 0.08 * inch))
+            story.append(Paragraph(
+                "<font color='#9c9c9c' size='8'><b>SCOPE</b></font>",
+                styles["meta"],
+            ))
+            story.append(Paragraph(
+                f"<font size='9'>{_escape_for_paragraph(verdict.scope)}</font>",
+                styles["body"],
+            ))
+        if verdict.headline:
+            story.append(Spacer(1, 0.08 * inch))
+            story.append(Paragraph(
+                f"<font color='#ffd7af' size='11'><b>"
+                f"{_escape_for_paragraph(verdict.headline)}</b></font>",
+                styles["body"],
+            ))
+        if verdict.key_points:
+            story.append(Spacer(1, 0.05 * inch))
+            story.append(Paragraph(
+                "<font color='#f0a8c7' size='8'><b>KEY POINTS</b></font>",
+                styles["meta"],
+            ))
+            for point in verdict.key_points:
+                story.append(Paragraph(
+                    f"<font size='9'>&bull;&nbsp; "
+                    f"{_escape_for_paragraph(point)}</font>",
+                    styles["body"],
+                ))
     elif verdict.agent_summary:
-        # 2b. RAW AGENT SUMMARY fallback -- only when the writer agent
-        #     didn't run. Less polished but still APK-specific.
+        # 2c. RAW AGENT SUMMARY fallback -- only when neither the
+        #     writer-agent structured section nor the synthesis surface
+        #     is available. Less polished but still APK-specific.
         story.append(Spacer(1, 0.08 * inch))
         story.append(Paragraph(
             "<font color='#ffd7af'><b>AUDIT FINDINGS</b></font>",
@@ -1276,10 +1314,18 @@ def _append_control_subsection(
         story.append(ev_table)
 
     # 4. GENERIC VERIFICATION STEPS -- only rendered when the agent
-    #    didn't produce a summary AND there's no evidence either.
-    #    Otherwise the catalog's generic "Run apkanalyzer + grep for X"
-    #    instructions just add noise to a report a real auditor reads.
-    no_agent_content = not verdict.agent_summary and not verdict.evidence_locations
+    #    didn't produce a summary AND there's no evidence either AND
+    #    the panel synthesis produced nothing either. Otherwise the
+    #    catalog's generic "Run apkanalyzer + grep for X" instructions
+    #    just add noise to a report a real auditor reads.
+    no_agent_content = (
+        not verdict.agent_summary
+        and not verdict.evidence_locations
+        and not verdict.scope
+        and not verdict.headline
+        and not verdict.key_points
+        and not verdict.report_section
+    )
     if no_agent_content and control is not None and control.verification_steps:
         story.append(Spacer(1, 0.08 * inch))
         story.append(Paragraph(

@@ -47,6 +47,17 @@ class SynthesisResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    scope: str = Field(
+        min_length=1,
+        max_length=1000,
+        description=(
+            "What the panel examined before the verdict: the control/"
+            "check under audit, the code surface inspected (files/"
+            "functions/manifest/resources), and the evidence base. "
+            "Written so a reader knows the audit's coverage without "
+            "opening the child investigation."
+        ),
+    )
     headline_verdict: str = Field(
         min_length=1,
         max_length=600,
@@ -89,6 +100,7 @@ class SynthesisResponse(BaseModel):
             return "\n".join(f"- {item}" for item in items)
 
         return (
+            f"### Scope\n{self.scope.strip()}\n\n"
             f"**Headline verdict.** {self.headline_verdict.strip()}\n\n"
             f"### Points of agreement\n{_bulleted(self.points_of_agreement)}\n\n"
             f"### Points of disagreement\n"
@@ -106,6 +118,12 @@ _SYSTEM_PROMPT = (
     "different LLM routings and produced one terminal outcome each. Your "
     "job is to read all three and produce ONE consolidated verdict.\n\n"
     "Rules:\n"
+    "- Open with the scope. Before the verdict, state in one short "
+    "paragraph what control/check was under audit, the code surface "
+    "examined (specific files/functions/manifest entries/resources), "
+    "and the evidence base (tool queries, decompiler reads, config "
+    "snippets) the panel relied on. The reader must know the audit's "
+    "coverage before reading the verdict.\n"
     "- Be honest about disagreement. If the critic dissents from the "
     "researcher's hypothesis, name the dissent explicitly. Do not "
     "average the answers -- pick the verdict with the strongest "
@@ -200,6 +218,11 @@ def _render_panel(
     lines.append(
         "# Synthesis instruction\n\n"
         "Produce ONE consolidated verdict in markdown. Structure:\n"
+        "0. **Scope** -- one short paragraph naming the control/check "
+        "under audit, the surface inspected (files/functions/manifest "
+        "entries/resources), and the evidence base (tool queries, "
+        "decompiler reads, config snippets). The reader must know the "
+        "audit's coverage before reading the verdict.\n"
         "1. **Headline verdict** -- single sentence stating whether the "
         "investigation found a bug, found a patch in place, or could not "
         "establish either.\n"
@@ -280,27 +303,43 @@ class SynthesisAgent(SynthesisRunnerBase):
         payload: dict[str, Any],
         parsed: BaseModel,
     ) -> None:
-        """Persist the synthesiser's ``recommended_next_actions`` list.
+        """Promote the structured synthesis fields onto ``panel_summary``.
 
         The base ``_commit_synthesis`` writes ``panel_summary`` with
-        ``narrative`` + ``personas`` + ``synthesized_at``; the parsed
-        LLM response also carries a ``recommended_next_actions`` list
-        (the panel's structured hand-off of what to audit next), but
-        that list would otherwise live only inside the markdown
-        narrative. The follow-up-discovery take-over service reads
-        ``payload['panel_summary']['recommended_next_actions']`` to
-        decide whether to spawn a child investigation, so we promote
-        the structured field back onto the panel_summary here.
+        ``narrative`` + ``personas`` + ``synthesized_at``. The parsed
+        LLM response also carries the schema fields that per-control
+        aggregate rows (MASVS, apk_static) need without re-parsing the
+        markdown narrative: ``scope``, ``headline_verdict``,
+        ``points_of_agreement``, ``points_of_disagreement``,
+        ``unresolved_questions``, ``recommended_next_actions``. Promote
+        each onto ``panel_summary`` so a downstream projector can read
+        ``payload['panel_summary'][<field>]`` directly.
 
-        No-op when the LLM produced an empty list -- the follow-up
-        primitive's own emptiness guard is the last line of defence,
-        but writing ``[]`` would be write amplification without a
-        readable-state change.
+        ``recommended_next_actions`` also feeds the follow-up-discovery
+        take-over service which spawns child investigations from the
+        panel's structured hand-off.
+
+        Runtime type of ``parsed`` is :class:`SynthesisResponse`; the
+        abstract base annotates it as ``BaseModel`` to keep the hook
+        schema-agnostic. Attribute reads go through :func:`getattr`
+        with safe defaults so a payload that arrives with a partial
+        response (schema evolution, tests) still commits.
         """
-        recs = getattr(parsed, "recommended_next_actions", None) or []
-        if not recs:
-            return
         panel_summary = payload.get("panel_summary")
         if not isinstance(panel_summary, dict):
             return
-        panel_summary["recommended_next_actions"] = [str(r) for r in recs]
+        scope = getattr(parsed, "scope", None)
+        if isinstance(scope, str) and scope.strip():
+            panel_summary["scope"] = scope.strip()
+        headline = getattr(parsed, "headline_verdict", None)
+        if isinstance(headline, str) and headline.strip():
+            panel_summary["headline_verdict"] = headline.strip()
+        for field in (
+            "points_of_agreement",
+            "points_of_disagreement",
+            "unresolved_questions",
+            "recommended_next_actions",
+        ):
+            items = getattr(parsed, field, None) or []
+            if items:
+                panel_summary[field] = [str(item) for item in items]
