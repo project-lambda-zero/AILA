@@ -158,7 +158,11 @@ def test_build_branch_summary_projects_both_contracts(
     assert summary.investigation_id == "inv-1"
     assert summary.status.value == "active"
     assert summary.persona_voice is not None
-    assert summary.persona_voice.value == "halvar"
+    # VRBranchSummary types persona_voice as an open str (specialist voices
+    # are user-extensible), while MalwareBranchSummary keeps the PersonaVoice
+    # StrEnum. StrEnum compares equal to its value, so a bare == check holds
+    # for both projections.
+    assert summary.persona_voice == "halvar"
     assert summary.fork_reason == "initial"
     assert summary.closed_reason == ""
     assert summary.cursor_state == "investigation_loop"

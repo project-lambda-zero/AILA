@@ -188,6 +188,24 @@ class DomainProfileRegistry:
 _STRATEGY_REGISTRY = StrategyRegistry()
 _DOMAIN_PROFILE_REGISTRY = DomainProfileRegistry()
 
+# The strategy families the platform recognises without a module
+# registration. These are exactly the families ``select_strategy_family``
+# can return; keep the two in sync. ``resolve_domain_profile`` uses this
+# set to adapt a domain_id that names a built-in family into a
+# single-family profile, while a domain_id that names neither a
+# registered profile nor a built-in family falls back to ``generic``.
+_BUILTIN_STRATEGY_FAMILIES: frozenset[str] = frozenset({
+    "generic",
+    "mobile_reverse",
+    "vulnerability_research",
+    "network_forensics",
+    "memory_forensics",
+    "persistence_hunt",
+    "web_pentest",
+    "malware_static",
+    "filesystem_triage",
+})
+
 
 def register_reasoning_strategy(declaration: ReasoningStrategyDeclaration) -> None:
     """Register a module-declared strategy family into the platform registry."""
@@ -243,8 +261,11 @@ class CyberReasoningEngine:
         1. Operator-supplied override from ConfigRegistry under
            ``reasoning_domain_profile_{domain_id}`` (cached).
         2. Module-registered profile from the DomainProfileRegistry.
-        3. Generic single-strategy profile (final fallback for unknown
-           domains).
+        3. Single-strategy self-adapter when ``domain_id`` names a
+           built-in strategy family (``_BUILTIN_STRATEGY_FAMILIES``).
+        4. Generic single-strategy profile (final fallback for a
+           domain_id that names neither a registered profile nor a
+           built-in family).
         """
         override = self._load_profile_override(domain_id)
         if override is not None:
@@ -252,6 +273,14 @@ class CyberReasoningEngine:
         profile = _DOMAIN_PROFILE_REGISTRY.resolve(domain_id)
         if profile is not None:
             return profile
+        if domain_id in _BUILTIN_STRATEGY_FAMILIES and domain_id != "generic":
+            return ReasoningDomainProfile(
+                domain_id=domain_id,
+                task_type=domain_id,
+                description="Cross-domain adapter for a built-in strategy family.",
+                allowed_strategies=[domain_id],
+                default_strategy=domain_id,
+            )
         return ReasoningDomainProfile(
             domain_id=domain_id,
             task_type=domain_id,

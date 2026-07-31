@@ -422,6 +422,17 @@ operator action.
 
 ### Fixed
 
+- Application `aila.*` loggers are no longer disabled when a migration
+  runs in-process. The Alembic environment called `fileConfig` with the
+  default `disable_existing_loggers=True`, which silently disabled every
+  logger created before it; any host that migrated before configuring
+  logging then dropped subsequent log records. The call now passes
+  `disable_existing_loggers=False`, preserving the Alembic and SQLAlchemy
+  logger configuration without clobbering the application hierarchy.
+- `resolve_domain_profile` adapts a domain id that names a built-in
+  reasoning strategy family into a single-family profile instead of the
+  blanket generic profile. A domain id that names neither a registered
+  profile nor a built-in family still falls back to generic.
 - APK ingestion now indexes the decompiled source tree on Windows. The
   unified staging directory linked the jadx output with a directory
   symlink, which the indexer's directory walk skips, so the entire
