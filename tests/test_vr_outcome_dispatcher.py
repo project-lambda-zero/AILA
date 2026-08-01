@@ -67,9 +67,10 @@ class TestTargetSignature:
 class TestRoutingTableCoverage:
     """Verify _NOT_YET_DISPATCHABLE covers every kind not handled directly."""
 
-    def test_six_kinds_have_real_handlers(self) -> None:
-        # These six are explicitly dispatched -- should NOT appear in
-        # _NOT_YET_DISPATCHABLE.
+    def test_ten_kinds_have_real_handlers(self) -> None:
+        # Every dispatchable D-43 outcome kind -- everything except the
+        # terminal ASSESSMENT_REPORT -- routes to a real handler and
+        # must NOT appear in _NOT_YET_DISPATCHABLE.
         for handled in (
             OutcomeKind.AUDIT_MEMO,
             OutcomeKind.DIRECT_FINDING,
@@ -77,21 +78,20 @@ class TestRoutingTableCoverage:
             OutcomeKind.CAMPAIGN_LAUNCH,
             OutcomeKind.PROFILE_SPEC_DRAFT,
             OutcomeKind.PATCH_ASSESSMENT_REPORT,
+            OutcomeKind.STRATEGY_DESCRIPTOR,
+            OutcomeKind.CRASH_TRIAGE_REPORT,
+            OutcomeKind.CONFIG_DELTA,
+            OutcomeKind.SUB_INVESTIGATION,
         ):
             assert handled not in _NOT_YET_DISPATCHABLE
 
-    def test_remaining_5_kinds_listed_explicitly(self) -> None:
-        # The other 5 of 11 D-43 outcome kinds must each be in the
-        # NOT_YET_DISPATCHABLE map so the dispatcher emits SKIPPED with
-        # a real reason rather than silently no-op.
-        expected_not_yet = {
+    def test_only_assessment_report_remains_skipped(self) -> None:
+        # ASSESSMENT_REPORT is the ONE kind still routed through
+        # _NOT_YET_DISPATCHABLE -- assessment reports are terminal
+        # narrative summaries with no downstream consumer to feed.
+        assert set(_NOT_YET_DISPATCHABLE.keys()) == {
             OutcomeKind.ASSESSMENT_REPORT,
-            OutcomeKind.STRATEGY_DESCRIPTOR,
-            OutcomeKind.CONFIG_DELTA,
-            OutcomeKind.CRASH_TRIAGE_REPORT,
-            OutcomeKind.SUB_INVESTIGATION,
         }
-        assert set(_NOT_YET_DISPATCHABLE.keys()) == expected_not_yet
 
     def test_every_outcome_kind_accounted_for(self) -> None:
         # No kind should be a silent gap.
@@ -102,6 +102,10 @@ class TestRoutingTableCoverage:
             OutcomeKind.CAMPAIGN_LAUNCH,
             OutcomeKind.PROFILE_SPEC_DRAFT,
             OutcomeKind.PATCH_ASSESSMENT_REPORT,
+            OutcomeKind.STRATEGY_DESCRIPTOR,
+            OutcomeKind.CRASH_TRIAGE_REPORT,
+            OutcomeKind.CONFIG_DELTA,
+            OutcomeKind.SUB_INVESTIGATION,
         }
         skipped = set(_NOT_YET_DISPATCHABLE.keys())
         all_listed = handled | skipped
@@ -122,13 +126,20 @@ class _FakeKnowledge:
         metadata: dict | None = None,
         dedup_key: str | None = None,
         session=None,
+        **extras: object,
     ) -> dict:
+        # KnowledgeService.store accepts a growing set of RFC-12 opt-in
+        # keywords (extract_entities, link_neighbors, enrich, etc.).
+        # Swallow anything the real signature takes so the stub tracks
+        # the production surface without needing to be re-typed each
+        # time a caller opts into a new flag.
         self.calls.append(
             {
                 "namespace": namespace,
                 "content": content,
                 "metadata": metadata or {},
                 "dedup_key": dedup_key,
+                "extras": dict(extras),
             },
         )
         return {
@@ -163,7 +174,11 @@ class TestKnowledgeStub:
 from dataclasses import dataclass  # noqa: E402
 from unittest.mock import AsyncMock, MagicMock, patch  # noqa: E402
 
-from aila.modules.vr.agents.outcome_dispatcher import OutcomeDispatcher  # noqa: E402
+from aila.modules.vr.agents.outcome_dispatcher import (  # noqa: E402
+    MAX_SUB_INVESTIGATION_DEPTH,
+    MAX_SUB_INVESTIGATION_PER_PARENT,
+    OutcomeDispatcher,
+)
 from aila.modules.vr.contracts import OutcomeDispatchStatus  # noqa: E402
 
 
@@ -478,3 +493,384 @@ class TestDispatchPatchAssessmentReport:
         assert "nday_error=" in result.reason
         assert "redis down" in result.reason
         assert "RuntimeError" in result.reason
+
+
+# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# The 4 kinds newly moved out of _NOT_YET_DISPATCHABLE. Each handler
+# has a specific-exception try/except that returns FAILED on fault
+# and a well-defined side effect (3 x KnowledgeService.store, 1 x
+# child VRInvestigationRecord spawn) on the happy path.
+# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+
+
+class TestDispatchStrategyDescriptor:
+    @pytest.mark.asyncio
+    async def test_writes_to_knowledge(self) -> None:
+        fake_knowledge = _FakeKnowledge()
+        d = OutcomeDispatcher(knowledge=fake_knowledge)
+        _patch_load(d)
+        result = await d._dispatch_strategy_descriptor(
+            "oc-str-1", "inv-x",
+            {
+                "descriptor_name": "FuzzilliGrammarDelta",
+                "descriptor_kind": "fuzz_strategy",
+                "descriptor": {
+                    "engine": "fuzzilli",
+                    "grammar_delta": ["add_map_transitions"],
+                },
+                "rationale": "Cover missed transition edges.",
+            },
+            MagicMock(confidence="strong"),
+        )
+        assert result.dispatch_status == OutcomeDispatchStatus.DISPATCHED
+        call = fake_knowledge.calls[0]
+        assert call["namespace"] == "vr.strategy_descriptor.workspace.ws-x"
+        assert call["metadata"]["descriptor_name"] == "FuzzilliGrammarDelta"
+        assert call["metadata"]["descriptor_kind"] == "fuzz_strategy"
+        assert call["metadata"]["status"] == "recorded"
+        # dedup_key mixes canonical-JSON descriptor hash so distinct
+        # descriptor bodies land as distinct rows.
+        assert call["dedup_key"].startswith(
+            "ws-x|fuzz_strategy|FuzzilliGrammarDelta|",
+        )
+        _, _, _, spec_hash = call["dedup_key"].split("|")
+        assert len(spec_hash) == 16
+        assert all(c in "0123456789abcdef" for c in spec_hash)
+
+    @pytest.mark.asyncio
+    async def test_rejects_missing_descriptor(self) -> None:
+        d = OutcomeDispatcher(knowledge=_FakeKnowledge())
+        _patch_load(d)
+        result = await d._dispatch_strategy_descriptor(
+            "oc-str-2", "inv-x",
+            {"descriptor_name": "X", "descriptor": {}},
+            MagicMock(confidence="strong"),
+        )
+        assert result.dispatch_status == OutcomeDispatchStatus.FAILED
+        assert "missing_descriptor_name_or_descriptor" in result.reason
+
+    @pytest.mark.asyncio
+    async def test_knowledge_store_failure_returns_failed(self) -> None:
+        fake_knowledge = _FakeKnowledge()
+
+        async def _boom(**_: object) -> dict:
+            raise RuntimeError("pg unavailable")
+
+        fake_knowledge.store = _boom  # type: ignore[assignment]
+        d = OutcomeDispatcher(knowledge=fake_knowledge)
+        _patch_load(d)
+        result = await d._dispatch_strategy_descriptor(
+            "oc-str-3", "inv-x",
+            {
+                "descriptor_name": "X",
+                "descriptor": {"engine": "afl++"},
+            },
+            MagicMock(confidence="strong"),
+        )
+        assert result.dispatch_status == OutcomeDispatchStatus.FAILED
+        assert "knowledge_store_failed" in result.reason
+        assert "RuntimeError" in result.reason
+
+
+class TestDispatchCrashTriageReport:
+    @pytest.mark.asyncio
+    async def test_writes_to_knowledge_with_signature(self) -> None:
+        fake_knowledge = _FakeKnowledge()
+        d = OutcomeDispatcher(knowledge=fake_knowledge)
+        _patch_load(d)
+        result = await d._dispatch_crash_triage_report(
+            "oc-ct-1", "inv-x",
+            {
+                "triage_summary": "heap use-after-free on Foo::bar path",
+                "crash_signature": "UAF@Foo::bar+0x18",
+                "crash_type": "heap_uaf",
+                "vulnerable_function": "Foo::bar",
+                "evidence_refs": ["ev-1", "ev-2"],
+            },
+            MagicMock(confidence="strong"),
+        )
+        assert result.dispatch_status == OutcomeDispatchStatus.DISPATCHED
+        call = fake_knowledge.calls[0]
+        assert call["namespace"] == "vr.crash_triage.workspace.ws-x"
+        assert call["metadata"]["crash_signature"] == "UAF@Foo::bar+0x18"
+        assert call["metadata"]["crash_type"] == "heap_uaf"
+        assert call["metadata"]["vulnerable_function"] == "Foo::bar"
+        # dedup_key rides on the signature when present.
+        assert call["dedup_key"] == "ws-x|tgt-x|UAF@Foo::bar+0x18"
+        # crash_type + signature stamped into the content header.
+        assert "crash_type=heap_uaf" in call["content"]
+        assert "signature=UAF@Foo::bar+0x18" in call["content"]
+        assert "heap use-after-free" in call["content"]
+
+    @pytest.mark.asyncio
+    async def test_dedup_falls_back_to_summary_hash_without_signature(
+        self,
+    ) -> None:
+        fake_knowledge = _FakeKnowledge()
+        d = OutcomeDispatcher(knowledge=fake_knowledge)
+        _patch_load(d)
+        result = await d._dispatch_crash_triage_report(
+            "oc-ct-2", "inv-x",
+            {"triage_summary": "OOB read triggered by malformed header"},
+            MagicMock(confidence="weak"),
+        )
+        assert result.dispatch_status == OutcomeDispatchStatus.DISPATCHED
+        call = fake_knowledge.calls[0]
+        prefix, target, body = call["dedup_key"].split("|")
+        assert (prefix, target) == ("ws-x", "tgt-x")
+        # 32 hex chars derived from sha256(summary)
+        assert len(body) == 32
+        assert all(c in "0123456789abcdef" for c in body)
+
+    @pytest.mark.asyncio
+    async def test_rejects_empty_summary(self) -> None:
+        d = OutcomeDispatcher(knowledge=_FakeKnowledge())
+        _patch_load(d)
+        result = await d._dispatch_crash_triage_report(
+            "oc-ct-3", "inv-x",
+            {"crash_signature": "only-a-sig-no-body"},
+            MagicMock(confidence="strong"),
+        )
+        assert result.dispatch_status == OutcomeDispatchStatus.FAILED
+        assert "empty_triage_summary" in result.reason
+
+    @pytest.mark.asyncio
+    async def test_knowledge_store_failure_returns_failed(self) -> None:
+        fake_knowledge = _FakeKnowledge()
+
+        async def _boom(**_: object) -> dict:
+            raise OSError("disk full")
+
+        fake_knowledge.store = _boom  # type: ignore[assignment]
+        d = OutcomeDispatcher(knowledge=fake_knowledge)
+        _patch_load(d)
+        result = await d._dispatch_crash_triage_report(
+            "oc-ct-4", "inv-x",
+            {"triage_summary": "stack overflow via recursion"},
+            MagicMock(confidence="strong"),
+        )
+        assert result.dispatch_status == OutcomeDispatchStatus.FAILED
+        assert "knowledge_store_failed" in result.reason
+        assert "OSError" in result.reason
+
+
+class TestDispatchConfigDelta:
+    @pytest.mark.asyncio
+    async def test_writes_proposal_to_knowledge(self) -> None:
+        fake_knowledge = _FakeKnowledge()
+        d = OutcomeDispatcher(knowledge=fake_knowledge)
+        _patch_load(d)
+        result = await d._dispatch_config_delta(
+            "oc-cd-1", "inv-x",
+            {
+                "target_key": "vr.reasoning.max_turns",
+                "current_value": 30,
+                "proposed_value": 60,
+                "rationale": "Deep-target audits need more turns.",
+            },
+            MagicMock(confidence="strong"),
+        )
+        assert result.dispatch_status == OutcomeDispatchStatus.DISPATCHED
+        call = fake_knowledge.calls[0]
+        assert call["namespace"] == "vr.config_delta.workspace.ws-x"
+        assert call["metadata"]["target_key"] == "vr.reasoning.max_turns"
+        assert call["metadata"]["proposed_value"] == 60
+        assert call["metadata"]["current_value"] == 30
+        # Contract-critical: proposals are RECORDED, never auto-applied.
+        assert call["metadata"]["status"] == "proposed"
+        # Content shape: contains both current and proposed values so an
+        # operator can review without reopening the metadata blob.
+        assert "current=30" in call["content"]
+        assert "proposed=60" in call["content"]
+        assert result.reason.endswith("status=proposed")
+
+    @pytest.mark.asyncio
+    async def test_accepts_falsy_proposed_value(self) -> None:
+        # `proposed_value: False` is legitimate; the presence check must
+        # not conflate it with 'missing'.
+        fake_knowledge = _FakeKnowledge()
+        d = OutcomeDispatcher(knowledge=fake_knowledge)
+        _patch_load(d)
+        result = await d._dispatch_config_delta(
+            "oc-cd-2", "inv-x",
+            {"target_key": "vr.reasoning.dry_run", "proposed_value": False},
+            MagicMock(confidence="strong"),
+        )
+        assert result.dispatch_status == OutcomeDispatchStatus.DISPATCHED
+        assert fake_knowledge.calls[0]["metadata"]["proposed_value"] is False
+
+    @pytest.mark.asyncio
+    async def test_rejects_missing_target_key(self) -> None:
+        d = OutcomeDispatcher(knowledge=_FakeKnowledge())
+        _patch_load(d)
+        result = await d._dispatch_config_delta(
+            "oc-cd-3", "inv-x",
+            {"proposed_value": 42},
+            MagicMock(confidence="strong"),
+        )
+        assert result.dispatch_status == OutcomeDispatchStatus.FAILED
+        assert "missing_target_key_or_proposed_value" in result.reason
+
+    @pytest.mark.asyncio
+    async def test_rejects_missing_proposed_value_key(self) -> None:
+        d = OutcomeDispatcher(knowledge=_FakeKnowledge())
+        _patch_load(d)
+        result = await d._dispatch_config_delta(
+            "oc-cd-4", "inv-x",
+            {"target_key": "vr.reasoning.max_turns"},
+            MagicMock(confidence="strong"),
+        )
+        assert result.dispatch_status == OutcomeDispatchStatus.FAILED
+        assert "missing_target_key_or_proposed_value" in result.reason
+
+    @pytest.mark.asyncio
+    async def test_knowledge_store_failure_returns_failed(self) -> None:
+        fake_knowledge = _FakeKnowledge()
+
+        async def _boom(**_: object) -> dict:
+            raise RuntimeError("pg down")
+
+        fake_knowledge.store = _boom  # type: ignore[assignment]
+        d = OutcomeDispatcher(knowledge=fake_knowledge)
+        _patch_load(d)
+        result = await d._dispatch_config_delta(
+            "oc-cd-5", "inv-x",
+            {"target_key": "vr.x", "proposed_value": 1},
+            MagicMock(confidence="strong"),
+        )
+        assert result.dispatch_status == OutcomeDispatchStatus.FAILED
+        assert "knowledge_store_failed" in result.reason
+        assert "RuntimeError" in result.reason
+
+
+class TestDispatchSubInvestigation:
+    """Depth-cap + fan-out-cap guards plus successful child spawn.
+
+    Depth + fan-out counters query the DB in production; unit tests
+    monkey-patch the helper methods so the assertions focus on the
+    guard branches without needing a real DB.
+    """
+
+    def _patched_dispatcher(
+        self,
+        *,
+        parent_depth: int,
+        child_count: int,
+        spawn_child_id: str | None = "child-inv-42",
+    ) -> tuple[OutcomeDispatcher, AsyncMock]:
+        d = OutcomeDispatcher(
+            knowledge=_FakeKnowledge(),
+            task_queue_factory=lambda: _FakeTaskQueue(),
+        )
+        _patch_load(d)
+        d._compute_investigation_depth = AsyncMock(  # type: ignore[method-assign]
+            return_value=parent_depth,
+        )
+        d._count_sub_investigation_children = AsyncMock(  # type: ignore[method-assign]
+            return_value=child_count,
+        )
+        spawn_mock = AsyncMock(return_value=spawn_child_id)
+        d._spawn_sub_investigation_child = spawn_mock  # type: ignore[method-assign]
+        return d, spawn_mock
+
+    @pytest.mark.asyncio
+    async def test_spawns_child_and_returns_dispatched(self) -> None:
+        d, spawn_mock = self._patched_dispatcher(
+            parent_depth=0, child_count=0,
+            spawn_child_id="child-inv-42",
+        )
+        result = await d._dispatch_sub_investigation(
+            "oc-sub-1", "inv-x",
+            {
+                "investigation": {
+                    "target_id": "tgt-y",
+                    "kind": "discovery",
+                    "title": "Nested audit of module M",
+                    "initial_question": "is M reachable from untrusted input?",
+                    "cost_budget_usd": 25.0,
+                },
+            },
+        )
+        assert result.dispatch_status == OutcomeDispatchStatus.DISPATCHED
+        assert result.dispatch_target == "vr_investigation:child-inv-42"
+        spawn_mock.assert_awaited_once()
+        spawn_kwargs = spawn_mock.await_args.kwargs
+        assert spawn_kwargs["child_target_id"] == "tgt-y"
+        assert spawn_kwargs["child_kind"] == "discovery"
+        assert spawn_kwargs["child_title"] == "Nested audit of module M"
+        assert spawn_kwargs["parent"].id == "inv-x"
+        # child_depth = parent_depth + 1 -- surfaced in the reason so the
+        # operator dashboard can filter/observe recursion depth.
+        assert "depth=1" in result.reason
+
+    @pytest.mark.asyncio
+    async def test_depth_cap_yields_skipped(self) -> None:
+        # Parent already sits at the cap; a new child would exceed it
+        # so the dispatcher SKIPPED-outs before touching the spawn path.
+        too_deep_parent = MAX_SUB_INVESTIGATION_DEPTH  # child would be +1
+        d, spawn_mock = self._patched_dispatcher(
+            parent_depth=too_deep_parent, child_count=0,
+        )
+        result = await d._dispatch_sub_investigation(
+            "oc-sub-deep", "inv-x",
+            {"investigation": {
+                "target_id": "tgt-y", "kind": "discovery",
+                "title": "deep child",
+            }},
+        )
+        assert result.dispatch_status == OutcomeDispatchStatus.SKIPPED
+        assert result.dispatch_target is None
+        assert "sub_investigation_depth_exceeded" in result.reason
+        assert f"max={MAX_SUB_INVESTIGATION_DEPTH}" in result.reason
+        spawn_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_fanout_cap_yields_skipped(self) -> None:
+        d, spawn_mock = self._patched_dispatcher(
+            parent_depth=0,
+            child_count=MAX_SUB_INVESTIGATION_PER_PARENT,
+        )
+        result = await d._dispatch_sub_investigation(
+            "oc-sub-wide", "inv-x",
+            {"investigation": {
+                "target_id": "tgt-y", "kind": "discovery",
+                "title": "sibling n",
+            }},
+        )
+        assert result.dispatch_status == OutcomeDispatchStatus.SKIPPED
+        assert "sub_investigation_fanout_exceeded" in result.reason
+        assert f"max={MAX_SUB_INVESTIGATION_PER_PARENT}" in result.reason
+        spawn_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rejects_missing_spec_fields(self) -> None:
+        d, spawn_mock = self._patched_dispatcher(
+            parent_depth=0, child_count=0,
+        )
+        result = await d._dispatch_sub_investigation(
+            "oc-sub-bad", "inv-x",
+            {"investigation": {"target_id": "tgt-y", "kind": "discovery"}},
+        )
+        assert result.dispatch_status == OutcomeDispatchStatus.FAILED
+        assert "missing_target_id_or_kind_or_title" in result.reason
+        spawn_mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_spawn_failure_returns_failed_with_reason(self) -> None:
+        d = OutcomeDispatcher(knowledge=_FakeKnowledge())
+        _patch_load(d)
+        d._compute_investigation_depth = AsyncMock(return_value=0)  # type: ignore[method-assign]
+        d._count_sub_investigation_children = AsyncMock(return_value=0)  # type: ignore[method-assign]
+        d._spawn_sub_investigation_child = AsyncMock(  # type: ignore[method-assign]
+            side_effect=RuntimeError("db unreachable"),
+        )
+        result = await d._dispatch_sub_investigation(
+            "oc-sub-spawn-fail", "inv-x",
+            {"investigation": {
+                "target_id": "tgt-y", "kind": "discovery", "title": "c",
+            }},
+        )
+        assert result.dispatch_status == OutcomeDispatchStatus.FAILED
+        assert "spawn_failed" in result.reason
+        assert "RuntimeError" in result.reason
+        assert "db unreachable" in result.reason

@@ -1,27 +1,40 @@
 """Outcome dispatcher (M3.R-8).
 
 Routes accepted VRInvestigationOutcomeRecord rows to their downstream
-artifacts. v0.3 v1 ships handlers for the 3 outcome kinds whose
-downstream consumers already exist in the codebase:
+artifacts. Ships handlers for every D-43 outcome kind except
+ASSESSMENT_REPORT, which is terminal by design (narrative-only summary,
+no downstream consumer):
 
-  AUDIT_MEMO          → KnowledgeService.store with namespace
-                        ``vr.audit_memo.workspace.<workspace_id>``
-                        (platform pgvector + HNSW + FTS infra per D-38)
-  DIRECT_FINDING      → vr_findings row creation (linking to project +
-                        target). Investigations without a linked project
-                        skip this dispatch and emit a SKIPPED status
-                        with a clear reason.
-  VARIANT_HUNT_ORDER  → spawn child VRInvestigationRecord with
-                        parent_investigation_id set, kind=variant_hunt,
-                        and enqueue the run_vr_investigate task
-
-The other 8 outcome kinds (AssessmentReport, StrategyDescriptor,
-ProfileSpecDraft, ConfigDelta, PatchAssessmentReport, CrashTriageReport,
-CampaignLaunch, SubInvestigation) currently have no downstream consumer
-built. They get dispatch_status=SKIPPED with reason
-'no_downstream_consumer_yet' -- these handlers land per-kind as the
-relevant downstream subsystems ship (CampaignLaunch needs the v0.3
-fuzzing module; SubInvestigation needs M3.R-5 branching).
+  AUDIT_MEMO              \u2192 KnowledgeService.store namespace
+                            ``vr.audit_memo.<scope>.<id>`` (D-38 pgvector
+                            + HNSW + FTS).
+  DIRECT_FINDING          \u2192 vr_findings row (linked to project +
+                            target). Investigations without a project
+                            still land the finding with project_id NULL
+                            for later operator linking.
+  VARIANT_HUNT_ORDER      \u2192 spawn child VRInvestigationRecord
+                            (parent_investigation_id set, kind=variant_hunt)
+                            + enqueue run_vr_investigate.
+  CAMPAIGN_LAUNCH         \u2192 vr_fuzz_campaign_proposals row awaiting
+                            operator approval before any fuzzer runs.
+  PROFILE_SPEC_DRAFT      \u2192 KnowledgeService write under
+                            ``vr.profile_spec.workspace.<id>``.
+  PATCH_ASSESSMENT_REPORT \u2192 fan out variant_hunt children +
+                            (optionally) enqueue N-day workflow.
+  STRATEGY_DESCRIPTOR     \u2192 KnowledgeService write under
+                            ``vr.strategy_descriptor.workspace.<id>``.
+  CRASH_TRIAGE_REPORT     \u2192 KnowledgeService write under
+                            ``vr.crash_triage.workspace.<id>``.
+  CONFIG_DELTA            \u2192 KnowledgeService write under
+                            ``vr.config_delta.workspace.<id>`` as a
+                            recorded proposal (status=proposed). Never
+                            auto-applied -- an operator or a future
+                            review UI drives the apply/reject decision.
+  SUB_INVESTIGATION       \u2192 spawn child VRInvestigationRecord +
+                            enqueue run_vr_investigate. Guarded by
+                            depth cap + per-parent fan-out cap.
+  ASSESSMENT_REPORT       \u2192 SKIPPED with reason
+                            ``assessment_reports_are_terminal_no_downstream``.
 """
 from __future__ import annotations
 
@@ -33,6 +46,7 @@ import re
 from typing import Any
 from uuid import uuid4
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
 from aila.modules.vr._task_queue import (
@@ -112,6 +126,19 @@ MAX_VARIANT_DEPTH = 5
 VARIANT_MIN_BUDGET_USD = 5.0
 
 
+# SUB_INVESTIGATION fork guards (mirror of the variant-hunt caps above).
+# MAX_SUB_INVESTIGATION_DEPTH bounds parent-chain depth so a runaway
+# agent can't recursively spawn sub-of-sub-of-sub investigations.
+# child_depth = parent_depth + 1; we refuse when the child would exceed
+# the cap. Default 2 means the tree may grow to depth 2 above root and
+# no further (root -> sub -> sub-sub is the deepest allowed shape).
+# MAX_SUB_INVESTIGATION_PER_PARENT bounds how many direct children a
+# single parent may accumulate, so a single burst can't conjure a
+# swarm of siblings.
+MAX_SUB_INVESTIGATION_DEPTH = 2
+MAX_SUB_INVESTIGATION_PER_PARENT = 5
+
+
 
 # Listed explicitly so the dispatcher emits SKIPPED with a real reason
 # rather than silently doing nothing.
@@ -164,12 +191,15 @@ def _int_or_none(value: Any) -> int | None:
 
 
 
+# ASSESSMENT_REPORT is the ONE remaining kind with no downstream
+# dispatch: assessment reports are terminal narrative summaries and
+# carry no actionable payload for a follow-up subsystem. Every other
+# outcome kind (AUDIT_MEMO, DIRECT_FINDING, VARIANT_HUNT_ORDER,
+# CAMPAIGN_LAUNCH, PROFILE_SPEC_DRAFT, PATCH_ASSESSMENT_REPORT,
+# STRATEGY_DESCRIPTOR, CRASH_TRIAGE_REPORT, CONFIG_DELTA,
+# SUB_INVESTIGATION) routes to a real handler in _handle_kind.
 _NOT_YET_DISPATCHABLE: dict[OutcomeKind, str] = {
     OutcomeKind.ASSESSMENT_REPORT: "assessment_reports_are_terminal_no_downstream",
-    OutcomeKind.STRATEGY_DESCRIPTOR: "no_strategy_registry_consumer_yet",
-    OutcomeKind.CONFIG_DELTA: "no_config_consumer_yet",
-    OutcomeKind.CRASH_TRIAGE_REPORT: "no_crash_triage_consumer_yet",
-    OutcomeKind.SUB_INVESTIGATION: "needs_M3R5_branching_first",
 }
 
 
@@ -297,6 +327,22 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
             )
         if outcome_kind == OutcomeKind.PATCH_ASSESSMENT_REPORT:
             return await self._dispatch_patch_assessment_report(
+                outcome_id, investigation_id, payload,
+            )
+        if outcome_kind == OutcomeKind.STRATEGY_DESCRIPTOR:
+            return await self._dispatch_strategy_descriptor(
+                outcome_id, investigation_id, payload, outcome_row,
+            )
+        if outcome_kind == OutcomeKind.CRASH_TRIAGE_REPORT:
+            return await self._dispatch_crash_triage_report(
+                outcome_id, investigation_id, payload, outcome_row,
+            )
+        if outcome_kind == OutcomeKind.CONFIG_DELTA:
+            return await self._dispatch_config_delta(
+                outcome_id, investigation_id, payload, outcome_row,
+            )
+        if outcome_kind == OutcomeKind.SUB_INVESTIGATION:
+            return await self._dispatch_sub_investigation(
                 outcome_id, investigation_id, payload,
             )
         if outcome_kind in _NOT_YET_DISPATCHABLE:
@@ -1212,6 +1258,576 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
             ),
             reason="; ".join(reason_parts) or "patch_assessment_recorded",
         )
+
+    async def _dispatch_strategy_descriptor(
+        self,
+        outcome_id: str,
+        investigation_id: str,
+        payload: dict[str, Any],
+        outcome: VRInvestigationOutcomeRecord | None,
+    ) -> OutcomeDispatchResult:
+        """STRATEGY_DESCRIPTOR -> KnowledgeService write under
+        ``vr.strategy_descriptor.workspace.<id>``.
+
+        Mirrors ``_dispatch_profile_spec_draft`` shape: the engine
+        emits a reusable strategy artifact (e.g. FUZZILLI/AFL++ recipe,
+        directed-fuzzing playbook) and we persist it in the workspace
+        namespace so a future strategy-registry consumer can read it.
+
+        Required payload fields:
+          - descriptor_name
+          - descriptor (dict)
+        Recommended:
+          - descriptor_kind (default 'generic')
+          - rationale
+        """
+        target_row, _ = await self._load_target_for_investigation(investigation_id)
+        descriptor_name = str(
+            payload.get("descriptor_name") or payload.get("name") or "",
+        ).strip()
+        descriptor_kind = str(payload.get("descriptor_kind") or "generic").strip()
+        descriptor = payload.get("descriptor") or payload.get("spec") or {}
+        if (
+            not descriptor_name
+            or not isinstance(descriptor, dict)
+            or not descriptor
+        ):
+            return OutcomeDispatchResult(
+                outcome_id=outcome_id,
+                outcome_kind=OutcomeKind.STRATEGY_DESCRIPTOR,
+                dispatch_status=OutcomeDispatchStatus.FAILED,
+                dispatch_target=None,
+                reason="missing_descriptor_name_or_descriptor",
+            )
+
+        workspace_id = target_row.workspace_id
+        namespace = f"vr.strategy_descriptor.workspace.{workspace_id}"
+        content = (
+            f"Strategy descriptor -- {descriptor_name} ({descriptor_kind})\n"
+            f"descriptor={json.dumps(descriptor, sort_keys=True)}"
+        )
+        # dedup_key mixes canonical-JSON descriptor hash so genuine spec
+        # changes produce a fresh entry instead of overwriting the prior
+        # descriptor (same rationale as \u00a7264 for profile_spec_draft).
+        dedup_key = (
+            f"{workspace_id}|{descriptor_kind}|{descriptor_name}|"
+            f"{hashlib.sha256(json.dumps(descriptor, sort_keys=True).encode()).hexdigest()[:16]}"
+        )
+        try:
+            store_result = await self._knowledge.store(
+                namespace=namespace,
+                content=content,
+                metadata={
+                    "investigation_id": investigation_id,
+                    "target_id": target_row.id,
+                    "workspace_id": workspace_id,
+                    "descriptor_name": descriptor_name,
+                    "descriptor_kind": descriptor_kind,
+                    "descriptor": descriptor,
+                    "rationale": payload.get("rationale") or "",
+                    "confidence": (
+                        outcome.confidence if outcome is not None else None
+                    ),
+                    "outcome_id": outcome_id,
+                    "status": "recorded",
+                },
+                dedup_key=dedup_key,
+            )
+        except (
+            OSError, RuntimeError, TimeoutError, ValueError,
+            SQLAlchemyError,
+        ) as exc:
+            _log.warning(
+                "_dispatch_strategy_descriptor: store failed inv=%s "
+                "outcome=%s err=%s",
+                investigation_id, outcome_id, exc,
+            )
+            return OutcomeDispatchResult(
+                outcome_id=outcome_id,
+                outcome_kind=OutcomeKind.STRATEGY_DESCRIPTOR,
+                dispatch_status=OutcomeDispatchStatus.FAILED,
+                dispatch_target=None,
+                reason=f"knowledge_store_failed:{type(exc).__name__}",
+            )
+        entry_id = store_result.get("entry_id")
+        return OutcomeDispatchResult(
+            outcome_id=outcome_id,
+            outcome_kind=OutcomeKind.STRATEGY_DESCRIPTOR,
+            dispatch_status=OutcomeDispatchStatus.DISPATCHED,
+            dispatch_target=f"knowledge_entry:{entry_id}",
+            reason=f"namespace={namespace} name={descriptor_name}",
+        )
+
+    async def _dispatch_crash_triage_report(
+        self,
+        outcome_id: str,
+        investigation_id: str,
+        payload: dict[str, Any],
+        outcome: VRInvestigationOutcomeRecord | None,
+    ) -> OutcomeDispatchResult:
+        """CRASH_TRIAGE_REPORT -> KnowledgeService write under
+        ``vr.crash_triage.workspace.<id>``.
+
+        Mirrors ``_dispatch_audit_memo``: the engine's analysis of an
+        existing crash artifact (root cause hypothesis, exploitability
+        judgement, adjacent-function review) lands in the workspace
+        namespace so a future crash-triage consumer can read it.
+
+        Required payload fields (one of):
+          - triage_summary
+          - claim
+          - answer
+        Recommended:
+          - crash_signature
+          - crash_type
+          - vulnerable_function
+          - evidence_refs
+        """
+        target_row, _ = await self._load_target_for_investigation(investigation_id)
+        summary = str(
+            payload.get("triage_summary")
+            or payload.get("claim")
+            or payload.get("answer")
+            or "",
+        ).strip()
+        if not summary:
+            return OutcomeDispatchResult(
+                outcome_id=outcome_id,
+                outcome_kind=OutcomeKind.CRASH_TRIAGE_REPORT,
+                dispatch_status=OutcomeDispatchStatus.FAILED,
+                dispatch_target=None,
+                reason="empty_triage_summary",
+            )
+
+        workspace_id = target_row.workspace_id
+        namespace = f"vr.crash_triage.workspace.{workspace_id}"
+        crash_signature = str(payload.get("crash_signature") or "").strip()
+        crash_type = str(payload.get("crash_type") or "").strip()
+        header_parts: list[str] = []
+        if crash_type:
+            header_parts.append(f"crash_type={crash_type}")
+        if crash_signature:
+            header_parts.append(f"signature={crash_signature}")
+        header = " ".join(header_parts)
+        content = f"{header}\n\n{summary}" if header else summary
+
+        # Dedup on (workspace, target, signature-or-summary-hash). Repeat
+        # triage of the same crash overwrites the previous row; distinct
+        # crashes (fresh signature or fresh summary) produce new rows.
+        dedup_body = (
+            crash_signature
+            or hashlib.sha256(summary.encode()).hexdigest()[:32]
+        )
+        dedup_key = f"{workspace_id}|{target_row.id}|{dedup_body}"
+        try:
+            store_result = await self._knowledge.store(
+                namespace=namespace,
+                content=content,
+                metadata={
+                    "investigation_id": investigation_id,
+                    "target_id": target_row.id,
+                    "workspace_id": workspace_id,
+                    "crash_signature": crash_signature or None,
+                    "crash_type": crash_type or None,
+                    "vulnerable_function": (
+                        payload.get("vulnerable_function") or None
+                    ),
+                    "evidence_refs": payload.get("evidence_refs") or [],
+                    "confidence": (
+                        outcome.confidence if outcome is not None else None
+                    ),
+                    "outcome_id": outcome_id,
+                },
+                dedup_key=dedup_key,
+                extract_entities=True,
+            )
+        except (
+            OSError, RuntimeError, TimeoutError, ValueError,
+            SQLAlchemyError,
+        ) as exc:
+            _log.warning(
+                "_dispatch_crash_triage_report: store failed inv=%s "
+                "outcome=%s err=%s",
+                investigation_id, outcome_id, exc,
+            )
+            return OutcomeDispatchResult(
+                outcome_id=outcome_id,
+                outcome_kind=OutcomeKind.CRASH_TRIAGE_REPORT,
+                dispatch_status=OutcomeDispatchStatus.FAILED,
+                dispatch_target=None,
+                reason=f"knowledge_store_failed:{type(exc).__name__}",
+            )
+        entry_id = store_result.get("entry_id")
+        return OutcomeDispatchResult(
+            outcome_id=outcome_id,
+            outcome_kind=OutcomeKind.CRASH_TRIAGE_REPORT,
+            dispatch_status=OutcomeDispatchStatus.DISPATCHED,
+            dispatch_target=f"knowledge_entry:{entry_id}",
+            reason=(
+                f"namespace={namespace} "
+                f"operation={store_result.get('operation')}"
+            ),
+        )
+
+    async def _dispatch_config_delta(
+        self,
+        outcome_id: str,
+        investigation_id: str,
+        payload: dict[str, Any],
+        outcome: VRInvestigationOutcomeRecord | None,
+    ) -> OutcomeDispatchResult:
+        """CONFIG_DELTA -> KnowledgeService write under
+        ``vr.config_delta.workspace.<id>`` as a *proposal*.
+
+        The payload the engine emits here is UNTYPED and there is no
+        safe typed ConfigRegistry.set consumer that could ingest it
+        without a schema. Auto-applying arbitrary key/value pairs to
+        the config registry would be a live-configuration footgun.
+
+        Instead we record the proposal in the workspace knowledge
+        namespace with ``status=proposed``. An operator (or a future
+        ConfigDelta review UI) reads the same namespace and applies
+        or rejects each proposal explicitly; the dispatcher never
+        writes to ConfigRegistry directly from this path.
+
+        Required payload fields:
+          - target_key (str)  -- dotted config path the delta names
+          - proposed_value    -- new value (any JSON-serializable type)
+        Recommended:
+          - current_value     -- what the engine observed before
+          - rationale         -- why the change is proposed
+        """
+        target_row, _ = await self._load_target_for_investigation(investigation_id)
+        target_key = str(
+            payload.get("target_key") or payload.get("key") or "",
+        ).strip()
+        # NOTE: proposed_value may legitimately be None / False / 0, so
+        # we test key presence, not truthiness.
+        if not target_key or "proposed_value" not in payload:
+            return OutcomeDispatchResult(
+                outcome_id=outcome_id,
+                outcome_kind=OutcomeKind.CONFIG_DELTA,
+                dispatch_status=OutcomeDispatchStatus.FAILED,
+                dispatch_target=None,
+                reason="missing_target_key_or_proposed_value",
+            )
+
+        workspace_id = target_row.workspace_id
+        namespace = f"vr.config_delta.workspace.{workspace_id}"
+        proposed_json = json.dumps(
+            payload.get("proposed_value"), sort_keys=True, default=str,
+        )
+        current_json = json.dumps(
+            payload.get("current_value"), sort_keys=True, default=str,
+        )
+        rationale = str(payload.get("rationale") or "")
+        content = (
+            f"Config delta proposal -- key={target_key}\n"
+            f"current={current_json}\n"
+            f"proposed={proposed_json}\n"
+            f"rationale={rationale}"
+        )
+        dedup_key = (
+            f"{workspace_id}|{target_key}|"
+            f"{hashlib.sha256(proposed_json.encode()).hexdigest()[:16]}"
+        )
+        try:
+            store_result = await self._knowledge.store(
+                namespace=namespace,
+                content=content,
+                metadata={
+                    "investigation_id": investigation_id,
+                    "target_id": target_row.id,
+                    "workspace_id": workspace_id,
+                    "target_key": target_key,
+                    "current_value": payload.get("current_value"),
+                    "proposed_value": payload.get("proposed_value"),
+                    "rationale": rationale,
+                    "confidence": (
+                        outcome.confidence if outcome is not None else None
+                    ),
+                    "outcome_id": outcome_id,
+                    # Never auto-applied; an operator flips this to
+                    # 'applied' or 'rejected' via the review UI.
+                    "status": "proposed",
+                },
+                dedup_key=dedup_key,
+            )
+        except (
+            OSError, RuntimeError, TimeoutError, ValueError,
+            SQLAlchemyError,
+        ) as exc:
+            _log.warning(
+                "_dispatch_config_delta: store failed inv=%s outcome=%s err=%s",
+                investigation_id, outcome_id, exc,
+            )
+            return OutcomeDispatchResult(
+                outcome_id=outcome_id,
+                outcome_kind=OutcomeKind.CONFIG_DELTA,
+                dispatch_status=OutcomeDispatchStatus.FAILED,
+                dispatch_target=None,
+                reason=f"knowledge_store_failed:{type(exc).__name__}",
+            )
+        entry_id = store_result.get("entry_id")
+        return OutcomeDispatchResult(
+            outcome_id=outcome_id,
+            outcome_kind=OutcomeKind.CONFIG_DELTA,
+            dispatch_status=OutcomeDispatchStatus.DISPATCHED,
+            dispatch_target=f"knowledge_entry:{entry_id}",
+            reason=(
+                f"namespace={namespace} key={target_key} status=proposed"
+            ),
+        )
+
+    async def _dispatch_sub_investigation(
+        self,
+        outcome_id: str,
+        investigation_id: str,
+        payload: dict[str, Any],
+    ) -> OutcomeDispatchResult:
+        """SUB_INVESTIGATION -> spawn nested child VRInvestigationRecord.
+
+        Mirrors the malware module's `_dispatch_sub_investigation` plus
+        VR's variant-hunt fork-time guards. Two hard limits protect the
+        fleet from runaway fan-out:
+
+          - depth cap (``MAX_SUB_INVESTIGATION_DEPTH``, default 2) --
+            refuse to spawn once the child would sit deeper in the
+            parent chain than the cap allows. A recursive agent that
+            keeps emitting SUB_INVESTIGATION outcomes hits this ceiling
+            before consuming unbounded worker slots.
+          - per-parent fan-out cap
+            (``MAX_SUB_INVESTIGATION_PER_PARENT``, default 5) -- refuse
+            once a parent already has that many direct children.
+
+        Both guards return SKIPPED (not FAILED) so a legitimate agent
+        retry doesn't re-mark the outcome dispatchable.
+
+        Required payload shape::
+
+            {
+              "investigation": {
+                "target_id": "<vr_target uuid>",
+                "kind": "<vr investigation kind>",
+                "title": "<child title>",
+                # optional
+                "initial_question": "...",
+                "strategy_family": "vulnerability_research.discovery_research",
+                "cost_budget_usd": 25.0,
+                "auto_pilot": true,
+              }
+            }
+        """
+        _, parent = await self._load_target_for_investigation(investigation_id)
+
+        # Depth guard. parent_depth = ancestor hops above spawning
+        # parent; the child sits at parent_depth + 1. Refuse when the
+        # child would exceed the cap.
+        parent_depth = await self._compute_investigation_depth(investigation_id)
+        if parent_depth + 1 > MAX_SUB_INVESTIGATION_DEPTH:
+            return OutcomeDispatchResult(
+                outcome_id=outcome_id,
+                outcome_kind=OutcomeKind.SUB_INVESTIGATION,
+                dispatch_status=OutcomeDispatchStatus.SKIPPED,
+                dispatch_target=None,
+                reason=(
+                    f"sub_investigation_depth_exceeded:"
+                    f"parent_depth={parent_depth} "
+                    f"max={MAX_SUB_INVESTIGATION_DEPTH}"
+                ),
+            )
+
+        # Per-parent fan-out cap.
+        child_count = await self._count_sub_investigation_children(
+            investigation_id,
+        )
+        if child_count >= MAX_SUB_INVESTIGATION_PER_PARENT:
+            return OutcomeDispatchResult(
+                outcome_id=outcome_id,
+                outcome_kind=OutcomeKind.SUB_INVESTIGATION,
+                dispatch_status=OutcomeDispatchStatus.SKIPPED,
+                dispatch_target=None,
+                reason=(
+                    f"sub_investigation_fanout_exceeded:"
+                    f"children={child_count} "
+                    f"max={MAX_SUB_INVESTIGATION_PER_PARENT}"
+                ),
+            )
+
+        spec = payload.get("investigation") or {}
+        if not isinstance(spec, dict):
+            return OutcomeDispatchResult(
+                outcome_id=outcome_id,
+                outcome_kind=OutcomeKind.SUB_INVESTIGATION,
+                dispatch_status=OutcomeDispatchStatus.FAILED,
+                dispatch_target=None,
+                reason="malformed_investigation_spec",
+            )
+        child_target_id = str(spec.get("target_id") or "").strip()
+        child_kind = str(spec.get("kind") or "").strip()
+        child_title = str(spec.get("title") or "").strip()
+        if not child_target_id or not child_kind or not child_title:
+            return OutcomeDispatchResult(
+                outcome_id=outcome_id,
+                outcome_kind=OutcomeKind.SUB_INVESTIGATION,
+                dispatch_status=OutcomeDispatchStatus.FAILED,
+                dispatch_target=None,
+                reason="missing_target_id_or_kind_or_title",
+            )
+
+        try:
+            child_id = await self._spawn_sub_investigation_child(
+                parent=parent,
+                child_target_id=child_target_id,
+                child_kind=child_kind,
+                child_title=child_title,
+                spec=spec,
+            )
+        except (
+            ValueError, RuntimeError, OSError, TimeoutError,
+            SQLAlchemyError,
+        ) as exc:
+            _log.warning(
+                "_dispatch_sub_investigation: spawn failed inv=%s "
+                "outcome=%s err=%s",
+                investigation_id, outcome_id, exc,
+            )
+            return OutcomeDispatchResult(
+                outcome_id=outcome_id,
+                outcome_kind=OutcomeKind.SUB_INVESTIGATION,
+                dispatch_status=OutcomeDispatchStatus.FAILED,
+                dispatch_target=None,
+                reason=f"spawn_failed:{type(exc).__name__}:{exc}",
+            )
+
+        return OutcomeDispatchResult(
+            outcome_id=outcome_id,
+            outcome_kind=OutcomeKind.SUB_INVESTIGATION,
+            dispatch_status=OutcomeDispatchStatus.DISPATCHED,
+            dispatch_target=f"vr_investigation:{child_id}",
+            reason=(
+                f"child_spawned parent={investigation_id} "
+                f"depth={parent_depth + 1}"
+            ),
+        )
+
+    async def _compute_investigation_depth(self, investigation_id: str) -> int:
+        """Count ancestor hops above ``investigation_id`` in the parent chain.
+
+        Returns 0 for a root investigation. Follows
+        ``parent_investigation_id`` upward one hop at a time; cycle-safe
+        (a self-referential or looped chain terminates once a repeat is
+        observed).
+        """
+        depth = 0
+        cur: str | None = investigation_id
+        seen: set[str] = set()
+        async with UnitOfWork() as uow:
+            while cur is not None:
+                if cur in seen:
+                    break
+                seen.add(cur)
+                row = (await uow.session.exec(
+                    _select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == cur,
+                    ),
+                )).first()
+                if row is None or not row.parent_investigation_id:
+                    break
+                depth += 1
+                cur = row.parent_investigation_id
+        return depth
+
+    async def _count_sub_investigation_children(
+        self, investigation_id: str,
+    ) -> int:
+        """Count direct children whose ``parent_investigation_id`` equals
+        the given id. Used to enforce the per-parent fan-out cap."""
+        async with UnitOfWork() as uow:
+            rows = (await uow.session.exec(
+                _select(VRInvestigationRecord.id).where(
+                    VRInvestigationRecord.parent_investigation_id
+                    == investigation_id,
+                ),
+            )).all()
+            return len(rows)
+
+    async def _spawn_sub_investigation_child(
+        self,
+        *,
+        parent: VRInvestigationRecord,
+        child_target_id: str,
+        child_kind: str,
+        child_title: str,
+        spec: dict[str, Any],
+    ) -> str:
+        """Create the child VRInvestigationRecord + its primary branch
+        and enqueue ``run_vr_investigate`` against it.
+
+        Returns the new investigation id. Enqueue failure is logged
+        (not raised) so the child row still lands and ``stall_recovery``
+        (or an operator retrigger) can pick it up later, mirroring
+        ``_spawn_variant_child``'s best-effort enqueue.
+        """
+        parent_budget = float(parent.cost_budget_usd or 5.0)
+        child_budget = float(
+            spec.get("cost_budget_usd") or (parent_budget * 0.5),
+        )
+        if child_budget < 5.0:
+            child_budget = 5.0
+        strategy_family = str(
+            spec.get("strategy_family")
+            or "vulnerability_research.discovery_research",
+        )[:64]
+        initial_question = str(spec.get("initial_question") or "")
+        auto_pilot = bool(spec.get("auto_pilot", parent.auto_pilot))
+
+        async with UnitOfWork() as uow:
+            child = VRInvestigationRecord(
+                target_id=child_target_id,
+                team_id=parent.team_id,
+                parent_investigation_id=parent.id,
+                kind=child_kind[:32],
+                title=child_title[:255],
+                initial_question=initial_question,
+                status=InvestigationStatus.CREATED.value,
+                auto_pilot=auto_pilot,
+                strategy_family=strategy_family,
+                cost_budget_usd=child_budget,
+            )
+            uow.session.add(child)
+            await uow.session.flush()
+            primary_branch = VRInvestigationBranchRecord(
+                investigation_id=child.id,
+                status="active",
+                fork_reason="sub_investigation_primary",
+            )
+            uow.session.add(primary_branch)
+            await uow.session.commit()
+            await uow.session.refresh(child)
+            child_id = child.id
+            child_team_id = child.team_id
+
+        # Best-effort enqueue. If it fails, the row is queryable and
+        # stall_recovery / operator resume covers the gap. Same shape
+        # as _spawn_variant_child's enqueue call.
+        try:
+            from aila.modules.vr.workflow.task import run_vr_investigate
+            task_queue = self._task_queue_factory()
+            await task_queue.submit(
+                track="vr",
+                fn=run_vr_investigate,
+                kwargs={"investigation_id": child_id},
+                user_id="system",
+                group_id="vr_sub_investigation",
+                team_id=child_team_id,
+            )
+        except (OSError, RuntimeError, TimeoutError, ImportError) as exc:
+            _log.warning(
+                "_spawn_sub_investigation_child: enqueue failed child=%s err=%s",
+                child_id, exc,
+            )
+        return child_id
 
     async def _load_target_for_investigation(
         self, investigation_id: str,
