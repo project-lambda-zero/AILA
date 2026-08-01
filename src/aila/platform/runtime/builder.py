@@ -7,6 +7,7 @@ from typing import Any
 from ...storage.registry import ConfigRegistry, SchemaRegistry
 from ...storage.secrets import SecretStore
 from ..config import ApplicationSettings, PlatformConfigSchema, PlatformSettings
+from ..events.bus import default_bus
 from ..llm import AilaLLMClient
 from ..llm.classify import make_classify_step
 from ..llm.cost import CostTracker
@@ -142,6 +143,13 @@ async def build_platform_runtime(*, app_settings: ApplicationSettings, platform_
     run_memory = RunMemory()
     cost_tracker = CostTracker(run_memory=run_memory, registry=config_registry)
     runtime_model.cost_tracker = cost_tracker
+    # Attach the process-wide domain-event bus so the client publishes the
+    # per-call LlmCallCompleted event. The default bus wires the journal-
+    # persist subscriber on first use; publish is best-effort at both the
+    # client call site and the bus, so a subscriber fault never breaks a
+    # turn. SystemService publishes SystemRegistered/Deregistered on the
+    # same default bus via the module-level publish().
+    runtime_model.bus = default_bus()
     # fix §130 -- publish the RunMemory so the hook layer's _on_job_end can
     # call clear(run_id) on terminal task transitions without importing
     # PlatformRuntime (which lives in a different scope than the ARQ hook).

@@ -532,7 +532,7 @@ class AilaLLMClient:
         self._config = LLMConfigProvider(registry=registry, secret_store=secret_store)
         self._pipeline = PipelineRunner(config_provider=self._config)
         self.cost_tracker: Any = None  # Set by builder.py to CostTracker instance
-        self.bus: Any = None  # Optional EventBus; set by builder.py for domain events
+        self.bus: Any = None  # DomainEventBus; wired to default_bus() by builder.py (None in bare/test construction)
         # #44: reuse AsyncOpenAI clients across calls instead of building (and
         # leaking) a fresh one per request. Closed via :meth:`aclose` from the
         # worker/API shutdown hooks so the TLS pool does not survive teardown.
