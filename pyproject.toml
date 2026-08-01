@@ -184,6 +184,7 @@ ignore = [
 "src/aila/platform/services/factory.py" = ["PLC0415"]
 "src/aila/platform/services/replay.py" = ["PLC0415"]
 "src/aila/platform/workflows/investigation_setup_base.py" = ["PLC0415"]
+"src/aila/storage/report_store.py" = ["PLC0415"]
 "src/aila/api/auth.py" = ["PLC0415"]
 "src/aila/api/auth_cache.py" = ["PLW0603"]
 "src/aila/api/deps.py" = ["PLC0415"]

@@ -37,7 +37,9 @@ from aila.platform.tasks.hooks import _on_job_end, _on_job_start
 from aila.platform.tasks.models import TaskRecord, TaskStatus
 from aila.platform.tasks.sweeps import all_periodic_sweeps
 from aila.platform.tasks.template import _REGISTRY
+from aila.platform.workflows.log import purge_old_transitions
 from aila.storage.database import async_session_scope
+from aila.storage.report_store import purge_expired_report_files
 
 __all__ = ["WorkerSettings", "reaper"]
 
@@ -382,6 +384,35 @@ async def reaper(ctx: dict[str, object]) -> None:
     except Exception as exc:
         _log.warning(
             "reaper: confidence drift purge failed: %s", exc, exc_info=True,
+        )
+    # Report-file retention sweep -- ReportArtifactStore recreates DB rows on
+    # every persist_run_bundle() call but the on-disk artifacts accumulated
+    # forever. Same best-effort shape as the DB purges above; the sweep is
+    # shallow (top-level of settings.report_dir) and per-file OSError does
+    # not abort the walk.
+    try:
+        purged = await purge_expired_report_files()
+        if purged:
+            _log.info(
+                "reaper.report_files: purged %d expired report files", purged,
+            )
+    except Exception as exc:
+        _log.warning(
+            "reaper: report-file purge failed: %s", exc, exc_info=True,
+        )
+    # Transition-log retention sweep -- WorkflowStateTransition is append-only
+    # (~2 rows per state per run) with no upsert, so the audit table grew
+    # unbounded. Bounded single DELETE inside its own async_session_scope;
+    # transport errors are logged and swallowed like every other purge.
+    try:
+        purged = await purge_old_transitions()
+        if purged:
+            _log.info(
+                "reaper.transition_log: purged %d old transition rows", purged,
+            )
+    except Exception as exc:
+        _log.warning(
+            "reaper: transition-log purge failed: %s", exc, exc_info=True,
         )
 
 

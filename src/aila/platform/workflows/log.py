@@ -11,8 +11,10 @@ commitment -- collisions are acceptable for audit use since the log is
 append-only and every pair of (run_id, seq) is unique.
 
 Expected row rate: ~2 rows per state per run (one ``entered`` + one
-``exited:*``). Retention/pruning is deferred to Phase 181 admin endpoints
-(T-178-02 accepts DoS via transition-log growth).
+``exited:*``). Retention is enforced by :func:`purge_old_transitions`,
+wired into the platform reaper cron next to the idempotency-cache and
+confidence-drift purges. The default 90-day window matches the drift
+purge; callers may override per-call via the ``retention_days`` arg.
 
 Error-message truncation (D-44): ``error_message`` is truncated at 2000
 characters. Full stack traces go to structlog on the worker, NOT to the
@@ -58,6 +60,12 @@ _ERROR_MESSAGE_MAX: Final[int] = 2000  # D-44
 # the same session; the cursor's optimistic lock is the primary defence,
 # this is the secondary guard on the audit table.
 _SEQ_INSERT_MAX_RETRIES: Final[int] = 5
+
+# Default retention for the workflow transition log. Matches the
+# ``ConfidenceDriftRecord`` default (aila.platform.llm.drift) so the
+# operator only has to reason about one retention horizon for platform
+# audit / observability tables.
+_DEFAULT_RETENTION_DAYS: Final[int] = 90
 
 
 def safe_exc_message(exc: BaseException) -> str:
@@ -365,3 +373,71 @@ async def emit_transition_event(
             _log.debug(
                 "resilience signal skipped: %s", bump_exc,
             )
+
+
+# ---------------------------------------------------------------------------
+# Retention sweep for the transition log (wired into the platform reaper).
+# ---------------------------------------------------------------------------
+
+
+async def purge_old_transitions(
+    retention_days: int = _DEFAULT_RETENTION_DAYS,
+) -> int:
+    """Delete ``WorkflowStateTransition`` rows older than the retention cutoff.
+
+    Every completed workflow state writes ~2 rows into the transition log
+    (one ``entered``, one ``exited:*``). With no upsert path the table
+    grows unbounded -- T-178-02 accepted this as a deferred DoS surface.
+    This sweep is wired into ``aila.platform.tasks.worker.reaper`` next
+    to :func:`aila.platform.llm.idempotency_cache.run_purge_expired_cron`
+    and :func:`aila.platform.llm.drift.run_purge_old_records_cron` so
+    the table stays bounded to ``retention_days`` of history.
+
+    Best-effort in the drift / idempotency-cache style: a single bounded
+    ``DELETE ... WHERE happened_at < cutoff`` inside its own
+    ``async_session_scope``. SQLAlchemy / driver transport errors are
+    logged at WARNING and swallowed with a ``0`` return so the cron
+    tick continues.
+
+    Column note: the underlying model exposes the row timestamp as
+    ``happened_at`` (populated by :func:`aila.platform.contracts.utc_now`
+    on INSERT and by the DB ``server_default=NOW()`` when omitted).
+    There is no separate ``created_at`` column on this table -- audit
+    rows are append-only and ``happened_at`` doubles as their creation
+    timestamp.
+
+    Args:
+        retention_days: Rows with ``happened_at`` strictly older than
+            ``utc_now() - retention_days`` are removed. Rows exactly at
+            the cutoff are kept (strict ``<``, matching
+            ``purge_old_records``).
+
+    Returns:
+        Count of rows deleted, or ``0`` on transport error.
+    """
+    from datetime import timedelta
+
+    from sqlalchemy.exc import DBAPIError, SQLAlchemyError
+    from sqlmodel import delete
+
+    from aila.platform.contracts import utc_now
+    from aila.storage.database import async_session_scope
+
+    cutoff = utc_now() - timedelta(days=retention_days)
+    try:
+        async with async_session_scope() as session:
+            result = await session.execute(
+                delete(WorkflowStateTransition).where(
+                    WorkflowStateTransition.happened_at < cutoff,
+                )
+            )
+            await session.commit()
+            # Some drivers report rowcount=-1 when the row count is
+            # unknown; clamp at zero to keep the cron log line
+            # non-negative (mirrors drift.purge_old_records /
+            # idempotency_cache.purge_expired).
+            rc = int(getattr(result, "rowcount", 0) or 0)
+            return rc if rc >= 0 else 0
+    except (SQLAlchemyError, DBAPIError) as exc:
+        _log.warning("transition-log retention purge failed: %s", exc)
+        return 0
