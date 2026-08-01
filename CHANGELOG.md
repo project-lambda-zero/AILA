@@ -406,6 +406,14 @@ operator action.
 
 ### Changed
 
+- The malware and forensics investigation flows now run the RFC-13
+  discovery-driven dispatch hub. Malware binds its investigate task to
+  `malware.investigate.hub`; the forensics full-analysis path resolves
+  through the two-phase dispatcher to `forensics.investigate.hub`, while
+  the freeflow and raw_directory modes keep their fixed workflows. The
+  vulnerability-research investigate task already ran its hub. Each hub
+  reads and writes the shared investigation ledger (migration 102, in the
+  linear chain). (RFC-13 #68, #23)
 - Malware playbooks execute through an ARQ task that walks the steps and
   writes an execution outcome, replacing the enqueue stub that recorded
   run intent without running anything. The run endpoint returns a queued

@@ -263,12 +263,18 @@ async def _state_routing(
     corresponding ``WorkflowDefinition.definition_id``.
     """
     mode = input.get("mode", "full_analysis")
+    # RFC-13 (#68): the full-analysis path runs the discovery-driven evidence
+    # hub (registered into FORENSICS_MODE_DEFINITIONS at module import). The
+    # hub composes the same forensic state handlers (intake, collection,
+    # deep_analysis, promotion) as the fixed pipeline, evidence-gated. The
+    # freeflow and raw_directory modes keep their fixed workflows.
+    _hub_id = "forensics.investigate.hub"
     mode_to_def_id = {
-        "full_analysis": FORENSICS_FULL_ANALYSIS_V1.definition_id,
+        "full_analysis": _hub_id,
         "freeflow": FORENSICS_FREEFLOW_V1.definition_id,
         "raw_directory": FORENSICS_RAW_DIRECTORY_V1.definition_id,
     }
-    selected_id = mode_to_def_id.get(mode, FORENSICS_FULL_ANALYSIS_V1.definition_id)
+    selected_id = mode_to_def_id.get(mode, _hub_id)
     return StateResult(
         next_state="mode_selection",
         output={"selected_definition_id": selected_id, **input},

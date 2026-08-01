@@ -29,6 +29,7 @@ from typing import Any, cast
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aila.modules.forensics.workflow.definitions import (
+    FORENSICS_MODE_DEFINITIONS,
     _build_services,
     _state_response_emit,
 )
@@ -166,4 +167,14 @@ FORENSICS_INVESTIGATE_HUB = build_dispatch_workflow(
     setup_builder=_setup_builder,
     loop_builder=_loop_builder,
     emit_handler=cast("HandlerFn", _state_response_emit),
+)
+
+
+# RFC-13 (#68): register the discovery-driven hub as a dispatch target so the
+# two-phase dispatcher (``FORENSICS_DISPATCHER_V1.dispatches_to`` is this same
+# dict) can resolve ``forensics.investigate.hub`` by id. This module depends on
+# ``definitions`` for its builders, so the registration lives here (downstream)
+# rather than in ``definitions`` (upstream) to keep the import edge acyclic.
+FORENSICS_MODE_DEFINITIONS[FORENSICS_INVESTIGATE_HUB.definition_id] = (
+    FORENSICS_INVESTIGATE_HUB
 )
