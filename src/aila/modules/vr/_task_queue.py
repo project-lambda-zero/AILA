@@ -8,11 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from aila.modules.vr.contracts.target_stages import StageName, StageState
-from aila.modules.vr.enrichment.workers import (
-    run_capability_profile_build,
-    run_function_ranking,
-)
+from aila.modules.vr.contracts.target_stages import StageState
+from aila.modules.vr.enrichment.workers import run_target_enrichment
 from aila.modules.vr.services.stage_tracker import load_target_stages
 from aila.platform.tasks.queue import TaskQueue
 from aila.storage.registry import ConfigRegistry
@@ -79,25 +76,29 @@ async def enqueue_downstream_target_stages(
     group_id: str = "system",
     team_id: str | None = None,
 ) -> list[dict[str, str]]:
-    """Fan out the post-ingestion enrichment stages for a target.
+    """Fan out the post-ingestion enrichment work for a target.
 
-    Reads the target's ``analysis_stages_json`` and enqueues
-    ``run_capability_profile_build`` and ``run_function_ranking`` for
-    any stage that is not already DONE. Both depend on INGESTION; if
-    ingestion is not yet DONE this is a no-op (the worker running
-    ``run_target_analysis`` calls this helper at task-end after
-    ingestion has flipped to DONE).
+    Enqueues a single ``run_target_enrichment`` job (the M3.T-4
+    orchestrator, ``enrichment/workers/orchestrator_worker.py``) that
+    sequences capability-profile build then function ranking inside
+    one worker slot instead of the two parallel jobs this helper used
+    to submit. Both stages depend on INGESTION -- if ingestion is not
+    yet DONE this is a no-op (the worker running ``run_target_analysis``
+    calls this helper at task-end after ingestion has flipped to DONE),
+    and if BOTH downstream stages are already DONE the helper skips the
+    enqueue entirely so a stale resume click doesn't re-run finished
+    work.
 
     Idempotent. Safe to call from:
       - inside ``run_target_analysis`` (auto-chain after ingestion).
       - the operator-facing ``POST /vr/targets/:id/resume-analysis``
         endpoint (which used to inline this fan-out logic).
 
-    StageTracker handles the "stage already DONE" / "stage RUNNING
-    within timeout" cases by raising StageAlreadyDoneError /
-    StageInFlightError inside each task; the task body catches those
-    and returns cleanly, so a stale duplicate enqueue is wasteful but
-    not corrupting.
+    StageTracker inside each service handles the "stage already DONE" /
+    "stage RUNNING within timeout" cases by raising
+    StageAlreadyDoneError / StageInFlightError; the service body
+    catches those and returns ``None``, so a stale duplicate enqueue
+    is wasteful but not corrupting.
     """
     stages = await load_target_stages(target_id)
     if stages.ingestion.state != StageState.DONE:
@@ -106,22 +107,19 @@ async def enqueue_downstream_target_stages(
         # mcp handles produced by ingestion.
         return []
 
-    enqueued: list[dict[str, str]] = []
+    if (
+        stages.capability_profile.state == StageState.DONE
+        and stages.function_ranking.state == StageState.DONE
+    ):
+        # Both downstream stages already finished -- nothing to do.
+        return []
 
-    async def _enqueue(stage_label: str, fn: object) -> None:
-        handle = await task_queue.submit(
-            track="vr",
-            fn=fn,
-            kwargs={"target_id": target_id},
-            user_id=user_id,
-            group_id=group_id,
-            team_id=team_id,
-        )
-        enqueued.append({"stage": stage_label, "task_id": handle.task_id})
-
-    if stages.capability_profile.state != StageState.DONE:
-        await _enqueue(StageName.CAPABILITY_PROFILE.value, run_capability_profile_build)
-    if stages.function_ranking.state != StageState.DONE:
-        await _enqueue(StageName.FUNCTION_RANKING.value, run_function_ranking)
-
-    return enqueued
+    handle = await task_queue.submit(
+        track="vr",
+        fn=run_target_enrichment,
+        kwargs={"target_id": target_id},
+        user_id=user_id,
+        group_id=group_id,
+        team_id=team_id,
+    )
+    return [{"stage": "enrichment", "task_id": handle.task_id}]

@@ -41,6 +41,7 @@ from aila.modules.vr.db_models import VRFindingRecord, VRInvestigationOutcomeRec
 from aila.modules.vr.enrichment.workers import (
     run_capability_profile_build,
     run_function_ranking,
+    run_target_enrichment,
 )
 from aila.modules.vr.reporting.pdf_report import _collect_facts
 from aila.modules.vr.reporting.poc_writer import PocWriter
@@ -87,6 +88,7 @@ __all__ = [
     "run_function_ranking",
     "run_fuzz_campaign_launch",
     "run_target_analysis",
+    "run_target_enrichment",
     "run_vr_claim_verifier",
     "run_vr_investigate",
     "run_vr_narrative",

@@ -2474,15 +2474,15 @@ def create_vr_router() -> APIRouter:
                 reset_count += 1
         await save_target_stages(target_id, stages)
 
-        # Fan out per non-DONE stage. CAPABILITY_PROFILE + FUNCTION_RANKING
-        # both depend on INGESTION (need handles/index_id). If ingestion is
-        # not yet DONE we enqueue ingestion alone; the worker's
-        # run_target_analysis auto-chains the downstream pair when it
-        # finishes (see _task_queue.enqueue_downstream_target_stages, also
-        # invoked from the end of that task). When ingestion is already
-        # DONE we skip straight to fanning out the downstream pair from
-        # here so the operator gets immediate progress and skips
-        # the ingestion no-op cycle.
+        # Fan out enrichment. CAPABILITY_PROFILE + FUNCTION_RANKING both
+        # depend on INGESTION (need handles/index_id) and are now sequenced
+        # inside the ``run_target_enrichment`` orchestrator (M3.T-4). If
+        # ingestion is not yet DONE we enqueue ingestion alone; the worker's
+        # run_target_analysis auto-chains the orchestrator when it finishes
+        # (see _task_queue.enqueue_downstream_target_stages, also invoked
+        # from the end of that task). When ingestion is already DONE we skip
+        # straight to enqueuing the orchestrator from here so the operator
+        # gets immediate progress and skips the ingestion no-op cycle.
         task_queue = get_task_queue("vr", request)
         enqueued: list[dict[str, str]] = []
         ingestion_state = stages.ingestion.state
