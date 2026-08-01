@@ -102,9 +102,11 @@ class ApkStaticSeedBuilder:
         cwe_block = ", ".join(check.cwe) or "(none)"
         masvs_block = ", ".join(check.masvs_refs) or "(none)"
         evidence_block = _group_evidence_block(check, static_summary)
+        polarity_block = _polarity_block(check)
 
         return _PROMPT_TEMPLATE.format(
             evidence_block=evidence_block,
+            polarity_block=polarity_block,
             check_id=check.id,
             group=check.group.value,
             title=check.title.strip(),
@@ -120,6 +122,36 @@ class ApkStaticSeedBuilder:
             cwe_block=cwe_block,
             masvs_block=masvs_block,
         )
+
+
+def _polarity_block(check: ApkStaticCheck) -> str:
+    """Finding-polarity clause for defense-presence checks.
+
+    Most apk_static checks hunt for a weakness: finding the weakness IS the
+    finding, so a ``direct_finding`` is correct. RESILIENCE checks invert
+    that -- they audit whether a *defensive* control is present, and the
+    control being present and reachable is the good state, i.e. a cited
+    NEGATIVE, not a vulnerability. Without stating this the scout emits a
+    ``direct_finding`` for a working defense (the verdict mapper then
+    projects it to ``MasvsVerdict.FINDING``, wrongly flagging a present
+    control as a failing one). Returns an empty string for every other
+    group so weakness-hunting checks keep the default polarity.
+    """
+    if check.group is not ApkStaticGroup.RESILIENCE:
+        return ""
+    return (
+        "\n## Finding polarity (RESILIENCE / defense-presence check)\n\n"
+        "This check audits whether a defensive control is present, not "
+        "whether a weakness exists. Invert the usual polarity: a control "
+        "that is PRESENT and reachable is a cited NEGATIVE -- submit a "
+        "no_finding that documents the mechanism with file:line evidence. "
+        "Reserve a direct_finding for the ABSENCE of the control, control "
+        "code that is dead / unreachable, or a trivially defeated control. "
+        "Documenting a working defense is NOT a vulnerability and must not "
+        "be submitted as one. If the control is present but weak (e.g. a "
+        "local-only check with no server-side attestation), that nuance "
+        "belongs in the no_finding evidence, not a direct_finding.\n"
+    )
 
 
 def _group_evidence_block(
@@ -232,7 +264,7 @@ Audit APK static check **{check_id}** ({group}) on APK `{package}`
 This is a concrete, statically-answerable check -- a definite finding or a
 cited negative, not a compliance opinion. A clean result is valid ONLY
 after the evidence below is examined; cite `file:line` for every claim.
-
+{polarity_block}
 ## Verification steps
 
 {steps_block}

@@ -455,6 +455,18 @@ operator action.
 
 ### Fixed
 
+- APK static RESILIENCE audits no longer report a present defensive
+  control as a failing one. RESILIENCE checks (integrity verification,
+  root / emulator / anti-debug / obfuscation detection) audit whether a
+  defense is present: the control being present and reachable is the good
+  state, and only its absence, dead code, or trivial bypass is a finding.
+  The per-check seed did not state that inverted polarity, so a scout that
+  correctly located a working control submitted a direct_finding, which
+  the verdict mapper projects to a FINDING and flags the present control
+  as a resilience gap. The RESILIENCE seed now states the inverted
+  polarity explicitly: a present, reachable control is a cited no_finding,
+  and a direct_finding is reserved for an absent, dead, or defeated
+  control.
 - Call-graph queries resolve interface and dependency-injection dispatch.
   A call through a field whose declared type is an interface (a
   DI-injected collaborator, the common shape in obfuscated Android /
