@@ -1,32 +1,71 @@
-"""File-backed prompt registry (RFC-09 step 0).
+"""File-backed prompt registry with optional DB override (RFC-09).
 
 The module tool researchers each carried a byte-identical
 ``_cached_read_prompt`` + ``_load_prompt`` pair differing only in the
 fallback base filename and the error class. This platform registry owns
 the single file-backed resolution path so no module reimplements it, and
 gives RFC-09's later steps (DB overrides, immutable versions, release
-aliases, per-investigation pins) one place to grow. This step is
-behavior-preserving and file-backed only -- no database, no versioning.
+aliases, per-investigation pins) one place to grow.
 
-Resolution mirrors the prior module logic exactly: the base prompt is
-``system_<strategy-leaf>.md`` (the last dotted segment of the strategy
-family), falling back to a module-supplied base filename; when a persona
-voice is supplied and ``persona_<voice>.md`` exists, its content is
-prepended to the base as a role-specific opening section.
+Resolution keys the same role at ``(module, role, strategy, model_family)``
+so a shipped role can carry model-specific variants:
+
+    system_<strategy-leaf>__<model_family>.md   # family-specific base
+    system_<strategy-leaf>.md                   # generic base
+    <fallback_base>__<model_family>.md          # family-specific fallback
+    <fallback_base>                             # generic fallback
+    persona_<voice>__<model_family>.md          # family-specific persona
+    persona_<voice>.md                          # generic persona
+
+A missing ``model_family`` (None) short-circuits the family-specific
+lookups so callers that do not track a routed model behave exactly as
+before. When a ``PromptVersionStore`` is bound at construction, the
+registry consults the store first through
+:meth:`PromptRegistry.resolve` and falls back to the file when the
+store has no matching entry or fails. The sync :meth:`load` stays
+file-only so the existing single-shot callers (human cost, knowledge
+enrichment, forensics narrative, ...) keep their pure-file semantics
+unchanged.
 """
 from __future__ import annotations
 
 import functools
+import logging
 from pathlib import Path
+from typing import TYPE_CHECKING, NamedTuple
 
-__all__ = ["PromptNotFoundError", "PromptRegistry"]
+if TYPE_CHECKING:
+    from aila.platform.prompts.version_store import PromptVersionStore
+
+__all__ = [
+    "LoadedPrompt",
+    "PromptNotFoundError",
+    "PromptRegistry",
+    "normalize_model_family",
+]
+
+_log = logging.getLogger(__name__)
 
 
 class PromptNotFoundError(RuntimeError):
     """Raised when neither the strategy-specific base nor the fallback exists."""
 
 
-@functools.lru_cache(maxsize=32)
+class LoadedPrompt(NamedTuple):
+    """Resolved system-prompt body plus the version it was resolved from.
+
+    ``version`` is None when the caller fell back to the file registry
+    (no store row, no store bound, or the store failed open). Callers
+    thread ``version`` into the correlation scope so every LLM call
+    written by R1's cost / seal writers is attributable to the exact
+    version.
+    """
+
+    body: str
+    version: str | None
+
+
+@functools.lru_cache(maxsize=64)
 def _cached_read_prompt(path_str: str) -> str:
     """Read a prompt file, cached by absolute path.
 
@@ -38,32 +77,242 @@ def _cached_read_prompt(path_str: str) -> str:
     return Path(path_str).read_text(encoding="utf-8")
 
 
-class PromptRegistry:
-    """Resolves a module's system prompt from its on-disk prompt directory."""
+# Known model families keyed by substring match against the tail of a
+# provider-qualified model id ("anthropic/claude-opus-4-7" ->
+# "claude"). Ordered by specificity so a longer marker wins first
+# ("gpt-4o" and "o1" both match a mini variant, but "gpt" wins because
+# it appears earlier in the tail). Unknown ids return None so the
+# caller falls back to the generic variant.
+_MODEL_FAMILY_MARKERS: tuple[str, ...] = (
+    "claude",
+    "gemini",
+    "llama",
+    "mistral",
+    "mixtral",
+    "deepseek",
+    "qwen",
+    "phi",
+    "grok",
+    "command",
+    "yi",
+    "gpt",
+    "o3",
+    "o1",
+)
 
-    def __init__(self, prompt_dir: Path | str, *, fallback_base: str) -> None:
+
+def normalize_model_family(model_id: str | None) -> str | None:
+    """Return the coarse family name for a provider-qualified model id.
+
+    Accepts the OpenRouter / provider-prefixed form used across the
+    codebase ("anthropic/claude-opus-4-7", "openai/gpt-4o",
+    "google/gemini-1.5-pro", "meta-llama/llama-3-70b", ...) and returns
+    a short family label ("claude", "gpt", "gemini", ...). Returns
+    ``None`` when the id is missing or does not carry a recognised
+    marker so the caller falls back to the default variant.
+    """
+    if not model_id:
+        return None
+    tail = model_id.rsplit("/", 1)[-1].lower()
+    for marker in _MODEL_FAMILY_MARKERS:
+        if marker in tail:
+            return marker
+    return None
+
+
+def _key_segment(value: str | None, default: str) -> str:
+    """Coerce a keyable value to the segment written into the DB key."""
+    segment = (value or "").strip().lower()
+    return segment or default
+
+
+class PromptRegistry:
+    """Resolves a module's system prompt from its on-disk prompt directory.
+
+    ``module`` is the key prefix used when a version store is bound, so
+    the DB key is deterministic and stable across processes: two live
+    workers reading the same on-disk prompt directory will build the
+    same store key for the same role.
+
+    ``version_store`` is optional -- when supplied, :meth:`resolve`
+    consults the store first (a released version overrides the file);
+    when omitted, the registry stays purely file-backed and behaves
+    exactly like the pre-DB path.
+    """
+
+    def __init__(
+        self,
+        prompt_dir: Path | str,
+        *,
+        fallback_base: str,
+        module: str | None = None,
+        version_store: PromptVersionStore | None = None,
+        override_alias: str = "production",
+    ) -> None:
         self._dir = Path(prompt_dir)
         self._fallback_base = fallback_base
+        self._module = (module or self._dir.name).strip().lower() or self._dir.name
+        self._store = version_store
+        self._override_alias = override_alias
 
-    def load(self, strategy_family: str, persona_voice: str | None = None) -> str:
-        """Return the system prompt for a strategy family + optional persona.
+    # ---------------------------------------------------------------- keys
+    def build_key(
+        self,
+        strategy_family: str,
+        persona_voice: str | None = None,
+        *,
+        model_family: str | None = None,
+    ) -> str:
+        """Return the ``module/role/strategy/model_family`` store key.
 
-        The base is ``system_<strategy-leaf>.md`` (falling back to the
-        module's base filename). When ``persona_voice`` is set and a
-        ``persona_<voice>.md`` file exists, it is prepended to the base.
-        Raises PromptNotFoundError when no base prompt can be resolved.
+        ``role`` is the persona voice ("halvar", ...) or ``"base"`` when
+        no persona applies. ``model_family`` normalises to ``"default"``
+        when the caller did not route a specific family, matching the
+        file-fallback behaviour.
         """
-        leaf = strategy_family.rsplit(".", 1)[-1]
-        base_candidate = self._dir / f"system_{leaf}.md"
-        if not base_candidate.exists():
-            base_candidate = self._dir / self._fallback_base
-        if not base_candidate.exists():
-            raise PromptNotFoundError(f"prompt file missing: {base_candidate}")
+        role = _key_segment(persona_voice, "base")
+        strategy = _key_segment(strategy_family, "default")
+        family = _key_segment(model_family, "default")
+        return f"{self._module}/{role}/{strategy}/{family}"
+
+    # -------------------------------------------------------- file-backed
+    def load(
+        self,
+        strategy_family: str,
+        persona_voice: str | None = None,
+        *,
+        model_family: str | None = None,
+    ) -> str:
+        """Return the file-backed system prompt for a strategy + persona.
+
+        This sync path never touches the store. Model-family-specific
+        variants on disk are preferred when ``model_family`` is set;
+        missing them the resolver falls back to the generic file so a
+        role that has not been forked per model still resolves.
+        """
+        return self._resolve_from_file(strategy_family, persona_voice, model_family)
+
+    # ----------------------------------------------------- DB-then-file
+    async def resolve(
+        self,
+        strategy_family: str,
+        persona_voice: str | None = None,
+        *,
+        model_family: str | None = None,
+        alias: str | None = None,
+        version: str | None = None,
+    ) -> LoadedPrompt:
+        """Resolve the prompt, preferring a DB override over the file.
+
+        A bound ``version_store`` is consulted first: the family-specific
+        key wins if a row exists, otherwise the default-variant key on
+        the same (module/role/strategy) tuple is tried, so a role that
+        has no per-family override transparently uses its shared
+        version-store body. A store fault (or an unbound store) falls
+        through to the file with ``version=None``. The persona prepend
+        applies to the file path only -- version-store bodies are stored
+        under a persona-scoped key and are treated verbatim.
+        """
+        effective_alias = alias if alias is not None else self._override_alias
+        if self._store is not None:
+            # Family-specific key first; when the routed family has no row,
+            # retry the default-variant key on the same module/role/strategy
+            # tuple so a role that was never forked per model transparently
+            # uses its shared version-store body.
+            candidates: list[tuple[str, str | None]] = [
+                (
+                    self.build_key(
+                        strategy_family, persona_voice, model_family=model_family,
+                    ),
+                    model_family,
+                ),
+            ]
+            if model_family is not None:
+                candidates.append(
+                    (self.build_key(strategy_family, persona_voice), None),
+                )
+            for key, family in candidates:
+                try:
+                    row = await self._store.resolve(
+                        key,
+                        alias=effective_alias,
+                        version=version,
+                        model_family=family,
+                    )
+                except (OSError, RuntimeError) as exc:
+                    _log.warning(
+                        "prompt version store resolve failed key=%s: %s (using file)",
+                        key,
+                        exc,
+                    )
+                    break
+                if row is not None:
+                    return LoadedPrompt(body=row.body, version=row.version)
+        body = self._resolve_from_file(strategy_family, persona_voice, model_family)
+        return LoadedPrompt(body=body, version=None)
+
+    # ---------------------------------------------------------- internals
+    def _resolve_from_file(
+        self,
+        strategy_family: str,
+        persona_voice: str | None,
+        model_family: str | None,
+    ) -> str:
+        base_candidate = self._pick_base(strategy_family, model_family)
+        if base_candidate is None:
+            attempted = list(self._base_candidates(strategy_family, model_family))
+            raise PromptNotFoundError(
+                f"prompt file missing: tried {[str(p) for p in attempted]}",
+            )
         base = _cached_read_prompt(str(base_candidate))
 
-        if persona_voice:
-            persona_candidate = self._dir / f"persona_{persona_voice.lower()}.md"
-            if persona_candidate.exists():
-                persona_prefix = _cached_read_prompt(str(persona_candidate))
-                return f"{persona_prefix}\n\n---\n\n{base}"
-        return base
+        if not persona_voice:
+            return base
+        persona_candidate = self._pick_persona(persona_voice, model_family)
+        if persona_candidate is None:
+            return base
+        persona_prefix = _cached_read_prompt(str(persona_candidate))
+        return f"{persona_prefix}\n\n---\n\n{base}"
+
+    def _base_candidates(
+        self,
+        strategy_family: str,
+        model_family: str | None,
+    ) -> list[Path]:
+        leaf = strategy_family.rsplit(".", 1)[-1]
+        fallback_stem = self._fallback_base.rsplit(".", 1)[0]
+        family = (model_family or "").strip().lower()
+        candidates: list[Path] = []
+        if family:
+            candidates.append(self._dir / f"system_{leaf}__{family}.md")
+        candidates.append(self._dir / f"system_{leaf}.md")
+        if family:
+            candidates.append(self._dir / f"{fallback_stem}__{family}.md")
+        candidates.append(self._dir / self._fallback_base)
+        return candidates
+
+    def _pick_base(
+        self,
+        strategy_family: str,
+        model_family: str | None,
+    ) -> Path | None:
+        for candidate in self._base_candidates(strategy_family, model_family):
+            if candidate.exists():
+                return candidate
+        return None
+
+    def _pick_persona(
+        self,
+        persona_voice: str,
+        model_family: str | None,
+    ) -> Path | None:
+        voice = persona_voice.lower()
+        family = (model_family or "").strip().lower()
+        candidates: list[Path] = []
+        if family:
+            candidates.append(self._dir / f"persona_{voice}__{family}.md")
+        candidates.append(self._dir / f"persona_{voice}.md")
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return None

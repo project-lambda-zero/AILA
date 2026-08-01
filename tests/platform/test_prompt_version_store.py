@@ -120,3 +120,74 @@ async def test_set_alias_unknown_version_raises(test_db) -> None:
     key = _key()
     with pytest.raises(PromptVersionNotFoundError):
         await store.set_alias(key, "production", "1.0.0", actor="op", reason="x")
+
+
+@pytest.mark.asyncio
+async def test_resolve_prefers_family_specific_key(test_db) -> None:
+    """When ``model_family`` is set the store checks ``{key}/{family}`` first.
+
+    Family-specific and default-variant rows co-exist under sibling keys; a
+    caller passing ``model_family="claude"`` must resolve the family row,
+    while a caller passing ``model_family=None`` still sees the bare key.
+    """
+    del test_db
+    store = PromptVersionStore()
+    base = _key()
+    family_key = f"{base}/claude"
+    v_family = await store.register(family_key, "CLAUDE BODY", author="op")
+    v_default = await store.register(base, "DEFAULT BODY", author="op")
+    await store.set_alias(
+        family_key, "production", v_family, actor="op", reason="promote family",
+    )
+    await store.set_alias(
+        base, "production", v_default, actor="op", reason="promote default",
+    )
+
+    got_family = await store.resolve(base, alias="production", model_family="claude")
+    assert got_family is not None
+    assert got_family.body == "CLAUDE BODY"
+    got_default = await store.resolve(base, alias="production")
+    assert got_default is not None
+    assert got_default.body == "DEFAULT BODY"
+
+
+@pytest.mark.asyncio
+async def test_resolve_family_missing_falls_back_to_default_variant(test_db) -> None:
+    """A family with no family-specific row falls back to the bare key row."""
+    del test_db
+    store = PromptVersionStore()
+    base = _key()
+    v_default = await store.register(base, "DEFAULT BODY", author="op")
+    await store.set_alias(
+        base, "production", v_default, actor="op", reason="promote default",
+    )
+
+    got = await store.resolve(base, alias="production", model_family="gpt")
+    assert got is not None
+    assert got.body == "DEFAULT BODY"
+
+
+@pytest.mark.asyncio
+async def test_resolve_by_explicit_version_honours_family(test_db) -> None:
+    """An explicit version query is scoped to the family-specific key first."""
+    del test_db
+    store = PromptVersionStore()
+    base = _key()
+    family_key = f"{base}/claude"
+    v_family = await store.register(family_key, "CLAUDE V1", author="op")
+    # Same version string exists on both keys; the family key wins.
+    v_default = await store.register(base, "DEFAULT V1", author="op")
+    assert v_family == v_default  # both are the first version on their key
+
+    got = await store.resolve(base, version=v_family, model_family="claude")
+    assert got is not None
+    assert got.body == "CLAUDE V1"
+
+
+@pytest.mark.asyncio
+async def test_resolve_family_missing_and_no_default_returns_none(test_db) -> None:
+    del test_db
+    store = PromptVersionStore()
+    base = _key()
+    got = await store.resolve(base, alias="production", model_family="claude")
+    assert got is None
