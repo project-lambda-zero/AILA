@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
+from sqlalchemy import delete, func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
@@ -149,6 +150,87 @@ class PermanentMemoryStore:
         await session.delete(entry)
         await session.commit()
         return True
+
+    async def prune_expired(
+        self,
+        session,
+        *,
+        max_age_days: int,
+        namespace: str | None = None,
+    ) -> int:
+        """Delete permanent-memory rows older than ``max_age_days``.
+
+        Age is measured against ``updated_at`` so a row that was rewritten
+        (upsert) resets the clock. ``max_age_days <= 0`` is a no-op --
+        callers use that sentinel to disable age-based prune without
+        having to branch. When ``namespace`` is supplied the delete is
+        scoped to that namespace; otherwise every namespace is pruned.
+        Commits the transaction and returns the deleted row count.
+        """
+        if max_age_days <= 0:
+            return 0
+        cutoff = utc_now() - timedelta(days=max_age_days)
+        stmt = delete(PermanentMemoryRecord).where(
+            PermanentMemoryRecord.updated_at < cutoff
+        )
+        if namespace is not None:
+            stmt = stmt.where(PermanentMemoryRecord.namespace == namespace)
+        result = await session.execute(stmt)
+        await session.commit()
+        # SQLAlchemy's Core ``Result.rowcount`` reports affected rows for
+        # DELETE. asyncpg exposes it; when the driver cannot report it we
+        # fall back to 0 so callers never see ``None`` in metrics.
+        return int(result.rowcount or 0)
+
+    async def prune_overflow(
+        self,
+        session,
+        *,
+        max_rows_per_namespace: int,
+    ) -> int:
+        """Cap each namespace at ``max_rows_per_namespace`` newest rows.
+
+        Row ordering is by ``updated_at DESC`` so the freshest entries
+        survive; the tail (oldest) is deleted. ``max_rows_per_namespace <= 0``
+        disables the cap. Commits the transaction and returns the total
+        deleted row count across all namespaces.
+        """
+        if max_rows_per_namespace <= 0:
+            return 0
+        # Namespaces that exceed the cap are the only ones that need work.
+        oversized = (await session.execute(
+            select(
+                PermanentMemoryRecord.namespace,
+                func.count().label("rows"),
+            )
+            .group_by(PermanentMemoryRecord.namespace)
+            .having(func.count() > max_rows_per_namespace)
+        )).all()
+        if not oversized:
+            return 0
+        deleted_total = 0
+        for namespace, _rows in oversized:
+            # Keep the ``max_rows_per_namespace`` most recent ids in a
+            # subquery; delete everything else in the namespace. Using an
+            # id-based NOT IN avoids relying on OFFSET semantics inside a
+            # correlated DELETE, which some driver combinations mishandle.
+            keep_ids_stmt = (
+                select(PermanentMemoryRecord.id)
+                .where(PermanentMemoryRecord.namespace == namespace)
+                .order_by(PermanentMemoryRecord.updated_at.desc())  # type: ignore[attr-defined]
+                .limit(max_rows_per_namespace)
+            )
+            keep_ids = [row[0] for row in (await session.execute(keep_ids_stmt)).all()]
+            if not keep_ids:
+                continue
+            del_stmt = delete(PermanentMemoryRecord).where(
+                PermanentMemoryRecord.namespace == namespace,
+                PermanentMemoryRecord.id.notin_(keep_ids),  # type: ignore[attr-defined]
+            )
+            result = await session.execute(del_stmt)
+            deleted_total += int(result.rowcount or 0)
+        await session.commit()
+        return deleted_total
 
 
 def append_run_event(run_state: RunState, state: str, note: str) -> None:

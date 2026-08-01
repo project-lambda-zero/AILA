@@ -25,6 +25,7 @@ __all__ = [
     "HealthReport",
     "platform_health_check",
     "register_maintenance_actions",
+    "tool_storage_prune",
 ]
 
 import asyncio
@@ -38,7 +39,9 @@ from sqlalchemy import text
 
 from aila.platform.automation.registry import AutomationRegistry
 from aila.platform.services.redis_pool import get_redis, pool_available
+from aila.platform.tools.pruner import ToolStoragePruneReport, prune_tool_storage
 from aila.storage.database import async_session_scope
+from aila.storage.registry import ConfigRegistry
 
 _log = logging.getLogger(__name__)
 
@@ -232,6 +235,27 @@ async def platform_health_check(**kwargs: object) -> HealthReport:
     return report
 
 
+async def tool_storage_prune(**kwargs: object) -> ToolStoragePruneReport:
+    """Prune platform-owned tool storage tables (#56).
+
+    Thin wrapper around :func:`aila.platform.tools.pruner.prune_tool_storage`
+    that constructs a fresh :class:`ConfigRegistry` per tick so operator
+    overrides on the ``platform.tool_storage_*`` knobs are picked up
+    without a worker restart. See the pruner module for the full
+    per-half semantics; this callable exists only so the automation
+    runner's ``bare-callable`` submit path can find it under a stable
+    ``action_id`` (``platform.tool_storage_prune``).
+
+    Not decorated with ``@platform_task`` for the same reason
+    :func:`platform_health_check` isn't -- DESIGN section 3.6 documents
+    the runner-owned bare-callable path, and the decorator would
+    trigger the ``__name__`` collision documented in CLAUDE.md common
+    mistake 19.
+    """
+    _ = kwargs
+    return await prune_tool_storage(config_registry=ConfigRegistry())
+
+
 def register_maintenance_actions(registry: AutomationRegistry) -> None:
     """Register all platform-owned maintenance actions.
 
@@ -242,6 +266,16 @@ def register_maintenance_actions(registry: AutomationRegistry) -> None:
         action_id="platform.health_check",
         handler_fn=platform_health_check,
         description="Platform health check and cleanup",
+        module_id="platform",
+    )
+    registry.register_action(
+        action_id="platform.tool_storage_prune",
+        handler_fn=tool_storage_prune,
+        description=(
+            "Prune expired and overflowing rows from platform tool storage "
+            "(permanent memory + generic artifacts) per the "
+            "tool_storage_* platform config knobs"
+        ),
         module_id="platform",
     )
     _log.info("Platform maintenance actions registered")
