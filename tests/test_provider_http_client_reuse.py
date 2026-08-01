@@ -39,11 +39,17 @@ def _no_per_call_with_block(cls: type) -> bool:
 
 
 def _init_calls_build_provider_http_client(cls: type) -> bool:
-    """Return True if __init__ (anywhere in MRO) calls build_provider_http_client."""
+    """Return True if __init__ (anywhere in MRO) calls the sync or async provider client builder.
+
+    The async variant (``build_async_provider_http_client``) is the required
+    entry point for providers whose backend API tolerates asyncio-native I/O
+    (NVD/EPSS/KEV/OSV per #64, #55); other providers still use the sync
+    builder.  Both funnel through the same proxy/verify resolution helpers.
+    """
     for c in cls.__mro__:
         if "__init__" in c.__dict__:
             src = inspect.getsource(c.__init__)
-            if "build_provider_http_client" in src:
+            if "build_provider_http_client" in src or "build_async_provider_http_client" in src:
                 return True
     return False
 
