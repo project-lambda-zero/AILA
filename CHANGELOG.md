@@ -455,6 +455,17 @@ operator action.
 
 ### Fixed
 
+- The dev process stack (backend, workers, audit_mcp, ida-headless,
+  frontend) survives the terminal or session that launched it closing.
+  start.sh spawned each service through PowerShell Start-Process, whose
+  children inherit the launching terminal's Windows Job Object
+  (kill-on-close), so the whole stack died together when the launching
+  session ended while the OS-service dependencies (postgres, redis) kept
+  running. start.sh now launches services via WMI Win32_Process.Create,
+  which reparents each process out of the terminal job to the WMI provider
+  service, and passes the working directory explicitly (the WMI call
+  otherwise defaults it to the system directory). Path conversion covers
+  git-bash, WSL, and already-Windows cwd forms.
 - APK static RESILIENCE audits no longer report a present defensive
   control as a failing one. RESILIENCE checks (integrity verification,
   root / emulator / anti-debug / obfuscation detection) audit whether a
