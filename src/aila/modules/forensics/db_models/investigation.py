@@ -23,6 +23,13 @@ class InvestigationRunRecord(SQLModel, table=True):
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     project_id: str = Field(index=True)
+    # Denormalised copy of ``forensics_projects.team_id`` at insert time
+    # (#59). Populated on every write path from the parent project so the
+    # do_orm_execute team-scope listener can auto-filter reads without
+    # a preceding parent-row join. The project ownership guard still
+    # runs on the parent row for defense-in-depth. Nullable to match the
+    # parent's ``NULL == admin-owned`` convention.
+    team_id: str | None = Field(default=None, index=True)
     question: str = Field(sa_column=Column(Text))
     status: str = Field(default="pending", index=True)
     task_id: str | None = Field(default=None, index=True)
@@ -48,6 +55,10 @@ class AgentStepRecord(SQLModel, table=True):
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     investigation_id: str = Field(index=True)
+    # Denormalised copy of the parent investigation's team_id (#59) --
+    # stamped at insert time so the team-scope listener can auto-filter
+    # step reads without a two-hop join back to ``forensics_projects``.
+    team_id: str | None = Field(default=None, index=True)
     step_number: int = Field(default=0)
     action: str = Field(default="reasoning")
     script_content: str | None = Field(default=None, sa_column=Column(Text))
@@ -70,6 +81,9 @@ class WriteUpRecord(SQLModel, table=True):
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     project_id: str = Field(index=True)
+    # Denormalised copy of ``forensics_projects.team_id`` (#59) so the
+    # team-scope listener can auto-filter write-up reads.
+    team_id: str | None = Field(default=None, index=True)
     investigation_id: str | None = Field(default=None, index=True)
     title: str = Field(default="", max_length=512)
     content_markdown: str = Field(default="", sa_column=Column(Text))

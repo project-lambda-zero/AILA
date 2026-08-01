@@ -132,6 +132,7 @@ async def _spawn_forensics_panel(
     *,
     investigation_id: str,
     primary_branch_id: str,
+    team_id: str | None,
 ) -> None:
     """Bind the platform persona spawn to forensics models and enqueue."""
     from aila.modules.forensics.workflow.panel.task import (
@@ -141,11 +142,13 @@ async def _spawn_forensics_panel(
     await spawn_persona_siblings(
         investigation_id,
         primary_branch_id,
-        # forensics_investigations has no team_id column (it predates
-        # TeamScopedMixin); the platform spawn accepts None for
-        # non-team-scoped modules and the enqueued task inherits the
-        # project's team via the operator auth path, not this hop.
-        None,
+        # #59: forensics_investigations now carries its own denormalised
+        # ``team_id`` column. Thread it through the sibling spawn so the
+        # enqueued task's TaskRecord stamps the correct tenant even if
+        # the primary task's ambient team_id is somehow out of sync
+        # (e.g. resumed by an admin sweep). ``None`` still means
+        # admin-owned, matching the parent project's convention.
+        team_id,
         siblings=_PANEL_SIBLINGS,
         branch_model=ForensicsInvestigationBranchRecord,
         inv_table="forensics_investigations",
@@ -183,9 +186,21 @@ def state_forensics_panel_setup(next_state: str) -> Any:
             # already carries its own branch_id and MUST NOT recursively
             # spawn (the platform spawn is idempotent per persona but
             # skipping the call keeps the hot path cheap).
+            # Resolve the investigation's team_id up-front so the sibling
+            # spawn stamps it onto every child TaskRecord (#59). Returns
+            # ``None`` (admin) if the row is missing -- spawn_persona_siblings
+            # already tolerates that case.
+            async with UnitOfWork() as uow:
+                inv_row = (await uow.session.exec(
+                    _select(InvestigationRunRecord).where(
+                        InvestigationRunRecord.id == investigation_id,
+                    )
+                )).first()
+            inv_team_id = inv_row.team_id if inv_row is not None else None
             await _spawn_forensics_panel(
                 investigation_id=investigation_id,
                 primary_branch_id=primary_branch_id,
+                team_id=inv_team_id,
             )
             await _mark_investigation_running(investigation_id)
 

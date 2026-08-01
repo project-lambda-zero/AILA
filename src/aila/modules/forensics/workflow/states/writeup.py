@@ -62,12 +62,28 @@ async def state_writeup(
         },
     )
 
-    from aila.modules.forensics.db_models import WriteUpRecord
+    from sqlmodel import select as _select
+
+    from aila.modules.forensics.db_models import ForensicsProjectRecord, WriteUpRecord
     from aila.platform.uow import UnitOfWork
 
     async with UnitOfWork() as uow:
+        # Load the parent project's team_id so the write-up row carries
+        # the same tenant marker (#59). The team-scope listener
+        # auto-filters read queries on ``forensics_writeups`` by team_id,
+        # so a row inserted with the wrong / missing team_id is
+        # invisible to the tenant that owns the investigation. A missing
+        # project row (deletion race) leaves the write-up unowned; the
+        # response_emit state downstream still lets the primary caller
+        # finish, and the write-up will only be visible to admins.
+        project = (await uow.session.exec(
+            _select(ForensicsProjectRecord).where(
+                ForensicsProjectRecord.id == project_id
+            )
+        )).first()
         record = WriteUpRecord(
             project_id=project_id,
+            team_id=project.team_id if project is not None else None,
             investigation_id=investigation_id,
             title=writeup_data.get("title", "Investigation Write-Up"),
             content_markdown=writeup_data.get("content", ""),

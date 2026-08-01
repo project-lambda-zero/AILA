@@ -267,6 +267,14 @@ class HonestInvestigator:
         # One-shot prompt block describing the parent attempt's outcome,
         # rendered into turn 1's history slot. Cleared after consumption.
         self._parent_summary: str | None = None
+        # Denormalised copy of the parent project's ``team_id`` (#59).
+        # Populated by :meth:`_load_project_context` on the first turn
+        # so every persisted ``AgentStepRecord`` / ``AnswerCandidateRecord``
+        # / summary flip carries the same tenant marker as the parent
+        # ``InvestigationRunRecord`` -- the team-scope listener then
+        # auto-filters reads on those rows without a project-join.
+        # Stays ``None`` when the parent project is admin-owned.
+        self.team_id: str | None = None
 
     # ------------------------------------------------------------------ run
 
@@ -299,7 +307,10 @@ class HonestInvestigator:
             max_turns, (question or "")[:120],
         )
 
-        evidence_listing, evidence_dir, project_kind, _project_team_id = await self._load_project_context()
+        evidence_listing, evidence_dir, project_kind, project_team_id = await self._load_project_context()
+        # Cache the parent project's team_id on the agent so downstream
+        # per-turn persistence stamps it onto every child row (#59).
+        self.team_id = project_team_id
 
         # Flip investigation to "running" so the reconciler can tell the
         # difference between "never started" and "in flight". Uses its own
@@ -424,6 +435,9 @@ class HonestInvestigator:
                 async with UnitOfWork() as step_uow:
                     step_uow.session.add(AgentStepRecord(
                         investigation_id=self.investigation_id,
+                        # Denormalised parent team_id (#59) so the
+                        # team-scope listener auto-filters step reads.
+                        team_id=self.team_id,
                         step_number=turn,
                         action=turn_result.get("action", "reasoning"),
                         script_content=_sanitize_for_postgres_text(turn_result.get("script_content")),
@@ -517,6 +531,9 @@ class HonestInvestigator:
                     async with UnitOfWork() as ans_uow:
                         ans_uow.session.add(AnswerCandidateRecord(
                             project_id=self.project_id,
+                            # Denormalised parent team_id (#59) so the
+                            # team-scope listener auto-filters answer reads.
+                            team_id=self.team_id,
                             investigation_id=self.investigation_id,
                             question_text=question,
                             answer_text=str(answer),

@@ -4,15 +4,29 @@ Mounted at ``/forensics`` by ``ForensicsModule.route_specs()``.
 Every endpoint uses ``DataEnvelope[T]`` response models, platform auth,
 and rate limiting per MODULE_STANDARD and MODULE_AI_CONTEXT rules.
 
-All list/get endpoints enforce team_id scoping via ``_team_filter`` to
-prevent cross-tenant data leaks (aligned with cost/automation routers).
+All list/get endpoints on the parent ``forensics_projects`` table enforce
+team_id scoping via ``_team_filter``. Every read against a child table
+additionally passes through the parent-project ownership guard
+(:func:`require_project_ownership`) so a cross-team caller is rejected
+before the child rows are queried.
 
-Project-scoped child tables (investigations, agent steps, write-ups,
-answer candidates, analyst directives, finding suppressions, solid
-evidence, artifacts, leads, project evidence) do NOT carry a ``team_id``
-column. Their team scope is derived transitively via the parent row in
-``forensics_projects``. The single source of truth for that join contract
-lives in ``aila.modules.forensics.db_models.team_scope``
+As of migration ``109_forensics_child_team_id`` (#59), four child
+tables -- ``forensics_investigations``, ``forensics_agent_steps``,
+``forensics_writeups``, ``forensics_answer_candidates`` -- also carry a
+denormalised ``team_id`` column. The platform ``do_orm_execute``
+listener auto-injects ``WHERE team_id = :caller`` on their reads for a
+non-admin session, so a cross-team leak requires bypassing BOTH the
+project guard AND the listener. Writes stamp the column from the parent
+project's ``team_id`` at insert time (see ``start_investigation`` /
+``rerun_investigation`` / :class:`HonestInvestigator` /
+``state_writeup``).
+
+The remaining project-scoped child tables (analyst directives, finding
+suppressions, solid evidence, artifacts, leads, project evidence) do
+NOT carry a ``team_id`` column. Their team scope is derived transitively
+via the parent project row alone -- the ownership guard MUST run before
+any select against them. The single source of truth for the join
+contract lives in ``aila.modules.forensics.db_models.team_scope``
 (:data:`PROJECT_SCOPED_CHILDREN` +
 :func:`require_project_ownership` +
 :func:`load_project_for_team`); the closure ``_require_project_ownership``
@@ -1352,9 +1366,14 @@ def create_forensics_router() -> APIRouter:
         - ``ready``: bool (on done)
         """
         from aila.api.deps import get_task_queue
+        from aila.api.sse_gate import enforce_sse_cap
         from aila.modules.forensics.db_models import ForensicsProjectRecord
         from aila.modules.forensics.services.machine_readiness import MachineReadinessService
         from aila.storage.db_models import ManagedSystemRecord
+
+        # #60 global SSE ceiling: refuse new streams when ACTIVE_SSE is
+        # at or above the configured cap.
+        enforce_sse_cap()
         async with UnitOfWork() as uow:
             project = (await uow.session.exec(
                 select(ForensicsProjectRecord).where(ForensicsProjectRecord.id == project_id)
@@ -1849,6 +1868,10 @@ def create_forensics_router() -> APIRouter:
 
             record = InvestigationRunRecord(
                 project_id=project_id,
+                # Denormalise the parent project's team_id at insert time
+                # (#59) so the team-scope listener auto-filters reads on
+                # this row without having to join through forensics_projects.
+                team_id=project.team_id,
                 question=body.question,
                 status="pending",
                 max_attempts=resolved_max_attempts,
@@ -2000,6 +2023,11 @@ def create_forensics_router() -> APIRouter:
 
             record = InvestigationRunRecord(
                 project_id=project_id,
+                # Denormalise the parent project's team_id at insert time
+                # (#59). Rerun always inherits the project's current team,
+                # not the parent attempt's, so an admin-driven team move
+                # between attempts stays consistent with the project row.
+                team_id=project.team_id,
                 question=new_question,
                 status="pending",
                 max_attempts=new_max,
@@ -2385,7 +2413,12 @@ def create_forensics_router() -> APIRouter:
         Replays past events on connect, then streams live updates until
         the investigation reaches a terminal state (completed / failed).
         """
+        from aila.api.sse_gate import enforce_sse_cap
         from aila.modules.forensics.db_models import ForensicsProjectRecord, InvestigationRunRecord
+
+        # #60 global SSE ceiling: refuse new streams when ACTIVE_SSE is
+        # at or above the configured cap.
+        enforce_sse_cap()
 
         async with UnitOfWork() as uow:
             project = (await uow.session.exec(
@@ -2426,42 +2459,53 @@ def create_forensics_router() -> APIRouter:
                 return r.status if r else None
 
         async def _inv_sse_generator() -> AsyncGenerator[str, None]:
-            stream = ProgressStream()
+            # #60 global SSE ceiling: count this stream against ACTIVE_SSE
+            # so the process-wide gauge (and enforce_sse_cap above) sees
+            # module SSE endpoints too. dec() runs on every exit path
+            # (normal completion, client disconnect, mid-stream exception)
+            # via the try/finally.
+            from aila.api.metrics import ACTIVE_SSE
 
-            yield f"data: {json.dumps({'stage': 'stream', 'message': 'Connected', 'percent': 0})}\n\n"
-
-            resume_from = last_id
-            latest_stage = "queued"
+            ACTIVE_SSE.inc()
             try:
-                catchup_events = await stream.catchup(task_id, last_id)
-                for event in catchup_events:
+                stream = ProgressStream()
+
+                yield f"data: {json.dumps({'stage': 'stream', 'message': 'Connected', 'percent': 0})}\n\n"
+
+                resume_from = last_id
+                latest_stage = "queued"
+                try:
+                    catchup_events = await stream.catchup(task_id, last_id)
+                    for event in catchup_events:
+                        yield f"data: {json.dumps(event)}\n\n"
+                        if event.get("stage"):
+                            latest_stage = event["stage"]
+                    resume_from = "$"
+                except (RuntimeError, OSError, TimeoutError, ConnectionError) as exc:
+                    _log.warning("Investigation SSE catchup failed for %s: %s", task_id, exc)
+
+                current_status = await _fetch_inv_status()
+                if current_status in _INV_TERMINAL:
+                    yield f"event: done\ndata: {json.dumps({'status': current_status})}\n\n"
+                    return
+
+                async for event in stream.stream_events(task_id, resume_from):
+                    if event.get("type") == "ping":
+                        current_status = await _fetch_inv_status()
+                        if current_status in _INV_TERMINAL:
+                            yield f"event: done\ndata: {json.dumps({'status': current_status})}\n\n"
+                            return
+                        yield f"data: {json.dumps({'stage': 'heartbeat', 'message': f'Investigation running (stage={latest_stage})', 'percent': None})}\n\n"
+                        continue
+
                     yield f"data: {json.dumps(event)}\n\n"
                     if event.get("stage"):
                         latest_stage = event["stage"]
-                resume_from = "$"
-            except (RuntimeError, OSError, TimeoutError, ConnectionError) as exc:
-                _log.warning("Investigation SSE catchup failed for %s: %s", task_id, exc)
-
-            current_status = await _fetch_inv_status()
-            if current_status in _INV_TERMINAL:
-                yield f"event: done\ndata: {json.dumps({'status': current_status})}\n\n"
-                return
-
-            async for event in stream.stream_events(task_id, resume_from):
-                if event.get("type") == "ping":
-                    current_status = await _fetch_inv_status()
-                    if current_status in _INV_TERMINAL:
-                        yield f"event: done\ndata: {json.dumps({'status': current_status})}\n\n"
+                    if event.get("stage") in _INV_TERMINAL:
+                        yield f"event: done\ndata: {json.dumps({'status': event['stage']})}\n\n"
                         return
-                    yield f"data: {json.dumps({'stage': 'heartbeat', 'message': f'Investigation running (stage={latest_stage})', 'percent': None})}\n\n"
-                    continue
-
-                yield f"data: {json.dumps(event)}\n\n"
-                if event.get("stage"):
-                    latest_stage = event["stage"]
-                if event.get("stage") in _INV_TERMINAL:
-                    yield f"event: done\ndata: {json.dumps({'status': event['stage']})}\n\n"
-                    return
+            finally:
+                ACTIVE_SSE.dec()
 
         return StreamingResponse(
             _inv_sse_generator(),

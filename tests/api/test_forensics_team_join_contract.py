@@ -1,11 +1,15 @@
 """#59 -- forensics team-isolation join contract completeness + enforcement.
 
 The audit's PARTIAL residual on ``child tables carry team_id or a
-documented join contract`` is closed here. Every project-scoped child
-table (investigations, agent steps, write-ups, answer candidates,
-analyst directives, finding suppressions, solid evidence, artifacts,
-leads, project evidence) has NO ``team_id`` column. Their team scope
-is inherited transitively through the parent
+documented join contract`` is closed here. As of migration
+``109_forensics_child_team_id``, four child tables
+(``forensics_investigations``, ``forensics_agent_steps``,
+``forensics_writeups``, ``forensics_answer_candidates``) carry a
+denormalised ``team_id`` column stamped from the parent project on
+every write path. The remaining project-scoped child tables (analyst
+directives, finding suppressions, solid evidence, artifacts, leads,
+project evidence) still have NO ``team_id`` column and inherit their
+tenant transitively through the parent
 :class:`ForensicsProjectRecord.team_id` via a project-ownership check
 that MUST run before any child-table read.
 
@@ -276,9 +280,11 @@ async def test_load_project_for_team_mismatch_raises_403(test_db) -> None:
 
 async def test_list_investigations_rejects_cross_team_reader(test_db) -> None:
     """A caller from team-b MUST get 403 when reading investigations
-    on a project owned by team-a, even though InvestigationRunRecord
-    has no team_id column. Proves the transitive join contract is
-    enforced end-to-end at the router boundary."""
+    on a project owned by team-a. Since migration 109 the child rows
+    also carry a denormalised ``team_id`` column, but the router still
+    fails-fast on the project-ownership guard before the child query
+    runs -- proving the transitive join contract is enforced end-to-end
+    at the router boundary regardless of any listener-injected filter."""
     suffix = uuid4().hex[:8]
     pid = await _seed_project(suffix, team_id="team-a")
     async with async_session_scope() as session:

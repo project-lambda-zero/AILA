@@ -7,25 +7,35 @@ The forensics module scopes rows to a tenant (team) through a single
 root table:
 
     ``forensics_projects`` (:class:`ForensicsProjectRecord`)
-        The only row that carries a ``team_id`` column.
+        The row that owns the tenant assignment. Every child row
+        derives its tenant from this parent via the ``project_id``
+        foreign key.
 
-Every other forensics table -- investigations, agent steps, write-ups,
-answer candidates, analyst directives, finding suppressions, solid
-evidence, artifacts, leads, and project evidence -- has NO ``team_id``
-column. They are project-scoped: a foreign key on ``project_id`` points
-back at ``forensics_projects.id`` and the team the row belongs to is
-inherited transitively through that join.
+As of migration ``109_forensics_child_team_id`` (#59), four of the
+child tables also carry a redundant ``team_id`` column:
 
-This is deliberate. The alternative (denormalising ``team_id`` onto
-every child row) is a shared-infra change (Alembic migration + a
-platform-wide backfill) and duplicates a value that is already
-determinable from the parent. But it means every read path that
-touches a child table MUST first resolve the parent project's
-``team_id`` and reject the request when it does not match the
-caller's ``AuthContext.team_id``. Skipping that step leaks
-cross-tenant data silently.
+    ``forensics_investigations``    (:class:`InvestigationRunRecord`)
+    ``forensics_agent_steps``       (:class:`AgentStepRecord`)
+    ``forensics_writeups``          (:class:`WriteUpRecord`)
+    ``forensics_answer_candidates`` (:class:`AnswerCandidateRecord`)
 
-This module formalises that rule as a single source of truth so:
+Every write path stamps that column from the parent project's
+``team_id`` at insert time so the platform ``do_orm_execute`` team-scope
+listener (see :mod:`aila.platform.services.team_scope`) can auto-inject
+``WHERE team_id = :caller`` on reads without a two-hop parent join.
+The project-ownership guard (:func:`require_project_ownership` /
+:func:`load_project_for_team`) still runs on the parent row and is now
+a defense-in-depth check rather than the sole barrier.
+
+The remaining project-scoped children -- analyst directives, finding
+suppressions, solid evidence, artifacts, leads, project evidence --
+have NO ``team_id`` column. They are still project-scoped: their tenant
+is derived transitively through the ``project_id`` join and every
+reader MUST resolve the parent project first and reject the request
+when it does not match the caller's ``AuthContext.team_id``. Skipping
+that step leaks cross-tenant data silently.
+
+This module formalises the rule as a single source of truth so:
 
 * The router calls :func:`require_project_ownership` in exactly one
   place (via the closure in ``api_router.create_forensics_router``)
