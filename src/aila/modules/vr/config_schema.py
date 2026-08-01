@@ -70,6 +70,33 @@ class VRConfigSchema(ModuleConfigBase):
         le=16384,
         description="Memory cap for sandboxed PoC execution, in megabytes.",
     )
+    poc_workspace_max_age_minutes: int = Field(
+        default=60,
+        ge=1,
+        le=10080,
+        description=(
+            "Age cap on per-run workspace subdirectories under "
+            "/tmp/aila_vr on the analyzer workstation. Subdirectories "
+            "older than this are removed by the prune pass every "
+            "compile_poc invocation so an orphaned workspace from a "
+            "crashed workflow does not accumulate. Read live via "
+            "ConfigRegistry so PUT /config/vr/* lands on the next "
+            "compile without a worker restart."
+        ),
+    )
+    poc_workspace_max_total_mb: int = Field(
+        default=512,
+        ge=1,
+        le=65536,
+        description=(
+            "Total-size cap in megabytes on the shared /tmp/aila_vr "
+            "workspace root on the analyzer workstation. The prune "
+            "pass at each compile_poc removes oldest per-run "
+            "subdirectories first until the tree fits under this cap. "
+            "Bounds workspace growth even when individual runs never "
+            "call cleanup_workspace explicitly."
+        ),
+    )
     ssh_command_timeout_seconds: float = Field(
         default=300.0,
         ge=10.0,
@@ -293,6 +320,22 @@ class VRConfigSchema(ModuleConfigBase):
             "after the wall-clock cap is hit before terminating, so an "
             "investigation that is actively producing work doesn't get "
             "killed for a slow turn."
+        ),
+    )
+
+    # --- Upload guard (#57: input-size DoS on target/APK uploads) ---------
+    upload_max_bytes: int = Field(
+        default=512 * 1024 * 1024,  # 512 MiB
+        ge=1024,
+        le=16 * 1024 * 1024 * 1024,  # hard ceiling 16 GiB
+        description=(
+            "Per-request byte cap the VR upload endpoints enforce while "
+            "streaming the body (POST /vr/targets/{id}/upload for raw "
+            "binaries; POST /vr/targets/upload-apk for APKs). Bodies past "
+            "this cap fail with HTTP 413 mid-stream so a chunked upload "
+            "that omits Content-Length cannot OOM the worker (the global "
+            "Content-Length middleware misses those). Env: "
+            "AILA_VR_UPLOAD_MAX_BYTES."
         ),
     )
 

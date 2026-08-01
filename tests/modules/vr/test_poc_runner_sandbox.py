@@ -21,7 +21,10 @@ from aila.modules.vr.tools.poc_runner import (
     PoCRunnerTool,
     apply_isolator,
     build_run_wrapper,
+    build_workspace_prune_cmd,
     confine_remote_poc_path,
+    new_run_dir,
+    run_dir_of,
 )
 
 _INTEGRATION = {
@@ -308,9 +311,12 @@ async def test_run_probes_firejail_first_then_unshare(monkeypatch):
     assert "firejail" in run_cmd
 
 
-async def test_run_falls_back_to_ulimit_when_nothing_installed(monkeypatch, caplog):
-    """When neither firejail nor unshare+setpriv is present the runner logs
-    the documented WARNING and uses the ulimit-only fence."""
+async def test_run_refuses_when_no_isolator_available(monkeypatch, caplog):
+    """fix #51 fail-close: when neither firejail nor unshare+setpriv is
+    installed on the target, the runner MUST refuse to execute instead
+    of falling back to a fenceless bash wrap. No run command reaches
+    the target; the caller receives ``status="error"`` with a clear
+    refusal reason so the operator sees why the PoC did not launch."""
     monkeypatch.delenv("AILA_VR_POC_ISOLATOR", raising=False)
 
     class _NoIsolatorSSH(_SSHStub):
@@ -323,18 +329,70 @@ async def test_run_falls_back_to_ulimit_when_nothing_installed(monkeypatch, capl
     tool = _tool()
     ssh = _NoIsolatorSSH()
     with caplog.at_level(logging.WARNING, logger="aila.modules.vr.tools.poc_runner"):
-        await tool._run(
+        result = await tool._run(
             ssh,  # type: ignore[arg-type]
             _INTEGRATION,
             poc_path="/tmp/aila_vr/poc.py",
             target_binary="/tmp/aila_vr/target",
         )
-    assert any("falling back to bare ulimit" in rec.message for rec in caplog.records)
+    assert result["status"] == "error"
+    assert "refusing to execute" in result["error"]
+    assert "firejail" in result["error"] and "unshare" in result["error"]
+    # Refusal was logged at WARNING so the operator sees it.
+    assert any("refusing to execute" in rec.message for rec in caplog.records)
+    # Critical: no PoC-invocation command was dispatched. Only the two
+    # detection probes (firejail then unshare) hit the SSH transport;
+    # the marker-framed run command is absent.
+    run_cmds = [c for c, _ in ssh.commands if "__AILA_POC_EXIT__" in c]
+    assert run_cmds == []
+    # Confirm the probes ran but nothing else -- ulimit / bash -c wrapping
+    # never left the tool.
+    probe_cmds = [c for c, _ in ssh.commands if "command -v" in c]
+    assert len(probe_cmds) == 2
+
+
+async def test_run_refusal_not_cached_so_later_probe_can_recover(monkeypatch):
+    """fix #51 -- a refusal on one call MUST NOT lock the workflow into
+    permanent refusal. If the operator installs firejail between attempts,
+    the next probe finds it and the PoC runs."""
+    monkeypatch.delenv("AILA_VR_POC_ISOLATOR", raising=False)
+
+    class _FlippingSSH(_SSHStub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.probe_calls = 0
+            self.firejail_present = False
+
+        async def run_command(self, integration: dict, command: str, timeout_seconds: float | None = None) -> str:
+            self.commands.append((command, integration))
+            if "command -v firejail" in command:
+                self.probe_calls += 1
+                return "OK\n" if self.firejail_present else "MISSING\n"
+            if "command -v unshare" in command:
+                self.probe_calls += 1
+                return "MISSING\n"
+            return await super().run_command(integration, command, timeout_seconds)
+
+    tool = _tool()
+    ssh = _FlippingSSH()
+    first = await tool._run(
+        ssh,  # type: ignore[arg-type]
+        _INTEGRATION,
+        poc_path="/tmp/aila_vr/poc.py",
+        target_binary="/tmp/aila_vr/target",
+    )
+    assert first["status"] == "error"
+    # Operator installs firejail on the target between attempts.
+    ssh.firejail_present = True
+    second = await tool._run(
+        ssh,  # type: ignore[arg-type]
+        _INTEGRATION,
+        poc_path="/tmp/aila_vr/poc.py",
+        target_binary="/tmp/aila_vr/target",
+    )
+    assert second["status"] == "ready"
     run_cmd = [c for c, _ in ssh.commands if "__AILA_POC_EXIT__" in c][0]
-    assert "firejail" not in run_cmd
-    # `unshare --user` is the discriminator -- ulimit wrap has neither.
-    assert "unshare --user" not in run_cmd
-    assert "ulimit -v" in run_cmd
+    assert "firejail" in run_cmd
 
 
 async def test_isolator_result_cached_per_integration(monkeypatch):
@@ -431,15 +489,18 @@ async def test_env_override_ignored_when_not_in_chain(monkeypatch):
     assert "firejail" in run_cmd
 
 
-def test_ulimit_env_override_logs_warning(monkeypatch, caplog):
-    """Forcing ulimit-only via env still surfaces the WARNING so an operator
-    consciously downgrading isolation sees the risk."""
+def test_ulimit_env_override_refuses_to_execute(monkeypatch, caplog):
+    """fix #51 fail-close: forcing the fenceless ``ulimit`` shape via env
+    MUST refuse to execute. The audit's ``no code path executes an
+    untrusted PoC without network isolation + cap drop`` acceptance
+    means an operator override cannot silently downgrade past the
+    firejail/unshare gate."""
     monkeypatch.setenv("AILA_VR_POC_ISOLATOR", ISOLATOR_ULIMIT)
 
     tool = _tool()
     ssh = _SSHStub()
     with caplog.at_level(logging.WARNING, logger="aila.modules.vr.tools.poc_runner"):
-        asyncio.run(
+        result = asyncio.run(
             tool._run(
                 ssh,  # type: ignore[arg-type]
                 _INTEGRATION,
@@ -447,4 +508,176 @@ def test_ulimit_env_override_logs_warning(monkeypatch, caplog):
                 target_binary="/tmp/aila_vr/target",
             )
         )
-    assert any("falling back to bare ulimit" in rec.message for rec in caplog.records)
+    assert result["status"] == "error"
+    assert "AILA_VR_POC_ISOLATOR=ulimit" in result["error"]
+    assert any("refusing to execute" in rec.message for rec in caplog.records)
+    # No command reached the wire -- not even a detection probe fires when
+    # the env override was explicit.
+    assert ssh.commands == []
+
+
+# ---------------------------------------------------------------------------
+# Per-run workspace teardown + quota prune (fix #51)
+# ---------------------------------------------------------------------------
+
+
+def test_new_run_dir_produces_unique_paths_under_sandbox_root():
+    a = new_run_dir()
+    b = new_run_dir()
+    assert a != b
+    assert a.startswith("/tmp/aila_vr/run_")
+    assert b.startswith("/tmp/aila_vr/run_")
+    # Both live inside the confined workspace root so the existing
+    # confine_remote_poc_path checker accepts a poc file under them.
+    assert confine_remote_poc_path(f"{a}/poc.py") is None
+    assert confine_remote_poc_path(f"{b}/poc") is None
+
+
+def test_run_dir_of_extracts_per_run_parent():
+    rd = new_run_dir()
+    assert run_dir_of(f"{rd}/poc.py") == rd
+    assert run_dir_of(f"{rd}/subdir/poc") == rd
+
+
+def test_run_dir_of_returns_none_for_paths_outside_a_run_subdir():
+    # Legacy path directly under the sandbox root -- not owned by any run.
+    assert run_dir_of("/tmp/aila_vr/poc.py") is None
+    # Non-run prefix -- do NOT treat as a per-run subdir.
+    assert run_dir_of("/tmp/aila_vr/notarun_x/poc") is None
+    # Escapes the sandbox root -- refuse.
+    assert run_dir_of("/etc/passwd") is None
+    # Relative path -- refuse.
+    assert run_dir_of("poc.py") is None
+    # Contains .. -- refuse.
+    assert run_dir_of("/tmp/aila_vr/run_x/../etc") is None
+
+
+def test_build_workspace_prune_cmd_age_and_size_pipeline():
+    cmd = build_workspace_prune_cmd("/tmp/aila_vr", 45, 262144)
+    # Age pass -- 45-minute cap targets only run_* subdirs of the root.
+    assert "find /tmp/aila_vr -maxdepth 1 -type d -name 'run_*'" in cmd
+    assert "-mmin +45" in cmd
+    # Size pass -- oldest-first eviction until du reports under CAP_KB.
+    assert "CAP_KB=262144" in cmd
+    assert "sort -n" in cmd
+    # mkdir bootstraps a missing workspace so the prune is a no-op on
+    # a fresh worker.
+    assert cmd.startswith("mkdir -p /tmp/aila_vr")
+
+
+async def test_compile_c_provisions_per_run_workspace_and_prunes(monkeypatch):
+    """fix #51 -- ``compile_poc`` creates ``/tmp/aila_vr/run_<hex>``,
+    runs the age+size prune BEFORE gcc, and returns paths inside the
+    per-run subdirectory. Assert both the mkdir shape and the prune
+    signature so a regression that skips either is caught.
+
+    The workspace caps are supplied via env var so ``ConfigRegistry.get``
+    resolves without touching the DB (the tool's registry read is a live
+    async call; the env-first layer keeps the unit test hermetic).
+    """
+    monkeypatch.setenv("AILA_VR_POC_WORKSPACE_MAX_AGE_MINUTES", "45")
+    monkeypatch.setenv("AILA_VR_POC_WORKSPACE_MAX_TOTAL_MB", "256")
+    tool = _tool()
+
+    class _CompileSSH(_SSHStub):
+        async def run_command(self, integration: dict, command: str, timeout_seconds: float | None = None) -> str:
+            self.commands.append((command, integration))
+            if command.startswith("mkdir -p") and "find " in command:
+                # Prune pipeline (mkdir -p ... && find ...); nothing to return.
+                return ""
+            if command.startswith("mkdir -p"):
+                return ""
+            return "__AILA_POC_EXIT__:0\n"
+
+        async def upload_file(self, integration: dict, local_path: str, remote_path: str, timeout_seconds: float | None = None) -> None:
+            del integration, local_path, remote_path, timeout_seconds
+
+    ssh = _CompileSSH()
+    result = await tool._compile(
+        ssh,  # type: ignore[arg-type]
+        _INTEGRATION,
+        code="int main(){return 0;}",
+        language="c",
+        filename="poc.c",
+    )
+    assert result["status"] == "ready"
+    # Per-run subdirectory returned + threaded into paths.
+    assert result["run_dir"].startswith("/tmp/aila_vr/run_")
+    assert result["binary_path"].startswith(result["run_dir"] + "/")
+    assert result["source_path"].startswith(result["run_dir"] + "/")
+    # A dedicated mkdir for the run subdir hit the wire.
+    mkdir_cmds = [c for c, _ in ssh.commands if c.startswith("mkdir -p /tmp/aila_vr/run_")]
+    assert len(mkdir_cmds) == 1
+    # Prune pipeline ran with the workspace root as scope.
+    prune_cmds = [
+        c for c, _ in ssh.commands
+        if "-name 'run_*'" in c and "-mmin +" in c and "CAP_KB=" in c
+    ]
+    assert len(prune_cmds) == 1
+
+
+async def test_cleanup_workspace_removes_per_run_subdir():
+    """fix #51 -- ``cleanup_workspace`` issues an ``rm -rf`` against the
+    per-run subdir resolved from ``poc_path``."""
+    tool = _tool()
+    ssh = _SSHStub()
+    run_dir = new_run_dir()
+    result = await tool._cleanup(
+        ssh,  # type: ignore[arg-type]
+        _INTEGRATION,
+        poc_path=f"{run_dir}/poc.py",
+    )
+    assert result["status"] == "cleaned"
+    assert result["run_dir"] == run_dir
+    rm_cmds = [c for c, _ in ssh.commands if c.startswith("rm -rf --")]
+    assert len(rm_cmds) == 1
+    assert run_dir in rm_cmds[0]
+
+
+async def test_cleanup_workspace_skips_legacy_paths():
+    """A ``poc_path`` directly under the sandbox root (pre-per-run layout)
+    is not owned by any run subdir -- ``cleanup_workspace`` returns
+    ``skipped`` and issues no rm."""
+    tool = _tool()
+    ssh = _SSHStub()
+    result = await tool._cleanup(
+        ssh,  # type: ignore[arg-type]
+        _INTEGRATION,
+        poc_path="/tmp/aila_vr/poc.py",
+    )
+    assert result["status"] == "skipped"
+    assert ssh.commands == []
+
+
+async def test_cleanup_workspace_refuses_paths_outside_sandbox():
+    tool = _tool()
+    ssh = _SSHStub()
+    result = await tool._cleanup(
+        ssh,  # type: ignore[arg-type]
+        _INTEGRATION,
+        poc_path="/etc/passwd",
+    )
+    assert result["status"] == "error"
+    assert "escapes" in result["error"]
+    assert ssh.commands == []
+
+
+async def test_cleanup_workspace_refuses_sandbox_root_via_run_dir():
+    """An explicit ``run_dir=/tmp/aila_vr`` (or any path outside the
+    ``run_<hex>`` layout) MUST NOT trigger an ``rm -rf`` of the shared
+    workspace root. Belt+suspenders check inside ``_cleanup``."""
+    tool = _tool()
+    ssh = _SSHStub()
+    for candidate in (
+        "/tmp/aila_vr",
+        "/tmp/aila_vr/sub/child",
+        "/tmp/aila_vr/notarun_x",
+        "/etc",
+    ):
+        result = await tool._cleanup(
+            ssh,  # type: ignore[arg-type]
+            _INTEGRATION,
+            run_dir=candidate,
+        )
+        assert result["status"] == "error", candidate
+    assert ssh.commands == []

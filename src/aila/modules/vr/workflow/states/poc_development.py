@@ -23,9 +23,15 @@ Sandbox containment (fix #51). The ``Stay within /tmp/aila_vr/`` line in
 control. The runtime enforcement lives in :mod:`aila.modules.vr.tools.poc_runner`:
 ``confine_remote_poc_path`` refuses any ``poc_path`` that is not absolute
 and under ``/tmp/aila_vr``, and every remote invocation is wrapped in
-``firejail`` -> ``unshare + setpriv`` -> ``ulimit`` (documented fallback
-chain) so a hallucinated ``requests.post(...)`` cannot reach the network
-and a hallucinated ``open('/etc/shadow')`` cannot exfiltrate host files.
+``firejail`` or ``unshare + setpriv`` (fail-closed -- when neither is
+present the tool REFUSES to execute with a clear reason instead of
+degrading to an unsandboxed shell). Each ``compile_poc`` allocates a
+fresh ``/tmp/aila_vr/run_<hex>`` subdirectory and returns paths inside
+it; this state's ``finally`` block invokes ``cleanup_workspace`` for
+every provisioned subdirectory so the analyzer workstation does not
+accumulate scratch space across runs. A hallucinated
+``requests.post(...)`` cannot reach the network and a hallucinated
+``open('/etc/shadow')`` cannot exfiltrate host files.
 """
 from __future__ import annotations
 
@@ -300,13 +306,93 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
             },
         )
 
+    # fix #51 -- per-run workspace teardown. Each successful compile
+    # allocates a fresh ``/tmp/aila_vr/run_<hex>`` subdirectory on the
+    # analyzer workstation; the ``finally`` block below reclaims every
+    # one via ``cleanup_workspace`` so the state exit path (crash,
+    # untested, LLM kill-switch) does not leak scratch space. Bounding
+    # workspace growth is the ``poc_runner`` prune's job even when this
+    # cleanup is skipped; the explicit ``finally`` is the fast path.
+    compiled_run_dirs: list[str] = []
+    try:
+        return await _run_ssh_attempts(
+            input=input,
+            services=services,
+            research=research,
+            integration=integration,
+            target_path=target_path,
+            patched_path=patched_path,
+            mitigations=mitigations,
+            compiled_run_dirs=compiled_run_dirs,
+        )
+    finally:
+        await _cleanup_compiled_workspaces(
+            services, integration, compiled_run_dirs,
+        )
+
+
+async def _cleanup_compiled_workspaces(
+    services: Any,
+    integration: dict[str, Any],
+    compiled_run_dirs: list[str],
+) -> None:
+    """Best-effort teardown of every per-run workspace this state provisioned.
+
+    fix #51 -- invoked from ``state_poc_development``'s ``finally`` block
+    so crash, untested, LLM kill-switch, and exception exit paths all
+    reclaim their scratch space. Cleanup failures are logged and
+    swallowed: an exit-path exception must NOT mask the original
+    workflow result, and the ``poc_runner`` prune pass will collect the
+    stragglers on the next compile.
+    """
+    for run_dir in compiled_run_dirs:
+        try:
+            result = await services.poc_runner.forward(
+                action="cleanup_workspace",
+                integration=integration,
+                run_dir=run_dir,
+            )
+        except (OSError, RuntimeError, TimeoutError) as exc:
+            _log.warning(
+                "poc_development: cleanup_workspace raised for %s (%s: %s)",
+                run_dir, type(exc).__name__, exc,
+            )
+            continue
+        status = result.get("status") if isinstance(result, dict) else None
+        if status not in ("cleaned", "skipped"):
+            _log.warning(
+                "poc_development: cleanup_workspace did not clean %s: %s",
+                run_dir, result,
+            )
+
+
+async def _run_ssh_attempts(
+    *,
+    input: dict[str, Any],
+    services: Any,
+    research: dict[str, Any],
+    integration: dict[str, Any],
+    target_path: str,
+    patched_path: Any,
+    mitigations: dict[str, Any],
+    compiled_run_dirs: list[str],
+) -> StateResult:
+    """SSH-driven PoC compile/run/verify attempt loop (fix #51 factor-out).
+
+    Split out from :func:`state_poc_development` so the caller can wrap
+    it in a ``try/finally`` that reclaims every ``compile_poc`` workspace
+    via ``cleanup_workspace`` regardless of which return path fires.
+    The behavior of the loop itself is unchanged from the pre-fix
+    version -- only the workspace bookkeeping is threaded through
+    ``compiled_run_dirs`` (mutated in place).
+    """
     history: list[dict[str, Any]] = []
     crash_payload: dict[str, Any] | None = None
     last_code: str = ""
     last_language: str = "python"
     last_filename: str = "poc.py"
 
-    # fix §308 -- track the "best" non-crashing attempt by a closeness
+    # fix \u00a7308 -- track the "best" non-crashing attempt by a closeness
     # heuristic. The prior code surfaced LAST attempt's language/code
     # in the untested_payload, which biased the operator's manual
     # follow-up toward whatever the LLM emitted last (often a
@@ -391,6 +477,15 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
             language=last_language,
             filename=last_filename,
         )
+        # fix #51 -- track the per-run workspace subdir for ``finally``
+        # cleanup regardless of compile success. A ``ready`` compile
+        # returns ``run_dir``; a compile that raced past ``mkdir`` and
+        # failed at gcc may still return one. Missing values (an older
+        # tool response) are skipped without erroring so the workflow
+        # stays forward-compatible.
+        compile_run_dir = compile_result.get("run_dir")
+        if isinstance(compile_run_dir, str) and compile_run_dir:
+            compiled_run_dirs.append(compile_run_dir)
         if compile_result.get("status") != "ready":
             history.append({
                 "attempt": attempt, "language": last_language,
