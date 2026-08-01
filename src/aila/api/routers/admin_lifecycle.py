@@ -309,15 +309,30 @@ async def promote(
     distinct approver strings on ``approved`` rows than
     ``platform.agent_promotion_quorum`` demands). The alias is left
     untouched in either case.
+
+    RFC-10: when ``version`` is the active canary for ``key``, the flip
+    goes through ``promote_from_canary`` so the min-sample gate
+    (``platform.agent_canary_min_sample``) also applies and the active
+    canary row is superseded. A direct (non-canary) promotion keeps the
+    plain ``promote`` path unchanged.
     """
     del request
     try:
-        record = await _CONTROLLER.promote(
-            key=body.key,
-            version=body.version,
-            actor=ctx.user_id,
-            reason=body.reason,
-        )
+        canary_row = await _CONTROLLER.active_canary(body.key)
+        if canary_row is not None and canary_row.version == body.version:
+            record = await _CONTROLLER.promote_from_canary(
+                key=body.key,
+                version=body.version,
+                actor=ctx.user_id,
+                reason=body.reason,
+            )
+        else:
+            record = await _CONTROLLER.promote(
+                key=body.key,
+                version=body.version,
+                actor=ctx.user_id,
+                reason=body.reason,
+            )
     except StageTransitionError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc),

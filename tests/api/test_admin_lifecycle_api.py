@@ -186,6 +186,92 @@ async def test_evaluate_then_promote_flips_alias(
 
 
 @pytest.mark.asyncio
+async def test_canary_promote_enforces_min_sample_gate(
+    async_client: AsyncClient, admin_token: str, test_db,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Promoting the ACTIVE canary version routes through the RFC-10
+    min-sample gate. With platform.agent_canary_min_sample=2 and zero
+    signals recorded, POST /promote returns 409 naming the gate; after
+    two in-ceiling signals the same promote succeeds and flips the
+    production alias. Proves /promote calls promote_from_canary (not the
+    bare promote that skips the sample gate) when a canary is live."""
+    del test_db
+    # Require two observed signals before a canary may graduate. Env is
+    # resolved ahead of the DB/default by ConfigRegistry, so this drives
+    # _resolve_canary_min_sample without an initialized platform state.
+    monkeypatch.setenv("AILA_PLATFORM_AGENT_CANARY_MIN_SAMPLE", "2")
+    hdr = {"Authorization": f"Bearer {admin_token}"}
+    key = _key()
+
+    version = await _register_version(async_client, hdr, key, "PROMPT BODY")
+    benchmark_id = await _register_benchmark(
+        async_client, hdr, key, _passing_cases(version),
+    )
+    eval_resp = await async_client.post(
+        "/admin/lifecycle/evaluate",
+        json={"key": key, "version": version, "benchmark_id": benchmark_id},
+        headers=hdr,
+    )
+    assert eval_resp.status_code == 201, eval_resp.text
+    approve_resp = await async_client.post(
+        "/admin/lifecycle/approve",
+        json={"key": key, "version": version, "reason": "ok"},
+        headers=hdr,
+    )
+    assert approve_resp.status_code == 201, approve_resp.text
+    shadow_resp = await async_client.post(
+        "/admin/lifecycle/shadow",
+        json={"key": key, "version": version, "reason": "shadow it"},
+        headers=hdr,
+    )
+    assert shadow_resp.status_code == 201, shadow_resp.text
+    canary_resp = await async_client.post(
+        "/admin/lifecycle/canary",
+        json={
+            "key": key, "version": version,
+            "cohort_percent": 10, "reason": "canary it",
+        },
+        headers=hdr,
+    )
+    assert canary_resp.status_code == 201, canary_resp.text
+    assert canary_resp.json()["data"]["to_stage"] == "canary"
+
+    # Zero signals recorded -> the gate blocks the promote with 409.
+    blocked = await async_client.post(
+        "/admin/lifecycle/promote",
+        json={"key": key, "version": version, "reason": "too early"},
+        headers=hdr,
+    )
+    assert blocked.status_code == 409, blocked.text
+    assert "min-sample gate not met" in blocked.json()["detail"]
+
+    # Two in-ceiling signals (no drift/cost breach) satisfy the gate.
+    for _ in range(2):
+        sig = await async_client.post(
+            "/admin/lifecycle/canary/signal",
+            json={"key": key, "drift": 0.0, "cost": 0.0},
+            headers=hdr,
+        )
+        assert sig.status_code == 200, sig.text
+
+    promoted = await async_client.post(
+        "/admin/lifecycle/promote",
+        json={"key": key, "version": version, "reason": "ship"},
+        headers=hdr,
+    )
+    assert promoted.status_code == 201, promoted.text
+    assert promoted.json()["data"]["to_stage"] == "production"
+
+    aliases = await async_client.get(
+        "/admin/prompts/aliases", params={"key": key}, headers=hdr,
+    )
+    assert aliases.status_code == 200
+    alias_map = {a["alias"]: a["version"] for a in aliases.json()["data"]}
+    assert alias_map["production"] == version
+
+
+@pytest.mark.asyncio
 async def test_promote_without_approve_returns_409(
     async_client: AsyncClient, admin_token: str, test_db,
 ) -> None:
