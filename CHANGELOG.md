@@ -381,6 +381,12 @@ operator action.
 
 ### Changed
 
+- Model-family prompt variants and the canary hold gate now operate on
+  live turns. A reasoning turn selects the prompt variant for the model
+  family it routes to (falling back to the default variant then the file),
+  and a canary-cohort turn's drift and cost feed the canary hold gate
+  automatically instead of only via a manual admin action. Both are inert
+  outside a live prompt rollout. (#33, RFC-10)
 - Upload endpoints read request bodies under a hard byte ceiling. Sample,
   investigation, and APK uploads reject a chunked body with no declared
   length and cap the read so an oversized upload cannot exhaust worker
@@ -507,6 +513,16 @@ operator action.
 
 ### Fixed
 
+- The global server-sent-events ceiling now bounds the session message
+  stream and the forensics readiness stream. Both called the cap check but
+  never counted themselves against the gauge, so the ceiling under-counted
+  live connections. (#60)
+- Promoting an active canary version now applies the minimum-sample gate.
+  The promote endpoint called the plain promote path, bypassing the gate
+  and the canary cleanup for a canary-stage version. (#34)
+- The turn budget's measured cost now tracks the durable cost ledger. The
+  reconciler was defined but never called, leaving the budget's measured
+  spend at zero for the whole run. (#38)
 - The prompt registry falls back to the default-variant version-store row
   when a routed model family has no family-specific override, instead of
   dropping to the file-backed base. (#33)
