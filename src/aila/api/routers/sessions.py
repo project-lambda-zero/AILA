@@ -336,6 +336,7 @@ async def _stream_message(
     auth: AuthContext,
 ) -> StreamingResponse:
     """Stream assistant response tokens via SSE (TASK-04, D-06 through D-14)."""
+    from aila.api.metrics import ACTIVE_SSE
     from aila.api.sse_gate import enforce_sse_cap
 
     # #60 global SSE ceiling: refuse new streams when ACTIVE_SSE is at
@@ -395,29 +396,36 @@ async def _stream_message(
         # the async handle without awaiting it, so the stream carried the echoed
         # input, never a real response. Progress-level streaming via handle()'s
         # progress_callback is a separate enhancement.
-        run_id_val: str | None = None
+        # #60: count this live stream against the global SSE ceiling. The
+        # try/finally guarantees .dec() runs on every exit path including
+        # client disconnect (the generator is cancelled -> finally runs).
+        ACTIVE_SSE.inc()
         try:
-            resp = await platform.handle(query=req.content, team_id=auth.team_id)
-            full_text = str(getattr(resp, "summary", "") or "")
-            run_id_val = getattr(resp, "run_id", None)
-        except Exception:
-            _log.exception("Platform error during SSE streaming for session %s", session_id)
-            full_text = "I encountered an error processing your request."
+            run_id_val: str | None = None
+            try:
+                resp = await platform.handle(query=req.content, team_id=auth.team_id)
+                full_text = str(getattr(resp, "summary", "") or "")
+                run_id_val = getattr(resp, "run_id", None)
+            except Exception:
+                _log.exception("Platform error during SSE streaming for session %s", session_id)
+                full_text = "I encountered an error processing your request."
 
-        if full_text:
-            yield f"data: {json.dumps({'token': full_text, 'type': 'token'})}\n\n"
+            if full_text:
+                yield f"data: {json.dumps({'token': full_text, 'type': 'token'})}\n\n"
 
-        # Persist the assistant message once the response resolves (D-07).
-        async with async_session_scope() as db:
-            db.add(SessionMessageRecord(
-                session_id=session_id,
-                role="assistant",
-                content=full_text,
-                run_id=run_id_val,
-            ))
-            await db.commit()
+            # Persist the assistant message once the response resolves (D-07).
+            async with async_session_scope() as db:
+                db.add(SessionMessageRecord(
+                    session_id=session_id,
+                    role="assistant",
+                    content=full_text,
+                    run_id=run_id_val,
+                ))
+                await db.commit()
 
-        yield f"data: {json.dumps({'type': 'done', 'run_id': run_id_val})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'run_id': run_id_val})}\n\n"
+        finally:
+            ACTIVE_SSE.dec()
 
     return StreamingResponse(
         _stream_generator(),

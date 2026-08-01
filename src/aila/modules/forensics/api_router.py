@@ -1475,16 +1475,30 @@ def create_forensics_router() -> APIRouter:
                 "message": result.message,
             })
 
+        from aila.api.metrics import ACTIVE_SSE
+
+        async def _counted_readiness_stream() -> AsyncGenerator[str, None]:
+            # #60 global SSE ceiling: count this stream against ACTIVE_SSE.
+            # stream_from_worker is a platform-layer helper that must not
+            # import the api-layer gauge, so the count is managed here.
+            # dec() runs on every exit path via the try/finally.
+            ACTIVE_SSE.inc()
+            try:
+                async for frame in stream_from_worker(
+                    _worker,
+                    start_event={
+                        "stage": "start",
+                        "total": total_tools,
+                        "os": project.analyzer_os,
+                        "message": f"Starting readiness check on {system.name} ({project.analyzer_os})",
+                    },
+                ):
+                    yield frame
+            finally:
+                ACTIVE_SSE.dec()
+
         return StreamingResponse(
-            stream_from_worker(
-                _worker,
-                start_event={
-                    "stage": "start",
-                    "total": total_tools,
-                    "os": project.analyzer_os,
-                    "message": f"Starting readiness check on {system.name} ({project.analyzer_os})",
-                },
-            ),
+            _counted_readiness_stream(),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
