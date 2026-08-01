@@ -1111,6 +1111,39 @@ class AilaLLMClient:
                         "cost_persistence_failed", run_id=run_id, model=routing.model_id,
                     )
 
+                # #39 replay-grade capture: LLMCostRecord stores only 200-char
+                # previews, which is enough for the operator interaction list
+                # but insufficient to REPLAY a turn. Persist the assembled
+                # prompt messages (with any tools spec) and the full response
+                # body to the hash-chained platform journal under
+                # kind="llm_prompt"/"llm_response". Correlation ids join the
+                # rows back to the same investigation/branch/turn as the cost
+                # record. Best-effort: replay-trail failure never blocks the
+                # LLM call path (record_llm_call_bodies absorbs its own
+                # errors and warns).
+                try:
+                    from aila.platform.services.replay import record_llm_call_bodies
+
+                    await record_llm_call_bodies(
+                        run_id=run_id,
+                        model_id=routing.model_id,
+                        task_type=routing.task_type,
+                        team_id=team_id,
+                        messages=messages,
+                        tools=tools,
+                        response_text=_response_text,
+                        usage=response.usage,
+                        duration_ms=int(_call_duration * 1000),
+                        status="ok",
+                    )
+                except _COST_TELEMETRY_ERRORS:
+                    import structlog
+                    structlog.get_logger(__name__).warning(
+                        "llm_replay_capture_failed",
+                        run_id=run_id,
+                        model=routing.model_id,
+                    )
+
                 # Step 3: Missing pricing warning (separate try/except)
                 if not _pricing_configured:
                     try:
