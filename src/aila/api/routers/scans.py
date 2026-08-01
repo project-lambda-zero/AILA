@@ -195,6 +195,13 @@ async def stream_scan_events(
     Each data line is JSON with keys: stage, message, percent, timestamp.
     Returns a single informational event if Redis is not configured.
     """
+    from aila.api.sse_gate import enforce_sse_cap
+
+    # #60 global SSE ceiling: refuse new streams when ACTIVE_SSE is at
+    # or above the configured cap. Runs before the DB fetch so a runaway
+    # reconnect burst does not pay any DB cost either.
+    enforce_sse_cap()
+
     async def _fetch_scan() -> object:
         async with async_session_scope() as session:
             return await TaskRepository.get_for_user(session, run_id, auth)

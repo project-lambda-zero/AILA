@@ -1254,6 +1254,11 @@ def create_vr_router() -> APIRouter:
         ),
         auth: AuthContext = Depends(require_auth),
     ) -> StreamingResponse:
+        from aila.api.sse_gate import enforce_sse_cap
+
+        # #60 global SSE ceiling: refuse new streams when ACTIVE_SSE is
+        # at or above the configured cap.
+        enforce_sse_cap()
         del request
         from datetime import datetime as _dt
 
@@ -1296,21 +1301,28 @@ def create_vr_router() -> APIRouter:
         async def _generator() -> AsyncGenerator[str, None]:
             import json as _json
 
-            last_heartbeat = utc_now()
-            local_cursor = cursor
+            # #60 global SSE ceiling: count this stream against ACTIVE_SSE
+            # so enforce_sse_cap sees every live SSE connection. The
+            # try/finally guarantees .dec() on every exit path (normal
+            # completion, client disconnect, mid-stream exception).
+            from aila.api.metrics import ACTIVE_SSE
 
-            open_env = VREventEnvelope(
-                type=VREventType.HEARTBEAT,
-                ts=utc_now().isoformat(),
-                project_id=project_id,
-                payload={"connected": True},
-            )
-            yield (
-                "event: open\n"
-                f"data: {_json.dumps(open_env.model_dump(mode='json'))}\n\n"
-            )
+            ACTIVE_SSE.inc()
+            try:
+              last_heartbeat = utc_now()
+              local_cursor = cursor
 
-            while True:
+              open_env = VREventEnvelope(
+                  type=VREventType.HEARTBEAT,
+                  ts=utc_now().isoformat(),
+                  project_id=project_id,
+                  payload={"connected": True},
+              )
+              yield (
+                  "event: open\n"
+                  f"data: {_json.dumps(open_env.model_dump(mode='json'))}\n\n"
+              )
+              while True:
                 async with UnitOfWork() as poll_uow:
                     # All investigations rooted at this project.
                     inv_ids = [
@@ -1465,6 +1477,8 @@ def create_vr_router() -> APIRouter:
                     last_heartbeat = now
 
                 await asyncio.sleep(_SSE_POLL_INTERVAL_S)
+            finally:
+                ACTIVE_SSE.dec()
 
         return StreamingResponse(
             _generator(),
@@ -2774,6 +2788,18 @@ def create_vr_router() -> APIRouter:
             )
 
 
+        # #57: buffer the body through the bounded reader so a chunked
+        # upload that omits Content-Length cannot OOM the worker. The
+        # previous streaming shape (passing file.file straight into
+        # httpx multipart) had no cap and slipped past the global
+        # _reject_oversized_requests middleware which only inspects
+        # Content-Length. Buffered upload matches the malware-side
+        # sample flow: bytes live in flight but never on local disk.
+        from aila.api.uploads import read_upload_bounded
+        from aila.modules.vr.services.config_helpers import get_int
+        upload_cap = await get_int("upload_max_bytes")
+        contents = await read_upload_bounded(file, upload_cap)
+
         bridge = IDABridgeTool(recorder=record_call)
         base_url = await bridge._resolve_base_url()
         try:
@@ -2783,7 +2809,7 @@ def create_vr_router() -> APIRouter:
                     files={
                         "file": (
                             file.filename,
-                            file.file,
+                            contents,
                             file.content_type or "application/octet-stream",
                         ),
                     },
@@ -2951,6 +2977,17 @@ def create_vr_router() -> APIRouter:
         # 3) Stream to a temp file in the same directory and hash on the
         #    fly. Atomic rename only after we know the digest -- keeps
         #    half-written partials out of the SHA-named slot.
+        #
+        #    #57: iter_upload_bounded caps the total bytes drained from
+        #    the multipart body and raises HTTP 413 mid-stream if the
+        #    client tries to push past the configured cap. This closes
+        #    the chunked-without-Content-Length hole that the global
+        #    _reject_oversized_requests middleware misses. The
+        #    partially-written temp file is unlinked in the except
+        #    branches below so a rejected upload leaves no residue.
+        from aila.api.uploads import iter_upload_bounded
+        from aila.modules.vr.services.config_helpers import get_int
+        upload_cap = await get_int("upload_max_bytes")
         sha256 = hashlib.sha256()
         fd, tmp_str = tempfile.mkstemp(
             prefix=".upload-", suffix=".apk.partial", dir=str(team_dir),
@@ -2959,13 +2996,18 @@ def create_vr_router() -> APIRouter:
         bytes_written = 0
         try:
             with os.fdopen(fd, "wb") as out:
-                while True:
-                    chunk = await file.read(1 << 20)  # 1 MiB
-                    if not chunk:
-                        break
+                async for chunk in iter_upload_bounded(
+                    file, upload_cap, chunk_size=1 << 20,
+                ):
                     sha256.update(chunk)
                     out.write(chunk)
                     bytes_written += len(chunk)
+        except HTTPException:
+            # 413 from the bounded iterator: drop the partial and
+            # re-raise so FastAPI turns it into the 413 response the
+            # client sees.
+            tmp_path.unlink(missing_ok=True)
+            raise
         except OSError as exc:
             tmp_path.unlink(missing_ok=True)
             raise HTTPException(
@@ -5636,6 +5678,11 @@ def create_vr_router() -> APIRouter:
         seconds. Terminates when the investigation reaches a terminal
         status or when the connection drops.
         """
+        from aila.api.sse_gate import enforce_sse_cap
+
+        # #60 global SSE ceiling: refuse new streams when ACTIVE_SSE is
+        # at or above the configured cap.
+        enforce_sse_cap()
         del request
         from datetime import datetime as _dt
 
@@ -5670,17 +5717,23 @@ def create_vr_router() -> APIRouter:
         async def _generator() -> AsyncGenerator[str, None]:
             import json as _json
 
-            last_heartbeat = utc_now()
-            local_cursor = cursor
-            terminal = {
-                InvestigationStatus.COMPLETED.value,
-                InvestigationStatus.FAILED.value,
-                InvestigationStatus.ABANDONED.value,
-            }
+            # #60 global SSE ceiling: count this stream against ACTIVE_SSE
+            # so enforce_sse_cap sees every live SSE connection.
+            from aila.api.metrics import ACTIVE_SSE
 
-            yield 'event: open\ndata: {"connected":true}\n\n'
+            ACTIVE_SSE.inc()
+            try:
+              last_heartbeat = utc_now()
+              local_cursor = cursor
+              terminal = {
+                  InvestigationStatus.COMPLETED.value,
+                  InvestigationStatus.FAILED.value,
+                  InvestigationStatus.ABANDONED.value,
+              }
 
-            while True:
+              yield 'event: open\ndata: {"connected":true}\n\n'
+
+              while True:
                 async with UnitOfWork() as poll_uow:
                     stmt = select(VRInvestigationMessageRecord).where(
                         VRInvestigationMessageRecord.investigation_id == investigation_id,
@@ -5757,6 +5810,8 @@ def create_vr_router() -> APIRouter:
                     return
 
                 await asyncio.sleep(_SSE_POLL_INTERVAL_S)
+            finally:
+                ACTIVE_SSE.dec()
 
         return StreamingResponse(
             _generator(),

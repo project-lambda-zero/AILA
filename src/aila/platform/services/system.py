@@ -1,29 +1,28 @@
 """SystemService -- managed system lifecycle: register, deregister, inventory per D-02.
 
-When an ``EventEmitter`` is supplied at construction time,
-:meth:`register_system` and :meth:`deregister_system` emit a
-``PlatformEvent`` for ``stage="system"`` with
-``action="registered" | "deregistered"``. The emitter drives the
-platform's audit_db and Redis SSE destinations. Callers that do not
-inject an emitter (the ``ServiceFactory`` default today) do not emit;
-the managed-system row still writes through :class:`PersistContract`.
+:meth:`register_system` and :meth:`deregister_system` publish typed
+domain events (:class:`aila.platform.events.SystemRegistered` /
+:class:`aila.platform.events.SystemDeregistered`) through the
+process-wide :class:`DomainEventBus`. The default subscriber persists
+every event to the hash-chained platform journal (kind="domain_event"),
+so a system lifecycle transition is durably recorded for #39 replay and
+audit without any caller wiring.
+
+When an :class:`EventEmitter` is ALSO injected at construction time,
+the legacy ``PlatformEvent`` (stage=``"system"``) is fanned out to the
+emitter's destinations (audit_db, Redis SSE) so the operator dashboard
+keeps its live stream. ``ServiceFactory`` injects such an emitter in
+production (#52); when no emitter is injected the domain-event bus
+still fires so the audit trail is not lost.
 
 Each method accepts an optional external session (from UoW) for
 atomicity. When ``session`` is ``None`` a short-lived session is created
 via ``async_session_scope`` (SDA-06).
-
-#52-3.4 status: the emitter injection point exists so a caller can
-drive the audit trail through the same emitter fan-out that other
-platform sites already use. Full domain-event dispatch (a
-``DomainEventBus`` publishing typed :class:`SystemRegistered` /
-:class:`SystemDeregistered` payloads into the hash-chained platform
-journal) is out of scope for this pure-code pass; wiring
-``ServiceFactory`` (and every caller that owns its own session) to
-thread an emitter is left as follow-up.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
@@ -33,7 +32,14 @@ from sqlmodel import SQLModel, select
 
 from ...storage.database import async_session_scope
 from ..contracts.persist import PersistContract
-from ..events import PlatformEvent
+from ..events import (
+    PlatformEvent,
+    SystemDeregistered,
+    SystemDeregisteredPayload,
+    SystemRegistered,
+    SystemRegisteredPayload,
+    publish,
+)
 
 if TYPE_CHECKING:
     from aila.api.auth import TeamContext
@@ -41,6 +47,8 @@ if TYPE_CHECKING:
     from ..events import EventEmitter
 
 __all__ = ["SystemService"]
+
+_log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -103,6 +111,12 @@ class SystemService:
                 await sess.commit()
             if self._emitter is not None:
                 self._emitter.emit(_registered_event(record))
+            # #52 / #60: publish the typed DomainEvent on the shared bus so
+            # the default journal subscriber (see events/persistence.py)
+            # writes a domain_event row. Publishing follows the persist
+            # commit so a rolled-back register never leaves a dangling
+            # event trail. A failing subscriber is isolated by the bus.
+            _publish_system_domain_event(record, action="registered")
 
     async def deregister_system(
         self,
@@ -118,11 +132,24 @@ class SystemService:
         service owns the session).
         """
         async with _session_or_new(session, self._team_context) as (sess, owns):
+            # Snapshot the identifying fields BEFORE the delete so the
+            # emitted event and DomainEvent both carry the pre-delete
+            # state -- some ORMs expire attributes after delete + commit.
+            snapshot_id = _system_id_str(record)
+            snapshot_name = str(getattr(record, "name", "") or "")
+            snapshot_host = str(getattr(record, "host", "") or "")
             await sess.delete(record)
             if owns:
                 await sess.commit()
             if self._emitter is not None:
-                self._emitter.emit(_deregistered_event(record))
+                self._emitter.emit(_deregistered_event_from_snapshot(
+                    snapshot_id, snapshot_name, snapshot_host,
+                ))
+            _publish_system_domain_event_from_snapshot(
+                snapshot_id, snapshot_host,
+                action="deregistered",
+                reason="deregister_system",
+            )
 
     async def list_systems(
         self,
@@ -176,6 +203,13 @@ def _deregistered_event(record: SQLModel) -> PlatformEvent:
     system_id = _system_id_str(record)
     hostname = str(getattr(record, "host", "") or "")
     name = str(getattr(record, "name", "") or "")
+    return _deregistered_event_from_snapshot(system_id, name, hostname)
+
+
+def _deregistered_event_from_snapshot(
+    system_id: str, name: str, hostname: str,
+) -> PlatformEvent:
+    """Build the deregistered PlatformEvent from pre-delete field values."""
     return PlatformEvent(
         stage="system",
         action="deregistered",
@@ -184,3 +218,75 @@ def _deregistered_event(record: SQLModel) -> PlatformEvent:
         details={"system_id": system_id, "hostname": hostname, "name": name},
         run_id=system_id,
     )
+
+
+def _publish_system_domain_event(record: SQLModel, *, action: str) -> None:
+    """Publish a typed SystemRegistered event on the shared domain bus.
+
+    The bus dispatches synchronously and its default subscriber persists
+    to the platform journal via kind="domain_event". A failing
+    subscriber is isolated by the bus, so a broken journal never blocks
+    the caller's register/deregister transaction. Any exception thrown
+    by ``publish`` (e.g. an import-time subscriber-wiring error) is
+    logged and absorbed so the business action succeeds even if the
+    event trail is temporarily broken.
+    """
+    system_id = _system_id_str(record)
+    hostname = str(getattr(record, "host", "") or "")
+    team_id_raw = getattr(record, "team_id", None)
+    team_id = None if team_id_raw is None else str(team_id_raw)
+    try:
+        if action == "registered":
+            publish(SystemRegistered(
+                team_id=team_id,
+                source_module="platform.system",
+                payload=SystemRegisteredPayload(
+                    system_id=system_id, hostname=hostname,
+                ),
+            ))
+        else:
+            publish(SystemDeregistered(
+                team_id=team_id,
+                source_module="platform.system",
+                payload=SystemDeregisteredPayload(
+                    system_id=system_id,
+                    reason="deregister_system",
+                ),
+            ))
+    except (RuntimeError, OSError, TimeoutError, ValueError, TypeError) as exc:
+        _log.warning(
+            "system domain-event publish failed action=%s system_id=%s: %s",
+            action, system_id, exc,
+        )
+
+
+def _publish_system_domain_event_from_snapshot(
+    system_id: str,
+    hostname: str,
+    *,
+    action: str,
+    reason: str,
+) -> None:
+    """Snapshot variant of :func:`_publish_system_domain_event` used by
+    :meth:`SystemService.deregister_system` after the ORM row has been
+    deleted (attribute access on the expired instance may raise)."""
+    try:
+        if action == "registered":
+            publish(SystemRegistered(
+                source_module="platform.system",
+                payload=SystemRegisteredPayload(
+                    system_id=system_id, hostname=hostname,
+                ),
+            ))
+        else:
+            publish(SystemDeregistered(
+                source_module="platform.system",
+                payload=SystemDeregisteredPayload(
+                    system_id=system_id, reason=reason,
+                ),
+            ))
+    except (RuntimeError, OSError, TimeoutError, ValueError, TypeError) as exc:
+        _log.warning(
+            "system domain-event publish failed action=%s system_id=%s: %s",
+            action, system_id, exc,
+        )

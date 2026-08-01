@@ -13,8 +13,11 @@ Usage:
 
 from __future__ import annotations
 
+import logging as _logging
+import threading as _threading
 from typing import TYPE_CHECKING
 
+from aila.platform.events import EventEmitter, ThreadSafeEventEmitter
 from aila.platform.llm.client import AilaLLMClient
 from aila.storage.registry import ConfigRegistry
 from aila.storage.secrets import SecretStore
@@ -53,15 +56,20 @@ class ServiceFactory:
         reasoning_engine: CyberReasoningEngine | None = None,
         config_registry: ConfigRegistry | None = None,
         secret_store: SecretStore | None = None,
+        system_emitter: EventEmitter | None = None,
     ) -> None:
         self._team_context = team_context
-        # fix §127 -- explicit injection points. Tests pass fakes; production
+        # fix \u00a7127 -- explicit injection points. Tests pass fakes; production
         # leaves these as None and the lazy getters build the real services.
         self._llm_client_override = llm_client
         self._reasoning_engine_override = reasoning_engine
         self._config_registry_override = config_registry
         self._secret_store_override = secret_store
-        # fix §125 / §126 -- memoized singletons. None until first access.
+        # #52-3.4 -- caller-supplied emitter for SystemService. Tests inject a
+        # fake; production leaves this as None and the SystemService property
+        # builds a lightweight process-wide default via the lazy getter below.
+        self._system_emitter_override = system_emitter
+        # fix \u00a7125 / \u00a7126 -- memoized singletons. None until first access.
         self._llm_client_cache: AilaLLMClient | None = None
         self._reasoning_engine_cache: CyberReasoningEngine | None = None
         self._config_registry_cache: ConfigRegistry | None = None
@@ -90,8 +98,32 @@ class ServiceFactory:
 
     @property
     def systems(self) -> SystemService:
-        """SystemService -- managed system lifecycle (#53 team-scoped)."""
-        return SystemService(team_context=self._team_context)
+        """SystemService -- managed system lifecycle (#52-3.4 emitter-wired).
+
+        The returned service carries the caller-supplied ``system_emitter``
+        if one was passed to the factory, otherwise a lightweight
+        process-wide default emitter (see :func:`_get_system_emitter`).
+        That default publishes system.registered / system.deregistered
+        PlatformEvents to two destinations wired at first use:
+
+            audit_db     -- appends AuditEventRecord rows via
+                            :func:`record_audit_event_sync` inside a
+                            short-lived sync session so the operator
+                            audit list surfaces every register /
+                            deregister transition.
+            log          -- structured INFO log so operators can trace
+                            emission without a DB round-trip.
+
+        The typed :class:`aila.platform.events.SystemRegistered` /
+        :class:`SystemDeregistered` DomainEvents are ALSO published on
+        the process-wide DomainEventBus by SystemService itself (see
+        ``system.py``); the default subscriber writes them into the
+        hash-chained platform journal via ``kind="domain_event"``.
+        """
+        return SystemService(
+            emitter=self._system_emitter_override or _get_system_emitter(),
+            team_context=self._team_context,
+        )
 
     @property
     def knowledge(self) -> KnowledgeService:
@@ -154,3 +186,82 @@ class ServiceFactory:
     def reasoning_graphs(self) -> ReasoningGraphService:
         """Durable storage/query surface for reasoning graph snapshots."""
         return ReasoningGraphService()
+
+
+# Process-wide default emitter shared by every ServiceFactory that does not
+# inject its own (#52-3.4). Built lazily on first access so importing the
+# factory module never pulls in the DB, Redis, or Prometheus paths.
+_SYSTEM_EMITTER_SINGLETON: EventEmitter | None = None
+_SYSTEM_EMITTER_LOCK = _threading.Lock()
+
+
+def _get_system_emitter() -> EventEmitter:
+    """Return the process-wide default SystemService emitter.
+
+    The emitter fans PlatformEvents to two destinations:
+
+    - ``audit_db`` -- writes AuditEventRecord rows via the sync-session
+      audit helper. A short-lived session is opened per emit; failures
+      route through the isolation guard so a broken DB never blocks
+      the caller.
+    - ``log`` -- structured INFO log so operators can trace emission
+      without a DB round-trip.
+
+    The emitter is a ThreadSafeEventEmitter so parallel request
+    handlers (system registration from concurrent API calls) safely
+    share a single queue.
+    """
+    global _SYSTEM_EMITTER_SINGLETON
+    if _SYSTEM_EMITTER_SINGLETON is not None:
+        return _SYSTEM_EMITTER_SINGLETON
+    with _SYSTEM_EMITTER_LOCK:
+        if _SYSTEM_EMITTER_SINGLETON is None:
+            _SYSTEM_EMITTER_SINGLETON = _build_system_emitter()
+    return _SYSTEM_EMITTER_SINGLETON
+
+
+def _build_system_emitter() -> EventEmitter:
+    """Construct the default SystemService emitter. Kept private so tests
+    can build their own via :class:`ThreadSafeEventEmitter` directly.
+
+    Destinations:
+
+    - ``log`` -- structured INFO log line so operators can trace every
+      system.registered / system.deregistered emission without a DB
+      round-trip. Never raises.
+
+    Persistence of the typed :class:`SystemRegistered` /
+    :class:`SystemDeregistered` DomainEvent is handled by the shared
+    :class:`aila.platform.events.DomainEventBus` (default subscriber
+    :func:`aila.platform.events.persistence.persist_domain_event` writes
+    a journal row with ``kind="domain_event"``); the emitter is a
+    complementary live-observation channel, not a persistence path,
+    which is why the drain-thread destination is intentionally kept
+    to a non-blocking log write. A caller that wants a Redis-stream
+    live-fan-out for admin UIs injects a custom ``system_emitter``
+    on the factory constructor.
+    """
+    from aila.platform.contracts._common import utc_now
+    from aila.platform.events.event import PlatformEvent
+
+    log = _logging.getLogger("aila.platform.services.system.emitter")
+
+    emitter = ThreadSafeEventEmitter()
+
+    def _log_destination(event: PlatformEvent) -> None:
+        log.info(
+            "system_event stage=%s action=%s key=%s run_id=%s ts=%s",
+            event.stage, event.action, event.key, event.run_id,
+            utc_now().isoformat(),
+        )
+
+    emitter.register_destination("log", _log_destination)
+    return emitter
+
+
+def _reset_system_emitter_for_tests() -> None:
+    """Drop the module-level singleton so the next factory access rebuilds
+    a fresh emitter. Tests only."""
+    global _SYSTEM_EMITTER_SINGLETON
+    with _SYSTEM_EMITTER_LOCK:
+        _SYSTEM_EMITTER_SINGLETON = None

@@ -857,6 +857,17 @@ async def create_system(
             )
             await session.commit()
             await session.refresh(record)
+            # #52-3.4 -- publish the typed SystemRegistered DomainEvent via
+            # the factory-injected SystemService emitter. The service's
+            # register_system does the DomainEventBus publish + PlatformEvent
+            # emitter fan-out; the row is already persisted above, so we call
+            # the service with the just-refreshed record and it becomes a
+            # no-op upsert (PersistContract.upsert idempotent on the PK)
+            # plus the two audit trails the operator dashboard needs.
+            from aila.platform.services.factory import ServiceFactory
+
+            factory = ServiceFactory(team_context=TeamContext.from_auth(auth))
+            await factory.systems.register_system(record, session=session)
             return record
 
     record = await _create()
@@ -981,10 +992,22 @@ async def delete_system(
                     detail=f"System {system_id} not found -- verify the ID via GET /systems",
                 )
             system_name = record.name
-            await session.delete(record)
+            # #52-3.4 -- route through SystemService.deregister_system so the
+            # typed SystemDeregistered DomainEvent lands on the shared bus
+            # (default subscriber persists to the platform journal via
+            # kind="domain_event") in addition to the PlatformEvent audit
+            # fan-out. The service reads the record fields before delete so
+            # the emitted event carries the pre-delete state.
+            from aila.platform.services.factory import ServiceFactory
+
+            factory = ServiceFactory(team_context=TeamContext.from_auth(auth))
+            await factory.systems.deregister_system(record, session=session)
             # #52-3.2: audit row shares the same transaction as the row
             # delete. Previously a crash between the two commits lost the
-            # audit trail while the system row was already gone.
+            # audit trail while the system row was already gone. Kept
+            # alongside the DomainEvent publish so the operator audit
+            # list surfaces the delete even before a journal reader is
+            # wired to the domain_event stream.
             record_audit_event(
                 session,
                 run_id=str(system_id),

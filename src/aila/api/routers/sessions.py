@@ -336,6 +336,12 @@ async def _stream_message(
     auth: AuthContext,
 ) -> StreamingResponse:
     """Stream assistant response tokens via SSE (TASK-04, D-06 through D-14)."""
+    from aila.api.sse_gate import enforce_sse_cap
+
+    # #60 global SSE ceiling: refuse new streams when ACTIVE_SSE is at
+    # or above the configured cap.
+    enforce_sse_cap()
+
     platform = request.app.state.platform
 
     async def _check_session() -> bool:

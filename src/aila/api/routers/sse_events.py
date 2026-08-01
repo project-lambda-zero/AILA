@@ -27,6 +27,7 @@ from aila.api.auth import AuthContext, require_user_or_api_key
 from aila.api.events import subscribe_user, unsubscribe_user
 from aila.api.limiter import limiter
 from aila.api.metrics import ACTIVE_SSE
+from aila.api.sse_gate import enforce_sse_cap
 
 router = APIRouter(prefix="/events", tags=["events"], dependencies=[Depends(require_user_or_api_key)])
 _log = logging.getLogger(__name__)
@@ -86,6 +87,11 @@ async def stream_events(
 
     Per D-04, D-13, D-17, D-19.
     """
+    # #60 global SSE ceiling: refuse a new stream when ACTIVE_SSE is at
+    # or above the configured cap so a runaway reconnect loop cannot
+    # grow live connections without bound. Already-open streams keep
+    # streaming; the caller receives 503 + Retry-After.
+    enforce_sse_cap()
 
     async def _generator() -> AsyncGenerator[str, None]:
         # 60-6: ACTIVE_SSE gauge tracks live SSE connections. The outer

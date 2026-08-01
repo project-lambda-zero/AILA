@@ -28,6 +28,22 @@ from pydantic import BaseModel
 from ..contracts._common import utc_now
 from ..llm.correlation import current_join_keys
 
+__all__ = [
+    "AssessmentCompleted",
+    "AssessmentCompletedPayload",
+    "AssessmentCreated",
+    "AssessmentCreatedPayload",
+    "ConfigChanged",
+    "ConfigChangedPayload",
+    "DomainEvent",
+    "LlmCallCompleted",
+    "LlmCallCompletedPayload",
+    "SystemDeregistered",
+    "SystemDeregisteredPayload",
+    "SystemRegistered",
+    "SystemRegisteredPayload",
+]
+
 # --- Base ---
 
 

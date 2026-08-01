@@ -461,6 +461,13 @@ async def stream_task_events(
 
     Returns text/event-stream response for use with EventSource API.
     """
+    from aila.api.sse_gate import enforce_sse_cap
+
+    # #60 global SSE ceiling: refuse new streams when ACTIVE_SSE is at
+    # or above the configured cap. Runs before the DB fetch so a runaway
+    # reconnect burst does not pay any DB cost either.
+    enforce_sse_cap()
+
     # Verify task exists and is accessible before opening the stream
     async def _fetch_task() -> TaskRecord | None:
         async with async_session_scope() as session:
