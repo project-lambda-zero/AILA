@@ -476,7 +476,17 @@ class TestSyncWrappers:
 # ---------------------------------------------------------------------------
 
 class TestRetry:
-    """Retry with backoff on transient errors."""
+    """Retry with backoff on transient errors.
+
+    The retry loop calls ``asyncio.sleep(delay)`` between attempts where
+    ``delay = min(_RETRY_BASE_DELAY * (2 ** attempt), _RETRY_MAX_DELAY)``
+    (see ``aila.platform.llm.client``). With the shipped defaults
+    ``_RETRY_BASE_DELAY=1.0`` / ``_RETRY_MAX_DELAY=30.0`` /
+    ``_MAX_RETRIES=3`` this yields the backoff schedule 1s, 2s, 4s across
+    attempts 0, 1, 2. Assert the schedule directly so the exponential
+    curve cannot silently regress to constant or linear backoff without
+    failing the suite (#62).
+    """
 
     @pytest.mark.asyncio
     async def test_retries_on_connection_error(self, client: AilaLLMClient) -> None:
@@ -490,22 +500,45 @@ class TestRetry:
                 ]
             )
             mock_oai.return_value = mock_instance
-            with patch("aila.platform.llm.client.asyncio.sleep", new_callable=AsyncMock):
-                response = await client.chat("scoring", [{"role": "user", "content": "test"}])
+            with patch(
+                "aila.platform.llm.client.asyncio.sleep", new_callable=AsyncMock,
+            ) as mock_sleep:
+                response = await client.chat(
+                    "scoring", [{"role": "user", "content": "test"}],
+                )
 
         assert response.content == "recovered"
+        # One transient failure then success: the retry loop should have
+        # awaited sleep exactly once (attempt 0 -> 1.0s backoff) and the
+        # provider was called twice (initial + one retry).
+        assert mock_sleep.await_count == 1
+        assert mock_sleep.await_args_list[0].args == (1.0,)
+        assert mock_instance.chat.completions.create.await_count == 2
 
     @pytest.mark.asyncio
     async def test_permanent_error_no_retry(self, client: AilaLLMClient) -> None:
         with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
             mock_instance = AsyncMock()
+            # A 4xx status is classified non-retryable by _is_retryable;
+            # a bare unknown exception defaults to retryable by design, so
+            # the permanent case must carry a 4xx status_code.
+            _perm_err = ValueError("bad request")
+            _perm_err.status_code = 400
             mock_instance.chat.completions.create = AsyncMock(
-                side_effect=ValueError("bad request")
+                side_effect=_perm_err
             )
             mock_oai.return_value = mock_instance
+            with patch(
+                "aila.platform.llm.client.asyncio.sleep", new_callable=AsyncMock,
+            ) as mock_sleep:
+                with pytest.raises(LLMError, match="bad request"):
+                    await client.chat(
+                        "scoring", [{"role": "user", "content": "test"}],
+                    )
 
-            with pytest.raises(LLMError, match="bad request"):
-                await client.chat("scoring", [{"role": "user", "content": "test"}])
+        # Non-retryable error must fail fast: no backoff sleep, single provider call.
+        assert mock_sleep.await_count == 0
+        assert mock_instance.chat.completions.create.await_count == 1
 
     @pytest.mark.asyncio
     async def test_exhausted_retries(self, client: AilaLLMClient) -> None:
@@ -515,9 +548,67 @@ class TestRetry:
                 side_effect=APITimeoutError(request=MagicMock())
             )
             mock_oai.return_value = mock_instance
-            with patch("aila.platform.llm.client.asyncio.sleep", new_callable=AsyncMock):
+            with patch(
+                "aila.platform.llm.client.asyncio.sleep", new_callable=AsyncMock,
+            ) as mock_sleep:
                 with pytest.raises(LLMError, match="failed after 3 retries"):
-                    await client.chat("scoring", [{"role": "user", "content": "test"}])
+                    await client.chat(
+                        "scoring", [{"role": "user", "content": "test"}],
+                    )
+
+        # Three attempts total (1 initial + 2 retry sleeps + a final raise
+        # after the third failed attempt): the exponential backoff formula
+        # min(1.0 * 2**attempt, 30.0) yields 1.0s, 2.0s, 4.0s across
+        # attempts 0..2. The loop sleeps BEFORE each attempt after the
+        # first, so with _MAX_RETRIES=3 the client awaits sleep 3 times
+        # in the sequence [1.0, 2.0, 4.0].
+        assert mock_instance.chat.completions.create.await_count == 3
+        assert mock_sleep.await_count == 3
+        delays = [call.args[0] for call in mock_sleep.await_args_list]
+        assert delays == [1.0, 2.0, 4.0], (
+            f"exponential backoff schedule regressed: expected [1.0, 2.0, 4.0], "
+            f"got {delays}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_retry_after_header_overrides_backoff(
+        self, client: AilaLLMClient,
+    ) -> None:
+        """429 with a ``Retry-After`` header uses the header value (capped at
+        ``_RETRY_MAX_DELAY``) instead of the exponential fallback.
+
+        This is the second backoff path the retry loop supports; assert the
+        override so a regression cannot silently swap the header value for
+        the exponential curve on rate-limit responses.
+        """
+        from openai import RateLimitError
+
+        rate_limit_response = MagicMock()
+        rate_limit_response.status_code = 429
+        rate_limit_response.headers = {"retry-after": "7"}
+        rate_limit_exc = RateLimitError(
+            message="rate limited",
+            response=rate_limit_response,
+            body={"error": {"message": "rate limited"}},
+        )
+        mock_completion = _make_completion(content="recovered")
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
+            mock_instance = AsyncMock()
+            mock_instance.chat.completions.create = AsyncMock(
+                side_effect=[rate_limit_exc, mock_completion],
+            )
+            mock_oai.return_value = mock_instance
+            with patch(
+                "aila.platform.llm.client.asyncio.sleep", new_callable=AsyncMock,
+            ) as mock_sleep:
+                response = await client.chat(
+                    "scoring", [{"role": "user", "content": "test"}],
+                )
+
+        assert response.content == "recovered"
+        assert mock_sleep.await_count == 1
+        # Header value wins over exponential fallback (7.0s, not 1.0s).
+        assert mock_sleep.await_args_list[0].args == (7.0,)
 
 
 # ---------------------------------------------------------------------------
