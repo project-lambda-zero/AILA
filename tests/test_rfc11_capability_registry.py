@@ -32,7 +32,6 @@ in :mod:`aila.platform.mcp.bridges` -- confirmed by the
 """
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 from unittest.mock import patch
 
@@ -291,15 +290,105 @@ def test_capability_registry_declare_is_idempotent() -> None:
     assert all_records[0].descriptor is d1
 
 
-def test_capability_registry_open_pool_not_implemented_seam() -> None:
-    """Later increment seam: ``open_pool_for_capability`` raises today."""
+def test_capability_registry_open_pool_for_capability_single_descriptor() -> None:
+    """``open_pool_for_capability`` returns one wired ``McpClient`` per match.
 
-    async def _run() -> None:
-        reg = McpCapabilityRegistry()
-        with pytest.raises(NotImplementedError, match="pooling composition"):
-            await reg.open_pool_for_capability("binary_audit")
+    RFC-11 pooling composition: for a capability advertised by exactly
+    one declared descriptor, the pool is a singleton tuple carrying an
+    ``McpClient`` whose ``server_id`` and ``timeout`` mirror what
+    :meth:`McpCapabilityRegistry.open_client` would return.
+    """
+    reg = McpCapabilityRegistry()
+    descriptor = McpServerDescriptor(
+        name="probe_mcp",
+        capability_tags=("binary_audit",),
+        env_var="PROBE_MCP_URL",
+        config_key="probe_mcp_url",
+        default_url="http://127.0.0.1:19998",
+        timeout_s=42.0,
+    )
+    reg.declare("test_scope", descriptor)
 
-    asyncio.run(_run())
+    pool = reg.open_pool_for_capability("binary_audit")
+
+    assert isinstance(pool, tuple)
+    assert len(pool) == 1
+    (client,) = pool
+    assert isinstance(client, McpClient)
+    assert client.server_id == "probe_mcp"
+    # Parity with :meth:`McpCapabilityRegistry.open_client`: the
+    # descriptor's timeout flows through to the client's internal
+    # timeout budget so pooled fan-out matches direct open.
+    assert client._timeout == 42.0  # noqa: SLF001
+
+
+def test_capability_registry_open_pool_for_capability_multi_descriptor() -> None:
+    """Multi-descriptor capability: the pool fans out across scopes.
+
+    Two modules each declare their own descriptor advertising the same
+    capability. The pool contains one ``McpClient`` per declaration in
+    declaration order, each pre-wired to its own descriptor.
+    """
+    reg = McpCapabilityRegistry()
+    d_vr = McpServerDescriptor(
+        name="audit_mcp",
+        capability_tags=("source_audit",),
+        env_var="VR_AUDIT_MCP_URL",
+        config_key="audit_mcp_url",
+        default_url="http://127.0.0.1:18822",
+    )
+    d_malware = McpServerDescriptor(
+        name="audit_mcp",
+        capability_tags=("source_audit",),
+        env_var="MALWARE_AUDIT_MCP_URL",
+        config_key="audit_mcp_url",
+        default_url="http://127.0.0.1:18823",
+    )
+    reg.declare("vr", d_vr)
+    reg.declare("malware", d_malware)
+
+    pool = reg.open_pool_for_capability("source_audit")
+
+    assert isinstance(pool, tuple)
+    assert len(pool) == 2
+    assert all(isinstance(c, McpClient) for c in pool)
+    # Same server name under two scopes -> two distinct clients wired
+    # to the same server_id but resolving through separate scopes.
+    assert {c.server_id for c in pool} == {"audit_mcp"}
+
+    # Narrowing by module_scope reduces the pool to that scope only.
+    vr_pool = reg.open_pool_for_capability(
+        "source_audit", module_scope="vr",
+    )
+    assert len(vr_pool) == 1
+    assert isinstance(vr_pool[0], McpClient)
+
+
+def test_capability_registry_open_pool_for_capability_empty() -> None:
+    """No descriptor advertises the capability -> empty tuple, no raise.
+
+    The pool is a fan-out target; an empty pool is a legitimate
+    "nothing to do" signal rather than an error. Mirrors
+    :meth:`McpRegistryServiceBase.pool_for_capability` which also
+    emits an empty pool rather than raising.
+    """
+    reg = McpCapabilityRegistry()
+    descriptor = McpServerDescriptor(
+        name="probe_mcp",
+        capability_tags=("binary_audit",),
+        env_var="PROBE_MCP_URL",
+        config_key="probe_mcp_url",
+        default_url="http://127.0.0.1:19998",
+    )
+    reg.declare("test_scope", descriptor)
+
+    assert reg.open_pool_for_capability("no_such_capability") == ()
+    # An empty registry also produces an empty pool.
+    empty_reg = McpCapabilityRegistry()
+    assert empty_reg.open_pool_for_capability("binary_audit") == ()
+    # Blank capability is treated as "no match" -- consistent with
+    # ``descriptors_for_capability("")``.
+    assert reg.open_pool_for_capability("") == ()
 
 
 # ── Step-0 request-shape parity: generic client vs android bridge ────

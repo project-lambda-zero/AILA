@@ -23,15 +23,19 @@ Two callers today:
   the bespoke bridge classes emit (see the parity test in
   ``tests/test_rfc11_capability_registry.py``).
 
+Pooling composition -- ``open_pool_for_capability(capability)`` --
+composes :meth:`McpCapabilityRegistry.descriptors_for_capability`
+with the per-server :meth:`McpCapabilityRegistry.open_client`
+construction to return a fan-out of pre-wired :class:`McpClient`s,
+one per matched module-declared descriptor. Complements
+:meth:`aila.platform.mcp.registry.McpRegistryServiceBase.pool_for_capability`
+(which produces the catalog-level :class:`~aila.platform.mcp.client.InstancePool`
+of :class:`~aila.platform.mcp.client.ResolvedInstance`\\ s at the
+URL layer).
+
 Later increments (deliberately unimplemented today, seams named so a
 reviewer can trace where they will land):
 
-* Pooling composition -- ``open_pool_for_capability(capability)``
-  would return a list of pre-wired :class:`McpClient`s built from
-  every enabled catalog row advertising the requested tag, matching
-  :meth:`aila.platform.mcp.registry.McpRegistryServiceBase.pool_for_capability`
-  (which already produces the :class:`~aila.platform.mcp.client.InstancePool`
-  of :class:`~aila.platform.mcp.client.ResolvedInstance`\\ s).
 * RFC-07 reroute -- an unhealthy instance drops from the pool by
   flipping ``McpServerInstance.enabled`` off; the resolver already
   treats a disabled row as absent. The reroute path itself lives on
@@ -256,40 +260,51 @@ class McpCapabilityRegistry:
         with self._lock:
             self._by_key.clear()
 
-    # Later increment seams (unimplemented today; the interface names
-    # keep the RFC-11 phase 4/5 landing sites visible).
-
-    async def open_pool_for_capability(
+    def open_pool_for_capability(
         self,
         capability: str,
         *,
         module_scope: str | None = None,
+        recorder: (
+            Callable[..., AbstractAsyncContextManager[dict[str, Any]]] | None
+        ) = None,
+        catalog: McpInstanceCatalog | None = None,
+        registry: ConfigRegistry | None = None,
     ) -> tuple[McpClient, ...]:
-        """Return one :class:`McpClient` per enabled catalog row of ``capability``.
+        """Return one :class:`McpClient` per declared descriptor of ``capability``.
 
-        Deferred to a later RFC-11 increment. When it lands, it will
-        compose with
+        Composes :meth:`descriptors_for_capability` with the same
+        per-server client construction as :meth:`open_client`: every
+        matched descriptor yields an :class:`McpClient` wired to the
+        shared four-tier resolver, so live dispatch stays byte-
+        identical to a single :meth:`open_client` call while the
+        caller receives a fan-out of clients rather than a manual
+        pool.
+
+        Optional ``module_scope`` narrows the search to one module's
+        declarations; omit it to fan out across every module that
+        advertises the capability. ``recorder``, ``catalog``, and
+        ``registry`` mirror :meth:`open_client`; each returned client
+        receives the same DI so per-call audit logging + catalog / DB
+        overrides apply uniformly to the whole pool.
+
+        Returns an empty tuple when no descriptor advertises the
+        capability -- callers treat an empty pool as "nothing to fan
+        out to", matching
         :meth:`aila.platform.mcp.registry.McpRegistryServiceBase.pool_for_capability`
-        (already implemented; returns the pool of
-        :class:`~aila.platform.mcp.client.ResolvedInstance`\\ s) so
-        the caller receives a fan-out of clients rather than a manual
-        pool. Today the method raises so no accidental caller ships
-        against a half-built API; the ``self`` state (module-declared
-        descriptors) is what the later increment will consult, hence
-        the instance-method signature over a bare function.
+        which also emits an empty pool rather than raising.
         """
-        # Read self.declarations() so the eventual implementation site
-        # is anchored to the registry state -- also gives PLR6301 an
-        # honest reason to accept the instance-method binding today.
         declared = self.descriptors_for_capability(
             capability, module_scope=module_scope,
         )
-        raise NotImplementedError(
-            f"McpCapabilityRegistry.open_pool_for_capability({capability!r}, "
-            f"module_scope={module_scope!r}): RFC-11 pooling composition "
-            f"lands in a later increment (would return {len(declared)} "
-            f"descriptor pool); use McpRegistryServiceBase.pool_for_capability "
-            f"+ open_client per member for now",
+        return tuple(
+            self.open_client(
+                declaration,
+                recorder=recorder,
+                catalog=catalog,
+                registry=registry,
+            )
+            for declaration in declared
         )
 
 
