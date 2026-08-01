@@ -36,7 +36,8 @@ from aila.modules.vr.db_models import (
     VRWorkspaceRecord,
 )
 from aila.platform.contracts.enums import InvestigationStatus
-from aila.platform.prompts import LoadedPrompt
+from aila.platform.prompts import LoadedPrompt, pinning
+from aila.platform.prompts.pinning import resolve_canary_key_for_investigation
 from aila.storage.database import async_session_scope
 
 pytestmark = pytest.mark.usefixtures("test_db")
@@ -200,3 +201,104 @@ async def test_store_error_falls_back_to_file_registry(monkeypatch) -> None:
     # No pin was written because nothing was resolved from the store.
     pins = await _read_pins(inv_id)
     assert pins == {}
+
+
+@pytest.mark.asyncio
+async def test_model_family_variant_served_for_investigation() -> None:
+    """#33 / RFC-09: when a model family is routed and a family-specific
+    prompt variant exists, the live investigation path serves it instead of
+    the default variant. A unique strategy family isolates the store key."""
+    strat = f"vulnerability_research.fam-{uuid4().hex[:8]}"
+    key = _prompt_key(strat)
+    v_default = await _PROMPT_VERSION_STORE.register(key, "DEFAULT BODY")
+    await _PROMPT_VERSION_STORE.set_alias(key, "production", v_default)
+    v_claude = await _PROMPT_VERSION_STORE.register(
+        f"{key}/claude", "CLAUDE BODY",
+    )
+    await _PROMPT_VERSION_STORE.set_alias(f"{key}/claude", "production", v_claude)
+
+    inv_id = await _make_investigation()
+    loaded = await _load_prompt(
+        strat, investigation_id=inv_id, model_family="claude",
+    )
+    assert loaded.body == "CLAUDE BODY"
+    assert loaded.version == v_claude
+
+
+@pytest.mark.asyncio
+async def test_model_family_missing_variant_falls_back_to_default() -> None:
+    """#33: a routed family with no variant serves the default variant --
+    never a wrong prompt."""
+    strat = f"vulnerability_research.fam-{uuid4().hex[:8]}"
+    key = _prompt_key(strat)
+    v_default = await _PROMPT_VERSION_STORE.register(key, "DEFAULT BODY")
+    await _PROMPT_VERSION_STORE.set_alias(key, "production", v_default)
+
+    inv_id = await _make_investigation()
+    loaded = await _load_prompt(
+        strat, investigation_id=inv_id, model_family="gpt",
+    )
+    assert loaded.body == "DEFAULT BODY"
+    assert loaded.version == v_default
+
+
+class _Route:
+    def __init__(self, on_canary: bool) -> None:
+        self.on_canary = on_canary
+        self.version = "1.0.0"
+
+
+@pytest.mark.asyncio
+async def test_resolve_canary_key_returns_key_on_canary_cohort(monkeypatch) -> None:
+    """RFC-10: an investigation bucketed into the active canary cohort for a
+    key gets that key back, so the seal step can feed its signal."""
+    async def _fake(*, key: str, investigation_id: str) -> _Route:
+        return _Route(on_canary=True)
+
+    monkeypatch.setattr(
+        pinning._CONTROLLER, "resolve_version_for_investigation", _fake,
+    )
+    result = await resolve_canary_key_for_investigation(
+        key="vr/strat/base", investigation_id="inv-1",
+    )
+    assert result == "vr/strat/base"
+
+
+@pytest.mark.asyncio
+async def test_resolve_canary_key_none_off_cohort(monkeypatch) -> None:
+    """An investigation NOT on the canary cohort gets None (no signal fed)."""
+    async def _fake(*, key: str, investigation_id: str) -> _Route:
+        return _Route(on_canary=False)
+
+    monkeypatch.setattr(
+        pinning._CONTROLLER, "resolve_version_for_investigation", _fake,
+    )
+    result = await resolve_canary_key_for_investigation(
+        key="vr/strat/base", investigation_id="inv-1",
+    )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_canary_key_none_without_investigation() -> None:
+    """No investigation id short-circuits before any lifecycle read."""
+    result = await resolve_canary_key_for_investigation(
+        key="vr/strat/base", investigation_id=None,
+    )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_canary_key_fault_returns_none(monkeypatch) -> None:
+    """A lifecycle-table fault degrades to None -- canary feeding is skipped,
+    never blocking the turn."""
+    async def _boom(*, key: str, investigation_id: str) -> _Route:
+        raise RuntimeError("lifecycle table down")
+
+    monkeypatch.setattr(
+        pinning._CONTROLLER, "resolve_version_for_investigation", _boom,
+    )
+    result = await resolve_canary_key_for_investigation(
+        key="vr/strat/base", investigation_id="inv-1",
+    )
+    assert result is None

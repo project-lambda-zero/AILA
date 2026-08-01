@@ -22,6 +22,7 @@ from aila.platform.contracts.reasoning import (
 )
 from aila.platform.exceptions import ValidationError
 from aila.platform.llm.client import AilaLLMClient
+from aila.platform.prompts.registry import normalize_model_family
 from aila.platform.services.context_assembler import (
     ContextAssembler,
     ContextSection,
@@ -329,6 +330,19 @@ class CyberReasoningEngine:
     ) -> None:
         """Pre-populate the override cache (used by async warmers + tests)."""
         self._profile_override_cache[domain_id] = profile
+
+    async def resolve_model_family(self, task_type: str) -> str | None:
+        """Return the coarse model family this ``task_type`` routes to.
+
+        The turn runner calls this before loading the prompt so an RFC-09
+        model-family prompt variant can be selected for the model the turn
+        will actually run on. Resolves the same model id the chat path
+        would pick, then normalizes to a family (claude / gpt / ...).
+        Returns None when no model resolves or the id has no known family;
+        the prompt path then falls back to the default variant / file.
+        """
+        model_id = await self._llm_client.resolve_model(task_type)
+        return normalize_model_family(model_id)
 
     async def decide_next_turn(
         self,

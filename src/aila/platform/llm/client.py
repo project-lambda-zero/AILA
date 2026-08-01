@@ -555,6 +555,16 @@ class AilaLLMClient:
         """Access pipeline for step registration at platform startup."""
         return self._pipeline
 
+    async def resolve_model(self, task_type: str) -> str:
+        """Resolve the model id this client would route ``task_type`` to.
+
+        Delegates to :meth:`LLMConfigProvider.resolve_model` (same routing,
+        drift-bias, and fallback logic the chat path uses) so a caller that
+        needs the routed model BEFORE the call -- e.g. RFC-09 model-family
+        prompt selection -- sees exactly what the turn will run on.
+        """
+        return await self._config.resolve_model(task_type)
+
     # ----- async primary API -----
 
     async def chat(

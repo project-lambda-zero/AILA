@@ -18,6 +18,7 @@ from dataclasses import dataclass
 __all__ = [
     "CorrelationContext",
     "correlation_scope",
+    "current_canary_key",
     "current_join_keys",
     "current_prompt_content_hash",
     "current_prompt_version",
@@ -33,6 +34,7 @@ class CorrelationContext:
     turn_number: int | None = None
     prompt_content_hash: str | None = None
     prompt_version: str | None = None
+    canary_key: str | None = None
 
 
 _correlation: ContextVar[CorrelationContext | None] = ContextVar(
@@ -66,6 +68,21 @@ def current_prompt_content_hash() -> str | None:
     return corr.prompt_content_hash
 
 
+def current_canary_key() -> str | None:
+    """Return the lifecycle key of the canary prompt this turn is running, or None.
+
+    Set only when the investigation's cohort bucket landed inside an active
+    canary for the resolved prompt key (RFC-10). Read by the seal step to
+    feed the turn's drift + cost into the canary hold gate for that key.
+    None on every non-canary turn, so the seal step's signal feed is a
+    no-op outside a live canary rollout.
+    """
+    corr = _correlation.get()
+    if corr is None:
+        return None
+    return corr.canary_key
+
+
 def current_prompt_version() -> str | None:
     """Return the resolved prompt version for the current turn, or None.
 
@@ -88,6 +105,7 @@ def correlation_scope(
     turn_number: int | None = None,
     prompt_content_hash: str | None = None,
     prompt_version: str | None = None,
+    canary_key: str | None = None,
 ) -> Iterator[None]:
     """Set the ambient correlation for the duration of the block.
 
@@ -101,6 +119,7 @@ def correlation_scope(
             turn_number=turn_number,
             prompt_content_hash=prompt_content_hash,
             prompt_version=prompt_version,
+            canary_key=canary_key,
         ),
     )
     try:

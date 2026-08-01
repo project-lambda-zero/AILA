@@ -453,10 +453,26 @@ class AgentTurnRunnerBase:
             case_state.observables.get("_directive.phase_strategy_family")
             or inv.strategy_family
         )
+        # v0.4 GA-52: branch persona maps to a per-role task_type
+        # (researcher / implementer / critic). Falls back to the
+        # investigation's strategy_family when no persona is assigned.
+        # Resolved BEFORE the prompt load so an RFC-09 model-family prompt
+        # variant can be selected for the model this turn routes to.
+        task_type = self._resolve_task_type(branch.persona_voice) if branch.persona_voice else effective_strategy_family
+        # RFC-09: pick the coarse model family this turn will run on so a
+        # family-specific prompt variant wins when one exists (falls back to
+        # the default variant then the file). Best effort -- a resolve fault
+        # (including an engine without the accessor) leaves model_family None
+        # and the prompt loads exactly as before.
+        try:
+            model_family = await self._engine.resolve_model_family(task_type)
+        except (OSError, RuntimeError, ValueError, TypeError, AttributeError):
+            model_family = None
         loaded_prompt = await self._load_prompt(
             effective_strategy_family,
             branch.persona_voice,
             investigation_id=self.investigation_id,
+            model_family=model_family,
         )
         system_prompt = loaded_prompt.body
         resolved_prompt_version = loaded_prompt.version
@@ -501,11 +517,6 @@ class AgentTurnRunnerBase:
                 sys_chars + usr_chars + tools_chars,
                 (sys_chars + usr_chars + tools_chars) // 4000,
             )
-
-        # v0.4 GA-52: branch persona maps to a per-role task_type
-        # (researcher / implementer / critic). Falls back to the
-        # investigation's strategy_family when no persona is assigned.
-        task_type = self._resolve_task_type(branch.persona_voice) if branch.persona_voice else effective_strategy_family
 
         # Idempotency: derive a request_key from (investigation, branch,
         # turn, prompts) and check the cache before the LLM call. If a
@@ -564,6 +575,7 @@ class AgentTurnRunnerBase:
                     turn_number=turn_number,
                     prompt_content_hash=system_prompt_hash,
                     prompt_version=resolved_prompt_version,
+                    canary_key=loaded_prompt.canary_key,
                 ):
                     decision = await self._engine.decide_next_turn(
                         task_type=task_type,

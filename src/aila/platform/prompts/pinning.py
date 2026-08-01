@@ -46,7 +46,7 @@ from aila.platform.lifecycle.controller import AgentLifecycleController
 from aila.platform.prompts.version_store import PromptVersionStore
 from aila.platform.uow import UnitOfWork
 
-__all__ = ["resolve_pinned_prompt"]
+__all__ = ["resolve_canary_key_for_investigation", "resolve_pinned_prompt"]
 
 _log = logging.getLogger(__name__)
 
@@ -73,12 +73,42 @@ def _decode_pins(pins_json: str | None) -> dict[str, str]:
     return {str(k): str(v) for k, v in loaded.items() if isinstance(v, str)}
 
 
+async def resolve_canary_key_for_investigation(
+    *, key: str, investigation_id: str | None,
+) -> str | None:
+    """Return ``key`` when this investigation is on the active canary cohort.
+
+    The cohort bucket is deterministic per (key, investigation_id) so this
+    returns the same answer on every turn of an investigation (RFC-10). The
+    caller threads the result into the correlation scope; the seal step then
+    feeds that turn's drift + cost into the canary hold gate for ``key``.
+
+    Best effort: no investigation id, no active canary, or a lifecycle-table
+    fault all return None so the caller simply skips canary signal feeding.
+    """
+    if not investigation_id:
+        return None
+    try:
+        route = await _CONTROLLER.resolve_version_for_investigation(
+            key=key, investigation_id=investigation_id,
+        )
+    except (SQLAlchemyError, OSError, RuntimeError, ValueError) as exc:
+        _log.debug(
+            "canary cohort route resolve failed key=%s inv=%s: %s "
+            "(skipping canary signal feed)",
+            key, investigation_id, exc,
+        )
+        return None
+    return key if route.on_canary else None
+
+
 async def resolve_pinned_prompt(
     *,
     investigation_id: str | None,
     key: str,
     investigation_model: type[Any],
     store: PromptVersionStore,
+    model_family: str | None = None,
 ) -> tuple[str | None, str | None]:
     """Resolve ``key`` for ``investigation_id`` through the pin-per-investigation rule.
 
@@ -93,6 +123,12 @@ async def resolve_pinned_prompt(
     ``investigation_model`` is the SQLModel class for the row (VR or
     malware) so this helper stays module-agnostic while still writing
     the pin back to the concrete table.
+
+    ``model_family`` (RFC-09 model-family variants) is forwarded to every
+    store resolve so a family-specific prompt row (``{key}/{family}``)
+    wins when present, falling back to the bare key. The pin map stays
+    keyed by version, not family: the version is pinned per investigation
+    while the family variant is selected per turn.
     """
     if not investigation_id:
         # An out-of-investigation resolve (tests, dev scripts) has
@@ -100,7 +136,9 @@ async def resolve_pinned_prompt(
         # canary cohort by. Preserve the pre-pin behaviour: resolve
         # the live production alias directly.
         try:
-            versioned = await store.resolve(key, alias="production")
+            versioned = await store.resolve(
+                key, alias="production", model_family=model_family,
+            )
         except (SQLAlchemyError, OSError, RuntimeError) as exc:
             _log.warning(
                 "prompt version store resolve failed key=%s: %s (using file)",
@@ -124,7 +162,9 @@ async def resolve_pinned_prompt(
             # Existing pin: resolve the exact version. Fail-open on a
             # store fault so the caller still falls back to the file.
             try:
-                versioned = await store.resolve(key, version=pinned_version)
+                versioned = await store.resolve(
+                    key, version=pinned_version, model_family=model_family,
+                )
             except (SQLAlchemyError, OSError, RuntimeError) as exc:
                 _log.warning(
                     "prompt version store resolve (pinned) failed "
@@ -173,7 +213,9 @@ async def resolve_pinned_prompt(
                 key, investigation_id, exc,
             )
             try:
-                versioned = await store.resolve(key, alias="production")
+                versioned = await store.resolve(
+                key, alias="production", model_family=model_family,
+            )
             except (SQLAlchemyError, OSError, RuntimeError) as fallback_exc:
                 _log.warning(
                     "prompt version store resolve failed key=%s: %s (using file)",
@@ -195,7 +237,9 @@ async def resolve_pinned_prompt(
         # still owns body materialisation. A store fault on this fetch
         # degrades to the file baseline like every other store path.
         try:
-            versioned = await store.resolve(key, version=resolved_version)
+            versioned = await store.resolve(
+                key, version=resolved_version, model_family=model_family,
+            )
         except (SQLAlchemyError, OSError, RuntimeError) as exc:
             _log.warning(
                 "prompt version store resolve (routed) failed key=%s "

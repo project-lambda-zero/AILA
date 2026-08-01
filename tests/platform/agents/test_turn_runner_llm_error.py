@@ -73,10 +73,13 @@ class _StubRunner(AgentTurnRunnerBase):
         return ""
 
     async def _load_prompt(
-        self, _family: Any, _persona: Any, *, investigation_id: Any = None,
+        self, _family: Any, _persona: Any, *,
+        investigation_id: Any = None, model_family: Any = None,
     ) -> Any:
-        del investigation_id
-        return SimpleNamespace(body="system prompt", version=None)
+        del investigation_id, model_family
+        return SimpleNamespace(
+            body="system prompt", version=None, canary_key=None,
+        )
 
     async def _fetch_tool_specs(
         self, *, target_kind: Any = None, primary_language: Any = None,

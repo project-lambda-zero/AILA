@@ -84,7 +84,10 @@ from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
 from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
 from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 from aila.platform.prompts import LoadedPrompt, PromptNotFoundError, PromptRegistry
-from aila.platform.prompts.pinning import resolve_pinned_prompt
+from aila.platform.prompts.pinning import (
+    resolve_canary_key_for_investigation,
+    resolve_pinned_prompt,
+)
 from aila.platform.prompts.version_store import PromptVersionStore
 from aila.platform.services.context_assembler import (
     ContextSection,
@@ -2916,6 +2919,7 @@ async def _load_prompt(
     persona_voice: str | None = None,
     *,
     investigation_id: str | None = None,
+    model_family: str | None = None,
 ) -> LoadedPrompt:
     """Load the system prompt for a strategy family + optional persona.
 
@@ -2934,19 +2938,25 @@ async def _load_prompt(
     ``version`` is None when the fallback path resolved from disk.
     """
     key = _prompt_key(strategy_family, persona_voice)
+    canary_key = await resolve_canary_key_for_investigation(
+        key=key, investigation_id=investigation_id,
+    )
     body, version = await resolve_pinned_prompt(
         investigation_id=investigation_id,
         key=key,
         investigation_model=VRInvestigationRecord,
         store=_PROMPT_VERSION_STORE,
+        model_family=model_family,
     )
     if body is not None:
-        return LoadedPrompt(body=body, version=version)
+        return LoadedPrompt(body=body, version=version, canary_key=canary_key)
     try:
-        file_body = _PROMPT_REGISTRY.load(strategy_family, persona_voice)
+        file_body = _PROMPT_REGISTRY.load(
+            strategy_family, persona_voice, model_family=model_family,
+        )
     except PromptNotFoundError as exc:
         raise VulnResearcherError(str(exc)) from exc
-    return LoadedPrompt(body=file_body, version=None)
+    return LoadedPrompt(body=file_body, version=None, canary_key=canary_key)
 
 
 # Resolves Pydantic forward refs when this module is imported standalone.

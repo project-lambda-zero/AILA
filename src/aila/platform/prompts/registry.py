@@ -56,13 +56,19 @@ class LoadedPrompt(NamedTuple):
 
     ``version`` is None when the caller fell back to the file registry
     (no store row, no store bound, or the store failed open). Callers
-    thread ``version`` into the correlation scope so every LLM call
+    Callers thread ``version`` into the correlation scope so every LLM call
     written by R1's cost / seal writers is attributable to the exact
     version.
+
+    ``canary_key`` is the lifecycle key of the prompt when this turn's
+    investigation is bucketed into an active canary cohort (RFC-10), else
+    None. Callers thread it into the correlation scope so the seal step can
+    feed the turn's drift + cost into that canary's hold gate.
     """
 
     body: str
     version: str | None
+    canary_key: str | None = None
 
 
 @functools.lru_cache(maxsize=64)

@@ -77,6 +77,16 @@ class LLMConfigProvider:
         self._registry = registry
         self._secret_store = secret_store
 
+    @property
+    def registry(self) -> ConfigRegistry:
+        """The backing ConfigRegistry (read-only accessor for collaborators).
+
+        Lets pipeline steps that already hold the provider reach the same
+        registry for helpers such as ``calculate_cost_usd`` without a
+        private-attribute reach-through.
+        """
+        return self._registry
+
     async def resolve_api_key(self) -> str | None:
         """Resolve API key: SecretStore first, then OPENAI_API_KEY env var.
 

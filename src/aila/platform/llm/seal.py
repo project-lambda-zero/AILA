@@ -391,6 +391,46 @@ def make_seal_step(
                         "Drift router record failed, continuing",
                         exc_info=True,
                     )
+
+            # RFC-10: feed this turn's drift + cost into the canary hold
+            # gate for the prompt this investigation is bucketed onto. The
+            # correlation canary_key is set only for canary-cohort turns, so
+            # this is inert outside a live canary rollout (and
+            # record_canary_signal itself no-ops when no canary is active).
+            # Best effort -- a failure never breaks the seal step.
+            from .correlation import current_canary_key
+
+            canary_key = current_canary_key()
+            if canary_key:
+                try:
+                    from aila.platform.lifecycle.controller import (
+                        AgentLifecycleController,
+                    )
+
+                    from .cost import calculate_cost_usd
+
+                    usage = getattr(response, "usage", {}) or {}
+                    turn_cost, _ = await calculate_cost_usd(
+                        routing.model_id,
+                        int(usage.get("prompt_tokens", 0) or 0),
+                        int(usage.get("completion_tokens", 0) or 0),
+                        config_provider.registry,
+                    )
+                    await AgentLifecycleController().record_canary_signal(
+                        key=canary_key,
+                        drift=drift_score,
+                        cost=turn_cost,
+                    )
+                except (
+                    sqlalchemy.exc.SQLAlchemyError,
+                    OSError,
+                    RuntimeError,
+                    ValueError,
+                    TypeError,
+                ):
+                    logger.debug(
+                        "Canary signal feed failed, continuing", exc_info=True,
+                    )
         except sqlalchemy.exc.SQLAlchemyError:
             logger.debug("Drift tracking failed, continuing", exc_info=True)
 
