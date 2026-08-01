@@ -19,6 +19,25 @@ operator action.
 
 ### Added
 
+- Startup seeding of file-backed agent prompts into the version store. On
+  boot each module registers its prompt bodies and points the production
+  alias at them only when a key has none yet, so the pin-per-investigation
+  and canary-routing paths resolve against the store by default while an
+  operator-promoted or canary-routed version survives a restart untouched.
+  (RFC-09, RFC-10)
+- Capability-scoped MCP client pooling. Resolving a capability composes the
+  matched server descriptors into a tuple of clients, each built with the
+  same resolver and dependency wiring as a single-server open, and returns
+  an empty tuple when nothing matches. (RFC-11)
+- A target-enrichment orchestrator that runs capability-profile build and
+  function ranking in sequence as one queued task, replacing the earlier
+  pair of parallel downstream tasks. The direct rank endpoint and the
+  standalone stage tasks stay available.
+- Dispatch handlers for four investigation outcome kinds that were routed
+  but inert. Strategy descriptors, crash-triage reports, and config-delta
+  proposals are recorded to the knowledge store; a sub-investigation
+  outcome spawns a child investigation guarded by a depth ceiling and a
+  per-parent child cap. The assessment-report kind stays terminal.
 - A `restore-db` CLI command that restores the database from a pg_dump
   custom-format backup (`pg_restore --clean --if-exists`), the companion to
   the existing `backup-db`.
