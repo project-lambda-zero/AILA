@@ -43,13 +43,20 @@ from aila.platform.eval.runner import (
     BenchmarkNotFoundError,
     EmptyCaseBundleError,
 )
+from aila.platform.lifecycle.assignments import (
+    AssignmentState,
+    LifecycleCanaryAssignment,
+)
 from aila.platform.lifecycle.controller import (
     AgentLifecycleController,
     CanarySignalOutcome,
     CohortRoute,
     StageTransitionError,
 )
-from aila.platform.lifecycle.models import LifecycleTransitionRecord
+from aila.platform.lifecycle.models import (
+    LifecycleStage,
+    LifecycleTransitionRecord,
+)
 
 __all__ = ["router"]
 
@@ -158,6 +165,40 @@ class CohortRouteResponse(BaseModel):
     canary_version: str | None
     production_version: str | None
     cohort_percent: int | None
+
+
+class VersionMetricsRow(BaseModel):
+    """Per-version metrics aggregation row.
+
+    Cost and drift signals are attributed to the exact ``prompt_version``
+    on the ``llm_cost_records`` row (RFC-09 write-side) and the most
+    recent canary hold signal on ``lifecycle_canary_assignments``. Eval
+    score comes from the latest ``EvalRunRecord`` for the (key, version);
+    quorum accept rate is the count of distinct approver actors on
+    ``approved`` transitions over the count of prior ``evaluated``
+    transitions for the same (key, version).
+    """
+
+    key: str
+    version: str
+    latest_stage: str | None
+    eval_verdict: str | None
+    eval_run_id: str | None
+    eval_created_at: datetime | None
+    approver_count: int
+    evaluated_count: int
+    quorum_accept_rate: float
+    cost_usd_total: float
+    cost_call_count: int
+    drift_status: str | None
+    drift_last_recorded: datetime | None
+
+
+class VersionMetricsResponse(BaseModel):
+    """Envelope for the per-version metrics endpoint."""
+
+    key: str
+    rows: list[VersionMetricsRow]
 
 
 class TransitionInfo(BaseModel):
@@ -467,3 +508,183 @@ def _route_to_response(route: CohortRoute) -> CohortRouteResponse:
         production_version=route.production_version,
         cohort_percent=route.cohort_percent,
     )
+
+
+@router.get("/metrics/versions")
+@limiter.limit("30/minute")
+async def list_version_metrics(
+    request: Request,
+    key: str = Query(min_length=1, max_length=256),
+    ctx: AuthContext = Depends(_require_admin),
+) -> DataEnvelope[VersionMetricsResponse]:
+    """Return per-version metrics aggregation for ``key``.
+
+    One row per version observed in the transition journal, join-
+    aggregated with:
+
+    * **Eval score** -- the verdict + run id from the most recent
+      :class:`EvalRunRecord` for (key, version).
+    * **Cost** -- ``SUM(cost_usd)`` from :class:`LLMCostRecord` grouped
+      by ``prompt_version``.
+    * **Quorum accept rate** -- distinct approver actors on ``approved``
+      transitions divided by prior ``evaluated`` transitions for the
+      same (key, version). 0.0 when no eval is on record.
+    * **Drift** -- the most recent canary hold signal's drift status
+      from :class:`LifecycleCanaryAssignment.last_signal_json`.
+
+    Rows are ordered by the most recent transition (newest first), so
+    the current production version -- or the last held canary -- lands
+    at the top of the returned list.
+    """
+    del request, ctx
+    rows = await _aggregate_version_metrics(key)
+    return DataEnvelope(
+        data=VersionMetricsResponse(key=key, rows=rows),
+    )
+
+
+async def _aggregate_version_metrics(key: str) -> list[VersionMetricsRow]:
+    """Build the per-version metrics list for ``key``.
+
+    Runs four bounded queries per call: (1) distinct versions +
+    latest_stage from ``lifecycle_transitions``; (2) evaluated rows
+    per version; (3) approver counts per version; (4) cost totals per
+    prompt_version; plus one canary-assignment-per-version fetch for
+    the drift signal. All queries scope to the single ``key``, so cost
+    stays proportional to the version history depth (typically < 20
+    rows).
+    """
+    from sqlmodel import func as _func
+    from sqlmodel import select
+
+    from aila.platform.eval.models import EvalRunRecord
+    from aila.platform.llm.cost_record import LLMCostRecord
+    from aila.storage.database import async_session_scope
+
+    async with async_session_scope() as session:
+        # (1) Distinct versions + latest transition per version.
+        transitions = (await session.exec(
+            select(LifecycleTransitionRecord)
+            .where(LifecycleTransitionRecord.key == key)
+            .order_by(LifecycleTransitionRecord.created_at.desc())
+        )).all()
+        if not transitions:
+            return []
+        latest_stage_by_version: dict[str, str] = {}
+        evaluated_count_by_version: dict[str, int] = {}
+        approvers_by_version: dict[str, set[str]] = {}
+        order: list[str] = []
+        for row in transitions:
+            if row.version not in latest_stage_by_version:
+                latest_stage_by_version[row.version] = row.to_stage
+                order.append(row.version)
+            if row.to_stage == LifecycleStage.EVALUATED.value:
+                evaluated_count_by_version[row.version] = (
+                    evaluated_count_by_version.get(row.version, 0) + 1
+                )
+            if row.to_stage == LifecycleStage.APPROVED.value:
+                approvers_by_version.setdefault(
+                    row.version, set(),
+                ).add(row.actor or "")
+
+        # (2) Latest eval verdict per (key, version).
+        eval_rows = (await session.exec(
+            select(EvalRunRecord)
+            .where(EvalRunRecord.key == key)
+            .order_by(EvalRunRecord.created_at.desc())
+        )).all()
+        latest_eval_by_version: dict[str, EvalRunRecord] = {}
+        for row in eval_rows:
+            if row.candidate_version not in latest_eval_by_version:
+                latest_eval_by_version[row.candidate_version] = row
+
+        # (3) Cost aggregation grouped by prompt_version. Scoped to the
+        # versions we already know exist (versions the transition journal
+        # never mentioned would not appear here anyway; the transition
+        # journal is the source of truth for which versions exist for key).
+        cost_rows = (await session.exec(
+            select(  # type: ignore[call-overload]
+                LLMCostRecord.prompt_version,
+                _func.coalesce(_func.sum(LLMCostRecord.cost_usd), 0.0),
+                _func.count(LLMCostRecord.id),
+            )
+            .where(LLMCostRecord.prompt_version.in_(list(latest_stage_by_version.keys())))  # type: ignore[attr-defined]
+            .group_by(LLMCostRecord.prompt_version)
+        )).all()
+        cost_total_by_version: dict[str, float] = {}
+        cost_count_by_version: dict[str, int] = {}
+        for prompt_version, total, count in cost_rows:
+            if prompt_version is None:
+                continue
+            cost_total_by_version[str(prompt_version)] = float(total or 0.0)
+            cost_count_by_version[str(prompt_version)] = int(count or 0)
+
+        # (4) Drift signal per version: pull every canary assignment
+        # for the key so an in-active or held row's last_signal_json
+        # still surfaces here for operator inspection.
+        assignment_rows = (await session.exec(
+            select(LifecycleCanaryAssignment)
+            .where(LifecycleCanaryAssignment.key == key)
+            .order_by(LifecycleCanaryAssignment.updated_at.desc())
+        )).all()
+        drift_by_version: dict[str, tuple[str, datetime]] = {}
+        for row in assignment_rows:
+            if row.version in drift_by_version:
+                continue
+            drift_status: str | None = None
+            if row.last_signal_json:
+                try:
+                    payload = json.loads(row.last_signal_json)
+                    if isinstance(payload, dict):
+                        # Prefer explicit status; otherwise fall back to
+                        # the state (held / active) as a proxy signal.
+                        raw_status = (
+                            payload.get("status")
+                            or payload.get("drift_status")
+                        )
+                        if raw_status is not None:
+                            drift_status = str(raw_status)
+                except (TypeError, ValueError):
+                    drift_status = None
+            if drift_status is None:
+                # Reflect the current row state so a held-without-payload
+                # canary still surfaces a signal string.
+                drift_status = (
+                    "held"
+                    if row.state == AssignmentState.HELD.value
+                    else None
+                )
+            if drift_status is not None:
+                drift_by_version[row.version] = (drift_status, row.updated_at)
+
+    # Assemble the response rows, preserving the newest-transition order.
+    rows_out: list[VersionMetricsRow] = []
+    for version in order:
+        evaluated_count = evaluated_count_by_version.get(version, 0)
+        approvers = approvers_by_version.get(version, set())
+        approver_count = len({a for a in approvers if a})
+        quorum_accept_rate = (
+            approver_count / evaluated_count
+            if evaluated_count > 0
+            else 0.0
+        )
+        eval_row = latest_eval_by_version.get(version)
+        drift_pair = drift_by_version.get(version)
+        rows_out.append(
+            VersionMetricsRow(
+                key=key,
+                version=version,
+                latest_stage=latest_stage_by_version.get(version),
+                eval_verdict=eval_row.verdict if eval_row else None,
+                eval_run_id=eval_row.id if eval_row else None,
+                eval_created_at=eval_row.created_at if eval_row else None,
+                approver_count=approver_count,
+                evaluated_count=evaluated_count,
+                quorum_accept_rate=quorum_accept_rate,
+                cost_usd_total=cost_total_by_version.get(version, 0.0),
+                cost_call_count=cost_count_by_version.get(version, 0),
+                drift_status=drift_pair[0] if drift_pair else None,
+                drift_last_recorded=drift_pair[1] if drift_pair else None,
+            ),
+        )
+    return rows_out

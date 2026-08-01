@@ -236,6 +236,18 @@ class PlatformConfigSchema(BaseModel):
     agent_canary_drift_ceiling: float = 0.2
     agent_canary_cost_ceiling_usd: float = 5.0
 
+    # RFC-10 canary minimum observed-signal count. promote_from_canary
+    # blocks a candidate flip until at least this many drift + cost
+    # samples have been recorded on the active canary assignment
+    # (record_canary_signal bumps the counter on every call, whether
+    # the signal was within ceilings or fired a hold). Default 0
+    # disables the check so the pre-#34 behaviour is preserved for
+    # operators who have not tuned it; a positive value enforces "no
+    # promotion on empty history" so a candidate that never observed
+    # traffic cannot be promoted through an empty signal chain. The
+    # promote() eval + quorum gate still runs regardless.
+    agent_canary_min_sample: int = 0
+
     # SMTP delivery for scheduled reports (#45 -- ghost config keys).
     # report_tasks.py reads these through ConfigRegistry, but they were never
     # declared here, so the registry never seeded them and
@@ -294,4 +306,44 @@ class PlatformConfigSchema(BaseModel):
     # here fires slightly earlier (8) so the directive nudges before
     # the render marker flips to STALE.
     reasoning_hyp_stale_turns: int = 8
+
+    # #60 global SSE connection ceiling. The platform emits SSE from at
+    # least seven endpoints (events, tasks, scans, sessions, forensics
+    # investigation + readiness, vr investigation + messages, malware
+    # messages). ACTIVE_SSE is a shared process-wide gauge tracking the
+    # live count across all of them. When the observed count is at or
+    # above this ceiling every new SSE-opening request short-circuits
+    # with HTTP 503 + Retry-After -- preserving the ability of already
+    # connected clients to keep streaming while stopping unbounded
+    # connection growth from an infinite reconnect loop. Read once at
+    # request time via ConfigRegistry.get_sync so an operator can
+    # widen or narrow the ceiling with PUT /config/platform without a
+    # restart. Value <= 0 disables the cap (unbounded) -- intended for
+    # tests only.
+    sse_max_connections: int = 500
+
+    # Bounded retention for platform-owned tool storage tables (#56).
+    # ``permanentmemoryrecord`` (backing ``PermanentMemoryTool`` +
+    # ``DecisionCacheTool``) and ``artifactrecord`` (backing
+    # ``ArtifactStoreTool``) both accumulate rows indefinitely because
+    # every writer path uses upsert / append without an eviction pass.
+    # A periodic pruner (``platform.tool_storage_prune``, registered by
+    # ``aila.platform.automation.maintenance``) walks each table and
+    # applies the age + per-scope row-count caps below. A value <= 0
+    # on any knob disables that half of the prune (age-only, cap-only,
+    # or fully disabled if both are zero) without a code change.
+    #
+    # Age caps compare against the row ``updated_at`` so a rewritten
+    # entry (upsert of a cached decision, refresh of an artifact)
+    # resets the clock. Row-count caps keep the newest N rows per
+    # scope (namespace for memory, module_id for artifacts) and delete
+    # the tail. Decision-cache entries already fail closed at read
+    # against ``routing_decision_cache_ttl_hours`` above; the age cap
+    # here is the actual eviction that turns those stale rows into
+    # freed storage. Defaults are deliberately generous so an operator
+    # that has never tuned retention sees no surprise data loss.
+    tool_storage_memory_max_age_days: int = 90
+    tool_storage_memory_max_rows_per_namespace: int = 10_000
+    tool_storage_artifact_max_age_days: int = 180
+    tool_storage_artifact_max_rows_per_module: int = 10_000
 

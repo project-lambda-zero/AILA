@@ -259,6 +259,7 @@ async def _spawn_persona_siblings_and_enqueue(
     investigation_id: str,
     primary_branch_id: str,
     team_id: str | None,
+    sizing_hint: Any = None,
 ) -> None:
     """Bind the shared platform persona spawn to VR models and helpers.
 
@@ -266,6 +267,11 @@ async def _spawn_persona_siblings_and_enqueue(
     :func:`aila.platform.workflows.persona_spawn.spawn_persona_siblings`;
     VR supplies its branch model, table names, persona tuple, task
     function, ARQ track and group, and the case_state strip composition.
+
+    ``sizing_hint`` is the pre-execution :class:`RoutingRecommendation`
+    the setup handler computed via ``routing_history_provider``. It is
+    forwarded verbatim to the platform spawn; None (or a hint with
+    insufficient evidence) preserves the pre-RFC-08 full-panel spawn.
     """
     from aila.modules.vr.workflow.task import run_vr_investigate
 
@@ -285,6 +291,7 @@ async def _spawn_persona_siblings_and_enqueue(
             _strip_directives_from_state(raw),
         ),
         should_reactivate=_has_unvoted_pending_draft,
+        sizing_hint=sizing_hint,
     )
 
     # On-demand specialists: spawn any ratified request_specialist
@@ -292,6 +299,26 @@ async def _spawn_persona_siblings_and_enqueue(
     # request ratified after setup also spawns -- see
     # _spawn_ratified_specialists.
     await _spawn_ratified_specialists(investigation_id)
+
+
+def _routing_history_provider_factory() -> Any:
+    """Lazily build the VR routing history provider on first use.
+
+    Deferred import: the eval helper touches LLMCostRecord + module
+    outcome-review models; importing at module load pulls those into
+    a top-level import chain the researcher module already crosses.
+    Lazy factory keeps the setup module light and avoids adding a new
+    import edge into the eval subsystem.
+    """
+    from aila.modules.vr.db_models import VRInvestigationOutcomeReviewRecord
+    from aila.platform.eval import build_routing_history_provider
+
+    return build_routing_history_provider(
+        outcome_review_model=VRInvestigationOutcomeReviewRecord,
+        branch_model=VRInvestigationBranchRecord,
+        investigation_model=VRInvestigationRecord,
+        target_model=VRTargetRecord,
+    )
 
 
 _SETUP_BINDINGS = InvestigationStateBindings(
@@ -304,6 +331,7 @@ _SETUP_BINDINGS = InvestigationStateBindings(
     pattern_store_factory=lambda: PatternStore(knowledge=KnowledgeService()),
     auto_deliberation_enabled=_is_auto_deliberation_enabled,
     specialist_spawn_fn=_spawn_ratified_specialists,
+    routing_history_provider=_routing_history_provider_factory(),
 )
 _SETUP_HOOKS = InvestigationStateHooks(resolve_cve_intel=_resolve_cve_intel)
 

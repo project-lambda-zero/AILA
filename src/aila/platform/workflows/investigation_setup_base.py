@@ -14,9 +14,9 @@ forces one behavior across every module.
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
@@ -26,6 +26,12 @@ from aila.platform.contracts.enums import BranchStatus, InvestigationStatus
 from aila.platform.services.specialist_registry import SpecialistAgentRegistry
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import StateResult
+
+if TYPE_CHECKING:
+    from aila.platform.eval.routing_learner import (
+        RoutingRecommendation,
+        RoutingSample,
+    )
 
 _log = logging.getLogger(__name__)
 
@@ -74,6 +80,16 @@ class InvestigationStateBindings:
     primary_persona_value: str | None = None
     unspecified_persona_value: str | None = None
     spawn_fn: Callable[..., Awaitable[Any]] | None = None
+    # RFC-08 pre-execution sizing: an optional per-module history
+    # provider consumed by :class:`RoutingLearner.recommend` to build a
+    # :class:`RoutingRecommendation` for this target_kind. When set, the
+    # setup handler passes the recommendation to ``spawn_fn`` as the
+    # ``sizing_hint`` kwarg so ``spawn_persona_siblings`` can cap the
+    # sibling panel when the evidence is strong. When None, spawn_fn is
+    # called without ``sizing_hint`` (module still gets full-panel spawn).
+    routing_history_provider: (
+        Callable[[str], Awaitable[Sequence[RoutingSample]]] | None
+    ) = None
     pattern_store_factory: Callable[[], Any] | None = None
     auto_deliberation_enabled: Callable[[], bool] | None = None
     module_id: str | None = None
@@ -465,12 +481,64 @@ def state_investigation_setup(
         # the only mutations that survive for an active branch are
         # idempotent (missing-persona INSERT, duplicate-persona abandon).
         # See persona_spawn.py "Reactivate the winner per persona" block.
+        # RFC-08 pre-execution sizing seam: consult the routing learner
+        # for a per-target_kind recommendation BEFORE spawning siblings
+        # so a well-known target_kind + task_type can cap the panel via
+        # ``spawn_persona_siblings``'s ``sizing_hint`` argument. Failure
+        # of the learner NEVER blocks setup -- an unrecommended spawn
+        # falls back to the full panel with a warn log.
+        target_kind: str | None = None
+        if (
+            bindings.routing_history_provider is not None
+            and bindings.target_model is not None
+            and getattr(inv, "target_id", None)
+        ):
+            async with UnitOfWork() as _tk_uow:
+                _target_row = (await _tk_uow.session.exec(
+                    _select(bindings.target_model).where(
+                        bindings.target_model.id == inv.target_id,
+                    )
+                )).first()
+                if _target_row is not None:
+                    target_kind = getattr(_target_row, "kind", None)
+        routing_recommendation: RoutingRecommendation | None = None
+        if (
+            bindings.routing_history_provider is not None
+            and target_kind is not None
+            and target_kind.strip()
+        ):
+            try:
+                from aila.platform.eval.routing_learner import RoutingLearner
+
+                learner = RoutingLearner()
+                routing_recommendation = await learner.recommend(
+                    target_kind, bindings.routing_history_provider,
+                )
+                _log.info(
+                    "investigation_setup routing_recommendation inv=%s "
+                    "target_kind=%s ranked=%d samples=%d seam=%s",
+                    investigation_id, target_kind,
+                    len(routing_recommendation.ranked_task_types),
+                    routing_recommendation.total_samples,
+                    routing_recommendation.seam_status,
+                )
+            except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
+                _log.warning(
+                    "investigation_setup routing_recommendation failed "
+                    "inv=%s target_kind=%s: %s (falling back to full panel)",
+                    investigation_id, target_kind, exc, exc_info=True,
+                )
+                routing_recommendation = None
+
         if bindings.auto_deliberation_enabled():
-            await bindings.spawn_fn(
-                investigation_id=investigation_id,
-                primary_branch_id=branch.id,
-                team_id=inv.team_id,
-            )
+            spawn_kwargs: dict[str, Any] = {
+                "investigation_id": investigation_id,
+                "primary_branch_id": branch.id,
+                "team_id": inv.team_id,
+            }
+            if routing_recommendation is not None:
+                spawn_kwargs["sizing_hint"] = routing_recommendation
+            await bindings.spawn_fn(**spawn_kwargs)
 
         # Resolve any CVE ids in the operator's question via the module's
         # optional hook (vr resolves via NVD; malware has no CVE surface).
@@ -558,6 +626,32 @@ def state_investigation_setup(
                 bindings.module_id, branch.persona_voice,
             )
 
+        # RFC-08: forward the routing recommendation (if any) into the
+        # loop / emit states as an operator-inspectable payload. Kept
+        # JSON-serializable via a plain dict so a resumed task's
+        # kwargs_json round-trips through ARQ without a Pydantic
+        # BaseModel dependency. None when the module supplied no
+        # history provider OR the learner errored.
+        routing_recommendation_payload: dict[str, Any] | None = None
+        if routing_recommendation is not None:
+            routing_recommendation_payload = {
+                "target_kind": routing_recommendation.target_kind,
+                "total_samples": routing_recommendation.total_samples,
+                "seam_status": routing_recommendation.seam_status,
+                "reasoning": routing_recommendation.reasoning,
+                "ranked_task_types": [
+                    {
+                        "task_type": s.task_type,
+                        "score": s.score,
+                        "approval_rate": s.approval_rate,
+                        "mean_cost_usd": s.mean_cost_usd,
+                        "accepted": s.accepted,
+                        "rejected": s.rejected,
+                    }
+                    for s in routing_recommendation.ranked_task_types
+                ],
+            }
+
         return StateResult(
             next_state=next_state,
             output={
@@ -569,6 +663,7 @@ def state_investigation_setup(
                 "team_id": inv.team_id,
                 "cve_intel": cve_intel,
                 "applicable_patterns": applicable_patterns,
+                "routing_recommendation": routing_recommendation_payload,
                 # Specialist capability routing: a spawned specialist branch
                 # carries the specialist name as its persona_voice; resolve it
                 # back to a capability so the dispatch hub's _pick filter

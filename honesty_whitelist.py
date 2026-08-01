@@ -522,5 +522,77 @@ HONESTY_WHITELIST = [
     # avoid a circular import; the wrapper re-attaches the ``TeamContext``
     # type. It is the single import boundary tests can monkeypatch.
     ("platform/services/team_scope.py", "current_team_context", "inlining"),
+
+    # ------------------------------------------------------------------
+    # RFC-09 inline_prompt_literal (rule 58) -- pending PromptRegistry
+    # migration. Each site binds a module-level ``_SYSTEM_PROMPT`` /
+    # ``_EXTRACTOR_SYSTEM_PROMPT`` / ``_PROMPT_TEMPLATE`` constant to a
+    # multi-line string that RFC-09 requires to move to a versioned
+    # ``.md`` file resolved through PromptRegistry. The rule locks NEW
+    # inline literals out of agent + runtime code; the entries below
+    # are the pre-existing sites the rule surfaced on land, tracked
+    # for migration in a follow-up (see docs/RFC-09.md).
+    # ------------------------------------------------------------------
+    ("platform/agents/claim_verifier.py", "_EXTRACTOR_SYSTEM_PROMPT",
+     "inline_prompt_literal"),
+    ("platform/agents/claim_verifier.py", "_VERDICT_SYSTEM_PROMPT",
+     "inline_prompt_literal"),
+    ("vr/agents/narrative_agent.py", "_SYSTEM_PROMPT",
+     "inline_prompt_literal"),
+    ("vr/agents/nday_researcher.py", "_SYSTEM_PROMPT",
+     "inline_prompt_literal"),
+    ("vr/agents/synthesis_agent.py", "_SYSTEM_PROMPT",
+     "inline_prompt_literal"),
+    ("vr/apk_static/seed.py", "_PROMPT_TEMPLATE",
+     "inline_prompt_literal"),
+    ("vr/masvs/seed.py", "_PROMPT_TEMPLATE",
+     "inline_prompt_literal"),
+    ("malware/agents/narrative_agent.py", "_SYSTEM_PROMPT",
+     "inline_prompt_literal"),
+    ("malware/agents/synthesis_agent.py", "_SYSTEM_PROMPT",
+     "inline_prompt_literal"),
+
+    # ------------------------------------------------------------------
+    # RFC-09 untagged_llm_call (rule 59) -- report writers + collectors
+    # that hold their own inline system prompts (see rule 58 whitelist
+    # above) and therefore cannot stamp a resolved
+    # ``prompt_content_hash`` / ``prompt_version`` via correlation_scope
+    # today. Tag stamps land alongside the RFC-09 prompt-migration
+    # follow-up for each file. The ``detail`` field pins the entry-
+    # point method that fired (``.chat_json`` / ``.chat_structured``)
+    # so a mis-suppression on a different call in the same file is
+    # impossible.
+    # ------------------------------------------------------------------
+    ("vr/reporting/poc_writer.py", "untagged_llm_call",
+     ".chat_structured"),
+    ("vr/reporting/writer_agent.py", "untagged_llm_call",
+     ".chat_structured"),
+    ("forensics/workflow/states/collectors/network.py",
+     "untagged_llm_call", ".chat_json"),
+
+    # ------------------------------------------------------------------
+    # Category (h): except_return_default residual after rule 25 tightening.
+    # Each site is a documented fail-closed / coerce path where the
+    # empty return is the public contract, not a swallow.
+    # ------------------------------------------------------------------
+    # api/sse_gate._current_active_sse: Prometheus internal-attr fallback.
+    # Returns 0 when both the fast ``Gauge._value.get()`` path AND the
+    # slower ``collect()`` fallback fail; 0 means "no live SSE streams"
+    # which is the fail-closed answer for the cap check (never denies
+    # a new connection on a bad reading).
+    ("api/sse_gate.py", "except_return_default",
+     "silently hides failures"),
+    # vr/tools/poc_runner.run_dir_of: PurePosixPath.relative_to raises
+    # ValueError when the path is outside _REMOTE_DIR; the None return
+    # signals "no per-run parent to clean up", which callers handle.
+    ("vr/tools/poc_runner.py", "except_return_default",
+     "silently hides failures"),
+
+    # Category (b): PromptRegistry.load is the sync file-backed entry
+    # point paired with async ``resolve()`` (DB-then-file). Inlining
+    # ``_resolve_from_file(...)`` at call sites would scatter the
+    # sync/async split contract that PromptRegistry exists to enforce.
+    ("platform/prompts/registry.py", "load",
+     "consider inlining"),
 ]
 

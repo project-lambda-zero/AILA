@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text as _sql_text
 from sqlmodel import select as _select
@@ -36,7 +36,25 @@ from aila.platform.contracts import utc_now
 from aila.platform.exceptions import WorkerUnreachableError
 from aila.platform.uow import UnitOfWork
 
+if TYPE_CHECKING:
+    from aila.platform.eval.routing_learner import RoutingRecommendation
+
 _log = logging.getLogger(__name__)
+
+# Minimum evidence multiplier the sizing-hint consumer requires before
+# it takes the recommendation seriously enough to cap siblings. The
+# learner's own ``min_evidence_per_task_type`` guards each task_type
+# individually; this second gate scales with panel width so a
+# 3-persona panel with 12 samples on the top task_type gets the
+# capped spawn while a 3-persona panel with only 6 samples spawns
+# everyone. Kept module-level so a test can monkey-patch it.
+_SIZING_HINT_EVIDENCE_MULTIPLIER: int = 4
+# Minimum absolute score the top-ranked task_type must clear before the
+# sizing hint reduces sibling count. Below this the router treats the
+# recommendation as "no clear winner" and spawns the full panel; the
+# learner's cost-weight-penalised score is bounded on [-1, 1] so a
+# 0.5 floor is comfortably above chance.
+_SIZING_HINT_MIN_TOP_SCORE: float = 0.5
 
 __all__ = [
     "SiblingSpawnResult",
@@ -55,6 +73,53 @@ class SiblingSpawnResult:
     enqueued: list[str] = field(default_factory=list)
 
 
+def _cap_siblings_by_sizing_hint(
+    siblings: tuple[Any, ...],
+    sizing_hint: RoutingRecommendation | None,
+) -> tuple[Any, ...]:
+    """Reduce ``siblings`` when the routing recommendation is confident.
+
+    Returns ``siblings`` unchanged when:
+      * ``sizing_hint`` is None (caller has no evidence),
+      * the hint carries fewer than ``_SIZING_HINT_EVIDENCE_MULTIPLIER *
+        len(siblings)`` total samples (evidence too thin to prune),
+      * the top task_type score is below
+        :data:`_SIZING_HINT_MIN_TOP_SCORE` (no clear winner),
+      * the persona tuple is already 1 or empty (nothing to cap).
+
+    Otherwise caps the returned tuple to the top ``ceil(len(siblings)/2)``
+    personas by position, on the assumption that the persona tuple is
+    ordered by module convention with the most-signal-carrying voices
+    first. This is a conservative sizing consumer -- it never spawns
+    ZERO siblings (leaves at least one non-primary voice) and never
+    increases the caller's original list.
+    """
+    if sizing_hint is None or len(siblings) <= 1:
+        return siblings
+    if sizing_hint.total_samples < _SIZING_HINT_EVIDENCE_MULTIPLIER * len(siblings):
+        return siblings
+    if not sizing_hint.ranked_task_types:
+        return siblings
+    top_score = sizing_hint.ranked_task_types[0].score
+    if top_score < _SIZING_HINT_MIN_TOP_SCORE:
+        return siblings
+    # Halve the panel (rounded up) so at least one non-primary voice
+    # survives to keep the dialectic real. The persona tuple order is
+    # a module convention -- the module chooses which personas rank
+    # highest by placing them first in the sibling tuple.
+    keep = max(1, (len(siblings) + 1) // 2)
+    capped = siblings[:keep]
+    _log.info(
+        "persona_spawn.sizing_hint capped siblings %d -> %d "
+        "target_kind=%s top_task_type=%s top_score=%.3f samples=%d",
+        len(siblings), len(capped),
+        sizing_hint.target_kind,
+        sizing_hint.ranked_task_types[0].task_type,
+        top_score, sizing_hint.total_samples,
+    )
+    return capped
+
+
 async def spawn_persona_siblings(
     investigation_id: str,
     primary_branch_id: str,
@@ -70,6 +135,7 @@ async def spawn_persona_siblings(
     task_queue: Any,
     strip_case_state: Callable[[str], str],
     should_reactivate: Callable[[Any], Awaitable[bool]] | None = None,
+    sizing_hint: RoutingRecommendation | None = None,
 ) -> SiblingSpawnResult:
     """Spawn / reuse one branch per persona for ``investigation_id``.
 
@@ -77,7 +143,18 @@ async def spawn_persona_siblings(
     string. ``strip_case_state`` composes the module's reject/directive
     strip helpers so a reactivated or freshly forked persona starts from
     the same clean baseline.
+
+    ``sizing_hint`` is the pre-execution :class:`RoutingRecommendation`
+    from :meth:`aila.platform.eval.routing_learner.RoutingLearner.recommend`
+    computed by the investigation-setup path before this call. When the
+    recommendation carries enough evidence and a clear top task_type,
+    the sibling tuple is capped to the top half of the persona list --
+    saving budget on investigations whose target_kind + task_type has a
+    well-known good route. A hint of None (or insufficient evidence /
+    no clear winner) leaves the sibling tuple untouched, preserving
+    the pre-RFC-08 behaviour.
     """
+    siblings = _cap_siblings_by_sizing_hint(siblings, sizing_hint)
     result = SiblingSpawnResult()
     if not siblings:
         return result

@@ -60,13 +60,16 @@ __all__ = [
 
 
 # One-line seam status published as a module constant so a caller can
-# introspect the learner's wire-up state without reading source. The RFC-08
-# acceptance requirement 5 states the recommendation "feeds #23
-# pre-execution sizing"; until the lifecycle SHADOW/CANARY transitions
-# ship and the branch-spawn path takes a sizing input, the seam is
-# ``recommendation_only``. A follow-up increment flips this to
-# ``wired_to_sizing`` alongside the lifecycle change.
-PRE_EXECUTION_SIZING_SEAM_STATUS: str = "recommendation_only"
+# introspect the learner's wire-up state without reading source. Set to
+# ``wired_to_sizing`` when the platform investigation-setup path consumes
+# a :class:`RoutingRecommendation` before spawning sibling branches --
+# see :func:`aila.platform.workflows.persona_spawn.spawn_persona_siblings`
+# (the ``sizing_hint`` parameter) and
+# :func:`aila.platform.workflows.investigation_setup_base.state_investigation_setup`
+# (the pre-spawn recommend call that threads the hint through). A caller
+# that has not yet wired the seam keeps observing ``recommendation_only``
+# by pinning the RoutingLearner to the pre-wired module version.
+PRE_EXECUTION_SIZING_SEAM_STATUS: str = "wired_to_sizing"
 
 
 @dataclass(frozen=True, slots=True)

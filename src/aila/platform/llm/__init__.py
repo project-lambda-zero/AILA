@@ -25,7 +25,11 @@ from .cost import CostTracker
 from .errors import BudgetExceededError, ClassificationBlockedError, ConfidenceRejectedError, LLMDisabledError, LLMError
 from .gate import extract_confidence, make_gate_step
 from .health_router import (
+    DRIFT_STATUS_DEGRADED,
+    DRIFT_STATUS_STABLE,
+    DRIFT_STATUS_VOLATILE,
     EndpointHealth,
+    ModelDrift,
     ModelHealthRouter,
     get_default_health_router,
     reset_default_health_router,
@@ -59,7 +63,11 @@ __all__ = [
     "ClassificationLevel",
     "ClassificationResult",
     "ConfidenceRejectedError",
+    "DRIFT_STATUS_DEGRADED",
+    "DRIFT_STATUS_STABLE",
+    "DRIFT_STATUS_VOLATILE",
     "EndpointHealth",
+    "ModelDrift",
     "EvidenceValidationReport",
     "EvidenceValidator",
     "LLMClient",

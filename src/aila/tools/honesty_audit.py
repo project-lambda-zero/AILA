@@ -56,6 +56,15 @@ Detects thirty-six categories of structural dishonesty:
 52. fail_open_recovery_path -- a safety / rate-limit / verify / recovery / finalizer function returns a permissive value (True / 0 / 0.0 / "" / [] / {} / bare return) from an ``except`` handler. The RFC-07 posture is fail-closed: return a conservative default and surface a signal (a bounded defer, mark-and-block, close-with-reason).
 53. close_without_infra_classification -- a finalizer that closes an investigation as a negative (a close_investigation / close_no_finding / synthesize_no_finding / finalize_negative call) does not consult InfraDeathClassifier in the same function body. An infra-death branch must be tagged as such, not silently recorded as a clean negative that vanishes from the operator's re-run queue.
 54. heal_without_journal -- a recovery function whose body mutates run state (set_enabled / flip_status / drop_lock / delete_cursor / re_enqueue) without also writing a checkpointed recovery event (LedgerService.append_general, record_signal, record_and_check, emit_recovery_event). Every heal must leave an audit trail so recovery is itself auditable.
+55. ungated_self_improvement_write -- a call to ``pattern_store.create(...)`` (or any ``.create`` / ``.add`` / ``.insert`` on a pattern-store-shaped receiver) outside :class:`ExperienceWriter` and the store's own file bypasses the RFC-08 review-gated write path. Every experience must be signed by a reviewed :class:`QuorumOutcome`; route the write through ``ExperienceWriter.record(verdict=...)``.
+56. self_labeled_reward -- an agent runtime file (``platform/agents/**`` or ``modules/*/agents/**``) passes or assigns a self-labelled promotion signal (``reward=``, ``self_score=``, ``agent_score=``, ``promotion_score=``, ``self_reward=``, or the same as an attribute assignment). An agent must not set its own promotion field; the RFC-08 gate reads only reviewer-produced, quorum-signed signals.
+57. unversioned_config_promotion -- a function calls ``.set("<...>_threshold", ...)`` / ``.set("<...>_ceiling", ...)`` / other threshold-shaped key without also referencing :class:`CalibrationProposalRecord` / :class:`CalibrationProposer` in the same body. RFC-08's propose-and-gate contract is that a live threshold only ever moves behind a versioned, reversible proposal row.
+58. inline_prompt_literal -- a module-level ``_*_PROMPT*`` constant is assigned a multi-line string literal (3+ newlines, 200+ chars). RFC-09 requires prompt text to be resolved through :class:`PromptRegistry` from a versioned ``.md`` file so cost / seal / audit rows carry the resolved ``prompt_content_hash`` + ``prompt_version``; an inline literal drops the attribution.
+59. untagged_llm_call -- a function calls ``.chat(...)`` / ``.chat_json(...)`` / ``.chat_structured(...)`` without ``correlation_scope(prompt_content_hash=, prompt_version=)`` or :func:`idempotent_llm_call` in the enclosing body. The RFC-09 stamp is mandatory: the raw call reaches the model with NULL prompt attribution and breaks the (cost, prompt) join.
+60. unaudited_alias_flip -- a function writes a :class:`PromptAliasRecord` row (constructor call, ``session.add`` of one, or raw ``UPDATE prompt_aliases``) without also emitting a matching :class:`PromptAliasChangeRecord` in the same body. Every alias flip must leave an audit trail; the canonical writer is ``PromptVersionStore.set_alias`` (pair-write in one transaction).
+61. promotion_without_gate -- a function flips a lifecycle version to production (a ``LifecycleTransitionRecord(to_stage=LifecycleStage.PRODUCTION)`` construct, or a ``set_alias(..., "production", ...)`` call) without referencing the eval + quorum gate markers (``_passing_evaluate``, ``_distinct_approver_count``, ``EvalRunner``, ``agent_promotion_quorum``, ``AgentLifecycleController``). Every promotion must pass the gate; delegate to :meth:`AgentLifecycleController.promote`.
+62. untransitioned_stage_change -- a function assigns a :class:`LifecycleStage` value (``.lifecycle_stage = ...`` attribute assignment, or ``stage=`` / ``to_stage=`` / ``lifecycle_stage=`` kwarg carrying a ``LifecycleStage.<X>`` member) without also constructing a :class:`LifecycleTransitionRecord` or calling ``._journal(...)`` in the same body. Every stage move must be journaled (RFC-10).
+63. canary_below_min_sample -- a function whose name matches ``promote_from_canary`` / ``promote_canary`` / ``flip_canary`` has no min-sample gate marker (``min_sample`` / ``min_samples`` / ``min_canary_sample`` / ``sample_count`` / ``signal_count`` / ``agent_canary_min_sample``) in its body. RFC-10 requires canary promotion to verify a minimum observed-signal count before flipping so a candidate that never saw traffic cannot be promoted on an empty history.
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -986,6 +995,207 @@ _JOURNAL_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
     "platform/tasks/storage.py",
 )
 
+# ---------------------------------------------------------------------------
+# RFC-08 / RFC-09 / RFC-10 rule constants (rules 55-63).
+#
+# Every rule below locks in a review-gated write path so agent turns +
+# operator commands cannot short-circuit a promotion / audit / journal
+# invariant by writing the underlying row directly. Renaming a marker
+# set here moves both the rule and its tests at once.
+# ---------------------------------------------------------------------------
+
+# Rule 55 -- ungated_self_improvement_write. Method names on a
+# PatternStore-shaped receiver that constitute a write; ``.create`` is
+# the canonical entry point but ``.add`` / ``.insert`` / ``.bulk_create``
+# / ``.record`` are all shapes a future subclass may expose. The
+# receiver-name markers match any dotted-attribute tail (Name.id or
+# Attribute.attr) that ends in a ``pattern_store``-family token so
+# ``self.pattern_store.create(...)`` / ``self._pattern_store.create(...)``
+# / ``store.create(...)`` (when ``store`` was bound from a
+# ``pattern_store``-typed attribute) all trigger the check while a
+# bare ``kb.create(...)`` on the KnowledgeService does not.
+_PATTERN_STORE_WRITE_METHODS: frozenset[str] = frozenset({
+    "create", "add", "insert", "bulk_create", "record",
+})
+_PATTERN_STORE_RECEIVER_TOKENS: tuple[str, ...] = (
+    "pattern_store", "_pattern_store",
+)
+# Files that OWN a pattern-store write path and legitimately call
+# ``.create(...)`` directly on the store instance: :class:`ExperienceWriter`
+# (the only reviewed-verdict-gated writer) and the store implementation
+# files themselves. Everything else must go through ExperienceWriter.
+_PATTERN_STORE_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
+    "platform/eval/experience_writer.py",
+    "platform/services/pattern_store.py",
+    "modules/vr/services/pattern_store.py",
+    "modules/malware/services/pattern_store.py",
+    "modules/forensics/services/pattern_store.py",
+)
+
+# Rule 56 -- self_labeled_reward. Kwarg / attribute names that carry a
+# self-labelled promotion signal. An agent turn is the model output;
+# the RFC-08 gate consumes only reviewer-produced signals, so an
+# agent that sets its own ``reward=`` / ``self_score=`` field short-
+# circuits the gate. Confidence / probability signals the LLM emits
+# for its own reasoning are not in this set; the names below are the
+# specific promotion-input shapes RFC-08 forbids.
+_SELF_LABELED_REWARD_NAMES: frozenset[str] = frozenset({
+    "reward",
+    "self_reward",
+    "self_score",
+    "agent_score",
+    "promotion_score",
+    "promotion_reward",
+    "self_labeled_reward",
+    "self_labeled_score",
+})
+# Scope: any file under ``platform/agents/`` OR ``modules/*/agents/``.
+# Test fixtures + eval-harness code that scores an agent for research
+# purposes live outside these paths and are correctly out of scope.
+_AGENT_RUNTIME_SCOPE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\](?:platform[/\\]agents|modules[/\\][^/\\]+[/\\]agents)[/\\]"
+)
+
+# Rule 57 -- unversioned_config_promotion. Substring tokens marking a
+# threshold-shaped ConfigRegistry key. A ``.set("<key>", value)`` call
+# whose key literal contains any of these tokens must run inside a
+# function body that also references CalibrationProposalRecord /
+# CalibrationProposer -- RFC-08's contract is that a threshold only
+# ever moves behind a versioned proposal row.
+_THRESHOLD_KEY_TOKENS: tuple[str, ...] = (
+    "threshold", "ceiling", "min_sample", "cutoff", "calibration",
+)
+_CALIBRATION_JOURNAL_MARKERS: frozenset[str] = frozenset({
+    "CalibrationProposalRecord",
+    "CalibrationProposer",
+    "CalibrationProposal",
+})
+_CALIBRATION_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
+    "platform/eval/calibration.py",
+    "tools/honesty_audit.py",
+)
+
+# Rule 58 -- inline_prompt_literal. A module-level assign whose target
+# name contains the ``PROMPT`` uppercase token (``_SYSTEM_PROMPT``,
+# ``_EXTRACTOR_SYSTEM_PROMPT``, ``_PROMPT_TEMPLATE``, ...) whose value
+# is a multi-line string constant fires. RFC-09 requires the prompt
+# text to live in a versioned ``.md`` file resolved through
+# :class:`PromptRegistry`; the length + newline floors below prevent
+# short single-purpose messages (a JSON schema hint, an error preamble)
+# from tripping the rule.
+_INLINE_PROMPT_NAME_TOKEN: str = "PROMPT"
+_INLINE_PROMPT_MIN_NEWLINES: int = 3
+_INLINE_PROMPT_MIN_LENGTH: int = 200
+_INLINE_PROMPT_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
+    "tools/honesty_audit.py",
+)
+
+# Rule 59 -- untagged_llm_call. Method-name markers for the three LLM
+# entry points and the identifier markers whose presence in the
+# enclosing function's body proves the call is tagged. A file that
+# defines / calls the raw entry point (the client itself, the
+# idempotent wrapper, the routing agents whose calls carry no prompt
+# version by design) is exempted.
+_LLM_CHAT_METHODS: frozenset[str] = frozenset({
+    "chat", "chat_json", "chat_structured",
+})
+_LLM_TAG_MARKERS: frozenset[str] = frozenset({
+    "correlation_scope",
+    "prompt_content_hash",
+    "prompt_version",
+    "idempotent_llm_call",
+    "current_prompt_content_hash",
+    "current_prompt_version",
+})
+_LLM_TAG_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
+    # The client owns the underlying transport, its sync-CLI wrappers
+    # forward to the async .chat() method, and it also defines schema-
+    # hint messages that are not prompts.
+    "platform/llm/client.py",
+    # The idempotent wrapper IS the tag stamp.
+    "platform/agents/idempotent_llm.py",
+    # Routing calls (task-type classifier + model router) have no
+    # investigation-scoped prompt version -- they carry only the
+    # routing prompt string built inline, not a per-investigation
+    # prompt from the version store.
+    "platform/routing/agent.py",
+    "platform/routing/router.py",
+    "platform/modules/platform.py",
+    # CyberReasoningEngine.decide_next_turn is a platform delegate
+    # wrapped by its callers (forensics/investigator.py,
+    # vr/agents/vuln_researcher.py) in ``correlation_scope(...)`` --
+    # the ContextVar carries the tag stamp through the delegate, and
+    # the reasoning file itself has no visibility into the resolved
+    # prompt version.
+    "platform/services/reasoning.py",
+    # This file self-references the markers in its own rule strings.
+    "tools/honesty_audit.py",
+)
+
+# Rule 60 -- unaudited_alias_flip. PromptAliasRecord is the mutable
+# pointer; PromptAliasChangeRecord is the append-only audit row. A
+# function that inserts / updates one without the other has drifted
+# from PromptVersionStore.set_alias() and reopens the alias table's
+# audit gap RFC-09 closed. The version_store file itself owns the
+# canonical pair-write; alembic migrations and this file's rule
+# strings are also exempt.
+_PROMPT_ALIAS_RECORD_NAME: str = "PromptAliasRecord"
+_PROMPT_ALIAS_CHANGE_RECORD_NAME: str = "PromptAliasChangeRecord"
+_PROMPT_ALIAS_TABLE_NAME: str = "prompt_aliases"
+_ALIAS_FLIP_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
+    "platform/prompts/version_store.py",
+    "tools/honesty_audit.py",
+)
+
+# Rule 61 -- promotion_without_gate. Identifier markers whose presence
+# in a function that flips a version to production clears the rule. A
+# body that constructs ``LifecycleTransitionRecord(to_stage=...
+# .PRODUCTION)`` or calls ``set_alias(<key>, "production", ...)``
+# without any gate marker is promoting without the eval + quorum guard
+# the RFC-10 controller enforces. ``EvalRunner`` alone counts as a
+# gate because its ``auto_promote`` path only flips the alias after
+# the run's ``verdict == 'pass'`` check.
+_PROMOTE_GATE_MARKERS: frozenset[str] = frozenset({
+    "_passing_evaluate",
+    "_distinct_approver_count",
+    "EvalRunner",
+    "agent_promotion_quorum",
+    "AgentLifecycleController",
+})
+_PRODUCTION_STAGE_LITERAL: str = "production"
+_LIFECYCLE_STAGE_NAME: str = "LifecycleStage"
+_LIFECYCLE_TRANSITION_RECORD_NAME: str = "LifecycleTransitionRecord"
+_LIFECYCLE_JOURNAL_METHOD_NAME: str = "_journal"
+_LIFECYCLE_STAGE_KWARGS: frozenset[str] = frozenset({
+    "stage", "to_stage", "lifecycle_stage", "new_stage",
+})
+_LIFECYCLE_CONTROLLER_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
+    "platform/lifecycle/controller.py",
+    # EvalRunner.run(auto_promote=True) flips the alias behind the
+    # run's own eval verdict; the check IS the gate on that path.
+    "platform/eval/runner.py",
+    "tools/honesty_audit.py",
+)
+
+# Rule 63 -- canary_below_min_sample. Function-name markers that
+# identify a canary promotion path and the identifier / call markers
+# whose presence in the body clears the rule. The check is looser
+# than a config-key match: any identifier or method call whose name
+# is one of the min-sample terms counts because it proves the code
+# path reasons about a sample count before flipping.
+_CANARY_PROMOTE_MARKERS: frozenset[str] = frozenset({
+    "promote_from_canary", "promote_canary", "flip_canary",
+})
+_CANARY_MIN_SAMPLE_MARKERS: frozenset[str] = frozenset({
+    "min_sample",
+    "min_samples",
+    "min_canary_sample",
+    "canary_min_sample",
+    "agent_canary_min_sample",
+    "sample_count",
+    "signal_count",
+})
+
 
 def _function_name_matches(name: str, markers: frozenset[str]) -> bool:
     """Return True when any marker appears as a substring of ``name`` (case-insensitive).
@@ -1039,6 +1249,226 @@ def _identifier_names_in_body(
                 ids.add(node.attr)
     return ids
 
+
+
+def _line_parses_as_python_statement(line: str) -> bool:
+    """Return True when the un-commented text of *line* is real code.
+
+    Rule 25's second-pass filter: strip the leading whitespace + ``#``
+    from the comment, then try to :func:`ast.parse` the remainder as
+    a module. Prose that starts with a Python keyword (``# for the
+    coroutine``, ``# from its call site.``) fails to parse and is
+    NOT flagged; a real commented-out statement (``# import os``,
+    ``# for x in xs:``, ``# return None``) parses cleanly and IS.
+
+    Two extra guards remove common English shapes the parser would
+    otherwise accept: a single Name / Constant expression (a bare
+    word or number) never counts as "code" -- ``# note`` shouldn't
+    fire -- and text ending with a sentence period without a
+    trailing closing paren / colon / bracket is prose. Together the
+    two guards eliminate the false positives the first-pass regex
+    surfaces on doc comments.
+    """
+    stripped = line.lstrip()
+    if not stripped.startswith("#"):
+        return False
+    inner = stripped[1:].lstrip()
+    if not inner:
+        return False
+    # Prose sentences (end with a period, no closing structural punctuation)
+    # are the dominant false-positive shape; skip them early.
+    if (
+        inner.endswith(".")
+        and not inner.endswith(("..", ").", "]", "}"))
+    ):
+        return False
+    try:
+        parsed = ast.parse(inner)
+    except SyntaxError:
+        return False
+    if not parsed.body:
+        return False
+    if len(parsed.body) != 1:
+        return True
+    stmt = parsed.body[0]
+    # A bare Expression whose value is just a Name / Constant is a
+    # single-word comment, not code. ``# for x in xs:`` parses as a
+    # For with body -> the Constant guard does not fire.
+    if isinstance(stmt, ast.Expr) and isinstance(
+        stmt.value, (ast.Name, ast.Constant),
+    ):
+        return False
+    return True
+
+
+def _pattern_store_receiver_tail(node: ast.expr) -> str | None:
+    """Return the receiver's terminal name when it names a pattern-store.
+
+    Rule 55 uses this to detect a ``.create(...)`` call whose receiver's
+    dotted-attribute tail is a pattern-store binding. ``.pattern_store``
+    / ``._pattern_store`` on an object (``self.pattern_store.create``,
+    ``services._pattern_store.create``) all match. A bare
+    ``pattern_store.create(...)`` where ``pattern_store`` is a local
+    variable also matches by Name.id. Returns the matched terminal name
+    for the diagnostic message, or ``None`` when the receiver is not a
+    pattern-store shape.
+    """
+    if isinstance(node, ast.Name):
+        return node.id if node.id in _PATTERN_STORE_RECEIVER_TOKENS else None
+    if isinstance(node, ast.Attribute):
+        return node.attr if node.attr in _PATTERN_STORE_RECEIVER_TOKENS else None
+    return None
+
+
+def _string_constant_value(node: ast.expr | None) -> str | None:
+    """Return the string value of a Constant node, else None.
+
+    Rules 58 / 60 use this to inspect a string literal after Python's
+    parser has folded any implicit concatenation. In Python 3.11+ a
+    parenthesised ``("foo\n" "bar\n" "baz\n")`` is a single
+    ast.Constant whose value is the concatenated string, so the check
+    matches both triple-quoted and paren-concat prompt bodies without
+    a special JoinedStr traversal.
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _references_lifecycle_stage(node: ast.expr | None) -> bool:
+    """Return True when *node* names a ``LifecycleStage.<X>`` member.
+
+    Rule 62 uses this to distinguish a genuine stage assignment (``.
+    lifecycle_stage = LifecycleStage.PRODUCTION`` or ``to_stage=Lifec
+    ycleStage.PRODUCTION.value``) from an incidental attribute access
+    (``record.to_stage``, a router response that reads the field back
+    from a DB row). Matches ``LifecycleStage.PRODUCTION``,
+    ``LifecycleStage.PRODUCTION.value``, and the imported-shortname
+    ``PRODUCTION`` when the source has ``from aila.platform.lifecycle.
+    models import LifecycleStage``.
+    """
+    if node is None:
+        return False
+    if isinstance(node, ast.Attribute):
+        # ``LifecycleStage.PRODUCTION`` -- value is Name(LifecycleStage).
+        if (
+            isinstance(node.value, ast.Name)
+            and node.value.id == _LIFECYCLE_STAGE_NAME
+        ):
+            return True
+        # ``LifecycleStage.PRODUCTION.value`` -- one level deeper.
+        return _references_lifecycle_stage(node.value)
+    return False
+
+
+def _call_callee_simple_name(node: ast.Call) -> str | None:
+    """Return the callee's simple name (Name.id or Attribute.attr).
+
+    Rule 62 uses this to skip the ``LifecycleTransitionRecord(...)``
+    constructor call and the ``._journal(...)`` method call when
+    counting stage writes -- those two ARE the journal, so a kwarg
+    ``to_stage=LifecycleStage.PRODUCTION`` on them is the row being
+    written, not a bypass.
+    """
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    return None
+
+
+def _is_production_alias_flip(node: ast.Call) -> bool:
+    """Return True when a call flips the production alias.
+
+    Matches either ``<x>.set_alias(<key>, "production", ...)`` (second
+    positional arg is the literal alias name) OR the same call with
+    an ``alias="production"`` kwarg. Rule 61 treats either shape as a
+    production write that must sit behind the eval + quorum gate.
+    """
+    if not isinstance(node.func, ast.Attribute) or node.func.attr != "set_alias":
+        return False
+    # Second positional arg (alias)
+    if len(node.args) >= 2:
+        alias_arg = node.args[1]
+        if (
+            isinstance(alias_arg, ast.Constant)
+            and alias_arg.value == _PRODUCTION_STAGE_LITERAL
+        ):
+            return True
+    for kw in node.keywords:
+        if (
+            kw.arg == "alias"
+            and isinstance(kw.value, ast.Constant)
+            and kw.value.value == _PRODUCTION_STAGE_LITERAL
+        ):
+            return True
+    return False
+
+
+def _is_production_transition_construct(node: ast.Call) -> bool:
+    """Return True when a call builds a LifecycleTransitionRecord to production.
+
+    Matches ``LifecycleTransitionRecord(..., to_stage=<PRODUCTION>, ...)``
+    where the kwarg value is either ``LifecycleStage.PRODUCTION`` /
+    ``LifecycleStage.PRODUCTION.value`` or the literal string
+    ``"production"``. Rule 61 uses this alongside
+    :func:`_is_production_alias_flip` to detect every shape of
+    production write.
+    """
+    callee = _call_callee_simple_name(node)
+    if callee != _LIFECYCLE_TRANSITION_RECORD_NAME:
+        return False
+    for kw in node.keywords:
+        if kw.arg != "to_stage":
+            continue
+        if isinstance(kw.value, ast.Constant) and kw.value.value == _PRODUCTION_STAGE_LITERAL:
+            return True
+        if _references_lifecycle_stage(kw.value):
+            # Only fire when the specific member is PRODUCTION.
+            root = kw.value
+            while isinstance(root, ast.Attribute) and root.attr == "value":
+                root = root.value
+            if (
+                isinstance(root, ast.Attribute)
+                and root.attr == _PRODUCTION_STAGE_LITERAL.upper()
+            ):
+                return True
+    return False
+
+
+def _build_parent_map(tree: ast.AST) -> dict[int, ast.AST]:
+    """Return ``{id(child): parent_node}`` for the entire tree.
+
+    Rules 59 (untagged_llm_call) and 60 (unaudited_alias_flip) need
+    to answer "what function contains this node?" without carrying a
+    stack through every visitor call. The parent map is cheap on the
+    parse of one file and lets both rules use
+    :func:`_enclosing_function` uniformly.
+    """
+    parents: dict[int, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[id(child)] = parent
+    return parents
+
+
+def _enclosing_function(
+    node: ast.AST, parents: dict[int, ast.AST],
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """Return the innermost ``def`` / ``async def`` enclosing *node*.
+
+    Walks up through the parent map until a function definition is
+    found. Returns None when the node lives at module level (a
+    module-level chat call, for example, would not have a function
+    scope to check for tag markers -- treated as unscoped and
+    intentionally not flagged by rule 59).
+    """
+    cur = parents.get(id(node))
+    while cur is not None:
+        if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return cur
+        cur = parents.get(id(cur))
+    return None
 
 
 def _workflow_base_corpus(filepath: str) -> dict[str, str]:
@@ -2215,7 +2645,22 @@ class _HonestyVisitor(ast.NodeVisitor):
                 )
 
     def _check_commented_out_code(self, source: str, filepath: str) -> None:
-        """Rule 25: commented-out Python statements."""
+        """Rule 25: commented-out Python statements.
+
+        The first-pass regex catches any comment whose text starts with
+        a Python keyword (``for``, ``from``, ``except``, ``assert``,
+        ...). English prose comments that use the same keyword as a
+        preposition (``# for the append coroutine``, ``# from its call
+        site.``, ``# except '.' and '-' to '_'``) trip that regex
+        without being dead code, so the second pass tries to
+        :func:`ast.parse` the un-commented text: only lines that parse
+        cleanly as a real statement AND aren't a single bare name /
+        constant AND aren't obviously prose (end with ``.`` /  ``,`` /
+        no closing punctuation of a Python statement) count as dead
+        code. This keeps the rule biting on ``# import os`` /
+        ``# for x in xs:`` / ``# return None`` while letting doc
+        comments through.
+        """
         normalized = filepath.replace("\\", "/")
         if _ALEMBIC_PATH_PATTERN.search(normalized):
             return  # migrations legitimately have commented SQL/Python
@@ -2227,6 +2672,8 @@ class _HonestyVisitor(ast.NodeVisitor):
                 continue
             lower = line.lower()
             if any(ex in lower for ex in _COMMENTED_CODE_EXEMPTIONS):
+                continue
+            if not _line_parses_as_python_statement(line):
                 continue
             self._emit(
                 lineno,
@@ -3461,6 +3908,567 @@ class _HonestyVisitor(ast.NodeVisitor):
                     )
                     break
 
+    # ------------------------------------------------------------------
+    # RFC-08 / RFC-09 / RFC-10 rules (55-63)
+    # ------------------------------------------------------------------
+
+    def _check_ungated_self_improvement_write(self, tree: ast.Module) -> None:
+        """Rule 55: ungated_self_improvement_write -- a pattern-store
+        write outside :class:`ExperienceWriter` and the store itself.
+
+        The RFC-08 write path is:
+
+            reviewed QuorumOutcome  ->  ExperienceWriter.record(...)
+                                    ->  pattern_store.create(...)
+
+        Every experience row must carry a reviewer-signed polarity
+        (positive / negative). A direct ``.create(...)`` on the store
+        from an agent turn, a workflow state, or a service reopens
+        that write path and lets the module insert a "learned"
+        pattern without ever passing the eval + quorum gate.
+
+        The rule fires on any ``<recv>.<method>(...)`` call where
+        ``<method>`` is one of :data:`_PATTERN_STORE_WRITE_METHODS` and
+        the receiver's terminal name matches a pattern-store shape
+        (:func:`_pattern_store_receiver_tail`). Files that OWN the
+        write path (:data:`_PATTERN_STORE_SELF_EXEMPT_SUFFIXES`) are
+        skipped; this file self-exempts because its rule strings
+        name the methods.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if normalized.endswith("tools/honesty_audit.py"):
+            return
+        for suffix in _PATTERN_STORE_SELF_EXEMPT_SUFFIXES:
+            if normalized.endswith(suffix):
+                return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not isinstance(func, ast.Attribute):
+                continue
+            if func.attr not in _PATTERN_STORE_WRITE_METHODS:
+                continue
+            tail = _pattern_store_receiver_tail(func.value)
+            if tail is None:
+                continue
+            self._emit(
+                node.lineno,
+                "ungated_self_improvement_write",
+                (
+                    f"ungated_self_improvement_write: {tail}.{func.attr}(...) "
+                    "writes a pattern-store row outside ExperienceWriter -- "
+                    "route the write through ExperienceWriter.record(verdict=...) "
+                    "so the RFC-08 eval + quorum gate signs the pattern"
+                ),
+            )
+
+    def _check_self_labeled_reward(self, tree: ast.Module) -> None:
+        """Rule 56: self_labeled_reward -- an agent runtime file sets
+        its own reward / promotion score used for promotion.
+
+        RFC-08's gate consumes reviewer-produced signals only. An
+        agent that passes ``reward=`` / ``self_score=`` / ``agent_score=``
+        kwargs (or assigns ``.reward = <x>`` on a record) writes the
+        promotion field itself and short-circuits the gate. Confidence
+        signals the LLM emits for its own reasoning are outside this
+        set; the names in :data:`_SELF_LABELED_REWARD_NAMES` are the
+        specific promotion-input shapes RFC-08 forbids.
+
+        Scope: any file under ``platform/agents/`` or
+        ``modules/*/agents/`` per :data:`_AGENT_RUNTIME_SCOPE_PATTERN`.
+        Tests + eval-harness code that scores an agent for research
+        purposes live outside these paths and are correctly out of
+        scope.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if not _AGENT_RUNTIME_SCOPE_PATTERN.search(normalized):
+            return
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                for kw in node.keywords:
+                    if kw.arg in _SELF_LABELED_REWARD_NAMES:
+                        self._emit(
+                            kw.value.lineno,
+                            "self_labeled_reward",
+                            (
+                                f"self_labeled_reward: agent code passes "
+                                f"'{kw.arg}=' as a promotion signal -- the RFC-08 "
+                                "gate consumes reviewer-produced quorum outcomes, "
+                                "not agent-labelled reward / score fields"
+                            ),
+                        )
+            elif isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if (
+                        isinstance(target, ast.Attribute)
+                        and target.attr in _SELF_LABELED_REWARD_NAMES
+                    ):
+                        self._emit(
+                            target.lineno,
+                            "self_labeled_reward",
+                            (
+                                f"self_labeled_reward: agent code assigns to "
+                                f"'.{target.attr}' as a promotion signal -- the "
+                                "RFC-08 gate reads reviewer-produced quorum "
+                                "outcomes, not agent-set reward / score fields"
+                            ),
+                        )
+            elif isinstance(node, ast.AnnAssign):
+                target = node.target
+                if (
+                    isinstance(target, ast.Attribute)
+                    and target.attr in _SELF_LABELED_REWARD_NAMES
+                    and node.value is not None
+                ):
+                    self._emit(
+                        node.lineno,
+                        "self_labeled_reward",
+                        (
+                            f"self_labeled_reward: agent code annotates + "
+                            f"assigns '.{target.attr}' as a promotion signal -- "
+                            "the RFC-08 gate reads reviewer-produced quorum "
+                            "outcomes, not agent-set reward / score fields"
+                        ),
+                    )
+
+    def _check_unversioned_config_promotion(self, tree: ast.Module) -> None:
+        """Rule 57: unversioned_config_promotion -- a function writes a
+        threshold-shaped config value without a versioned proposal row.
+
+        RFC-08's propose-and-gate contract is that a live threshold only
+        ever moves behind a :class:`CalibrationProposalRecord`. A function
+        that calls ``.set("<x>_threshold", value)`` /
+        ``.set("<x>_ceiling", value)`` / any threshold-shape key without
+        also referencing :class:`CalibrationProposalRecord` or
+        :class:`CalibrationProposer` in the same body is bumping the
+        floor without leaving a reversible audit row -- exactly the
+        drift RFC-08 exists to prevent.
+
+        The rule fires per function so a helper that both drafts a
+        proposal AND persists it (which references CalibrationProposal /
+        CalibrationProposer) clears the check on the whole body. The
+        calibration file itself is the canonical writer and is exempt;
+        alembic migrations are skipped by the generic alembic guard.
+        """
+        normalized = self.filename.replace("\\", "/")
+        for suffix in _CALIBRATION_SELF_EXEMPT_SUFFIXES:
+            if normalized.endswith(suffix):
+                return
+        if _ALEMBIC_PATH_PATTERN.search(normalized):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            first_hit: tuple[int, str] | None = None
+            for sub in ast.walk(node):
+                if not isinstance(sub, ast.Call):
+                    continue
+                if not (
+                    isinstance(sub.func, ast.Attribute)
+                    and sub.func.attr == "set"
+                ):
+                    continue
+                key_node: ast.expr | None = None
+                if sub.args:
+                    key_node = sub.args[0]
+                else:
+                    for kw in sub.keywords:
+                        if kw.arg == "key":
+                            key_node = kw.value
+                            break
+                key_text = _string_constant_value(key_node)
+                if key_text is None:
+                    continue
+                low = key_text.lower()
+                if not any(tok in low for tok in _THRESHOLD_KEY_TOKENS):
+                    continue
+                first_hit = (sub.lineno, key_text)
+                break
+            if first_hit is None:
+                continue
+            body_ids = _identifier_names_in_body(node)
+            if body_ids & _CALIBRATION_JOURNAL_MARKERS:
+                continue
+            line, key = first_hit
+            self._emit(
+                line,
+                "unversioned_config_promotion",
+                (
+                    f"unversioned_config_promotion: '{node.name}' bumps a "
+                    f"threshold-shaped config value ({key!r}) without "
+                    "referencing CalibrationProposalRecord / CalibrationProposer "
+                    "in the same body -- RFC-08 requires the change to sit "
+                    "behind a versioned, reversible proposal row"
+                ),
+            )
+
+    def _check_inline_prompt_literal(self, tree: ast.Module) -> None:
+        """Rule 58: inline_prompt_literal -- a module-level ``_*_PROMPT*``
+        constant binds a multi-line prompt string.
+
+        RFC-09 puts prompt text under a resolver (:class:`PromptRegistry`
+        reading a versioned ``.md`` file) so cost / seal / audit rows
+        carry the resolved ``prompt_content_hash`` + ``prompt_version``.
+        A multi-line literal bound to a module constant sidesteps that
+        resolver: every call using it stamps a NULL prompt_version and
+        the (cost, prompt) join goes empty on the row.
+
+        The rule fires on a module-body Assign whose target name
+        contains the uppercase token ``PROMPT`` and whose value is a
+        string Constant with 3+ newlines and 200+ characters. Python's
+        parser folds a parenthesised implicit-concat literal to a
+        single Constant, so ``_SYSTEM_PROMPT = ("foo " "bar")`` and
+        ``_SYSTEM_PROMPT = \"\"\"foo\\nbar\"\"\"`` both match without a
+        special JoinedStr traversal.
+        """
+        normalized = self.filename.replace("\\", "/")
+        for suffix in _INLINE_PROMPT_SELF_EXEMPT_SUFFIXES:
+            if normalized.endswith(suffix):
+                return
+        for node in tree.body:
+            if not isinstance(node, ast.Assign):
+                continue
+            target_name: str | None = None
+            for target in node.targets:
+                if (
+                    isinstance(target, ast.Name)
+                    and _INLINE_PROMPT_NAME_TOKEN in target.id
+                ):
+                    target_name = target.id
+                    break
+            if target_name is None:
+                continue
+            text = _string_constant_value(node.value)
+            if text is None:
+                continue
+            if text.count("\n") < _INLINE_PROMPT_MIN_NEWLINES:
+                continue
+            if len(text) < _INLINE_PROMPT_MIN_LENGTH:
+                continue
+            self._emit(
+                node.lineno,
+                "inline_prompt_literal",
+                (
+                    f"inline_prompt_literal: module-level '{target_name}' "
+                    f"binds a multi-line prompt string "
+                    f"({text.count(chr(10)) + 1} lines); RFC-09 requires "
+                    "prompts to be resolved through PromptRegistry from a "
+                    "versioned .md file so cost / seal rows carry the "
+                    "prompt_content_hash + prompt_version stamp"
+                ),
+            )
+
+    def _check_untagged_llm_call(self, tree: ast.Module) -> None:
+        """Rule 59: untagged_llm_call -- an LLM entry-point call reaches
+        the model without ``correlation_scope`` / ``idempotent_llm_call``.
+
+        RFC-09's join between cost and prompt runs through two
+        columns: ``prompt_content_hash`` + ``prompt_version`` on
+        :class:`LLMCostRecord` and :class:`AuditSealRecord`. Those
+        values are stamped by ``correlation_scope(prompt_content_hash=,
+        prompt_version=)`` (or its wrapper :func:`idempotent_llm_call`,
+        which reads the ContextVar and stamps itself). A raw
+        ``.chat(...)`` / ``.chat_json(...)`` / ``.chat_structured(...)``
+        outside either wrapper reaches the client with NULL
+        attribution -- the resulting row cannot be joined back to the
+        prompt that produced it.
+
+        The rule walks each function scope, collects every LLM entry-
+        point call in the body, and fires on the first when no tag
+        marker (:data:`_LLM_TAG_MARKERS`) appears anywhere in the
+        enclosing function. Files whose whole purpose is to OWN the
+        entry point (client, idempotent wrapper, routing) are exempt
+        via :data:`_LLM_TAG_SELF_EXEMPT_SUFFIXES`.
+        """
+        normalized = self.filename.replace("\\", "/")
+        for suffix in _LLM_TAG_SELF_EXEMPT_SUFFIXES:
+            if normalized.endswith(suffix):
+                return
+        parents = _build_parent_map(tree)
+        # Group hits by enclosing function so a single function that
+        # makes many raw chat calls fires only once (on the first).
+        per_function: dict[int, tuple[int, str]] = {}
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr in _LLM_CHAT_METHODS
+            ):
+                continue
+            enclosing = _enclosing_function(node, parents)
+            if enclosing is None:
+                continue
+            body_ids = _identifier_names_in_body(enclosing)
+            if body_ids & _LLM_TAG_MARKERS:
+                continue
+            key = id(enclosing)
+            if key in per_function:
+                continue
+            per_function[key] = (node.lineno, node.func.attr)
+        for func_id, (line, method) in per_function.items():
+            # func_id is retained above so a later shape can name the
+            # function; the current message identifies the file+line.
+            del func_id
+            self._emit(
+                line,
+                "untagged_llm_call",
+                (
+                    f"untagged_llm_call: .{method}(...) is called without "
+                    "correlation_scope(prompt_content_hash=, prompt_version=) "
+                    "or idempotent_llm_call(...) in the enclosing function "
+                    "body -- RFC-09 requires every LLM call to stamp the "
+                    "prompt_content_hash + prompt_version so cost / seal rows "
+                    "carry the attribution"
+                ),
+            )
+
+    def _check_unaudited_alias_flip(self, tree: ast.Module) -> None:
+        """Rule 60: unaudited_alias_flip -- a function writes a
+        :class:`PromptAliasRecord` without also writing a matching
+        :class:`PromptAliasChangeRecord`.
+
+        :class:`PromptAliasRecord` is the mutable pointer;
+        :class:`PromptAliasChangeRecord` is the append-only audit row.
+        The canonical writer is ``PromptVersionStore.set_alias()`` --
+        which does both in one transaction. Any function that
+        constructs / adds / raw-UPDATEs the alias row without also
+        emitting the change row has drifted from that pair-write and
+        reopens the audit gap RFC-09 closed.
+
+        The rule fires on any function-scope body that references
+        :class:`PromptAliasRecord` (name in identifiers or a raw SQL
+        literal touching ``prompt_aliases``) without also referencing
+        :class:`PromptAliasChangeRecord`. The version_store file
+        itself and alembic migrations are exempt.
+        """
+        normalized = self.filename.replace("\\", "/")
+        for suffix in _ALIAS_FLIP_SELF_EXEMPT_SUFFIXES:
+            if normalized.endswith(suffix):
+                return
+        if _ALEMBIC_PATH_PATTERN.search(normalized):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            body_ids = _identifier_names_in_body(node)
+            writes_alias = _PROMPT_ALIAS_RECORD_NAME in body_ids
+            raw_sql_line: int | None = None
+            if not writes_alias:
+                for sub in ast.walk(node):
+                    if not (
+                        isinstance(sub, ast.Constant)
+                        and isinstance(sub.value, str)
+                    ):
+                        continue
+                    low = sub.value.lower()
+                    if _PROMPT_ALIAS_TABLE_NAME not in low:
+                        continue
+                    if "update " in low or "insert " in low or "into " in low:
+                        raw_sql_line = sub.lineno
+                        break
+            if not writes_alias and raw_sql_line is None:
+                continue
+            if _PROMPT_ALIAS_CHANGE_RECORD_NAME in body_ids:
+                continue
+            hit_line = node.lineno if raw_sql_line is None else raw_sql_line
+            self._emit(
+                hit_line,
+                "unaudited_alias_flip",
+                (
+                    f"unaudited_alias_flip: '{node.name}' writes "
+                    f"{_PROMPT_ALIAS_RECORD_NAME} / prompt_aliases without "
+                    "also emitting PromptAliasChangeRecord in the same body; "
+                    "route alias flips through PromptVersionStore.set_alias() "
+                    "or mirror its pair-write so the audit log stays complete"
+                ),
+            )
+
+    def _check_promotion_without_gate(self, tree: ast.Module) -> None:
+        """Rule 61: promotion_without_gate -- a function flips a version
+        to production without the eval + quorum gate.
+
+        The canonical promotion path is
+        :meth:`AgentLifecycleController.promote`, which enforces two
+        checks before ``set_alias(..., PRODUCTION_ALIAS, ...)``:
+
+            1. ``_passing_evaluate(key, version)`` returned a
+               passing eval verdict; and
+            2. ``_distinct_approver_count(key, version) >=
+               agent_promotion_quorum``.
+
+        A function that constructs
+        ``LifecycleTransitionRecord(to_stage=LifecycleStage.PRODUCTION)``
+        or calls ``set_alias(..., "production", ...)`` outside the
+        controller AND without any gate marker in its body
+        (:data:`_PROMOTE_GATE_MARKERS`) is promoting without the gate.
+        The controller itself and :class:`EvalRunner` (whose
+        ``auto_promote`` path IS the gate on its own call) are exempt
+        via :data:`_LIFECYCLE_CONTROLLER_SELF_EXEMPT_SUFFIXES`.
+        """
+        normalized = self.filename.replace("\\", "/")
+        for suffix in _LIFECYCLE_CONTROLLER_SELF_EXEMPT_SUFFIXES:
+            if normalized.endswith(suffix):
+                return
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            hit_line: int | None = None
+            for sub in ast.walk(node):
+                if not isinstance(sub, ast.Call):
+                    continue
+                if (
+                    _is_production_transition_construct(sub)
+                    or _is_production_alias_flip(sub)
+                ):
+                    hit_line = sub.lineno
+                    break
+            if hit_line is None:
+                continue
+            body_ids = _identifier_names_in_body(node)
+            if body_ids & _PROMOTE_GATE_MARKERS:
+                continue
+            self._emit(
+                hit_line,
+                "promotion_without_gate",
+                (
+                    f"promotion_without_gate: '{node.name}' flips a version "
+                    "to production without referencing the eval + quorum gate "
+                    "(_passing_evaluate, _distinct_approver_count, EvalRunner, "
+                    "agent_promotion_quorum, AgentLifecycleController) -- "
+                    "route through AgentLifecycleController.promote() (RFC-10)"
+                ),
+            )
+
+    def _check_untransitioned_stage_change(self, tree: ast.Module) -> None:
+        """Rule 62: untransitioned_stage_change -- a function assigns a
+        :class:`LifecycleStage` value without writing a
+        :class:`LifecycleTransitionRecord`.
+
+        The RFC-10 stage machine is journaled: every observed stage
+        change appends a row to ``lifecycle_transitions`` so the
+        history answers "who moved this version to <stage> and when?"
+        without replay. A function that writes
+        ``.lifecycle_stage = LifecycleStage.<X>`` or passes
+        ``to_stage=LifecycleStage.<X>`` / ``stage=LifecycleStage.<X>``
+        to a call that is NOT the transition constructor / journaler
+        has drifted from that history and needs a matching journal
+        write in the same body.
+
+        The controller file itself is exempt because it OWNS the
+        journaler; every other stage-writer must mirror the
+        constructor + journal pair.
+        """
+        normalized = self.filename.replace("\\", "/")
+        for suffix in _LIFECYCLE_CONTROLLER_SELF_EXEMPT_SUFFIXES:
+            if normalized.endswith(suffix):
+                return
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            stage_hits: list[int] = []
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Assign):
+                    if not _references_lifecycle_stage(sub.value):
+                        continue
+                    for tgt in sub.targets:
+                        if (
+                            isinstance(tgt, ast.Attribute)
+                            and tgt.attr in _LIFECYCLE_STAGE_KWARGS
+                        ):
+                            stage_hits.append(sub.lineno)
+                            break
+                elif isinstance(sub, ast.Call):
+                    callee = _call_callee_simple_name(sub)
+                    if callee in (
+                        _LIFECYCLE_TRANSITION_RECORD_NAME,
+                        _LIFECYCLE_JOURNAL_METHOD_NAME,
+                    ):
+                        continue
+                    for kw in sub.keywords:
+                        if (
+                            kw.arg in _LIFECYCLE_STAGE_KWARGS
+                            and _references_lifecycle_stage(kw.value)
+                        ):
+                            stage_hits.append(sub.lineno)
+                            break
+            if not stage_hits:
+                continue
+            body_ids = _identifier_names_in_body(node)
+            if _LIFECYCLE_TRANSITION_RECORD_NAME in body_ids:
+                continue
+            call_names = _call_names_in_body(node)
+            if _LIFECYCLE_JOURNAL_METHOD_NAME in call_names:
+                continue
+            self._emit(
+                stage_hits[0],
+                "untransitioned_stage_change",
+                (
+                    f"untransitioned_stage_change: '{node.name}' assigns a "
+                    "LifecycleStage value without constructing a "
+                    "LifecycleTransitionRecord or calling _journal(...) in "
+                    "the same body -- every stage move must be journaled "
+                    "(RFC-10)"
+                ),
+            )
+
+    def _check_canary_below_min_sample(self, tree: ast.Module) -> None:
+        """Rule 63: canary_below_min_sample -- a canary promotion path
+        has no min-sample gate marker.
+
+        RFC-10's canary contract is that promoting a candidate that
+        never observed enough traffic is structurally impossible. A
+        function whose name is on the canary-promotion API
+        (:data:`_CANARY_PROMOTE_MARKERS`) must reference a
+        min-sample identifier / call name (:data:`_CANARY_MIN_SAMPLE_MARKERS`)
+        in its body so a reviewer sees the check.
+
+        The check is name-based on the RFC-10 API surface. The audit
+        tool self-exempts because its own rule strings name the
+        markers.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if normalized.endswith("tools/honesty_audit.py"):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not _function_name_matches(node.name, _CANARY_PROMOTE_MARKERS):
+                continue
+            body_ids = _identifier_names_in_body(node)
+            if body_ids & _CANARY_MIN_SAMPLE_MARKERS:
+                continue
+            call_names = _call_names_in_body(node)
+            if call_names & _CANARY_MIN_SAMPLE_MARKERS:
+                continue
+            # A string-constant ConfigRegistry key literal also counts
+            # (a function reading ``platform.agent_canary_min_sample``
+            # via ``.get("platform", "agent_canary_min_sample")`` names
+            # the marker as a Constant, not an identifier).
+            has_key_literal = False
+            for sub in ast.walk(node):
+                text = _string_constant_value(sub)
+                if text is None:
+                    continue
+                if text in _CANARY_MIN_SAMPLE_MARKERS:
+                    has_key_literal = True
+                    break
+            if has_key_literal:
+                continue
+            self._emit(
+                node.lineno,
+                "canary_below_min_sample",
+                (
+                    f"canary_below_min_sample: canary promotion function "
+                    f"'{node.name}' has no min-sample gate marker "
+                    "(min_sample, min_samples, min_canary_sample, "
+                    "sample_count, signal_count, agent_canary_min_sample) "
+                    "in its body -- RFC-10 requires canary promotion to "
+                    "verify a minimum observed-signal count before flipping"
+                ),
+            )
+
 
 class HonestyAuditor:
     """Audit one or more Python source files for structural dishonesty.
@@ -3557,6 +4565,19 @@ class HonestyAuditor:
         visitor._check_fail_open_recovery_path(tree)
         visitor._check_close_without_infra_classification(tree)
         visitor._check_heal_without_journal(tree)
+        # Rules 55-63: RFC-08 self-improvement, RFC-09 prompt registry,
+        # RFC-10 lifecycle. Each rule self-exempts the files that OWN
+        # the primitive it locks in (ExperienceWriter, PromptVersionStore,
+        # AgentLifecycleController, EvalRunner).
+        visitor._check_ungated_self_improvement_write(tree)
+        visitor._check_self_labeled_reward(tree)
+        visitor._check_unversioned_config_promotion(tree)
+        visitor._check_inline_prompt_literal(tree)
+        visitor._check_untagged_llm_call(tree)
+        visitor._check_unaudited_alias_flip(tree)
+        visitor._check_promotion_without_gate(tree)
+        visitor._check_untransitioned_stage_change(tree)
+        visitor._check_canary_below_min_sample(tree)
         return visitor.findings
 
     def audit_directory(self, directory: Path) -> list[Finding]:

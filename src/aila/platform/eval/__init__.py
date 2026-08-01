@@ -72,6 +72,7 @@ from .retrieval_runner import (
     RetrievalEvalRunner,
     RetrieveFn,
 )
+from .routing_history import build_routing_history_provider
 from .routing_learner import (
     PRE_EXECUTION_SIZING_SEAM_STATUS,
     RoutingLearner,
@@ -124,8 +125,9 @@ __all__ = [
     "RoutingRecommendation",
     "RoutingSample",
     "TaskTypeScore",
-    "calibration_curve",
     "aggregate_report",
+    "build_routing_history_provider",
+    "calibration_curve",
     "average_precision",
     "dcg_at_k",
     "determinism_score",

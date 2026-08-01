@@ -558,6 +558,11 @@ def create_app() -> FastAPI:
     from aila.api.routers.admin_dead_letter import router as admin_dead_letter_router
     application.include_router(admin_dead_letter_router)
 
+    # RFC-07 phase 3: Admin state reconciliation router (god-tier admin --
+    # on-demand per-task heal of TaskRecord + workflow cursor + ARQ lock).
+    from aila.api.routers.admin_reconcile import router as admin_reconcile_router
+    application.include_router(admin_reconcile_router)
+
     # Phase 181: Admin workflow inspection router (admin only -- run/transition audit)
     from aila.api.routers.admin_workflows import router as admin_workflows_router
     application.include_router(admin_workflows_router)

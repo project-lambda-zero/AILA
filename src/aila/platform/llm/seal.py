@@ -373,6 +373,24 @@ def make_seal_step(
                     confidence_score=drift_score,
                 )
                 ctx["drift_status"] = drift_result.status
+                # Feed the per-model drift signal into the router so a
+                # persistently degrading / volatile model biases future
+                # pick() decisions on ``resolve_model``. Failure of the
+                # in-process record path must NOT break the seal step --
+                # the router is best-effort observational state.
+                try:
+                    from .health_router import get_default_health_router
+
+                    get_default_health_router().record_drift(
+                        routing.model_id,
+                        ctx["task_type"],
+                        drift_result.status,
+                    )
+                except (RuntimeError, ValueError, TypeError):
+                    logger.debug(
+                        "Drift router record failed, continuing",
+                        exc_info=True,
+                    )
         except sqlalchemy.exc.SQLAlchemyError:
             logger.debug("Drift tracking failed, continuing", exc_info=True)
 

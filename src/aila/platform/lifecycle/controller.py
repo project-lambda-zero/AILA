@@ -601,13 +601,38 @@ class AgentLifecycleController:
     ) -> LifecycleTransitionRecord:
         """Promote an active canary to production via the same eval+quorum gate.
 
-        Thin wrapper: the RFC-10 acceptance criterion is that promotion
-        from canary still enforces the eval + quorum gate exactly like a
-        cold promote. Delegates to :meth:`promote` (which owns both
-        checks) and, on success, supersedes the active canary row for
-        the key so the router stops splitting cohorts. Raises whatever
-        ``promote`` raises when the gate blocks.
+        Three-part guard, enforcing the RFC-10 acceptance criteria
+        ("eval gate AND quorum approval AND minimum observed traffic"):
+
+        1. ``platform.agent_canary_min_sample`` samples must have been
+           recorded on the active canary assignment for the key. Each
+           ``record_canary_signal`` call bumps ``signal_count`` on the
+           assignment row's ``last_signal_json`` accumulator; a value
+           of 0 disables the check for teams that have not tuned it.
+        2. The most recent ``evaluated`` transition for (key, version)
+           carries ``verdict == 'pass'`` (delegated to :meth:`promote`).
+        3. ``_distinct_approver_count`` >= ``agent_promotion_quorum``
+           (delegated to :meth:`promote`).
+
+        Raises :class:`StageTransitionError` on any gate miss with the
+        specific gap named; the canary row is left ACTIVE so a later
+        signal or approver can clear the gate without operator
+        intervention. On success, supersedes the active canary row
+        for the key so the router stops splitting cohorts.
         """
+        min_sample = await self._resolve_canary_min_sample()
+        if min_sample > 0:
+            signal_count = await self._current_canary_signal_count(
+                key=key, version=version,
+            )
+            if signal_count < min_sample:
+                raise StageTransitionError(
+                    f"cannot promote_from_canary key={key!r} "
+                    f"version={version!r}: min-sample gate not met -- "
+                    f"{signal_count} signal(s) recorded on the active "
+                    f"canary, {min_sample} required ("
+                    f"platform.agent_canary_min_sample)",
+                )
         record = await self.promote(
             key=key, version=version, actor=actor, reason=reason,
         )
@@ -662,6 +687,16 @@ class AgentLifecycleController:
             drift_breach=drift_breach,
             cost_breach=cost_breach,
         )
+        # Bump the assignment row's signal_count on every observed
+        # sample so promote_from_canary can enforce a minimum-traffic
+        # gate. The counter lives in the same ``last_signal_json``
+        # blob the hold snapshot writes; a within-ceilings sample
+        # updates only the counter and the last-seen payload, a
+        # breach also flips state via ``_hold_assignment`` (which
+        # reads the counter forward so the number is preserved).
+        new_signal_count = await self._bump_canary_signal_count(
+            assignment_id=canary_row.id, signal=signal,
+        )
         if not (drift_breach or cost_breach):
             return CanarySignalOutcome(
                 fired=False,
@@ -670,7 +705,9 @@ class AgentLifecycleController:
                 transition=None,
             )
         await self._hold_assignment(
-            assignment_id=canary_row.id, signal=signal,
+            assignment_id=canary_row.id,
+            signal=signal,
+            signal_count=new_signal_count,
         )
         snapshot: dict[str, object] = {
             "assignment_kind": AssignmentKind.CANARY.value,
@@ -851,7 +888,11 @@ class AgentLifecycleController:
         return row
 
     async def _hold_assignment(
-        self, *, assignment_id: str, signal: CanaryHoldSignal,
+        self,
+        *,
+        assignment_id: str,
+        signal: CanaryHoldSignal,
+        signal_count: int,
     ) -> None:
         now = utc_now()
         async with async_session_scope() as session:
@@ -863,9 +904,110 @@ class AgentLifecycleController:
                 return
             row.state = AssignmentState.HELD.value
             row.updated_at = now
-            row.last_signal_json = json.dumps(signal.as_snapshot())
+            snapshot = signal.as_snapshot()
+            snapshot["signal_count"] = signal_count
+            row.last_signal_json = json.dumps(snapshot)
             session.add(row)
             await session.commit()
+
+    async def _bump_canary_signal_count(
+        self, *, assignment_id: str, signal: CanaryHoldSignal,
+    ) -> int:
+        """Increment ``signal_count`` on the assignment's last_signal_json.
+
+        Read-modify-write on the JSON blob column so the counter
+        survives worker restarts and lets ``promote_from_canary``
+        enforce a minimum-traffic gate without a new column. Returns
+        the post-increment count so the caller can pass it forward
+        into ``_hold_assignment`` (which stores the breach payload
+        alongside the same counter without a second read).
+        """
+        now = utc_now()
+        async with async_session_scope() as session:
+            row = (await session.exec(
+                select(LifecycleCanaryAssignment)
+                .where(LifecycleCanaryAssignment.id == assignment_id)
+            )).first()
+            if row is None:
+                return 0
+            current_count = self._extract_signal_count(row.last_signal_json)
+            new_count = current_count + 1
+            snapshot = signal.as_snapshot()
+            snapshot["signal_count"] = new_count
+            row.last_signal_json = json.dumps(snapshot)
+            row.updated_at = now
+            session.add(row)
+            await session.commit()
+        return new_count
+
+    async def _current_canary_signal_count(
+        self, *, key: str, version: str,
+    ) -> int:
+        """Return the observed signal_count on the active canary row.
+
+        Zero when no canary is active for the key, when the active
+        canary is a different version than the one being promoted, or
+        when no signal has been recorded yet (the accumulator lives
+        under ``last_signal_json`` as one field alongside the last
+        breach payload). ``promote_from_canary`` uses this to gate on
+        a minimum-traffic floor before delegating to :meth:`promote`.
+        """
+        row = await self._active_assignment(
+            key=key, kind=AssignmentKind.CANARY.value,
+        )
+        if row is None or row.version != version:
+            return 0
+        return self._extract_signal_count(row.last_signal_json)
+
+    @staticmethod
+    def _extract_signal_count(payload: str | None) -> int:
+        """Return ``signal_count`` from a ``last_signal_json`` blob.
+
+        Zero for a missing / empty / unparseable payload, and zero
+        when the field is present but not a non-negative integer.
+        The accumulator is stored under the ``signal_count`` key by
+        :meth:`_bump_canary_signal_count`; older rows written before
+        the counter existed have no key and read as zero, which is
+        the correct fail-closed default for the min-sample gate.
+        """
+        if not payload:
+            return 0
+        try:
+            data = json.loads(payload)
+        except (TypeError, ValueError) as exc:
+            _log.debug(
+                "_extract_signal_count: unparseable last_signal_json: %s", exc,
+            )
+            return 0
+        raw = data.get("signal_count") if isinstance(data, dict) else None
+        if not isinstance(raw, int) or raw < 0:
+            return 0
+        return raw
+
+    async def _resolve_canary_min_sample(self) -> int:
+        """Read ``platform.agent_canary_min_sample`` via ConfigRegistry.
+
+        Env -> cache -> DB row -> :class:`PlatformConfigSchema` default,
+        with a schema-default fallback on a registry error or a value
+        that does not coerce to a non-negative int. A negative value
+        clamps to 0 (which disables the min-sample gate); a value
+        greater than 0 enforces "no promotion on empty history."
+        """
+        defaults = PlatformConfigSchema()
+        default_value = int(defaults.agent_canary_min_sample)
+        try:
+            raw = await ConfigRegistry().get(
+                "platform", "agent_canary_min_sample",
+            )
+        except (OSError, RuntimeError, ValueError, TypeError):
+            return default_value
+        if raw is None:
+            return default_value
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            return default_value
+        return max(value, 0)
 
     async def _resolve_signal_ceilings(self) -> tuple[float, float]:
         """Read canary drift + cost ceilings via ConfigRegistry.

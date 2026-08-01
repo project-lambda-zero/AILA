@@ -95,6 +95,16 @@ class LLMConfigProvider:
         Fallback: llm_default_model in ConfigRegistry.
         Final fallback: "antigravity/claude-opus-4-6-thinking".
 
+        When an operator has configured an ordered comma-separated
+        fallback list at ``llm_model_{task_type}_fallback``, this
+        method consults the process-wide :class:`ModelHealthRouter`
+        for per-model drift bias: a primary model whose seal drift
+        tracker reported a persistent ``degrading`` or ``volatile``
+        status for this task_type routes to the next non-degraded
+        candidate. The primary is still returned when every fallback
+        is also drift-biased (a drifting primary is preferable to
+        blind rerouting against no evidence).
+
         Args:
             task_type: The task type string (e.g. "scoring", "synthesis").
 
@@ -102,12 +112,38 @@ class LLMConfigProvider:
             OpenRouter model identifier string.
         """
         specific = await self._registry.get("platform", f"llm_model_{task_type}")
+        primary: str | None = None
         if specific is not None and str(specific).strip():
-            return str(specific)
-        default = await self._registry.get("platform", "llm_default_model")
-        if default is not None and str(default).strip():
-            return str(default)
-        return "antigravity/claude-opus-4-6-thinking"
+            primary = str(specific)
+        else:
+            default = await self._registry.get("platform", "llm_default_model")
+            if default is not None and str(default).strip():
+                primary = str(default)
+        if primary is None:
+            return "antigravity/claude-opus-4-6-thinking"
+        fallback_raw = await self._registry.get(
+            "platform", f"llm_model_{task_type}_fallback",
+        )
+        if fallback_raw is None or not str(fallback_raw).strip():
+            return primary
+        fallbacks = [
+            token.strip()
+            for token in str(fallback_raw).split(",")
+            if token.strip() and token.strip() != primary
+        ]
+        if not fallbacks:
+            return primary
+        # Deferred import: health_router imports nothing from config.py,
+        # so a plain top-level import would be fine; keeping it inline
+        # matches the seal step's record_drift wiring one grep away
+        # from its call site.
+        from .health_router import get_default_health_router
+
+        return get_default_health_router().pick_model(
+            [primary, *fallbacks],
+            default=primary,
+            task_type=task_type,
+        )
 
     async def resolve_base_url(self) -> str:
         """Resolve API base URL from ConfigRegistry.

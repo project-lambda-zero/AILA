@@ -1,4 +1,4 @@
-"""RFC-07 phase 5 -- per-endpoint infra-health tracker for LLM gateways.
+"""RFC-07 phase 5 -- per-endpoint infra-health tracker + drift bias for LLM gateways.
 
 The problem this router solves is narrow. AILA routes every LLM call
 through ONE operator-configured gateway URL today (:meth:`aila.platform.llm.config.LLMConfigProvider.resolve_base_url`);
@@ -45,10 +45,14 @@ from dataclasses import dataclass
 from typing import Literal
 
 __all__ = [
+    "DRIFT_STATUS_DEGRADED",
+    "DRIFT_STATUS_STABLE",
+    "DRIFT_STATUS_VOLATILE",
     "ENDPOINT_STATUS_HEALTHY",
     "ENDPOINT_STATUS_UNHEALTHY",
     "EndpointHealth",
     "InfraFailureKind",
+    "ModelDrift",
     "ModelHealthRouter",
     "get_default_health_router",
     "reset_default_health_router",
@@ -79,6 +83,49 @@ InfraFailureKind = Literal[
 # recovers on the next attempt. Overridable per-instance so an
 # operator with a fast-cycling load balancer can shorten it.
 _DEFAULT_COOLDOWN_S: float = 60.0
+
+# Drift status labels mirror ConfidenceDriftTracker's status vocabulary
+# (aila.platform.llm.drift). Kept as module-level strings so seal.py,
+# tests, and the operator dashboard consume ONE spelling.
+DRIFT_STATUS_STABLE: str = "stable"
+DRIFT_STATUS_DEGRADED: str = "degrading"
+DRIFT_STATUS_VOLATILE: str = "volatile"
+
+# Drift-driven cooldown for (model_id, task_type). Much longer than the
+# infra cooldown because drift is a slow-moving quality signal, not a
+# transient outage: a volatile / degrading model stays biased against
+# the pick until a fresh stable sample lands OR the cooldown lapses.
+# 900s (15 min) keeps a drifting model biased through a typical
+# investigation turn window without pinning the router permanently on a
+# one-off spike.
+_DEFAULT_DRIFT_COOLDOWN_S: float = 900.0
+
+# Drift statuses that count as "degraded" for pick bias. Kept as a set
+# so a caller inspecting slots via ``is_drift_degraded`` gets the same
+# classification the pick path uses.
+_DEGRADED_DRIFT_STATUSES: frozenset[str] = frozenset(
+    {DRIFT_STATUS_DEGRADED, DRIFT_STATUS_VOLATILE},
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ModelDrift:
+    """Snapshot of one (model_id, task_type) drift slot.
+
+    Immutable snapshot returned by :meth:`ModelHealthRouter.snapshot_drift`;
+    the router's internal dicts stay live and privately mutable. ``status``
+    is one of :data:`DRIFT_STATUS_STABLE`, :data:`DRIFT_STATUS_DEGRADED`,
+    :data:`DRIFT_STATUS_VOLATILE`. ``degraded_until_monotonic`` is 0.0 when
+    the last observation was stable (no bias active).
+    """
+
+    model_id: str
+    task_type: str
+    status: str
+    degraded_until_monotonic: float
+    last_recorded_at_monotonic: float
+    total_stable: int
+    total_degraded: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +189,7 @@ class ModelHealthRouter:
         self,
         *,
         cooldown_s: float = _DEFAULT_COOLDOWN_S,
+        drift_cooldown_s: float = _DEFAULT_DRIFT_COOLDOWN_S,
         monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
         if cooldown_s <= 0:
@@ -149,7 +197,13 @@ class ModelHealthRouter:
                 "ModelHealthRouter: cooldown_s must be > 0, "
                 f"got {cooldown_s!r}",
             )
+        if drift_cooldown_s <= 0:
+            raise ValueError(
+                "ModelHealthRouter: drift_cooldown_s must be > 0, "
+                f"got {drift_cooldown_s!r}",
+            )
         self._cooldown_s = cooldown_s
+        self._drift_cooldown_s = drift_cooldown_s
         self._clock = monotonic_clock or time.monotonic
         # url -> per-URL bookkeeping. Values are plain dicts (not a
         # dataclass) so a single mutation on the happy path is one
@@ -157,7 +211,29 @@ class ModelHealthRouter:
         # method builds :class:`EndpointHealth` from the dict when
         # a diagnostic caller asks.
         self._state: dict[str, dict[str, object]] = {}
+        # (model_id, task_type) -> per-slot drift bookkeeping. Populated
+        # by :meth:`record_drift` from the seal step's drift tracker;
+        # consumed by :meth:`pick` / :meth:`pick_model` to bias against
+        # a persistently degrading or volatile model when a fallback
+        # candidate is available.
+        self._drift: dict[tuple[str, str], dict[str, object]] = {}
         self._lock = threading.Lock()
+
+    def _drift_slot(self, model_id: str, task_type: str) -> dict[str, object]:
+        """Return the live bookkeeping dict for (``model_id``, ``task_type``),
+        creating on demand."""
+        key = (model_id, task_type)
+        slot = self._drift.get(key)
+        if slot is None:
+            slot = {
+                "status": DRIFT_STATUS_STABLE,
+                "degraded_until": 0.0,
+                "last_recorded_at": 0.0,
+                "total_stable": 0,
+                "total_degraded": 0,
+            }
+            self._drift[key] = slot
+        return slot
 
     def _slot(self, url: str) -> dict[str, object]:
         """Return the live bookkeeping dict for ``url``, creating on demand."""
@@ -253,16 +329,108 @@ class ModelHealthRouter:
                 return True
             return False
 
+    def record_drift(
+        self,
+        model_id: str,
+        task_type: str,
+        status: str,
+    ) -> None:
+        """Record one drift observation for (``model_id``, ``task_type``).
+
+        Called from the seal step after :class:`ConfidenceDriftTracker`
+        computes a fresh drift status. A ``degrading`` / ``volatile``
+        status marks the slot degraded for ``drift_cooldown_s``; a
+        ``stable`` observation clears the degradation immediately
+        (a single stable sample is enough to re-eligible the model,
+        mirroring the infra ``record_success`` contract). Statuses the
+        router does not recognise (``insufficient_data``, empty string)
+        are silently ignored so a caller that always calls in never
+        needs to guard on the tracker's fallback labels.
+
+        Idempotent: back-to-back degrading observations roll the cooldown
+        forward and increment ``total_degraded``; back-to-back stable
+        observations increment ``total_stable`` without disturbing the
+        cooldown timer once it has already elapsed. The router never
+        removes a slot; a persistent snapshot remains for operator
+        diagnostics.
+        """
+        if not model_id or not task_type:
+            return
+        if status not in _DEGRADED_DRIFT_STATUSES and status != DRIFT_STATUS_STABLE:
+            # insufficient_data / unknown label -- nothing actionable.
+            return
+        now = self._clock()
+        with self._lock:
+            slot = self._drift_slot(model_id, task_type)
+            slot["last_recorded_at"] = now
+            if status in _DEGRADED_DRIFT_STATUSES:
+                slot["status"] = status
+                slot["degraded_until"] = float(now + self._drift_cooldown_s)
+                slot["total_degraded"] = int(
+                    slot["total_degraded"],  # type: ignore[arg-type]
+                ) + 1
+            else:
+                slot["status"] = DRIFT_STATUS_STABLE
+                slot["degraded_until"] = 0.0
+                slot["total_stable"] = int(
+                    slot["total_stable"],  # type: ignore[arg-type]
+                ) + 1
+        if status in _DEGRADED_DRIFT_STATUSES:
+            _log.info(
+                "model_health_router.record_drift model=%s task_type=%s "
+                "status=%s cooldown_s=%.1f",
+                model_id, task_type, status, self._drift_cooldown_s,
+            )
+
+    def is_drift_degraded(self, model_id: str, task_type: str) -> bool:
+        """Return True iff (``model_id``, ``task_type``) is currently biased against.
+
+        Lazy recovery mirrors :meth:`is_healthy`: a slot whose
+        ``degraded_until`` timestamp has slid into the past is treated
+        as stable again without a fresh observation, so a model that
+        drifted once but was never re-sampled stops biasing pick
+        forever after the cooldown lapses.
+        """
+        if not model_id or not task_type:
+            return False
+        with self._lock:
+            slot = self._drift.get((model_id, task_type))
+            if slot is None:
+                return False
+            if slot["status"] == DRIFT_STATUS_STABLE:
+                return False
+            deadline = float(slot["degraded_until"])  # type: ignore[arg-type]
+            if self._clock() >= deadline:
+                slot["status"] = DRIFT_STATUS_STABLE
+                slot["degraded_until"] = 0.0
+                return False
+            return True
+
     def pick(
-        self, candidates: list[str], *, default: str,
+        self,
+        candidates: list[str],
+        *,
+        default: str,
+        model_id: str | None = None,
+        task_type: str | None = None,
     ) -> str:
         """Return the first healthy candidate, falling back to ``default``.
 
-        Behaviour on the happy path (no unhealthy candidates) is
-        deterministic: ``candidates[0]`` when the list is non-empty,
-        otherwise ``default``. That determinism is what makes the
-        router behaviour-preserving today, when the operator's
+        Behaviour on the happy path (no unhealthy candidates AND no drift
+        bias) is deterministic: ``candidates[0]`` when the list is
+        non-empty, otherwise ``default``. That determinism is what
+        makes the router behaviour-preserving today, when the operator's
         gateway config typically resolves to one URL.
+
+        When ``model_id`` and ``task_type`` are supplied, a drift bias
+        for the (model, task_type) pair skips the first healthy candidate
+        in favour of the next one -- so a drifting model on the primary
+        gateway hands the pick to the operator's fallback URL. When
+        every candidate is either infra-unhealthy or drift-biased for
+        the same model, the router returns the first infra-healthy URL
+        it saw (drift is quality, not infra; a drifting model is still
+        preferable to a hard outage). Falls back to ``default`` when
+        no candidate is infra-healthy.
 
         A ``default`` that is itself unhealthy is still returned when
         every candidate is unhealthy -- routing to a known-bad URL
@@ -272,15 +440,112 @@ class ModelHealthRouter:
         """
         if not candidates:
             return default
+        drift_biased = bool(
+            model_id and task_type
+            and self.is_drift_degraded(model_id, task_type),
+        )
+        first_healthy: str | None = None
         for url in candidates:
-            if self.is_healthy(url):
-                return url
+            if not self.is_healthy(url):
+                continue
+            if first_healthy is None:
+                first_healthy = url
+                if not drift_biased:
+                    return url
+                # Drift bias -- keep looking for a non-primary healthy URL.
+                continue
+            _log.info(
+                "model_health_router.pick drift_bias model=%s task_type=%s "
+                "skipping primary=%s picking fallback=%s",
+                model_id, task_type, first_healthy, url,
+            )
+            return url
+        if first_healthy is not None:
+            if drift_biased:
+                _log.info(
+                    "model_health_router.pick drift_bias model=%s task_type=%s "
+                    "no fallback -- returning drifting primary=%s",
+                    model_id, task_type, first_healthy,
+                )
+            return first_healthy
         _log.warning(
             "model_health_router.pick: every candidate is unhealthy "
             "(%d checked) -- falling back to default=%s",
             len(candidates), default,
         )
         return default
+
+    def pick_model(
+        self,
+        candidates: list[str],
+        *,
+        default: str,
+        task_type: str,
+    ) -> str:
+        """Return the first non-drift-degraded model, falling back to ``default``.
+
+        Mirror of :meth:`pick` on the model-id axis. Deterministic when
+        no drift is on record: returns ``candidates[0]``. When the
+        primary is drift-biased for ``task_type``, prefers the next
+        stable candidate; when every candidate is drift-biased,
+        returns ``candidates[0]`` (a drifting primary is still
+        preferable to picking blindly against no evidence). Falls
+        back to ``default`` when ``candidates`` is empty.
+
+        Called from :meth:`LLMConfigProvider.resolve_model` so a
+        persistently drifting primary model routes to the operator's
+        configured fallback for that task_type without a config edit.
+        """
+        if not candidates:
+            return default
+        primary = candidates[0]
+        if not self.is_drift_degraded(primary, task_type):
+            return primary
+        for url in candidates[1:]:
+            if not self.is_drift_degraded(url, task_type):
+                _log.info(
+                    "model_health_router.pick_model drift_bias task_type=%s "
+                    "skipping primary=%s picking fallback=%s",
+                    task_type, primary, url,
+                )
+                return url
+        _log.info(
+            "model_health_router.pick_model task_type=%s every candidate "
+            "drift-biased -- returning primary=%s",
+            task_type, primary,
+        )
+        return primary
+
+    def snapshot_drift(self) -> tuple[ModelDrift, ...]:
+        """Return an immutable view of every tracked drift slot.
+
+        Diagnostic accessor for the operator dashboard. Sorted by
+        (model_id, task_type) so log-line and JSON output are
+        deterministic across runs.
+        """
+        with self._lock:
+            keys = sorted(self._drift.keys())
+            snap = tuple(
+                ModelDrift(
+                    model_id=model_id,
+                    task_type=task_type,
+                    status=str(self._drift[(model_id, task_type)]["status"]),
+                    degraded_until_monotonic=float(
+                        self._drift[(model_id, task_type)]["degraded_until"],  # type: ignore[arg-type]
+                    ),
+                    last_recorded_at_monotonic=float(
+                        self._drift[(model_id, task_type)]["last_recorded_at"],  # type: ignore[arg-type]
+                    ),
+                    total_stable=int(
+                        self._drift[(model_id, task_type)]["total_stable"],  # type: ignore[arg-type]
+                    ),
+                    total_degraded=int(
+                        self._drift[(model_id, task_type)]["total_degraded"],  # type: ignore[arg-type]
+                    ),
+                )
+                for model_id, task_type in keys
+            )
+        return snap
 
     def snapshot(self) -> tuple[EndpointHealth, ...]:
         """Return an immutable view of every tracked URL's state.
