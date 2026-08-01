@@ -23,19 +23,34 @@ Env-var resolution: secrets are resolved via SecretStore.resolve_provider_secret
 which looks up the DB record.  There is no env-var fallback chain for secrets --
 callers that need env-var override must check the env var before calling
 resolve_provider_secret().
+
+Key rotation: SecretStore.rotate_all_secrets() adds a new key version to the
+keyring, marks it active, and re-encrypts every stored SecretRecord under it.
+The prior active version stays in the keyring so records that fail to migrate
+remain decryptable, and every rotation appends one audit row to the tamper-
+evident platform journal.
+
+Keyring file protection: on Unix the file is chmod 0600 on every write. On
+Windows the same restriction is applied via ``icacls`` (inheritance stripped,
+full control granted only to the current process owner) so the on-disk key
+material is not readable by other users of the host.
 """
 
 from __future__ import annotations
 
 import base64
+import binascii
+import getpass
 import json
 import logging
 import os
 import stat
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from filelock import FileLock
 from sqlmodel import select
@@ -46,6 +61,101 @@ from ..config import get_settings
 from ..platform.contracts._common import utc_now
 from .database import async_session_scope
 from .db_models import SecretRecord
+
+__all__ = [
+    "MasterKeyMaterial",
+    "MasterKeyProvider",
+    "MasterKeySecretProtector",
+    "SecretStore",
+    "SecretStoreSettings",
+    "mask_secret_hint",
+]
+
+
+def _apply_owner_only_acl_windows(path: Path) -> None:
+    """Restrict a keyring file to the current process owner on Windows.
+
+    Mirrors the Unix ``chmod S_IRUSR|S_IWUSR`` restriction: the file's ACL is
+    replaced with a single ACE granting Full control to the current user.
+    Inherited ACEs from the parent directory are dropped so a permissive
+    parent (Users, Authenticated Users) cannot leak read access to the key
+    material.
+
+    Best-effort: if ``icacls`` is missing, times out, or refuses the change,
+    the ACL is left at the Windows default and a warning is logged. The caller
+    still gets a functioning keyring; the operator is expected to lock the
+    file down manually if the warning appears.
+
+    No-op on non-Windows platforms.
+    """
+    if os.name != "nt":
+        return
+    try:
+        user_name = getpass.getuser()
+    except (OSError, KeyError):
+        _log.warning(
+            "Cannot resolve current user for icacls hardening on %s; keyring ACL left at Windows default.",
+            path,
+        )
+        return
+    if not user_name:
+        _log.warning(
+            "Empty username resolved for icacls hardening on %s; keyring ACL left at Windows default.",
+            path,
+        )
+        return
+    # ``icacls`` resolves a bare account name against the local SAM first, which
+    # is exactly what we want -- the process owner. Prepending ``USERDOMAIN``
+    # would break on non-domain-joined hosts where USERDOMAIN=='WORKGROUP' is a
+    # sentinel and not a real principal. If two candidate accounts collide by
+    # name, LookupAccountName's local-first search still picks the right one.
+    principal_candidates: list[str] = [user_name]
+    computer = os.environ.get("COMPUTERNAME")
+    if computer and computer.upper() != "WORKGROUP":
+        principal_candidates.append(f"{computer}\\{user_name}")
+
+    last_stderr = ""
+    for principal in principal_candidates:
+        # /inheritance:r  -- strip inherited ACEs so Users/Authenticated Users are gone
+        # /grant:r <p>:F  -- replace any existing ACE for the principal with Full control
+        # This is the standard owner-only-lockdown pattern and is idempotent, so a
+        # repeat call on the same file just re-asserts the ACL.
+        try:
+            subprocess.run(
+                [
+                    "icacls",
+                    str(path),
+                    "/inheritance:r",
+                    "/grant:r",
+                    f"{principal}:F",
+                ],
+                check=True,
+                capture_output=True,
+                timeout=10,
+            )
+            return
+        except FileNotFoundError:
+            _log.warning(
+                "icacls binary not available; keyring ACL on %s left at Windows default.",
+                path,
+            )
+            return
+        except subprocess.CalledProcessError as exc:
+            last_stderr = (exc.stderr or b"").decode("utf-8", errors="replace").strip()
+            continue
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            _log.warning(
+                "Failed to apply owner-only ACL to keyring %s (%s); Windows ACL left unchanged.",
+                path,
+                type(exc).__name__,
+            )
+            return
+
+    _log.warning(
+        "icacls could not resolve a valid owner principal for keyring %s (last error: %s); Windows ACL left unchanged.",
+        path,
+        last_stderr or "unknown",
+    )
 
 
 class SecretStoreSettings(Protocol):
@@ -72,8 +182,14 @@ class MasterKeyProvider:
     a freshly generated key for the active version.
 
     On Unix systems, the keyring file is created with mode 0o600 (owner read/write
-    only).  On Windows, file permissions are left to the OS (icacls hardening is
-    tracked as an active requirement in PROJECT.md).
+    only).  On Windows, the equivalent lockdown is applied via ``icacls``
+    (inheritance stripped, Full control granted only to the current process
+    owner) -- see :func:`_apply_owner_only_acl_windows`.
+
+    Additional key versions may be added at runtime via :meth:`add_key_version`
+    to support secret-key rotation (see :meth:`SecretStore.rotate_all_secrets`).
+    Older versions stay in the keyring so already-encrypted records can still
+    be decrypted during and after the rotation.
 
     Raises RuntimeError on any configuration error -- malformed JSON, missing active
     version, or invalid base64 key -- to fail fast before attempting any encryption.
@@ -167,10 +283,110 @@ class MasterKeyProvider:
             self._write_keyring_unlocked(payload)
 
     def _write_keyring_unlocked(self, payload: dict[str, object]) -> None:
-        """Inner write logic -- caller must hold self._file_lock."""
+        """Inner write logic -- caller must hold self._file_lock.
+
+        On POSIX hosts the file is chmod'd to owner read/write only. On Windows
+        the same intent is expressed with ``icacls``: inheritance is stripped
+        and Full control is granted only to the current process owner.
+        """
         self.keyring_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        if os.name != "nt":
+        if os.name == "nt":
+            _apply_owner_only_acl_windows(self.keyring_path)
+        else:
             self.keyring_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+    def list_versions(self) -> list[str]:
+        """Return every key version currently present in the keyring, sorted.
+
+        The active version stays in this list; callers wanting to distinguish
+        it can compare against :attr:`active_version`.
+        """
+        keys = self._keyring.get("keys", {})
+        if not isinstance(keys, dict):
+            return []
+        return sorted(str(v) for v in keys.keys())
+
+    def next_version_label(self) -> str:
+        """Suggest the next monotonic version label for :meth:`add_key_version`.
+
+        If the existing versions follow the ``v<N>`` convention, returns
+        ``v<max(N)+1>``. Otherwise appends ``-rot<count>`` to the current
+        active version so the new label is still unique.
+        """
+        existing = self.list_versions()
+        numeric: list[int] = []
+        for label in existing:
+            if label.startswith("v") and label[1:].isdigit():
+                numeric.append(int(label[1:]))
+        if numeric:
+            return f"v{max(numeric) + 1}"
+        return f"{self.active_version}-rot{len(existing) + 1}"
+
+    def add_key_version(
+        self,
+        new_version: str,
+        *,
+        activate: bool = True,
+        key_bytes: bytes | None = None,
+    ) -> MasterKeyMaterial:
+        """Add a fresh key version to the keyring and optionally activate it.
+
+        The prior active version is left in the ``keys`` map so records still
+        encrypted under it can be decrypted. This is the primitive that
+        :meth:`SecretStore.rotate_all_secrets` uses to introduce a new key
+        before re-encrypting existing ciphertext.
+
+        Args:
+            new_version: Version label for the new key. Must not already exist
+                in the keyring.
+            activate: When True (default) the ``active_version`` field is
+                pointed at ``new_version`` so future encryptions use it.
+            key_bytes: Optional explicit 32-byte key material. When None a
+                fresh key is generated with :func:`os.urandom`. Provided as an
+                escape hatch for external key-management integrations; the
+                default caller path never sets it.
+
+        Returns:
+            The :class:`MasterKeyMaterial` for the new version.
+
+        Raises:
+            ValueError: If ``new_version`` is blank, already present, or
+                ``key_bytes`` is not exactly 32 bytes.
+        """
+        label = (new_version or "").strip()
+        if not label:
+            raise ValueError("MasterKeyProvider.add_key_version requires a non-empty version label.")
+        if key_bytes is None:
+            material = os.urandom(32)
+        else:
+            if len(key_bytes) != 32:
+                raise ValueError(
+                    f"MasterKeyProvider.add_key_version requires a 32-byte key (got {len(key_bytes)} bytes)."
+                )
+            material = bytes(key_bytes)
+
+        with self._file_lock:
+            payload = dict(self._keyring)
+            existing_keys = payload.get("keys", {})
+            if not isinstance(existing_keys, dict):
+                raise RuntimeError(
+                    f"Secret keyring file {self.keyring_path} is not a valid keyring document."
+                )
+            keys = dict(existing_keys)
+            if label in keys:
+                raise ValueError(
+                    f"MasterKeyProvider.add_key_version: version '{label}' already exists in the keyring."
+                )
+            keys[label] = self._encode_key(material)
+            payload["keys"] = keys
+            if activate:
+                payload["active_version"] = label
+            self._write_keyring_unlocked(payload)
+            self._keyring = payload
+            if activate:
+                self.active_version = label
+
+        return MasterKeyMaterial(version=label, key_bytes=material)
 
     @staticmethod
     def _encode_key(key_bytes: bytes) -> str:
@@ -490,6 +706,154 @@ class SecretStore:
         """List metadata for all provider-scoped secrets.  No plaintext returned."""
         async with async_session_scope(self.settings) as session:
             return await self.list_metadata(session, "provider", limit=limit)
+
+    async def rotate_all_secrets(
+        self,
+        *,
+        new_version: str | None = None,
+    ) -> dict[str, object]:
+        """Introduce a new master-key version and re-encrypt every stored secret.
+
+        Rotation flow:
+
+        1. A new key version is generated and appended to the keyring via
+           :meth:`MasterKeyProvider.add_key_version`. The prior active version
+           stays in the keyring so records not yet migrated (or that fail to
+           migrate) remain decryptable throughout the transition.
+        2. Every :class:`SecretRecord` handled by the master-key backend is
+           decrypted with the key stored on the record, re-encrypted under the
+           new active version, and rewritten in place. The record's
+           ``key_version``, ``nonce``, ``ciphertext``, ``algorithm``, and
+           ``updated_at`` fields are all refreshed.
+        3. A single ``audit`` row is appended to the hash-chained platform
+           journal (kind="audit", action="secret.key_rotation") summarising
+           the rotation. The payload holds counts and version labels only --
+           no plaintext ever enters the journal.
+
+        A record that fails to decrypt (corrupted ciphertext, missing prior
+        key, unsupported backend) is skipped and reported in the ``failures``
+        list; those records keep their old ``key_version`` so a subsequent
+        rotation can retry them.
+
+        Args:
+            new_version: Optional explicit label for the new key version. When
+                omitted the next monotonic ``vN`` label is chosen via
+                :meth:`MasterKeyProvider.next_version_label`. Must not equal
+                the currently active version and must not already exist in the
+                keyring.
+
+        Returns:
+            A summary dict with:
+              - ``previous_active_version``: the version active before the call
+              - ``new_active_version``: the new active version
+              - ``reencrypted_count``: number of records successfully migrated
+              - ``failures``: list of ``{scope, secret_key, prior_version, failure}``
+                dicts, one per record that could not be re-encrypted
+              - ``retained_versions``: every version now present in the keyring
+                (all prior versions are retained so old records still decrypt)
+
+        Raises:
+            ValueError: If ``new_version`` collides with an existing version or
+                equals the currently active version.
+        """
+        # Lazy import: journal -> db_models -> secrets would recurse at module load.
+        from aila.platform.services.journal import JournalEntry, append
+
+        previous_version = self.key_provider.active_version
+        resolved_new_version = (new_version or "").strip() or self.key_provider.next_version_label()
+        if resolved_new_version == previous_version:
+            raise ValueError(
+                f"rotate_all_secrets: new version '{resolved_new_version}' equals the currently active version."
+            )
+
+        # add_key_version raises ValueError on a duplicate label; propagate
+        # unchanged so the caller sees the collision before we touch any rows.
+        self.key_provider.add_key_version(resolved_new_version, activate=True)
+
+        reencrypted_count = 0
+        failures: list[dict[str, str]] = []
+
+        async with async_session_scope(self.settings) as session:
+            records = list(await session.exec(select(SecretRecord)))
+            for record in records:
+                if record.backend != self.master_protector.backend_name:
+                    failures.append(
+                        {
+                            "scope": record.scope,
+                            "secret_key": record.secret_key,
+                            "prior_version": record.key_version,
+                            "failure": "unsupported_backend",
+                        }
+                    )
+                    continue
+                try:
+                    plaintext = self.master_protector.decrypt(record)
+                except (RuntimeError, InvalidTag, ValueError, binascii.Error) as exc:
+                    _log.error(
+                        "rotate_all_secrets: could not decrypt %s/%s under version '%s': %s",
+                        record.scope,
+                        record.secret_key,
+                        record.key_version,
+                        type(exc).__name__,
+                    )
+                    failures.append(
+                        {
+                            "scope": record.scope,
+                            "secret_key": record.secret_key,
+                            "prior_version": record.key_version,
+                            "failure": type(exc).__name__,
+                        }
+                    )
+                    continue
+
+                ciphertext, nonce, key_version, algorithm = self.master_protector.encrypt(
+                    scope=record.scope,
+                    secret_key=record.secret_key,
+                    plaintext=plaintext,
+                )
+                record.ciphertext = ciphertext
+                record.nonce = nonce
+                record.key_version = key_version
+                record.algorithm = algorithm
+                record.updated_at = utc_now()
+                session.add(record)
+                reencrypted_count += 1
+
+            retained_versions = self.key_provider.list_versions()
+            await append(
+                session,
+                entry=JournalEntry(
+                    kind="audit",
+                    source="secrets.rotation",
+                    action="secret.key_rotation",
+                    status="ok" if not failures else "partial",
+                    payload={
+                        "previous_active_version": previous_version,
+                        "new_active_version": resolved_new_version,
+                        "reencrypted_count": reencrypted_count,
+                        "failure_count": len(failures),
+                        "failures": failures,
+                        "retained_versions": retained_versions,
+                    },
+                    contains_secret=False,
+                ),
+            )
+            await session.commit()
+
+        _log.info(
+            "rotate_all_secrets: %s -> %s, re-encrypted=%d, failures=%d",
+            previous_version,
+            resolved_new_version,
+            reencrypted_count,
+            len(failures),
+        )
+        return {
+            "previous_active_version": previous_version,
+            "new_active_version": resolved_new_version,
+            "reencrypted_count": reencrypted_count,
+            "failures": failures,
+            "retained_versions": retained_versions,
+        }
 
     def _decrypt_record(self, record: SecretRecord) -> str:
         if record.backend == self.master_protector.backend_name:
