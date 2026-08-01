@@ -76,6 +76,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await platform._ensure_initialized()
     app.state.platform = platform
 
+    # RFC-09/10 activation: register each module's file-backed prompts into
+    # the version store and set a production alias where none exists, so the
+    # pin-per-investigation and canary-routing paths run by default instead
+    # of falling back to disk. Alias-if-absent means an operator-promoted or
+    # canary version survives restart untouched. Best-effort: a seed fault
+    # degrades the module to its file baseline and must not block startup.
+    try:
+        from aila.platform.prompts.bootstrap import seed_module_prompts
+
+        _runtime = getattr(platform, "runtime", None)
+        _seeded = await seed_module_prompts(getattr(_runtime, "module_registry", None))
+        if any(_seeded.values()):
+            _log.info("Seeded module prompt versions: %s", _seeded)
+    except (OSError, TimeoutError, RuntimeError, ValueError, LookupError) as exc:
+        _log.warning("Module prompt seeding skipped: %s", exc)
+
     if not _os.getenv("AILA_JWT_SECRET_KEY"):
         _log.warning(
             "AILA_JWT_SECRET_KEY is not set. JWT secret was auto-generated. "

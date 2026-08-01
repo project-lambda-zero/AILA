@@ -241,6 +241,13 @@ class VRModule(ModuleProtocol):
             session.add(existing)
         await session.commit()
 
+    async def seed_prompts(self) -> int:
+        """RFC-09 activation: seed the VR file-backed prompts into the
+        version store and set production aliases where none exist."""
+        from .agents.vuln_researcher import seed_prompt_versions
+
+        return await seed_prompt_versions()
+
     async def system_summary(self, system_id: int, session: Any) -> dict[str, Any]:
         """VR is not system-scoped today."""
         del system_id, session

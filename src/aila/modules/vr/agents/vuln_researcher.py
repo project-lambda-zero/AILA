@@ -69,6 +69,7 @@ from aila.platform.agents.turn_helpers import (
 )
 from aila.platform.agents.turn_runner import AgentTurnRunnerBase
 from aila.platform.contracts import utc_now
+from aila.platform.contracts.enums import PersonaVoice
 from aila.platform.contracts.reasoning import (
     ReasoningCaseState,
     ReasoningContract,
@@ -2957,6 +2958,54 @@ async def _load_prompt(
     except PromptNotFoundError as exc:
         raise VulnResearcherError(str(exc)) from exc
     return LoadedPrompt(body=file_body, version=None, canary_key=canary_key)
+
+
+_SEED_STRATEGY_FAMILIES: tuple[str, ...] = (
+    "vulnerability_research.discovery_research",
+    "vulnerability_research.variant_hunt",
+    "vulnerability_research.triage",
+    "vulnerability_research.nday",
+    "vulnerability_research.audit",
+    "vulnerability_research.masvs_audit",
+    "vulnerability_research.apk_static_audit",
+)
+
+
+async def seed_prompt_versions() -> int:
+    """Register the file-backed VR prompts into the version store (RFC-09).
+
+    For every (strategy_family, persona) key that resolves to a base file,
+    register the file body and point the ``production`` alias at it ONLY
+    when the key has no production alias yet. Idempotent: ``register``
+    deduplicates by content hash so an unchanged file writes no new row,
+    and an existing production alias is left untouched so an operator
+    promoted or canary-routed version is never overwritten on restart. A
+    later file edit registers a new version but does not flip production;
+    promotion stays an explicit RFC-10 lifecycle action.
+
+    Returns the count of keys whose production alias was newly set.
+    """
+    personas: tuple[str | None, ...] = (None, *(v.value for v in PersonaVoice))
+    seeded = 0
+    for strategy_family in _SEED_STRATEGY_FAMILIES:
+        for persona in personas:
+            try:
+                body = _PROMPT_REGISTRY.load(strategy_family, persona)
+            except PromptNotFoundError:
+                continue
+            key = _prompt_key(strategy_family, persona)
+            version = await _PROMPT_VERSION_STORE.register(
+                key, body, author="bootstrap",
+                notes="file baseline (RFC-09 activation seed)",
+            )
+            if await _PROMPT_VERSION_STORE.resolve(key, alias="production") is not None:
+                continue
+            await _PROMPT_VERSION_STORE.set_alias(
+                key, "production", version,
+                actor="bootstrap", reason="initial file baseline",
+            )
+            seeded += 1
+    return seeded
 
 
 # Resolves Pydantic forward refs when this module is imported standalone.

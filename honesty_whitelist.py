@@ -594,5 +594,16 @@ HONESTY_WHITELIST = [
     # sync/async split contract that PromptRegistry exists to enforce.
     ("platform/prompts/registry.py", "load",
      "consider inlining"),
+
+    # Category (b): RFC-09 activation bootstrap. seed_prompt_versions sets the
+    # production alias ONLY when the key has none yet (alias-if-absent). It
+    # establishes the initial file baseline, never promotes a candidate over
+    # an existing baseline, so there is nothing to eval against. The RFC-10
+    # gate (AgentLifecycleController.promote) governs candidate promotions and
+    # requires eval evidence that does not exist at first-boot bootstrap.
+    ("vr/agents/vuln_researcher.py", "seed_prompt_versions",
+     "promotion_without_gate"),
+    ("malware/agents/malware_researcher.py", "seed_prompt_versions",
+     "promotion_without_gate"),
 ]
 
