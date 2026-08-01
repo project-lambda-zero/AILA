@@ -16,6 +16,7 @@ from aila.platform.llm.cost import (
     calculate_cost_usd,
     emit_missing_pricing_notification,
     persist_cost_record,
+    reconcile_budget_state,
 )
 from aila.platform.llm.errors import BudgetExceededError, LLMError
 from aila.platform.llm.run_memory import RunMemory
@@ -912,3 +913,68 @@ class TestEmitMissingPricingNotification:
             await emit_missing_pricing_notification("my-model-v2")
 
         assert added_records[0].source_entity_id == "pricing_missing:my-model-v2"
+
+
+class TestReconcileBudgetState:
+    """reconcile_budget_state syncs the turn-budget cost accumulator against
+    the durable LLM cost ledger (issue #38)."""
+
+    @pytest.mark.asyncio
+    async def test_reconcile_raises_actual_cost_to_ledger_total(self) -> None:
+        """actual_cost_usd is raised to the ledger SUM for the run."""
+        from contextlib import asynccontextmanager
+
+        from aila.platform.contracts.budget import BudgetConfig, BudgetState
+
+        budget = BudgetState(config=BudgetConfig(max_turns=10))
+        budget.record_cost(0.25)  # in-flight per-call charges
+
+        result = MagicMock()
+        result.first = MagicMock(return_value=(1.75,))
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=result)
+
+        @asynccontextmanager
+        async def scope():
+            yield session
+
+        with patch("aila.storage.database.async_session_scope", scope):
+            total = await reconcile_budget_state(budget, "run-xyz")
+
+        assert total == 1.75
+        assert budget.actual_cost_usd == 1.75
+
+    @pytest.mark.asyncio
+    async def test_reconcile_is_monotonic_never_lowers(self) -> None:
+        """A stale/partial ledger read below the in-flight total is ignored."""
+        from contextlib import asynccontextmanager
+
+        from aila.platform.contracts.budget import BudgetConfig, BudgetState
+
+        budget = BudgetState(config=BudgetConfig(max_turns=10))
+        budget.record_cost(3.0)
+
+        result = MagicMock()
+        result.first = MagicMock(return_value=(1.0,))
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=result)
+
+        @asynccontextmanager
+        async def scope():
+            yield session
+
+        with patch("aila.storage.database.async_session_scope", scope):
+            total = await reconcile_budget_state(budget, "run-xyz")
+
+        assert total == 1.0
+        assert budget.actual_cost_usd == 3.0  # unchanged; monotonic
+
+    @pytest.mark.asyncio
+    async def test_reconcile_missing_run_id_returns_none(self) -> None:
+        """A missing run id short-circuits before any DB access."""
+        from aila.platform.contracts.budget import BudgetConfig, BudgetState
+
+        budget = BudgetState(config=BudgetConfig(max_turns=10))
+        total = await reconcile_budget_state(budget, None)
+        assert total is None
+        assert budget.actual_cost_usd == 0.0

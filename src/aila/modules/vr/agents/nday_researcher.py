@@ -24,6 +24,7 @@ from aila.platform.contracts.obligations import (
     ObligationSeverity,
     adjudicate,
 )
+from aila.platform.llm.cost import reconcile_budget_state
 from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 from aila.platform.services.evidence_pack import BoundedEvidencePack, EvidenceSection
 from aila.platform.services.factory import ServiceFactory
@@ -268,8 +269,14 @@ class NdayResearcher:
                     "result": None, "error": str(exc),
                 }
             steps.append(turn_result)
+            # #38: sync the turn-based budget's actual-cost accumulator
+            # against the durable LLM cost ledger so estimated_cost_usd and
+            # the cost-per-turn divergence warning reflect real spend. Best
+            # effort -- reconcile_budget_state never raises and never blocks
+            # the loop (it returns None on a ledger read fault).
+            await reconcile_budget_state(self.budget, self.run_id)
             await self._emit(
-                emitter, f"Turn {turn} → action={turn_result.get('action')}",
+                emitter, f"Turn {turn} \u2192 action={turn_result.get('action')}",
                 stage="turn_done", turn=turn, action=turn_result.get("action"),
             )
             if turn_result.get("submitted"):
