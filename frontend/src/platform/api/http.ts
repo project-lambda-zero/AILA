@@ -2,6 +2,103 @@ import { appEnv } from "@platform/config/env";
 
 import { isErrorEnvelope, type ErrorEnvelope as ApiErrorEnvelope } from "@/lib/errorEnvelope";
 
+// ---------------------------------------------------------------------------
+// #47 -- CSRF double-submit token.
+//
+// Every mutating request (POST/PUT/PATCH/DELETE) carries an `X-CSRF-Token`
+// header derived from a random per-tab token. The same token is mirrored into
+// a `SameSite=Strict` cookie so the backend can enforce the double-submit
+// pattern (compare header to cookie, reject on mismatch) once the matching
+// server-side check ships. Until then the header is a no-op the backend
+// ignores; adding it eagerly is defense-in-depth and pre-positions the app
+// for the eventual `HttpOnly` cookie migration described in useAuthStore.
+//
+// The final hardened state is HttpOnly + Secure + SameSite=Strict cookies
+// issued by the backend on login, plus this same double-submit header sent on
+// every mutation. That combination gives credentials that JS cannot exfiltrate
+// while still protecting against cross-site request forgery through the
+// standard double-submit pattern.
+// ---------------------------------------------------------------------------
+
+export const CSRF_HEADER_NAME = "X-CSRF-Token";
+const CSRF_COOKIE_NAME = "aila_csrf";
+const MUTATING_METHODS: Record<string, true> = {
+  POST: true,
+  PUT: true,
+  PATCH: true,
+  DELETE: true,
+};
+
+function readCookie(name: string): string | null {
+  if (typeof document === "undefined") return null;
+  const cookies = document.cookie ? document.cookie.split(";") : [];
+  for (const entry of cookies) {
+    const eq = entry.indexOf("=");
+    if (eq < 0) continue;
+    const key = entry.slice(0, eq).trim();
+    if (key === name) {
+      return decodeURIComponent(entry.slice(eq + 1).trim());
+    }
+  }
+  return null;
+}
+
+function writeCsrfCookie(value: string): void {
+  if (typeof document === "undefined") return;
+  const secure = typeof location !== "undefined" && location.protocol === "https:" ? "; Secure" : "";
+  // SameSite=Strict blocks the cookie from riding along on cross-site
+  // navigations, which is the property that lets the backend treat the
+  // cookie as a proof-of-first-party-origin on mutating requests.
+  document.cookie = `${CSRF_COOKIE_NAME}=${encodeURIComponent(value)}; Path=/; SameSite=Strict${secure}`;
+}
+
+/** Return the current CSRF token, minting one if none exists yet.
+ *
+ * Exported so raw `fetch` call sites (multipart upload, POST-based SSE) can
+ * attach the same header without going through {@link requestJson}. Prefer
+ * routing through the wrappers here whenever possible; this getter exists
+ * only for call sites that cannot use the JSON helpers. */
+export function getCsrfToken(): string {
+  const existing = readCookie(CSRF_COOKIE_NAME);
+  if (existing) return existing;
+  const fresh = mintCsrfToken();
+  writeCsrfCookie(fresh);
+  return fresh;
+}
+
+function mintCsrfToken(): string {
+  const cryptoImpl = typeof globalThis !== "undefined" ? globalThis.crypto : undefined;
+  if (cryptoImpl && typeof cryptoImpl.randomUUID === "function") {
+    return cryptoImpl.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  if (cryptoImpl && typeof cryptoImpl.getRandomValues === "function") {
+    cryptoImpl.getRandomValues(bytes);
+  } else {
+    // Environment without WebCrypto (very old browsers / broken jsdom):
+    // fall back to Math.random. The double-submit guarantee degrades to
+    // "any string agreed between cookie and header", which the backend
+    // will still validate as equal.
+    for (let i = 0; i < bytes.length; i += 1) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  let hex = "";
+  for (const byte of bytes) {
+    hex += byte.toString(16).padStart(2, "0");
+  }
+  return hex;
+}
+
+function applyCsrfHeader(headers: Headers, method: string): void {
+  if (!MUTATING_METHODS[method.toUpperCase()]) return;
+  if (headers.has(CSRF_HEADER_NAME)) return;
+  const token = getCsrfToken();
+  if (token) {
+    headers.set(CSRF_HEADER_NAME, token);
+  }
+}
+
 interface LegacyErrorPayload {
   detail?: string;
   code?: string | null;
@@ -182,6 +279,8 @@ export async function requestJson<T>(
     headers.set("Authorization", `Bearer ${options.token}`);
   }
 
+  applyCsrfHeader(headers, options.method ?? "GET");
+
   const signal = resolveAbortSignal(
     options.signal,
     options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
@@ -218,6 +317,8 @@ export async function requestBlob(
   if (options.token) {
     headers.set("Authorization", `Bearer ${options.token}`);
   }
+
+  applyCsrfHeader(headers, options.method ?? "GET");
 
   const signal = resolveAbortSignal(
     options.signal,
