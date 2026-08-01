@@ -70,24 +70,29 @@ async def get_dashboard(
             )
         total_systems = int((await session.exec(systems_count_stmt)).one() or 0)
 
-        # Finding severity counts -- vulnerability module contribution if registered.
-        # report_count aggregates in Python; the module accepts team_id so the
-        # underlying SELECT carries an explicit team predicate that does not rely
-        # on the do_orm_execute listener.
+        # Finding severity counts -- aggregated across every module that exposes
+        # a `report_count` capability. Providers are resolved through the module
+        # registry, never by name; each accepts team_id so the underlying SELECT
+        # carries an explicit team predicate that does not rely on the
+        # do_orm_execute listener.
         critical = high = medium = low = total_findings = 0
         platform = getattr(request.app.state, "platform", None)
         if platform is not None:
-            try:
-                module = platform.runtime.module_registry.first_with("report_count")
-                if module is not None:
+            for module in platform.runtime.module_registry.all_with("report_count"):
+                try:
                     counts = await module.report_count("", session, team_id=auth.team_id)
-                    total_findings = int(counts.get("total_findings", 0))
-                    critical = int(counts.get("critical", 0))
-                    high = int(counts.get("high", 0))
-                    medium = int(counts.get("medium", 0))
-                    low = int(counts.get("low", 0))
-            except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError):
-                _log.debug("vulnerability report_count unavailable; finding counts will be 0", exc_info=True)
+                except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError):
+                    _log.debug(
+                        "report_count via module %r unavailable; excluded from totals",
+                        module.module_id,
+                        exc_info=True,
+                    )
+                    continue
+                total_findings += int(counts.get("total_findings", 0))
+                critical += int(counts.get("critical", 0))
+                high += int(counts.get("high", 0))
+                medium += int(counts.get("medium", 0))
+                low += int(counts.get("low", 0))
 
         # MTTR: mean time to resolution from FindingWorkflowRecord (closed transitions).
         # #36: FindingWorkflowRecord is NOT team-scoped (transitions carry no team_id

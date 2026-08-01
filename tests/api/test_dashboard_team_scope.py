@@ -54,6 +54,10 @@ class _Registry:
         candidate = getattr(self._module, capability, None)
         return self._module if callable(candidate) else None
 
+    def all_with(self, capability: str) -> list[object]:
+        candidate = getattr(self._module, capability, None)
+        return [self._module] if callable(candidate) else []
+
 
 def _req(module: object) -> object:
     platform = types.SimpleNamespace(
