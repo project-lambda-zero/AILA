@@ -277,6 +277,56 @@ async def backup_database(
     return dest
 
 
+async def restore_database(
+    source: str | Path,
+    settings: DatabaseSettings | None = None,
+) -> Path:
+    """Restore the PostgreSQL database from a pg_dump custom-format archive.
+
+    Runs ``pg_restore --clean --if-exists --no-owner`` against the configured
+    database URL, dropping any pre-existing objects the dump would recreate
+    (``--clean``) while tolerating a fresh database where those objects do not
+    exist yet (``--if-exists``).  ``--no-owner`` skips ALTER OWNER statements
+    so the restore succeeds when the connecting role differs from the role
+    that produced the dump.
+
+    Args:
+        source: Path to the pg_dump custom-format archive to restore.
+        settings: Optional settings object.  Falls back to get_settings().
+
+    Returns:
+        The source Path that was restored.
+
+    Raises:
+        FileNotFoundError: If ``source`` does not exist.
+        UpstreamError: If pg_restore exits with a non-zero return code.
+    """
+    source_path = Path(source)
+    if not source_path.exists():
+        raise FileNotFoundError(f"pg_restore source does not exist: {source_path}")
+    active_settings = settings or get_settings()
+    url = active_settings.database_url
+    # pg_restore requires a libpq-compatible URL (no +asyncpg driver prefix).
+    pg_url = url.replace("+asyncpg", "")
+    result = await asyncio.to_thread(
+        subprocess.run,
+        [
+            "pg_restore",
+            "--clean",
+            "--if-exists",
+            "--no-owner",
+            f"--dbname={pg_url}",
+            str(source_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if result.returncode != 0:
+        raise UpstreamError(f"pg_restore failed: {result.stderr}")
+    return source_path
+
+
 @contextmanager
 def session_scope(settings: DatabaseSettings | None = None):  # type: ignore[return]
     """Sync context manager yielding a SQLModel Session bound to the sync engine.

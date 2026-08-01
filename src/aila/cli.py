@@ -81,7 +81,7 @@ from .platform.tools import (
     SSHCommandTool,
     SystemRegistryTool,
 )
-from .storage.database import async_session_scope, backup_database, init_db
+from .storage.database import async_session_scope, backup_database, init_db, restore_database
 from .storage.provider_config import ProviderConfigStore
 from .storage.secrets import SecretStore
 
@@ -1283,8 +1283,11 @@ def backup_db(destination: Path | None = None) -> None:
 
 @app.command("restore-db")
 def restore_db(source: Path) -> None:
-    typer.echo("Database restore from pg_dump is not yet implemented for PostgreSQL.", err=True)
-    raise typer.Exit(1)
+    try:
+        restored_path = _run_async(restore_database(source=source))
+    except (AILAError, sqlalchemy.exc.SQLAlchemyError, OSError) as exc:  # pragma: no cover - typer surface
+        fail(exc)
+    typer.echo(json.dumps({"message": f"Database restored from {restored_path}.", "source_path": str(restored_path)}, indent=2))
 
 
 @schedule_app.command("create")
