@@ -19,6 +19,12 @@ operator action.
 
 ### Added
 
+- A `restore-db` CLI command that restores the database from a pg_dump
+  custom-format backup (`pg_restore --clean --if-exists`), the companion to
+  the existing `backup-db`.
+- Retention sweeps for on-disk report artifacts and workflow transition-log
+  rows, wired into the reaper cron alongside the idempotency-cache and drift
+  purges, so neither surface grows without bound. (#46)
 - A process-wide domain event bus with typed events and a durable
   journal. System registration and deregistration publish typed domain
   events through the bus; a default subscriber persists them to the
@@ -381,6 +387,10 @@ operator action.
 
 ### Changed
 
+- Malware playbooks execute through an ARQ task that walks the steps and
+  writes an execution outcome, replacing the enqueue stub that recorded
+  run intent without running anything. The run endpoint returns a queued
+  run id.
 - Model-family prompt variants and the canary hold gate now operate on
   live turns. A reasoning turn selects the prompt variant for the model
   family it routes to (falling back to the default variant then the file),
@@ -513,6 +523,10 @@ operator action.
 
 ### Fixed
 
+- The LLM client publishes its per-call domain event again. The client's
+  event-bus reference was never assigned during runtime construction, so the
+  guarded publish was dead code; it is now wired to the process-wide bus.
+  (#39)
 - The global server-sent-events ceiling now bounds the session message
   stream and the forensics readiness stream. Both called the cap check but
   never counted themselves against the gauge, so the ceiling under-counted
