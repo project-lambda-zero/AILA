@@ -195,6 +195,10 @@ async def test_vr_dispatch_routes_not_yet_dispatchable_to_skipped() -> None:
         "_dispatch_campaign_launch",
         "_dispatch_profile_spec_draft",
         "_dispatch_patch_assessment_report",
+        "_dispatch_strategy_descriptor",
+        "_dispatch_crash_triage_report",
+        "_dispatch_config_delta",
+        "_dispatch_sub_investigation",
     ):
         setattr(dispatcher, other, AsyncMock(side_effect=AssertionError(
             "no per-kind handler should run for a not-yet-dispatchable kind",
@@ -203,14 +207,14 @@ async def test_vr_dispatch_routes_not_yet_dispatchable_to_skipped() -> None:
     with patch(
         "aila.platform.agents.outcome_dispatcher.claim_outcome_for_dispatch",
         new=AsyncMock(return_value=_winning_claim(
-            VROutcomeKind.STRATEGY_DESCRIPTOR.value,
+            VROutcomeKind.ASSESSMENT_REPORT.value,
         )),
     ):
         result = await dispatcher.dispatch("oc-2")
 
     assert result.dispatch_status == OutcomeDispatchStatus.SKIPPED
-    assert result.reason == "no_strategy_registry_consumer_yet"
-    assert result.outcome_kind == VROutcomeKind.STRATEGY_DESCRIPTOR
+    assert result.reason == "assessment_reports_are_terminal_no_downstream"
+    assert result.outcome_kind == VROutcomeKind.ASSESSMENT_REPORT
 
 
 @pytest.mark.asyncio
