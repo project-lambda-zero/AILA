@@ -17,6 +17,7 @@ Phase 175 additions (D-02, D-04a, D-05):
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING
 
 import sqlalchemy.exc
@@ -26,12 +27,32 @@ from .run_memory import RunMemory
 
 if TYPE_CHECKING:
     from ...storage.registry import ConfigRegistry
+    from ..contracts.budget import BudgetState
 
 _log = logging.getLogger(__name__)
 
 _KEY_PROMPT = "_cost_prompt_tokens"
 _KEY_COMPLETION = "_cost_completion_tokens"
 _NO_RUN = "_no_run"
+
+# Model-id slug charset: env-var round-trip via ConfigRegistry.get uppercases
+# key parts into AILA_{NAMESPACE}_{KEY}; slashes/colons in provider-qualified
+# ids ('anthropic/claude-sonnet-4-6', 'openai:gpt-4o') produce env names that
+# no shell accepts and no pricing schema registers. Fold every non-word char
+# except '.' and '-' to '_' so the resulting key is stable and resolvable on
+# both the read path and the missing-price alarm path (issue #38).
+_MODEL_SLUG_RX = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _normalize_model_id(model_id: str) -> str:
+    """Return an env-var-safe, lowercase slug of ``model_id``.
+
+    Idempotent: sanitized ids round-trip to themselves. Empty or all-punct
+    input collapses to ``'unknown'`` so downstream key building never yields
+    a trailing-underscore key like ``llm_cost_per_1k_prompt_``.
+    """
+    slug = _MODEL_SLUG_RX.sub("_", (model_id or "").strip()).strip("_")
+    return (slug or "unknown").lower()
 
 
 class CostTracker:
@@ -194,8 +215,9 @@ async def calculate_cost_usd(
             False when either key was missing, non-numeric, or negative
             (T-175-01 mitigation -- reject negative prices).
     """
-    prompt_key = f"llm_cost_per_1k_prompt_{model_id}"
-    completion_key = f"llm_cost_per_1k_completion_{model_id}"
+    slug = _normalize_model_id(model_id)
+    prompt_key = f"llm_cost_per_1k_prompt_{slug}"
+    completion_key = f"llm_cost_per_1k_completion_{slug}"
 
     try:
         prompt_price_raw = await registry.get("platform", prompt_key)
@@ -364,7 +386,8 @@ async def emit_missing_pricing_notification(model_id: str) -> None:
         from aila.storage.database import async_session_scope
         from aila.storage.db_models import NotificationRecord
 
-        source_entity_id = f"pricing_missing:{model_id}"
+        slug = _normalize_model_id(model_id)
+        source_entity_id = f"pricing_missing:{slug}"
 
         async with async_session_scope() as session:
             existing = (
@@ -384,8 +407,8 @@ async def emit_missing_pricing_notification(model_id: str) -> None:
                 body=(
                     f"No pricing configuration found for model '{model_id}'. "
                     f"LLM calls will record $0.00 cost until pricing is configured. "
-                    f"Set 'llm_cost_per_1k_prompt_{model_id}' and "
-                    f"'llm_cost_per_1k_completion_{model_id}' in platform config "
+                    f"Set 'llm_cost_per_1k_prompt_{slug}' and "
+                    f"'llm_cost_per_1k_completion_{slug}' in platform config "
                     f"to enable accurate cost tracking."
                 ),
                 category="warning",
@@ -399,3 +422,66 @@ async def emit_missing_pricing_notification(model_id: str) -> None:
             "emit_missing_pricing_notification_failed",
             extra={"model_id": model_id},
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #38: cross-check the turn-based BudgetState against the token-based
+# LLMCostRecord ledger. Historically the two never met -- BudgetState.turns_used
+# tracked reasoning depth and CostTracker/LLMCostRecord tracked spend, and the
+# BudgetState.cost_per_turn_usd knob defaulted to 0.0 so estimated_cost_usd
+# reported $0.00 forever even when the ledger had a real per-run cost. This
+# reconciler is the single wire: read SUM(cost_usd) from the durable ledger
+# for the run and hand it to BudgetState.reconcile_actual_cost() so
+# estimated_cost_usd and effective_cost_per_turn_usd surface measured spend.
+# ---------------------------------------------------------------------------
+
+
+async def reconcile_budget_state(
+    budget_state: BudgetState,
+    run_id: str | None,
+) -> float | None:
+    """Reconcile a :class:`BudgetState` against the durable cost ledger.
+
+    Queries ``LLMCostRecord`` for ``SUM(cost_usd)`` scoped to ``run_id`` and
+    calls :meth:`BudgetState.reconcile_actual_cost` with the result. The
+    reconciliation is monotonic on the BudgetState side, so a stale or
+    partial ledger read cannot lower an in-flight ``record_cost`` total.
+
+    Returns the ledger total in USD when the query succeeds (``0.0`` when the
+    run has no cost rows yet), or ``None`` when the run id is missing or the
+    lookup failed. Failures are logged at DEBUG and never raised -- a budget
+    check MUST never block on the observability ledger.
+
+    Callers that also want a divergence signal can compare the returned total
+    against ``budget_state.turns_used * budget_state.config.cost_per_turn_usd``
+    once the reconciler returns.
+    """
+    rid = run_id or _NO_RUN
+    if rid == _NO_RUN:
+        return None
+
+    try:
+        from sqlalchemy import select as _select
+        from sqlalchemy.sql import func as _func
+
+        from aila.platform.llm.cost_record import LLMCostRecord
+        from aila.storage.database import async_session_scope
+
+        async with async_session_scope() as session:
+            row = (
+                await session.execute(
+                    _select(
+                        _func.coalesce(_func.sum(LLMCostRecord.cost_usd), 0.0),
+                    ).where(LLMCostRecord.run_id == rid)
+                )
+            ).first()
+    except (sqlalchemy.exc.SQLAlchemyError, OSError, RuntimeError) as exc:
+        _log.debug(
+            "reconcile_budget_state.ledger_read_failed run_id=%s exc=%s",
+            rid, exc,
+        )
+        return None
+
+    ledger_total = float((row[0] if row is not None else 0.0) or 0.0)
+    budget_state.reconcile_actual_cost(ledger_total)
+    return ledger_total
