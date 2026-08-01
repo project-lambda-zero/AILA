@@ -19,6 +19,32 @@ operator action.
 
 ### Added
 
+- A process-wide domain event bus with typed events and a durable
+  journal. System registration and deregistration publish typed domain
+  events through the bus; a default subscriber persists them to the
+  platform journal, and a replay service re-derives state from the
+  journal. (#39, #52)
+- A global server-sent-events ceiling. A new event stream is refused with
+  a clear status when the process-wide active-stream count is at or above
+  the configured cap, so a runaway client cannot exhaust the connection
+  budget. (#60)
+- An admin state-reconciliation endpoint. `POST /admin/reconcile` heals a
+  single task's TaskRecord, workflow cursor, and queue lock in one
+  operation. (RFC-07)
+- Tool-storage and working-memory pruning. A pruner reclaims expired
+  tool-storage rows, and expired working-memory rows are removed on a
+  schedule. (#46, #56)
+- A canonical agent-configuration directory (`.agents/`) with a setup
+  script that links shared agent config. Repo-authored shared content is
+  tracked while bulk external skill installs stay out of version control.
+  (#5, #41)
+- Team scoping on forensics child records. Investigation runs, agent
+  steps, write-ups, and answer candidates carry a team id, backfilled
+  from the parent project by a migration. (#59)
+- Honesty-audit self-improvement guardrail rules that flag ungated
+  promotion writes, self-labeled rewards, unversioned config promotion,
+  inline prompt literals, untagged model calls, and canary flips below a
+  minimum sample count. (#32, #33, #34)
 - Reasoning synthesis records an explicit audit scope. Each consolidated
   panel verdict now opens with what was examined -- the control or check
   under audit, the code surface inspected, and the evidence base -- so a
@@ -355,6 +381,32 @@ operator action.
 
 ### Changed
 
+- Upload endpoints read request bodies under a hard byte ceiling. Sample,
+  investigation, and APK uploads reject a chunked body with no declared
+  length and cap the read so an oversized upload cannot exhaust worker
+  memory. (#57)
+- External intelligence providers (NVD, EPSS, KEV) and the binary-analysis
+  collector no longer block the event loop. HTTP calls use an async client
+  with async backoff, and subprocess-heavy analysis runs off the loop.
+  (#64, #55)
+- The web client keeps the access token in memory only, stores the refresh
+  token in session storage with a bounded lifetime, and sends a
+  double-submit CSRF header on state-changing requests. Finding severity
+  uses an explicit vocabulary (Immediate, High, Moderate, Planned).
+  (#47, #55)
+- Per-model seal drift biases model-routing decisions, and the routing
+  learner informs sibling-branch sizing. Prompt resolution keys on model
+  family with a database override path. (#31, #32, #33, #34)
+- Secret storage rotates on key version and restricts secret files with
+  Windows ACLs. (#42)
+- LLM cost keys are normalized before aggregation, and a budget can
+  reconcile against actual recorded cost. (#38)
+- The PoC sandbox fails closed. Each run gets an isolated per-run
+  workspace that is torn down after use, governed by an age-and-size
+  workspace quota. (#51)
+- Scheduled-automation listing is paginated in SQL, the batched
+  target-analysis migration no longer loads all rows at once, and the
+  cron dependency is required rather than optional. (#56)
 - On-demand specialist agents are named panelists instead of capability
   slugs. A panel can pull in an expert branch (reverse engineering,
   mobile, exploit development, variant hunt, crypto) when a case needs
@@ -455,6 +507,12 @@ operator action.
 
 ### Fixed
 
+- The prompt registry falls back to the default-variant version-store row
+  when a routed model family has no family-specific override, instead of
+  dropping to the file-backed base. (#33)
+- The canary promotion gate blocks a candidate flip until a minimum count
+  of drift and cost samples has been observed on the active assignment.
+  (#34)
 - The dev process stack (backend, workers, audit_mcp, ida-headless,
   frontend) survives the terminal or session that launched it closing.
   start.sh spawned each service through PowerShell Start-Process, whose
