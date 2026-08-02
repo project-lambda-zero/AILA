@@ -550,6 +550,14 @@ operator action.
 
 ### Fixed
 
+- Malware Android APK ingestion. Uploading an APK through the malware
+  sample-upload endpoint streamed the bytes to ida-headless (the native-binary
+  path) and never recorded an ``apk_path``, so the APK_DECODE stage failed with
+  "android_apk target requires apk_path in descriptor" and the target sat at
+  pending with no stages. APK uploads now stream to the android-mcp uploads
+  directory (``ANDROID_MCP_UPLOAD_DIR``, default ``~/.android-mcp/uploads``) and
+  record ``apk_path`` in the descriptor, so apktool / jadx decode runs; native
+  binaries still go through ida-headless.
 - The forensics investigation hub now executes when selected by the
   two-phase dispatcher. As the inner definition it shares the dispatcher's
   run id, so its cursor has to reset from the dispatcher's terminal state to
