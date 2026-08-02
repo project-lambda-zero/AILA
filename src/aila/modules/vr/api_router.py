@@ -21,7 +21,7 @@ from typing import Any, Literal
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import func as sa_func
 from sqlalchemy import text as sa_text
 from sqlalchemy.exc import SQLAlchemyError
@@ -5755,31 +5755,48 @@ def create_vr_router() -> APIRouter:
                     )).first()
 
                 for row in rows:
-                    summary = _message_summary(row)
-                    # Discriminate operator-steering messages from
-                    # agent turns so the consumer can branch on the
-                    # typed event name without parsing the payload
-                    # (08_FRONTEND_UX.md §2.1).
-                    is_operator = row.sender_kind == SenderKind.OPERATOR.value
-                    event_type = (
-                        VREventType.OPERATOR_STEERING
-                        if is_operator
-                        else VREventType.MESSAGE_CREATED
-                    )
-                    envelope = VREventEnvelope(
-                        type=event_type,
-                        ts=(
-                            row.created_at.isoformat()
-                            if row.created_at else utc_now().isoformat()
-                        ),
-                        investigation_id=investigation_id,
-                        branch_id=row.branch_id,
-                        payload=summary.model_dump(mode="json"),
-                    )
-                    yield (
-                        f"event: {event_type.value}\n"
-                        f"data: {_json.dumps(envelope.model_dump(mode='json'))}\n\n"
-                    )
+                    # A single row that fails to project or serialize MUST
+                    # NOT kill the generator -- otherwise one bad message
+                    # closes the stream and the investigation stops live-
+                    # refreshing entirely. Build the event defensively; on
+                    # failure log (ASCII-only, cp1252-safe) and skip the row.
+                    event_data: str | None = None
+                    try:
+                        summary = _message_summary(row)
+                        # Discriminate operator-steering messages from agent
+                        # turns so the consumer can branch on the typed event
+                        # name without parsing the payload (08_FRONTEND_UX.md).
+                        is_operator = row.sender_kind == SenderKind.OPERATOR.value
+                        event_type = (
+                            VREventType.OPERATOR_STEERING
+                            if is_operator
+                            else VREventType.MESSAGE_CREATED
+                        )
+                        envelope = VREventEnvelope(
+                            type=event_type,
+                            ts=(
+                                row.created_at.isoformat()
+                                if row.created_at else utc_now().isoformat()
+                            ),
+                            investigation_id=investigation_id,
+                            branch_id=row.branch_id,
+                            payload=summary.model_dump(mode="json"),
+                        )
+                        event_data = (
+                            f"event: {event_type.value}\n"
+                            f"data: {_json.dumps(envelope.model_dump(mode='json'))}\n\n"
+                        )
+                    except (ValidationError, ValueError, TypeError, KeyError, AttributeError):
+                        _log.warning(
+                            "vr.sse: skipping unserializable message row id=%s "
+                            "inv=%s -- live tail continues",
+                            getattr(row, "id", "?"), investigation_id,
+                        )
+                    if event_data is not None:
+                        yield event_data
+                    # Advance the cursor past this row whether or not it
+                    # serialized, so a bad row is skipped for good instead of
+                    # re-crashing / re-logging on every poll.
                     if row.created_at and row.created_at > local_cursor:
                         local_cursor = row.created_at
 

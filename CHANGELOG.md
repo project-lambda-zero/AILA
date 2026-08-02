@@ -550,6 +550,14 @@ operator action.
 
 ### Fixed
 
+- Investigation message SSE live tail no longer dies on one bad row. The VR
+  and malware ``/investigations/{id}/messages/stream`` endpoints projected each
+  polled row into a summary with no per-row guard, so a single message that
+  failed to serialize (an out-of-enum field, malformed payload) raised inside
+  the generator, closed the stream, and the investigation stopped refreshing
+  until a full page reload. Each row is now projected defensively: a row that
+  fails to serialize is logged and skipped (the cursor advances past it) and
+  the live tail keeps delivering the rest.
 - Malware Android APK ingestion. Uploading an APK through the malware
   sample-upload endpoint streamed the bytes to ida-headless (the native-binary
   path) and never recorded an ``apk_path``, so the APK_DECODE stage failed with
