@@ -424,6 +424,7 @@ def build_dispatch_workflow(
     setup_builder: SetupBuilder,
     loop_builder: LoopBuilder,
     emit_handler: HandlerFn,
+    allow_phase_handoff: bool = False,
 ) -> WorkflowDefinition:
     """Expand a discovery-driven phase graph into an engine WorkflowDefinition.
 
@@ -433,6 +434,13 @@ def build_dispatch_workflow(
     re-decides after each phase and the traversal grows with the agents'
     discoveries. The module supplies the setup and per-phase loop handlers;
     the hub handler is the substrate's.
+
+    Set ``allow_phase_handoff=True`` when this graph runs as the inner
+    definition of a two-phase dispatcher (``is_dispatcher`` + ``dispatches_to``):
+    the inner run shares the dispatcher's run_id, so the cursor must reset from
+    the dispatcher's terminal state to this graph's start_state. A graph bound
+    directly to a task (VR, malware) runs under its own fresh run_id and leaves
+    this at the default.
     """
     if not phases:
         raise ValueError(
@@ -462,4 +470,5 @@ def build_dispatch_workflow(
         start_state=SETUP_STATE,
         states=states,
         services_factory=services_factory,
+        allow_phase_handoff=allow_phase_handoff,
     )

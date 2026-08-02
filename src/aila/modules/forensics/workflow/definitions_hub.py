@@ -167,6 +167,11 @@ FORENSICS_INVESTIGATE_HUB = build_dispatch_workflow(
     setup_builder=_setup_builder,
     loop_builder=_loop_builder,
     emit_handler=cast("HandlerFn", _state_response_emit),
+    # Runs as the inner definition of FORENSICS_DISPATCHER_V1 (two-phase
+    # dispatch), sharing the dispatcher's run_id -- reset the cursor from the
+    # dispatcher's terminal to this graph's start_state, like the fixed-mode
+    # definitions (FORENSICS_FULL_ANALYSIS_V1 etc.) that also set this.
+    allow_phase_handoff=True,
 )
 
 

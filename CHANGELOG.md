@@ -550,6 +550,14 @@ operator action.
 
 ### Fixed
 
+- The forensics investigation hub now executes when selected by the
+  two-phase dispatcher. As the inner definition it shares the dispatcher's
+  run id, so its cursor has to reset from the dispatcher's terminal state to
+  the hub's start state; without that flag the inner run returned no response
+  and no phase ran. ``build_dispatch_workflow`` takes an
+  ``allow_phase_handoff`` flag and the forensics hub sets it, matching the
+  fixed-mode definitions. (RFC-13 #68)
+
 - The LLM client publishes its per-call domain event again. The client's
   event-bus reference was never assigned during runtime construction, so the
   guarded publish was dead code; it is now wired to the process-wide bus.
