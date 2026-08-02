@@ -589,6 +589,14 @@ operator action.
   symlinks, so on POSIX (where the staging tree links with symlinks rather than
   Windows junctions) it detected no languages and indexing fell back to
   auto-detection that drops minority languages. The probe now follows symlinks.
+- Malware investigations over APK, script, and document targets can now query
+  the code index. The investigation agent's tool surface was fixed to
+  ida-headless for every kind, so an APK / script / document investigation --
+  whose ingestion builds an audit-mcp source index, not an ida-headless binary
+  handle -- had no way to read the indexed code and could reason only over the
+  static summary. These kinds now receive a read-only audit-mcp tool surface
+  (semantic search, read function, call graph, and related query tools);
+  mutating and pipeline tools are never exposed. Binary kinds keep ida-headless.
 - The forensics investigation hub now executes when selected by the
   two-phase dispatcher. As the inner definition it shares the dispatcher's
   run id, so its cursor has to reset from the dispatcher's terminal state to
