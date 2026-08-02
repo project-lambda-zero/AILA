@@ -558,6 +558,13 @@ operator action.
   directory (``ANDROID_MCP_UPLOAD_DIR``, default ``~/.android-mcp/uploads``) and
   record ``apk_path`` in the descriptor, so apktool / jadx decode runs; native
   binaries still go through ida-headless.
+- Malware APK decompiled-source indexing on Windows. The unified staging tree
+  that feeds the code index linked the jadx and apktool output with directory
+  symlinks, which ``os.walk(followlinks=False)`` (used by both the language probe
+  and the indexer) does not descend, so indexing failed the target with "No
+  supported languages detected". The staging tree now links with NTFS junctions
+  (descended by that walk and needing no developer mode), so the decompiled Java
+  is indexed and the downstream audit stages run.
 - The forensics investigation hub now executes when selected by the
   two-phase dispatcher. As the inner definition it shares the dispatcher's
   run id, so its cursor has to reset from the dispatcher's terminal state to
