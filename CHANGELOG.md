@@ -565,6 +565,30 @@ operator action.
   supported languages detected". The staging tree now links with NTFS junctions
   (descended by that walk and needing no developer mode), so the decompiled Java
   is indexed and the downstream audit stages run.
+- Malware script and document ingestion. Uploading a script or document sample
+  streamed the bytes to ida-headless (the native-binary disassembler), which
+  cannot load them, so the analysis failed or produced nothing. These kinds now
+  save the sample to a per-hash directory and index it through audit-mcp
+  (``MALWARE_SAMPLE_DIR``, default ``~/.aila/malware_samples``); scripts get a
+  code index the agent can query, and a sample with no source language audit-mcp
+  recognizes (a binary document) is kept on disk for line reads instead of
+  failing the target. Native binaries still go through ida-headless.
+- Malware APK analysis stuck at pending after a resume. Resuming an APK whose
+  stages were already complete left the row at pending forever (a permanent
+  "analyzing" state in the UI): the android path swallowed the
+  already-done signal without re-deriving the overall state, unlike the binary
+  path. The android path now re-derives analysis state from per-stage truth on
+  resume, so a completed APK returns to ready.
+- Malware APK upload directory. APK uploads wrote to a directory that could
+  diverge from the one the android-mcp resolver reads for agent tool calls
+  (two different environment variables and defaults). Uploads now write to the
+  single directory the resolver reads, so an uploaded APK is found by both the
+  ingestion path and later agent lookups.
+- Malware decompiled-source language detection on non-Windows hosts. The
+  language probe over the unified staging tree did not follow directory
+  symlinks, so on POSIX (where the staging tree links with symlinks rather than
+  Windows junctions) it detected no languages and indexing fell back to
+  auto-detection that drops minority languages. The probe now follows symlinks.
 - The forensics investigation hub now executes when selected by the
   two-phase dispatcher. As the inner definition it shares the dispatcher's
   run id, so its cursor has to reset from the dispatcher's terminal state to
