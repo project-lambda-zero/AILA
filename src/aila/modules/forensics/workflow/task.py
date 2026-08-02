@@ -15,19 +15,10 @@ from __future__ import annotations
 from typing import Any
 
 from aila.modules.forensics.workflow.definitions import FORENSICS_DISPATCHER_V1
-
-# Importing the hub registers it into FORENSICS_MODE_DEFINITIONS (RFC-13 #68)
-# so the worker's dispatcher can resolve the full-analysis path to it. The
-# re-export in __all__ makes the import a declared surface, not dead weight.
-from aila.modules.forensics.workflow.definitions_hub import FORENSICS_INVESTIGATE_HUB
 from aila.platform.tasks.context import TaskContext
 from aila.platform.tasks.template import platform_task
 
-__all__ = [
-    "FORENSICS_INVESTIGATE_HUB",
-    "run_forensics_analysis",
-    "run_forensics_investigation",
-]
+__all__ = ["run_forensics_analysis", "run_forensics_investigation"]
 
 
 @platform_task(

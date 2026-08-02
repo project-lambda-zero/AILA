@@ -70,3 +70,15 @@ async def test_malware_seed_sets_production_alias() -> None:
         key, alias="production",
     )
     assert rec is not None
+
+
+def test_malware_depth_tag_normalizes_to_seeded_default_key() -> None:
+    # The malware frontend rides analysis depth through strategy_family as a
+    # ``depth:<value>`` tag. Every depth must collapse to the seeded
+    # ``malware/default/<persona>`` key so RFC-09/10 resolves against the store
+    # instead of falling back to disk for the primary creation path.
+    default_key = malware_researcher._prompt_key("default", "halvar")
+    for depth in ("low", "medium", "high", "ultimate"):
+        assert malware_researcher._prompt_key(f"depth:{depth}", "halvar") == default_key
+    # A genuinely custom strategy stays distinct (falls back to file when unseeded).
+    assert malware_researcher._prompt_key("custom", "halvar") != default_key

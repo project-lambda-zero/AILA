@@ -556,7 +556,14 @@ operator action.
   the hub's start state; without that flag the inner run returned no response
   and no phase ran. ``build_dispatch_workflow`` takes an
   ``allow_phase_handoff`` flag and the forensics hub sets it, matching the
-  fixed-mode definitions. (RFC-13 #68)
+  fixed-mode definitions. The hub is registered into the dispatcher's mode
+  registry lazily on the first full-analysis route, so a hub-import fault can
+  no longer keep the fixed-mode forensics tasks from registering. (RFC-13 #68)
+- The startup prompt seeding now covers the malware frontend creation path.
+  That frontend rides analysis depth through ``strategy_family`` as a
+  ``depth:<value>`` tag; the malware prompt key collapses that tag to the base
+  strategy, so a frontend-created malware investigation resolves its prompt
+  against the version store instead of falling back to disk. (RFC-09, RFC-10)
 
 - The LLM client publishes its per-call domain event again. The client's
   event-bus reference was never assigned during runtime construction, so the
