@@ -50,6 +50,18 @@ operator action.
   pressure since it is augmentation, not a precondition. Wired for the
   vulnerability-research and malware modules through a per-module setup
   resolver; forensics leaves the hook unset. (RFC-12 #49, RFC-24 #24)
+- Evicted working-memory observations now persist to the knowledge base.
+  An investigation keeps a bounded live store of observations; when it
+  passes its cap and drops the oldest, each dropped observation is now
+  written to the vector database under a workspace-scoped observation
+  namespace, stamped with the investigation, branch, turn, and observation
+  key that produced it. On a long investigation this keeps the middle of
+  the run semantically retrievable through the setup read loop and the
+  agent retrieve tool, instead of recoverable only by exact-key recall or
+  by re-running the tool. The write is best-effort and never fails the
+  tool result it follows. Wired for the vulnerability-research and malware
+  modules through a base tool-executor hook the modules override. (RFC-12
+  #49)
 - Confirmed vulnerability findings now reach the knowledge base. When a
   direct-finding outcome is dispatched, its root-cause text is stored in
   the vector database under a workspace-scoped finding namespace, carrying

@@ -43,6 +43,7 @@ from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
 from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
 from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 from aila.platform.mcp.bridges.knowledge import KnowledgeBridgeTool
+from aila.platform.services.knowledge import KnowledgeService
 from aila.platform.uow import UnitOfWork
 
 __all__ = [
@@ -97,6 +98,10 @@ class ToolExecutor(ToolExecutorHelpersBase):
         # Per-process LRU: investigation_id -> (workspace_id, team_id) for
         # server-side knowledge-retrieval scoping.
         self._inv_workspace_cache: OrderedDict[str, tuple[str, str | None]] = OrderedDict()
+        # RFC-12 evicted-observation burn writer. Constructed lazily on the
+        # first eviction so unit tests that never trip the cap pay nothing.
+        # Tests may substitute a fake here before invoking the hook.
+        self._obs_knowledge_writer: KnowledgeService | None = None
         # Per-process LRU: investigation_id -> resolved audit_mcp
         # index_id (or empty string when the investigation's target has
         # no source repo). Filled lazily on first use per investigation.
@@ -189,6 +194,59 @@ class ToolExecutor(ToolExecutorHelpersBase):
         while len(cache) > self._INV_INDEX_CACHE_MAX:
             cache.popitem(last=False)
         return (workspace_id, team_id)
+
+    # RFC-12: when the live observables cap drops readings this turn, burn
+    # each string-valued observation into the workspace-scoped semantic
+    # store so a later branch turn can still recall it by query. Best
+    # effort by base-class contract -- a store failure logs and returns;
+    # it MUST NOT propagate because the tool result has already committed.
+    # extract_entities/link_neighbors are off: evicted observations are
+    # high-volume and the per-write cost of entity extraction is not paid
+    # back on this retrieval path (query hits go through the vector index).
+    async def _on_observables_evicted(
+        self,
+        investigation_id: str,
+        branch_id: str,
+        at_turn: int | None,
+        evicted: dict[str, Any],
+    ) -> None:
+        burnable = {
+            k: v for k, v in evicted.items()
+            if isinstance(v, str) and v.strip()
+        }
+        if not burnable:
+            return
+        workspace_id, _team_id = await self._resolve_workspace_scope(
+            investigation_id,
+        )
+        if not workspace_id:
+            return
+        writer = self._obs_knowledge_writer
+        if writer is None:
+            writer = KnowledgeService()
+            self._obs_knowledge_writer = writer
+        for key, value in burnable.items():
+            try:
+                await writer.store(
+                    namespace=f"vr.observation.workspace.{workspace_id}",
+                    content=str(value)[:6000],
+                    metadata={
+                        "investigation_id": investigation_id,
+                        "branch_id": branch_id,
+                        "turn_number": at_turn,
+                        "observable_key": key,
+                        "workspace_id": workspace_id,
+                        "source": "evicted_observation",
+                    },
+                    dedup_key=f"obs:{investigation_id}:{branch_id}:{key}",
+                    extract_entities=False,
+                    link_neighbors=False,
+                )
+            except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
+                _log.warning(
+                    "evicted-observation burn failed inv=%s branch=%s key=%s: %s",
+                    investigation_id, branch_id, key, exc, exc_info=True,
+                )
 
     def _augment_tool_error(
         self, server_id: str, tool_name: str, args: dict[str, Any],

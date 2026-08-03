@@ -24,6 +24,10 @@ VR_KNOWLEDGE_KINDS: tuple[str, ...] = (
     "crash_triage",
     "config_delta",
     "profile_spec",
+    # RFC-12: evicted observations burned by the VR ToolExecutor's
+    # _on_observables_evicted hook, so working-memory eviction does not
+    # lose the underlying tool reading -- it just moves off the hot path.
+    "observation",
 )
 
 

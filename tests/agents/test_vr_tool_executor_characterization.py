@@ -401,3 +401,27 @@ def test_apply_observables_delta_merges_and_caps() -> None:
     )["observables"]
     assert len(capped) <= cap
     assert "_directive.keep" in capped
+
+
+def test_merge_and_report_eviction_surfaces_dropped_keys() -> None:
+    """The eviction-reporting merge drops the OLDEST non-reserved keys past
+    the cap, keeps reserved keys, and returns exactly what fell out so the
+    caller can burn it before it leaves the live case state."""
+    seed = {"observables": {"_directive.keep": "steer", "old": "AAA", "mid": "BBB"}}
+    new_json, evicted = ToolExecutor._merge_and_report_eviction(
+        json.dumps(seed), {"new": "CCC"}, cap=2,
+    )
+    kept = json.loads(new_json)["observables"]
+    # cap=2 with one reserved key keeps the reserved key + the single
+    # newest non-reserved key; the two older non-reserved keys evict.
+    assert set(kept) == {"_directive.keep", "new"}
+    assert evicted == {"old": "AAA", "mid": "BBB"}
+
+
+def test_merge_and_report_eviction_no_overflow_evicts_nothing() -> None:
+    """Under the cap, nothing evicts and the reported mapping is empty."""
+    new_json, evicted = ToolExecutor._merge_and_report_eviction(
+        None, {"a": "1", "b": "2"}, cap=10,
+    )
+    assert json.loads(new_json)["observables"] == {"a": "1", "b": "2"}
+    assert evicted == {}

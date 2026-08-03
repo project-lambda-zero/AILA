@@ -187,6 +187,7 @@ class ToolExecutorHelpersBase:
         persisted_payload = dict(payload)
         if durable_bodies:
             persisted_payload[_OBSERVABLE_BODIES_KEY] = durable_bodies
+        evicted: dict[str, Any] = {}
         async with UnitOfWork() as uow:
             msg = self._message_model(
                 investigation_id=investigation_id,
@@ -212,14 +213,29 @@ class ToolExecutorHelpersBase:
                         branch_id,
                     )
                 else:
-                    branch.case_state_json = self._apply_observables_delta(
-                        branch.case_state_json, observables_delta, cap=cap,
+                    branch.case_state_json, evicted = (
+                        self._merge_and_report_eviction(
+                            branch.case_state_json, observables_delta, cap=cap,
+                        )
                     )
                     branch.updated_at = utc_now()
                     uow.session.add(branch)
             await uow.session.commit()
             await uow.session.refresh(msg)
-            return msg.id
+            new_msg_id = msg.id
+        # RFC-12: observations evicted by the storage cap leave working
+        # memory here. Burn them to the workspace-scoped semantic store
+        # (best-effort, OUTSIDE the UoW so an embed + store never holds the
+        # result-write transaction) so a later turn -- or a sibling branch,
+        # or a future investigation on the same target -- can retrieve them
+        # by query instead of exact-key recall. The default hook is a
+        # no-op; a module executor overrides it to write provenance-stamped
+        # entries. By contract the hook never raises.
+        if evicted:
+            await self._on_observables_evicted(
+                investigation_id, branch_id, at_turn, evicted,
+            )
+        return new_msg_id
 
     async def _write_error_message(
         self,
@@ -414,6 +430,26 @@ class ToolExecutorHelpersBase:
         override lands on the next merge without a worker restart.
         Pure helper -- does no I/O -- so it can run inside any UoW.
         """
+        new_json, _evicted = cls._merge_and_report_eviction(
+            case_state_json, delta, cap=cap,
+        )
+        return new_json
+
+    @classmethod
+    def _merge_and_report_eviction(
+        cls, case_state_json: str | None, delta: dict[str, Any],
+        *, cap: int | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Merge ``delta`` and report which observations the cap evicted.
+
+        Returns ``(new_case_state_json, evicted)`` where ``evicted`` maps
+        each NON-reserved observable key the cap trim dropped to its value.
+        Reserved keys (``_directive.*``, ``_recall.*``, ``_ledger.*``) are
+        never evicted, so never appear in ``evicted``. The eviction policy
+        is identical to :meth:`_apply_observables_delta`; this method only
+        additionally surfaces what fell out so a caller can persist it
+        before it leaves the live case state. Pure helper -- does no I/O.
+        """
         effective_cap = cap if cap is not None else cls._MAX_OBSERVABLES
         try:
             case_state = json.loads(case_state_json or "{}")
@@ -426,6 +462,7 @@ class ToolExecutorHelpersBase:
         if not isinstance(observables, dict):
             observables = {}
         observables.update({str(k): v for k, v in delta.items()})
+        evicted: dict[str, Any] = {}
         # Bound the dict size. Eviction strategy: keep ALL reserved keys
         # (``_directive.*`` steering must survive; ``_recall.pinned`` is
         # the engine-written recall pin list and must not be evicted
@@ -450,12 +487,16 @@ class ToolExecutorHelpersBase:
             keep_n = max(0, effective_cap - len(reserved_keys))
             kept_non_reserved_keys = set(non_reserved_keys[-keep_n:])
             kept_or_reserved = reserved_keys | kept_non_reserved_keys
+            evicted = {
+                k: v for k, v in observables.items()
+                if k not in kept_or_reserved
+            }
             observables = {
                 k: v for k, v in observables.items()
                 if k in kept_or_reserved
             }
         case_state["observables"] = observables
-        return json.dumps(case_state)
+        return json.dumps(case_state), evicted
 
     async def _resolve_max_observables(self) -> int:
         """Resolve the per-branch observables cap via ConfigRegistry.
@@ -510,6 +551,28 @@ class ToolExecutorHelpersBase:
             branch.updated_at = utc_now()
             uow.session.add(branch)
             await uow.commit()
+
+    async def _on_observables_evicted(
+        self,
+        investigation_id: str,
+        branch_id: str,
+        at_turn: int | None,
+        evicted: dict[str, Any],
+    ) -> None:
+        """Hook: observations just evicted from the live case_state.
+
+        Called after the result+observables UoW commits, with the
+        non-reserved observables the storage cap dropped this merge. The
+        base does nothing. A module executor overrides this to burn each
+        evicted observation into its workspace-scoped semantic store so
+        the observation stays retrievable by query after it leaves working
+        memory, carrying provenance about the prior work that produced it
+        (investigation, branch, turn, observable key). Best-effort by
+        contract: an override MUST NOT raise -- the tool result is already
+        persisted, so a store failure must only log.
+        """
+        del investigation_id, branch_id, at_turn, evicted  # base no-op
+        return None
 
     # ---- merged-dispatch hooks (subclasses override) --------------------
     async def _hard_block_repeat_limit(self) -> int | None:
