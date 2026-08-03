@@ -66,6 +66,38 @@ _DEFAULT_MAX_TURNS = 3
 # root-cause / IOC / timeline outcomes.
 _PANEL_OUTCOME_KIND = "panel_finding"
 
+# Cap on how many prior patterns show up in the branch's first-turn
+# context message. The panel researcher body is still a stub; a big
+# retrieval dump would balloon the message table without any consumer
+# reading it. Ten is enough to prove surfacing works and matches the
+# ``k=10`` passed to ``PatternStore.applicable()`` in the setup.
+_PATTERN_SURFACE_LIMIT = 10
+
+
+def _render_applicable_patterns_block(
+    patterns: list[dict[str, Any]],
+) -> str:
+    """Render a compact ``kind | summary`` bullet list for the branch turn.
+
+    Returns an empty string on an empty / non-list input so the caller
+    can concatenate without a guard. Malformed entries (non-dict, missing
+    fields) are skipped rather than raising -- the setup layer already
+    guarantees ``model_dump(mode="json")`` output, this is defense in
+    depth against a resumed cursor with a hand-edited state row.
+    """
+    if not patterns:
+        return ""
+    lines: list[str] = ["Applicable prior patterns (RFC-12):"]
+    for entry in patterns[:_PATTERN_SURFACE_LIMIT]:
+        if not isinstance(entry, dict):
+            continue
+        summary = str(entry.get("summary") or "").strip() or "(no summary)"
+        kind = str(entry.get("kind") or "unspecified")
+        lines.append(f"- [{kind}] {summary}")
+    if len(lines) == 1:  # only the header survived -- nothing worth surfacing
+        return ""
+    return "\n".join(lines)
+
 
 async def _read_max_turns() -> int:
     """Resolve the panel per-task turn cap from the forensics namespace."""
@@ -213,22 +245,42 @@ def state_forensics_panel_loop(next_state: str) -> Any:
             investigation_id,
         )
 
+        # RFC-12 setup threads prior patterns into the loop via the
+        # state input; validate + coerce to a list of dicts so a
+        # corrupted resume (non-list, wrong element type) still leaves
+        # the loop functional with an empty surface.
+        raw_patterns = input.get("applicable_patterns")
+        applicable_patterns: list[dict[str, Any]] = (
+            [p for p in raw_patterns if isinstance(p, dict)]
+            if isinstance(raw_patterns, list)
+            else []
+        )
+        patterns_block = _render_applicable_patterns_block(applicable_patterns)
+
         max_turns = await _read_max_turns()
         exit_reason = "max_turns"
         outcome_id: str | None = None
 
         for turn_attempt in range(1, max_turns + 1):
             await _bump_turn_count(branch_id)
+            base_text = (
+                f"{persona_voice} role -- turn {turn_attempt}: reviewing "
+                "the forensic evidence in role and preparing a panel "
+                "submission."
+            )
+            # Surface prior patterns on the first turn only -- the
+            # researcher body is a stub, so re-attaching the same block
+            # every turn would just repeat itself in the message log.
+            if turn_attempt == 1 and patterns_block:
+                turn_text = f"{base_text}\n\n{patterns_block}"
+            else:
+                turn_text = base_text
             await _record_turn_message(
                 investigation_id=investigation_id,
                 branch_id=branch_id,
                 persona_voice=persona_voice,
                 turn_number=turn_attempt,
-                text=(
-                    f"{persona_voice} role -- turn {turn_attempt}: reviewing "
-                    "the forensic evidence in role and preparing a panel "
-                    "submission."
-                ),
+                text=turn_text,
             )
             # Panel roles converge fast: submit a draft on the first turn
             # so the sibling-review quorum runs on real drafts. A follow-up

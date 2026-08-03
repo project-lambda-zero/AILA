@@ -163,6 +163,7 @@ class ForensicsModule(ModuleProtocol):
                 AgentStepRecord,
                 AnswerCandidateRecord,
                 ArtifactRecord,
+                ForensicsPatternRecord,
                 ForensicsProjectRecord,
                 InvestigationRunRecord,
                 LeadRecord,
@@ -172,6 +173,7 @@ class ForensicsModule(ModuleProtocol):
             schema_registry.push(
                 ForensicsProjectRecord,
                 ProjectEvidenceRecord,
+                ForensicsPatternRecord,
                 ArtifactRecord,
                 LeadRecord,
                 InvestigationRunRecord,

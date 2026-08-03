@@ -25,8 +25,13 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
+from aila.modules.forensics.contracts.pattern import (
+    ForensicsPatternCreate,
+    ForensicsPatternKind,
+)
 from aila.modules.forensics.contracts.status import InvestigationStatus
 from aila.modules.forensics.db_models import (
     ForensicsInvestigationBranchRecord,
@@ -38,7 +43,11 @@ from aila.modules.forensics.services.outcome_review import (
     OUTCOME_STATE_DRAFT,
     OUTCOME_STATE_REJECTED,
     evaluate_quorum,
+    summarize_outcome_for_review,
 )
+from aila.modules.forensics.services.pattern_store import PatternStore
+from aila.platform.eval.experience_writer import ExperienceWriter
+from aila.platform.services.factory import ServiceFactory
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import RESERVED_SUCCEEDED, StateResult
 
@@ -56,6 +65,78 @@ async def _load_draft_outcome_ids(investigation_id: str) -> list[str]:
             )
         )).all()
     return [str(rid) for rid in rows]
+
+
+async def _load_outcome_payload(outcome_id: str) -> str | None:
+    """Return the raw ``payload_json`` string for one outcome, or ``None``.
+
+    Used by the RFC-08 record_experience hook to derive the pattern body
+    from the same field ``summarize_outcome_for_review`` reads for sibling
+    review prompts, so the pattern catalog carries the same finding text
+    the panel deliberated on.
+    """
+    async with UnitOfWork() as uow:
+        row = (await uow.session.exec(
+            _select(ForensicsInvestigationOutcomeRecord.payload_json).where(
+                ForensicsInvestigationOutcomeRecord.id == outcome_id,
+            )
+        )).first()
+    if row is None:
+        return None
+    return str(row or "")
+
+
+async def _record_forensics_experience(
+    *,
+    verdict: Any,
+    investigation_id: str,
+    outcome_id: str,
+    summary: str,
+    body: str,
+) -> None:
+    """RFC-08 step 1 module closure: write a signed pattern on a verdict.
+
+    Forensics has no target row -- the project IS the workspace, so the
+    investigation's ``project_id`` doubles as ``workspace_id`` on the
+    pattern create. Delegates to :class:`ExperienceWriter` with the
+    forensics :class:`PatternStore` + :class:`ForensicsPatternCreate` +
+    :attr:`ForensicsPatternKind.TRIAGE_RULE`. The writer itself skips
+    non-terminal verdicts + empty summary/body, so a still-DRAFT quorum
+    tick or a payload with no finding text is a safe no-op; the emit
+    call site already gates on ``transition_occurred`` for the common
+    still-DRAFT skip.
+    """
+    async with UnitOfWork() as uow:
+        inv = (await uow.session.exec(
+            _select(InvestigationRunRecord).where(
+                InvestigationRunRecord.id == investigation_id,
+            ),
+        )).first()
+    if inv is None or not inv.project_id:
+        _log.warning(
+            "forensics record_experience: investigation/project missing inv=%s",
+            investigation_id,
+        )
+        return
+    writer = ExperienceWriter(
+        pattern_store=PatternStore(knowledge=ServiceFactory().knowledge),
+        pattern_create_cls=ForensicsPatternCreate,
+        pattern_kind=ForensicsPatternKind.TRIAGE_RULE,
+    )
+    result = await writer.record(
+        workspace_id=inv.project_id,
+        investigation_id=investigation_id,
+        verdict=verdict,
+        summary=summary,
+        body=body,
+        team_id=inv.team_id,
+        evidence_refs=[outcome_id],
+    )
+    _log.info(
+        "forensics record_experience outcome=%s pattern=%s polarity=%s "
+        "skipped=%s",
+        outcome_id, result.pattern_id, result.polarity, result.skipped_reason,
+    )
 
 
 async def _load_outcome_states(investigation_id: str) -> dict[str, int]:
@@ -141,17 +222,48 @@ async def state_forensics_panel_emit(
     for outcome_id in draft_ids:
         try:
             result = await evaluate_quorum(outcome_id)
-            _log.info(
-                "forensics_panel_emit quorum inv=%s outcome=%s new_state=%s "
-                "reason=%s",
-                investigation_id, outcome_id, result.new_state,
-                result.transition_reason,
-            )
         except (RuntimeError, ValueError) as exc:
             _log.warning(
                 "forensics_panel_emit quorum FAILED inv=%s outcome=%s err=%s",
                 investigation_id, outcome_id, exc, exc_info=True,
             )
+            continue
+        _log.info(
+            "forensics_panel_emit quorum inv=%s outcome=%s new_state=%s "
+            "reason=%s",
+            investigation_id, outcome_id, result.new_state,
+            result.transition_reason,
+        )
+        # RFC-08 step 1: on a terminal quorum transition (approved or
+        # rejected) hand the verdict + a payload excerpt to the
+        # ExperienceWriter so a signed pattern lands in the forensics
+        # PatternStore. Gated on ``transition_occurred`` so a still-
+        # DRAFT quorum tick does not fire; mirrors the platform
+        # investigation_emit_base gate. Best-effort: never break the
+        # existing finalize path -- a store crash logs + continues.
+        if result.transition_occurred and result.new_state in (
+            OUTCOME_STATE_APPROVED, OUTCOME_STATE_REJECTED,
+        ):
+            try:
+                payload_json = await _load_outcome_payload(outcome_id)
+                excerpt = summarize_outcome_for_review(payload_json)
+                first_line = excerpt.splitlines()[0] if excerpt else ""
+                _summary = (first_line or excerpt)[:400]
+                await _record_forensics_experience(
+                    verdict=result,
+                    investigation_id=investigation_id,
+                    outcome_id=outcome_id,
+                    summary=_summary,
+                    body=excerpt,
+                )
+            except (
+                SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError,
+            ) as exc:
+                _log.warning(
+                    "forensics record_experience FAILED inv=%s outcome=%s "
+                    "err=%s",
+                    investigation_id, outcome_id, exc, exc_info=True,
+                )
 
     finalized_status: str | None = None
     if branch_id and await _is_primary_branch(branch_id):

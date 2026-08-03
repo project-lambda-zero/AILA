@@ -13,6 +13,7 @@ from .investigation import AgentStepRecord, InvestigationRunRecord, WriteUpRecor
 from .message import ForensicsInvestigationMessageRecord
 from .outcome import ForensicsInvestigationOutcomeRecord
 from .outcome_review import ForensicsInvestigationOutcomeReviewRecord
+from .pattern import ForensicsPatternRecord
 from .project import ForensicsProjectRecord, ProjectEvidenceRecord
 from .question import AnswerCandidateRecord
 from .solid_evidence import SolidEvidenceRecord
@@ -38,6 +39,7 @@ __all__ = [
     "ForensicsInvestigationBranchRecord",
     "ForensicsInvestigationMessageRecord",
     "ForensicsInvestigationOutcomeRecord",
+    "ForensicsPatternRecord",
     "ForensicsInvestigationOutcomeReviewRecord",
     "ForensicsProjectRecord",
     "InvestigationRunRecord",

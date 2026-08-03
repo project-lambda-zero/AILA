@@ -50,6 +50,26 @@ operator action.
   pressure since it is augmentation, not a precondition. Wired for the
   vulnerability-research and malware modules through a per-module setup
   resolver; forensics leaves the hook unset. (RFC-12 #49, RFC-24 #24)
+- Malware evidence now reaches the knowledge base. Dispatching a durable
+  malware outcome (a YARA rule, a config-extractor script, a family
+  verdict, or an analysis report) now stores its content in the vector
+  database under a workspace-scoped malware finding namespace, in addition
+  to the module table it already wrote, so a later investigation on the
+  same target can retrieve it by query. The malware pattern proposer now
+  routes every proposed pattern through the shared pattern store, so each
+  pattern pair-writes a queryable row and a semantically retrievable
+  knowledge mirror instead of a table row alone. The writes are
+  best-effort and never fail the dispatch. (RFC-12 #49)
+- Forensics joins the cross-investigation knowledge loop. A new forensics
+  pattern catalog (the forensics_patterns table) stores reusable
+  techniques with a knowledge-base mirror, using the project as the
+  workspace scope. On a terminal panel verdict the module now writes a
+  signed pattern through the shared experience writer (positive on
+  approve, negative on reject), and at panel setup it retrieves applicable
+  prior patterns plus a scope snapshot and surfaces them into the
+  investigation, matching the vulnerability-research and malware modules.
+  The write and the retrieval are best-effort and never break the panel.
+  (RFC-12 #49)
 - Evicted working-memory observations now persist to the knowledge base.
   An investigation keeps a bounded live store of observations; when it
   passes its cap and drops the oldest, each dropped observation is now
