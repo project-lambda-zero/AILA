@@ -19,6 +19,14 @@ operator action.
 
 ### Added
 
+- The knowledge retrieval eval is now runnable end to end (RFC-12 Phase 6).
+  A new `aila eval-retrieval` command builds a recall benchmark from stored
+  findings (query = the originating investigation's question, relevant = the
+  finding's knowledge entry), replays it through the live routed-retrieval
+  path, and reports recall, precision, and MRR at k with a pass/fail verdict
+  against the prior baseline. This turns the record-replay harness from library
+  code into a live gate, so a later retrieval change (ingestion or ranking) is
+  measured before it ships. (RFC-12 #49)
 - A knowledge-base backfill command (RFC-12 Phase 6). The store started empty
   because writes were failing (#37), so findings recorded before the fix never
   reached the vector database. The new `aila backfill-knowledge` command (with

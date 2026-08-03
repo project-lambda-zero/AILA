@@ -1311,6 +1311,68 @@ def backfill_knowledge(
     typer.echo(json.dumps({"vr": result}, indent=2))
 
 
+@app.command("eval-retrieval")
+def eval_retrieval(
+    k: int = typer.Option(10, "--k", help="Cutoff for recall/precision@k."),
+    name: str = typer.Option(
+        "vr-findings", "--name", help="Benchmark display label.",
+    ),
+) -> None:
+    """Score retrieval recall over stored findings (RFC-12 Phase 6).
+
+    Builds a benchmark from stored VR findings (query = originating question,
+    relevant = the finding's knowledge entry), then replays it through the live
+    retrieve_routed path and reports recall/precision/MRR at k.
+    """
+    from .modules.vr.services.retrieval_benchmark import (
+        VR_FINDING_NAMESPACE_GLOB,
+        build_vr_finding_benchmark_cases,
+    )
+    from .platform.eval.retrieval_live import make_retrieve_fn
+    from .platform.eval.retrieval_runner import RetrievalEvalRunner
+
+    async def _run() -> dict[str, object]:
+        cases = await build_vr_finding_benchmark_cases()
+        if not cases:
+            return {
+                "status": "no_cases",
+                "detail": (
+                    "no finding knowledge entries with a resolvable originating "
+                    "question; run 'aila backfill-knowledge' first"
+                ),
+            }
+        runner = RetrievalEvalRunner()
+        bench = await runner.register_benchmark(
+            key="vr_finding_recall", name=name, cases=cases, k=k,
+            created_by="cli",
+        )
+        run = await runner.run(
+            key="vr_finding_recall",
+            benchmark_id=bench.id,
+            candidate_label="live_retrieve_routed",
+            candidate_retrieve_fn=make_retrieve_fn(
+                namespace_patterns=[VR_FINDING_NAMESPACE_GLOB],
+            ),
+        )
+        report = json.loads(run.report_json).get("candidate", {})
+        return {
+            "benchmark_id": bench.id,
+            "run_id": run.id,
+            "cases": len(cases),
+            "k": k,
+            "verdict": run.verdict,
+            "recall_at_k": report.get("recall_at_k"),
+            "precision_at_k": report.get("precision_at_k"),
+            "mrr": report.get("mrr"),
+        }
+
+    try:
+        result = _run_async(_run())
+    except (AILAError, sqlalchemy.exc.SQLAlchemyError, OSError, ValueError) as exc:  # pragma: no cover - typer surface
+        fail(exc)
+    typer.echo(json.dumps(result, indent=2))
+
+
 @schedule_app.command("create")
 def schedule_create(
     target_name: str = typer.Option(..., "--target", help="Target system name to scan."),
