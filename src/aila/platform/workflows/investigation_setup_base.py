@@ -663,6 +663,7 @@ def state_investigation_setup(
                         team_id=inv.team_id,
                         target_kind=target_kind,
                         primary_language=target_lang,
+                        investigation_id=investigation_id,
                     )
                 except (SQLAlchemyError, ImportError, OSError, RuntimeError, ValueError, TypeError) as exc:
                     _log.warning(

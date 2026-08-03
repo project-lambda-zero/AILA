@@ -70,6 +70,7 @@ JOURNAL_KINDS: Final[frozenset[str]] = frozenset(
         "evidence_added",
         "evidence_sealed",
         "operator_message",
+        "knowledge_retrieval",
     }
 )
 

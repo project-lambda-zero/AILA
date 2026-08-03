@@ -19,6 +19,18 @@ operator action.
 
 ### Added
 
+- A retrieval journal for the knowledge base (RFC-12 Phase 5, ASI06
+  governance). When an investigation retrieves prior knowledge, at setup and
+  on demand through the agent retrieve tool, the platform appends an audit
+  record to the append-only journal naming the query, the route, and each
+  hit's entry id, namespace, relevance score, trust tier, and
+  classification. Trust tier is derived from the namespace: observations
+  burned straight off tool output are the lower target-derived tier, while
+  quorum- or promotion-gated findings, audit memos, and patterns are the
+  verified tier. An operator can now audit which prior knowledge, at what
+  trust level, informed a finding. The journal write is best-effort and
+  never blocks retrieval; scope and investigation context are injected
+  server-side, so the agent cannot forge or widen them. (RFC-12 #49)
 - Agentic knowledge retrieval (RFC-12 agentic path). The vulnerability-
   research and malware agents can now call a read-only knowledge.retrieve
   tool mid-turn to pull prior workspace knowledge on demand, alongside

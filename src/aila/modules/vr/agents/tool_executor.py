@@ -136,11 +136,18 @@ class ToolExecutor(ToolExecutorHelpersBase):
             workspace_id, team_id = await self._resolve_workspace_scope(
                 investigation_id,
             )
-            scoped = {k: v for k, v in args.items() if k != "_namespaces"}
+            scoped = {
+                k: v for k, v in args.items()
+                if k not in ("_namespaces", "_journal_context")
+            }
             if workspace_id:
                 scoped["_namespaces"] = vr_knowledge_namespaces(
                     workspace_id, team_id,
                 )
+                scoped["_journal_context"] = {
+                    "investigation_id": investigation_id,
+                    "team_id": team_id,
+                }
             return scoped
         return args
 

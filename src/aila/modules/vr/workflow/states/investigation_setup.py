@@ -140,6 +140,7 @@ async def _resolve_retrieved_knowledge(
     team_id: str | None,
     target_kind: str | None,
     primary_language: str | None,
+    investigation_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Retrieve prior VR knowledge for the RFC-12 RETRIEVED prompt tier.
 
@@ -157,6 +158,10 @@ async def _resolve_retrieved_knowledge(
         routed = await KnowledgeService().retrieve_routed(
             query=query, route="simple", limit=8, min_score=0.3,
             namespaces=namespaces,
+            journal_context={
+                "investigation_id": investigation_id,
+                "team_id": team_id,
+            } if investigation_id else None,
         )
         _CONSECUTIVE_KB_RETRIEVAL_FAILURES = 0
         return [

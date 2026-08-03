@@ -135,6 +135,12 @@ class KnowledgeBridgeTool(Tool):
         limit_int = max(1, min(limit_int, _RETRIEVE_LIMIT_MAX))
         route = kwargs.get("route")
         route_arg = str(route) if route else None
+        # Investigation journal context is injected server-side by the module
+        # executor (alongside _namespaces), never agent-supplied, so the
+        # RFC-12 retrieval journal records the agentic path too.
+        journal_context = kwargs.get("_journal_context")
+        if not isinstance(journal_context, dict):
+            journal_context = None
 
         routed = await KnowledgeService().retrieve_routed(
             query=query,
@@ -142,6 +148,7 @@ class KnowledgeBridgeTool(Tool):
             limit=limit_int,
             min_score=_RETRIEVE_FLOOR,
             namespaces=list(namespaces),
+            journal_context=journal_context,
         )
         results = [
             {

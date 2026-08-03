@@ -19,12 +19,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, or_, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select, update
 
@@ -54,15 +56,109 @@ __all__ = [
     "NAMESPACE_AGENT_PREFIX",
     "NAMESPACE_PLATFORM_PREFIX",
     "NAMESPACE_USER_PREFIX",
+    "TRUST_TIER_TARGET_DERIVED",
+    "TRUST_TIER_VERIFIED",
     "make_agent_namespace",
     "make_platform_namespace",
     "make_user_namespace",
+    "trust_tier_from_namespace",
 ]
+
+# RFC-12 Phase 5 trust tiering. Verified-tier knowledge (findings, audit
+# memos, promoted patterns) is written behind a quorum or an operator
+# promotion; target-derived knowledge (evicted observations burned straight
+# off a tool result) is untrusted input and carries the lower tier. The tier
+# is derived from the namespace ``kind`` segment, so no column or data
+# migration is needed: the ``*.observation.*`` namespaces are target-derived,
+# everything else the modules write is verified. Retrieval journals the tier
+# per hit so an operator can audit what trust level informed a finding.
+TRUST_TIER_VERIFIED = "verified"
+TRUST_TIER_TARGET_DERIVED = "target_derived"
+
+
+def trust_tier_from_namespace(namespace: str | None) -> str:
+    """Map a knowledge namespace to its RFC-12 trust tier.
+
+    ``<module>.observation.*`` namespaces hold observations burned directly
+    from tool output (untrusted input) and return ``target_derived``; every
+    other namespace a module writes (findings, audit memos, patterns) is
+    quorum- or promotion-gated and returns ``verified``. An empty or unknown
+    namespace defaults to ``target_derived`` -- the conservative tier.
+    """
+    if not namespace:
+        return TRUST_TIER_TARGET_DERIVED
+    if ".observation." in namespace:
+        return TRUST_TIER_TARGET_DERIVED
+    return TRUST_TIER_VERIFIED
+
+
+async def _journal_retrieval(
+    *,
+    route: str,
+    query: str,
+    min_score: float,
+    namespaces: list[str] | None,
+    gated: list[dict[str, Any]],
+    journal_context: dict[str, Any],
+    session: AsyncSession | None = None,
+) -> None:
+    """Append a best-effort ``knowledge_retrieval`` journal entry (RFC-12 ASI06).
+
+    Records the query, route, and per-hit provenance (entry id, namespace,
+    score, trust tier, classification) under the investigation's journal chain
+    so an operator can audit which prior knowledge -- and at what trust tier --
+    informed a turn. Never raises: a journal failure must not break retrieval,
+    which is an augmentation, not a precondition.
+    """
+    try:
+        from .journal import JournalEntry, append_or_deadletter
+
+        results = []
+        for hit in gated:
+            prov = hit.get("provenance") or {}
+            ns = hit.get("namespace") or prov.get("namespace")
+            results.append({
+                "entry_id": hit.get("id"),
+                "namespace": ns,
+                "score": round(float(hit.get("score") or 0.0), 4),
+                "trust_tier": trust_tier_from_namespace(ns),
+                "classification": hit.get("classification"),
+            })
+        entry = JournalEntry(
+            kind="knowledge_retrieval",
+            source="knowledge_service",
+            action="retrieve_routed",
+            investigation_id=journal_context.get("investigation_id"),
+            branch_id=journal_context.get("branch_id"),
+            turn_number=journal_context.get("turn_number"),
+            payload={
+                "query": query[:2000],
+                "route": route,
+                "namespaces": list(namespaces or []),
+                "min_score": min_score,
+                "result_count": len(results),
+                "results": results,
+            },
+        )
+        team_id = journal_context.get("team_id")
+        if session is not None:
+            await append_or_deadletter(session, entry=entry, team_id=team_id)
+        else:
+            async with async_session_scope() as scope_session:
+                await append_or_deadletter(
+                    scope_session, entry=entry, team_id=team_id,
+                )
+    except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
+        _log.warning(
+            "knowledge_retrieval journal failed: %s", exc, exc_info=True,
+        )
 
 # HNSW ``ef_search`` at query time (issue #37): the pgvector default (40)
 # under-recalls on a growing corpus. 100 trades a little latency for
 # materially better recall on the cosine-distance retrieval paths.
 _HNSW_EF_SEARCH = 100
+
+_log = logging.getLogger(__name__)
 
 
 def _advisory_lock_key(namespace: str, dedup_key: str) -> int:
@@ -940,6 +1036,7 @@ class KnowledgeService:
         max_hops: int | None = None,
         graph_seed_limit: int = 1,
         session: AsyncSession | None = None,
+        journal_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Adaptive RFC-12 retrieval entrypoint.
 
@@ -1030,7 +1127,7 @@ class KnowledgeService:
             )
             gated = apply_gate_many(hits, entry_rows=rows_by_id)
 
-        return {
+        result = {
             "status": "retrieved",
             "route": chosen.value,
             "query": query.replace(STABLE_CORE_TOKEN_PREFIX, "", 1).strip()
@@ -1040,6 +1137,21 @@ class KnowledgeService:
             "results": gated,
             "hop_bound": hop_bound,
         }
+        # RFC-12 Phase 5 (ASI06): journal what an investigation retrieved so a
+        # finding can cite the prior knowledge that informed it. Only fires
+        # when the caller supplies investigation context; best-effort, never
+        # breaks retrieval.
+        if journal_context:
+            await _journal_retrieval(
+                route=chosen.value,
+                query=query,
+                min_score=min_score,
+                namespaces=namespaces,
+                gated=gated,
+                journal_context=journal_context,
+                session=session,
+            )
+        return result
 
     async def _hydrate_provenance_rows(
         self,
