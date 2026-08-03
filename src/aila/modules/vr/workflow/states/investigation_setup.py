@@ -25,6 +25,7 @@ from aila.modules.vr.services.cve_intel_resolver import (
     extract_cve_ids,
     resolve_cve_intel,
 )
+from aila.modules.vr.services.knowledge_scope import vr_knowledge_namespaces
 from aila.modules.vr.services.pattern_store import PatternStore
 from aila.platform.agents.branch_pool import (
     _strip_directives_from_state,
@@ -130,13 +131,6 @@ _FAILURE_ESCALATION_THRESHOLD: int = 5
 
 _CONSECUTIVE_KB_RETRIEVAL_FAILURES: int = 0
 
-# VR knowledge kinds the outcome dispatcher writes, workspace-scoped
-# (namespace ``vr.<kind>.workspace.<id>``); see outcome_dispatcher.
-_VR_KNOWLEDGE_KINDS: tuple[str, ...] = (
-    "audit_memo", "strategy_descriptor", "crash_triage",
-    "config_delta", "profile_spec",
-)
-
 
 async def _resolve_retrieved_knowledge(
     *,
@@ -157,12 +151,7 @@ async def _resolve_retrieved_knowledge(
     """
     del target_kind, primary_language  # scope is namespace-based, not kind-based
     global _CONSECUTIVE_KB_RETRIEVAL_FAILURES
-    namespaces = [
-        f"vr.{kind}.workspace.{workspace_id}" for kind in _VR_KNOWLEDGE_KINDS
-    ]
-    if team_id:
-        namespaces.append(f"vr.audit_memo.team.{team_id}")
-    namespaces.append("vr.audit_memo.global")
+    namespaces = vr_knowledge_namespaces(workspace_id, team_id)
     try:
         routed = await KnowledgeService().retrieve_routed(
             query=query, route="simple", limit=8, min_score=0.3,

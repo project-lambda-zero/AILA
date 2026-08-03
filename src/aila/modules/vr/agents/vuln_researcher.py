@@ -84,6 +84,7 @@ from aila.platform.mcp.adapters.known_tools import tools_for_language
 from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
 from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
 from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
+from aila.platform.mcp.bridges.knowledge import KnowledgeBridgeTool
 from aila.platform.prompts import LoadedPrompt, PromptNotFoundError, PromptRegistry
 from aila.platform.prompts.pinning import (
     resolve_canary_key_for_investigation,
@@ -2465,8 +2466,14 @@ async def _fetch_tool_specs(
     # RFC-11 -- capability-first resolution when the catalog is
     # populated for the VR scope, else the static name map.
     catalog_applicable = await _applicable_servers_by_capability(target_kind)
-    applicable = catalog_applicable or _applicable_servers_for_kind(target_kind)
+    applicable = set(catalog_applicable or _applicable_servers_for_kind(target_kind))
+    # RFC-12: the read-only knowledge bridge is available on every kind so
+    # the agent can pull prior workspace knowledge on demand regardless of
+    # the code-analysis backend chosen above.
+    applicable.add("knowledge")
     out: dict[str, list[dict[str, Any]]] = {}
+    if "knowledge" in applicable:
+        out["knowledge"] = await KnowledgeBridgeTool().list_tool_specs()
     if "audit_mcp" in applicable:
         specs = await AuditMcpBridgeTool(recorder=record_call).list_tool_specs()
         allowed = tools_for_language("audit_mcp", primary_language)
@@ -2524,7 +2531,9 @@ def _render_available_tools_section(
     pick.
     """
     specialized = set(specialized_tools())
-    applicable = _applicable_servers_for_kind(target_kind)
+    applicable = set(_applicable_servers_for_kind(target_kind))
+    # RFC-12: the read-only knowledge bridge is listed on every kind.
+    applicable.add("knowledge")
     specs_by_server = tool_specs or {}
     parts: list[str] = ["# Available tools\n"]
     if target_kind:

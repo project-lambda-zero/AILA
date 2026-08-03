@@ -32,6 +32,7 @@ from aila.modules.vr.workflow.states.investigation_setup import (
 from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
 from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
 from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
+from aila.platform.mcp.bridges.knowledge import KnowledgeBridgeTool
 from aila.platform.workflows.investigation_loop_base import (
     state_investigation_loop as _build_loop_state,
 )
@@ -88,6 +89,7 @@ def _get_executor() -> ToolExecutor:
             ida=IDABridgeTool(recorder=record_call),
             audit_mcp=AuditMcpBridgeTool(recorder=record_call),
             android_mcp=AndroidMcpBridgeTool(recorder=record_call),
+            knowledge=KnowledgeBridgeTool(recorder=record_call),
         )
     return _EXECUTOR_SINGLETON
 

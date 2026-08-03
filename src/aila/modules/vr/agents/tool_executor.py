@@ -34,6 +34,7 @@ from aila.modules.vr.db_models import (
     VRTargetRecord,
 )
 from aila.modules.vr.services.config_helpers import get_int
+from aila.modules.vr.services.knowledge_scope import vr_knowledge_namespaces
 from aila.platform.agents.tool_execution import (
     ToolExecutionResult,
 )
@@ -41,6 +42,7 @@ from aila.platform.agents.tool_executor import ToolExecutorHelpersBase
 from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
 from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
 from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
+from aila.platform.mcp.bridges.knowledge import KnowledgeBridgeTool
 from aila.platform.uow import UnitOfWork
 
 __all__ = [
@@ -80,6 +82,7 @@ class ToolExecutor(ToolExecutorHelpersBase):
         ida: IDABridgeTool | Any,
         audit_mcp: AuditMcpBridgeTool | Any,
         android_mcp: AndroidMcpBridgeTool | Any,
+        knowledge: KnowledgeBridgeTool | Any | None = None,
     ) -> None:
         self._message_model = VRInvestigationMessageRecord
         self._branch_model = VRInvestigationBranchRecord
@@ -87,7 +90,13 @@ class ToolExecutor(ToolExecutorHelpersBase):
             "ida_headless": ida,
             "audit_mcp": audit_mcp,
             "android_mcp": android_mcp,
+            # RFC-12 agentic path: read-only knowledge retrieval, scoped
+            # server-side in _pre_dispatch_correct_args.
+            "knowledge": knowledge or KnowledgeBridgeTool(),
         }
+        # Per-process LRU: investigation_id -> (workspace_id, team_id) for
+        # server-side knowledge-retrieval scoping.
+        self._inv_workspace_cache: OrderedDict[str, tuple[str, str | None]] = OrderedDict()
         # Per-process LRU: investigation_id -> resolved audit_mcp
         # index_id (or empty string when the investigation's target has
         # no source repo). Filled lazily on first use per investigation.
@@ -115,7 +124,71 @@ class ToolExecutor(ToolExecutorHelpersBase):
         # round-trip that would return "Unknown index" / a missing kwarg).
         if server_id == "audit_mcp":
             return await self._maybe_correct_index_id(investigation_id, args)
+        # RFC-12: inject the workspace-scoped knowledge namespaces SERVER-SIDE
+        # so the agent can never widen retrieval beyond its own workspace.
+        # Any agent-supplied _namespaces is dropped and replaced.
+        if server_id == "knowledge":
+            workspace_id, team_id = await self._resolve_workspace_scope(
+                investigation_id,
+            )
+            scoped = {k: v for k, v in args.items() if k != "_namespaces"}
+            if workspace_id:
+                scoped["_namespaces"] = vr_knowledge_namespaces(
+                    workspace_id, team_id,
+                )
+            return scoped
         return args
+
+    async def _resolve_workspace_scope(
+        self, investigation_id: str,
+    ) -> tuple[str, str | None]:
+        """Resolve investigation -> (workspace_id, team_id) for knowledge
+        retrieval scoping. Returns ``("", None)`` when unresolvable; the
+        knowledge bridge refuses an unscoped call in that case.
+        """
+        cache = self._inv_workspace_cache
+        if investigation_id in cache:
+            cache.move_to_end(investigation_id)
+            return cache[investigation_id]
+        try:
+            async with UnitOfWork() as uow:
+                inv = (await uow.session.exec(
+                    _select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == investigation_id,
+                    ),
+                )).first()
+                if inv is None or not inv.target_id:
+                    return self._cache_workspace_scope(investigation_id, "", None)
+                target = (await uow.session.exec(
+                    _select(VRTargetRecord).where(
+                        VRTargetRecord.id == inv.target_id,
+                    ),
+                )).first()
+                workspace_id = (
+                    str(target.workspace_id)
+                    if target and target.workspace_id else ""
+                )
+                return self._cache_workspace_scope(
+                    investigation_id, workspace_id,
+                    getattr(inv, "team_id", None),
+                )
+        except (SQLAlchemyError, OSError, RuntimeError, AttributeError, ValueError, TypeError) as exc:
+            _log.info(
+                "tool_executor._resolve_workspace_scope: failed for inv=%s "
+                "(%s: %s); knowledge retrieval will be refused",
+                investigation_id, type(exc).__name__, exc, exc_info=True,
+            )
+            return ("", None)
+
+    def _cache_workspace_scope(
+        self, investigation_id: str, workspace_id: str, team_id: str | None,
+    ) -> tuple[str, str | None]:
+        cache = self._inv_workspace_cache
+        cache[investigation_id] = (workspace_id, team_id)
+        cache.move_to_end(investigation_id)
+        while len(cache) > self._INV_INDEX_CACHE_MAX:
+            cache.popitem(last=False)
+        return (workspace_id, team_id)
 
     def _augment_tool_error(
         self, server_id: str, tool_name: str, args: dict[str, Any],

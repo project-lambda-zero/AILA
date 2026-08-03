@@ -255,11 +255,22 @@ ANDROID_MCP_TOOLS: frozenset[str] = frozenset({
 })
 
 
+# RFC-12: the in-process knowledge bridge exposes exactly one read-only
+# tool -- knowledge.retrieve -- so a reasoning agent can pull prior
+# workspace-scoped knowledge on demand. No mutating tool exists on this
+# server; the generic adapter renders the {status, route, count, results}
+# response.
+KNOWLEDGE_TOOLS: frozenset[str] = frozenset({
+    "retrieve",
+})
+
+
 # Indexed by server_id used by the bridge dispatch.
 KNOWN_TOOLS: dict[str, frozenset[str]] = {
     "ida_headless": IDA_HEADLESS_TOOLS,
     "audit_mcp": AUDIT_MCP_TOOLS,
     "android_mcp": ANDROID_MCP_TOOLS,
+    "knowledge": KNOWLEDGE_TOOLS,
 }
 
 

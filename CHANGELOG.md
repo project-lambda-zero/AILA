@@ -19,6 +19,16 @@ operator action.
 
 ### Added
 
+- Agentic knowledge retrieval (RFC-12 agentic path). The vulnerability-
+  research and malware agents can now call a read-only knowledge.retrieve
+  tool mid-turn to pull prior workspace knowledge on demand, alongside
+  their code-index tools. The tool routes through the gated retrieve_routed
+  path (relevance-floored + sanitize/classify), exposes no write action,
+  and its search scope is injected server-side from the investigation's
+  workspace, so an agent (or a prompt-injected instruction) cannot widen
+  retrieval beyond its own workspace. Delivered as an in-process bridge
+  registered on the agent tool surface next to the code-index bridges.
+  (RFC-12 #49, RFC-11 #35, #43)
 - Four RFC-12 knowledge-base honesty guardrails in the CI audit:
   second_embedding_path (an embedding provider built outside the canonical
   embedding + knowledge services), vector_without_provenance (a
