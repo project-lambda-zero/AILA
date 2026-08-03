@@ -142,12 +142,19 @@ async def _journal_retrieval(
         )
         team_id = journal_context.get("team_id")
         if session is not None:
+            # Caller owns the transaction: append flushes into it and the
+            # caller commits. Do not commit here.
             await append_or_deadletter(session, entry=entry, team_id=team_id)
         else:
+            # Own the transaction: append flushes but never commits (its
+            # contract), and async_session_scope does not auto-commit, so the
+            # journal row must be committed explicitly or it rolls back on
+            # scope exit.
             async with async_session_scope() as scope_session:
                 await append_or_deadletter(
                     scope_session, entry=entry, team_id=team_id,
                 )
+                await scope_session.commit()
     except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
         _log.warning(
             "knowledge_retrieval journal failed: %s", exc, exc_info=True,
