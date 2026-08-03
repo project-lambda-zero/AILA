@@ -19,6 +19,16 @@ operator action.
 
 ### Added
 
+- Four RFC-12 knowledge-base honesty guardrails in the CI audit:
+  second_embedding_path (an embedding provider built outside the canonical
+  embedding + knowledge services), vector_without_provenance (a
+  KnowledgeEntryRecord stored with an embedding but no model_id),
+  retrieval_without_gate (agent-runtime code using the raw retrieve instead
+  of the relevance-floored, sanitize/classify gated retrieve_routed), and
+  unsanitized_retrieved_content (a retrieve_routed body that stops applying
+  the gate). Each self-exempts or scopes to the surface it locks in, so the
+  one embedding path, per-vector provenance, and gated agent retrieval stay
+  enforced. (RFC-12 #49, #37, #43)
 - The knowledge base read loop. An investigation now retrieves prior
   knowledge (audit memos, findings, strategy notes from earlier
   investigations on the same workspace's similar targets) at setup and

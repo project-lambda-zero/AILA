@@ -302,6 +302,139 @@ class TestAgentEnvRead:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Rules 64-67 -- RFC-12 knowledge-base guardrails
+# ---------------------------------------------------------------------------
+
+
+class TestSecondEmbeddingPath:
+    """Rule 64: an embedding provider built outside the canonical files."""
+
+    def test_provider_outside_service_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/services/rogue_embed.py",
+            "def embed(text):\n"
+            "    provider = resolve_provider('bge-m3')\n"
+            "    return provider.encode(text)\n",
+        )
+        assert "second_embedding_path" in _audit(src)
+
+    def test_sentence_transformer_outside_service_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/tools/rogue.py",
+            "def build():\n"
+            "    return SentenceTransformer('BAAI/bge-m3')\n",
+        )
+        assert "second_embedding_path" in _audit(src)
+
+    def test_provider_in_embedding_service_clean(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/services/embedding.py",
+            "def resolve_provider(name=None):\n"
+            "    return SentenceTransformer('BAAI/bge-m3')\n",
+        )
+        assert "second_embedding_path" not in _audit(src)
+
+    def test_provider_in_knowledge_service_clean(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/services/knowledge.py",
+            "def _init(self):\n"
+            "    self._provider = resolve_provider(None)\n",
+        )
+        assert "second_embedding_path" not in _audit(src)
+
+
+class TestVectorWithoutProvenance:
+    """Rule 65: a KnowledgeEntryRecord built with an embedding but no model_id."""
+
+    def test_embedding_without_model_id_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/tools/rogue_store.py",
+            "def store(ns, content, vec):\n"
+            "    return KnowledgeEntryRecord(namespace=ns, content=content, embedding=vec)\n",
+        )
+        assert "vector_without_provenance" in _audit(src)
+
+    def test_embedding_with_model_id_clean(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/services/knowledge.py",
+            "def store(ns, content, vec, mid):\n"
+            "    return KnowledgeEntryRecord(namespace=ns, content=content, embedding=vec, model_id=mid)\n",
+        )
+        assert "vector_without_provenance" not in _audit(src)
+
+    def test_record_without_embedding_clean(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/tools/x.py",
+            "def touch(ns):\n"
+            "    return KnowledgeEntryRecord(namespace=ns, content='x')\n",
+        )
+        assert "vector_without_provenance" not in _audit(src)
+
+
+class TestRetrievalWithoutGate:
+    """Rule 66: agent-scope code using the raw retrieve instead of routed."""
+
+    def test_raw_retrieve_in_agent_scope_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/agents/rogue_agent.py",
+            "async def pull(self, q):\n"
+            "    return await self._knowledge.retrieve(query=q)\n",
+        )
+        assert "retrieval_without_gate" in _audit(src)
+
+    def test_routed_retrieve_in_agent_scope_clean(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/agents/good_agent.py",
+            "async def pull(self, q):\n"
+            "    return await self._knowledge.retrieve_routed(query=q)\n",
+        )
+        assert "retrieval_without_gate" not in _audit(src)
+
+    def test_raw_retrieve_outside_agent_scope_clean(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/services/cve_service.py",
+            "async def pull(self, q):\n"
+            "    return await self._knowledge.retrieve(query=q)\n",
+        )
+        assert "retrieval_without_gate" not in _audit(src)
+
+
+class TestUnsanitizedRetrievedContent:
+    """Rule 67: retrieve_routed body that drops the sanitize/classify gate."""
+
+    def test_routed_without_gate_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/services/knowledge.py",
+            "async def retrieve_routed(self, query):\n"
+            "    return await self.retrieve(query)\n",
+        )
+        assert "unsanitized_retrieved_content" in _audit(src)
+
+    def test_routed_with_gate_clean(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/services/knowledge.py",
+            "async def retrieve_routed(self, query):\n"
+            "    hits = await self.retrieve(query)\n"
+            "    return apply_gate_many(hits)\n",
+        )
+        assert "unsanitized_retrieved_content" not in _audit(src)
+
+
 def test_full_audit_exit_zero_and_clean() -> None:
     """The full CLI audit on ``src/aila`` must exit 0 with no findings.
 

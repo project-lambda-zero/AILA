@@ -65,6 +65,10 @@ Detects thirty-six categories of structural dishonesty:
 61. promotion_without_gate -- a function flips a lifecycle version to production (a ``LifecycleTransitionRecord(to_stage=LifecycleStage.PRODUCTION)`` construct, or a ``set_alias(..., "production", ...)`` call) without referencing the eval + quorum gate markers (``_passing_evaluate``, ``_distinct_approver_count``, ``EvalRunner``, ``agent_promotion_quorum``, ``AgentLifecycleController``). Every promotion must pass the gate; delegate to :meth:`AgentLifecycleController.promote`.
 62. untransitioned_stage_change -- a function assigns a :class:`LifecycleStage` value (``.lifecycle_stage = ...`` attribute assignment, or ``stage=`` / ``to_stage=`` / ``lifecycle_stage=`` kwarg carrying a ``LifecycleStage.<X>`` member) without also constructing a :class:`LifecycleTransitionRecord` or calling ``._journal(...)`` in the same body. Every stage move must be journaled (RFC-10).
 63. canary_below_min_sample -- a function whose name matches ``promote_from_canary`` / ``promote_canary`` / ``flip_canary`` has no min-sample gate marker (``min_sample`` / ``min_samples`` / ``min_canary_sample`` / ``sample_count`` / ``signal_count`` / ``agent_canary_min_sample``) in its body. RFC-10 requires canary promotion to verify a minimum observed-signal count before flipping so a candidate that never saw traffic cannot be promoted on an empty history.
+64. second_embedding_path -- an embedding provider (``resolve_provider`` / ``get_embedding_provider`` / ``BGEProvider`` / ``MiniLMProvider`` / ``SentenceTransformer``) is constructed outside the canonical ``platform/services/embedding.py`` + ``platform/services/knowledge.py``. RFC-12 / #37 require ONE embedding path; a second provider writes incompatible vectors into the shared knowledge table.
+65. vector_without_provenance -- a ``KnowledgeEntryRecord`` is constructed with an ``embedding=`` kwarg but no ``model_id=`` kwarg. RFC-12 / #37 require every stored vector to carry its model provenance so a model swap triggers a re-embed sweep instead of silent corpus invalidation.
+66. retrieval_without_gate -- agent-runtime code (``platform/agents/**`` or ``modules/*/agents/**``) calls the raw ``.retrieve(`` instead of ``retrieve_routed``. RFC-12 / #43: only the routed path applies the relevance floor + sanitize/classify gate, so agent-reachable retrieval must go through it.
+67. unsanitized_retrieved_content -- a ``retrieve_routed`` definition's body no longer references the sanitize/classify gate (``apply_gate`` / ``apply_gate_many``). RFC-12 / #43: the routed entry point must gate every hit so retrieved content cannot reach a prompt unsanitised.
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -1665,6 +1669,45 @@ def _platform_base_field_names(base_file: Path, base_class: str) -> frozenset[st
 # ---------------------------------------------------------------------------
 # Main auditor class
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# RFC-12 knowledge-base guardrails (rules 64-67).
+#
+# The knowledge base must have ONE embedding path, provenance on every
+# stored vector, a relevance-floored + sanitize/classify gated retrieval on
+# the agent surface, and the gate permanently wired into the routed retrieval
+# entry point. Each rule self-exempts or scopes to the surface it locks in.
+# ---------------------------------------------------------------------------
+
+# Rule 64 -- second_embedding_path. An embedding provider constructed or
+# selected outside the canonical embedding + knowledge service files means a
+# second model can write vectors into the shared table, making cross-model
+# cosine similarity meaningless (#37).
+_EMBEDDING_PROVIDER_CALLEES: frozenset[str] = frozenset({
+    "resolve_provider", "get_embedding_provider",
+    "BGEProvider", "MiniLMProvider", "SentenceTransformer",
+})
+_EMBEDDING_PATH_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
+    "platform/services/embedding.py",
+    "platform/services/knowledge.py",
+)
+
+# Rule 65 -- vector_without_provenance. A KnowledgeEntryRecord constructed
+# with an embedding but no model_id stores a vector that a later model swap
+# silently invalidates with no detection or re-embed trigger (#37).
+_KNOWLEDGE_RECORD_NAME: str = "KnowledgeEntryRecord"
+
+# Rule 66 -- retrieval_without_gate. Agent-scope code must retrieve through
+# retrieve_routed (which applies the relevance floor + sanitize/classify
+# gate), not the raw hybrid retrieve which returns ungated, unfloored hits.
+_RAW_RETRIEVE_METHOD: str = "retrieve"
+_ROUTED_RETRIEVE_METHOD: str = "retrieve_routed"
+
+# Rule 67 -- unsanitized_retrieved_content. The routed retrieval entry point
+# must keep applying the gate; a retrieve_routed body that stops calling
+# apply_gate would return raw content into a prompt (#43).
+_KNOWLEDGE_GATE_CALLS: frozenset[str] = frozenset({"apply_gate", "apply_gate_many"})
 
 
 class _HonestyVisitor(ast.NodeVisitor):
@@ -4469,6 +4512,125 @@ class _HonestyVisitor(ast.NodeVisitor):
                 ),
             )
 
+    def _check_second_embedding_path(self, tree: ast.Module) -> None:
+        """Rule 64: second_embedding_path -- an embedding provider is
+        constructed or selected outside the canonical embedding +
+        knowledge service files.
+
+        RFC-12 / #37 require ONE embedding path: a second provider
+        writing vectors into the shared knowledge table makes
+        cross-model cosine similarity meaningless. The embedding
+        factory (:mod:`platform/services/embedding.py`) and the
+        service that owns the store (:mod:`platform/services/
+        knowledge.py`) are the only files that may build a provider.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if any(normalized.endswith(s) for s in _EMBEDDING_PATH_SELF_EXEMPT_SUFFIXES):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = _call_callee_simple_name(node)
+            if name in _EMBEDDING_PROVIDER_CALLEES:
+                self._emit(
+                    node.lineno,
+                    "second_embedding_path",
+                    (
+                        f"second_embedding_path: embedding provider '{name}' "
+                        "constructed outside the canonical embedding/knowledge "
+                        "service -- a second embedding path writes incompatible "
+                        "vectors into the shared table (#37); embed through "
+                        "KnowledgeService.embed"
+                    ),
+                )
+
+    def _check_vector_without_provenance(self, tree: ast.Module) -> None:
+        """Rule 65: vector_without_provenance -- a KnowledgeEntryRecord is
+        constructed with an embedding but no model_id.
+
+        RFC-12 / #37 require every stored vector to carry its
+        provenance (``model_id``) so a model swap triggers a re-embed
+        sweep instead of silently invalidating the corpus. A record
+        built with an ``embedding=`` kwarg but no ``model_id=`` kwarg
+        stores an un-attributed vector.
+        """
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if _call_callee_simple_name(node) != _KNOWLEDGE_RECORD_NAME:
+                continue
+            kwargs = {kw.arg for kw in node.keywords if kw.arg}
+            if "embedding" in kwargs and "model_id" not in kwargs:
+                self._emit(
+                    node.lineno,
+                    "vector_without_provenance",
+                    (
+                        f"vector_without_provenance: {_KNOWLEDGE_RECORD_NAME} "
+                        "constructed with an embedding but no model_id -- a "
+                        "stored vector without provenance is silently "
+                        "invalidated by a model swap (#37)"
+                    ),
+                )
+
+    def _check_retrieval_without_gate(self, tree: ast.Module) -> None:
+        """Rule 66: retrieval_without_gate -- agent-scope code calls the
+        raw hybrid retrieve instead of the gated routed path.
+
+        RFC-12 / #43: the raw ``.retrieve(`` returns ungated,
+        unfloored hits; only ``retrieve_routed`` applies the relevance
+        floor + sanitize/classify gate. Agent-runtime code
+        (``platform/agents/**`` or ``modules/*/agents/**``) that
+        reaches the knowledge base must go through the routed path so
+        retrieved content is floored + sanitised before it can enter
+        a prompt.
+        """
+        if not _AGENT_RUNTIME_SCOPE_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if isinstance(func, ast.Attribute) and func.attr == _RAW_RETRIEVE_METHOD:
+                self._emit(
+                    node.lineno,
+                    "retrieval_without_gate",
+                    (
+                        "retrieval_without_gate: agent-scope code calls raw "
+                        "'.retrieve(' -- use 'retrieve_routed' so retrieved "
+                        "hits are relevance-floored and sanitize/classify "
+                        "gated before reaching a prompt (#43)"
+                    ),
+                )
+
+    def _check_unsanitized_retrieved_content(self, tree: ast.Module) -> None:
+        """Rule 67: unsanitized_retrieved_content -- the routed retrieval
+        entry point stops applying the sanitize/classify gate.
+
+        RFC-12 / #43: ``retrieve_routed`` is the single agent-facing
+        retrieval entry, and every hit it returns MUST pass
+        ``apply_gate`` / ``apply_gate_many`` so ``sanitized_content``
+        is guaranteed. A ``retrieve_routed`` definition whose body no
+        longer references the gate would hand raw retrieved content to
+        a caller that emits it into a prompt.
+        """
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if node.name != _ROUTED_RETRIEVE_METHOD:
+                continue
+            if _call_names_in_body(node) & _KNOWLEDGE_GATE_CALLS:
+                continue
+            self._emit(
+                node.lineno,
+                "unsanitized_retrieved_content",
+                (
+                    f"unsanitized_retrieved_content: '{_ROUTED_RETRIEVE_METHOD}' "
+                    "does not apply the sanitize/classify gate (apply_gate / "
+                    "apply_gate_many) -- retrieved content would reach a prompt "
+                    "unsanitised (#43)"
+                ),
+            )
+
 
 class HonestyAuditor:
     """Audit one or more Python source files for structural dishonesty.
@@ -4578,6 +4740,13 @@ class HonestyAuditor:
         visitor._check_promotion_without_gate(tree)
         visitor._check_untransitioned_stage_change(tree)
         visitor._check_canary_below_min_sample(tree)
+        # Rules 64-67: RFC-12 knowledge-base integrity + retrieval gate.
+        # Every file is in scope; each rule self-exempts or scopes to the
+        # surface it locks in.
+        visitor._check_second_embedding_path(tree)
+        visitor._check_vector_without_provenance(tree)
+        visitor._check_retrieval_without_gate(tree)
+        visitor._check_unsanitized_retrieved_content(tree)
         return visitor.findings
 
     def audit_directory(self, directory: Path) -> list[Finding]:
