@@ -83,8 +83,9 @@ class KnowledgeBridgeTool(Tool):
                         "type": "string",
                         "required": False,
                         "description": (
-                            "Optional route override: 'simple' | 'graph' | "
-                            "'stable_core'. Omit to auto-classify."
+                            "Optional route override: 'simple' (hybrid) | "
+                            "'graph' (multi-hop). Both stay within your "
+                            "workspace scope. Omit to auto-classify."
                         ),
                     },
                 ],

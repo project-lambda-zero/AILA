@@ -10,6 +10,7 @@ import logging
 import os
 from typing import Any
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
 from aila.modules.vr._task_queue import default_task_queue
@@ -166,7 +167,7 @@ async def _resolve_retrieved_knowledge(
             }
             for h in routed.get("results", [])
         ]
-    except (ImportError, OSError, RuntimeError, ValueError, TypeError) as exc:
+    except (SQLAlchemyError, ImportError, OSError, RuntimeError, ValueError, TypeError) as exc:
         _CONSECUTIVE_KB_RETRIEVAL_FAILURES += 1
         if _CONSECUTIVE_KB_RETRIEVAL_FAILURES >= _FAILURE_ESCALATION_THRESHOLD:
             _log.error(

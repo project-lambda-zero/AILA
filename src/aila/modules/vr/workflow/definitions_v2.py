@@ -134,13 +134,23 @@ def _setup_builder(next_state: str) -> HandlerFn:
 
 def _loop_builder(phase: PhaseSpec, next_state: str) -> HandlerFn:
     """Bind the VR loop handler with the phase mission, cap, and tool regime."""
+    # RFC-12: the read-only knowledge bridge is a universal server, reachable
+    # in every phase (workspace-scoped server-side, no write path). Union it
+    # into the phase tool gate so agentic knowledge.retrieve is not hard-
+    # rejected by a phase whose allowed_servers lists only code-analysis
+    # backends. A None gate (no phase restriction) already permits it.
+    phase_servers = (
+        (*phase.allowed_servers, "knowledge")
+        if phase.allowed_servers
+        else phase.allowed_servers
+    )
     return _build_loop_state(
         _LOOP_BINDINGS,
         InvestigationStateHooks(),
         next_state=next_state,
         phase_directive=phase.directive,
         phase_max_turns=phase.max_turns,
-        phase_allowed_servers=phase.allowed_servers,
+        phase_allowed_servers=phase_servers,
         phase_strategy_family=phase.strategy_family,
     )
 
