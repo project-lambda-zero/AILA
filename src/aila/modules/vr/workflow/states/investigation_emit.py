@@ -21,16 +21,20 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from sqlmodel import select as _select
+
 from aila.modules.vr._task_queue import default_task_queue
 from aila.modules.vr.agents.outcome_dispatcher import OutcomeDispatcher
 from aila.modules.vr.agents.pattern_extractor import (
     PatternExtractor,
 )
+from aila.modules.vr.contracts.pattern import PatternKind, VRPatternCreate
 from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
     VRInvestigationMessageRecord,
     VRInvestigationOutcomeRecord,
     VRInvestigationRecord,
+    VRTargetRecord,
 )
 from aila.modules.vr.services.config_helpers import get_float, get_int
 from aila.modules.vr.services.outcome_review import (
@@ -40,7 +44,9 @@ from aila.modules.vr.services.outcome_review import (
 )
 from aila.modules.vr.services.pattern_store import PatternStore
 from aila.modules.vr.workflow.finalize import finalize_investigation
+from aila.platform.eval.experience_writer import ExperienceWriter
 from aila.platform.services.factory import ServiceFactory
+from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.investigation_emit_base import (
     state_investigation_emit as _build_emit_state,
 )
@@ -62,6 +68,68 @@ _log = logging.getLogger(__name__)
 # circular. First-call build defers them to a point where every module is
 # fully imported.
 _HANDLER: Any = None
+
+
+async def _record_experience(
+    *,
+    verdict: Any,
+    investigation_id: str,
+    outcome_id: str,
+    summary: str,
+    body: str,
+) -> None:
+    """RFC-08 step 1 module closure: write a signed pattern on a verdict.
+
+    Resolves the investigation's ``workspace_id`` via the
+    investigation -> target chain (target owns ``workspace_id`` on VR),
+    then delegates to :class:`ExperienceWriter` with VR's PatternStore
+    + ``VRPatternCreate`` + ``PatternKind.TRIAGE_RULE``. The writer
+    itself skips non-terminal states + empty summary/body so a DRAFT
+    verdict is a safe no-op; the emit_base call site already gates on
+    ``transition_occurred`` for the common still-DRAFT skip.
+    """
+    async with UnitOfWork() as uow:
+        inv = (await uow.session.exec(
+            _select(VRInvestigationRecord).where(
+                VRInvestigationRecord.id == investigation_id,
+            ),
+        )).first()
+        if inv is None:
+            _log.warning(
+                "vr record_experience: investigation %s missing",
+                investigation_id,
+            )
+            return
+        target = (await uow.session.exec(
+            _select(VRTargetRecord).where(
+                VRTargetRecord.id == inv.target_id,
+            ),
+        )).first()
+    if target is None or not target.workspace_id:
+        _log.warning(
+            "vr record_experience: target/workspace missing inv=%s",
+            investigation_id,
+        )
+        return
+
+    writer = ExperienceWriter(
+        pattern_store=PatternStore(knowledge=ServiceFactory().knowledge),
+        pattern_create_cls=VRPatternCreate,
+        pattern_kind=PatternKind.TRIAGE_RULE,
+    )
+    result = await writer.record(
+        workspace_id=target.workspace_id,
+        investigation_id=investigation_id,
+        verdict=verdict,
+        summary=summary,
+        body=body,
+        team_id=inv.team_id,
+        evidence_refs=[outcome_id],
+    )
+    _log.info(
+        "vr record_experience outcome=%s pattern=%s polarity=%s skipped=%s",
+        outcome_id, result.pattern_id, result.polarity, result.skipped_reason,
+    )
 
 
 def _build_emit_handler() -> Any:
@@ -93,6 +161,7 @@ def _build_emit_handler() -> Any:
         post_draft_review_request=post_draft_review_request,
         finalize=finalize_investigation,
         branch_table="vr_investigation_branches",
+        record_experience=_record_experience,
     )
     # VR has no post-completion proposers.
     return _build_emit_state(bindings, InvestigationStateHooks())

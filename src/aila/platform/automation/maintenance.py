@@ -25,6 +25,7 @@ __all__ = [
     "HealthReport",
     "platform_health_check",
     "register_maintenance_actions",
+    "run_calibration_sweep",
     "tool_storage_prune",
 ]
 
@@ -38,6 +39,7 @@ from redis.exceptions import RedisError
 from sqlalchemy import text
 
 from aila.platform.automation.registry import AutomationRegistry
+from aila.platform.eval.calibration_sweep import run_calibration_sweep
 from aila.platform.services.redis_pool import get_redis, pool_available
 from aila.platform.tools.pruner import ToolStoragePruneReport, prune_tool_storage
 from aila.storage.database import async_session_scope
@@ -275,6 +277,25 @@ def register_maintenance_actions(registry: AutomationRegistry) -> None:
             "Prune expired and overflowing rows from platform tool storage "
             "(permanent memory + generic artifacts) per the "
             "tool_storage_* platform config knobs"
+        ),
+        module_id="platform",
+    )
+    # RFC-08 step 2 wiring: aggregate recent per-outcome_kind accept/reject
+    # review history into versioned CalibrationProposalRecord rows. Advisory
+    # only -- proposals are persisted; the module's live threshold is never
+    # mutated by this action. Inert until an operator creates a schedule via
+    # POST /automation/schedules; the register call alone does not run the
+    # sweep. Mirrors the platform.tool_storage_prune registration model.
+    registry.register_action(
+        action_id="platform.calibration_proposer_sweep",
+        handler_fn=run_calibration_sweep,
+        description=(
+            "Aggregate recent per-outcome_kind accept/reject review history "
+            "across module-owned outcome + review tables into versioned "
+            "CalibrationProposalRecord rows (RFC-08 step 2). Proposal only -- "
+            "the live confidence threshold is never mutated by this action; "
+            "promoting a proposal into the runtime config is a separate, "
+            "gated admin step per the propose-and-gate contract."
         ),
         module_id="platform",
     )

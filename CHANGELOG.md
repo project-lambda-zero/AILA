@@ -406,6 +406,22 @@ operator action.
 
 ### Changed
 
+- The RFC-07 ToolRouter now sits on the live MCP tool-dispatch path. The
+  agent tool executor routes a bridge call through the router when the
+  server resolves to a capability with catalogued instances, so an
+  infra-failed call reroutes to another healthy instance and an instance
+  is disabled after repeated failures; the happy path is unchanged and a
+  single-instance capability passes through directly. Previously the
+  router was implemented but never invoked. (RFC-07)
+- The RFC-08 self-improvement writers now run on live paths. An
+  accept/reject review verdict writes a signed positive/negative pattern
+  through the ExperienceWriter on both verdict paths (the emit-state draft
+  review and a reviewer's mid-turn vote that flips quorum inline), and the
+  CalibrationProposer runs as a schedulable platform automation action
+  (`platform.calibration_proposer_sweep`) that aggregates per-outcome_kind
+  verdict history into a versioned, reversible threshold proposal.
+  Previously both were implemented but never invoked; each new call is
+  wrapped so a failure never affects the investigation. (RFC-08)
 - The malware and forensics investigation flows now run the RFC-13
   discovery-driven dispatch hub. Malware binds its investigate task to
   `malware.investigate.hub`; the forensics full-analysis path resolves

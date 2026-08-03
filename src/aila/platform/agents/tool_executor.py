@@ -38,6 +38,16 @@ from aila.platform.mcp.adapters import (
     get_read_tools,
     registered_tools,
 )
+from aila.platform.mcp.capability_registry import default_capability_registry
+from aila.platform.mcp.client import ResolvedInstance
+from aila.platform.mcp.instance_catalog import (
+    McpInstanceCatalog,
+    decode_capability_tags,
+)
+from aila.platform.runtime.tool_router import (
+    ToolInfraError,
+    ToolRouter,
+)
 from aila.platform.uow import UnitOfWork
 from aila.storage.registry import ConfigRegistry
 
@@ -543,6 +553,235 @@ class ToolExecutorHelpersBase:
         """Bridge base URL embedded in auto-steering messages. Default: standard port."""
         return "http://127.0.0.1:18822"
 
+    # ---- RFC-07 router wiring (subclass hooks) --------------------------
+    # Envelope-error prefixes that indicate INFRA failure (connection
+    # refused / timeout / unreachable). The three bridges CATCH httpx
+    # transport errors and return them as ``{"status": "error",
+    # "error": "Cannot reach ..." | "Timeout (...)" | "Unreachable: ..."}``
+    # envelopes -- see audit_mcp / android_mcp / ida_headless bridges.
+    # The router-mediated dispatch inspects those envelopes and
+    # re-raises them as :class:`ToolInfraError` so the router can
+    # reroute to the next enabled instance. Every OTHER error text
+    # (missing kwargs, resource-not-found, contract violations) is a
+    # semantic failure reroute cannot help with -- the router only
+    # routes AROUND infrastructure, never around tool semantics.
+    _INFRA_ERROR_PREFIXES: tuple[str, ...] = (
+        "Cannot reach ",
+        "Timeout (",
+        "Unreachable:",
+    )
+
+    def _router_module_scope(self) -> str | None:
+        """Return the module id used by the RFC-07 router, or None to disable.
+
+        Default: ``None`` -- the router is inert and every dispatch
+        takes the direct bridge.forward path (byte-identical to
+        pre-wiring). Subclasses override to return their own module id
+        (``"vr"``, ``"malware"``) so router-mediated dispatch reroutes
+        across enabled catalog rows of the same capability and disables
+        an instance after repeated INFRA failures. A ``None`` return
+        preserves the pre-router path so a module that has not
+        published RFC-11 descriptors cannot regress.
+        """
+        return None
+
+    def _get_tool_router(self) -> ToolRouter:
+        """Return the per-executor :class:`ToolRouter`, creating it lazily.
+
+        The router accumulates per-instance consecutive-failure counters
+        used to decide when to flip an instance's ``enabled`` bit off,
+        so it MUST be reused across calls -- a fresh router per call
+        would never accumulate enough failures to trigger the
+        disable-flip. State lives on the executor instance so tests
+        that construct multiple executors get independent counters.
+        """
+        router: ToolRouter | None = getattr(self, "_tool_router", None)
+        if router is None:
+            router = ToolRouter(catalog=McpInstanceCatalog())
+            self._tool_router = router
+        return router
+
+    async def _resolve_router_candidates(
+        self, server_id: str, module_scope: str,
+    ) -> list[ResolvedInstance]:
+        """Return the enabled catalog rows the router should iterate.
+
+        Consults the RFC-11 :func:`default_capability_registry` for a
+        ``(module_scope, server_id)`` descriptor; if the module has not
+        published one, returns ``[]`` so the caller falls back to a
+        direct :meth:`bridge.forward`. Otherwise enumerates every
+        enabled :class:`McpInstanceCatalog` row for the scope, filtered
+        to (a) matching server name and (b) advertising at least one
+        of the descriptor's declared capability tags. Deduplicated by
+        instance id. Empty returns preserve the pre-wiring behaviour.
+        """
+        registry = default_capability_registry()
+        descriptor = next(
+            (
+                decl.descriptor
+                for decl in registry.declarations(module_scope=module_scope)
+                if decl.descriptor.name == server_id
+            ),
+            None,
+        )
+        if descriptor is None:
+            return []
+        catalog = self._get_tool_router()._catalog
+        if catalog is None:
+            return []
+        rows = await catalog.list_instances(
+            module_scope=module_scope, include_disabled=False,
+        )
+        descriptor_tags = frozenset(descriptor.capability_tags)
+        seen_ids: set[str] = set()
+        out: list[ResolvedInstance] = []
+        for row in rows:
+            if row.name != server_id or row.id in seen_ids:
+                continue
+            row_tags = decode_capability_tags(row.capability_tags)
+            if not descriptor_tags.intersection(row_tags):
+                continue
+            endpoint = (row.endpoint or "").strip().rstrip("/")
+            if not endpoint:
+                continue
+            seen_ids.add(row.id)
+            out.append(
+                ResolvedInstance(
+                    url=endpoint,
+                    source="catalog",
+                    instance_id=row.id,
+                    capability_tags=tuple(row_tags),
+                    name=row.name,
+                    module_scope=row.module_scope,
+                ),
+            )
+        return out
+
+    @classmethod
+    def _classify_bridge_infra_error(cls, raw: Any) -> str | None:
+        """Return the infra-error text when ``raw`` looks like a bridge
+        INFRA-failure envelope the router should reroute past; else
+        ``None``.
+
+        Bridges catch ``httpx.ConnectError`` and ``httpx.TimeoutException``
+        at the transport layer and re-emit them as
+        ``{"status": "error", "error": "Cannot reach ..." | "Timeout (...)"
+        | "Unreachable: ..."}`` envelopes. Application-level errors
+        (missing kwargs, resource-not-found) share the ``status='error'``
+        shape but MUST NOT trigger a reroute -- the router only routes
+        around infrastructure.
+        """
+        if not isinstance(raw, dict) or raw.get("status") != "error":
+            return None
+        error_text = str(raw.get("error") or "")
+        for prefix in cls._INFRA_ERROR_PREFIXES:
+            if error_text.startswith(prefix):
+                return error_text
+        return None
+
+    async def _dispatch_via_router(
+        self,
+        bridge: Any,
+        server_id: str,
+        tool_name: str,
+        args: dict[str, Any],
+    ) -> dict[str, Any]:
+        """RFC-07 wire-in around :meth:`bridge.forward`.
+
+        Happy path (first candidate answers cleanly) returns the bridge
+        dict verbatim -- byte-identical to pre-wiring. On an INFRA
+        failure the router reroutes to the next enabled catalog row of
+        the same capability; after ``consecutive_failure_limit``
+        back-to-back infra failures against ONE instance the router
+        flips its ``enabled`` bit off via :meth:`McpInstanceCatalog.set_enabled`.
+
+        Defensive: a subclass that has not overridden
+        :meth:`_router_module_scope` (returns ``None``) or a scope
+        whose capability registry / catalog turns up no candidates
+        falls straight to the pre-wiring direct dispatch. Any
+        unexpected error inside the router path also falls back and
+        logs -- the router MUST NEVER break a tool call that would
+        otherwise succeed.
+        """
+        module_scope = self._router_module_scope()
+        if not module_scope:
+            return await bridge.forward(action=tool_name, **args)
+        try:
+            candidates = await self._resolve_router_candidates(
+                server_id, module_scope,
+            )
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
+            _log.info(
+                "tool_executor.router: candidate resolution failed for "
+                "%s/%s (%s: %s) -- falling back to direct bridge.forward",
+                module_scope, server_id, type(exc).__name__, exc,
+            )
+            return await bridge.forward(action=tool_name, **args)
+        if not candidates:
+            # No RFC-11 descriptor OR the catalog holds no enabled row
+            # for this scope+server+capability. The bridge's own
+            # four-tier resolver still picks up env / config / default
+            # so this pre-wiring path stays live.
+            return await bridge.forward(action=tool_name, **args)
+
+        async def _dispatch(instance: ResolvedInstance) -> dict[str, Any]:
+            # Point the bridge at the router's chosen instance for
+            # this attempt. Save + restore the prior cached
+            # resolution so subsequent non-router callers still see
+            # the bridge's own resolver state (the ``_fixed_base_url``
+            # test/DI path is untouched -- bridges ignore ``_resolved``
+            # when their fixed URL is set).
+            prior_resolved = getattr(bridge, "_resolved", None)
+            override_ok = hasattr(bridge, "_resolved")
+            if override_ok:
+                bridge._resolved = instance
+            try:
+                raw = await bridge.forward(action=tool_name, **args)
+            finally:
+                if override_ok:
+                    bridge._resolved = prior_resolved
+            infra_text = self._classify_bridge_infra_error(raw)
+            if infra_text is not None:
+                raise ToolInfraError(infra_text)
+            return raw
+
+        router = self._get_tool_router()
+        try:
+            outcome = await router.route(
+                candidates, _dispatch, capability=server_id,
+            )
+        except (RuntimeError, OSError, ValueError, TypeError) as exc:
+            _log.warning(
+                "tool_executor.router: router.route raised for %s.%s "
+                "(%s: %s) -- falling back to direct bridge.forward",
+                server_id, tool_name, type(exc).__name__, exc,
+            )
+            return await bridge.forward(action=tool_name, **args)
+
+        if outcome.ok and isinstance(outcome.value, dict):
+            # Byte-identical to a first-try direct dispatch: the router
+            # returns the winning candidate's raw dict verbatim.
+            return outcome.value
+        # Every enabled candidate exhausted (or the value came back
+        # non-dict from a misbehaving dispatch coroutine). Re-shape the
+        # terminal outcome into the same ``{"status": "error",
+        # "error": ...}`` envelope the direct path would have returned
+        # on a bridge infra failure so the rest of ``execute()``
+        # (status whitelist, breakers, error persistence) sees a
+        # uniform response shape.
+        last_error = (
+            outcome.attempts[-1].error
+            if outcome.attempts and outcome.attempts[-1].error
+            else "router exhausted every enabled instance"
+        )
+        return {
+            "status": "error",
+            "error": (
+                f"Every enabled instance of {server_id!r} failed for "
+                f"{tool_name!r}: {last_error}"
+            ),
+        }
+
     async def execute(
         self,
         investigation_id: str,
@@ -753,7 +992,14 @@ class ToolExecutorHelpersBase:
                 )
 
         try:
-            raw = await bridge.forward(action=tool_name, **args)
+            # RFC-07 wire-in: dispatch goes through the ToolRouter when
+            # the module has an RFC-11 descriptor for this server AND
+            # the catalog holds >=1 enabled row matching. Otherwise the
+            # helper falls straight back to direct bridge.forward so
+            # the byte-identical happy-path guarantee holds.
+            raw = await self._dispatch_via_router(
+                bridge, server_id, tool_name, args,
+            )
         except (httpx.HTTPError, OSError, RuntimeError, ValueError, TypeError) as exc:
             # fix §197 -- broadened from (OSError, TimeoutError,
             # RuntimeError). `bridge.forward` reaches into httpx

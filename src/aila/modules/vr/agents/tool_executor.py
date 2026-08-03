@@ -101,6 +101,13 @@ class ToolExecutor(ToolExecutorHelpersBase):
     async def _hard_block_repeat_limit(self) -> int | None:
         return await get_int("tool_executor_hard_block_repeat")
 
+    def _router_module_scope(self) -> str | None:
+        """RFC-07 router scope -- routes across VR catalog rows and
+        applies the disable-after-N-failures policy per the VR-scoped
+        RFC-11 descriptors published in :mod:`aila.modules.vr.services.mcp_registry`.
+        """
+        return "vr"
+
     async def _pre_dispatch_correct_args(
         self, investigation_id: str, server_id: str, args: dict[str, Any],
     ) -> dict[str, Any]:

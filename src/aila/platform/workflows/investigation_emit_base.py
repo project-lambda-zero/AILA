@@ -667,6 +667,39 @@ def state_investigation_emit(
                     quorum.siblings_active if quorum.transition_occurred else 0,
                     quorum.transition_reason or "(no change)",
                 )
+                # RFC-08 step 1: when quorum flips to a terminal verdict
+                # (approved | rejected), hand the verdict + a payload
+                # excerpt to the module's ExperienceWriter closure so a
+                # signed pattern lands in the module PatternStore.
+                # Gated on ``transition_occurred`` so a still-DRAFT
+                # tally never pays the cost; the writer itself is also
+                # skip-safe on DRAFT (redundant defense). The whole call
+                # is wrapped so any write failure logs and continues --
+                # this MUST NOT change ``approved`` or the dispatch
+                # branch below.
+                if (
+                    bindings.record_experience is not None
+                    and quorum.transition_occurred
+                    and outcome_row is not None
+                ):
+                    try:
+                        _payload_excerpt = summarize_outcome_for_review(
+                            outcome_row.payload_json,
+                        )
+                        _first_line = _payload_excerpt.splitlines()[0] if _payload_excerpt else ""
+                        _summary = (_first_line or _payload_excerpt)[:400]
+                        await bindings.record_experience(
+                            verdict=quorum,
+                            investigation_id=investigation_id,
+                            outcome_id=str(outcome_id),
+                            summary=_summary,
+                            body=_payload_excerpt,
+                        )
+                    except (OSError, TimeoutError, RuntimeError, ValueError, SQLAlchemyError) as exc:
+                        _log.warning(
+                            "investigation_emit EXPERIENCE_WRITE FAILED outcome=%s err=%s: %s",
+                            outcome_id, type(exc).__name__, exc,
+                        )
                 approved = quorum.new_state == bindings.approved_state
             except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
                 _log.warning(

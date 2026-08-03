@@ -30,7 +30,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -100,6 +100,13 @@ class AgentTurnRunnerBase:
     # Config -- every subclass sets these (declared for readers; the
     # runner reads them off ``self`` at call time).
     _LOG_LABEL: ClassVar[str] = "agent"
+    # RFC-08: optional per-module hook (bound by the researcher subclass) that
+    # writes a signed experience pattern when a sibling review vote flips
+    # quorum to a terminal verdict on THIS (inline-dispatch) path. Default
+    # None -> no-op, so any subclass that does not bind it is unaffected.
+    _record_experience_on_verdict: ClassVar[
+        Callable[..., Awaitable[None]] | None
+    ] = None
     _result_cls: ClassVar[type[AgentTurnResult]] = AgentTurnResult
     _EMPTY_TOOLRUN_DIRECTIVE: ClassVar[str] = (
         "*** EMPTY tool_run COERCED TO reasoning ***\n\n"
@@ -937,6 +944,27 @@ class AgentTurnRunnerBase:
                 )
                 quorum = await self._evaluate_quorum(decision.review_outcome_id)
                 review_state = quorum.new_state
+                # RFC-08: a reviewer's vote that flips quorum to a terminal
+                # verdict here dispatches inline and never re-transitions on
+                # the emit-state DRAFT_REVIEW path, so the emit-side
+                # experience write would miss it. Mirror it here. Defensive:
+                # a write failure MUST NOT affect the review / dispatch below.
+                if (
+                    self._record_experience_on_verdict is not None
+                    and quorum.transition_occurred
+                ):
+                    try:
+                        await self._record_experience_on_verdict(
+                            verdict=quorum,
+                            investigation_id=self.investigation_id,
+                            outcome_id=decision.review_outcome_id,
+                        )
+                    except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+                        _log.warning(
+                            "%s EXPERIENCE_WRITE FAILED outcome=%s err=%s: %s",
+                            self._LOG_LABEL, decision.review_outcome_id,
+                            type(exc).__name__, exc,
+                        )
                 _log.info(
                     "%s REVIEW inv=%s branch=%s outcome=%s "
                     "vote=%s state=%s approve=%d reject=%d k=%d",

@@ -3024,3 +3024,45 @@ HonestVulnResearcher._upsert_canonical_outcome = staticmethod(_upsert_canonical_
 HonestVulnResearcher._resolve_task_type = staticmethod(resolve_task_type)
 HonestVulnResearcher._evaluate_quorum = staticmethod(evaluate_quorum)
 HonestVulnResearcher._upsert_review = staticmethod(upsert_review)
+
+
+async def _record_experience_on_verdict(
+    *, verdict: Any, investigation_id: str, outcome_id: str,
+) -> None:
+    """RFC-08: a sibling review vote that flips quorum to a terminal verdict
+    on the turn_runner inline-dispatch path writes a signed experience
+    pattern too (the emit-state path only covers proposer-side verdicts).
+    Loads the outcome, builds summary/body the same way the emit path does,
+    delegates to the module's _record_experience. Lazy imports dodge the
+    workflow<->agents import cycle (this file is PLC0415-exempt)."""
+    from aila.modules.vr.workflow.states.investigation_emit import (
+        _record_experience,
+    )
+    from aila.platform.services.outcome_review import summarize_outcome_for_review
+
+    async with UnitOfWork() as uow:
+        outcome = (await uow.session.exec(
+            _select(VRInvestigationOutcomeRecord).where(
+                VRInvestigationOutcomeRecord.id == outcome_id,
+            ),
+        )).first()
+    if outcome is None:
+        _log.warning(
+            "vr _record_experience_on_verdict: outcome %s missing", outcome_id,
+        )
+        return
+    excerpt = summarize_outcome_for_review(outcome.payload_json)
+    first_line = excerpt.splitlines()[0] if excerpt else ""
+    summary = (first_line or excerpt)[:400]
+    await _record_experience(
+        verdict=verdict,
+        investigation_id=investigation_id,
+        outcome_id=outcome_id,
+        summary=summary,
+        body=excerpt,
+    )
+
+
+HonestVulnResearcher._record_experience_on_verdict = staticmethod(
+    _record_experience_on_verdict
+)

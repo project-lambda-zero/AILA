@@ -125,6 +125,31 @@ class InvestigationStateBindings:
     post_draft_review_request: Callable[..., Awaitable[Any]] | None = None
     finalize: Callable[..., Awaitable[Any]] | None = None
     branch_table: str | None = None
+    # RFC-08 step 1 wire-in: a module-provided async callback that turns
+    # a terminal quorum verdict (approved | rejected) into a signed row
+    # in the module's PatternStore via ``ExperienceWriter``. Called from
+    # ``state_investigation_emit`` immediately after ``evaluate_quorum``
+    # returns a transitioning verdict; wrapped in a defensive try/except
+    # so a write failure never disturbs the dispatch/approve path.
+    # ``None`` (default) leaves the emit path unchanged -- module
+    # bindings that predate the wire-in stay behavior-identical.
+    #
+    # Called as::
+    #
+    #     await bindings.record_experience(
+    #         verdict=quorum,
+    #         investigation_id=investigation_id,
+    #         outcome_id=str(outcome_id),
+    #         summary=<one-line summary>,
+    #         body=<full body>,
+    #     )
+    #
+    # The module closure resolves ``workspace_id`` from
+    # ``investigation_id`` (via its own investigation -> target chain)
+    # and calls ``ExperienceWriter.record`` -- the writer itself skips
+    # non-terminal states + empty summary/body, so a DRAFT verdict is
+    # a safe no-op even without gating.
+    record_experience: Callable[..., Awaitable[None]] | None = None
 
 
 @dataclass(frozen=True)
