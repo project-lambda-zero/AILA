@@ -1,17 +1,8 @@
 from __future__ import annotations
 
-import json
 import threading
 
-from sqlalchemy.exc import IntegrityError
-from sqlmodel import select, update
-
-from ...platform.contracts._common import utc_now
-from ...storage.database import async_session_scope
-from ...storage.db_models import KnowledgeEntryRecord
 from ..config import PlatformSettings
-from ..services.knowledge_entities import extract_entities
-from ..services.runtime import run_blocking_io
 from ._common import Tool, normalize_limit, require_text
 
 __all__ = [
@@ -73,129 +64,27 @@ class KnowledgeStoreTool(Tool):
         self.namespace = require_text(namespace, tool_name="KnowledgeStoreTool", field_name="namespace")
         self.settings = settings
 
-    @staticmethod
-    async def _find_entry_id(session: object, namespace: str, dedup_key: str) -> int | None:
-        """Return the id of the (namespace, dedup_key) entry, or None."""
-        stmt = select(KnowledgeEntryRecord.id).where(
-            KnowledgeEntryRecord.namespace == namespace,
-            KnowledgeEntryRecord.dedup_key == dedup_key,
-        )
-        # exec() of a single-column select yields the scalar id, not a Row.
-        row = (await session.exec(stmt)).first()
-        if row is None:
-            return None
-        return row[0] if isinstance(row, tuple) else row
-
-    @staticmethod
-    async def _overwrite_entry(
-        session: object,
-        entry_id: int,
-        content: str,
-        embedding_list: list[float],
-        meta_json: str,
-        dedup_key: str | None,
-    ) -> None:
-        """Overwrite an entry's content, embedding, and metadata in place."""
-        stmt = (
-            update(KnowledgeEntryRecord)
-            .where(KnowledgeEntryRecord.id == entry_id)
-            .values(
-                content=content,
-                embedding=embedding_list,
-                entry_metadata=meta_json,
-                dedup_key=dedup_key,
-            )
-        )
-        # search_vector is auto-maintained by the PostgreSQL generated column.
-        await session.exec(stmt)
-
     async def forward(self, content: str, metadata: dict | None = None) -> dict:
         content = require_text(content, tool_name="KnowledgeStoreTool", field_name="content")
         meta = dict(metadata or {})
         # Extract dedup sentinel before storing -- do not persist _dedup_key inside entry_metadata (per D-06)
         dedup_key: str | None = meta.pop("_dedup_key", None)
 
-        # RFC-12: tag the security identifiers in the content so retrieval can
-        # scope by CVE / CWE / technique id through metadata_filter.
-        entities = extract_entities(content)
-        if entities:
-            meta["entities"] = entities
-
-        # Embedding computed outside transaction -- keep write lock short.
-        # #37: embed via KnowledgeService so the store path shares the service
-        # provider + 384-dim truncation (embed already returns list[float],
-        # which pgvector accepts directly).
-        embedding_list = await run_blocking_io(_knowledge_service().embed, content)
-        meta_json = json.dumps(meta)
-
-        async with async_session_scope(self.settings) as session:
-            existing_id: int | None = None
-            if dedup_key is not None:
-                existing_id = await self._find_entry_id(session, self.namespace, dedup_key)
-
-            if existing_id is not None:
-                await self._overwrite_entry(
-                    session, existing_id, content, embedding_list, meta_json, dedup_key
-                )
-                await session.commit()
-                entry_id = existing_id
-                operation = "updated"
-            else:
-                try:
-                    record = KnowledgeEntryRecord(
-                        namespace=self.namespace,
-                        content=content,
-                        embedding=embedding_list,
-                        entry_metadata=meta_json,
-                        dedup_key=dedup_key,
-                        created_at=utc_now(),
-                    )
-                    session.add(record)
-                    await session.commit()
-                    await session.refresh(record)
-                    entry_id = record.id
-                    operation = "inserted"
-                except IntegrityError:
-                    # A concurrent knowledge_store with the same (namespace,
-                    # dedup_key) won the INSERT race; the
-                    # uq_knowledgeentryrecord_namespace_dedup_key constraint
-                    # rejected this one. Resolve idempotently as an overwrite
-                    # so the agent receives a clean result rather than a 500
-                    # (#37). KnowledgeService.store deliberately does NOT
-                    # swallow this -- its pattern_store caller pairs the mirror
-                    # INSERT with a pattern row and relies on the raise to roll
-                    # the pair back together.
-                    await session.rollback()
-                    winner_id = (
-                        await self._find_entry_id(session, self.namespace, dedup_key)
-                        if dedup_key is not None
-                        else None
-                    )
-                    if winner_id is None:
-                        raise
-                    await self._overwrite_entry(
-                        session, winner_id, content, embedding_list, meta_json, dedup_key
-                    )
-                    await session.commit()
-                    entry_id = winner_id
-                    operation = "updated"
-
-        # RFC-12: link this entry to its nearest same-namespace neighbours so
-        # the graph retrieval route can hop to related agent knowledge. Runs
-        # after the write commits; a linking failure never fails the store.
-        if entry_id is not None:
-            await _knowledge_service().link_semantic_neighbors(
-                entry_id, embedding_list, self.namespace, None,
-            )
-
-        return {
-            "status": "stored",
-            "operation": operation,
-            "entry_id": entry_id,
-            "namespace": self.namespace,
-            "embedding_dim": 384,
-            "content_length": len(content),
-        }
+        # #37/RFC-12: delegate to KnowledgeService.store so this tool shares the
+        # one embedding path, stamps provenance (model_id / content_hash /
+        # source_type / updated_at) on every vector, upserts under the
+        # advisory-lock dedup, and links semantic neighbours -- instead of
+        # running a second, provenance-less INSERT path that wrote vectors the
+        # #37 guardrails now forbid. extract_entities tags CVE / CWE / technique
+        # ids so retrieval can scope through metadata_filter.
+        return await _knowledge_service().store(
+            namespace=self.namespace,
+            content=content,
+            metadata=meta,
+            dedup_key=dedup_key,
+            extract_entities=True,
+            link_neighbors=True,
+        )
 
 
 class KnowledgeRetrieveTool(Tool):

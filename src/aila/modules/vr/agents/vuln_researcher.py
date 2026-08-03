@@ -177,12 +177,16 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         branch_id: str,
         cve_intel: list[dict[str, Any]] | None = None,
         applicable_patterns: list[dict[str, Any]] | None = None,
+        retrieved_knowledge: list[dict[str, Any]] | None = None,
     ) -> None:
         self._engine = reasoning_engine
         self.investigation_id = investigation_id
         self.branch_id = branch_id
         self._cve_intel = list(cve_intel or [])
         self._applicable_patterns = list(applicable_patterns or [])
+        # RFC-12 read loop: prior knowledge (audit memos, findings, strategy
+        # descriptors) resolved at setup for the RETRIEVED prompt tier.
+        self._retrieved_knowledge = list(retrieved_knowledge or [])
 
     # ---- AgentTurnRunnerBase config + hooks (RFC-03 Phase 7) -----------
     _LOG_LABEL = "vuln_researcher"
@@ -257,7 +261,10 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         return hydrated.get
 
     def _extra_user_prompt_kwargs(self) -> dict[str, Any]:
-        return {"cve_intel": self._cve_intel}
+        return {
+            "cve_intel": self._cve_intel,
+            "retrieved_knowledge": self._retrieved_knowledge,
+        }
 
     def _maybe_reject_fanout_submit(
         self, *, decision: Any, inv: Any, case_state: Any, turn_number: int,
@@ -554,6 +561,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         prior_outcomes: list[dict[str, Any]] | None = None,
         sibling_context: list[dict[str, Any]] | None = None,
         applicable_patterns: list[dict[str, Any]] | None = None,
+        retrieved_knowledge: list[dict[str, Any]] | None = None,
     ) -> str:
         """Render the per-turn user prompt through the RFC-24 tiered
         assembler.
@@ -605,6 +613,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         priors = prior_outcomes or []
         siblings = sibling_context or []
         patterns = applicable_patterns or []
+        retrieved = retrieved_knowledge or []
         target_kind = (target_snapshot or {}).get("kind")
         primary_language = (target_snapshot or {}).get("primary_language")
 
@@ -717,6 +726,23 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                 summary=(
                     f"# Sibling deliberations: {len(siblings)} sibling "
                     "branches (elided for budget)"
+                ),
+            ))
+
+        # RFC-12 read loop: prior knowledge retrieved from the platform
+        # knowledge base (audit memos, findings, strategy notes from earlier
+        # investigations on similar targets). RETRIEVED tier -- the assembler
+        # drops it first under budget pressure since it is augmentation, not
+        # a hard precondition.
+        retrieved_section = _render_retrieved_knowledge_section(retrieved)
+        if retrieved_section:
+            sections.append(ContextSection(
+                tier=ContextTier.RETRIEVED,
+                label="retrieved_knowledge",
+                body=retrieved_section.rstrip("\n"),
+                summary=(
+                    f"# Retrieved prior knowledge: {len(retrieved)} entries "
+                    "elided for budget"
                 ),
             ))
 
@@ -2120,6 +2146,53 @@ def _render_pattern_section(patterns: list[dict[str, Any]]) -> str:
             # than dropping it entirely, so the agent at least sees the
             # title + kind of the next-most-relevant pattern.
             remaining = _PATTERN_SECTION_BUDGET - used
+            if remaining > 80:
+                lines.append(block[: remaining - 4] + "...\n")
+            break
+        lines.append(block)
+        used += len(block)
+    if not lines:
+        return ""
+    return header + "".join(lines)
+
+
+_RETRIEVED_SECTION_BUDGET: int = 4000
+
+
+def _render_retrieved_knowledge_section(hits: list[dict[str, Any]]) -> str:
+    """Render prior knowledge retrieved from the platform knowledge base for
+    the RFC-12 read loop.
+
+    Each hit is a compact dict ({namespace, content, score}) resolved at setup
+    from earlier investigations' audit memos, findings, and strategy notes on
+    similar targets. The content already passed the retrieval sanitize/classify
+    gate; it is still untrusted prior corpus, so the header tells the agent to
+    corroborate before relying on it. Bounded to ``_RETRIEVED_SECTION_BUDGET``
+    chars; hits are pre-ranked by relevance so truncation drops the weakest
+    first.
+    """
+    if not hits:
+        return ""
+    header = (
+        "# Retrieved prior knowledge\n\n"
+        "Audit memos, findings, and strategy notes retrieved from earlier\n"
+        "investigations on similar targets. This is untrusted prior context --\n"
+        "corroborate against the live target before relying on any claim.\n\n"
+    )
+    lines: list[str] = []
+    used = len(header)
+    for h in hits:
+        namespace = str(h.get("namespace") or "")
+        parts = namespace.split(".")
+        kind = parts[1] if len(parts) > 1 else (namespace or "knowledge")
+        score = h.get("score")
+        content = str(h.get("content") or "").strip()
+        if not content:
+            continue
+        score_str = f" (relevance {float(score):.2f})" if isinstance(score, (int, float)) else ""
+        block = f"## {kind}{score_str}\n{content}\n\n"
+        if used + len(block) > _RETRIEVED_SECTION_BUDGET:
+            remaining = _RETRIEVED_SECTION_BUDGET - used
             if remaining > 80:
                 lines.append(block[: remaining - 4] + "...\n")
             break

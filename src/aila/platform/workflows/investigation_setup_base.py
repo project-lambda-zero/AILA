@@ -162,6 +162,13 @@ class InvestigationStateHooks:
     """
 
     resolve_cve_intel: Callable[[str], Awaitable[list[dict[str, Any]]]] | None = None
+    # RFC-12 read loop: resolve prior knowledge (audit memos, findings,
+    # strategy descriptors) for the RETRIEVED prompt tier. Takes the
+    # investigation question + target scope as keyword args and returns a
+    # list of compact, gated hit dicts ({namespace, content, score}). vr +
+    # malware bind a KnowledgeService-backed resolver; forensics leaves it
+    # unset (no knowledge corpus yet) so the fetch is skipped.
+    resolve_retrieved_knowledge: Callable[..., Awaitable[list[dict[str, Any]]]] | None = None
     propose_playbook: Callable[..., Awaitable[Any]] | None = None
     propose_pattern: Callable[..., Awaitable[Any]] | None = None
     finalize_investigation: Callable[..., Awaitable[Any]] | None = None
@@ -638,11 +645,38 @@ def state_investigation_setup(
                     exc_info=True,
                 )
 
+        # RFC-12 read loop: fetch prior knowledge (audit memos, findings,
+        # strategy descriptors from earlier investigations on similar
+        # targets) for the RETRIEVED prompt tier. Reuses the target scope
+        # resolved above. A lookup failure NEVER blocks setup -- the tier is
+        # augmentation, not a boot dependency. target_ws/target_kind/
+        # target_lang are function-scoped locals bound at the top of the
+        # pattern try above.
+        retrieved_knowledge: list[dict[str, Any]] = []
+        if hooks.resolve_retrieved_knowledge is not None and target_ws is not None:
+            kb_query = (inv.initial_question or inv.title or "").strip()
+            if kb_query:
+                try:
+                    retrieved_knowledge = await hooks.resolve_retrieved_knowledge(
+                        query=kb_query,
+                        workspace_id=target_ws,
+                        team_id=inv.team_id,
+                        target_kind=target_kind,
+                        primary_language=target_lang,
+                    )
+                except (SQLAlchemyError, ImportError, OSError, RuntimeError, ValueError, TypeError) as exc:
+                    _log.warning(
+                        "investigation_setup: retrieved-knowledge lookup "
+                        "failed inv=%s: %s", investigation_id, exc,
+                        exc_info=True,
+                    )
+                    retrieved_knowledge = []
+
         _log.info(
             "investigation_setup READY investigation_id=%s branch_id=%s "
-            "strategy=%s cve_intel=%d patterns=%d",
+            "strategy=%s cve_intel=%d patterns=%d retrieved=%d",
             investigation_id, branch.id, inv.strategy_family, len(cve_intel),
-            len(applicable_patterns),
+            len(applicable_patterns), len(retrieved_knowledge),
         )
 
         branch_capability: str | None = None
@@ -688,6 +722,7 @@ def state_investigation_setup(
                 "team_id": inv.team_id,
                 "cve_intel": cve_intel,
                 "applicable_patterns": applicable_patterns,
+                "retrieved_knowledge": retrieved_knowledge,
                 "routing_recommendation": routing_recommendation_payload,
                 # Specialist capability routing: a spawned specialist branch
                 # carries the specialist name as its persona_voice; resolve it

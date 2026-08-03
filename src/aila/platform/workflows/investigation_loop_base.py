@@ -293,10 +293,23 @@ def state_investigation_loop(
                 f"investigation_loop: applicable_patterns must be a list, got "
                 f"{type(raw_patterns).__name__}: {raw_patterns!r:.200}",
             )
+        # RFC-12 read loop: setup resolved prior knowledge for the RETRIEVED
+        # prompt tier and threaded it through the state input. Same strict
+        # validation as cve_intel + applicable_patterns so a corrupted resume
+        # surfaces loudly rather than silently dropping the tier.
+        raw_retrieved = input.get("retrieved_knowledge")
+        if raw_retrieved is None:
+            raw_retrieved = []
+        if not isinstance(raw_retrieved, list):
+            raise ValueError(
+                f"investigation_loop: retrieved_knowledge must be a list, got "
+                f"{type(raw_retrieved).__name__}: {raw_retrieved!r:.200}",
+            )
 
         engine = CyberReasoningEngine(services.llm_client)
         researcher = bindings.researcher_factory(
             engine, investigation_id, branch_id, raw_cve_intel, raw_patterns,
+            raw_retrieved,
         )
         executor = bindings.executor_factory()
 

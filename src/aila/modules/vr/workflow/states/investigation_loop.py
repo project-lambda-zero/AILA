@@ -95,9 +95,9 @@ def _get_executor() -> ToolExecutor:
 _LOOP_BINDINGS = InvestigationStateBindings(
     inv_model=VRInvestigationRecord,
     branch_model=VRInvestigationBranchRecord,
-    researcher_factory=lambda engine, iid, bid, cve, pat: HonestVulnResearcher(
+    researcher_factory=lambda engine, iid, bid, cve, pat, retrieved: HonestVulnResearcher(
         reasoning_engine=engine, investigation_id=iid, branch_id=bid,
-        cve_intel=cve, applicable_patterns=pat,
+        cve_intel=cve, applicable_patterns=pat, retrieved_knowledge=retrieved,
     ),
     executor_factory=_get_executor,
     max_turns_reader=lambda: get_int("max_turns_per_task"),

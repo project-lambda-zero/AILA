@@ -19,6 +19,17 @@ operator action.
 
 ### Added
 
+- The knowledge base read loop. An investigation now retrieves prior
+  knowledge (audit memos, findings, strategy notes from earlier
+  investigations on the same workspace's similar targets) at setup and
+  renders it as a RETRIEVED prompt tier, so the knowledge the platform
+  writes is finally read back into a reasoning turn. Retrieval is
+  workspace-scoped and runs through the adaptive routed path, so every
+  hit is relevance-floored and passes the sanitize/classify gate; the
+  tier degrades to a budget summary and drops first under context
+  pressure since it is augmentation, not a precondition. Wired for the
+  vulnerability-research and malware modules through a per-module setup
+  resolver; forensics leaves the hook unset. (RFC-12 #49, RFC-24 #24)
 - Startup seeding of file-backed agent prompts into the version store. On
   boot each module registers its prompt bodies and points the production
   alias at them only when a key has none yet, so the pin-per-investigation
@@ -566,6 +577,21 @@ operator action.
 
 ### Fixed
 
+- Knowledge writes silently failing on a database bootstrapped through
+  table creation rather than migrations. Such a database could keep the
+  embedding column at vector(384) while the provider emits 1024-dim
+  vectors, so every knowledge store was rejected at flush time and the
+  failure was swallowed by caller-side error handling, leaving the whole
+  knowledge, pattern, and memory subsystem quietly non-persisting. A new
+  idempotent migration widens the column to vector(1024) only when it is
+  narrower, so a drifted database self-heals on the next upgrade and a
+  database already at full width is left untouched. (RFC-12 #49, #37)
+- The agent knowledge_store tool wrote vectors through a second INSERT
+  path that stamped no provenance and reported a stale embedding
+  dimension. It now delegates to the knowledge service, so one embedding
+  path stamps model_id, content_hash, and source_type on every vector and
+  upserts under the advisory-lock dedup instead of a divergent write.
+  (RFC-12 #49, #37)
 - Investigation message SSE live tail no longer dies on one bad row. The VR
   and malware ``/investigations/{id}/messages/stream`` endpoints projected each
   polled row into a summary with no per-row guard, so a single message that

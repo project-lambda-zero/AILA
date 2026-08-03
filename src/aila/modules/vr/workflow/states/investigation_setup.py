@@ -128,6 +128,71 @@ _CONSECUTIVE_CVE_INTEL_FAILURES: int = 0
 _FAILURE_ESCALATION_THRESHOLD: int = 5
 
 
+_CONSECUTIVE_KB_RETRIEVAL_FAILURES: int = 0
+
+# VR knowledge kinds the outcome dispatcher writes, workspace-scoped
+# (namespace ``vr.<kind>.workspace.<id>``); see outcome_dispatcher.
+_VR_KNOWLEDGE_KINDS: tuple[str, ...] = (
+    "audit_memo", "strategy_descriptor", "crash_triage",
+    "config_delta", "profile_spec",
+)
+
+
+async def _resolve_retrieved_knowledge(
+    *,
+    query: str,
+    workspace_id: str,
+    team_id: str | None,
+    target_kind: str | None,
+    primary_language: str | None,
+) -> list[dict[str, Any]]:
+    """Retrieve prior VR knowledge for the RFC-12 RETRIEVED prompt tier.
+
+    Scopes to this workspace's audit memos, strategy descriptors, crash
+    triage reports, config deltas, and profile specs (plus team- and
+    global-scoped audit memos), through the adaptive ``retrieve_routed``
+    simple path so each hit is gate-sanitised + provenance stamped.
+    Never raises: a failure returns the empty degraded default and
+    escalates after ``_FAILURE_ESCALATION_THRESHOLD`` consecutive faults.
+    """
+    del target_kind, primary_language  # scope is namespace-based, not kind-based
+    global _CONSECUTIVE_KB_RETRIEVAL_FAILURES
+    namespaces = [
+        f"vr.{kind}.workspace.{workspace_id}" for kind in _VR_KNOWLEDGE_KINDS
+    ]
+    if team_id:
+        namespaces.append(f"vr.audit_memo.team.{team_id}")
+    namespaces.append("vr.audit_memo.global")
+    try:
+        routed = await KnowledgeService().retrieve_routed(
+            query=query, route="simple", limit=8, min_score=0.3,
+            namespaces=namespaces,
+        )
+        _CONSECUTIVE_KB_RETRIEVAL_FAILURES = 0
+        return [
+            {
+                "namespace": h.get("namespace", ""),
+                "content": (h.get("sanitized_content") or h.get("content") or "")[:600],
+                "score": round(float(h.get("score", 0.0) or 0.0), 3),
+            }
+            for h in routed.get("results", [])
+        ]
+    except (ImportError, OSError, RuntimeError, ValueError, TypeError) as exc:
+        _CONSECUTIVE_KB_RETRIEVAL_FAILURES += 1
+        if _CONSECUTIVE_KB_RETRIEVAL_FAILURES >= _FAILURE_ESCALATION_THRESHOLD:
+            _log.error(
+                "investigation_setup: KB retrieval failed %d times in a row "
+                "(last err: %s) -- escalating; check KnowledgeService",
+                _CONSECUTIVE_KB_RETRIEVAL_FAILURES, exc, exc_info=True,
+            )
+        else:
+            _log.warning(
+                "investigation_setup: KB retrieval failed (consecutive=%d): %s",
+                _CONSECUTIVE_KB_RETRIEVAL_FAILURES, exc, exc_info=True,
+            )
+        return []
+
+
 async def _resolve_cve_intel(question: str) -> list[dict[str, Any]]:
     """Resolve CVE ids in *question* to intel dicts (VR setup-factory hook).
 
@@ -333,7 +398,10 @@ _SETUP_BINDINGS = InvestigationStateBindings(
     specialist_spawn_fn=_spawn_ratified_specialists,
     routing_history_provider=_routing_history_provider_factory(),
 )
-_SETUP_HOOKS = InvestigationStateHooks(resolve_cve_intel=_resolve_cve_intel)
+_SETUP_HOOKS = InvestigationStateHooks(
+    resolve_cve_intel=_resolve_cve_intel,
+    resolve_retrieved_knowledge=_resolve_retrieved_knowledge,
+)
 
 # The setup handler is the platform factory bound to VR's models + hook.
 state_investigation_setup = _build_setup_state(_SETUP_BINDINGS, _SETUP_HOOKS)
