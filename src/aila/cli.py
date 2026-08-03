@@ -1290,6 +1290,27 @@ def restore_db(source: Path) -> None:
     typer.echo(json.dumps({"message": f"Database restored from {restored_path}.", "source_path": str(restored_path)}, indent=2))
 
 
+@app.command("backfill-knowledge")
+def backfill_knowledge(
+    dry_run: bool = typer.Option(
+        False, "--dry-run",
+        help="Report what would be embedded without writing to the store.",
+    ),
+) -> None:
+    """Re-embed historical findings into the knowledge base (RFC-12 Phase 6).
+
+    The store started empty because writes were failing (#37); this repopulates
+    it from findings already recorded so cross-investigation retrieval reflects
+    prior work. Idempotent -- safe to re-run.
+    """
+    from .modules.vr.services.knowledge_backfill import backfill_vr_knowledge
+    try:
+        result = _run_async(backfill_vr_knowledge(dry_run=dry_run))
+    except (AILAError, sqlalchemy.exc.SQLAlchemyError, OSError) as exc:  # pragma: no cover - typer surface
+        fail(exc)
+    typer.echo(json.dumps({"vr": result}, indent=2))
+
+
 @schedule_app.command("create")
 def schedule_create(
     target_name: str = typer.Option(..., "--target", help="Target system name to scan."),

@@ -19,6 +19,15 @@ operator action.
 
 ### Added
 
+- A knowledge-base backfill command (RFC-12 Phase 6). The store started empty
+  because writes were failing (#37), so findings recorded before the fix never
+  reached the vector database. The new `aila backfill-knowledge` command (with
+  a `--dry-run` report) re-embeds each stored finding into its workspace-scoped
+  finding namespace through the canonical embedding and knowledge services,
+  including negative results that spare a later investigation from repeating a
+  dead end. The write is idempotent (upsert on namespace plus dedup key) and
+  stamps the embedding model id, so a re-run updates in place and a future
+  embedding-model swap re-embeds rather than duplicating. (RFC-12 #49)
 - A retrieval journal for the knowledge base (RFC-12 Phase 5, ASI06
   governance). When an investigation retrieves prior knowledge, at setup and
   on demand through the agent retrieve tool, the platform appends an audit
