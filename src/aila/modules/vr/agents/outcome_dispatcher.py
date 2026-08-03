@@ -546,6 +546,45 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
                 uow.session.add(inv_row)
             await uow.session.commit()
 
+        # RFC-12: burn the finding into the vector DB so a future
+        # investigation on this target retrieves it. The agent's primary
+        # output (a confirmed vulnerability) must reach the RAG store, not
+        # only vr_findings -- otherwise cross-investigation knowledge never
+        # sees it. Best-effort: the finding row is already committed, so a
+        # KB-mirror failure logs and returns the finding result unchanged
+        # rather than failing the dispatch.
+        finding_text = str(root_cause).strip()
+        if finding_text:
+            target_signature = str(
+                payload.get("target_signature")
+                or _compute_target_signature(target_row.id, payload),
+            )
+            ws_id = target_row.workspace_id
+            try:
+                await self._knowledge.store(
+                    namespace=f"vr.finding.workspace.{ws_id}",
+                    content=finding_text,
+                    metadata={
+                        "investigation_id": investigation_id,
+                        "finding_id": finding_id,
+                        "target_id": target_row.id,
+                        "workspace_id": ws_id,
+                        "target_signature": target_signature,
+                        "vulnerable_function": vulnerable_function,
+                        "crash_type": crash_type,
+                        "evidence_refs": payload.get("evidence_refs") or [],
+                        "outcome_id": outcome_id,
+                    },
+                    dedup_key=f"finding:{finding_id}",
+                    extract_entities=True,
+                    link_neighbors=True,
+                )
+            except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
+                _log.warning(
+                    "direct_finding KB mirror failed inv=%s finding=%s: %s",
+                    investigation_id, finding_id, exc, exc_info=True,
+                )
+
         # fix §236 -- variant spawn loop is non-atomic across child
         # investigations (each _spawn_variant_child has its own UoW +
         # ARQ enqueue). A crash mid-loop used to leave N children alive

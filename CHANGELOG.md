@@ -50,6 +50,17 @@ operator action.
   pressure since it is augmentation, not a precondition. Wired for the
   vulnerability-research and malware modules through a per-module setup
   resolver; forensics leaves the hook unset. (RFC-12 #49, RFC-24 #24)
+- Confirmed vulnerability findings now reach the knowledge base. When a
+  direct-finding outcome is dispatched, its root-cause text is stored in
+  the vector database under a workspace-scoped finding namespace, carrying
+  the finding id, target signature, vulnerable function, crash type, and
+  evidence refs as metadata, in addition to the findings-table row it
+  already wrote. The agent's primary output was previously written only to
+  the findings table, so a later investigation on the same target could
+  not retrieve it through knowledge retrieval; it now surfaces in both the
+  setup read loop and the agent retrieve tool, retrievable by semantic
+  query and selectable by metadata. The write is best-effort and never
+  fails the dispatch. (RFC-12 #49)
 - Startup seeding of file-backed agent prompts into the version store. On
   boot each module registers its prompt bodies and points the production
   alias at them only when a key has none yet, so the pin-per-investigation

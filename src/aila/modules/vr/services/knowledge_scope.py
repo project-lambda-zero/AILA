@@ -18,6 +18,7 @@ __all__ = ["VR_KNOWLEDGE_KINDS", "vr_knowledge_namespaces"]
 # VR knowledge kinds the outcome dispatcher writes, workspace-scoped; see
 # aila.modules.vr.agents.outcome_dispatcher.
 VR_KNOWLEDGE_KINDS: tuple[str, ...] = (
+    "finding",
     "audit_memo",
     "strategy_descriptor",
     "crash_triage",
