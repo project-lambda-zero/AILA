@@ -236,7 +236,7 @@ class ToolExecutor(ToolExecutorHelpersBase):
             try:
                 await writer.store(
                     namespace=f"vr.observation.workspace.{workspace_id}",
-                    content=str(value)[:6000],
+                    content=str(value),
                     metadata={
                         "investigation_id": investigation_id,
                         "branch_id": branch_id,

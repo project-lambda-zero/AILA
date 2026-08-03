@@ -206,7 +206,7 @@ async def _journal_retrieval(
             branch_id=journal_context.get("branch_id"),
             turn_number=journal_context.get("turn_number"),
             payload={
-                "query": query[:2000],
+                "query": query,
                 "route": route,
                 "namespaces": list(namespaces or []),
                 "min_score": min_score,

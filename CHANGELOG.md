@@ -680,6 +680,17 @@ operator action.
 
 ### Fixed
 
+- Knowledge-base writes and reads no longer truncate content. Observations
+  burned from tool output were capped at 6000 characters before being stored,
+  and prior knowledge retrieved into an investigation prompt was capped at 600
+  characters per entry, so long tool results and multi-paragraph findings
+  reached the vector store and the agent already clipped. Both caps are
+  removed: the full observation is stored and the full retrieved entry is
+  returned, matching the finding-burn and backfill paths that already stored
+  full content. The prompt render layer still bounds the assembled retrieved
+  section, so the model context stays sized while the stored and returned data
+  is complete. The retrieval journal also records the full query rather than
+  a 2000-character prefix. (RFC-12 #49)
 - Knowledge writes silently failing on a database bootstrapped through
   table creation rather than migrations. Such a database could keep the
   embedding column at vector(384) while the provider emits 1024-dim
