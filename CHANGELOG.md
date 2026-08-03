@@ -19,6 +19,17 @@ operator action.
 
 ### Added
 
+- Trust-weight and temporal-decay ranking controls for knowledge retrieval
+  (RFC-12 Phase 5). Two config knobs, `knowledge_target_derived_weight` and
+  `knowledge_decay_half_life_hours`, let an operator down-weight untrusted
+  target-derived memory (burned off tool output) so quorum-gated verified
+  entries win ties, and favor fresh memory by scaling each hit's score by an
+  exponential half-life. Both apply after the relevance gate, so the hot
+  scoring path is untouched, and both default to a no-op, so retrieval ranking
+  is unchanged until an operator opts in and validates the change against
+  `aila eval-retrieval`. A hit pushed below the relevance floor by either
+  control is dropped, and the pre-adjustment score is preserved for audit.
+  (RFC-12 #49)
 - The knowledge retrieval eval is now runnable end to end (RFC-12 Phase 6).
   A new `aila eval-retrieval` command builds a recall benchmark from stored
   findings (query = the originating investigation's question, relevant = the

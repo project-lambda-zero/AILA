@@ -214,6 +214,28 @@ class PlatformConfigSchema(BaseModel):
     # env or PUT /config without a schema change.
     knowledge_pattern_relevance_floor: float = 0.3
 
+    # RFC-12 Phase 5 ranking controls, applied by
+    # KnowledgeService.retrieve_routed AFTER the relevance gate as a
+    # config-gated post-rank. Both default to a no-op so the shipped
+    # ranking is byte-identical until an operator opts in and validates
+    # the change against the retrieval eval (aila eval-retrieval).
+    #
+    # knowledge_target_derived_weight multiplies the score of every hit
+    # whose namespace resolves to the target-derived trust tier (burned
+    # off untrusted tool output, e.g. *.observation.*). 1.0 = no change;
+    # below 1.0 down-weights untrusted memory so quorum/promotion-gated
+    # verified entries win ties (RFC-12 ASI06 poisoning defense). A hit
+    # pushed below knowledge_pattern_relevance_floor by the weight is
+    # dropped.
+    knowledge_target_derived_weight: float = 1.0
+
+    # knowledge_decay_half_life_hours applies exponential temporal decay
+    # to every hit that carries a provenance timestamp: score is scaled
+    # by 0.5 ** (age_hours / half_life). 0 = disabled (no decay). A
+    # positive value favors fresh memory; a hit decayed below the
+    # relevance floor is dropped.
+    knowledge_decay_half_life_hours: float = 0.0
+
     # RFC-10 promotion quorum. The lifecycle controller counts DISTINCT
     # actor strings on ``approved`` transitions for a (key, version) pair
     # and refuses to flip the production alias until that count meets or

@@ -23,6 +23,7 @@ import logging
 import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, or_, text
@@ -90,6 +91,79 @@ def trust_tier_from_namespace(namespace: str | None) -> str:
     if ".observation." in namespace:
         return TRUST_TIER_TARGET_DERIVED
     return TRUST_TIER_VERIFIED
+
+
+def _age_hours(ts: Any, now: datetime) -> float | None:
+    """Return the age of a provenance timestamp in hours, or ``None``.
+
+    Accepts a ``datetime`` (from an ORM row) or an ISO-8601 string (from a
+    serialized provenance dict). A tz-naive value is read as UTC to match
+    :func:`utc_now`. A future timestamp (clock skew) clamps to 0 so decay
+    never boosts a score above its base. Anything unparseable returns
+    ``None`` so the caller leaves that hit's score untouched.
+    """
+    if ts is None:
+        return None
+    if isinstance(ts, str):
+        try:
+            ts = datetime.fromisoformat(ts)
+        except ValueError:
+            _log.debug("unparseable provenance timestamp %r; skipping decay", ts)
+            return None
+    if not isinstance(ts, datetime):
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=now.tzinfo)
+    delta = (now - ts).total_seconds()
+    if delta <= 0:
+        return 0.0
+    return delta / 3600.0
+
+
+def _apply_trust_decay(
+    gated: list[dict[str, Any]],
+    *,
+    target_derived_weight: float,
+    decay_half_life_hours: float,
+    floor: float,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    """Re-rank gated hits by a config-gated trust weight + temporal decay.
+
+    RFC-12 Phase 5. Applied AFTER the relevance gate so it never touches the
+    hot ``_merge_and_rank`` scoring contract. For each hit: a target-derived
+    (untrusted, ``*.observation.*``) namespace has its score scaled by
+    ``target_derived_weight`` (ASI06 poisoning defense), then any hit with a
+    provenance timestamp is scaled by ``0.5 ** (age_hours / half_life)`` when
+    ``decay_half_life_hours > 0``. A hit whose adjusted score falls below
+    ``floor`` is dropped; the survivors are re-sorted by adjusted score. The
+    pre-adjustment value is preserved under ``base_score`` for audit. Callers
+    only invoke this when at least one knob is active, so the default config
+    (weight 1.0, half-life 0) leaves ranking byte-identical.
+    """
+    adjusted: list[dict[str, Any]] = []
+    for hit in gated:
+        base = float(hit.get("score") or 0.0)
+        score = base
+        prov = hit.get("provenance") or {}
+        namespace = hit.get("namespace") or prov.get("namespace")
+        if (
+            target_derived_weight != 1.0
+            and trust_tier_from_namespace(namespace) == TRUST_TIER_TARGET_DERIVED
+        ):
+            score *= target_derived_weight
+        if decay_half_life_hours > 0:
+            age = _age_hours(prov.get("updated_at") or prov.get("created_at"), now)
+            if age is not None:
+                score *= 0.5 ** (age / decay_half_life_hours)
+        if score < floor:
+            continue
+        new_hit = dict(hit)
+        new_hit["base_score"] = round(base, 6)
+        new_hit["score"] = score
+        adjusted.append(new_hit)
+    adjusted.sort(key=lambda h: float(h.get("score") or 0.0), reverse=True)
+    return adjusted
 
 
 async def _journal_retrieval(
@@ -1031,6 +1105,41 @@ class KnowledgeService:
         # Merge, floor, and rank outside the transaction (pure, unit-testable).
         return _merge_and_rank(vec_map, fts_map, fts_content_map, limit, min_score)
 
+    async def _resolve_trust_decay_config(self) -> tuple[float, float]:
+        """Resolve the Phase 5 ranking knobs via ConfigRegistry.
+
+        Returns ``(target_derived_weight, decay_half_life_hours)``. Both
+        default to a no-op (1.0, 0.0) so a fresh install, a bad DB row, or a
+        registry read failure leaves retrieval ranking unchanged rather than
+        silently degrading it.
+        """
+        try:
+            registry = ConfigRegistry()
+            raw_weight = await registry.get(
+                "platform", "knowledge_target_derived_weight"
+            )
+            raw_half_life = await registry.get(
+                "platform", "knowledge_decay_half_life_hours"
+            )
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
+            _log.debug(
+                "trust/decay config read failed; using no-op defaults: %s", exc,
+            )
+            return (1.0, 0.0)
+        weight = 1.0
+        half_life = 0.0
+        if raw_weight is not None:
+            try:
+                weight = float(raw_weight)
+            except (TypeError, ValueError):
+                weight = 1.0
+        if raw_half_life is not None:
+            try:
+                half_life = float(raw_half_life)
+            except (TypeError, ValueError):
+                half_life = 0.0
+        return (weight, half_life)
+
     async def retrieve_routed(
         self,
         query: str,
@@ -1133,6 +1242,21 @@ class KnowledgeService:
                 session=session,
             )
             gated = apply_gate_many(hits, entry_rows=rows_by_id)
+
+        # RFC-12 Phase 5: config-gated trust weight + temporal decay, applied
+        # after the gate so it never touches the _merge_and_rank contract. The
+        # default config (weight 1.0, half-life 0) skips this entirely, so the
+        # shipped ranking is unchanged until an operator opts in and validates
+        # the change against the retrieval eval.
+        weight, half_life = await self._resolve_trust_decay_config()
+        if weight != 1.0 or half_life > 0:
+            gated = _apply_trust_decay(
+                gated,
+                target_derived_weight=weight,
+                decay_half_life_hours=half_life,
+                floor=min_score,
+                now=utc_now(),
+            )
 
         result = {
             "status": "retrieved",
