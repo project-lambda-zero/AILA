@@ -499,3 +499,70 @@ def test_whitelist_loads() -> None:
     # ``entries`` is a set of triples; presence of at least one is not
     # required (an empty whitelist is legal), but the load must succeed.
     assert isinstance(entries, set)
+
+
+class TestContentSliceTruncation:
+    """Rule 68 -- content_slice_truncation (RFC-12 no-trim policy).
+
+    A constant-bound slice on content stored into or returned from the
+    knowledge base is flagged; ordinary indexing, dynamic windows, list
+    caps, and hash digests are not; the audit tool self-exempts.
+    """
+
+    def test_content_kwarg_slice_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path, "aila/platform/services/knowledge.py",
+            "async def store(value):\n"
+            "    await kb.store(namespace='x', content=str(value)[:6000])\n",
+        )
+        assert "content_slice_truncation" in _audit(src)
+
+    def test_content_dict_value_slice_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path, "aila/modules/vr/workflow/states/investigation_setup.py",
+            "def resolve(h):\n"
+            "    return {'content': (h.get('sanitized_content') or '')[:600]}\n",
+        )
+        assert "content_slice_truncation" in _audit(src)
+
+    def test_query_dict_value_slice_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path, "aila/platform/services/knowledge.py",
+            "def journal(query):\n"
+            "    return {'query': query[:2000]}\n",
+        )
+        assert "content_slice_truncation" in _audit(src)
+
+    def test_full_content_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path, "aila/platform/services/knowledge.py",
+            "async def store(value):\n"
+            "    await kb.store(namespace='x', content=str(value))\n",
+        )
+        assert "content_slice_truncation" not in _audit(src)
+
+    def test_non_content_slice_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path, "aila/platform/services/foo.py",
+            "def f(digest, results):\n"
+            "    key = digest[:8]\n"
+            "    top = results[:3]\n"
+            "    return {'claim': digest[:240]}\n",
+        )
+        assert "content_slice_truncation" not in _audit(src)
+
+    def test_dynamic_upper_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path, "aila/platform/services/foo.py",
+            "def f(content, n):\n"
+            "    return {'content': content[:n]}\n",
+        )
+        assert "content_slice_truncation" not in _audit(src)
+
+    def test_self_exempt_audit_tool(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path, "aila/tools/honesty_audit.py",
+            "def f(value):\n"
+            "    return {'content': str(value)[:6000]}\n",
+        )
+        assert "content_slice_truncation" not in _audit(src)

@@ -605,5 +605,13 @@ HONESTY_WHITELIST = [
      "promotion_without_gate"),
     ("malware/agents/malware_researcher.py", "seed_prompt_versions",
      "promotion_without_gate"),
+
+    # Category (b): rule 68 content_slice_truncation. These cap the query
+    # string written to an AUDIT-LOG detail field (record_audit_event
+    # details), not knowledge-base content. The audit row is a bounded
+    # metadata record, so a 200-char query snippet is the intended shape --
+    # no stored or retrieved knowledge data is trimmed here.
+    ("api/routers/scans.py", "_audit", "[:200]"),
+    ("api/routers/tasks.py", "_audit_submit", "[:200]"),
 ]
 

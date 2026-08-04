@@ -69,6 +69,7 @@ Detects thirty-six categories of structural dishonesty:
 65. vector_without_provenance -- a ``KnowledgeEntryRecord`` is constructed with an ``embedding=`` kwarg but no ``model_id=`` kwarg. RFC-12 / #37 require every stored vector to carry its model provenance so a model swap triggers a re-embed sweep instead of silent corpus invalidation.
 66. retrieval_without_gate -- agent-runtime code (``platform/agents/**`` or ``modules/*/agents/**``) calls the raw ``.retrieve(`` instead of ``retrieve_routed``. RFC-12 / #43: only the routed path applies the relevance floor + sanitize/classify gate, so agent-reachable retrieval must go through it.
 67. unsanitized_retrieved_content -- a ``retrieve_routed`` definition's body no longer references the sanitize/classify gate (``apply_gate`` / ``apply_gate_many``). RFC-12 / #43: the routed entry point must gate every hit so retrieved content cannot reach a prompt unsanitised.
+68. content_slice_truncation -- a constant-bound slice (``x[:N]``) is applied to the direct value of a ``content=``-family keyword argument, or to a dict value keyed by a content field (``content`` / ``query`` / ``body`` / ``text`` / ``sanitized_content`` / ``root_cause``). Stored and returned knowledge data must be kept in full; only the render/display layer bounds size. A genuinely required cap goes in honesty_whitelist.py with a reason.
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -1708,6 +1709,45 @@ _ROUTED_RETRIEVE_METHOD: str = "retrieve_routed"
 # must keep applying the gate; a retrieve_routed body that stops calling
 # apply_gate would return raw content into a prompt (#43).
 _KNOWLEDGE_GATE_CALLS: frozenset[str] = frozenset({"apply_gate", "apply_gate_many"})
+
+# Rule 68 -- content_slice_truncation. A constant-bound slice (``x[:N]``)
+# applied to a content-bearing value that is STORED into or RETURNED from the
+# knowledge base silently drops the tail of the data. The policy is: full
+# content is persisted and returned; only the render/display layer bounds
+# size. The rule fires when the DIRECT value of a ``content=`` keyword
+# argument, or the value of a dict entry keyed by one of the content-field
+# names below, is a ``[:N]`` slice. It is intentionally a flag-then-whitelist
+# rule: a genuinely required cap goes in honesty_whitelist.py with a reason,
+# the same way every other deliberate exception is recorded.
+_CONTENT_FIELD_NAMES: frozenset[str] = frozenset({
+    "content", "query", "body", "text", "sanitized_content", "root_cause",
+})
+_CONTENT_TRUNCATION_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
+    "tools/honesty_audit.py",
+    "tools/honesty_whitelist.py",
+)
+
+
+def _constant_slice_upper(node: ast.expr) -> int | None:
+    """Return ``N`` when *node* is a ``value[:N]`` slice with a literal int ``N``.
+
+    Matches only the trim shape the rule targets: no lower bound, no step, and
+    an integer-constant upper bound. ``x[a:b]``, ``x[:n]`` where ``n`` is a
+    name/attribute, and ``x[::2]`` all return None so ordinary indexing and
+    dynamic windows never trip the rule.
+    """
+    if not isinstance(node, ast.Subscript):
+        return None
+    sl = node.slice
+    if not isinstance(sl, ast.Slice):
+        return None
+    if sl.lower is not None or sl.step is not None or sl.upper is None:
+        return None
+    upper = sl.upper
+    if isinstance(upper, ast.Constant) and isinstance(upper.value, int) \
+            and not isinstance(upper.value, bool):
+        return upper.value
+    return None
 
 
 class _HonestyVisitor(ast.NodeVisitor):
@@ -4631,6 +4671,60 @@ class _HonestyVisitor(ast.NodeVisitor):
                 ),
             )
 
+    def _check_content_slice_truncation(self, tree: ast.Module) -> None:
+        """Rule 68: content_slice_truncation -- a constant-bound slice on
+        content that is stored into or returned from the knowledge base.
+
+        Operator policy: stored and retrieved knowledge data is kept in
+        full; only the render/display layer bounds size. A ``x[:N]`` slice
+        applied to the direct value of a ``content=`` keyword argument, or
+        to a dict value keyed by a content-field name, silently drops the
+        tail. This is a flag-then-whitelist rule: a genuinely required cap
+        is recorded in honesty_whitelist.py with a reason rather than left
+        implicit in the code.
+        """
+        if self.filename.replace("\\", "/").endswith(
+            _CONTENT_TRUNCATION_SELF_EXEMPT_SUFFIXES
+        ):
+            return
+        parents = _build_parent_map(tree)
+
+        def _emit_trunc(node: ast.expr, field: str, upper: int) -> None:
+            func = _enclosing_function(node, parents)
+            where = func.name if func is not None else "<module>"
+            self._emit(
+                node.lineno,
+                "content_slice_truncation",
+                (
+                    f"content_slice_truncation: field '{field}' is pre-trimmed "
+                    f"with [:{upper}] in {where}() -- stored/returned knowledge "
+                    "data must be kept in full (the render layer bounds display); "
+                    "whitelist with a reason if the cap is truly required"
+                ),
+            )
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                # (a) a ``content=``-family keyword argument whose value is
+                #     a ``[:N]`` slice.
+                for kw in node.keywords:
+                    if kw.arg in _CONTENT_FIELD_NAMES:
+                        upper = _constant_slice_upper(kw.value)
+                        if upper is not None:
+                            _emit_trunc(kw.value, kw.arg, upper)
+            elif isinstance(node, ast.Dict):
+                # (b) a dict entry keyed by a content-field name whose value
+                #     is a ``[:N]`` slice.
+                for key, value in zip(node.keys, node.values, strict=False):
+                    if (
+                        isinstance(key, ast.Constant)
+                        and isinstance(key.value, str)
+                        and key.value in _CONTENT_FIELD_NAMES
+                    ):
+                        upper = _constant_slice_upper(value)
+                        if upper is not None:
+                            _emit_trunc(value, key.value, upper)
+
 
 class HonestyAuditor:
     """Audit one or more Python source files for structural dishonesty.
@@ -4747,6 +4841,9 @@ class HonestyAuditor:
         visitor._check_vector_without_provenance(tree)
         visitor._check_retrieval_without_gate(tree)
         visitor._check_unsanitized_retrieved_content(tree)
+        # Rule 68: content_slice_truncation -- no arbitrary [:N] trim on
+        # stored/returned knowledge data (flag-then-whitelist).
+        visitor._check_content_slice_truncation(tree)
         return visitor.findings
 
     def audit_directory(self, directory: Path) -> list[Finding]:

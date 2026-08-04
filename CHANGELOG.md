@@ -19,6 +19,16 @@ operator action.
 
 ### Added
 
+- A new honesty-audit guardrail, `content_slice_truncation` (rule 68), flags a
+  constant-bound slice (`x[:N]`) applied to content stored into or returned
+  from the knowledge base: the direct value of a `content=`-family keyword
+  argument, or a dict value keyed by `content` / `query` / `body` / `text` /
+  `sanitized_content` / `root_cause`. Stored and retrieved knowledge data must
+  be kept in full; only the render layer bounds size. It is a
+  flag-then-whitelist rule, so a genuinely required cap is recorded in
+  `honesty_whitelist.py` with a reason. Two existing audit-log query caps that
+  bound an audit-record detail field (not knowledge data) are whitelisted.
+  (RFC-12 #49)
 - The retrieved-knowledge prompt tier now refreshes on the branch's live
   focus (RFC-12 Phase 1). Prior knowledge was retrieved once at investigation
   setup, keyed on the opening question, and never updated, so a long
