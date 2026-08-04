@@ -195,6 +195,18 @@ class VRConfigSchema(ModuleConfigBase):
             "task until the investigation-level turn cap is reached."
         ),
     )
+    oracle_specialist_adjudication: int = Field(
+        default=1,
+        ge=0,
+        le=1,
+        description=(
+            "When 1, the oracle LLM-judges open request_specialist entries "
+            "each spawn cycle and ratifies the warranted ones itself, so a "
+            "specialist spawns even when no distinct sibling branch casts "
+            "the ratifying vote. Set 0 to require a sibling vote (the prior "
+            "RFC-13 behavior)."
+        ),
+    )
 
     # --- Agent submit-gate caps (operator-tunable) -----------------------
     # Resolved at the USE site via ConfigRegistry (namespace=vr) so a PUT

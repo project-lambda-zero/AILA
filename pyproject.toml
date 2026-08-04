@@ -402,6 +402,11 @@ ignore = [
 "src/aila/platform/services/embedding.py" = ["PLC0415"]
 "src/aila/platform/services/health_probes.py" = ["PLC0415", "BLE001"]
 "src/aila/platform/services/knowledge.py" = ["PLC0415"]
+# oracle.py: PLC0415 for the deferred idempotent_llm_call / ServiceFactory
+# imports inside adjudicate_specialist_requests -- the factory pulls in the
+# reasoning engine which imports back into platform.services, so a module
+# scope import would re-enter a half-built services package.
+"src/aila/platform/services/oracle.py" = ["PLC0415"]
 "src/aila/platform/services/reasoning.py" = ["E402"]
 "src/aila/platform/services/redis_pool.py" = ["PLW0603"]
 "src/aila/platform/services/report.py" = ["PLC0415"]

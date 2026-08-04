@@ -256,6 +256,61 @@ async def _has_unvoted_pending_draft(branch: Any) -> bool:
     return len(set(voted)) < len(set(draft_ids))
 
 
+# Adjudication uses the critic routing (a critical judgment call). An
+# unregistered task_type would fall back to the default route, so this is safe
+# even if the key is retuned or removed.
+_ADJUDICATOR_TASK_TYPE = "vulnerability_research.critic"
+
+
+async def _adjudicate_specialist_requests(investigation_id: str) -> None:
+    """Have the oracle LLM-judge open request_specialist entries (RFC-13 gap).
+
+    A specialist request is otherwise ratified only by a distinct sibling
+    branch; on a small panel or an early pause that vote never lands and the
+    request rots open, so no specialist spawns. When the
+    ``oracle_specialist_adjudication`` toggle is on, the oracle judges each
+    open request against the investigation's evidence and ratifies the
+    warranted ones itself, so the spawn poll below sees them. Best-effort: a
+    config, DB, or model failure leaves requests open for a real sibling vote.
+    """
+    from aila.modules.vr.services.config_helpers import get_int
+    try:
+        if await get_int("oracle_specialist_adjudication") <= 0:
+            return
+    except (OSError, RuntimeError, ValueError) as exc:
+        _log.warning(
+            "oracle adjudication toggle read failed inv=%s err=%s",
+            investigation_id, exc,
+        )
+        return
+    question = ""
+    try:
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                _select(VRInvestigationRecord).where(
+                    VRInvestigationRecord.id == investigation_id,
+                )
+            )).first()
+            if inv is not None:
+                question = inv.initial_question or ""
+    except (OSError, RuntimeError) as exc:
+        _log.warning(
+            "oracle adjudication context read failed inv=%s err=%s",
+            investigation_id, exc,
+        )
+    try:
+        await Oracle().adjudicate_specialist_requests(
+            investigation_id,
+            task_type=_ADJUDICATOR_TASK_TYPE,
+            extra_context=question,
+        )
+    except (OSError, RuntimeError, TimeoutError) as exc:
+        _log.warning(
+            "oracle specialist adjudication failed inv=%s err=%s",
+            investigation_id, exc,
+        )
+
+
 async def _spawn_ratified_specialists(investigation_id: str) -> None:
     """Spawn ratified request_specialist capabilities not yet on the panel.
 
@@ -267,6 +322,7 @@ async def _spawn_ratified_specialists(investigation_id: str) -> None:
     next cycle, not only when the request predates setup. No-op when nothing
     is ratified or the primary branch does not exist yet.
     """
+    await _adjudicate_specialist_requests(investigation_id)
     capabilities = await Oracle().ratified_specialist_capabilities(
         investigation_id,
     )

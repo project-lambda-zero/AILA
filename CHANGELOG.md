@@ -19,6 +19,19 @@ operator action.
 
 ### Added
 
+- The planner oracle now adjudicates open `request_specialist` entries when
+  no distinct sibling branch has cast the ratifying vote
+  (`Oracle.adjudicate_specialist_requests`). Previously a specialist request
+  was ratified only by a distinct approver, so on a small panel (one filer
+  plus a single sibling that never votes) or an early pause the request stayed
+  open and the specialist never spawned. When the
+  `oracle_specialist_adjudication` toggle is on (default 1), the oracle asks
+  the model whether each open request is warranted given the investigation's
+  gathered evidence and records its own distinct-approver decision, so a
+  warranted request reaches quorum and spawns on the same cycle while a
+  rejected one is marked and never re-judged. The adjudicator prompt is a
+  versioned file resolved through PromptRegistry. Set the toggle to 0 to
+  require a sibling vote (the prior behavior). (RFC-13 #68)
 - Contextual chunk enrichment (RFC-12 Phase 3) is now reachable through the
   canonical `ServiceFactory.knowledge`, which wires the platform LLM client
   into the `KnowledgeService` it builds. Previously the factory produced a

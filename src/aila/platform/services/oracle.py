@@ -1,6 +1,6 @@
 """The planner oracle -- a thin request router over the shared ledger.
 
-RFC-13 (#68). The oracle decides NOTHING on its own. Branches file
+RFC-13 (#68). The oracle routes requests, it does not plan. Branches file
 requests on the investigation ledger (``kind="request"``) carrying an
 ``intent`` and a ``target_capability``; the oracle routes each open
 request to its decider, and once a request is ratified by a distinct
@@ -8,10 +8,20 @@ approver it applies the request's mechanical effect and records the
 decision. A confirmed-trust dispatch phase then activates on the next hub
 visit because the effect confirmed the underlying discovery.
 
-Contract-net-lite: no bidding, no LLM planner, no hidden policy. The two
-non-negotiables are (1) a branch cannot approve its own request
-(distinct-approver, mirrors the outcome-review quorum rule) and (2) the
-oracle applies only the declared, mechanical effect for an intent.
+Contract-net-lite: no bidding, no hidden policy. The two non-negotiables
+are (1) a branch cannot approve its own request (distinct-approver,
+mirrors the outcome-review quorum rule) and (2) the oracle applies only
+the declared, mechanical effect for an intent.
+
+The one place the oracle exercises judgment is
+``adjudicate_specialist_requests`` (opt-in, module-invoked): a specialist
+request is otherwise ratified only by a distinct sibling branch, so on a
+small panel or an early pause it rots open and the specialist never
+spawns. When invoked, the oracle asks the model whether such a request is
+warranted given the investigation's evidence and records its own
+distinct-approver decision accordingly. It still never invents an
+objective, a phase, or a discovery -- it only ratifies or rejects a
+request a branch already filed.
 
 Request payload convention (``payload_json`` of a ``request`` entry)::
 
@@ -25,10 +35,14 @@ Request payload convention (``payload_json`` of a ``request`` entry)::
 """
 from __future__ import annotations
 
+import json
+import logging
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from aila.platform.prompts.registry import PromptRegistry
 from aila.platform.services.ledger import (
     _SYSTEM_ACTOR,
     LedgerPermissionError,
@@ -37,7 +51,22 @@ from aila.platform.services.ledger import (
 
 __all__ = ["Oracle", "OracleError"]
 
+_log = logging.getLogger(__name__)
+
 _ORACLE_ACTOR = "__oracle__"
+
+# RFC-09 criterion 1: the adjudicator prompt lives in a versionable .md file
+# resolved through PromptRegistry, not an inline literal, so cost / seal rows
+# carry the resolved prompt attribution.
+_PROMPT_DIR = Path(__file__).resolve().parents[1] / "prompts"
+_ADJUDICATOR_PROMPT_REGISTRY = PromptRegistry(
+    _PROMPT_DIR, fallback_base="system_oracle_specialist_adjudicator.md",
+)
+
+
+def _load_adjudicator_prompt() -> str:
+    """Return the specialist-adjudicator system prompt from the registry."""
+    return _ADJUDICATOR_PROMPT_REGISTRY.load("oracle_specialist_adjudicator")
 
 
 class OracleError(RuntimeError):
@@ -330,6 +359,177 @@ class Oracle:
             if result.get("applied"):
                 applied.append(result)
         return applied
+
+    async def adjudicate_specialist_requests(
+        self,
+        investigation_id: str,
+        *,
+        task_type: str,
+        extra_context: str = "",
+        quorum_k: int = 1,
+        session: AsyncSession | None = None,
+    ) -> list[dict[str, Any]]:
+        """LLM-judge open ``request_specialist`` entries and ratify the warranted.
+
+        RFC-13 ratified a specialist request only when a DISTINCT branch
+        approved it (the distinct-approver quorum). On a small panel -- one
+        filer plus a single sibling that never casts the vote -- or an early
+        pause, that approval never lands and the request rots open, so the
+        specialist (the implementer that would build a PoC, the analyst that
+        would run a variant hunt) never spawns.
+
+        This lets the oracle itself decide whether a request is real. For each
+        open ``request_specialist`` that is neither already ratified by a
+        sibling nor already oracle-adjudicated, it asks the model whether the
+        request is warranted given the investigation's evidence, then records
+        its OWN decision as ``__oracle__``. Because the oracle is a distinct
+        approver, a warranted request reaches ``quorum_k`` and the existing
+        spawn path picks it up on the same cycle; a rejected one carries an
+        ``oracle_adjudicated`` marker so it never spawns and is never
+        re-judged. Best-effort per request: a model, parse, or kill-switch
+        outcome leaves the request open so a later cycle or a real sibling
+        vote can still ratify it. Returns one entry per request it ruled on.
+        """
+        # Lazy imports break the platform.services import cycle: the factory
+        # pulls in the reasoning engine, which imports back into services.
+        from aila.platform.agents.idempotent_llm import idempotent_llm_call
+        from aila.platform.services.factory import ServiceFactory
+
+        del quorum_k  # oracle is a single distinct approver; is_ratified uses 1
+        rows = await self._ledger.read_general(investigation_id, session=session)
+        by_target = _decision_targets(rows)
+        evidence = self._render_discovery_context(
+            [r for r in rows if r.get("kind") == "discovery"],
+        )
+        system_prompt = _load_adjudicator_prompt()
+        llm_client = ServiceFactory().llm_client
+        ruled: list[dict[str, Any]] = []
+        for row in rows:
+            if row.get("kind") != "request":
+                continue
+            payload = row.get("payload") or {}
+            if payload.get("intent") != "request_specialist":
+                continue
+            request_id = int(row["id"])
+            prior = by_target.get(request_id, [])
+            if any((d.get("payload") or {}).get("approved") for d in prior):
+                continue  # a real sibling already ratified it
+            if any(
+                str(d.get("author_branch_id")) == _ORACLE_ACTOR
+                and (d.get("payload") or {}).get("oracle_adjudicated")
+                for d in prior
+            ):
+                continue  # already oracle-adjudicated -- idempotent
+            capability = payload.get("target_capability")
+            user_prompt = (
+                f"# Open question\n{extra_context or '(not provided)'}\n\n"
+                f"# Requested specialist capability\n{capability}\n\n"
+                f"# Filing branch's stated reason\n{payload.get('reason') or '(none)'}\n\n"
+                f"# Evidence gathered so far\n{evidence or '(no discoveries recorded yet)'}\n\n"
+                "Decide whether spawning this specialist is warranted now."
+            )
+            try:
+                resp, _hit = await idempotent_llm_call(
+                    llm_client,
+                    method="chat",
+                    task_type=task_type,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    investigation_id=investigation_id,
+                )
+            except (RuntimeError, OSError, TimeoutError) as exc:
+                _log.warning(
+                    "oracle specialist adjudication LLM failed inv=%s req=%s err=%s",
+                    investigation_id, request_id, exc,
+                )
+                continue
+            if resp.disabled:
+                _log.info(
+                    "oracle specialist adjudication skipped (llm kill switch) "
+                    "inv=%s req=%s", investigation_id, request_id,
+                )
+                continue
+            verdict = self._parse_adjudication(resp.content)
+            if verdict is None:
+                continue
+            warranted = bool(verdict.get("warranted"))
+            await self._ledger.append_general(
+                investigation_id,
+                _ORACLE_ACTOR,
+                "decision",
+                {
+                    "approved": warranted,
+                    "oracle_adjudicated": True,
+                    "target": request_id,
+                    "capability": capability,
+                    "rationale": str(verdict.get("rationale") or ""),
+                },
+                idempotency_key=f"oracle_adjudicate:{request_id}",
+                session=session,
+            )
+            _log.info(
+                "oracle adjudicated specialist request inv=%s req=%s cap=%s "
+                "warranted=%s", investigation_id, request_id, capability, warranted,
+            )
+            ruled.append({
+                "request_id": request_id,
+                "capability": capability,
+                "warranted": warranted,
+                "rationale": verdict.get("rationale"),
+            })
+        return ruled
+
+    @staticmethod
+    def _render_discovery_context(
+        discoveries: list[dict[str, Any]],
+        *,
+        max_items: int = 30,
+        char_budget: int = 4000,
+    ) -> str:
+        """Pack recent discoveries into a compact evidence block for the prompt.
+
+        Bounds item count and total size at the render layer (a prompt-budget
+        cap, not a store-side data trim): the most recent discoveries are
+        packed until the budget is reached.
+        """
+        lines: list[str] = []
+        used = 0
+        for row in discoveries[-max_items:]:
+            payload = row.get("payload") or {}
+            text = (
+                payload.get("summary") or payload.get("claim")
+                or payload.get("finding") or payload.get("label")
+                or payload.get("description") or payload.get("note")
+            )
+            if not text:
+                text = ", ".join(sorted(str(k) for k in payload)) or "(empty)"
+            line = f"- {text}"
+            if used + len(line) > char_budget and lines:
+                break
+            lines.append(line)
+            used += len(line)
+        return "\n".join(lines)
+
+    @staticmethod
+    def _parse_adjudication(content: str | None) -> dict[str, Any] | None:
+        """Parse the adjudicator's strict-JSON verdict; None when unusable."""
+        if not content:
+            _log.debug("oracle adjudication returned empty content")
+            return None
+        try:
+            data = json.loads(content)
+        except (ValueError, TypeError):
+            _log.debug("oracle adjudication response not JSON: %r", content[:200])
+            return None
+        if not isinstance(data, dict) or "warranted" not in data:
+            _log.debug(
+                "oracle adjudication response missing 'warranted': %r",
+                content[:200],
+            )
+            return None
+        return data
 
     async def _load_request(
         self,
