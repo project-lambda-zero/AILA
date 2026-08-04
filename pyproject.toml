@@ -224,6 +224,14 @@ ignore = [
 "src/aila/modules/_template/api_router.py" = ["PLC0415"]
 "src/aila/modules/_template/workflow/states/investigation_setup.py" = ["PLC0415"]
 "src/aila/modules/_template/workflow/states/investigation_emit.py" = ["PLC0415"]
+# _template agent scaffold: PLC0415 for the deferred workflow.task /
+# outcome_dispatcher imports the copy-me handlers use to break the
+# researcher-> workflow.task -> researcher import cycle the platform
+# task registration wraps into. Mirrors the vr/malware agent wiring.
+"src/aila/modules/_template/agents/researcher.py" = ["PLC0415"]
+"src/aila/modules/_template/workflow/task.py" = ["PLC0415"]
+"src/aila/modules/_template/workflow/definitions.py" = ["PLC0415"]
+"src/aila/modules/_template/workflow/states/investigation_loop.py" = ["PLW0603"]
 "src/aila/modules/forensics/agents/investigator.py" = ["PLC0415"]
 "src/aila/modules/forensics/agents/resolver_agent.py" = ["PLC0415"]
 "src/aila/modules/forensics/api_router.py" = ["PLC0415", "BLE001", "N806"]

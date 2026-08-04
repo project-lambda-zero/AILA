@@ -1059,3 +1059,31 @@ class TestReviewVoteAndCommentNotReady:
         vote, comment = self._researcher()._review_vote_and_comment(decision)
         assert vote == "abstain"
         assert comment == ""
+
+    def test_empty_rationale_reject_downgraded_to_abstain(self) -> None:
+        """RFC-03 5b convergence: the reject path now delegates to the
+        platform base, which downgrades an unevidenced reject to abstain
+        so an empty-rationale veto cannot swing quorum. VR previously
+        lacked this downgrade."""
+        decision = SimpleNamespace(
+            review_vote="reject",
+            review_comment="",
+            reasoning="",
+            review_outcome_id="o-empty-reject",
+        )
+        vote, comment = self._researcher()._review_vote_and_comment(decision)
+        assert vote == "abstain"
+        assert comment.startswith("[system] reject vote downgraded")
+
+    def test_evidenced_reject_preserved(self) -> None:
+        """A reject carrying a rationale is preserved verbatim (only the
+        unevidenced veto is downgraded)."""
+        decision = SimpleNamespace(
+            review_vote="reject",
+            review_comment="the PoC does not reproduce on the shipped build",
+            reasoning="",
+            review_outcome_id="o-evidenced-reject",
+        )
+        vote, comment = self._researcher()._review_vote_and_comment(decision)
+        assert vote == "reject"
+        assert comment == "the PoC does not reproduce on the shipped build"

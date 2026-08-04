@@ -70,6 +70,23 @@ class ToolExecutor(ToolExecutorHelpersBase):
     # tail of finished/stale ids.
     _INV_INDEX_CACHE_MAX: int = 2048
 
+    # Hard allowlist of MCP servers the AGENT may dispatch against -- the
+    # exact set wired in ``__init__``'s ``_bridges`` map. Matches the
+    # server catalog vr exposes to the researcher via ``_fetch_tool_specs``:
+    #   - audit_mcp:   source-code audit (source_repo + android_apk source tree)
+    #   - ida_headless: binary analysis (native_binary / kernel / hypervisor /
+    #                   android_apk native libs)
+    #   - android_mcp: APK-facet tools (manifest / signing / permissions)
+    #   - knowledge:   RFC-12 read-only knowledge retrieval (available on
+    #                  every target kind)
+    # The base check (ToolExecutorHelpersBase._dispatch) rejects any other
+    # server_id BEFORE adapter lookup with a clear "not exposed to this
+    # agent" error. Adding a new bridge requires wiring it in ``__init__``
+    # AND appending it here.
+    _AGENT_ALLOWED_SERVERS: frozenset[str] = frozenset(
+        {"audit_mcp", "ida_headless", "android_mcp", "knowledge"},
+    )
+
     # Merged-dispatch config (ToolExecutorHelpersBase.execute reads these).
     _TOOLRUN_EXAMPLE_JSON = (
         '{"tool": "audit_mcp.read_function", "args": {"name": "..."}}'

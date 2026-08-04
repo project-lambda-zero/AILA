@@ -392,13 +392,31 @@ class AgentTurnRunnerBase:
     def _review_vote_and_comment(self, decision: Any) -> tuple[str, str]:
         """Resolve the effective (vote, comment) for an outcome review.
 
-        Default mirrors the raw decision fields. Malware downgrades an
-        empty-rationale reject to abstain.
+        Default behavior: read the raw ``review_vote`` / ``review_comment``
+        (falling back to ``reasoning``) off the decision, but downgrade
+        an empty-rationale ``reject`` to ``abstain`` -- an unevidenced
+        veto MUST NOT swing quorum. The downgrade is logged and the
+        stored comment carries a ``[system]`` marker so operators can
+        see why the vote flipped. Subclasses that recognize additional
+        vote flavors (e.g. VR's ``not_ready``) SHOULD handle those
+        first and delegate the reject path back to this base via
+        ``super()._review_vote_and_comment(decision)``.
         """
-        return (
-            decision.review_vote or "abstain",
-            decision.review_comment or decision.reasoning or "",
-        )
+        raw_vote = decision.review_vote or "abstain"
+        raw_comment = (decision.review_comment or decision.reasoning or "").strip()
+        if raw_vote == "reject" and not raw_comment:
+            _log.warning(
+                "%s REVIEW DOWNGRADE inv=%s branch=%s outcome=%s "
+                "vote=reject -> abstain (empty rationale; unevidenced veto)",
+                self._LOG_LABEL, self.investigation_id, self.branch_id,
+                getattr(decision, "review_outcome_id", None),
+            )
+            return (
+                "abstain",
+                "[system] reject vote downgraded to abstain: no "
+                "rationale provided in review_comment or reasoning",
+            )
+        return (raw_vote, raw_comment)
 
     async def _dispatch_approved_outcome(self, outcome_id: str) -> None:
         """Enqueue the module's outcome dispatcher for an approved outcome.

@@ -19,6 +19,15 @@ operator action.
 
 ### Added
 
+- The module template now scaffolds a full investigation on the shared agent
+  runtime (RFC-03 #28). `_template/agents/` subclasses every platform agent
+  primitive (turn runner, tool executor, claim verifier, pattern extractor,
+  synthesis runner, outcome dispatcher, branch pool, persona router) as
+  minimal bindings, the workflow loop and emit states bind those primitives,
+  and the module declares its residue config keys. A module copied from the
+  template inherits the correct per-turn engine by construction; a copier
+  supplies its own prompts, outcome kinds, tool bridges, and record
+  projections.
 - The module template now scaffolds the investigation lifecycle against the
   platform primitives (RFC-02 #27). A new module inherits pause / resume /
   re-enqueue / cost handlers that dispatch straight to the platform lifecycle
@@ -583,6 +592,13 @@ operator action.
 
 ### Changed
 
+- The vulnerability-research and malware tool executors no longer diverge on
+  their pre-call and access guards (RFC-03 #28). The malware executor gains
+  the pre-call hard-block that refuses a bridge call whose identical arguments
+  have failed repeatedly (config `tool_executor_hard_block_repeat`), and the
+  vulnerability-research executor gains the server allowlist that returns a
+  clear not-exposed error for a server the agent may not call. Neither change
+  alters a successful call path.
 - Investigation pause / resume / re-enqueue handlers now bind the platform
   lifecycle service directly at the api_router call site (RFC-02 #27). The
   per-module lifecycle adapter indirection is gone; each handler passes its
@@ -768,6 +784,12 @@ operator action.
 
 ### Fixed
 
+- An unevidenced reject vote no longer swings review quorum in the
+  vulnerability-research module (RFC-03 #28). The empty-rationale
+  reject-to-abstain downgrade now lives in the shared turn runner, so both
+  modules apply it uniformly; previously only the malware module downgraded a
+  reject cast with no rationale, and a vulnerability-research branch could veto
+  a correct outcome with an empty review comment.
 - Pausing or re-enqueuing an investigation no longer fails when the task queue
   backend is unreachable (RFC-02 #27). The post-commit queue purge is
   best-effort, but its backend connection error was uncaught, so a pause whose

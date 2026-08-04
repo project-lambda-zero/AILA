@@ -435,6 +435,24 @@ HONESTY_WHITELIST = [
     # module_id at. Same public facade shape as vr / malware; inlining
     # would scatter the module_id binding across every panel spawn site.
     ("forensics/_task_queue.py", "default_task_queue", "consider inlining"),
+    # _template/_task_queue.default_task_queue: same public factory shape
+    # as vr / malware / forensics; the scaffold ships it so a copier's
+    # ``from aila.modules.<mod>._task_queue import default_task_queue``
+    # site keeps working after the rename, without scattering the
+    # ConfigRegistry + module_id binding across every callsite.
+    ("_template/_task_queue.py", "default_task_queue", "consider inlining"),
+    # _template/workflow/finalize.finalize_investigation: template ships a
+    # NO-OP finalize chokepoint (a copier wires the four-trigger detector).
+    # The single ``return FinalizeResult(no_trigger)`` is deliberate --
+    # inlining at the emit call site would force every copier to
+    # rediscover the FinalizeResult shape instead of extending the seed.
+    ("_template/workflow/finalize.py", "finalize_investigation", "consider inlining"),
+    # _template/workflow/services.TemplateWorkflowServices.build: the
+    # per-run services factory shape mandated by the WorkflowServices
+    # protocol (D-15 freshness contract). Same shape as vr / malware
+    # BuildableServices.build; inlining at the definition site would
+    # violate the factory-per-run contract.
+    ("_template/workflow/services.py", "build", "consider inlining"),
     # platform/contracts/target_stages.get: typed getattr facade exposed so
     # consumers don't reach into the StageDescriptor internals; the
     # ``return getattr(...)`` is the simplest signature that satisfies

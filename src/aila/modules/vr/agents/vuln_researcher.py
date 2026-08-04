@@ -335,12 +335,18 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         is preserved verbatim (not downgraded) because the
         not_ready-recorded directive stamped by the runner already
         surfaces the missing blocker on the next prompt.
+
+        Every other vote (approve / reject / request_edit / abstain)
+        delegates to the platform base, which handles the empty-
+        rationale reject -> abstain downgrade uniformly across modules.
         """
         raw_vote = decision.review_vote or "abstain"
-        raw_comment = (decision.review_comment or decision.reasoning or "").strip()
         if raw_vote == "not_ready":
-            return ("not_ready", raw_comment)
-        return (raw_vote, raw_comment)
+            return (
+                "not_ready",
+                (decision.review_comment or decision.reasoning or "").strip(),
+            )
+        return super()._review_vote_and_comment(decision)
 
     async def _dispatch_approved_outcome(self, outcome_id: str) -> None:
         # Deferred import: workflow.task imports the researcher module.

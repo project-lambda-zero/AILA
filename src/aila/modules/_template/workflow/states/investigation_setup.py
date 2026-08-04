@@ -31,7 +31,6 @@ from aila.modules._template.db_models import (
     TemplateInvestigationRecord,
     TemplateTargetRecord,
 )
-from aila.modules._template.workflow.task import run_template_investigate
 from aila.platform.contracts.enums import PersonaVoice
 from aila.platform.workflows.investigation_setup_base import (
     InvestigationStateBindings,
@@ -104,6 +103,12 @@ async def _spawn_persona_siblings_and_enqueue(
     # config-driven Redis binding + team-id inheritance. The scaffold
     # constructs the queue lazily so the file compiles without the
     # ``_task_queue.py`` helper that a fresh copy has not written yet.
+    # ``run_template_investigate`` is imported here too because
+    # ``workflow.task`` imports ``workflow.definitions``, which
+    # imports every state file (including THIS one). A module-scope
+    # import here would form the classic setup <-> task cycle -- vr
+    # uses the same deferred-import shape.
+    from aila.modules._template.workflow.task import run_template_investigate
     from aila.platform.tasks.queue import TaskQueue
     from aila.storage.registry import ConfigRegistry
 
