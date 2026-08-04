@@ -23,6 +23,7 @@ worker replays the cached blurb instead of paying for a second completion.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from pathlib import Path
@@ -130,11 +131,18 @@ async def enrich_chunk(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": _build_user_message(document, chunk)},
     ]
-    # No investigation context on ingest -- use a namespace-derived stable
-    # id so the idempotency cache key is deterministic across retries of
-    # the same ingest; the messages payload already differentiates every
-    # (document, chunk) pair inside that namespace.
-    investigation_id = f"knowledge-enrich:{namespace}"
+    # No investigation context on ingest -- derive a stable, column-fitting
+    # id from the namespace so the idempotency cache key is deterministic
+    # across retries of the same ingest; the messages payload already
+    # differentiates every (document, chunk) pair inside that namespace.
+    # The id MUST fit the varchar(36) investigation_id columns on the LLM
+    # idempotency cache, cost, and seal rows: the raw
+    # ``knowledge-enrich:<namespace>`` form overflowed them for real
+    # namespaces, which silently failed every cache + journal write and
+    # re-paid the model on every re-ingest. ``kbenrich-`` (9) + a 26-char
+    # namespace digest = 35 chars.
+    ns_digest = hashlib.sha256(namespace.encode("utf-8")).hexdigest()[:26]
+    investigation_id = f"kbenrich-{ns_digest}"
     resp, _cache_hit = await idempotent_llm_call(
         llm_client,
         method="chat",

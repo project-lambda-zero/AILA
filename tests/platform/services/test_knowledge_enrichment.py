@@ -35,6 +35,7 @@ from sqlmodel import select
 
 from aila.platform.llm.client import LLMResponse
 from aila.platform.services.knowledge import KnowledgeService
+from aila.platform.services.knowledge_enrichment import enrich_chunk
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import KnowledgeEntryRecord
 
@@ -347,3 +348,34 @@ async def test_enrich_on_with_disabled_llm_stores_raw_chunk() -> None:
         assert row.content.strip() in _DOC, (
             "on empty blurb the raw chunk must be stored verbatim"
         )
+
+
+async def test_enrich_chunk_idempotency_id_fits_varchar36() -> None:
+    """The idempotency id passed for enrichment must fit the varchar(36)
+    investigation_id column on the LLM idempotency cache / cost / seal rows.
+
+    A real workspace namespace (``vr.finding.workspace.<uuid>``) is ~48
+    chars; the raw ``knowledge-enrich:<namespace>`` form overflowed the
+    column and silently failed every cache + journal write, re-paying the
+    model on each re-ingest. The derived id must be <=36 chars, carry the
+    ``kbenrich-`` prefix, and be deterministic per namespace.
+    """
+    captured: dict[str, str] = {}
+
+    async def fake_idempotent(*args, **kwargs) -> tuple[LLMResponse, bool]:
+        captured["investigation_id"] = kwargs["investigation_id"]
+        return _make_llm_response("blurb"), False
+
+    ns = "vr.finding.workspace.15aa5ea8-ad72-49f4-8da2-c6a3343490ee"
+    with patch(
+        "aila.platform.services.knowledge_enrichment.idempotent_llm_call",
+        new=AsyncMock(side_effect=fake_idempotent),
+    ):
+        await enrich_chunk(_StubLLMClient(), document="doc", chunk="c", namespace=ns)
+        first = captured["investigation_id"]
+        await enrich_chunk(_StubLLMClient(), document="doc", chunk="c", namespace=ns)
+        second = captured["investigation_id"]
+
+    assert len(first) <= 36, f"id {first!r} ({len(first)}) overflows varchar(36)"
+    assert first.startswith("kbenrich-")
+    assert first == second  # deterministic per namespace

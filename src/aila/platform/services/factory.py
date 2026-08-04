@@ -127,8 +127,21 @@ class ServiceFactory:
 
     @property
     def knowledge(self) -> KnowledgeService:
-        """KnowledgeService -- RAG retrieval, agent knowledge store (#53 team-scoped)."""
-        return KnowledgeService(team_context=self._team_context)
+        """KnowledgeService -- RAG retrieval, agent knowledge store (#53 team-scoped).
+
+        Wired with the factory's ``llm_client`` so RFC-12 Phase 3 contextual
+        enrichment (``store(..., chunked=True, enrich=True)``) is reachable
+        through the canonical constructor. Without it the enrichment path
+        (which checks ``self._llm_client is not None``) was a silent no-op for
+        every factory-built service. Enrichment stays opt-in per call and
+        default-off, so the client is exercised only when a caller explicitly
+        requests it; the pure-retrieval paths that build ``KnowledgeService()``
+        directly are unaffected and stay lightweight.
+        """
+        return KnowledgeService(
+            team_context=self._team_context,
+            llm_client=self.llm_client,
+        )
 
     def _get_config_registry(self) -> ConfigRegistry:
         """Return the memoized ConfigRegistry, building it on first access."""

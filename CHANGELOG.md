@@ -19,6 +19,14 @@ operator action.
 
 ### Added
 
+- Contextual chunk enrichment (RFC-12 Phase 3) is now reachable through the
+  canonical `ServiceFactory.knowledge`, which wires the platform LLM client
+  into the `KnowledgeService` it builds. Previously the factory produced a
+  service with no LLM client, so `store(..., chunked=True, enrich=True)` was a
+  silent no-op for every factory-built caller. Enrichment stays opt-in per
+  call and default-off, so the client is exercised only when a caller
+  explicitly requests it; pure-retrieval code that builds `KnowledgeService()`
+  directly is unaffected. (RFC-12 #49)
 - A new honesty-audit guardrail, `content_slice_truncation` (rule 68), flags a
   constant-bound slice (`x[:N]`) applied to content stored into or returned
   from the knowledge base: the direct value of a `content=`-family keyword
@@ -712,6 +720,15 @@ operator action.
 
 ### Fixed
 
+- Knowledge enrichment silently failed its idempotency and journaling on
+  every ingest. The enrichment LLM call derived its idempotency scope as
+  `knowledge-enrich:<namespace>`, which overflowed the `varchar(36)`
+  `investigation_id` column on the LLM idempotency cache, cost, and seal rows
+  for any real namespace; each cache and journal write was rejected and
+  dead-lettered, so a re-ingest re-paid the model instead of replaying the
+  cached blurb. The scope is now a fixed-width namespace digest
+  (`kbenrich-` plus a 26-character digest, 35 characters total), so the cache
+  persists and a re-ingest replays it. (RFC-12 #49)
 - Knowledge-base writes and reads no longer truncate content. Observations
   burned from tool output were capped at 6000 characters before being stored,
   and prior knowledge retrieved into an investigation prompt was capped at 600
