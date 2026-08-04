@@ -4,6 +4,13 @@ Barrel re-export only. Model definitions live in domain submodules.
 """
 from __future__ import annotations
 
+from aila.platform.contracts.evidence_graph import (
+    EvidenceGraphEdge,
+    EvidenceGraphNode,
+    EvidenceGraphSnapshot,
+)
+from aila.platform.contracts.hypothesis import HypothesisProjection, HypothesisState
+
 from .advisory import CVSSVector, CWEMapping, VRAdvisory
 from .apk_static import (
     ApkStaticAuditAggregate,
@@ -45,11 +52,6 @@ from .enrichment import (
     TargetCapabilityProfile,
 )
 from .events import VREventEnvelope, VREventType
-from .evidence_graph import (
-    EvidenceGraphEdge,
-    EvidenceGraphNode,
-    EvidenceGraphSnapshot,
-)
 from .finding import (
     CrashSignature,
     CrashType,
@@ -79,7 +81,6 @@ from .fuzz_proposal import (
     SeedCorpusEntry,
     VRFuzzCampaignProposalSummary,
 )
-from .hypothesis import HypothesisProjection, HypothesisState
 from .investigation import (
     InvestigationKind,
     InvestigationPauseReason,

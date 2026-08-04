@@ -35,11 +35,6 @@ from typing import Any
 from sqlmodel import select as _select
 
 from aila.modules.vr.contracts.target import TargetKind
-from aila.modules.vr.contracts.target_stages import (
-    StageName,
-    StageState,
-    StageStatus,
-)
 from aila.modules.vr.db_models import VRTargetRecord
 from aila.modules.vr.services.config_helpers import get_float
 from aila.modules.vr.services.mcp_call_logger import record_call
@@ -51,6 +46,11 @@ from aila.modules.vr.services.stage_tracker import (
     save_target_stages,
 )
 from aila.platform.contracts import utc_now
+from aila.platform.contracts.target_stages import (
+    StageName,
+    StageState,
+    StageStatus,
+)
 from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
 from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
 from aila.platform.mcp.bridges.ida_headless import IDABridgeTool

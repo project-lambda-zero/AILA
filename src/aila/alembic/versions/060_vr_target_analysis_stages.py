@@ -21,7 +21,7 @@ struct, services that haven't been upgraded yet keep working (they read
 the rolled-up `analysis_state`), and upgraded services start using the
 per-stage tracker.
 
-See `aila.modules.vr.contracts.target_stages` for the canonical schema.
+See `aila.platform.contracts.target_stages` for the canonical schema.
 """
 from __future__ import annotations
 

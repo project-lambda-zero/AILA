@@ -435,15 +435,10 @@ HONESTY_WHITELIST = [
     # module_id at. Same public facade shape as vr / malware; inlining
     # would scatter the module_id binding across every panel spawn site.
     ("forensics/_task_queue.py", "default_task_queue", "consider inlining"),
-    # contracts.target_stages.get: typed getattr facade exposed so
+    # platform/contracts/target_stages.get: typed getattr facade exposed so
     # consumers don't reach into the StageDescriptor internals; the
     # ``return getattr(...)`` is the simplest signature that satisfies
     # the typing contract.
-    ("malware/contracts/target_stages.py", "get", "consider inlining"),
-    ("vr/contracts/target_stages.py", "get", "consider inlining"),
-    # RFC-01: hoisted platform copy of the same typed getattr facade; the
-    # vr/malware entries above are removed when those files are deleted in
-    # RFC-01 Phase 3.
     ("platform/contracts/target_stages.py", "get", "consider inlining"),
     # personas.role_notes_for: registry-style lookup facade, two-call
     # path lets the role_notes_for caller stay agnostic of the backing

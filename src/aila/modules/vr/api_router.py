@@ -2434,11 +2434,11 @@ def create_vr_router() -> APIRouter:
         import json as _json
 
         from aila.api.deps import get_task_queue
-        from aila.modules.vr.contracts.target_stages import StageState
         from aila.modules.vr.services.stage_tracker import (
             parse_stages,
             save_target_stages,
         )
+        from aila.platform.contracts.target_stages import StageState
 
         from ._task_queue import enqueue_downstream_target_stages
         from .db_models import VRTargetRecord
@@ -2592,11 +2592,11 @@ def create_vr_router() -> APIRouter:
         # ``run_target_analysis`` on the vr worker queue.
         if kind_str == TargetKind.ANDROID_APK.value:
             from aila.api.deps import get_task_queue
-            from aila.modules.vr.contracts.target_stages import StageName, StageState
             from aila.modules.vr.services.stage_tracker import (
                 parse_stages,
                 save_target_stages,
             )
+            from aila.platform.contracts.target_stages import StageName, StageState
 
             from .workflow.task import run_target_analysis
 

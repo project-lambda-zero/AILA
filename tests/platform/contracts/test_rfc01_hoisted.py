@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+from aila.modules.malware import contracts as mw_contracts
 from aila.modules.malware.contracts import branch as mw_b
 from aila.modules.malware.contracts import investigation as mw_i
 from aila.modules.malware.contracts import message as mw_m
@@ -16,14 +17,13 @@ from aila.modules.malware.contracts import outcome as mw_o
 from aila.modules.malware.contracts import pattern as mw_p
 from aila.modules.malware.contracts import target as mw_t
 from aila.modules.malware.contracts import workspace as mw_ws
+from aila.modules.vr import contracts as vr_contracts
 from aila.modules.vr.contracts import branch as vr_b
-from aila.modules.vr.contracts import hypothesis as vr_h
 from aila.modules.vr.contracts import investigation as vr_i
 from aila.modules.vr.contracts import message as vr_m
 from aila.modules.vr.contracts import outcome as vr_o
 from aila.modules.vr.contracts import pattern as vr_p
 from aila.modules.vr.contracts import target as vr_t
-from aila.modules.vr.contracts import target_stages as vr_ts
 from aila.modules.vr.contracts import workspace as vr_ws
 from aila.platform.contracts import enums as pe
 from aila.platform.contracts import target_stages as p_ts
@@ -51,9 +51,7 @@ _VR_PAIRS = [
     (pe.PatternStatus, vr_p.PatternStatus),
     (pe.PatternScope, vr_p.PatternScope),
     (pe.PatternConfidence, vr_p.PatternConfidence),
-    (pe.HypothesisState, vr_h.HypothesisState),
-    (pe.StageState, vr_ts.StageState),
-    (pe.StageName, vr_ts.StageName),
+    (pe.HypothesisState, vr_contracts.HypothesisState),
 ]
 
 _MW_PAIRS = [
@@ -73,6 +71,9 @@ _MW_PAIRS = [
     (pe.PatternStatus, mw_p.PatternStatus),
     (pe.PatternScope, mw_p.PatternScope),
     (pe.PatternConfidence, mw_p.PatternConfidence),
+    (pe.HypothesisState, mw_contracts.HypothesisState),
+    (pe.StageState, mw_contracts.StageState),
+    (pe.StageName, mw_contracts.StageName),
 ]
 
 

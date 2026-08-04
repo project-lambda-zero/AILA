@@ -28,7 +28,6 @@ from typing import Any, Protocol
 from sqlmodel import select as _select
 
 from aila.modules.vr.contracts.target import TargetKind
-from aila.modules.vr.contracts.target_stages import StageName
 from aila.modules.vr.db_models import VRTargetRecord
 from aila.modules.vr.enrichment.contracts import (
     FunctionRanking,
@@ -41,6 +40,7 @@ from aila.modules.vr.services.stage_tracker import (
     StageTracker,
 )
 from aila.platform.contracts import utc_now
+from aila.platform.contracts.target_stages import StageName
 from aila.platform.uow import UnitOfWork
 
 __all__ = [

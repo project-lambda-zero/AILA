@@ -37,7 +37,6 @@ from aila.modules.vr.contracts.enrichment import (
     TargetCapabilityProfile,
 )
 from aila.modules.vr.contracts.target import TargetKind
-from aila.modules.vr.contracts.target_stages import StageName
 from aila.modules.vr.db_models import VRTargetRecord
 from aila.modules.vr.enrichment.services.function_ranker import (
     McpCallable,
@@ -47,6 +46,7 @@ from aila.modules.vr.services.stage_tracker import (
     StageInFlightError,
     StageTracker,
 )
+from aila.platform.contracts.target_stages import StageName
 from aila.platform.uow import UnitOfWork
 
 __all__ = [

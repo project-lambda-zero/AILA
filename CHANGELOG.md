@@ -697,6 +697,20 @@ operator action.
 
 ### Removed
 
+- The vulnerability-research and malware modules no longer carry their own
+  `contracts/hypothesis.py`, `contracts/evidence_graph.py`, or
+  `contracts/target_stages.py` files (RFC-01 Phase 3). Those three modules
+  had become byte-identical re-export shims after the earlier platform
+  hoist; they are deleted and every import site now resolves
+  `HypothesisProjection`, `HypothesisState`, the `EvidenceGraph` node and
+  edge and snapshot contracts, `StageName`, `StageState`, `StageStatus`,
+  `TargetAnalysisStages`, and `roll_up_overall_state` directly from
+  `aila.platform.contracts.*`. Each module contract barrel keeps
+  re-exporting the same names under the same `__all__`, sourced from the
+  platform, so the module contract package surface is unchanged. The two
+  stale `contracts/target_stages.get` entries in the honesty whitelist are
+  dropped. No schema change; behavior-preserving. This closes the last
+  open item of RFC-01. (#26)
 - androguard and MobSF are no longer part of the APK analysis pipeline.
   The APK static summary is composed in-repo instead (see Changed), and
   MobSF scanning is dropped entirely.

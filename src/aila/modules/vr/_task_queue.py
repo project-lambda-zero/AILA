@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from aila.modules.vr.contracts.target_stages import StageState
 from aila.modules.vr.enrichment.workers import run_target_enrichment
 from aila.modules.vr.services.stage_tracker import load_target_stages
+from aila.platform.contracts.target_stages import StageState
 from aila.platform.tasks.queue import TaskQueue
 from aila.storage.registry import ConfigRegistry
 
