@@ -4936,10 +4936,14 @@ def create_vr_router() -> APIRouter:
         §32/§33/§35/§47.
         """
         del request
-        from .db_models import VRInvestigationRecord
-        from .workflow.pause_resume import (
+        from aila.platform.services.investigation_lifecycle import (
             PauseInvestigationError,
-            pause_investigation_atomic,
+            pause_investigation,
+        )
+
+        from .db_models import (
+            VRInvestigationBranchRecord,
+            VRInvestigationRecord,
         )
 
         # Team filter: confirm the auth context can see this row before
@@ -4961,10 +4965,14 @@ def create_vr_router() -> APIRouter:
                 )
 
         try:
-            summary = await pause_investigation_atomic(
+            summary = await pause_investigation(
                 investigation_id,
+                inv_model=VRInvestigationRecord,
+                branch_model=VRInvestigationBranchRecord,
+                branch_table="vr_investigation_branches",
+                track="vr",
+                pause_reason=InvestigationPauseReason.OPERATOR.value,
                 user_id=auth.user_id,
-                reason=InvestigationPauseReason.OPERATOR.value,
             )
         except PauseInvestigationError as exc:
             raise HTTPException(
@@ -5014,12 +5022,16 @@ def create_vr_router() -> APIRouter:
         Closes §34.
         """
         from aila.api.deps import get_task_queue
-
-        from .db_models import VRInvestigationRecord
-        from .workflow.pause_resume import (
+        from aila.platform.services.investigation_lifecycle import (
             ResumeInvestigationError,
-            resume_investigation_atomic,
+            resume_investigation,
         )
+
+        from .db_models import (
+            VRInvestigationBranchRecord,
+            VRInvestigationRecord,
+        )
+        from .workflow.task import run_vr_investigate
 
         # Team filter first.
         async with UnitOfWork() as uow:
@@ -5039,10 +5051,15 @@ def create_vr_router() -> APIRouter:
 
         task_queue = get_task_queue("vr", request)
         try:
-            summary = await resume_investigation_atomic(
+            summary = await resume_investigation(
                 investigation_id,
-                user_id=auth.user_id,
+                inv_model=VRInvestigationRecord,
+                branch_model=VRInvestigationBranchRecord,
+                branch_table="vr_investigation_branches",
+                track="vr",
+                task_fn=run_vr_investigate,
                 task_queue=task_queue,
+                user_id=auth.user_id,
                 auth_user_id=auth.user_id,
                 auth_role=auth.role,
                 auth_team_id=auth.team_id,
@@ -5365,9 +5382,12 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRInvestigationSummary]:
         from aila.api.deps import get_task_queue
+        from aila.platform.services.investigation_lifecycle import (
+            reenqueue_investigation,
+        )
 
         from .db_models import VRInvestigationRecord
-        from .workflow.pause_resume import reenqueue_investigation_atomic
+        from .workflow.task import run_vr_investigate
 
         # Auth visibility check: confirm the caller can see this row
         # before mutating it. The platform reenqueue service owns the
@@ -5397,14 +5417,26 @@ def create_vr_router() -> APIRouter:
             new_kind = body.kind.value
             new_strategy = _KIND_DEFAULT_STRATEGY[body.kind]
 
-        await reenqueue_investigation_atomic(
+        task_queue = get_task_queue("vr", request)
+
+        async def _submit_one(inv_id: str, branch_id: str | None) -> None:
+            del branch_id  # VR submits once; setup owns branch spawn
+            await task_queue.submit(
+                track="vr",
+                fn=run_vr_investigate,
+                kwargs={"investigation_id": inv_id},
+                user_id=auth.user_id,
+                group_id=auth.role,
+                team_id=auth.team_id,
+            )
+
+        await reenqueue_investigation(
             investigation_id,
+            inv_model=VRInvestigationRecord,
+            fn_path_pattern="%run_vr_investigate%",
+            submit_one=_submit_one,
             new_kind=new_kind,
             new_strategy=new_strategy,
-            task_queue=get_task_queue("vr", request),
-            user_id=auth.user_id,
-            group_id=auth.role,
-            team_id=auth.team_id,
         )
 
         async with UnitOfWork() as uow:

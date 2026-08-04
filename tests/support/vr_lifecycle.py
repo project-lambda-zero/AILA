@@ -1,12 +1,12 @@
-"""VR binding of the platform investigation lifecycle service.
+"""Test binding of the platform investigation lifecycle to VR models.
 
-Thin wrappers over :mod:`aila.platform.services.investigation_lifecycle`:
-pause / resume are bound to the VR record models, the vr branch table,
-the ``vr`` ARQ track, and ``run_vr_investigate``. The pause-reason enum
-coercion stays here (VR owns its reason vocabulary); the platform takes
-the already-coerced value. The api_router pause / resume handlers keep
-the ``pause_investigation_atomic`` / ``resume_investigation_atomic``
-call surface unchanged.
+The production api_router pause / resume / re-enqueue handlers inline the
+VR binding of :mod:`aila.platform.services.investigation_lifecycle`
+(platform-bound: the handler is the call site, no module wrapper module).
+The lifecycle unit tests exercise that same platform atomic sequence
+through VR concrete models; this helper supplies the binding plus the VR
+pause-reason coercion so the tests stay focused on lifecycle behaviour
+rather than model plumbing.
 """
 from __future__ import annotations
 
@@ -46,11 +46,7 @@ _VR_BRANCH_TABLE = "vr_investigation_branches"
 
 
 def _pause_reason_value(reason: str | None) -> str:
-    """Coerce caller-supplied reason to a contract-enum value.
-
-    Empty / unknown strings degrade to ``OPERATOR`` so the column never
-    holds a free-form string.
-    """
+    """Coerce a caller-supplied reason to a contract-enum value."""
     if reason is None:
         return InvestigationPauseReason.OPERATOR.value
     try:
@@ -112,12 +108,7 @@ async def reenqueue_investigation_atomic(
     group_id: str | None = None,
     team_id: str | None = None,
 ) -> dict[str, Any]:
-    """Reset + re-submit ``investigation_id`` (VR binding).
-
-    VR submits exactly one task per investigation (``branch_model`` left
-    unset selects the platform submit-once mode); its setup state
-    respawns/reuses the persona branches on dispatch.
-    """
+    """Reset + re-submit ``investigation_id`` (VR binding)."""
     if task_queue is None:
         raise ReenqueueInvestigationError(
             "task_queue argument required (auth-bound for safety)",

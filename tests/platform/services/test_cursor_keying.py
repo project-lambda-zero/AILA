@@ -36,10 +36,6 @@ from aila.modules.vr.db_models import (
     VRTargetRecord,
     VRWorkspaceRecord,
 )
-from aila.modules.vr.workflow.pause_resume import (
-    pause_investigation_atomic,
-    resume_investigation_atomic,
-)
 from aila.platform.contracts._common import utc_now
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.engine import DurableStateMachine
@@ -47,6 +43,10 @@ from aila.platform.workflows.types import RESERVED_PAUSED
 from aila.storage.db_models import (
     WorkflowRunRecord,
     WorkflowStateCursor,
+)
+from tests.support.vr_lifecycle import (
+    pause_investigation_atomic,
+    resume_investigation_atomic,
 )
 
 pytestmark = pytest.mark.asyncio

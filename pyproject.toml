@@ -217,6 +217,13 @@ ignore = [
 "src/aila/_dotenv.py" = ["PLC0415"]
 "src/aila/cli.py" = ["PLC0415", "E402"]
 "src/aila/modules/_template/module.py" = ["PLC0415", "PIE790"]
+# _template lifecycle scaffold: PLC0415 for the deferred workflow.task /
+# task-queue imports the copy-me handlers document as the canonical
+# pattern. Mirrors the vr/malware wiring (see "vr/api_router.py",
+# "malware/workflow/states/investigation_setup.py").
+"src/aila/modules/_template/api_router.py" = ["PLC0415"]
+"src/aila/modules/_template/workflow/states/investigation_setup.py" = ["PLC0415"]
+"src/aila/modules/_template/workflow/states/investigation_emit.py" = ["PLC0415"]
 "src/aila/modules/forensics/agents/investigator.py" = ["PLC0415"]
 "src/aila/modules/forensics/agents/resolver_agent.py" = ["PLC0415"]
 "src/aila/modules/forensics/api_router.py" = ["PLC0415", "BLE001", "N806"]

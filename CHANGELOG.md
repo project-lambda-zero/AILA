@@ -19,6 +19,16 @@ operator action.
 
 ### Added
 
+- The module template now scaffolds the investigation lifecycle against the
+  platform primitives (RFC-02 #27). A new module inherits pause / resume /
+  re-enqueue / cost handlers that dispatch straight to the platform lifecycle
+  and cost services, plus workflow setup / loop / emit states that bind the
+  platform state factories, so the correct four-source-of-truth behavior is
+  present by construction rather than copied from an existing module.
+- A structural-similarity guardrail (honesty rule 69,
+  `lifecycle_binding_copy_of_platform`) flags a module
+  `workflow/pause_resume.py` that re-copies the platform atomic lifecycle body
+  instead of binding the shared service. (RFC-02 #27)
 - The planner oracle now adjudicates open `request_specialist` entries when
   no distinct sibling branch has cast the ratifying vote
   (`Oracle.adjudicate_specialist_requests`). Previously a specialist request
@@ -573,6 +583,13 @@ operator action.
 
 ### Changed
 
+- Investigation pause / resume / re-enqueue handlers now bind the platform
+  lifecycle service directly at the api_router call site (RFC-02 #27). The
+  per-module lifecycle adapter indirection is gone; each handler passes its
+  record models, branch table, ARQ track, and task function to the shared
+  `pause_investigation` / `resume_investigation` / `reenqueue_investigation`
+  service, and the module still owns its pause-reason vocabulary at that call
+  site. Behavior is unchanged; the atomic body keeps a single implementation.
 - The RFC-07 ToolRouter now sits on the live MCP tool-dispatch path. The
   agent tool executor routes a bridge call through the router when the
   server resolves to a capability with catalogued instances, so an
@@ -710,6 +727,10 @@ operator action.
 
 ### Removed
 
+- The vulnerability-research and malware modules no longer carry a
+  `workflow/pause_resume.py` lifecycle adapter (RFC-02 #27). Each had become a
+  thin binding over the platform lifecycle service; the api_router handlers now
+  bind that service inline, so the modules hold no lifecycle wrapper module.
 - The vulnerability-research and malware modules no longer carry their own
   `contracts/hypothesis.py`, `contracts/evidence_graph.py`, or
   `contracts/target_stages.py` files (RFC-01 Phase 3). Those three modules
@@ -747,6 +768,14 @@ operator action.
 
 ### Fixed
 
+- Pausing or re-enqueuing an investigation no longer fails when the task queue
+  backend is unreachable (RFC-02 #27). The post-commit queue purge is
+  best-effort, but its backend connection error was uncaught, so a pause whose
+  database transition had already committed still returned a server error and
+  the operator saw a failure for a pause that in fact took effect. The shared
+  purge primitive now degrades to a zero-count result and logs a warning when
+  the queue backend cannot be reached, so the lifecycle transition reports
+  success once its transaction commits.
 - Pausing an investigation now cancels its active worker tasks and the running
   loop detects the pause through the cursor (RFC-02). Two mis-keyed predicates
   are corrected. Pause matched `taskrecord` rows by

@@ -26,7 +26,7 @@
 
 HONESTY_WHITELIST = [
     # Category (b): state_response_emit is a required workflow stage handler.
-    ("_template/workflow.py", "state_response_emit", "context"),
+    ("_template/workflow/__init__.py", "state_response_emit", "context"),
 
     # Category (b): register_tools() accepts optional registry= param for backward compat.
     ("platform.py", "register_tools", "registry"),

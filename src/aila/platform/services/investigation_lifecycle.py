@@ -24,7 +24,8 @@ forces one behavior.
 Generic over the module: callers bind their concrete investigation and
 branch record models, the raw branch table name (for the operator-facing
 branch-status projection), the ARQ track, and the module task function
-via a thin module wrapper. The platform file never names a module. The
+at the module call site (the api_router lifecycle handler binds the
+concrete models directly). The platform file never names a module. The
 pause-reason enum coercion stays module-side (each module validates its
 own reason vocabulary) and the already-coerced string is passed in.
 """

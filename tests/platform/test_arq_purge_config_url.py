@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pytest
 import redis.asyncio as aredis
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 import aila.storage.registry as registry_mod
 from aila.platform.tasks.arq_purge import purge_arq_jobs_for_investigation
@@ -65,4 +66,27 @@ async def test_no_redis_url_returns_zero(monkeypatch) -> None:
     monkeypatch.setattr(aredis, "from_url", _fake_from_url)
 
     result = await purge_arq_jobs_for_investigation("inv-y", track="malware")
+    assert result == {"scanned": 0, "matched": 0, "purged_jobs": 0}
+
+
+@pytest.mark.asyncio
+async def test_redis_unreachable_degrades_to_zero(monkeypatch) -> None:
+    """Redis down (zrange raises ConnectionError) -> the best-effort purge
+    returns a zero-count result instead of propagating and failing the
+    caller's already-committed lifecycle transition (pause/resume 500)."""
+
+    class _DownClient:
+        async def zrange(self, *args, **kwargs) -> list[bytes]:
+            raise RedisConnectionError(
+                "Error 22 connecting to 127.0.0.1:6379. refused",
+            )
+
+        async def aclose(self) -> None:
+            return None
+
+    monkeypatch.setattr(aredis, "from_url", lambda url, **kw: _DownClient())
+
+    result = await purge_arq_jobs_for_investigation(
+        "inv-z", track="vr", redis_url="redis://127.0.0.1:6379",
+    )
     assert result == {"scanned": 0, "matched": 0, "purged_jobs": 0}

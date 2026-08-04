@@ -1,7 +1,8 @@
 """Phase B -- atomic pause/resume + cursor SSOT.
 
 Exercises the pause_investigation_atomic / resume_investigation_atomic
-task bodies (vr/workflow/pause_resume.py) and the cursor SSOT contract
+lifecycle bindings (tests/support/vr_lifecycle.py over the platform
+investigation_lifecycle service) and the cursor SSOT contract
 (workflow_state_cursor.current_state = '__paused__' / archived_state
 round-trip). Plus a coverage test for the §233 variant_hunt_order
 zombie-investigation fix in outcome_dispatcher.
@@ -23,7 +24,12 @@ from aila.modules.vr.db_models import (
     VRTargetRecord,
     VRWorkspaceRecord,
 )
-from aila.modules.vr.workflow.pause_resume import (
+from aila.platform.contracts._common import utc_now
+from aila.platform.tasks.models import TaskRecord
+from aila.platform.uow import UnitOfWork
+from aila.platform.workflows.types import RESERVED_PAUSED
+from aila.storage.db_models import WorkflowStateCursor
+from tests.support.vr_lifecycle import (
     PauseInvestigationError,
     ReenqueueInvestigationError,
     ResumeInvestigationError,
@@ -31,11 +37,6 @@ from aila.modules.vr.workflow.pause_resume import (
     reenqueue_investigation_atomic,
     resume_investigation_atomic,
 )
-from aila.platform.contracts._common import utc_now
-from aila.platform.tasks.models import TaskRecord
-from aila.platform.uow import UnitOfWork
-from aila.platform.workflows.types import RESERVED_PAUSED
-from aila.storage.db_models import WorkflowStateCursor
 
 
 async def _seed_target(slug: str) -> str:

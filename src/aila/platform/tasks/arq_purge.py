@@ -79,6 +79,7 @@ async def purge_arq_jobs_for_investigation(
 
     try:
         import redis.asyncio as _aredis
+        from redis.exceptions import RedisError as _RedisError
     except ImportError:
         _log.warning("purge_arq_jobs_for_investigation: redis library missing")
         return {"scanned": 0, "matched": 0, "purged_jobs": 0}
@@ -142,6 +143,16 @@ async def purge_arq_jobs_for_investigation(
                     job_id, exc, type(exc).__name__,
                 )
                 continue
+    except (_RedisError, OSError) as exc:
+        # Redis unreachable (down or restarting). The purge is best-effort
+        # -- the cursor SSOT already gates surviving jobs on next pickup --
+        # so degrade to a zero-count result rather than propagate and fail
+        # the caller's already-committed lifecycle transition.
+        _log.warning(
+            "purge_arq_jobs_for_investigation: redis unreachable inv=%s "
+            "track=%s err=%s; purge skipped",
+            investigation_id, track, exc,
+        )
     finally:
         try:
             await client.aclose()

@@ -70,6 +70,7 @@ Detects thirty-six categories of structural dishonesty:
 66. retrieval_without_gate -- agent-runtime code (``platform/agents/**`` or ``modules/*/agents/**``) calls the raw ``.retrieve(`` instead of ``retrieve_routed``. RFC-12 / #43: only the routed path applies the relevance floor + sanitize/classify gate, so agent-reachable retrieval must go through it.
 67. unsanitized_retrieved_content -- a ``retrieve_routed`` definition's body no longer references the sanitize/classify gate (``apply_gate`` / ``apply_gate_many``). RFC-12 / #43: the routed entry point must gate every hit so retrieved content cannot reach a prompt unsanitised.
 68. content_slice_truncation -- a constant-bound slice (``x[:N]``) is applied to the direct value of a ``content=``-family keyword argument, or to a dict value keyed by a content field (``content`` / ``query`` / ``body`` / ``text`` / ``sanitized_content`` / ``root_cause``). Stored and returned knowledge data must be kept in full; only the render/display layer bounds size. A genuinely required cap goes in honesty_whitelist.py with a reason.
+69. lifecycle_binding_copy_of_platform -- a module ``workflow/pause_resume.py`` binding is a full copy of ``platform/services/investigation_lifecycle.py`` instead of a thin dispatcher over ``pause_investigation`` / ``resume_investigation`` / ``reenqueue_investigation``. RFC-02 Phase 4 owns the four-source-of-truth atomic pause/resume/re-enqueue on the platform; a module keeps only the per-module enum coercion + record-model bindings. Sibling of rule 41 with its own scope + corpus.
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -845,6 +846,22 @@ _WORKFLOW_STATE_SCOPE_PATTERN = _re.compile(
 )
 _WORKFLOW_BASE_CORPUS_CACHE: dict[str, dict[str, str]] = {}
 
+# Rule 69 -- module lifecycle-binding files must not be full copies of the
+# platform investigation-lifecycle service. Scoped to any module's
+# ``workflow/pause_resume.py`` (future-proof across the vr/malware pair
+# and any new module that scaffolds a pause/resume adapter). RFC-02
+# Phase 4 owns the four-source-of-truth atomic pause / resume / re-enqueue
+# on ``platform/services/investigation_lifecycle.py``; the module keeps
+# only the per-module reason coercion + record-model bindings, or -- the
+# canonical shape after the pause_resume adapter deletion -- calls the
+# platform service directly from the api_router handler. A file matching
+# this scope that mirrors the platform service body has re-introduced the
+# copy this rule locks out.
+_LIFECYCLE_BINDING_SCOPE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]modules[/\\][^/\\]+[/\\]workflow[/\\]pause_resume\.py$"
+)
+_LIFECYCLE_BASE_CORPUS_CACHE: dict[str, dict[str, str]] = {}
+
 # Rule 42 -- module agents/ files must not re-implement a platform agent
 # primitive. RFC-03 Phase 1 lifted the operator-intent classifier and the
 # auto-steering injector to platform/agents/; Phase 7 lifted the per-turn
@@ -1502,6 +1519,36 @@ def _workflow_base_corpus(filepath: str) -> dict[str, str]:
                 continue
             corpus[f"workflows/{py.name}"] = normalized
     _WORKFLOW_BASE_CORPUS_CACHE[aila_root] = corpus
+    return corpus
+
+
+def _lifecycle_base_corpus(filepath: str) -> dict[str, str]:
+    """Return {relpath: normalized_source} for the platform lifecycle service.
+
+    Reads platform/services/investigation_lifecycle.py so a module
+    ``workflow/pause_resume.py`` binding copied back from the platform
+    service is caught. Normalized via ast.unparse; cached per aila root.
+    The corpus is a single-entry dict because the lifecycle atomic
+    pause / resume / re-enqueue lives in one platform file.
+    """
+    match = _CONTRACTS_DIR_PATTERN.search(filepath.replace("\\", "/"))
+    if match is None:
+        return {}
+    aila_root = match.group(1)
+    cached = _LIFECYCLE_BASE_CORPUS_CACHE.get(aila_root)
+    if cached is not None:
+        return cached
+    corpus: dict[str, str] = {}
+    py = Path(aila_root) / "platform" / "services" / "investigation_lifecycle.py"
+    if py.is_file():
+        try:
+            normalized = ast.unparse(
+                ast.parse(py.read_text(encoding="utf-8")),
+            )
+            corpus[f"services/{py.name}"] = normalized
+        except (OSError, SyntaxError, ValueError, RecursionError):
+            pass
+    _LIFECYCLE_BASE_CORPUS_CACHE[aila_root] = corpus
     return corpus
 
 
@@ -3327,6 +3374,59 @@ class _HonestyVisitor(ast.NodeVisitor):
                 "platform state factory instead of copying it",
             )
 
+    def _check_lifecycle_binding_copy_of_platform(self, tree: ast.Module) -> None:
+        """Rule 69: lifecycle_binding_copy_of_platform -- a module
+        ``workflow/pause_resume.py`` binding must not duplicate the
+        platform investigation-lifecycle service.
+
+        RFC-02 Phase 4 owns the four-source-of-truth atomic pause /
+        resume / re-enqueue on
+        ``platform/services/investigation_lifecycle.py``; a module keeps
+        only the per-module reason coercion + record-model dispatch, or
+        (the canonical shape after the pause_resume adapter deletion)
+        calls the platform service directly from its api_router handler.
+        A file matching this scope whose normalized body matches the
+        lifecycle service above the similarity threshold is a copy that
+        slipped back in. The length ceiling keeps thin bindings well
+        under the threshold; only a same-size copy trips it.
+        """
+        if not _LIFECYCLE_BINDING_SCOPE_PATTERN.search(
+            self.filename.replace("\\", "/"),
+        ):
+            return
+        try:
+            own = ast.unparse(tree)
+        except (ValueError, RecursionError):
+            return
+        if not own.strip():
+            return
+        best_name = ""
+        best_ratio = 0.0
+        own_len = len(own)
+        for name, base_src in _lifecycle_base_corpus(self.filename).items():
+            b_len = len(base_src)
+            if b_len == 0:
+                continue
+            if 2 * min(own_len, b_len) / (own_len + b_len) < _SERVICE_COPY_THRESHOLD:
+                continue
+            matcher = difflib.SequenceMatcher(None, own, base_src)
+            if matcher.quick_ratio() < _SERVICE_COPY_THRESHOLD:
+                continue
+            ratio = matcher.ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_name = name
+        if best_ratio >= _SERVICE_COPY_THRESHOLD:
+            self._emit(
+                1,
+                "lifecycle_binding_copy_of_platform",
+                f"lifecycle_binding_copy_of_platform: normalized body is "
+                f"{best_ratio:.0%} similar to platform/{best_name}; dispatch "
+                "to the platform lifecycle service (pause_investigation / "
+                "resume_investigation / reenqueue_investigation) instead of "
+                "copying it",
+            )
+
     def _check_agent_llm_chat_bypass(self, tree: ast.Module) -> None:
         """Rule 43: agent_llm_chat_bypass -- a module agents/ file calls the
         raw llm_client.chat() instead of the idempotent wrapper.
@@ -4776,6 +4876,7 @@ class HonestyAuditor:
             visitor._check_shadowed_platform_base(tree, module_id)
             visitor._check_service_copy_of_platform(tree)
             visitor._check_workflow_state_copy_of_platform(tree)
+            visitor._check_lifecycle_binding_copy_of_platform(tree)
             visitor._check_cost_read_stored_actual(tree, module_id)
             visitor._check_lifecycle_handler_bypass(tree, module_id)
             visitor._check_agent_primitive_reimplementation(tree)

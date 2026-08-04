@@ -21,6 +21,19 @@ import-clean. Wire into the durable workflow engine by creating a
 WorkflowServices subclass and defining handlers as async def
 state_*(state_input, services) -> StateResult.
 
+Investigation-lifecycle scaffold (RFC-02)
+-----------------------------------------
+For modules that drive a full investigation lifecycle (pause / resume /
+re-enqueue, sibling persona spawn, bounded turn loop), the copy-me
+scaffold lives under ``states/`` in this package. Each
+``investigation_setup`` / ``investigation_loop`` / ``investigation_emit``
+file collapses to a platform factory call bound to the module's record
+models + task function, mirroring the vr wiring shape. The lifecycle
+endpoints (pause / resume / re-enqueue / cost) live on the module's
+``api_router.py`` and dispatch straight to the platform lifecycle
+service; the module never re-implements the four-source-of-truth atomic
+transitions itself.
+
 RFC-13 adaptive path (optional, discovery-driven)
 -------------------------------------------------
 When a module's phases should activate on what the agents discover rather
