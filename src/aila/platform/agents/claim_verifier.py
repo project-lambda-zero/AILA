@@ -41,6 +41,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from collections.abc import Callable
 from typing import Any, ClassVar
 from uuid import uuid4
@@ -263,6 +264,22 @@ Rules:
 """
 
 
+# A general "no <thing> found / identified" negative-conclusion pattern the
+# fixed prefix/substring tables miss when the negative noun sits between
+# "no" and the verb, e.g. "No container escape vulnerability found" or
+# "No exploitable vulnerability was identified". Matched on the uppercased
+# head window. It requires BOTH a security-negative noun and a discovery
+# verb within a short span so an ordinary "no" ("no authentication is
+# required to trigger the RCE") does not trip it.
+_NEGATIVE_CONCLUSION_RE = re.compile(
+    r"\bNO\b(?:\s+[\w'-]+){0,6}\s+"
+    r"(?:VULNERABILIT\w*|BUGS?|EXPLOIT\w*|FINDINGS?|WEAKNESS(?:ES)?|FLAWS?|"
+    r"ISSUES?|ESCAPES?|BYPASS(?:ES)?|OVERFLOWS?|INJECTIONS?)"
+    r"(?:\s+[\w'-]+){0,4}?\s+"
+    r"(?:FOUND|IDENTIFIED|DETECTED|PRESENT|OBSERVED|EXISTS?|EXISTED)\b",
+)
+
+
 def is_negative_finding_claim(
     answer: str,
     *,
@@ -288,6 +305,8 @@ def is_negative_finding_claim(
     # comparisons remain anchored at position 0 by construction.
     head = (answer or "").strip().upper()[:200]
     if any(head.startswith(p) for p in prefixes):
+        return True
+    if _NEGATIVE_CONCLUSION_RE.search(head):
         return True
     return any(phrase in head for phrase in substrings)
 

@@ -720,6 +720,18 @@ operator action.
 
 ### Fixed
 
+- A strong-confidence negative conclusion no longer burns as a false positive
+  finding. The vulnerability-research outcome-kind mapper routed any submit
+  with confidence `strong` or `exact` to `direct_finding` regardless of the
+  answer, so a strongly held "no vulnerability found" conclusion was recorded
+  in `vr_findings` and the knowledge base as a confirmed vulnerability. The
+  mapper now checks answer polarity first: an answer that reads as a negative
+  conclusion (no bug, not exploitable, no vulnerability found) maps to
+  `audit_memo` (the cleared-region record), never a finding. The negative
+  claim detector is also widened to catch the common "no <thing> vulnerability
+  found" and "no exploitable <thing> found" phrasings that the fixed prefix
+  table missed because the negative noun sits between "no" and the verb.
+  (RFC-12 #49)
 - Knowledge enrichment silently failed its idempotency and journaling on
   every ingest. The enrichment LLM call derived its idempotency scope as
   `knowledge-enrich:<namespace>`, which overflowed the `varchar(36)`

@@ -15,16 +15,16 @@ from types import SimpleNamespace
 import pytest
 
 from aila.modules.vr.agents.vuln_researcher import (
-    HonestVulnResearcher,
     _PROMPT_VERSION_STORE,
+    HonestVulnResearcher,
     _applicable_servers_for_kind,
     _decision_to_message_payload,
     _fetch_tool_specs,
     _format_param,
     _load_prompt,
     _mcp_family_rule_for_kind,
-    _prompt_key,
     _outcome_payload,
+    _prompt_key,
     _render_available_tools_section,
     _render_operator_messages_section,
     _render_target_snapshot_section,
@@ -154,6 +154,31 @@ class TestTerminalOutcomeKindRouting:
             reasoning="r", action="submit", confidence="unknown", answer="dunno",
         )
         assert _terminal_outcome_kind(d) == OutcomeKind.ASSESSMENT_REPORT
+
+    def test_strong_confidence_negative_answer_becomes_audit_memo(self) -> None:
+        # Regression: a strong-confidence NEGATIVE conclusion must NOT become
+        # a direct_finding. Before the polarity guard, confidence>=strong
+        # mapped to DIRECT_FINDING regardless of the answer, so "no bug found"
+        # burned a false positive into vr_findings + the knowledge base.
+        d = ReasoningTurnDecision(
+            reasoning="r", action="submit", confidence="strong",
+            answer="No container escape vulnerability found via shell injection.",
+        )
+        assert _terminal_outcome_kind(d) == OutcomeKind.AUDIT_MEMO
+
+    def test_negative_answer_in_payload_becomes_audit_memo(self) -> None:
+        d = ReasoningTurnDecision(
+            reasoning="r", action="submit", confidence="strong", answer="",
+            payload={"answer": "No exploitable vulnerability found in the sandbox."},
+        )
+        assert _terminal_outcome_kind(d) == OutcomeKind.AUDIT_MEMO
+
+    def test_positive_strong_finding_still_direct_finding(self) -> None:
+        d = ReasoningTurnDecision(
+            reasoning="r", action="submit", confidence="strong",
+            answer="Authentication bypass: a forged token grants admin access.",
+        )
+        assert _terminal_outcome_kind(d) == OutcomeKind.DIRECT_FINDING
 
 
 class TestToOutcomeConfidence:
@@ -616,6 +641,7 @@ class TestSnapshotTargetAndroidApk:
     ) -> SimpleNamespace:
         return SimpleNamespace(
             id="t-1",
+            workspace_id="ws-1",
             kind=kind,
             display_name="SampleApp",
             primary_language="java",

@@ -387,6 +387,32 @@ class TestNegativeFindingClaim:
             substrings=("THE ISSUE IS MITIGATED",),
         ) is False
 
+    def test_regex_matches_noun_between_no_and_verb(self) -> None:
+        # The fixed prefix table matches "NO VULNERABILITY" but misses the
+        # common phrasing where the negative noun sits between "no" and the
+        # verb. Regression for the direct_finding false-positive: these were
+        # not detected, so a strong-confidence "no bug" burned as a finding.
+        for answer in (
+            "No container escape vulnerability found via shell injection.",
+            "No exploitable vulnerability found in the sandbox.",
+            "No SQL injection was identified in the login handler.",
+        ):
+            assert is_negative_finding_claim(
+                answer, prefixes=(), substrings=(),
+            ) is True, answer
+
+    def test_regex_does_not_flag_positive_findings(self) -> None:
+        # A leading "no" that is not a negative conclusion, and ordinary
+        # positive findings, must not trip the regex.
+        for answer in (
+            "No authentication is required to trigger the RCE in the upload path.",
+            "An authentication bypass was found allowing admin access.",
+            "The heap overflow in parse_hdr is exploitable via a crafted packet.",
+        ):
+            assert is_negative_finding_claim(
+                answer, prefixes=(), substrings=(),
+            ) is False, answer
+
     def test_platform_helper_handles_empty(self) -> None:
         assert is_negative_finding_claim("", prefixes=(), substrings=()) is False
         assert is_negative_finding_claim(

@@ -38,6 +38,7 @@ from typing import Any
 from sqlmodel import select as _select
 
 from aila.modules.vr._task_queue import default_task_queue
+from aila.modules.vr.agents.claim_verifier import is_negative_finding_claim
 from aila.modules.vr.agents.persona_router import resolve_task_type
 from aila.modules.vr.contracts import (
     OutcomeKind,
@@ -2688,10 +2689,21 @@ def _decision_to_message_payload(
 def _terminal_outcome_kind(decision: ReasoningTurnDecision) -> OutcomeKind:
     """Pick a terminal outcome kind from a submit decision.
 
-    v0.3 v1 has a tiny dispatch: confidence >= strong + contract suggests
-    DirectFinding -> DirectFinding; otherwise AssessmentReport. Real
-    routing logic lands in M3.R-4 outcome_router.
+    Polarity is checked BEFORE confidence: an answer that reads as a
+    negative conclusion ("no vulnerability found", "not exploitable") is an
+    AUDIT_MEMO -- the cleared-region record -- regardless of how confident
+    the agent is that nothing is there. Without this guard a
+    strong-confidence "no bug" mapped to DIRECT_FINDING and was burned into
+    ``vr_findings`` + the knowledge base as a false positive, since the
+    confidence-only dispatch cannot tell a confident finding from a
+    confident non-finding. Otherwise: confidence >= strong -> DirectFinding,
+    else AssessmentReport.
     """
+    answer = str(
+        (decision.payload or {}).get("answer") or decision.answer or "",
+    )
+    if is_negative_finding_claim(answer):
+        return OutcomeKind.AUDIT_MEMO
     if decision.confidence in {"strong", "exact"}:
         return OutcomeKind.DIRECT_FINDING
     return OutcomeKind.ASSESSMENT_REPORT
