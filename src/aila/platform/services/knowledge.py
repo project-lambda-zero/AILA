@@ -166,6 +166,42 @@ def _apply_trust_decay(
     return adjusted
 
 
+def _ingest_gate_metadata(content: str) -> dict[str, Any]:
+    """RFC-12 Phase 5: classify + sanitize-check content at ingest time.
+
+    Records the classification tier and whether the content carries
+    injection or secret patterns WITHOUT rewriting the stored content: the
+    raw text is preserved in full (the operator's no-trim rule) and the
+    retrieval gate still sanitizes on read. Tagging at write lets trust
+    tiering and the retrieval floor act on a poisoned or restricted entry,
+    and logs a RESTRICTED write for audit (ASI06). Never raises: a gate
+    failure returns no tag rather than blocking the store, which is an
+    augmentation, not a precondition.
+    """
+    # Deferred import: PLC0415 is ignored for knowledge.py per-file; keeps
+    # the module import graph flat, mirroring the knowledge_gate and
+    # knowledge_enrichment lazy imports elsewhere in this file.
+    from ..llm.classify import ClassificationLevel, classify_messages
+    from ..llm.sanitize import sanitize_input
+    try:
+        result = classify_messages([{"content": content}])
+    except (ValueError, TypeError, RuntimeError) as exc:
+        _log.debug("ingest classify failed; storing without gate tag: %s", exc)
+        return {}
+    meta: dict[str, Any] = {"ingest_classification": result.level.name.lower()}
+    if result.level >= ClassificationLevel.RESTRICTED:
+        meta["ingest_classification_matches"] = list(result.pattern_types)
+        _log.info(
+            "ingest gate: RESTRICTED content stored (patterns=%s)",
+            result.pattern_types,
+        )
+    try:
+        meta["ingest_content_flagged"] = sanitize_input(content) != content
+    except (ValueError, TypeError, RuntimeError) as exc:
+        _log.debug("ingest sanitize check failed: %s", exc)
+    return meta
+
+
 async def _journal_retrieval(
     *,
     route: str,
@@ -681,6 +717,12 @@ class KnowledgeService:
             entities = extract_security_entities(content)
             if entities:
                 entry_meta["entities"] = entities
+        # RFC-12 Phase 5: classify/sanitize gate on ingest (raw content is
+        # preserved; only the classification tier + injection flag are
+        # recorded so trust tiering and the retrieval floor can act on an
+        # untrusted or poisoned write). Chunked writes route each chunk
+        # through this same path, so they are gated too.
+        entry_meta.update(_ingest_gate_metadata(content))
         meta_json = json.dumps(entry_meta)
         embedding_list = self.embed(content)
         # RFC-12 provenance: model_id + content_hash + source_type + updated_at

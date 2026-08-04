@@ -19,6 +19,17 @@ operator action.
 
 ### Added
 
+- An ingest-time classification gate for the knowledge base (RFC-12 Phase 5,
+  ASI06 governance). Every knowledge write now classifies its content and
+  records the classification tier plus an injection flag in the entry
+  metadata, so trust tiering and the retrieval relevance floor can act on an
+  untrusted or poisoned write, and a restricted write is logged for audit.
+  The gate is metadata-only: the raw content is stored in full and the
+  existing retrieval-time sanitize and classify gate is unchanged, so no
+  stored data is altered. Chunked writes route through the same path and are
+  gated per chunk. This closes the ingest side of the RFC-12 acceptance
+  criterion that content pass the sanitize and classify gate at both ingest
+  and retrieval. (RFC-12 #49)
 - Trust-weight and temporal-decay ranking controls for knowledge retrieval
   (RFC-12 Phase 5). Two config knobs, `knowledge_target_derived_weight` and
   `knowledge_decay_half_life_hours`, let an operator down-weight untrusted
