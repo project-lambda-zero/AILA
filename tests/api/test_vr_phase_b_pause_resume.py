@@ -92,7 +92,13 @@ async def _seed_branch(investigation_id: str) -> str:
         return br.id
 
 
-async def _seed_cursor(run_id: str, current_state: str = "investigation_loop") -> None:
+async def _seed_cursor(
+    run_id: str,
+    current_state: str = "investigation_loop",
+    *,
+    branch_id: str | None = None,
+    investigation_id: str | None = None,
+) -> None:
     """Seed both WorkflowRunRecord and WorkflowStateCursor.
 
     The cursor table has an FK on workflowrunrecord.id; without the run
@@ -118,6 +124,8 @@ async def _seed_cursor(run_id: str, current_state: str = "investigation_loop") -
             state_input={},
             updated_at=utc_now(),
             version=0,
+            branch_id=branch_id,
+            investigation_id=investigation_id,
         )
         uow.session.add(cursor)
         await uow.session.commit()
@@ -845,3 +853,66 @@ async def test_reenqueue_no_active_branch_single_submit() -> None:
 
     assert summary["submitted"] == 1
     assert calls == [(inv_id, None)]
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_pause_cancels_active_taskrecords() -> None:
+    """Pause cancels the investigation's active taskrecords (Defect A).
+
+    Regression: pause matched taskrecord.id = ANY([inv_id, *branch_ids]),
+    but taskrecord.id is a fresh ARQ uuid, so it cancelled zero rows. The
+    cancel now keys on kwargs_json (which carries the investigation_id).
+    A task belonging to a different investigation is left untouched.
+    """
+    target_id = await _seed_target("pc1")
+    inv_id = await _seed_inv(target_id)
+    await _seed_branch(inv_id)
+    mine = await _seed_taskrecord(inv_id, status="running")
+    other_inv = await _seed_inv(await _seed_target("pc2"))
+    theirs = await _seed_taskrecord(other_inv, status="running")
+
+    summary = await pause_investigation_atomic(
+        inv_id, user_id="op", reason="operator",
+    )
+
+    async with UnitOfWork() as uow:
+        mine_row = (await uow.session.exec(
+            select(TaskRecord).where(TaskRecord.id == mine),
+        )).first()
+        theirs_row = (await uow.session.exec(
+            select(TaskRecord).where(TaskRecord.id == theirs),
+        )).first()
+    assert mine_row.status == "cancelled"
+    assert theirs_row.status == "running"
+    assert summary["cancelled_tasks"] >= 1
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_loop_alive_detects_cursor_pause_by_branch_id() -> None:
+    """_is_loop_alive reads the cursor by the branch_id COLUMN (Defect B).
+
+    Regression: the loop did session.get(WorkflowStateCursor, branch_id),
+    but the PK is run_id (the ARQ task uuid), so it always returned None
+    and the cursor SSOT check was dead. With inv RUNNING and the branch
+    ACTIVE, only the cursor read can surface the pause.
+    """
+    from aila.platform.workflows.investigation_loop_base import (  # noqa: PLC0415
+        _is_loop_alive,
+    )
+    target_id = await _seed_target("lb1")
+    inv_id = await _seed_inv(target_id)
+    branch_id = await _seed_branch(inv_id)
+    # Cursor keyed by a task uuid (run_id) but carrying the branch_id
+    # column, flipped to __paused__ (what pause writes).
+    await _seed_cursor(
+        str(uuid.uuid4()),
+        current_state=RESERVED_PAUSED,
+        branch_id=branch_id,
+        investigation_id=inv_id,
+    )
+
+    alive, reason = await _is_loop_alive(
+        VRInvestigationRecord, VRInvestigationBranchRecord, inv_id, branch_id,
+    )
+    assert alive is False
+    assert reason == "cursor_paused"

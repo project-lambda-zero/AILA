@@ -105,13 +105,23 @@ async def _is_loop_alive(
         if branch.status != BranchStatus.ACTIVE.value:
             return False, f"branch_status_flipped:{branch.status}"
 
-        # Cursor SSOT -- Phase B's pause writes __paused__ here.
-        cursor = await uow.session.get(WorkflowStateCursor, branch_id)
-        if cursor is not None:
-            if cursor.current_state == RESERVED_PAUSED:
+        # Cursor SSOT -- pause writes __paused__ here. Look up by the
+        # denormalised ``branch_id`` COLUMN (migration 101), not by primary
+        # key: the cursor PK is ``run_id`` (the ARQ task uuid), so
+        # ``session.get(_, branch_id)`` always missed and this SSOT check
+        # was dead. Take the most-recent cursor for the branch; pause flips
+        # every cursor of the investigation to __paused__.
+        cursor_state = (await uow.session.exec(
+            _select(WorkflowStateCursor.current_state)
+            .where(WorkflowStateCursor.branch_id == branch_id)
+            .order_by(WorkflowStateCursor.updated_at.desc())
+            .limit(1)
+        )).first()
+        if cursor_state is not None:
+            if cursor_state == RESERVED_PAUSED:
                 return False, "cursor_paused"
-            if cursor.current_state in RESERVED_TERMINAL_STATES:
-                return False, f"cursor_terminal:{cursor.current_state}"
+            if cursor_state in RESERVED_TERMINAL_STATES:
+                return False, f"cursor_terminal:{cursor_state}"
 
     # Phase B.5 -- per-investigation cancellation token. Process-local;
     # cross-process synchronization is via the cursor SSOT (which the

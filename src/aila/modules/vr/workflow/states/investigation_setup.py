@@ -277,7 +277,10 @@ async def _adjudicate_specialist_requests(investigation_id: str) -> None:
     try:
         if await get_int("oracle_specialist_adjudication") <= 0:
             return
-    except (OSError, RuntimeError, ValueError) as exc:
+    except (OSError, RuntimeError, ValueError, TypeError) as exc:
+        # TypeError covers int(None) when the registry cannot resolve the
+        # key (schema not bootstrapped in some test/edge envs); adjudication
+        # is best-effort, so skip rather than break the spawn poll.
         _log.warning(
             "oracle adjudication toggle read failed inv=%s err=%s",
             investigation_id, exc,

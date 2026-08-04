@@ -240,29 +240,35 @@ async def pause_investigation(
             result = await uow.session.exec(upd_stmt)
             summary["paused_cursors"] = result.rowcount or 0
 
-        # 3. Cancel TaskRecord rows in active dispatch states. The worker
-        #    that picks up the task next sees status != queued/running and
-        #    exits clean.
-        if branch_ids:
-            cancel_stmt = _sql_text(
-                "UPDATE taskrecord "
-                "SET status = :cancelled, "
-                "    completed_at = :ts, "
-                "    error = COALESCE(error, '') || :marker "
-                "WHERE id = ANY(:ids) "
-                "  AND status = ANY(:active_statuses)"
-            ).bindparams(
-                cancelled=TaskStatus.CANCELLED.value,
-                active_statuses=[
-                    TaskStatus.QUEUED.value,
-                    TaskStatus.RUNNING.value,
-                ],
-                ts=now,
-                marker=f"operator_pause:{user_id or 'unknown'}\n",
-                ids=[investigation_id, *branch_ids],
-            )
-            cancel_result = await uow.session.exec(cancel_stmt)
-            summary["cancelled_tasks"] = cancel_result.rowcount or 0
+        # 3. Cancel TaskRecord rows in active dispatch states. Match on
+        #    kwargs_json, which carries the investigation_id -- NOT on
+        #    taskrecord.id, which is a fresh ARQ uuid4 and never equals an
+        #    investigation or branch id, so the prior ``id = ANY(...)``
+        #    predicate cancelled zero rows. This mirrors the reenqueue
+        #    cancel keying. investigation_id is a uuid, so kwargs_json
+        #    alone identifies this investigation's tasks unambiguously. A
+        #    cancelled row makes the worker exit clean on its next alive
+        #    check and the ARQ purge below stops the queued job.
+        cancel_stmt = _sql_text(
+            "UPDATE taskrecord "
+            "SET status = :cancelled, "
+            "    completed_at = :ts, "
+            "    error = COALESCE(error, '') || :marker "
+            "WHERE status = ANY(:active_statuses) "
+            "  AND kwargs_json LIKE :inv_pat"
+        ).bindparams(
+            cancelled=TaskStatus.CANCELLED.value,
+            active_statuses=[
+                TaskStatus.QUEUED.value,
+                TaskStatus.RUNNING.value,
+                TaskStatus.WAITING.value,
+            ],
+            ts=now,
+            marker=f"operator_pause:{user_id or 'unknown'}\n",
+            inv_pat=f'%"{investigation_id}"%',
+        )
+        cancel_result = await uow.session.exec(cancel_stmt)
+        summary["cancelled_tasks"] = cancel_result.rowcount or 0
 
         # 3.5. Flip every active branch's projection status to paused so
         # the UI does not show a paused investigation with branches still

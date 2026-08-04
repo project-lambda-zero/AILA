@@ -747,6 +747,22 @@ operator action.
 
 ### Fixed
 
+- Pausing an investigation now cancels its active worker tasks and the running
+  loop detects the pause through the cursor (RFC-02). Two mis-keyed predicates
+  are corrected. Pause matched `taskrecord` rows by
+  `id = ANY([investigation_id, ...branch_ids])`, but a taskrecord id is a fresh
+  ARQ uuid, so it cancelled zero rows and a running task held its slot until
+  its turn ended; pause now matches on `kwargs_json` (which carries the
+  investigation_id), the same key re-enqueue already used. The loop's cursor
+  pause-detection looked up `WorkflowStateCursor` by `branch_id` as a primary
+  key, but the primary key is `run_id` (the task uuid), so the lookup always
+  returned None and the cursor check was dead code; it now queries the
+  denormalised `branch_id` column added in migration 101. A paused
+  investigation's projections and its worker tasks now move together. (#27)
+- The oracle specialist-adjudication toggle read no longer raises when the
+  config registry cannot resolve the default (an `int(None)` TypeError in an
+  environment where the config schema is not bootstrapped, e.g. a unit test);
+  it degrades to skipping adjudication, matching the best-effort contract. (#68)
 - A strong-confidence negative conclusion no longer burns as a false positive
   finding. The vulnerability-research outcome-kind mapper routed any submit
   with confidence `strong` or `exact` to `direct_finding` regardless of the
