@@ -164,6 +164,25 @@ class AgentTurnRunnerBase:
         """
         return {}
 
+    async def _refresh_retrieved_knowledge(
+        self,
+        *,
+        inv: Any,
+        target_snapshot: dict[str, Any] | None,
+        case_state: Any,
+    ) -> None:
+        """RFC-12 Phase 1: per-pivot refresh of the RETRIEVED prompt tier.
+
+        Default no-op. A module overrides this to re-run knowledge retrieval
+        keyed on the branch's CURRENT focus (its live hypotheses) rather than
+        the boot question, and update the retrieved-knowledge the next prompt
+        renders. Called each turn after ``case_state`` is decoded and before
+        the prompt is built. Best-effort by contract: an override must swallow
+        its own failures and never raise into the turn.
+        """
+        del inv, target_snapshot, case_state
+        return None
+
     async def _load_ledger_board(self) -> str:
         """Render a bounded digest of the shared ledger for the turn prompt.
 
@@ -489,6 +508,12 @@ class AgentTurnRunnerBase:
         tool_specs = await self._fetch_tool_specs(
             target_kind=(target_snapshot or {}).get("kind"),
             primary_language=(target_snapshot or {}).get("primary_language"),
+        )
+        # RFC-12 Phase 1: refresh the RETRIEVED tier on the branch's current
+        # focus before the prompt is built, so recalled knowledge tracks the
+        # live pivot instead of the boot question. No-op by default.
+        await self._refresh_retrieved_knowledge(
+            inv=inv, target_snapshot=target_snapshot, case_state=case_state,
         )
         user_prompt = self._build_user_prompt(
             inv=inv,

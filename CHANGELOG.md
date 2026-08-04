@@ -19,6 +19,17 @@ operator action.
 
 ### Added
 
+- The retrieved-knowledge prompt tier now refreshes on the branch's live
+  focus (RFC-12 Phase 1). Prior knowledge was retrieved once at investigation
+  setup, keyed on the opening question, and never updated, so a long
+  investigation that pivoted onto a different question kept seeing recall for
+  the original one. Each turn now re-queries the knowledge base on the
+  branch's current hypotheses when that focus changes from the last
+  retrieval, so recalled prior findings track what the branch is
+  investigating now. The refresh is bounded to real pivots (an unchanged
+  focus does not re-query), scoped to the workspace, journaled like the setup
+  retrieval, and best-effort so a retrieval fault never breaks the turn.
+  (RFC-12 #49)
 - An ingest-time classification gate for the knowledge base (RFC-12 Phase 5,
   ASI06 governance). Every knowledge write now classifies its content and
   records the classification tier plus an injection flag in the entry
