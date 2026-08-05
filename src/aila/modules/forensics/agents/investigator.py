@@ -53,7 +53,9 @@ from aila.platform.llm.correlation import (
     current_join_keys,
     current_prompt_version,
 )
-from aila.platform.prompts import PromptRegistry
+from aila.platform.prompts import LoadedPrompt, PromptNotFoundError, PromptRegistry
+from aila.platform.prompts.pinning import resolve_pinned_prompt
+from aila.platform.prompts.version_store import PromptVersionStore
 from aila.platform.services.reasoning import CyberReasoningEngine
 from aila.platform.services.reasoning_graphs import ReasoningGraphService
 from aila.storage.registry import ConfigRegistry
@@ -94,6 +96,28 @@ async def _read_float_config(key: str) -> float:
 
 _PROMPT_DIR = Path(__file__).parent / "prompts"
 _PROMPT_REGISTRY = PromptRegistry(_PROMPT_DIR, fallback_base="system_base.md")
+_PROMPT_VERSION_STORE = PromptVersionStore()
+
+
+def _freeflow_analyzer_os(analyzer_os: str) -> str:
+    """Normalize the analyzer OS the way :func:`_load_freeflow_prompt` does.
+
+    ``"windows"`` selects the Windows hint; every other value (including
+    ``"darwin"`` and empty string) falls back to Linux. Keeping this in one
+    place ensures the version-store key and the file-fallback body agree on
+    the effective OS variant so pin identity does not diverge from body.
+    """
+    return "windows" if analyzer_os == "windows" else "linux"
+
+
+def _freeflow_prompt_key(analyzer_os: str) -> str:
+    """Version-store key for the assembled forensics free-flow system prompt.
+
+    Distinct per effective analyzer OS since the assembled body differs
+    (base + ``os_hint_windows.md`` vs. base + ``os_hint_linux.md``). Aligned
+    with the vr / malware key convention: ``{module}/{role}/{variant}``.
+    """
+    return f"forensics/freeflow/{_freeflow_analyzer_os(analyzer_os)}"
 
 
 def _load_freeflow_prompt(analyzer_os: str) -> str:
@@ -103,13 +127,108 @@ def _load_freeflow_prompt(analyzer_os: str) -> str:
     for a Windows analyzer, ``base + linux`` otherwise. Both files are
     resolved through the platform :class:`PromptRegistry` so a later
     version-store entry can override either without touching this module.
+
+    This sync helper stays the file-only baseline. The live turn path
+    goes through :func:`_resolve_freeflow_prompt` which prefers a pinned
+    version-store body and only falls back to this assembly when the
+    store has nothing (or faults) -- matching the vr / malware _load_prompt
+    contract without breaking callers that still want the byte-identical
+    file assembly.
     """
     base = _PROMPT_REGISTRY.load("base")
-    hint_leaf = "windows" if analyzer_os == "windows" else "linux"
+    hint_leaf = _freeflow_analyzer_os(analyzer_os)
     hint_path = _PROMPT_DIR / f"os_hint_{hint_leaf}.md"
     if not hint_path.exists():
         raise FileNotFoundError(f"forensics OS hint missing: {hint_path}")
     return base + hint_path.read_text(encoding="utf-8")
+
+
+async def _resolve_freeflow_prompt(
+    analyzer_os: str, *, investigation_id: str | None,
+) -> LoadedPrompt:
+    """Resolve the assembled free-flow system prompt through the version store.
+
+    Routes through :func:`resolve_pinned_prompt` so the first turn on an
+    investigation pins the current production-alias version onto
+    ``forensics_investigations.prompt_pins_json`` and every later turn
+    on the SAME investigation resolves that exact version. That is the
+    RFC-09 criterion 4 safety: a live production-alias flip never
+    rewrites the prompt of an in-flight investigation.
+
+    Falls back to :func:`_load_freeflow_prompt` (byte-identical file
+    assembly) when the store has no body -- no production alias yet, a
+    pin pointing at a missing version, or a store fault. The returned
+    :class:`LoadedPrompt` carries ``version=None`` in the fallback path
+    so the caller can distinguish a versioned resolve from a file one
+    and stamp the correlation scope accordingly (RFC-09 criterion 2).
+    """
+    # Lazy import: db_models pulls SQLModel table registration -- keeping
+    # it lazy avoids a circular import between the agents module and the
+    # forensics db_models package on cold interpreter startup. PLC0415 is
+    # already covered file-wide via ``pyproject.toml`` per-file-ignores.
+    from aila.modules.forensics.db_models import InvestigationRunRecord
+
+    key = _freeflow_prompt_key(analyzer_os)
+    body, version = await resolve_pinned_prompt(
+        investigation_id=investigation_id,
+        key=key,
+        investigation_model=InvestigationRunRecord,
+        store=_PROMPT_VERSION_STORE,
+    )
+    if body is not None:
+        return LoadedPrompt(body=body, version=version)
+    return LoadedPrompt(
+        body=_load_freeflow_prompt(analyzer_os), version=None,
+    )
+
+
+_SEED_ANALYZER_OS: tuple[str, ...] = ("linux", "windows")
+
+
+async def seed_prompt_versions() -> int:
+    """Register the assembled forensics free-flow prompts (RFC-09 seed).
+
+    For each effective analyzer OS variant, assemble the same file body
+    the live turn path would produce (base + OS hint) and register it
+    under the corresponding version-store key. Points ``production`` at
+    the resulting version ONLY when the key has no production alias yet
+    so an operator-promoted or canary-routed version is never overwritten
+    on restart. Idempotent: :meth:`PromptVersionStore.register`
+    deduplicates by content hash so an unchanged file writes no new row,
+    and a later file edit registers a new version but does not flip
+    ``production`` -- promotion stays an explicit RFC-10 lifecycle action.
+
+    Called from :meth:`ForensicsModule.seed_prompts`, itself invoked by
+    :func:`aila.platform.prompts.bootstrap.seed_module_prompts` at app
+    startup. A per-key fault is logged by the store but never blocks
+    startup: the fallback path in :func:`_resolve_freeflow_prompt` keeps
+    working from the file baseline.
+
+    Returns the count of keys whose ``production`` alias was newly set.
+    """
+    seeded = 0
+    for analyzer_os in _SEED_ANALYZER_OS:
+        try:
+            body = _load_freeflow_prompt(analyzer_os)
+        except (FileNotFoundError, PromptNotFoundError, OSError) as exc:
+            _log.warning(
+                "forensics seed_prompt_versions skipped os=%s (%s)",
+                analyzer_os, exc,
+            )
+            continue
+        key = _freeflow_prompt_key(analyzer_os)
+        version = await _PROMPT_VERSION_STORE.register(
+            key, body, author="bootstrap",
+            notes="file baseline (RFC-09 activation seed)",
+        )
+        if await _PROMPT_VERSION_STORE.resolve(key, alias="production") is not None:
+            continue
+        await _PROMPT_VERSION_STORE.set_alias(
+            key, "production", version,
+            actor="bootstrap", reason="initial file baseline",
+        )
+        seeded += 1
+    return seeded
 
 
 # ---------------------------------------------------------------------------
@@ -714,7 +833,20 @@ class HonestInvestigator:
                 {"stage": "llm_query_start", "step": turn, "prompt_chars": len(prompt)},
             )
 
-        system_prompt = _load_freeflow_prompt(self.analyzer_os)
+        # RFC-09 criteria 2 + 4: route the free-flow prompt through the
+        # version store so the first turn on this investigation pins the
+        # production-alias version onto ``prompt_pins_json`` and every
+        # later turn on the same investigation resolves that exact
+        # version. Falls back to the file assembly when the store has no
+        # body (no production alias yet, missing pin target, or store
+        # fault). The resolved version is what stamps the correlation
+        # scope so LLMCostRecord + AuditSealRecord carry non-null
+        # ``prompt_version`` for every turn that landed a store body --
+        # closing the (cost, prompt) join criterion 2 requires.
+        loaded = await _resolve_freeflow_prompt(
+            self.analyzer_os, investigation_id=self.investigation_id,
+        )
+        system_prompt = loaded.body
         # RFC-09 criterion 2: hash the FINAL assembled system prompt (base +
         # OS hint) so a Linux-analyzer turn and a Windows-analyzer turn land
         # distinct content hashes on their LLMCostRecord + AuditSealRecord.
@@ -722,11 +854,17 @@ class HonestInvestigator:
         # already established by the caller is not clobbered.
         prompt_hash = hashlib.sha256(system_prompt.encode("utf-8")).hexdigest()
         _inv, _br, _turn = current_join_keys()
+        # loaded.version is the resolved version-store id when the store
+        # returned a body; None on the file-fallback path. current_prompt_version()
+        # is consulted as an outer fallback so an already-established version
+        # (set by an enclosing scope) is preserved when the loader itself did
+        # not resolve one.
+        resolved_version = loaded.version or current_prompt_version()
         t0 = time.monotonic()
         with correlation_scope(
             investigation_id=_inv, branch_id=_br, turn_number=_turn,
             prompt_content_hash=prompt_hash,
-            prompt_version=current_prompt_version(),
+            prompt_version=resolved_version,
         ):
             decision = await self.reasoning_engine.decide_next_turn(
                 task_type=domain_profile.task_type,

@@ -21,6 +21,7 @@ carries a ``panel_summary``.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -32,8 +33,27 @@ from aila.modules.vr.db_models import (
 )
 from aila.platform.agents.synthesis_runner import SynthesisRunnerBase
 from aila.platform.llm.sanitize import sanitize_input
+from aila.platform.prompts import PromptRegistry
 
 __all__ = ["SynthesisAgent", "SynthesisResponse"]
+
+_PROMPT_DIR = Path(__file__).parent / "prompts"
+_PROMPT_REGISTRY = PromptRegistry(
+    _PROMPT_DIR,
+    module="vr",
+    fallback_base="system_synthesis.md",
+)
+
+
+def _load_system_prompt() -> str:
+    """Return the VR synthesis system prompt from the registry.
+
+    RFC-09 criterion 1: body lives in ``prompts/system_synthesis.md``
+    resolved via :class:`PromptRegistry`. Called at class-body import
+    time to populate the ``_SYSTEM_PROMPT`` ClassVar the shared
+    :class:`SynthesisRunnerBase.run` reads.
+    """
+    return _PROMPT_REGISTRY.load("synthesis")
 
 
 class SynthesisResponse(BaseModel):
@@ -109,37 +129,6 @@ class SynthesisResponse(BaseModel):
             f"### Recommended next actions\n"
             f"{_bulleted(self.recommended_next_actions)}\n"
         )
-
-
-_SYSTEM_PROMPT = (
-    "You are the synthesiser for a vulnerability-research deliberation "
-    "panel. Three persona branches (researcher / critic / implementer) "
-    "have each reasoned independently about the same investigation using "
-    "different LLM routings and produced one terminal outcome each. Your "
-    "job is to read all three and produce ONE consolidated verdict.\n\n"
-    "Rules:\n"
-    "- Open with the scope. Before the verdict, state in one short "
-    "paragraph what control/check was under audit, the code surface "
-    "examined (specific files/functions/manifest entries/resources), "
-    "and the evidence base (tool queries, decompiler reads, config "
-    "snippets) the panel relied on. The reader must know the audit's "
-    "coverage before reading the verdict.\n"
-    "- Be honest about disagreement. If the critic dissents from the "
-    "researcher's hypothesis, name the dissent explicitly. Do not "
-    "average the answers -- pick the verdict with the strongest "
-    "source-level evidence and explain why.\n"
-    "- Quote specific file:line citations from the panel members' "
-    "answers when describing the verdict. Do not invent new citations.\n"
-    "- If the panel collectively could not establish a verdict, say so "
-    "and list the open questions. 'Inconclusive' is an honest outcome.\n"
-    "- Variant_hunt_orders the panel produced are aggregated by the "
-    "dispatcher automatically. You do not need to repeat them -- just "
-    "reference the count and the most important ones in your "
-    "recommended next actions.\n"
-    "- The synthesis lands as the investigation's primary outcome, "
-    "rendered in the PDF report as the headline finding. Write for the "
-    "audit-committee reader, not for another LLM."
-)
 
 
 def _render_reviews(lines: list[str], reviews: list[dict[str, Any]]) -> None:
@@ -258,7 +247,7 @@ class SynthesisAgent(SynthesisRunnerBase):
 
     _LOG_LABEL: ClassVar[str] = "synthesis"
     _TASK_TYPE: ClassVar[str] = "vulnerability_research.synthesizer"
-    _SYSTEM_PROMPT: ClassVar[str] = _SYSTEM_PROMPT
+    _SYSTEM_PROMPT: ClassVar[str] = _load_system_prompt()
     _investigation_model: ClassVar[type[VRInvestigationRecord]] = (
         VRInvestigationRecord
     )

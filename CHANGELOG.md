@@ -19,6 +19,41 @@ operator action.
 
 ### Added
 
+- Prompt registry with per-investigation pinning and alias deployment
+  (RFC-09 #33). Prompts are now immutable, content-hashed, versioned
+  entries resolved at runtime through the platform registry and addressed
+  by candidate / staging / production aliases. A prompt change ships by
+  flipping an alias, with no code release and no worker restart, and every
+  flip is an audited event; rollback is a single flip. Each investigation
+  pins the version it resolved at first use, so a live alias flip changes
+  only new investigations and never rewrites a prompt on a running one.
+  Model-family variants resolve by the routed model. The inline system
+  prompts and templates across the claim verifier, the vr and malware
+  narrative and synthesis agents, the n-day researcher, the apk-static and
+  masvs seeders, and the report writers now resolve from versioned files
+  through the registry rather than from inline literals; the shared claim
+  verifier prompt is a single platform entry used by both modules.
+- Forensics prompts on the versioned prompt path (RFC-09 #33). The
+  forensics investigator resolves its free-flow prompt through the version
+  store with per-investigation pinning, and its LLM calls now record a
+  prompt version like the vulnerability and malware modules. Adds a
+  prompt-pin column to the forensics investigation row.
+- The agent-config bundle as the versioned unit (RFC-09 Amendment 2 #33).
+  A registered version now carries the prompt body plus an optional
+  persona roster, model routing, and exemplar set, and the content hash
+  covers all four, so a routing or roster or exemplar change is a
+  versioned event with its own immutable identity, not an out-of-band
+  edit. A pinned bundle's exemplars fold into the resolved prompt body and
+  a pinned bundle's model routing overrides model selection for that
+  investigation; both are pinned per investigation. A prompt-only bundle
+  (empty roster, routing, and exemplars) resolves byte-identically to the
+  prior behavior. The existing prompt-version and content-hash columns on
+  the cost and seal records identify the bundle end to end.
+- A fourth RFC-09 honesty guardrail, `unpinned_investigation_prompt`
+  (#33). Agent-runtime code that resolves a prompt by live alias instead
+  of the per-investigation pin (bypassing the canonical pinned-resolve
+  path) is now a build-time finding, so the pin-per-investigation
+  guarantee is enforced structurally rather than by discipline alone.
 - Eval-gated experience, calibration, and learned routing (RFC-08 #32).
   Reviewed investigation outcomes now feed a bounded self-improvement
   loop that proposes parameter changes and gates them, never rewriting
@@ -706,6 +741,15 @@ operator action.
 
 ### Changed
 
+- Model selection now consults the pinned agent-config bundle first
+  (RFC-09 #33). When a running investigation's pinned bundle specifies a
+  model for the task type, that routing wins; an empty bundle routing
+  falls through to the existing registry-based resolution unchanged, so
+  behavior is identical for every prompt-only bundle. A prompt version's
+  content hash now covers the whole bundle (body plus roster, routing,
+  and exemplars) rather than the body alone, so re-registering an
+  identical prompt with different routing produces a new immutable
+  version.
 - The confidence-gate score now passes through the active post-hoc
   calibrator before it is mapped to a HIGH/MEDIUM/LOW/REJECT level
   (RFC-08 #32). When a calibrator is fitted and active for the task type,

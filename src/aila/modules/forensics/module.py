@@ -352,6 +352,20 @@ class ForensicsModule(ModuleProtocol):
         """Return empty dict -- forensics does not own workflow run reports."""
         return {}
 
+    async def seed_prompts(self) -> int:
+        """RFC-09 activation: seed the forensics free-flow prompts into the
+        version store and set production aliases where none exist.
+
+        Discovered by :func:`aila.platform.prompts.bootstrap.seed_module_prompts`
+        at app startup. Delegates to
+        :func:`aila.modules.forensics.agents.investigator.seed_prompt_versions`
+        so the prompt inventory lives with the agent that consumes it --
+        same shape vr and malware use.
+        """
+        from .agents.investigator import seed_prompt_versions
+
+        return await seed_prompt_versions()
+
     def health_checks(self) -> dict[str, object]:
         """Return SSH reachability probe callable for the platform health router.
 

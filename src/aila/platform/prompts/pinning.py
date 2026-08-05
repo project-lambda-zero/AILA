@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -43,10 +44,41 @@ from sqlmodel import select
 
 from aila.platform.contracts import utc_now
 from aila.platform.lifecycle.controller import AgentLifecycleController
+from aila.platform.prompts.bundle_ctx import (
+    PinnedBundle,
+    current_pinned_bundle,
+    set_pinned_bundle,
+)
+from aila.platform.prompts.registry import _decode_bundle_extras, _fold_exemplars
 from aila.platform.prompts.version_store import PromptVersionStore
 from aila.platform.uow import UnitOfWork
 
-__all__ = ["resolve_canary_key_for_investigation", "resolve_pinned_prompt"]
+__all__ = [
+    "ResolvedBundle",
+    "resolve_canary_key_for_investigation",
+    "resolve_pinned_bundle",
+    "resolve_pinned_prompt",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedBundle:
+    """Full pinned bundle for a turn (RFC-09 Amendment 2).
+
+    Sibling to the ``(body, version)`` return of :func:`resolve_pinned_prompt`
+    for callers that need the raw extras (persona-spawn, routing override).
+    Every field defaults to ``None`` / empty so the file-fallback path
+    yields a bundle the consumer can treat exactly like "no override".
+
+    ``body`` already has non-empty exemplars folded in -- consumers should
+    prefer ``body`` over reconstructing it from ``exemplars``.
+    """
+
+    body: str | None = None
+    version: str | None = None
+    roster: dict[str, Any] | None = None
+    routing: dict[str, Any] | None = None
+    exemplars: list[Any] | None = None
 
 _log = logging.getLogger(__name__)
 
@@ -102,6 +134,63 @@ async def resolve_canary_key_for_investigation(
     return key if route.on_canary else None
 
 
+async def resolve_pinned_bundle(
+    *,
+    investigation_id: str | None,
+    key: str,
+    investigation_model: type[Any],
+    store: PromptVersionStore,
+    model_family: str | None = None,
+) -> ResolvedBundle:
+    """Resolve the full pinned agent-config bundle for a turn.
+
+    RFC-09 Amendment 2 sibling to :func:`resolve_pinned_prompt`. Same
+    pin / canary / fail-open semantics; returns the bundle extras
+    (roster / routing / exemplars) alongside the body so callers that
+    need the RAW bundle (e.g. persona-spawn override) do not double-query
+    the store. Prompt-only bundles resolve to ``ResolvedBundle(body=body,
+    version=version)`` with the extras None -- byte-identical downstream.
+
+    File-fallback path returns an all-``None`` :class:`ResolvedBundle` --
+    consumers treat it as "no override".
+    """
+    body, version = await resolve_pinned_prompt(
+        investigation_id=investigation_id,
+        key=key,
+        investigation_model=investigation_model,
+        store=store,
+        model_family=model_family,
+    )
+    bundle = current_pinned_bundle()
+    return ResolvedBundle(
+        body=body,
+        version=version,
+        roster=bundle.roster or None,
+        routing=bundle.routing or None,
+        exemplars=bundle.exemplars or None,
+    )
+
+
+def _materialize(versioned: Any) -> tuple[str, str]:
+    """Return ``(body_with_exemplars, version)`` and publish the bundle.
+
+    Decodes the versioned record's bundle extras, publishes them into
+    the pinned-bundle ContextVar so downstream consumers (LLM routing,
+    persona-spawn) see the pinned routing / roster for this turn, and
+    folds any non-empty exemplars into the returned body so the LLM
+    actually sees them. A prompt-only bundle (all extras empty) yields
+    the body unchanged and publishes an empty ``PinnedBundle`` -- the
+    same effect as the file-fallback path.
+    """
+    roster, routing, exemplars = _decode_bundle_extras(versioned)
+    set_pinned_bundle(PinnedBundle(
+        roster=roster or {},
+        routing=routing or {},
+        exemplars=exemplars or [],
+    ))
+    return (_fold_exemplars(versioned.body, exemplars), versioned.version)
+
+
 async def resolve_pinned_prompt(
     *,
     investigation_id: str | None,
@@ -129,7 +218,20 @@ async def resolve_pinned_prompt(
     wins when present, falling back to the bare key. The pin map stays
     keyed by version, not family: the version is pinned per investigation
     while the family variant is selected per turn.
+
+    RFC-09 Amendment 2 (bundle consumption): every call publishes the
+    resolved bundle's roster + routing + exemplars into the pinned-
+    bundle ContextVar (empty defaults when the fallback path fires) so
+    the LLM routing hot path and the persona-spawn seam can read the
+    bundle without a second store lookup. Non-empty exemplars are
+    folded into the returned body so the model actually sees them --
+    prompt-only bundles keep body byte-identical.
     """
+    # Always start from an empty bundle so a fallback path here does not
+    # inherit the previous turn's overrides. Every return branch below
+    # is responsible for re-publishing a populated bundle before exit
+    # when it resolved a real version from the store.
+    set_pinned_bundle(PinnedBundle())
     if not investigation_id:
         # An out-of-investigation resolve (tests, dev scripts) has
         # nothing to pin against AND no investigation id to bucket a
@@ -147,7 +249,7 @@ async def resolve_pinned_prompt(
             return (None, None)
         if versioned is None:
             return (None, None)
-        return (versioned.body, versioned.version)
+        return _materialize(versioned)
 
     async with UnitOfWork() as uow:
         row = (await uow.session.exec(
@@ -182,7 +284,7 @@ async def resolve_pinned_prompt(
                     key, pinned_version, investigation_id,
                 )
                 return (None, None)
-            return (versioned.body, versioned.version)
+            return _materialize(versioned)
 
         # First resolve: route through the lifecycle controller so a
         # canary assignment (RFC-10) can hand this investigation the
@@ -260,4 +362,4 @@ async def resolve_pinned_prompt(
             row.updated_at = utc_now()
             uow.session.add(row)
             await uow.session.commit()
-        return (versioned.body, versioned.version)
+        return _materialize(versioned)

@@ -41,7 +41,26 @@ class InvestigationRunRecord(SQLModel, table=True):
     # path, this points at the prior attempt whose findings are
     # carried forward. NULL for the original (root) investigation.
     parent_investigation_id: str | None = Field(default=None, index=True, max_length=64)
+    # RFC-09 criterion 4: pin-per-investigation. First resolve of a prompt
+    # key on this row records the current production-alias version here;
+    # subsequent resolves for the SAME investigation return the pinned
+    # version so a live production-alias flip never rewrites a running
+    # investigation. JSON object mapping prompt-key -> resolved version
+    # string. Empty object = nothing pinned yet. Mirrors the base column
+    # on ``InvestigationRecordBase`` (this table does not extend the base
+    # so the field is declared directly). Migration 115 adds the column.
+    prompt_pins_json: str = Field(
+        default="{}", sa_type=Text, sa_column_kwargs={"nullable": True},
+    )
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+    # RFC-09 criterion 4 requires ``resolve_pinned_prompt`` to stamp the
+    # row's modification time when it persists a fresh pin. Added here
+    # for that hot path (SQLModel would otherwise raise on setattr for
+    # an unmapped attribute under Pydantic v2). Nullable so migration 115
+    # can backfill existing rows without a data migration.
+    updated_at: datetime | None = Field(
+        default_factory=utc_now, sa_type=DateTime(timezone=True),
+    )
 
 
 class AgentStepRecord(SQLModel, table=True):

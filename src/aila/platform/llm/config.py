@@ -115,12 +115,31 @@ class LLMConfigProvider:
         is also drift-biased (a drifting primary is preferable to
         blind rerouting against no evidence).
 
+        RFC-09 Amendment 2 (bundle routing): when the pinned
+        agent-config bundle for the current turn carries a
+        ``routing_json`` entry for ``task_type``, that model wins
+        over the registry lookup. An empty routing dict (every
+        prompt-only bundle, and every non-investigation call) leaves
+        this behaviour byte-identical to before -- the override only
+        applies when an operator explicitly wired routing into the
+        bundle. Runs on the LLM hot path; the ContextVar read is a
+        single attribute access.
+
         Args:
             task_type: The task type string (e.g. "scoring", "synthesis").
 
         Returns:
             OpenRouter model identifier string.
         """
+        # Bundle routing override -- pinned bundle wins when present. An
+        # empty bundle (nothing pinned, or a prompt-only bundle) falls
+        # through untouched to the existing registry lookup.
+        from aila.platform.prompts.bundle_ctx import current_pinned_bundle
+        bundle = current_pinned_bundle()
+        if bundle.routing:
+            override = bundle.routing.get(task_type)
+            if override and str(override).strip():
+                return str(override)
         specific = await self._registry.get("platform", f"llm_model_{task_type}")
         primary: str | None = None
         if specific is not None and str(specific).strip():

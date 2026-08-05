@@ -26,8 +26,19 @@ __all__ = [
 
 
 class PromptVersionRecord(SQLModel, table=True):
-    """One immutable prompt version. A new body is a new content hash and a
-    new version; the same body re-registered resolves to the existing row."""
+    """One immutable prompt version -- now the immutable agent-config bundle
+    (RFC-09 Amendment 2). ``body`` is the prompt text; ``roster_json`` is the
+    persona roster, ``routing_json`` the per-task_type model routing, and
+    ``exemplars_json`` the exemplars folded into the resolved body. All three
+    default to their empty representation so a prompt-only register (every
+    caller that predates the amendment) produces a byte-identical
+    prompt-only bundle. ``content_hash`` is the sha256 of the canonical
+    ``{body, roster, routing, exemplars}`` json -- the SAME body with
+    different extras is a different bundle version, and the same bundle
+    re-registered dedups to the existing row via the (key, content_hash)
+    uniqueness. Cost / seal rows identify the bundle by
+    ``prompt_version`` + ``prompt_content_hash`` -- no separate bundle id
+    column is stored."""
 
     __tablename__ = "prompt_versions"
     __table_args__ = (
@@ -45,6 +56,12 @@ class PromptVersionRecord(SQLModel, table=True):
     body: str = Field(sa_type=Text)
     author: str = Field(default="", max_length=128)
     notes: str = Field(default="", sa_type=Text)
+    # Bundle extras (RFC-09 Amendment 2). Empty defaults keep every
+    # pre-amendment register byte-identical to today: a prompt-only
+    # bundle carries ``{}`` / ``{}`` / ``[]`` in these columns.
+    roster_json: str = Field(default="{}", sa_type=Text)
+    routing_json: str = Field(default="{}", sa_type=Text)
+    exemplars_json: str = Field(default="[]", sa_type=Text)
     created_at: datetime = Field(
         default_factory=utc_now, sa_type=DateTime(timezone=True),
     )

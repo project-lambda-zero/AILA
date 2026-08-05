@@ -3132,6 +3132,13 @@ async def seed_prompt_versions() -> int:
     later file edit registers a new version but does not flip production;
     promotion stays an explicit RFC-10 lifecycle action.
 
+    Also seeds the RFC-09 rule-58 migration keys: the VR-owned narrative,
+    n-day, synthesis, and per-check/per-control seed templates lifted out
+    of module-level ``_*_PROMPT*`` literals, plus the platform-owned
+    claim-verifier extractor + verdict prompts (dedup-safe: the malware
+    module seeds the same platform keys, ``register`` deduplicates by
+    content hash so the second module to reach the seed is a no-op).
+
     Returns the count of keys whose production alias was newly set.
     """
     personas: tuple[str | None, ...] = (None, *(v.value for v in PersonaVoice))
@@ -3154,6 +3161,67 @@ async def seed_prompt_versions() -> int:
                 actor="bootstrap", reason="initial file baseline",
             )
             seeded += 1
+
+    # RFC-09 rule-58 migration keys: bodies were lifted out of module-level
+    # ``_*_PROMPT*`` literals into versioned ``.md`` files (narrative,
+    # n-day, synthesis, apk-static seed template, masvs seed template).
+    # Lazy imports avoid an aila-agents<->aila-vr circular pull.
+    from aila.modules.vr.agents.narrative_agent import (
+        _load_system_prompt as _load_vr_narrative_prompt,
+    )
+    from aila.modules.vr.agents.nday_researcher import (
+        _load_system_prompt as _load_vr_nday_prompt,
+    )
+    from aila.modules.vr.agents.synthesis_agent import (
+        _load_system_prompt as _load_vr_synthesis_prompt,
+    )
+    from aila.modules.vr.apk_static.seed import (
+        _load_prompt_template as _load_apk_static,
+    )
+    from aila.modules.vr.masvs.seed import (
+        _load_prompt_template as _load_masvs,
+    )
+
+    migration_entries: tuple[tuple[str, str], ...] = (
+        ("vr/narrative/base", _load_vr_narrative_prompt()),
+        ("vr/nday/base", _load_vr_nday_prompt()),
+        ("vr/synthesis/base", _load_vr_synthesis_prompt()),
+        ("vr/apk_static_seed/base", _load_apk_static()),
+        ("vr/masvs_seed/base", _load_masvs()),
+    )
+    for key, body in migration_entries:
+        version = await _PROMPT_VERSION_STORE.register(
+            key, body, author="bootstrap",
+            notes="RFC-09 rule-58 inline-prompt migration seed",
+        )
+        if await _PROMPT_VERSION_STORE.resolve(key, alias="production") is not None:
+            continue
+        await _PROMPT_VERSION_STORE.set_alias(
+            key, "production", version,
+            actor="bootstrap", reason="initial file baseline",
+        )
+        seeded += 1
+
+    # Platform-owned claim-verifier prompts: registered here (dedup-safe
+    # because the malware module also does this -- content-hash dedup on
+    # ``register`` makes the second module a no-op). Same alias-if-absent
+    # shape as the VR-local entries above; covered by the RFC-09
+    # activation bootstrap whitelist entry on this function.
+    from aila.platform.agents.claim_verifier import (
+        platform_claim_verifier_seed_entries,
+    )
+    for key, body in platform_claim_verifier_seed_entries():
+        version = await _PROMPT_VERSION_STORE.register(
+            key, body, author="bootstrap",
+            notes="platform claim-verifier file baseline (RFC-09 activation seed)",
+        )
+        if await _PROMPT_VERSION_STORE.resolve(key, alias="production") is not None:
+            continue
+        await _PROMPT_VERSION_STORE.set_alias(
+            key, "production", version,
+            actor="bootstrap", reason="initial file baseline",
+        )
+        seeded += 1
     return seeded
 
 

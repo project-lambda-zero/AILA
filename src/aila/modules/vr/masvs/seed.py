@@ -18,13 +18,34 @@ the scout receives.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from aila.modules.vr.masvs.models import MasvsControl
+from aila.platform.prompts import PromptRegistry
 
 __all__ = [
     "MasvsSeedBuilder",
 ]
+
+_PROMPT_DIR = Path(__file__).parent / "prompts"
+_PROMPT_REGISTRY = PromptRegistry(
+    _PROMPT_DIR,
+    module="vr",
+    fallback_base="masvs_seed_template.md",
+)
+
+
+def _load_prompt_template() -> str:
+    """Return the MASVS seed template body from the registry.
+
+    RFC-09 criterion 1: template lives in
+    ``prompts/masvs_seed_template.md`` resolved via
+    :class:`PromptRegistry` so the child investigation's initial_question
+    is derived from a versioned source of truth rather than an inline
+    module constant.
+    """
+    return _PROMPT_REGISTRY.load("masvs_seed")
 
 
 _UNKNOWN = "<unknown>"
@@ -109,7 +130,7 @@ class MasvsSeedBuilder:
             or "  - (none catalogued)"
         )
 
-        return _PROMPT_TEMPLATE.format(
+        return _load_prompt_template().format(
             control_id=control.id,
             group=control.group.value,
             level=control.level.value,
@@ -141,36 +162,3 @@ def _text_or_unknown(value: object) -> str:
     if not text:
         return _UNKNOWN
     return text
-
-
-# Doubled braces escape literal `{` / `}` for ``str.format``; every
-# named placeholder below is filled by :meth:`MasvsSeedBuilder.build`.
-#
-# Aggressively trimmed (was ~4500 chars → now ~1200 chars). vuln_researcher
-# already injects: (a) the persona system prompt, (b) the full tool
-# surface declaration, (c) the audit-kind outcome contract. Repeating
-# them in the seed bloated each child's per-turn context by ~3x with
-# zero added information -- drop them. What stays is the irreducible
-# per-control payload: which MASVS control to audit, which APK, which
-# audit-mcp index to query, and the catalog's evidence hints.
-_PROMPT_TEMPLATE = """\
-Audit MASVS control **{control_id}** ({group} L{level}) on APK `{package}`
-(versionName {version_name}, sha256 {sha256}...). Use audit_mcp index
-`{index_id}` for the jadx-decompiled Java tree ({jadx_class_count} classes).
-
-## {title}
-
-{description}
-
-## Verification steps
-
-{steps_block}
-
-## Evidence hints (seed `mcp__audit_mcp_semantic_search` with these)
-
-{hints_block}
-
-## Load-bearing APIs
-
-{apis_block}
-"""

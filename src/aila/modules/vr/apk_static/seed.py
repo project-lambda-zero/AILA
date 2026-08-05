@@ -20,13 +20,34 @@ sink/config, so the bug-hunting audit persona is a direct fit.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from aila.modules.vr.apk_static.models import ApkStaticCheck, ApkStaticGroup
+from aila.platform.prompts import PromptRegistry
 
 __all__ = [
     "ApkStaticSeedBuilder",
 ]
+
+_PROMPT_DIR = Path(__file__).parent / "prompts"
+_PROMPT_REGISTRY = PromptRegistry(
+    _PROMPT_DIR,
+    module="vr",
+    fallback_base="apk_static_seed_template.md",
+)
+
+
+def _load_prompt_template() -> str:
+    """Return the APK-static seed template body from the registry.
+
+    RFC-09 criterion 1: template lives in
+    ``prompts/apk_static_seed_template.md`` resolved via
+    :class:`PromptRegistry` so the child investigation's initial_question
+    is derived from a versioned source of truth rather than an inline
+    module constant that silently drifts.
+    """
+    return _PROMPT_REGISTRY.load("apk_static_seed")
 
 
 _UNKNOWN = "<unknown>"
@@ -104,7 +125,7 @@ class ApkStaticSeedBuilder:
         evidence_block = _group_evidence_block(check, static_summary)
         polarity_block = _polarity_block(check)
 
-        return _PROMPT_TEMPLATE.format(
+        return _load_prompt_template().format(
             evidence_block=evidence_block,
             polarity_block=polarity_block,
             check_id=check.id,
@@ -246,39 +267,3 @@ def _text_or_unknown(value: object) -> str:
     return text
 
 
-# Doubled braces escape literal `{` / `}` for ``str.format``; every named
-# placeholder below is filled by :meth:`ApkStaticSeedBuilder.build`. Kept
-# lean: vuln_researcher already injects the persona system prompt, the
-# tool surface, and the audit-kind outcome contract, so the seed carries
-# only the irreducible per-check payload.
-_PROMPT_TEMPLATE = """\
-Audit APK static check **{check_id}** ({group}) on APK `{package}`
-(versionName {version_name}, sha256 {sha256}...). Use audit_mcp index
-`{index_id}` for the jadx-decompiled tree ({jadx_class_count} classes);
-`read_lines` also reaches AndroidManifest.xml + res/ under that index.
-
-## {title}
-
-{description}
-
-This is a concrete, statically-answerable check -- a definite finding or a
-cited negative, not a compliance opinion. A clean result is valid ONLY
-after the evidence below is examined; cite `file:line` for every claim.
-{polarity_block}
-## Verification steps
-
-{steps_block}
-{evidence_block}
-## Evidence hints (seed `mcp__audit_mcp_semantic_search` / `search_functions` / `search_constants`)
-
-{hints_block}
-
-## Load-bearing APIs / manifest attributes
-
-{apis_block}
-
-## Mapping
-
-- CWE: {cwe_block}
-- OWASP MASVS v2.1.0: {masvs_block}
-"""

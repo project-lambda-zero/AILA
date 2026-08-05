@@ -22,18 +22,33 @@ PoC discipline (same rules as ReportWriter):
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from aila.platform.llm.correlation import (
+    correlation_scope,
+    current_join_keys,
+    current_prompt_version,
+)
+from aila.platform.prompts import PromptRegistry
 from aila.platform.services.factory import ServiceFactory
 
 __all__ = [
     "PocDraft",
     "PocWriter",
 ]
+
+_PROMPT_DIR = Path(__file__).parent / "prompts"
+_PROMPT_REGISTRY = PromptRegistry(
+    _PROMPT_DIR,
+    module="vr",
+    fallback_base="system_poc_writer.md",
+)
 
 _log = logging.getLogger(__name__)
 
@@ -153,53 +168,42 @@ class PocWriter:
           - root_cause_summary: str
           - final_answer: str                (the agent's submit text)
         """
-        response = await self._services.llm_client.chat_structured(
-            task_type=self._TASK_TYPE,
-            messages=[
-                {"role": "system", "content": self._system_prompt()},
-                {"role": "user", "content": self._render_facts(facts)},
-            ],
-            model_class=PocDraft,
-        )
+        system_prompt = self._system_prompt()
+        # RFC-09 criterion 2: stamp the resolved prompt's content hash so
+        # the LLMCostRecord + AuditSealRecord written under this
+        # chat_structured attribute back to the exact prompt template
+        # that produced this PoC. Prompt lives in a file-backed .md so
+        # ``prompt_version`` is None unless a caller is already inside a
+        # pinned scope; the hash alone is enough to close the (cost,
+        # prompt) join for this call.
+        prompt_hash = hashlib.sha256(system_prompt.encode("utf-8")).hexdigest()
+        _inv, _br, _turn = current_join_keys()
+        with correlation_scope(
+            investigation_id=_inv, branch_id=_br, turn_number=_turn,
+            prompt_content_hash=prompt_hash,
+            prompt_version=current_prompt_version(),
+        ):
+            response = await self._services.llm_client.chat_structured(
+                task_type=self._TASK_TYPE,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": self._render_facts(facts)},
+                ],
+                model_class=PocDraft,
+            )
         if response.disabled:
             raise RuntimeError("LLM kill-switch active -- cannot draft PoC")
         return PocDraft.model_validate(json.loads(response.content))
 
     @staticmethod
     def _system_prompt() -> str:
-        return (
-            "You are a senior exploit developer. Your job: convert a "
-            "confirmed vulnerability finding into a runnable proof of "
-            "concept that demonstrates the bug.\n\n"
-            "Hard rules:\n"
-            "- ONLY use facts present in the input. Do NOT invent "
-            "function signatures, file paths, struct layouts, or "
-            "configuration directives that weren't established by "
-            "the investigation.\n"
-            "- If the finding is missing critical information for a "
-            "real PoC (exact memory layout, calling convention, "
-            "target version), produce a SKELETON PoC with "
-            "``can_run=False`` and list the missing inputs. Better "
-            "an honest stub than a fabricated exploit.\n"
-            "- Default to LEAST-HARMFUL payload that demonstrates "
-            "the bug. A crash / OOB read is enough for proof. Do "
-            "not author working RCE shellcode unless the finding "
-            "explicitly establishes the primitive.\n"
-            "- For source-repo C/C++ targets, prefer a Python "
-            "scripted request (requests / socket / curl) that "
-            "triggers the bug remotely. Include the target setup "
-            "(config snippet, build flags) so the operator can "
-            "stand up the vulnerable instance.\n"
-            "- For binary targets, write C that exercises the "
-            "vulnerable primitive directly.\n"
-            "- ``expected_outcome`` MUST be a concrete signal the "
-            "operator can verify: a specific crash type, an ASAN "
-            "report line, an HTTP error code, a particular log "
-            "message. 'It works' is not an acceptable expected "
-            "outcome.\n"
-            "- Output MUST be valid JSON matching the PocDraft "
-            "schema. No prose outside the JSON object."
-        )
+        """Return the PoC writer system prompt from the registry.
+
+        RFC-09 criterion 1: body lives in ``prompts/system_poc_writer.md``
+        resolved via :class:`PromptRegistry` so cost / seal rows carry
+        the resolved ``prompt_content_hash``.
+        """
+        return _PROMPT_REGISTRY.load("poc_writer")
 
     @staticmethod
     def _render_facts(facts: dict[str, Any]) -> str:

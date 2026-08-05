@@ -1,6 +1,6 @@
 """honesty_audit -- AST-based structural honesty checker for Python code.
 
-Detects seventy-three categories of structural dishonesty:
+Detects seventy-four categories of structural dishonesty:
 
 1. unused_parameter    -- function parameter accepted but never referenced in body.
 2. misleading_name     -- function name implies intelligence but body only forwards.
@@ -74,6 +74,7 @@ Detects seventy-three categories of structural dishonesty:
 70. mcp_catalog_placement -- a subclass of :class:`McpRegistryServiceBase` defined inside ``src/aila/platform/**`` binds ``_servers`` to a literal MCP server catalog (a tuple/list of dict specs). The MCP server catalog is module domain: each module owns ``MCP_SERVERS`` in ``modules/<id>/services/mcp_registry.py`` and binds it onto the platform base via the ``_servers`` ClassVar. The platform base takes the catalog as class state supplied by the subclass and never hardcodes one -- a platform-side placement re-imports module domain into the platform layer and reopens the RFC-04 boundary. Structural guardrail (fires zero on the current tree).
 71. service_env_read -- a module ``modules/*/services/**`` file reads config via ``os.environ`` / ``os.getenv`` (attribute access or ``from os import environ/getenv``) instead of ``ConfigRegistry(module_id, key)``. Sibling of rule 49 (``agent_env_read``) for the services layer: RFC-04's config-drift closure removed every direct env read from module services so the DB override and per-module schema default both participate on one path. AST-based -- docstring or comment mentions of ``os.environ`` are invisible and never trip this.
 72. platform_hardcodes_strategy_family -- a file under ``src/aila/platform/**`` contains a string-literal AST node equal to one of the known module reasoning-strategy family names (``mobile_reverse`` / ``vulnerability_research`` / ``web_pentest`` / ``network_forensics`` / ``memory_forensics`` / ``persistence_hunt`` / ``malware_static`` / ``filesystem_triage``). The platform reasoning surface must not name a family owned by a module; strategy families are declared by each module via ``ModuleProtocol.reasoning_strategies()`` and resolved through the registry. The family literal ``generic`` is allowed because it is the platform's fallback family; ``tests/`` paths are exempt. Sibling of rule 48 for the reasoning-strategy surface (RFC-05 crit 6).
+74. unpinned_investigation_prompt -- agent-runtime code (``platform/agents/**`` or ``modules/*/agents/**``) resolves a prompt / bundle by LIVE ALIAS instead of the per-investigation pin. The canonical path is :func:`aila.platform.prompts.pinning.resolve_pinned_prompt`, which reads or persists the investigation pin before ever looking at the alias; a raw ``.resolve(alias=...)`` on the prompt store or the prompt registry in a turn function bypasses that pin and lets an operator alias flip mid-run bleed the new prompt into an already-running investigation's transcript. RFC-09 criterion 4 / threat T6. Scope is the agent-runtime tree; the platform prompts package owns the raw resolve and is naturally out of scope. ``seed_prompt_versions`` functions are exempt because seed / registration legitimately talks to the store directly. Sibling of rules 58 / 59 / 60 on the pin surface.
 73. structural_self_modification -- the RFC-08 self-improvement layer (``platform/eval/**`` and the sanctioned proposer files ``platform/agents/pattern_extractor.py`` / ``platform/agents/persona_router.py`` / ``platform/agents/calibrator.py``) proposes parameters (thresholds / persona-selection / patterns / routing weights) only. A structural graph edit from within that layer -- a ``PhaseSpec(...)`` / ``WorkflowDefinition(...)`` construction, a ``make_dispatch_router(...)`` / ``build_dispatch_workflow(...)`` call, a subscript / delete / mutator-method mutation of a ``.states`` / ``.nodes`` / ``.edges`` mapping, or a subscript / mutator write to a persona-roster binding (``PERSONA_ROLE_MAP`` / ``persona_task_type`` / ``role_task_type``) -- lets a self-improvement writer mint a new node, phase, or roster entry outside the operator-authored workflow definition. Fire is scoped to the self-improvement files only so the workflow / engine layer (which legitimately builds the graph) is not flagged; precision over recall by design.
 
 Usage (CLI):
@@ -1390,6 +1391,54 @@ _PROMPT_ALIAS_CHANGE_RECORD_NAME: str = "PromptAliasChangeRecord"
 _PROMPT_ALIAS_TABLE_NAME: str = "prompt_aliases"
 _ALIAS_FLIP_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
     "platform/prompts/version_store.py",
+    "tools/honesty_audit.py",
+)
+
+# Rule 74 -- unpinned_investigation_prompt. Agent-runtime code MUST
+# resolve a prompt / bundle through ``resolve_pinned_prompt`` (the
+# RFC-09 pin-per-investigation rule). A raw ``.resolve(alias=...)``
+# in a turn function bypasses the pin: a live production-alias flip
+# would then bleed the new prompt into the already-running
+# investigation's transcript. The receiver-token set captures the
+# canonical prompt-store / prompt-registry bindings so a call that
+# omits the ``alias=`` kwarg (and rides the registry's default
+# ``production`` alias) is still caught. The seed-function marker
+# lets ``seed_prompt_versions`` legitimately consult the store
+# during bootstrap without tripping the rule.
+_UNPINNED_INVESTIGATION_RESOLVE_METHOD: str = "resolve"
+_UNPINNED_INVESTIGATION_PIN_MARKER: str = "resolve_pinned_prompt"
+# Seed / bootstrap functions legitimately talk to the store directly.
+# Substring markers (case-insensitive) cover the shipped names --
+# ``seed_prompt_versions`` (vr + malware researchers),
+# ``seed_platform_claim_verifier_prompts`` (the shared claim-verifier
+# seed under ``platform/agents``), and any future ``*_seed_prompts_*``
+# / ``bootstrap_prompts`` helper -- so a new prompt-owning module
+# does not have to touch this list. Precision-over-recall: a false
+# positive on a seed is worse than a miss.
+_UNPINNED_INVESTIGATION_SEED_MARKERS: frozenset[str] = frozenset({
+    "seed_prompt",
+    "seed_platform",
+    "bootstrap_prompt",
+    "register_prompt",
+})
+_UNPINNED_INVESTIGATION_STORE_RECEIVER_TOKENS: frozenset[str] = frozenset({
+    # Module-level singletons the two active researcher modules bind.
+    "_PROMPT_VERSION_STORE",
+    "_PROMPT_REGISTRY",
+    "_prompt_version_store",
+    "_prompt_registry",
+    # Attribute-terminal bindings (``self._store``,
+    # ``self._prompt_store``, ``self._prompt_registry``).
+    "_store",
+    "_prompt_store",
+    # Direct class-name receiver (``PromptVersionStore().resolve(...)``
+    # / ``PromptRegistry().resolve(...)``): the outer call's terminal
+    # attribute is the class name.
+    "PromptVersionStore",
+    "PromptRegistry",
+})
+_UNPINNED_INVESTIGATION_PROMPT_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
+    # This file names the markers in its own rule strings.
     "tools/honesty_audit.py",
 )
 
@@ -4886,6 +4935,115 @@ class _HonestyVisitor(ast.NodeVisitor):
                 ),
             )
 
+    def _check_unpinned_investigation_prompt(self, tree: ast.Module) -> None:
+        """Rule 74: unpinned_investigation_prompt -- an agent-runtime
+        turn resolves a prompt / bundle by LIVE ALIAS instead of the
+        investigation pin.
+
+        RFC-09 criterion 4 (T6): a live production-alias flip must
+        NEVER rewrite the prompt on a turn that belongs to an
+        already-running investigation. The canonical path is
+        :func:`aila.platform.prompts.pinning.resolve_pinned_prompt`,
+        which reads (or persists) the investigation's pin before ever
+        looking at the alias. A raw ``.resolve(alias=...)`` on the
+        store or the registry in a turn function bypasses that pin
+        and lets an operator alias flip mid-run bleed the new prompt
+        into the running transcript.
+
+        The rule fires on a ``.resolve(...)`` call in a scope-matching
+        file (``platform/agents/**`` or ``modules/*/agents/**``) when
+        either:
+
+        1. an explicit ``alias=`` keyword argument is present (the
+           precise dead-give-away shape), OR
+        2. the receiver terminal name matches one of
+           :data:`_UNPINNED_INVESTIGATION_STORE_RECEIVER_TOKENS`
+           (module-level ``_PROMPT_VERSION_STORE`` /
+           ``_PROMPT_REGISTRY`` singleton, an attribute-tail
+           ``_store`` / ``_prompt_store``, or the class name
+           terminal of a ``PromptVersionStore().resolve(...)`` /
+           ``PromptRegistry().resolve(...)`` chain),
+
+        AND the enclosing function does NOT reference
+        ``resolve_pinned_prompt`` in its body. Functions whose name
+        contains ``seed_prompt_versions`` are exempt because seed /
+        registration legitimately talks to the store directly. The
+        platform's own prompt package (``platform/prompts/**``) is
+        outside the agent-runtime scope and is not touched by this
+        rule; the file self-exempt is a belt on the same suspender.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if not _AGENT_RUNTIME_SCOPE_PATTERN.search(normalized):
+            return
+        for suffix in _UNPINNED_INVESTIGATION_PROMPT_SELF_EXEMPT_SUFFIXES:
+            if normalized.endswith(suffix):
+                return
+        parents = _build_parent_map(tree)
+        # Group hits by enclosing function so a single function that
+        # makes many raw resolves fires only once (on the first).
+        per_function: dict[int, tuple[int, str]] = {}
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (
+                isinstance(func, ast.Attribute)
+                and func.attr == _UNPINNED_INVESTIGATION_RESOLVE_METHOD
+            ):
+                continue
+            has_alias_kwarg = any(kw.arg == "alias" for kw in node.keywords)
+            recv = func.value
+            recv_tail: str | None = None
+            if isinstance(recv, ast.Name):
+                recv_tail = recv.id
+            elif isinstance(recv, ast.Attribute):
+                recv_tail = recv.attr
+            elif isinstance(recv, ast.Call):
+                # ``PromptVersionStore().resolve(...)`` chain: the
+                # constructor call's callee terminal is the class name.
+                inner = recv.func
+                if isinstance(inner, ast.Name):
+                    recv_tail = inner.id
+                elif isinstance(inner, ast.Attribute):
+                    recv_tail = inner.attr
+            matches_store_receiver = (
+                recv_tail is not None
+                and recv_tail in _UNPINNED_INVESTIGATION_STORE_RECEIVER_TOKENS
+            )
+            if not (has_alias_kwarg or matches_store_receiver):
+                continue
+            enclosing = _enclosing_function(node, parents)
+            if enclosing is None:
+                continue
+            enclosing_name_low = enclosing.name.lower()
+            if any(
+                marker in enclosing_name_low
+                for marker in _UNPINNED_INVESTIGATION_SEED_MARKERS
+            ):
+                continue
+            body_ids = _identifier_names_in_body(enclosing)
+            if _UNPINNED_INVESTIGATION_PIN_MARKER in body_ids:
+                continue
+            key = id(enclosing)
+            if key in per_function:
+                continue
+            shape = "alias=" if has_alias_kwarg else (recv_tail or "<recv>")
+            per_function[key] = (node.lineno, shape)
+        for func_id, (line, shape) in per_function.items():
+            del func_id
+            self._emit(
+                line,
+                "unpinned_investigation_prompt",
+                (
+                    f"unpinned_investigation_prompt: '.resolve({shape})' "
+                    "in an agent-runtime function without "
+                    "'resolve_pinned_prompt' in the same body -- RFC-09 "
+                    "requires per-investigation pinning so a live "
+                    "production-alias flip never rewrites the prompt of "
+                    "an already-running investigation (T6)"
+                ),
+            )
+
     def _check_promotion_without_gate(self, tree: ast.Module) -> None:
         """Rule 61: promotion_without_gate -- a function flips a version
         to production without the eval + quorum gate.
@@ -5523,6 +5681,10 @@ class HonestyAuditor:
         visitor._check_inline_prompt_literal(tree)
         visitor._check_untagged_llm_call(tree)
         visitor._check_unaudited_alias_flip(tree)
+        # Rule 74: unpinned_investigation_prompt -- the RFC-09 4th
+        # guardrail. Self-scopes to agent-runtime files, so the dispatch
+        # site is unconditional.
+        visitor._check_unpinned_investigation_prompt(tree)
         visitor._check_promotion_without_gate(tree)
         visitor._check_untransitioned_stage_change(tree)
         visitor._check_canary_below_min_sample(tree)

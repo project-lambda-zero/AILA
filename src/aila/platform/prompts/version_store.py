@@ -4,11 +4,18 @@ The platform owns register (immutable, content-hash-deduplicated), resolve
 (by explicit version or by alias pointer), and set_alias (an audited pointer
 flip = deploy / rollback). Canonical aliases are ``candidate`` / ``staging``
 / ``production``, but any string is accepted so a caller can add its own.
+
+RFC-09 Amendment 2: the versioned unit is the agent-config bundle
+(prompt body + persona roster + per-task_type routing + exemplars). A
+prompt-only register (roster/routing/exemplars omitted) keeps the
+legacy behaviour byte-identical because the empty-default bundle
+produces a stable canonical hash.
 """
 from __future__ import annotations
 
 import hashlib
-from typing import TYPE_CHECKING
+import json
+from typing import TYPE_CHECKING, Any
 
 from sqlmodel import select
 
@@ -30,23 +37,71 @@ class PromptVersionNotFoundError(RuntimeError):
     """Raised when set_alias targets a version that does not exist."""
 
 
-def _content_hash(body: str) -> str:
-    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+def _canonical_bundle_json(
+    body: str,
+    roster: dict[str, Any] | None,
+    routing: dict[str, Any] | None,
+    exemplars: list[Any] | None,
+) -> str:
+    """Return the canonical json used to hash an agent-config bundle.
+
+    Ordering: sorted keys, ``(',', ':')`` separators. Empty extras
+    ``{}``/``{}``/``[]`` so a prompt-only register produces a stable,
+    reproducible hash across processes and Python versions.
+    """
+    payload = {
+        "body": body,
+        "roster": roster or {},
+        "routing": routing or {},
+        "exemplars": exemplars or [],
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
+def _content_hash(
+    body: str,
+    roster: dict[str, Any] | None = None,
+    routing: dict[str, Any] | None = None,
+    exemplars: list[Any] | None = None,
+) -> str:
+    """Sha256 of the canonical bundle payload (RFC-09 Amendment 2).
+
+    Prompt-only callers (roster/routing/exemplars omitted) still get a
+    stable hash: the payload folds in the empty defaults, so an
+    unchanged body produces the same hash across every re-register.
+    """
+    return hashlib.sha256(
+        _canonical_bundle_json(body, roster, routing, exemplars).encode("utf-8"),
+    ).hexdigest()
 
 
 class PromptVersionStore:
     """Register, resolve, and alias immutable prompt versions."""
 
     async def register(
-        self, key: str, body: str, *, author: str = "", notes: str = "",
+        self,
+        key: str,
+        body: str,
+        *,
+        author: str = "",
+        notes: str = "",
+        roster: dict[str, Any] | None = None,
+        routing: dict[str, Any] | None = None,
+        exemplars: list[Any] | None = None,
     ) -> str:
-        """Register ``body`` under ``key`` and return its version.
+        """Register a bundle under ``key`` and return its version.
 
-        Immutable and content-hash-deduplicated: re-registering an identical
-        body returns the existing version rather than creating a duplicate.
-        A new body gets the next monotonic version for the key.
+        Immutable and bundle-hash-deduplicated: re-registering an
+        identical ``(body, roster, routing, exemplars)`` returns the
+        existing version rather than creating a duplicate. A new bundle
+        gets the next monotonic version for the key.
+
+        Prompt-only callers omit ``roster`` / ``routing`` / ``exemplars``
+        so an existing ``register(key, body, author=..., notes=...)``
+        call stays valid and produces a stable hash byte-identical to
+        every prior identical call.
         """
-        content_hash = _content_hash(body)
+        content_hash = _content_hash(body, roster, routing, exemplars)
         async with async_session_scope() as session:
             existing = (
                 await session.exec(
@@ -79,6 +134,15 @@ class PromptVersionStore:
             session.add(PromptVersionRecord(
                 key=key, version=version, content_hash=content_hash,
                 body=body, author=author, notes=notes,
+                roster_json=json.dumps(
+                    roster or {}, sort_keys=True, separators=(",", ":"),
+                ),
+                routing_json=json.dumps(
+                    routing or {}, sort_keys=True, separators=(",", ":"),
+                ),
+                exemplars_json=json.dumps(
+                    exemplars or [], sort_keys=True, separators=(",", ":"),
+                ),
             ))
             await session.commit()
             return version

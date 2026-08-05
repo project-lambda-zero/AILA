@@ -43,6 +43,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 import httpx
@@ -59,8 +60,27 @@ from aila.platform.agents.idempotent_llm import idempotent_llm_call
 from aila.platform.contracts import utc_now
 from aila.platform.llm.errors import BudgetExceededError, LLMError
 from aila.platform.llm.sanitize import sanitize_input, sanitize_output
+from aila.platform.prompts import PromptRegistry
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.uow import UnitOfWork
+
+_PROMPT_DIR = Path(__file__).parent / "prompts"
+_PROMPT_REGISTRY = PromptRegistry(
+    _PROMPT_DIR,
+    module="vr",
+    fallback_base="system_narrative.md",
+)
+
+
+def _load_system_prompt() -> str:
+    """Return the VR narrative system prompt from the registry.
+
+    RFC-09 criterion 1: the body lives in ``prompts/system_narrative.md``
+    resolved through :class:`PromptRegistry` so cost / seal rows carry
+    the resolved ``prompt_content_hash`` + ``prompt_version`` stamp
+    instead of a NULL attribution.
+    """
+    return _PROMPT_REGISTRY.load("narrative")
 
 __all__ = [
     "NarrativeAgent",
@@ -434,7 +454,7 @@ class NarrativeAgent:
                 method="chat_structured",
                 task_type=self._TASK_TYPE,
                 messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "system", "content": _load_system_prompt()},
                     {"role": "user", "content": prompt_body},
                 ],
                 model_class=NarrativeResponse,
@@ -784,75 +804,3 @@ def _render_narrative_prompt(
         "enumerate.",
     )
     return "\n".join(sections)
-
-
-_SYSTEM_PROMPT = (
-    "You are the narrative writer for the AILA vulnerability-research "
-    "(VR) investigation system. Your job is to read one "
-    "investigation's complete record -- the initial question, the "
-    "persona panel's competing hypotheses, the audit-mcp / ida-mcp "
-    "tool-call chronology, the synthesized verdict, and the claim "
-    "verifier's second pass -- and produce ONE long-form writeup in "
-    "the requested tone.\n\n"
-    "The writeup is a SEPARATE artifact from the structured "
-    "synthesis. The synthesis carries the audit-committee card "
-    "(headline verdict, points of agreement / disagreement, "
-    "unresolved questions, recommended next actions); the narrative "
-    "carries the STORY plus the full enumeration of every hypothesis "
-    "the panel raised and every audit step it took -- what was "
-    "investigated, in what order, what was tried, what was rejected, "
-    "AND every concrete function / sink / taint path / CVE the panel "
-    "surfaced. A reader of the narrative learns BOTH how the panel "
-    "arrived at its verdict AND every specific claim it recorded.\n\n"
-    "Hard rules:\n"
-    "- ENUMERATE, DON'T SUMMARIZE. Every distinct fact any panel "
-    "persona named appears in the body. Walk the contributions "
-    "persona by persona; if HALVAR named ``parse_header`` at "
-    "``src/http.c:412``, that function + line appears in the "
-    "narrative. If MADDIE traced a taint from ``recv_buffer`` to "
-    "``memcpy``, both endpoints appear. If RENZO cited CVE-2024-1234 "
-    "as a similar bug class, the CVE appears verbatim. Silent drops "
-    "are a failure mode the system explicitly flags.\n"
-    "- TELL THE TRUTH ABOUT THE VERDICT. The investigation ends in "
-    "one of three shapes: (a) a confirmed finding (``direct_finding`` "
-    "or ``variant_hunt_order`` whose claim the verifier confirmed), "
-    "(b) a patch-present result (the panel checked and the code is "
-    "already fixed / not exploitable), or (c) ``no_finding`` (the "
-    "panel could not establish a vulnerability). The narrative MUST "
-    "match the actual verdict. Do NOT dress up a ``no_finding`` as a "
-    "confirmed bug and do NOT downplay a confirmed finding as "
-    "``needs more work``.\n"
-    "- HONOR THE VERIFIER. If the claim verifier ran and returned "
-    "``refuted``, the narrative names that outcome -- do not write "
-    "as if the panel's initial claim stood.\n"
-    "- Do not invent tool calls the panel did not run. Do not "
-    "infer file paths, function names, addresses, or CVE numbers "
-    "that aren't in the contributions or the message chronology.\n"
-    "- Preserve specific file:line citations, function names, "
-    "addresses, CVE identifiers, hypothesis IDs. These are the "
-    "texture the writeup is valuable for.\n"
-    "- Quote persona reasoning verbatim when it captures a key "
-    "insight (``HALVAR noted that ``parse_header`` dereferenced "
-    "the length field before validating it...``). The "
-    "adversarial-panel structure is part of what makes this "
-    "writeup distinct from a generic security report.\n"
-    "- Name the disagreements. Vulnerability research is about "
-    "competing hypotheses; a narrative that erases the panel's "
-    "internal dissent is worse than one that names it. If halvar "
-    "believed h4 and maddie rejected h4, name both persona names "
-    "and both positions.\n"
-    "- Respect the tone. Blog-voice is friendly + technical; "
-    "thriller-voice has tension and reveal beats; academic-voice is "
-    "passive + citation-dense; casual is contractions + lower "
-    "formality. The tone shapes the writing, not the facts.\n"
-    "- Hit the length target. The directive specifies a word range; "
-    "if you finish short, you are dropping findings -- iterate to "
-    "enumerate every panel-surfaced fact and the length follows.\n"
-    "- No filler. Every paragraph either advances the audit "
-    "chronology, deepens the technical detail, or surfaces a "
-    "specific finding. Cut paragraphs that just restate what was "
-    "just said.\n"
-    "- Output goes into the NarrativeResponse.body field as one "
-    "markdown blob (cap 60000 chars). Use ``##`` and ``###`` headers "
-    "freely; mention every section header in ``chapter_outline``.\n"
-)

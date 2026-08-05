@@ -30,9 +30,10 @@ unchanged.
 from __future__ import annotations
 
 import functools
+import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 if TYPE_CHECKING:
     from aila.platform.prompts.version_store import PromptVersionStore
@@ -56,7 +57,7 @@ class LoadedPrompt(NamedTuple):
 
     ``version`` is None when the caller fell back to the file registry
     (no store row, no store bound, or the store failed open). Callers
-    Callers thread ``version`` into the correlation scope so every LLM call
+    thread ``version`` into the correlation scope so every LLM call
     written by R1's cost / seal writers is attributable to the exact
     version.
 
@@ -64,11 +65,86 @@ class LoadedPrompt(NamedTuple):
     investigation is bucketed into an active canary cohort (RFC-10), else
     None. Callers thread it into the correlation scope so the seal step can
     feed the turn's drift + cost into that canary's hold gate.
+
+    RFC-09 Amendment 2: ``roster`` / ``routing`` / ``exemplars`` carry the
+    pinned agent-config bundle extras when they were populated on the
+    resolved version, else None (file-fallback path and every prompt-only
+    bundle). ``body`` already has non-empty exemplars folded in by the
+    resolver, so this trio is present for callers that need the raw bundle
+    (persona-spawn, routing override) rather than a re-materialisation of
+    the prompt body.
     """
 
     body: str
     version: str | None
     canary_key: str | None = None
+    roster: dict | None = None
+    routing: dict | None = None
+    exemplars: list | None = None
+
+
+def _decode_bundle_extras(
+    row: Any,
+) -> tuple[dict | None, dict | None, list | None]:
+    """Return ``(roster, routing, exemplars)`` from a PromptVersionRecord.
+
+    Missing / empty json (a prompt-only bundle) decodes to None so the
+    caller can distinguish "no bundle extras" from "empty bundle". A
+    corrupted json field is treated as None (log at DEBUG in caller)
+    rather than crashing the resolve path -- the base body is still
+    served.
+    """
+    def _load(field_value: str | None, empty: Any) -> Any | None:
+        if not field_value or field_value in ("{}", "[]"):
+            return None
+        try:
+            loaded = json.loads(field_value)
+        except (TypeError, ValueError) as exc:
+            _log.warning(
+                "prompt bundle extras json corrupted -- treating as empty: %s",
+                exc,
+            )
+            return None
+        if loaded == empty:
+            return None
+        return loaded
+
+    roster_raw = getattr(row, "roster_json", None)
+    routing_raw = getattr(row, "routing_json", None)
+    exemplars_raw = getattr(row, "exemplars_json", None)
+    roster = _load(roster_raw, {})
+    routing = _load(routing_raw, {})
+    exemplars = _load(exemplars_raw, [])
+    return (
+        roster if isinstance(roster, dict) else None,
+        routing if isinstance(routing, dict) else None,
+        exemplars if isinstance(exemplars, list) else None,
+    )
+
+
+def _fold_exemplars(body: str, exemplars: list | None) -> str:
+    """Return ``body`` with the pinned bundle's exemplars appended.
+
+    Empty / None exemplars keep the body byte-identical so a prompt-only
+    bundle is indistinguishable from the pre-amendment resolve path. Each
+    exemplar renders as ``### Exemplar N`` followed by its content -- a
+    string is inlined verbatim, a mapping serialises deterministically as
+    JSON so the folded body is reproducible.
+    """
+    if not exemplars:
+        return body
+    lines: list[str] = ["", "---", "", "## Exemplars", ""]
+    for index, item in enumerate(exemplars, start=1):
+        lines.append(f"### Exemplar {index}")
+        lines.append("")
+        if isinstance(item, str):
+            lines.append(item)
+        else:
+            lines.append(
+                json.dumps(item, sort_keys=True, indent=2, ensure_ascii=False),
+            )
+        lines.append("")
+    return body + "\n".join(lines)
 
 
 @functools.lru_cache(maxsize=64)
@@ -253,7 +329,18 @@ class PromptRegistry:
                     )
                     break
                 if row is not None:
-                    return LoadedPrompt(body=row.body, version=row.version)
+                    roster, routing, exemplars = _decode_bundle_extras(row)
+                    # Fold non-empty exemplars into the body so the LLM
+                    # actually sees them (RFC-09 Amendment 2 -- exemplars
+                    # are part of the prompt body + bundle content_hash).
+                    resolved_body = _fold_exemplars(row.body, exemplars)
+                    return LoadedPrompt(
+                        body=resolved_body,
+                        version=row.version,
+                        roster=roster,
+                        routing=routing,
+                        exemplars=exemplars,
+                    )
         body = self._resolve_from_file(strategy_family, persona_voice, model_family)
         return LoadedPrompt(body=body, version=None)
 
