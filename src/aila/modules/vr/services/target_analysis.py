@@ -36,7 +36,6 @@ from sqlmodel import select as _select
 
 from aila.modules.vr.contracts.target import TargetKind
 from aila.modules.vr.db_models import VRTargetRecord
-from aila.modules.vr.services.config_helpers import get_float
 from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.modules.vr.services.stage_tracker import (
     StageAlreadyDoneError,
@@ -45,6 +44,7 @@ from aila.modules.vr.services.stage_tracker import (
     load_target_stages,
     save_target_stages,
 )
+from aila.platform.config_base import ModuleConfigReader
 from aila.platform.contracts import utc_now
 from aila.platform.contracts.target_stages import (
     StageName,
@@ -80,22 +80,31 @@ _POLL_INTERVAL_SECONDS = 3.0
 
 # fix §268 -- artifact-file storage for the heavy android-mcp
 # static-summary output. The full payload (40KB-2MB) used to live
-# inline in ``mcp_handles_json`` where
-# every read of the row paid the parse cost. They now live in a
-# content-addressed JSON file under
-# ``VR_TARGET_ARTIFACT_DIR/{target_id}/{name}.json``; only a small
+# inline in ``mcp_handles_json`` where every read of the row paid the
+# parse cost. They now live in a content-addressed JSON file under
+# ``{target_artifact_dir}/{target_id}/{name}.json``; only a small
 # digest + pointer is kept inline so API projections and the MASVS
-# dispatcher stay cheap. Defaults to ``~/.aila/vr_target_artifacts``
-# (same shape as ANDROID_MCP_UPLOAD_DIR's ``~/.android-mcp/uploads``).
-def _artifact_root() -> Path:
-    raw = os.environ.get("VR_TARGET_ARTIFACT_DIR", "").strip()
+# dispatcher stay cheap. Root defaults to ``~/.aila/vr_target_artifacts``
+# (same shape as ANDROID_MCP_UPLOAD_DIR's ``~/.android-mcp/uploads``)
+# when the ``vr.target_artifact_dir`` config key is empty; a non-empty
+# override lands via ``PUT /config/vr/target_artifact_dir`` or the
+# ``AILA_VR_TARGET_ARTIFACT_DIR`` env var.
+_cfg = ModuleConfigReader("vr")
+
+
+async def _resolve_artifact_root() -> Path:
+    raw = (await _cfg.get_str("target_artifact_dir")).strip()
     if raw:
         return Path(raw).expanduser()
     return Path.home() / ".aila" / "vr_target_artifacts"
 
 
+async def _resolve_android_mcp_workdir() -> Path:
+    return Path(await _cfg.get_str("android_mcp_workdir")).expanduser()
+
+
 def _write_target_artifact(
-    target_id: str, name: str, payload: Mapping[str, Any],
+    root: Path, target_id: str, name: str, payload: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Persist a JSON payload to the per-target artifact dir.
 
@@ -110,7 +119,7 @@ def _write_target_artifact(
     so a crash mid-write can never leave a half-written JSON behind
     that a future ``_load_target_artifact_payload`` would choke on.
     """
-    target_dir = _artifact_root() / target_id
+    target_dir = root / target_id
     target_dir.mkdir(parents=True, exist_ok=True)
     artifact_path = target_dir / f"{name}.json"
     body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
@@ -372,10 +381,10 @@ class TargetAnalysisError(Exception):
 
 
 # ─── React Native unification helpers ─────────────────────────────────
-
-_DEFAULT_APK_WORKDIR = Path(
-    os.environ.get("ANDROID_MCP_WORKDIR", "~/.android-mcp/work"),
-).expanduser()
+# ``_build_unified_staging`` accepts the android-mcp workdir as an
+# argument; the async caller resolves it via
+# ``_resolve_android_mcp_workdir`` (config-registry-backed) so a PUT
+# /config override lands without a worker restart.
 
 
 def _hash_path_for_cache(apk_path: str) -> str:
@@ -385,6 +394,7 @@ def _hash_path_for_cache(apk_path: str) -> str:
 
 
 def _build_unified_staging(
+    workdir: Path,
     apk_sha: str,
     java_dir: str | None,
     react_dir: str | None,
@@ -407,7 +417,7 @@ def _build_unified_staging(
     in place; only the link entry consumes filesystem state. On POSIX
     ``os.symlink`` always succeeds without admin.
     """
-    staging = _DEFAULT_APK_WORKDIR / f"apk-unified-{apk_sha[:16]}"
+    staging = workdir / f"apk-unified-{apk_sha[:16]}"
     if staging.exists():
         # Tear down prior entries WITHOUT recursing into them. A junction
         # child must be removed as a link (os.rmdir drops the junction,
@@ -630,7 +640,7 @@ class TargetAnalysisService:
             return
 
         # Legacy INGESTION flow -- source_repo / binary kinds / CVE etc.
-        poll_timeout_s = await get_float("ingestion_poll_timeout_s")
+        poll_timeout_s = await _cfg.get_float("ingestion_poll_timeout_s")
         try:
             async with StageTracker(
                 target_id,
@@ -1117,8 +1127,10 @@ class TargetAnalysisService:
         # junctions inside re-resolve to the current jadx + rn dirs).
         apk_sha = current_handles.get("android_mcp_apk_sha256") or \
             _hash_path_for_cache(apk_path)
+        workdir = await _resolve_android_mcp_workdir()
         staging = await asyncio.to_thread(
             _build_unified_staging,
+            workdir,
             apk_sha=str(apk_sha),
             java_dir=java_dir if isinstance(java_dir, str) else None,
             react_dir=react_dir if isinstance(react_dir, str) else None,
@@ -1254,8 +1266,9 @@ class TargetAnalysisService:
         # and keep only the digest + pointer inline. The PDF renderer
         # and any other full-payload consumer pulls the file via
         # ``load_target_artifact_payload``.
+        artifact_root = await _resolve_artifact_root()
         artifact_ref = _write_target_artifact(
-            target_id, "static_summary", resp,
+            artifact_root, target_id, "static_summary", resp,
         )
         digest = _static_summary_digest_fields(resp)
         inline_ref: dict[str, Any] = {**artifact_ref, **digest}
@@ -1475,7 +1488,7 @@ class TargetAnalysisService:
     # ─── polling ────────────────────────────────────────────────────────
 
     async def _poll_ida(self, binary_id: str) -> None:
-        poll_timeout_s = await get_float("ingestion_poll_timeout_s")
+        poll_timeout_s = await _cfg.get_float("ingestion_poll_timeout_s")
         deadline = utc_now().timestamp() + poll_timeout_s
         while utc_now().timestamp() < deadline:
             resp = await self._ida.forward(
@@ -1509,7 +1522,7 @@ class TargetAnalysisService:
         keeps log noise proportional to the wait.
         """
         sleep_for = interval_s if interval_s is not None else _POLL_INTERVAL_SECONDS
-        poll_timeout_s = await get_float("ingestion_poll_timeout_s")
+        poll_timeout_s = await _cfg.get_float("ingestion_poll_timeout_s")
         deadline = utc_now().timestamp() + poll_timeout_s
         while utc_now().timestamp() < deadline:
             resp = await self._audit_mcp.forward(

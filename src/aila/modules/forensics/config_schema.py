@@ -19,19 +19,15 @@ from aila.platform.config_base import ModuleConfigBase
 __all__ = ["ForensicsConfigSchema", "FORENSICS_DEFAULTS"]
 
 
-FORENSICS_LLM_MODEL = "antigravity/claude-opus-4-6-thinking"
-
-
 class ForensicsConfigSchema(ModuleConfigBase):
-    """Operator-tunable settings for the forensics module."""
+    """Operator-tunable settings for the forensics module.
 
-    llm_model: str = Field(
-        default=FORENSICS_LLM_MODEL,
-        description=(
-            "LLM model for all forensics agents (freeflow, resolver, writeup, network). "
-            "Set to empty string to fall back to the platform default."
-        ),
-    )
+    ``llm_model`` is inherited from :class:`ModuleConfigBase` -- the
+    forensics module's historical default matched the platform default
+    (``PlatformConfigSchema.llm_default_model``), so no per-module
+    override is needed.
+    """
+
     freeflow_max_attempts: int = Field(
         default=10,
         ge=1,
@@ -52,6 +48,22 @@ class ForensicsConfigSchema(ModuleConfigBase):
         default=3600.0,
         ge=60.0,
         description="Timeout for the full artifact collection pipeline.",
+    )
+    # RFC-04 C11e -- previously read from raw
+    # ``AILA_FORENSICS_RETRIEVE_MAX_BYTES`` env at every call and ignored
+    # PUT /config overrides. Routed through ConfigRegistry so operator
+    # overrides land on the next call without a worker restart. Env form
+    # is standardised to ``AILA_FORENSICS_RETRIEVE_MAX_BYTES`` (unchanged
+    # spelling -- the layered lookup already accepts it).
+    retrieve_max_bytes: int = Field(
+        default=500 * 1024 * 1024,  # 500 MiB
+        ge=1024,
+        description=(
+            "Per-retrieval byte cap the file_retriever service enforces "
+            "on the analyzer-side script and on the SFTP pull back to the "
+            "API host. Bodies past this cap fail retrieval so a huge "
+            "malicious archive cannot OOM the worker."
+        ),
     )
     freeflow_max_cost_usd: float = Field(
         default=25.0,

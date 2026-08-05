@@ -33,12 +33,12 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
     VRTargetRecord,
 )
-from aila.modules.vr.services.config_helpers import get_int
 from aila.modules.vr.services.knowledge_scope import vr_knowledge_namespaces
 from aila.platform.agents.tool_execution import (
     ToolExecutionResult,
 )
 from aila.platform.agents.tool_executor import ToolExecutorHelpersBase
+from aila.platform.config_base import ModuleConfigReader
 from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
 from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
 from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
@@ -52,6 +52,7 @@ __all__ = [
 ]
 
 _log = logging.getLogger(__name__)
+_cfg = ModuleConfigReader("vr")
 
 
 class ToolExecutor(ToolExecutorHelpersBase):
@@ -130,7 +131,7 @@ class ToolExecutor(ToolExecutorHelpersBase):
         self._inv_index_id_cache: OrderedDict[str, str] = OrderedDict()
 
     async def _hard_block_repeat_limit(self) -> int | None:
-        return await get_int("tool_executor_hard_block_repeat")
+        return await _cfg.get_int("tool_executor_hard_block_repeat")
 
     def _router_module_scope(self) -> str | None:
         """RFC-07 router scope -- routes across VR catalog rows and

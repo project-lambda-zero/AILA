@@ -62,7 +62,6 @@ from aila.modules.vr.db_models import (
     VRInvestigationOutcomeRecord,
     VRInvestigationRecord,
 )
-from aila.modules.vr.services.config_helpers import get_float, get_int
 from aila.modules.vr.services.investigation_finalizers import (
     close_rejected_for_investigation,
     synthesize_no_finding_for_investigation,
@@ -70,10 +69,12 @@ from aila.modules.vr.services.investigation_finalizers import (
 from aila.modules.vr.services.investigation_reaper import (
     evaluate_cap_for_investigation,
 )
+from aila.platform.config_base import ModuleConfigReader
 from aila.platform.contracts import utc_now
 from aila.platform.uow import UnitOfWork
 
 _log = logging.getLogger(__name__)
+_cfg = ModuleConfigReader("vr")
 
 __all__ = [
     "FinalizeResult",
@@ -145,10 +146,10 @@ async def _detect_trigger(investigation_id: str) -> tuple[str, dict[str, Any]]:
     # them via shell env should switch to the canonical AILA_VR_<KEY>
     # form or set values via PUT /config. See config_helpers.get_int /
     # get_float and VRConfigSchema.
-    wallclock_hours = await get_float("investigation_wall_clock_hours")
-    turn_cap = await get_int("investigation_turn_cap")
-    message_cap = await get_int("investigation_message_cap")
-    idle_grace_s = await get_float("wall_clock_idle_grace_s")
+    wallclock_hours = await _cfg.get_float("investigation_wall_clock_hours")
+    turn_cap = await _cfg.get_int("investigation_turn_cap")
+    message_cap = await _cfg.get_int("investigation_message_cap")
+    idle_grace_s = await _cfg.get_float("wall_clock_idle_grace_s")
     now = utc_now()
 
     async with UnitOfWork() as uow:

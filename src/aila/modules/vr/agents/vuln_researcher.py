@@ -54,7 +54,6 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
     VRTargetRecord,
 )
-from aila.modules.vr.services.config_helpers import get_int
 from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.modules.vr.services.outcome_polarity import derive_outcome_polarity
 from aila.modules.vr.services.outcome_review import (
@@ -72,6 +71,7 @@ from aila.platform.agents.turn_helpers import (
     decode_case_state,
 )
 from aila.platform.agents.turn_runner import AgentTurnRunnerBase
+from aila.platform.config_base import ModuleConfigReader
 from aila.platform.contracts import utc_now
 from aila.platform.contracts.enums import PersonaVoice
 from aila.platform.contracts.reasoning import (
@@ -109,6 +109,7 @@ __all__ = [
 ]
 
 _log = logging.getLogger(__name__)
+_cfg = ModuleConfigReader("vr")
 
 
 # Variant-hunt submit gate (Option B): when the agent terminal-submits
@@ -206,10 +207,10 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
     _OUTCOME_STATE_APPROVED = OUTCOME_STATE_APPROVED
 
     async def _load_turn_config(self) -> None:
-        self._variant_hunt_reject_cap = await get_int("variant_hunt_reject_cap")
-        self._unresolved_hyp_reject_cap = await get_int("unresolved_hyp_reject_cap")
-        self._draft_pending_reject_cap = await get_int("draft_pending_reject_cap")
-        self._sibling_open_hyp_reject_cap = await get_int(
+        self._variant_hunt_reject_cap = await _cfg.get_int("variant_hunt_reject_cap")
+        self._unresolved_hyp_reject_cap = await _cfg.get_int("unresolved_hyp_reject_cap")
+        self._draft_pending_reject_cap = await _cfg.get_int("draft_pending_reject_cap")
+        self._sibling_open_hyp_reject_cap = await _cfg.get_int(
             "sibling_open_hyp_reject_cap",
         )
 

@@ -19,6 +19,23 @@ operator action.
 
 ### Added
 
+- The module config base is now complete (RFC-04 #29). ModuleConfigBase
+  carries an llm_model field defaulting to the platform default model, and
+  ModuleConfigReader gains get_typed and get_bool alongside the existing typed
+  getters. Module config schemas inherit the llm_model field instead of each
+  redeclaring it.
+- The module template now ships the full investigation support layer and a
+  frontend (RFC-04 #29). `_template/services/` constructs every platform
+  support primitive (pattern store, stage tracker, branch reaper and cleanup,
+  multi-target, machine readiness, cap reaper, finalizer, stall recovery, MCP
+  registry and call logger) as thin bindings, and `_template/frontend/` wraps
+  the shared message-stream hook, so a copied module inherits the support layer
+  by construction.
+- Honesty-audit guardrails against support-layer re-duplication (RFC-04 #29):
+  a rule flagging an MCP server catalog hardcoded inside the platform layer, a
+  rule flagging os.environ / os.getenv reads inside module services, and a
+  frontend audit rule flagging a module message-stream hook that does not wrap
+  the shared platform hook.
 - The module template now scaffolds a full investigation on the shared agent
   runtime (RFC-03 #28). `_template/agents/` subclasses every platform agent
   primitive (turn runner, tool executor, claim verifier, pattern extractor,
@@ -592,6 +609,16 @@ operator action.
 
 ### Changed
 
+- Module config reads consolidate onto a single module-scoped
+  ModuleConfigReader (RFC-04 #29). The per-module config-helpers indirection is
+  gone; each consumer resolves typed config through the shared reader, and
+  module-service reads that previously went through the process environment now
+  resolve through the config registry with the same defaults, so an operator
+  override lands without an environment change.
+- The shared investigation message-stream hook gains a query-cache-scope
+  option, and the vulnerability-research wrapper gains the auto-reconnect loop
+  and catch-up cursor the malware wrapper already had (RFC-04 #29). The public
+  hook API stays backward compatible and the sole caller is unchanged.
 - The vulnerability-research and malware tool executors no longer diverge on
   their pre-call and access guards (RFC-03 #28). The malware executor gains
   the pre-call hard-block that refuses a bridge call whose identical arguments
@@ -743,6 +770,9 @@ operator action.
 
 ### Removed
 
+- The per-module `services/config_helpers.py` files (vulnerability-research,
+  malware, forensics, template) are deleted (RFC-04 #29); the shared
+  ModuleConfigReader replaces them.
 - The vulnerability-research and malware modules no longer carry a
   `workflow/pause_resume.py` lifecycle adapter (RFC-02 #27). Each had become a
   thin binding over the platform lifecycle service; the api_router handlers now

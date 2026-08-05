@@ -28,7 +28,7 @@ from aila.modules.vr.db_models import (
 from aila.modules.vr.db_models.outcome_review import (
     VRInvestigationOutcomeReviewRecord,
 )
-from aila.modules.vr.services.config_helpers import get_int as _vr_get_int
+from aila.platform.config_base import ModuleConfigReader
 from aila.platform.services.investigation_finalizers import (
     abandon_stale_branches as _platform_abandon_stale_branches,
 )
@@ -56,6 +56,8 @@ __all__ = [
     "synthesize_no_finding_for_investigation",
     "synthesize_no_finding_outcomes",
 ]
+
+_cfg = ModuleConfigReader("vr")
 
 
 _VR_BRANCH_TABLE = "vr_investigation_branches"
@@ -109,7 +111,7 @@ close_rejected_outcomes = partial(
 abandon_stale_branches_impl = partial(
     _platform_abandon_stale_branches_impl,
     branch_model=VRInvestigationBranchRecord,
-    get_int=_vr_get_int,
+    get_int=_cfg.get_int,
 )
 
 close_rejected_for_investigation = partial(
@@ -133,5 +135,5 @@ synthesize_no_finding_for_investigation = partial(
 abandon_stale_branches = partial(
     _platform_abandon_stale_branches,
     branch_model=VRInvestigationBranchRecord,
-    get_int=_vr_get_int,
+    get_int=_cfg.get_int,
 )

@@ -27,7 +27,7 @@ from aila.modules._template.db_models import (
     TemplateInvestigationBranchRecord,
     TemplateInvestigationRecord,
 )
-from aila.modules._template.services.config_helpers import get_int
+from aila.platform.config_base import ModuleConfigReader
 from aila.platform.workflows.investigation_loop_base import (
     state_investigation_loop as _build_loop_state,
 )
@@ -39,6 +39,11 @@ from aila.platform.workflows.investigation_setup_base import (
 __all__ = ["state_investigation_loop"]
 
 _log = logging.getLogger(__name__)
+
+# Module-scoped typed config reader. Resolves the ``template`` namespace
+# through :class:`ConfigRegistry` (env -> DB -> schema default) and
+# replaces the deleted ``services.config_helpers`` shim (RFC-04).
+_config = ModuleConfigReader("template")
 
 # Per-worker-process executor singleton. Ties the bridge httpx pools +
 # LRU caches on the executor's lifetime to the worker process, so
@@ -68,7 +73,7 @@ _LOOP_BINDINGS = InvestigationStateBindings(
         )
     ),
     executor_factory=_get_executor,
-    max_turns_reader=lambda: get_int("max_turns_per_task"),
+    max_turns_reader=lambda: _config.get_int("max_turns_per_task"),
     researcher_error=TemplateResearcherError,
     module_id="template",
 )

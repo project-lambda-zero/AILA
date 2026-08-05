@@ -1,0 +1,12 @@
+{
+  "extends": "@aila/typescript-config/react-module",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["../../../../../frontend/src/*"],
+      "@app/*": ["../../../../../frontend/src/app/*"],
+      "@platform/*": ["../../../../../frontend/src/platform/*"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx"]
+}

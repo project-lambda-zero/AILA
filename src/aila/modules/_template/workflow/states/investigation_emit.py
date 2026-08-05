@@ -30,7 +30,6 @@ from aila.modules._template.db_models import (
     TemplateInvestigationOutcomeRecord,
     TemplateInvestigationRecord,
 )
-from aila.modules._template.services.config_helpers import get_float, get_int
 from aila.modules._template.services.outcome_review import (
     OUTCOME_STATE_APPROVED,
     evaluate_quorum,
@@ -38,6 +37,7 @@ from aila.modules._template.services.outcome_review import (
 )
 from aila.modules._template.services.pattern_store import PatternStore
 from aila.modules._template.workflow.finalize import finalize_investigation
+from aila.platform.config_base import ModuleConfigReader
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.workflows.investigation_emit_base import (
     state_investigation_emit as _build_emit_state,
@@ -51,6 +51,11 @@ from aila.platform.workflows.types import StateResult
 __all__ = ["state_investigation_emit"]
 
 _log = logging.getLogger(__name__)
+
+# Module-scoped typed config reader. Resolves the ``template`` namespace
+# through :class:`ConfigRegistry` (env -> DB -> schema default) and
+# replaces the deleted ``services.config_helpers`` shim (RFC-04).
+_config = ModuleConfigReader("template")
 
 # Deferred emit handler singleton. workflow/task.py imports back into
 # workflow/definitions.py which imports THIS module; wiring the task
@@ -89,8 +94,8 @@ def _build_emit_handler() -> Any:
         verifier_task_fn=None,
         track="template",
         task_queue_factory=default_task_queue,
-        get_int=get_int,
-        get_float=get_float,
+        get_int=_config.get_int,
+        get_float=_config.get_float,
         outcome_dispatcher_cls=OutcomeDispatcher,
         pattern_extractor_cls=PatternExtractor,
         pattern_store_factory=lambda: PatternStore(

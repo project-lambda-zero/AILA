@@ -21,10 +21,15 @@ from aila.modules._template.db_models import (
     TemplateInvestigationRecord,
     TemplateTargetRecord,
 )
-from aila.modules._template.services.config_helpers import get_float
 from aila.modules._template.services.outcome_review import OUTCOME_STATE_APPROVED
 from aila.platform.agents.claim_verifier import ClaimVerifierAgentBase
+from aila.platform.config_base import ModuleConfigReader
 from aila.platform.contracts.enums import OutcomeDispatchStatus
+
+# Module-scoped typed config reader. Resolves the ``template`` namespace
+# through :class:`ConfigRegistry` (env -> DB -> schema default) and
+# replaces the deleted ``services.config_helpers`` shim (RFC-04).
+_config = ModuleConfigReader("template")
 
 __all__ = ["ClaimVerifierAgent"]
 
@@ -75,7 +80,7 @@ class ClaimVerifierAgent(ClaimVerifierAgentBase):
 
     async def _read_auto_promote_floor(self) -> float:
         """Read ``claim_verifier_auto_promote_floor`` via ConfigRegistry."""
-        return await get_float("claim_verifier_auto_promote_floor")
+        return await _config.get_float("claim_verifier_auto_promote_floor")
 
     def _bridge_recorder(self) -> Callable[..., Any]:
         return _template_record_call

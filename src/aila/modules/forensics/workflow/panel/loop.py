@@ -37,11 +37,11 @@ from aila.modules.forensics.db_models import (
     ForensicsInvestigationOutcomeRecord,
     InvestigationRunRecord,
 )
-from aila.modules.forensics.services.config_helpers import get_int
 from aila.modules.forensics.services.outcome_review import (
     OUTCOME_STATE_DRAFT,
     post_draft_review_request,
 )
+from aila.platform.config_base import ModuleConfigReader
 from aila.platform.contracts.enums import (
     OutcomeConfidence,
     OutcomeDispatchStatus,
@@ -54,6 +54,7 @@ from aila.platform.workflows.types import StateResult
 __all__ = ["state_forensics_panel_loop"]
 
 _log = logging.getLogger(__name__)
+_cfg = ModuleConfigReader("forensics")
 
 # Fallback per-task turn cap when the ``forensics/max_turns_per_task``
 # config key is unset. The panel roles converge in a small number of
@@ -102,7 +103,7 @@ def _render_applicable_patterns_block(
 async def _read_max_turns() -> int:
     """Resolve the panel per-task turn cap from the forensics namespace."""
     try:
-        return int(await get_int("max_turns_per_task"))
+        return int(await _cfg.get_int("max_turns_per_task"))
     except (KeyError, ValueError, TypeError):
         return _DEFAULT_MAX_TURNS
 

@@ -219,6 +219,45 @@ const RULES = [
 ];
 
 // ---------------------------------------------------------------------------
+// File-level rules -- fired once per matching file when a REQUIRED pattern
+// is absent. Complements the per-line RULES above; use for import-boundary
+// or scaffold-adherence checks where the interesting signal is the LACK of
+// a token in a file, not its presence on a line.
+//
+// Each file rule:
+//   id             -- identifier used in output and whitelist lookup
+//   description    -- human-readable label
+//   fileMatch      -- RegExp on forward-slash-normalized path; rule applies
+//                     only to matching files
+//   requireContent -- RegExp searched against the full file body; finding
+//                     emits at line 1 when the pattern is NOT found
+// ---------------------------------------------------------------------------
+const FILE_RULES = [
+  // Every module-frontend SSE hook MUST route its transport through the
+  // shared platform hook (auth, reconnect/backoff, abort). Reinventing
+  // fetch + line splitting inside a module produces a second convention
+  // sitting next to the platform one and drifts (missed auth headers,
+  // missed reconnect, missed abort). Enforced across modules because the
+  // Python honesty audit cannot scan .ts/.tsx.
+  {
+    id: "module_sse_missing_platform_import",
+    description:
+      "Module SSE hook does not import useSSEStream from @platform/hooks/useSSEStream",
+    // Any file named useInvestigation*Stream.ts(x) that lives under a
+    // module frontend hooks directory (aila/modules/<mod>/frontend/hooks/
+    // or frontend/src/modules/<mod>/hooks/). The platform hook itself
+    // sits at frontend/src/platform/hooks/useSSEStream.ts (different
+    // basename) so it never matches.
+    fileMatch:
+      /(?:aila\/modules\/[^/]+\/frontend|modules\/[^/]+\/frontend)\/hooks\/useInvestigation[^/]*Stream\.tsx?$/,
+    // Import specifier is normalized on the string; matches whether the
+    // module uses a default, namespace, or named import form.
+    requireContent:
+      /from\s+["']@platform\/hooks\/useSSEStream["']/,
+  },
+];
+
+// ---------------------------------------------------------------------------
 // File collection
 // ---------------------------------------------------------------------------
 
@@ -263,6 +302,42 @@ function collectFiles(dir) {
 // Scanning
 // ---------------------------------------------------------------------------
 
+// Additional roots scanned ONLY for FILE_RULES (import-boundary /
+// scaffold-adherence checks). Per-line RULES are NOT applied here --
+// module frontends carry a backlog of unrelated pre-existing findings
+// (raw fetch, theme hex, double casts) that the shell audit was never
+// wired to police, and turning them on wholesale would drown the SSE
+// boundary check we actually care about here. When those backlogs are
+// cleaned up the roots can move to the primary scan.
+//
+// Relative to process.cwd() -- when run via `pnpm --filter @aila/shell
+// run honesty-audit` this is the frontend package dir, so ../src/aila
+// resolves to the repo's Python + module tree.
+const FILE_ONLY_ROOTS = [
+  resolve(process.cwd(), "..", "src", "aila", "modules"),
+];
+
+function runFileRules(filePath) {
+  const normalizedPath = filePath.replace(/\\/g, "/");
+  let content;
+  try {
+    content = readFileSync(filePath, "utf8");
+  } catch {
+    return;
+  }
+  for (const rule of FILE_RULES) {
+    if (!rule.fileMatch.test(normalizedPath)) continue;
+    if (isWhitelisted(filePath, rule.id)) continue;
+    if (rule.requireContent.test(content)) continue;
+    findings.push({
+      file: filePath,
+      line: 1,
+      rule: rule.id,
+      snippet: rule.description,
+    });
+  }
+}
+
 const findings = [];
 const files = collectFiles(rootDir);
 
@@ -278,6 +353,21 @@ for (const filePath of files) {
   }
 
   const lines = content.split(/\r?\n/);
+
+  // File-level rules -- fire once per matching file when required
+  // content is missing. Emits at line 1 so grouped output stays
+  // scannable.
+  for (const rule of FILE_RULES) {
+    if (!rule.fileMatch.test(normalizedPath)) continue;
+    if (isWhitelisted(filePath, rule.id)) continue;
+    if (rule.requireContent.test(content)) continue;
+    findings.push({
+      file: filePath,
+      line: 1,
+      rule: rule.id,
+      snippet: rule.description,
+    });
+  }
 
   for (const rule of RULES) {
     // Extension filter
@@ -301,6 +391,17 @@ for (const filePath of files) {
         snippet: line.trim().slice(0, 120),
       });
     }
+  }
+}
+
+// File-only scan pass. Walks the additional roots (module frontends)
+// and applies FILE_RULES only, so import-boundary checks fire against
+// every module hook while the per-line RULES stay scoped to the
+// primary root.
+for (const root of FILE_ONLY_ROOTS) {
+  if (!existsSync(root)) continue;
+  for (const filePath of collectFiles(root)) {
+    runFileRules(filePath);
   }
 }
 

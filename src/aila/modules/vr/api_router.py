@@ -32,6 +32,7 @@ from aila.api.limiter import limiter
 from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
 from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.modules.vr.services.outcome_polarity import derive_outcome_polarity
+from aila.platform.config_base import ModuleConfigReader
 from aila.platform.contracts import utc_now
 from aila.platform.contracts.auth import AuthContext, require_auth
 from aila.platform.services.factory import ServiceFactory
@@ -198,6 +199,7 @@ def _descriptor_from_spec(spec: Any) -> str:
 __all__ = ["DisclosureUpdate", "create_vr_router"]
 
 _log = logging.getLogger(__name__)
+_cfg = ModuleConfigReader("vr")
 
 
 class DisclosureUpdate(BaseModel):
@@ -2796,8 +2798,7 @@ def create_vr_router() -> APIRouter:
         # Content-Length. Buffered upload matches the malware-side
         # sample flow: bytes live in flight but never on local disk.
         from aila.api.uploads import read_upload_bounded
-        from aila.modules.vr.services.config_helpers import get_int
-        upload_cap = await get_int("upload_max_bytes")
+        upload_cap = await _cfg.get_int("upload_max_bytes")
         contents = await read_upload_bounded(file, upload_cap)
 
         bridge = IDABridgeTool(recorder=record_call)
@@ -2986,8 +2987,7 @@ def create_vr_router() -> APIRouter:
         #    partially-written temp file is unlinked in the except
         #    branches below so a rejected upload leaves no residue.
         from aila.api.uploads import iter_upload_bounded
-        from aila.modules.vr.services.config_helpers import get_int
-        upload_cap = await get_int("upload_max_bytes")
+        upload_cap = await _cfg.get_int("upload_max_bytes")
         sha256 = hashlib.sha256()
         fd, tmp_str = tempfile.mkstemp(
             prefix=".upload-", suffix=".apk.partial", dir=str(team_dir),

@@ -64,9 +64,9 @@ _registry: ConfigRegistry | None = None
 def _get_registry() -> ConfigRegistry:
     """Lazy singleton -- one registry instance per worker process.
 
-    Mirrors ``aila.modules.malware.services.config_helpers._get_registry``
-    so the reaper pays the registry construction cost only on first
-    cap read, not on module import.
+    Mirrors the shared reader in :mod:`aila.platform.config_base` so the
+    reaper pays the registry construction cost only on first cap read,
+    not on module import.
     """
     global _registry
     if _registry is None:

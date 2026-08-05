@@ -36,7 +36,6 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
     VRTargetRecord,
 )
-from aila.modules.vr.services.config_helpers import get_float, get_int
 from aila.modules.vr.services.outcome_review import (
     OUTCOME_STATE_APPROVED,
     evaluate_quorum,
@@ -44,6 +43,7 @@ from aila.modules.vr.services.outcome_review import (
 )
 from aila.modules.vr.services.pattern_store import PatternStore
 from aila.modules.vr.workflow.finalize import finalize_investigation
+from aila.platform.config_base import ModuleConfigReader
 from aila.platform.eval.experience_writer import ExperienceWriter
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.uow import UnitOfWork
@@ -59,6 +59,7 @@ from aila.platform.workflows.types import StateResult
 __all__ = ["state_investigation_emit"]
 
 _log = logging.getLogger(__name__)
+_cfg = ModuleConfigReader("vr")
 
 
 # The emit handler is the platform factory bound to VR's models + agents.
@@ -149,8 +150,8 @@ def _build_emit_handler() -> Any:
         verifier_task_fn=run_vr_claim_verifier,
         track="vr",
         task_queue_factory=default_task_queue,
-        get_int=get_int,
-        get_float=get_float,
+        get_int=_cfg.get_int,
+        get_float=_cfg.get_float,
         outcome_dispatcher_cls=OutcomeDispatcher,
         pattern_extractor_cls=PatternExtractor,
         pattern_store_factory=lambda: PatternStore(

@@ -34,6 +34,7 @@ from aila.modules.forensics.services.hash_ledger import (
 )
 from aila.modules.forensics.tools._ssh_helper import get_ssh_service
 from aila.modules.forensics.tools.script_tool import ScriptExecutorTool
+from aila.platform.config_base import ModuleConfigReader
 from aila.platform.exceptions import AILAError
 from aila.platform.services.runtime import run_blocking_io
 
@@ -45,23 +46,23 @@ __all__ = [
 
 _log = logging.getLogger(__name__)
 
-# Hard upper bound. Override via ``AILA_FORENSICS_RETRIEVE_MAX_BYTES``.
-_DEFAULT_MAX_BYTES = 500 * 1024 * 1024  # 500 MB
+_cfg = ModuleConfigReader("forensics")
 
 
 class FileRetrievalError(AILAError):
     """Raised when retrieval fails (path missing, too large, permission)."""
 
 
-def _max_retrieve_bytes() -> int:
-    raw = os.environ.get("AILA_FORENSICS_RETRIEVE_MAX_BYTES")
-    if not raw:
-        return _DEFAULT_MAX_BYTES
-    try:
-        value = int(raw)
-    except ValueError:
-        return _DEFAULT_MAX_BYTES
-    return max(1024, value)
+async def _max_retrieve_bytes() -> int:
+    """Resolve the per-retrieval byte cap via ConfigRegistry.
+
+    Default (500 MiB) and per-worker overrides both live on
+    :class:`ForensicsConfigSchema.retrieve_max_bytes`; PUT /config or
+    the ``AILA_FORENSICS_RETRIEVE_MAX_BYTES`` env var lands without a
+    worker restart. The schema pins ``ge=1024`` so a misconfigured
+    value cannot fall below the historical floor.
+    """
+    return await _cfg.get_int("retrieve_max_bytes")
 
 
 def _build_extraction_script(
@@ -638,7 +639,7 @@ async def retrieve_file_from_image(
     if not disk_image_path:
         raise FileRetrievalError("disk_image_path must be non-empty.")
 
-    max_bytes = _max_retrieve_bytes()
+    max_bytes = await _max_retrieve_bytes()
     script = _build_extraction_script(
         disk_image_path=disk_image_path,
         virtual_path=virtual_path,
@@ -673,7 +674,7 @@ async def retrieve_from_raw_directory(
     if not target_path.strip():
         raise FileRetrievalError("target_path must be non-empty.")
 
-    max_bytes = _max_retrieve_bytes()
+    max_bytes = await _max_retrieve_bytes()
     script = _build_raw_extraction_script(
         target_path=target_path,
         max_bytes=max_bytes,

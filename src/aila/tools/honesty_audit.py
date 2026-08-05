@@ -1,6 +1,6 @@
 """honesty_audit -- AST-based structural honesty checker for Python code.
 
-Detects thirty-six categories of structural dishonesty:
+Detects seventy-one categories of structural dishonesty:
 
 1. unused_parameter    -- function parameter accepted but never referenced in body.
 2. misleading_name     -- function name implies intelligence but body only forwards.
@@ -71,6 +71,8 @@ Detects thirty-six categories of structural dishonesty:
 67. unsanitized_retrieved_content -- a ``retrieve_routed`` definition's body no longer references the sanitize/classify gate (``apply_gate`` / ``apply_gate_many``). RFC-12 / #43: the routed entry point must gate every hit so retrieved content cannot reach a prompt unsanitised.
 68. content_slice_truncation -- a constant-bound slice (``x[:N]``) is applied to the direct value of a ``content=``-family keyword argument, or to a dict value keyed by a content field (``content`` / ``query`` / ``body`` / ``text`` / ``sanitized_content`` / ``root_cause``). Stored and returned knowledge data must be kept in full; only the render/display layer bounds size. A genuinely required cap goes in honesty_whitelist.py with a reason.
 69. lifecycle_binding_copy_of_platform -- a module ``workflow/pause_resume.py`` binding is a full copy of ``platform/services/investigation_lifecycle.py`` instead of a thin dispatcher over ``pause_investigation`` / ``resume_investigation`` / ``reenqueue_investigation``. RFC-02 Phase 4 owns the four-source-of-truth atomic pause/resume/re-enqueue on the platform; a module keeps only the per-module enum coercion + record-model bindings. Sibling of rule 41 with its own scope + corpus.
+70. mcp_catalog_placement -- a subclass of :class:`McpRegistryServiceBase` defined inside ``src/aila/platform/**`` binds ``_servers`` to a literal MCP server catalog (a tuple/list of dict specs). The MCP server catalog is module domain: each module owns ``MCP_SERVERS`` in ``modules/<id>/services/mcp_registry.py`` and binds it onto the platform base via the ``_servers`` ClassVar. The platform base takes the catalog as class state supplied by the subclass and never hardcodes one -- a platform-side placement re-imports module domain into the platform layer and reopens the RFC-04 boundary. Structural guardrail (fires zero on the current tree).
+71. service_env_read -- a module ``modules/*/services/**`` file reads config via ``os.environ`` / ``os.getenv`` (attribute access or ``from os import environ/getenv``) instead of ``ConfigRegistry(module_id, key)``. Sibling of rule 49 (``agent_env_read``) for the services layer: RFC-04's config-drift closure removed every direct env read from module services so the DB override and per-module schema default both participate on one path. AST-based -- docstring or comment mentions of ``os.environ`` are invisible and never trip this.
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -895,6 +897,84 @@ _LIFTED_AGENT_PRIMITIVES: frozenset[str] = frozenset({
 # a per-module schema default, and env can all take turns without a
 # hand-coded fork per copy.
 _OS_ENV_ATTRS: frozenset[str] = frozenset({"environ", "getenv"})
+
+# Rule 70 -- mcp_catalog_placement. A hardcoded MCP server catalog embedded
+# INSIDE ``src/aila/platform/**`` is a boundary inversion: the module owns
+# ``MCP_SERVERS`` and binds it onto :class:`McpRegistryServiceBase` via the
+# ``_servers`` ClassVar. The platform base takes the catalog as class
+# state supplied by the subclass and never hardcodes one itself. A
+# platform-side subclass of ``McpRegistryServiceBase`` that assigns
+# ``_servers`` to a literal catalog (a tuple/list containing dict specs)
+# has re-imported module domain into the platform layer. The base file
+# itself is exempt (it declares the ClassVar without binding a value).
+_MCP_REGISTRY_PLATFORM_SCOPE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]platform[/\\]"
+)
+_MCP_REGISTRY_BASE_FILE_SUFFIX = "platform/mcp/registry.py"
+_MCP_REGISTRY_BASE_NAMES: frozenset[str] = frozenset({
+    "McpRegistryServiceBase", "McpRegistryService",
+})
+# A server-spec dict is a small mapping with these operator-visible keys.
+# We accept a literal catalog when at least one element is a dict with a
+# ``"id"`` key or a ``"config_key"`` key (the shape modules already use).
+_MCP_SPEC_KEYS: frozenset[str] = frozenset({"id", "config_key"})
+
+
+def _class_inherits_from(
+    node: ast.ClassDef, base_names: frozenset[str],
+) -> bool:
+    """Return True if *node* names one of *base_names* in its base list.
+
+    Matches bare names (``class X(Base):``) and attribute access
+    (``class X(pkg.Base):``); either form re-imports the base into the
+    subclass's MRO.
+    """
+    for base in node.bases:
+        if isinstance(base, ast.Name) and base.id in base_names:
+            return True
+        if isinstance(base, ast.Attribute) and base.attr in base_names:
+            return True
+    return False
+
+
+def _is_literal_server_catalog(value: ast.expr) -> bool:
+    """Return True if *value* is a literal MCP-server catalog.
+
+    A catalog is a tuple/list whose elements are ``ast.Dict`` literals
+    with at least one entry keyed by ``"id"`` or ``"config_key"`` (the
+    operator-visible shape modules already use for MCP_SERVERS).
+    """
+    if not isinstance(value, (ast.Tuple, ast.List)):
+        return False
+    if not value.elts:
+        return False
+    for elt in value.elts:
+        if not isinstance(elt, ast.Dict):
+            return False
+        has_spec_key = False
+        for key in elt.keys:
+            if (
+                isinstance(key, ast.Constant)
+                and isinstance(key.value, str)
+                and key.value in _MCP_SPEC_KEYS
+            ):
+                has_spec_key = True
+                break
+        if not has_spec_key:
+            return False
+    return True
+
+
+# Rule 71 -- service_env_read. Sibling of rule 49 (agent_env_read).
+# ``modules/*/services/**`` code must resolve config through
+# ``ConfigRegistry(module_id, key)`` for the same reason: a hand-coded
+# ``os.environ`` / ``os.getenv`` read silently bypasses the DB override
+# and the per-module schema default the operator relies on. The check
+# reuses the ``_OS_ENV_ATTRS`` corpus so a docstring or comment mention
+# (AST-invisible) never trips it.
+_SERVICES_SCOPE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]modules[/\\][^/\\]+[/\\]services[/\\]"
+)
 
 # Rule 50 -- static_node_mutation. Mutating a WorkflowDefinition.states map
 # after construction reopens the node set the dispatch-hub / phase-graph
@@ -4825,6 +4905,124 @@ class _HonestyVisitor(ast.NodeVisitor):
                         if upper is not None:
                             _emit_trunc(value, key.value, upper)
 
+    def _check_mcp_catalog_placement(self, tree: ast.Module) -> None:
+        """Rule 70: mcp_catalog_placement -- a platform-side subclass of
+        :class:`McpRegistryServiceBase` binds ``_servers`` to a literal
+        server catalog inside ``src/aila/platform/**``.
+
+        The MCP server catalog is module domain: each module owns its
+        ``MCP_SERVERS`` tuple and binds it onto the platform base via the
+        ``_servers`` ClassVar (see ``modules/vr/services/mcp_registry.py``
+        and ``modules/malware/services/mcp_registry.py``). The platform
+        base takes the catalog as class state supplied by the subclass and
+        never hardcodes one -- a platform file that names a concrete
+        catalog has re-imported module domain into the platform layer and
+        reopens the boundary RFC-04 closed.
+
+        Fires when a file under ``src/aila/platform/**`` (the base file
+        ``platform/mcp/registry.py`` is exempt -- it declares the ClassVar
+        without binding a value) defines a class that inherits from
+        ``McpRegistryServiceBase`` (or the module-side ``McpRegistryService``
+        binding name) and assigns ``_servers`` to a literal catalog: a
+        tuple/list whose elements are dict spec literals carrying an
+        ``"id"`` or ``"config_key"`` key. The current tree has no such
+        placement; the rule is a future-proofing structural guardrail
+        (same shape as rules 41 and 69).
+        """
+        norm = self.filename.replace("\\", "/")
+        if not _MCP_REGISTRY_PLATFORM_SCOPE_PATTERN.search(norm):
+            return
+        if norm.endswith(_MCP_REGISTRY_BASE_FILE_SUFFIX):
+            return
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            if not _class_inherits_from(node, _MCP_REGISTRY_BASE_NAMES):
+                continue
+            for stmt in node.body:
+                value: ast.expr | None = None
+                target_name: str | None = None
+                if (
+                    isinstance(stmt, ast.Assign)
+                    and len(stmt.targets) == 1
+                    and isinstance(stmt.targets[0], ast.Name)
+                ):
+                    target_name = stmt.targets[0].id
+                    value = stmt.value
+                elif (
+                    isinstance(stmt, ast.AnnAssign)
+                    and isinstance(stmt.target, ast.Name)
+                    and stmt.value is not None
+                ):
+                    target_name = stmt.target.id
+                    value = stmt.value
+                if target_name != "_servers" or value is None:
+                    continue
+                if not _is_literal_server_catalog(value):
+                    continue
+                self._emit(
+                    stmt.lineno,
+                    "mcp_catalog_placement",
+                    (
+                        f"mcp_catalog_placement: class '{node.name}' binds "
+                        f"'_servers' to a literal server catalog inside "
+                        "src/aila/platform/**; the MCP server catalog is "
+                        "module domain -- own it as MCP_SERVERS in "
+                        "modules/<id>/services/mcp_registry.py and pass it "
+                        "onto the platform base (RFC-04 boundary invariant)"
+                    ),
+                )
+
+    def _check_service_env_read(self, tree: ast.Module) -> None:
+        """Rule 71: service_env_read -- a module services/ file reads config
+        via ``os.environ`` / ``os.getenv`` instead of ``ConfigRegistry``.
+
+        Sibling of rule 49 (agent_env_read) for the services layer. RFC-04
+        closed the config-drift path across module services: a hand-coded
+        env read silently bypasses the DB override and the per-module
+        schema default the operator relies on. Modules resolve config
+        through ``ConfigRegistry(module_id, key)`` so env, the DB, and the
+        per-module schema default each participate on one path.
+
+        The check fires on the same three shapes as rule 49:
+          - ``os.environ`` / ``os.getenv`` attribute access on the ``os``
+            module (covers ``os.environ["X"]``, ``os.environ.get("X")``,
+            ``os.getenv("X")``);
+          - ``from os import environ`` / ``from os import getenv``.
+
+        Detection is AST-based; a docstring or comment mention of
+        ``os.environ`` (e.g. the header of
+        ``modules/vr/services/investigation_reaper.py`` explaining why the
+        reaper was rewritten off the env path) is invisible to the AST and
+        never trips this.
+        """
+        if not _SERVICES_SCOPE_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Attribute)
+                and node.attr in _OS_ENV_ATTRS
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "os"
+            ):
+                self._emit(
+                    node.lineno,
+                    "service_env_read",
+                    f"service_env_read: read config via ConfigRegistry(module_id, "
+                    f"key) instead of os.{node.attr} (RFC-04 config-drift closure)",
+                )
+                continue
+            if isinstance(node, ast.ImportFrom) and node.module == "os":
+                for alias in node.names:
+                    if alias.name in _OS_ENV_ATTRS:
+                        self._emit(
+                            node.lineno,
+                            "service_env_read",
+                            f"service_env_read: read config via ConfigRegistry"
+                            f"(module_id, key) instead of 'from os import "
+                            f"{alias.name}' (RFC-04 config-drift closure)",
+                        )
+
 
 class HonestyAuditor:
     """Audit one or more Python source files for structural dishonesty.
@@ -4945,6 +5143,11 @@ class HonestyAuditor:
         # Rule 68: content_slice_truncation -- no arbitrary [:N] trim on
         # stored/returned knowledge data (flag-then-whitelist).
         visitor._check_content_slice_truncation(tree)
+        # Rules 70-71: RFC-04 platform/module boundary closure.
+        # Each rule self-scopes (rule 70 to src/aila/platform/**, rule 71
+        # to modules/*/services/**), so the dispatch site is unconditional.
+        visitor._check_mcp_catalog_placement(tree)
+        visitor._check_service_env_read(tree)
         return visitor.findings
 
     def audit_directory(self, directory: Path) -> list[Finding]:

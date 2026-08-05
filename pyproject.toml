@@ -232,6 +232,10 @@ ignore = [
 "src/aila/modules/_template/workflow/task.py" = ["PLC0415"]
 "src/aila/modules/_template/workflow/definitions.py" = ["PLC0415"]
 "src/aila/modules/_template/workflow/states/investigation_loop.py" = ["PLW0603"]
+# _template services stall_recovery: PLC0415 for the deferred
+# _task_queue / workflow.task imports the sweep uses to break the
+# worker boot-path -> task-registration import cycle. Mirrors the
+# vr / malware stall_recovery entries.
 "src/aila/modules/forensics/agents/investigator.py" = ["PLC0415"]
 "src/aila/modules/forensics/agents/resolver_agent.py" = ["PLC0415"]
 "src/aila/modules/forensics/api_router.py" = ["PLC0415", "BLE001", "N806"]
@@ -337,6 +341,7 @@ ignore = [
 # circular import cycle -- same pattern VR + malware use).
 "src/aila/modules/forensics/workflow/panel/setup.py" = ["PLC0415"]
 "src/aila/modules/vr/services/followup_discovery.py" = ["PLC0415"]
+"src/aila/modules/_template/services/stall_recovery.py" = ["PLC0415"]
 "src/aila/modules/vr/services/stall_recovery.py" = ["PLC0415"]
 "src/aila/modules/vr/services/target_analysis.py" = ["PLC0415"]
 "src/aila/modules/vr/workflow/definitions.py" = ["PLC0415"]
@@ -387,6 +392,11 @@ ignore = [
 "src/aila/modules/vulnerability/workflow/utils/row_helpers.py" = ["PLC0415"]
 "src/aila/platform/automation/runner.py" = ["E712"]
 "src/aila/platform/automation/supervisor.py" = ["PLC0415"]
+# config_base.py: PLC0415 for the lazy import of PlatformConfigSchema inside
+# platform_default_llm_model(). config_base is imported by every module
+# config_schema; a module-scope import of platform.config would pull the
+# storage.registry family definitions during a half-built platform import.
+"src/aila/platform/config_base.py" = ["PLC0415"]
 "src/aila/platform/contracts/persist.py" = ["PLC0415"]
 "src/aila/platform/contracts/reasoning.py" = ["PLC0415"]
 "src/aila/platform/events/emitter.py" = ["PLC0415"]

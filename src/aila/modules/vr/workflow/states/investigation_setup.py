@@ -32,6 +32,7 @@ from aila.platform.agents.branch_pool import (
     _strip_directives_from_state,
     _strip_rejected_from_state,
 )
+from aila.platform.config_base import ModuleConfigReader
 from aila.platform.services.knowledge import KnowledgeService
 from aila.platform.services.oracle import Oracle
 from aila.platform.services.specialist_registry import SpecialistAgentRegistry
@@ -79,9 +80,8 @@ async def _core_sibling_personas() -> tuple[PersonaVoice, ...]:
     Optional specialists are spawned on demand via the oracle, not listed
     here.
     """
-    from aila.modules.vr.services.config_helpers import get_str
     try:
-        raw = await get_str("core_persona_siblings")
+        raw = await _cfg.get_str("core_persona_siblings")
     except (TypeError, ValueError):
         raw = ""
     if not raw or raw.strip().lower() == "none":
@@ -112,9 +112,10 @@ _PRIMARY_PERSONA: PersonaVoice = PersonaVoice.HALVAR  # researcher
 __all__ = ["state_investigation_setup"]
 
 _log = logging.getLogger(__name__)
+_cfg = ModuleConfigReader("vr")
 
 
-# fix §293 -- module-level consecutive failure counters for the two
+# fix \u00a7293 -- module-level consecutive failure counters for the two
 # best-effort lookups (CVE intel, knowledge-transfer pattern store)
 # that surround the main UoW. The prior bare `except Exception` +
 # `_log.warning(...)` swallowed silent infrastructure rot: a broken
@@ -273,9 +274,8 @@ async def _adjudicate_specialist_requests(investigation_id: str) -> None:
     warranted ones itself, so the spawn poll below sees them. Best-effort: a
     config, DB, or model failure leaves requests open for a real sibling vote.
     """
-    from aila.modules.vr.services.config_helpers import get_int
     try:
-        if await get_int("oracle_specialist_adjudication") <= 0:
+        if await _cfg.get_int("oracle_specialist_adjudication") <= 0:
             return
     except (OSError, RuntimeError, ValueError, TypeError) as exc:
         # TypeError covers int(None) when the registry cannot resolve the

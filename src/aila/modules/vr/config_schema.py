@@ -18,19 +18,15 @@ from aila.platform.config_base import ModuleConfigBase
 __all__ = ["VRConfigSchema", "VR_DEFAULTS"]
 
 
-VR_LLM_MODEL = "antigravity/claude-opus-4-6-thinking"
-
-
 class VRConfigSchema(ModuleConfigBase):
-    """Operator-tunable settings for the VR module."""
+    """Operator-tunable settings for the VR module.
 
-    llm_model: str = Field(
-        default=VR_LLM_MODEL,
-        description=(
-            "LLM model for all VR agents (n-day, patch-diff, advisory, triage). "
-            "Set to empty string to fall back to the platform default."
-        ),
-    )
+    ``llm_model`` is inherited from :class:`ModuleConfigBase` -- the
+    VR module's historical default matched the platform default
+    (``PlatformConfigSchema.llm_default_model``), so no per-module
+    override is needed.
+    """
+
     nday_max_turns: int = Field(
         default=30,
         ge=5,
@@ -332,6 +328,33 @@ class VRConfigSchema(ModuleConfigBase):
             "after the wall-clock cap is hit before terminating, so an "
             "investigation that is actively producing work doesn't get "
             "killed for a slow turn."
+        ),
+    )
+
+    # --- Filesystem paths for MCP output storage (RFC-04 C11e) ------------
+    # Previously read from raw ``VR_TARGET_ARTIFACT_DIR`` /
+    # ``ANDROID_MCP_WORKDIR`` env vars at module import. Now routed
+    # through ConfigRegistry so PUT /config overrides land without a
+    # worker restart and the env form is standardised to
+    # ``AILA_VR_TARGET_ARTIFACT_DIR`` / ``AILA_VR_ANDROID_MCP_WORKDIR``.
+    target_artifact_dir: str = Field(
+        default="",
+        description=(
+            "Root dir for heavy per-target MCP output payloads (currently "
+            "the android-mcp static summary written by target_analysis). "
+            "Empty string falls back to ``~/.aila/vr_target_artifacts``; "
+            "set to a shared path when multiple workers must resolve the "
+            "same artifact pointers stored in ``mcp_handles_json``."
+        ),
+    )
+    android_mcp_workdir: str = Field(
+        default="~/.android-mcp/work",
+        description=(
+            "android-mcp working directory the VR module builds unified "
+            "APK staging trees under (``apk-unified-<sha>/`` with links "
+            "to the jadx + RN + apktool outputs). ``~`` is expanded at "
+            "read time. Change per-workstation to move staging off the "
+            "default home-dir location."
         ),
     )
 

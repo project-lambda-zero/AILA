@@ -33,7 +33,6 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
     VRTargetRecord,
 )
-from aila.modules.vr.services.config_helpers import get_float
 from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.modules.vr.services.outcome_review import OUTCOME_STATE_APPROVED
 from aila.platform.agents.claim_verifier import (
@@ -42,10 +41,12 @@ from aila.platform.agents.claim_verifier import (
 from aila.platform.agents.claim_verifier import (
     is_negative_finding_claim as _platform_is_negative_finding_claim,
 )
+from aila.platform.config_base import ModuleConfigReader
 
 __all__ = ["ClaimVerifierAgent", "is_negative_finding_claim"]
 
 _log = logging.getLogger(__name__)
+_cfg = ModuleConfigReader("vr")
 
 # VR-domain negative-claim vocabulary. Kept module-local so the platform
 # base's phrase-table hook is passed the right set for vr and no other
@@ -124,7 +125,7 @@ class ClaimVerifierAgent(ClaimVerifierAgentBase):
 
     async def _read_auto_promote_floor(self) -> float:
         """Read the vr-namespaced auto-promote floor via ConfigRegistry."""
-        return await get_float("claim_verifier_auto_promote_floor")
+        return await _cfg.get_float("claim_verifier_auto_promote_floor")
 
     def _bridge_recorder(self) -> Callable[..., Any]:
         """The vr mcp call recorder -- probe traffic attributed to vr."""

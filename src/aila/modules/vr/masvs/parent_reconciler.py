@@ -69,7 +69,6 @@ from aila.modules.vr.db_models import (
     VRTargetRecord,
 )
 from aila.modules.vr.db_models.outcome_review import VRInvestigationOutcomeReviewRecord
-from aila.modules.vr.services.config_helpers import get_int
 
 # Phase C moved the implementations of these helpers out of this
 # MASVS-specific module into the canonical
@@ -88,6 +87,7 @@ from aila.modules.vr.services.investigation_finalizers import (
 )
 from aila.modules.vr.services.outcome_review import evaluate_quorum
 from aila.modules.vr.workflow.task import run_vr_investigate
+from aila.platform.config_base import ModuleConfigReader
 from aila.platform.contracts import utc_now
 from aila.platform.services.branch_cleanup import close_orphan_branches_on_terminal
 from aila.platform.tasks.models import TaskRecord
@@ -96,6 +96,7 @@ from aila.platform.uow import UnitOfWork
 __all__ = ["sweep_masvs_audit_parents"]
 
 _log = logging.getLogger(__name__)
+_cfg = ModuleConfigReader("vr")
 
 _TERMINAL_STATUSES: frozenset[str] = frozenset(
     (
@@ -453,7 +454,7 @@ async def _enforce_total_turn_cap(uow: UnitOfWork) -> int:
     """
     # ConfigRegistry (namespace=vr, key=investigation_total_turn_cap).
     # Schema field enforces ge=50 so a typo cannot fall below the floor.
-    cap = await get_int("investigation_total_turn_cap")
+    cap = await _cfg.get_int("investigation_total_turn_cap")
     cap = max(50, cap)
 
     inv = VRInvestigationRecord

@@ -74,7 +74,7 @@ def _stub_heavy_helpers(
 
     monkeypatch.setattr(
         ta_mod, "_build_unified_staging",
-        lambda **kwargs: staging_path,  # noqa: ARG005 -- signature match only
+        lambda *args, **kwargs: staging_path,  # noqa: ARG005 -- workdir positional + kwargs
     )
     monkeypatch.setattr(
         ta_mod, "_detect_staging_languages",

@@ -22,9 +22,17 @@ import type { ModuleFrontendSpec } from "@platform/extension-registry/types";
  * `import.meta.glob` requires a static string literal so Vite can pre-scan
  * the filesystem. It also honours `server.fs.allow`, which is set to the
  * repo root in `vite.config.ts`, so the `../../../../` traversal is legal.
+ *
+ * Underscore-prefixed module directories (`_template`) are copy-me scaffolds,
+ * never live modules -- the backend registry (`platform/modules/builtin.py`)
+ * skips them, and the negative glob below keeps the shell from discovering
+ * their `frontend/spec.ts` so the scaffold contributes nothing to the SPA.
  */
 const MODULE_SPEC_GLOB = import.meta.glob<Record<string, unknown>>(
-  "../../../../src/aila/modules/*/frontend/spec.ts",
+  [
+    "../../../../src/aila/modules/*/frontend/spec.ts",
+    "!../../../../src/aila/modules/_*/frontend/spec.ts",
+  ],
   { eager: true },
 );
 

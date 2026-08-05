@@ -22,9 +22,14 @@ from aila.modules._template.db_models import (
     TemplateInvestigationBranchRecord,
     TemplateInvestigationMessageRecord,
 )
-from aila.modules._template.services.config_helpers import get_int
 from aila.platform.agents.tool_execution import ToolExecutionResult
 from aila.platform.agents.tool_executor import ToolExecutorHelpersBase
+from aila.platform.config_base import ModuleConfigReader
+
+# Module-scoped typed config reader. Resolves the ``template`` namespace
+# through :class:`ConfigRegistry` (env -> DB -> schema default) and
+# replaces the deleted ``services.config_helpers`` shim (RFC-04).
+_config = ModuleConfigReader("template")
 
 __all__ = [
     "ToolExecutionResult",
@@ -65,7 +70,7 @@ class ToolExecutor(ToolExecutorHelpersBase):
 
     async def _hard_block_repeat_limit(self) -> int | None:
         """Return the operator-tunable repeat-block cap."""
-        return await get_int("tool_executor_hard_block_repeat")
+        return await _config.get_int("tool_executor_hard_block_repeat")
 
     def _router_module_scope(self) -> str | None:
         """RFC-07 router scope -- template rows land under ``template``."""

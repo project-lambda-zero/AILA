@@ -24,11 +24,11 @@ from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
     VRInvestigationRecord,
 )
-from aila.modules.vr.services.config_helpers import get_int
 from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.modules.vr.workflow.states.investigation_setup import (
     _spawn_ratified_specialists,
 )
+from aila.platform.config_base import ModuleConfigReader
 from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
 from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
 from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
@@ -44,6 +44,7 @@ from aila.platform.workflows.investigation_setup_base import (
 __all__ = ["state_investigation_loop"]
 
 _log = logging.getLogger(__name__)
+_cfg = ModuleConfigReader("vr")
 
 # Per-task turn budget. Loop returns on submit, status flip, researcher
 # error, or when this cap hits -- at which point investigation_emit
@@ -102,7 +103,7 @@ _LOOP_BINDINGS = InvestigationStateBindings(
         cve_intel=cve, applicable_patterns=pat, retrieved_knowledge=retrieved,
     ),
     executor_factory=_get_executor,
-    max_turns_reader=lambda: get_int("max_turns_per_task"),
+    max_turns_reader=lambda: _cfg.get_int("max_turns_per_task"),
     researcher_error=VulnResearcherError,
     specialist_spawn_fn=_spawn_ratified_specialists,
 )

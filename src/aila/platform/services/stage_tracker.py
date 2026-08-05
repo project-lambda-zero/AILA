@@ -89,8 +89,8 @@ _log = logging.getLogger(__name__)
 
 
 # Default per-stage timeouts. The longest is ingestion at 4h, set to
-# match TargetAnalysisService's existing _POLL_TIMEOUT_SECONDS, so
-# operators with monorepo-scale targets (chromium, firefox) don't get
+# match TargetAnalysisService's ``ingestion_poll_timeout_s`` config key,
+# so operators with monorepo-scale targets (chromium, firefox) don't get
 # pre-empted by the reaper mid-flight.
 _DEFAULT_TIMEOUTS: dict[StageName, float] = {
     StageName.INGESTION: 14400.0,

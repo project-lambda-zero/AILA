@@ -43,6 +43,22 @@ export interface UseSSEStreamOpts<T> {
    *  keeping unstable inline closures out of the dep array is what
    *  prevents a reconnect on every render. */
   deps: readonly unknown[];
+  /** React Query cache scope this stream feeds, e.g.
+   *  ``["vr", "investigation-messages", investigationId]``.
+   *
+   *  Two roles, no duplication:
+   *   1. Every entry is spread into the effect's dep array, so any
+   *      cache-key change (module id, investigation id, branch filter)
+   *      forces a reconnect against the new scope. Callers can leave
+   *      those ids out of ``deps`` and rely on this option alone.
+   *   2. Serves as machine-readable documentation of which cache the
+   *      ``onMessage`` closure mutates -- the RFC-04 module standard
+   *      requires SSE hooks to declare their cache scope explicitly so
+   *      a reader can trace stream -> query without opening the body.
+   *
+   *  Optional so non-cache streams (raw tail viewers, tests) don't have
+   *  to pass one; empty when omitted. */
+  queryKeyPrefix?: readonly unknown[];
 }
 
 const MAX_BACKOFF_MS = 30_000;
@@ -59,7 +75,7 @@ const MAX_BACKOFF_MS = 30_000;
 export function useSSEStream<T>(
   opts: UseSSEStreamOpts<T>,
 ): { status: SSEStreamStatus } {
-  const { reconnect, deps } = opts;
+  const { reconnect, deps, queryKeyPrefix } = opts;
   const [status, setStatus] = useState<SSEStreamStatus>("reconnecting");
 
   // Callbacks via refs. They close over render-scope values (the query
@@ -182,8 +198,11 @@ export function useSSEStream<T>(
     return () => {
       ac.abort();
     };
+    // Cache-scope ids (queryKeyPrefix) are spread alongside the caller's
+    // deps so a scope change (e.g. investigation id) reconnects against
+    // the new scope without the caller having to duplicate ids in deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reconnect, ...deps]);
+  }, [reconnect, ...deps, ...(queryKeyPrefix ?? [])]);
 
   return { status };
 }
