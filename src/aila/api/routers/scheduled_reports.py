@@ -262,27 +262,27 @@ async def trigger_scheduled_report(
     # Falls back to task_id="manual" if arq/Redis is not available.
     task_id = "manual"
     try:
-        import arq
+        from aila.platform.tasks.queue import TaskQueue
+        from aila.platform.tasks.report_tasks import generate_scheduled_report_job
 
-        registry = get_config_registry(request)
-        redis_url_raw = await registry.get("platform", "redis_url")
-        redis_url = str(redis_url_raw) if redis_url_raw else "redis://localhost:6379"
-
-        # Parse host/port from redis_url for arq RedisSettings
-        import urllib.parse as _urlparse
-        parsed = _urlparse.urlparse(redis_url)
-        redis_host = parsed.hostname or "localhost"
-        redis_port = parsed.port or 6379
-
-        redis_settings = arq.connections.RedisSettings(host=redis_host, port=redis_port)
-        pool = await arq.create_pool(redis_settings)
-        job = await pool.enqueue_job(
-            "generate_scheduled_report_job",
-            report_id=report_id,
-            triggered_by=auth.user_id,
+        # Route through TaskQueue so the job is enqueued on the module-track
+        # queue (arq:queue:default) under the fully-qualified registry name the
+        # worker resolves, with a TaskRecord for status tracking. A raw
+        # enqueue_job by bare name would target ARQ's default queue key, which
+        # no AILA worker consumes.
+        task_queue = TaskQueue(
+            config_registry=get_config_registry(request),
+            module_id="__platform__",
         )
-        task_id = job.job_id if job else "manual"
-        await pool.aclose()
+        handle = await task_queue.submit(
+            track="default",
+            fn=generate_scheduled_report_job,
+            kwargs={"report_id": report_id, "triggered_by": auth.user_id},
+            user_id=auth.user_id,
+            group_id=auth.role,
+            team_id=auth.team_id,
+        )
+        task_id = handle.task_id
     except Exception:
         _log.debug("Could not enqueue scheduled report via arq; will run synchronously next worker cycle", exc_info=True)
 

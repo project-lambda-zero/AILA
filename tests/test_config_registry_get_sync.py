@@ -44,7 +44,11 @@ def test_env_override_is_cast(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_cache_hit_returned() -> None:
     reg = _registry()
     reg._cache[("testns", "foo")] = _CacheEntry(value=99, expires_at=time.monotonic() + 100)
-    assert reg.get_sync("testns", "foo") == 99
+    # Pin the cross-process invalidation version (#56) so the ambient Redis
+    # counter cannot evict the version-0 entry and force a DB fallthrough; this
+    # test asserts the pure cache-hit branch in isolation.
+    with patch.object(reg, "_current_version_sync", return_value=0):
+        assert reg.get_sync("testns", "foo") == 99
 
 
 def test_db_value_cast_and_cached() -> None:

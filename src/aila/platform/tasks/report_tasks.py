@@ -36,6 +36,8 @@ from email.mime.text import MIMEText
 from sqlmodel import select
 
 from aila.platform.runtime import get_worker_platform
+from aila.platform.tasks.context import TaskContext
+from aila.platform.tasks.template import platform_task
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import ScheduledReportRecord
 from aila.storage.registry import ConfigRegistry
@@ -45,15 +47,22 @@ __all__ = ["generate_scheduled_report_job"]
 _log = logging.getLogger(__name__)
 
 
+@platform_task(
+    track="default",
+    module_id="__platform__",
+    max_tries=1,
+    timeout_s=600.0,
+)
 async def generate_scheduled_report_job(
-    ctx: dict,
+    ctx: TaskContext,
+    *,
     report_id: str,
     triggered_by: str,
 ) -> dict:
-    """ARQ job: generate a scheduled report and deliver via email.
+    """Platform task: generate a scheduled report and deliver via email.
 
     Args:
-        ctx: ARQ job context dict (worker state).
+        ctx: platform task context (unused; required by the task contract).
         report_id: ID of the ScheduledReportRecord to run.
         triggered_by: User ID who triggered the job (for audit logging).
 
@@ -64,6 +73,7 @@ async def generate_scheduled_report_job(
         Never raises -- exceptions are logged and reflected in the return dict
         so ARQ does not retry on business logic failures.
     """
+    del ctx  # unused; required positional for the platform_task contract
     _log.info(
         "generate_scheduled_report_job: starting report_id=%r triggered_by=%r",
         report_id,

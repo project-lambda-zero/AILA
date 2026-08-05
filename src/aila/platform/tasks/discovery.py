@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING
 
 from sqlmodel import select
 
+from aila.platform.tasks.context import TaskContext
+from aila.platform.tasks.template import platform_task
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import (
     ManagedSystemRecord,
@@ -753,11 +755,17 @@ async def _mark_system_stale(system_id: int) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def network_discovery_job(ctx: dict) -> None:
+@platform_task(
+    track="default",
+    module_id="__platform__",
+    max_tries=1,
+    timeout_s=1800.0,
+)
+async def network_discovery_job(ctx: TaskContext) -> None:
     """Collect ports, services, and connections from all registered systems.
 
-    arq cron job entry point -- registered in WorkerSettings.cron_jobs at 15-min
-    intervals (D-08). Never blocks on a single unreachable system (D-10).
+    Registered as a platform task under its fully-qualified name; not currently
+    wired to a trigger. Never blocks on a single unreachable system (D-10).
 
     For each system:
     - Try SSH collection of ports, connections, and services.
@@ -765,6 +773,7 @@ async def network_discovery_job(ctx: dict) -> None:
     - Persist results, overwriting previous scan (D-09).
     - On SSH failure: mark system stale, log warning, continue.
     """
+    del ctx  # unused; required positional for the platform_task contract
     _log.info("network_discovery_job: starting discovery run")
     collected_at = datetime.now(tz=UTC)
 

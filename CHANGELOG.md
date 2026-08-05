@@ -795,6 +795,13 @@ operator action.
 
 ### Removed
 
+- The worker's legacy ARQ function shim (`_legacy_arq_functions`) is retired.
+  The scheduled-report and network-discovery jobs are now registered through
+  the `@platform_task` decorator like every other task, so the ARQ worker
+  function list is sourced entirely from the task registry under
+  fully-qualified names. The manual scheduled-report trigger also enqueues
+  through the shared task queue on the module track rather than a raw bare-name
+  enqueue to ARQ's default queue key, so the job reaches a worker.
 - The per-module `services/config_helpers.py` files (vulnerability-research,
   malware, forensics, template) are deleted (RFC-04 #29); the shared
   ModuleConfigReader replaces them.

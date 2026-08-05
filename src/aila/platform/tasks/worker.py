@@ -601,26 +601,16 @@ def _bootstrap_platform_tasks() -> None:
     # registration is the bare-name copy, and the fully-qualified enqueue name
     # ({fn.__module__}.{fn.__qualname__}) cannot resolve it -- the scan job is
     # rejected with "function not found" and reaped as orphan-queued.
-    for platform_module in ("aila.platform.tasks.entrypoints",):
+    for platform_module in (
+        "aila.platform.tasks.entrypoints",
+        "aila.platform.tasks.report_tasks",
+        "aila.platform.tasks.discovery",
+    ):
         try:
             __import__(platform_module)
         except Exception:
             _log.warning(
                 "platform-task bootstrap: %s import failed", platform_module, exc_info=True)
-
-
-def _legacy_arq_functions() -> list[Any]:
-    """Non-@platform_task ARQ callables (reports, discovery). Phase 182 migrates."""
-    fns: list[Any] = []
-    for mod_name, fn_name in (
-        ("aila.platform.tasks.report_tasks", "generate_scheduled_report_job"),
-        ("aila.platform.tasks.discovery", "network_discovery_job"),
-    ):
-        try:
-            fns.append(getattr(__import__(mod_name, fromlist=[fn_name]), fn_name))
-        except Exception:
-            _log.warning("legacy import %s failed", mod_name, exc_info=True)
-    return fns
 
 
 _bootstrap_platform_tasks()
@@ -1038,7 +1028,7 @@ class WorkerSettings:
     queue_name = "arq:queue:vulnerability"
     # Legacy ARQ functions preserved for non-@platform_task callers
     # (scheduled reports + network discovery). Phase 182 re-homes them.
-    functions: list[Any] = _REGISTRY.all_functions() + _legacy_arq_functions()
+    functions: list[Any] = _REGISTRY.all_functions()
     cron_jobs = [cron(reaper, second=0)]
     max_tries = 3
     job_timeout = 3600

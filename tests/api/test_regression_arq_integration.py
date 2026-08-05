@@ -90,9 +90,9 @@ def test_regression_redis_url_ipv4_parsing() -> None:
 def test_regression_worker_settings_has_functions() -> None:
     """Guard: WorkerSettings exposes functions + cron_jobs for ARQ dispatch.
 
-    Phase 179: ``functions`` is sourced from the ``@platform_task`` registry
-    plus a small list of legacy ARQ callables (reports, discovery). The
-    registry is populated by ``worker._bootstrap_platform_tasks``.
+    ``functions`` is sourced entirely from the ``@platform_task`` registry,
+    populated by ``worker._bootstrap_platform_tasks``. Each entry is an arq
+    ``Function`` whose ``.coroutine`` is the registered task body.
     """
     from aila.platform.tasks.worker import WorkerSettings
 
@@ -105,8 +105,8 @@ def test_regression_worker_settings_has_functions() -> None:
         "WorkerSettings.cron_jobs empty -- reaper not scheduled"
     )
     for fn in WorkerSettings.functions:
-        assert callable(fn)
-        assert inspect.iscoroutinefunction(fn)
+        # Entries are arq Function objects; the task body is on .coroutine.
+        assert inspect.iscoroutinefunction(fn.coroutine)
 
 
 # ---- Bug 4: AnalyzePayload uses target_names not targets -------------------
@@ -189,12 +189,15 @@ def test_regression_run_platform_handle_importable() -> None:
     assert param_names[0] == "ctx", (
         f"run_platform_handle must take ctx as first param, got {param_names!r}"
     )
-    has_var_keyword = any(
+    # ARQ forwards query / module_payload / options as keyword arguments. The
+    # handler may accept them via explicit keyword-only parameters or a **kwargs
+    # bucket -- either binds the enqueue kwargs without a signature break.
+    accepts_forwarded_kwargs = any(
         p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-    )
-    assert has_var_keyword, (
-        "run_platform_handle must accept **kwargs so ARQ can forward "
-        "query/module_payload/options without signature breakage"
+    ) or {"query", "module_payload", "options"}.issubset(sig.parameters.keys())
+    assert accepts_forwarded_kwargs, (
+        "run_platform_handle must accept query/module_payload/options as "
+        "keyword arguments (explicit keyword-only params or **kwargs)"
     )
 
     # Must be in the __all__ export of the module

@@ -39,7 +39,7 @@ class TestInvestigationEnums:
     def test_kind_values(self) -> None:
         assert {m.value for m in InvestigationKind} == {
             "discovery", "variant_hunt", "triage", "n_day", "audit",
-            "masvs_audit",
+            "masvs_audit", "apk_static_audit",
         }
 
     def test_status_values(self) -> None:
@@ -129,7 +129,7 @@ class TestOutcomeEnums:
 
     def test_dispatch_status(self) -> None:
         assert {m.value for m in OutcomeDispatchStatus} == {
-            "pending", "dispatched", "failed", "skipped",
+            "pending", "claimed", "dispatched", "failed", "skipped",
         }
 
 
