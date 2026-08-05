@@ -839,6 +839,16 @@ operator action.
 
 ### Fixed
 
+- Vulnerability scan submission (POST /analyze) is dispatchable again
+  (RFC-05 follow-up). The shared scan endpoint selected the first-registered
+  module rather than the one that declares a scan track (the resolver matched a
+  None-returning protocol default), returning 503; it now selects the module
+  that answers with a track. Separately, the platform scan entrypoint was
+  registered under its bare callable name while the queue enqueues by the
+  fully-qualified name, so the worker rejected the job with "function not
+  found" and reaped it as orphan-queued; the worker registry bootstrap now
+  imports the platform task entrypoints so they register under the
+  fully-qualified name.
 - An unevidenced reject vote no longer swings review quorum in the
   vulnerability-research module (RFC-03 #28). The empty-rationale
   reject-to-abstain downgrade now lives in the shared turn runner, so both

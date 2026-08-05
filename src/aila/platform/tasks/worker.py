@@ -594,6 +594,20 @@ def _bootstrap_platform_tasks() -> None:
         except Exception:
             _log.warning("platform-task bootstrap: %s import failed", task_module, exc_info=True)
 
+    # Platform-owned @platform_task entrypoints live outside the feature-module
+    # tree (the queued scan handler run_platform_handle). Import them here too so
+    # their decorators register under the fully-qualified name in _REGISTRY
+    # before WorkerSettings reads all_functions(). Otherwise the only
+    # registration is the bare-name copy, and the fully-qualified enqueue name
+    # ({fn.__module__}.{fn.__qualname__}) cannot resolve it -- the scan job is
+    # rejected with "function not found" and reaped as orphan-queued.
+    for platform_module in ("aila.platform.tasks.entrypoints",):
+        try:
+            __import__(platform_module)
+        except Exception:
+            _log.warning(
+                "platform-task bootstrap: %s import failed", platform_module, exc_info=True)
+
 
 def _legacy_arq_functions() -> list[Any]:
     """Non-@platform_task ARQ callables (reports, discovery). Phase 182 migrates."""
@@ -601,7 +615,6 @@ def _legacy_arq_functions() -> list[Any]:
     for mod_name, fn_name in (
         ("aila.platform.tasks.report_tasks", "generate_scheduled_report_job"),
         ("aila.platform.tasks.discovery", "network_discovery_job"),
-        ("aila.platform.tasks.entrypoints", "run_platform_handle"),
     ):
         try:
             fns.append(getattr(__import__(mod_name, fromlist=[fn_name]), fn_name))

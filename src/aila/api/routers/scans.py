@@ -77,8 +77,17 @@ async def submit_scan(
             config_registry=getattr(getattr(platform, "runtime", None), "config_registry", None),
             module_id=MODULE_ID_PLATFORM,
         )
-        scan_module = platform.runtime.module_registry.first_with("scan_submission_track")
-        track = scan_module.scan_submission_track() if scan_module is not None else None
+        # scan_submission_track() has a None-returning protocol default, so every
+        # module inherits a callable of that name. first_with() matches on method
+        # existence and would return the first-registered module (whose default is
+        # None) rather than the module that actually publishes a track. Resolve
+        # the first module that answers with a non-None track instead.
+        track: str | None = None
+        for scan_module in platform.runtime.module_registry.all_with("scan_submission_track"):
+            candidate = scan_module.scan_submission_track()
+            if candidate is not None:
+                track = candidate
+                break
         if track is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
