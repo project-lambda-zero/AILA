@@ -40,10 +40,17 @@ branch_labels = None
 depends_on = None
 
 
-# Every module's pattern table gets the same two columns + the same
-# trust_tier index. Kept as a tuple so ``upgrade`` / ``downgrade`` iterate
-# once each and can never fall out of sync -- adding a fifth module later
-# is one line here, not four in each function.
+# Every deployed module's pattern table gets the same two columns + the
+# same trust_tier index. Kept as a tuple so ``upgrade`` / ``downgrade``
+# iterate once each and can never fall out of sync -- adding a fifth
+# module later is one line here, not four in each function.
+#
+# ``template_patterns`` belongs to the ``_template`` copy-me scaffold,
+# which is never registered as a live module, so no migration creates its
+# table and it is absent from the live DB (it exists only in a test DB
+# built via ``create_all``). Each column op is therefore guarded on the
+# table actually existing in the bound database -- the scaffold table is
+# skipped live and picked up automatically anywhere it does exist.
 _PATTERN_TABLES: tuple[str, ...] = (
     "vr_patterns",
     "malware_patterns",
@@ -52,8 +59,15 @@ _PATTERN_TABLES: tuple[str, ...] = (
 )
 
 
+def _existing_tables() -> set[str]:
+    """Return the subset of _PATTERN_TABLES present in the bound DB."""
+    inspector = sa.inspect(op.get_bind())
+    present = set(inspector.get_table_names())
+    return {t for t in _PATTERN_TABLES if t in present}
+
+
 def upgrade() -> None:
-    for table in _PATTERN_TABLES:
+    for table in sorted(_existing_tables()):
         op.add_column(
             table,
             sa.Column(
@@ -80,7 +94,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    for table in _PATTERN_TABLES:
+    for table in sorted(_existing_tables()):
         op.drop_index(f"ix_{table}_trust_tier", table_name=table)
         op.drop_column(table, "provenance_json")
         op.drop_column(table, "trust_tier")
