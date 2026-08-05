@@ -31,14 +31,18 @@ operator action.
   investigation lists and detail views render STALLED as a distinct
   terminal state.
 - Malware dispatch-hub deep phases activate on real discoveries (RFC-13
-  #68). The malware agent prompt now guides the panel to post packer and
-  config findings to the shared ledger and to raise and approve
-  phase-activation requests; the unpack phase activates on a
-  quorum-confirmed `finding: packed` discovery and config_extract on a
-  confirmed `finding: config_present` discovery. Previously the malware
-  hub never posted these discoveries, so the two confirmed-trust phases
-  could not activate and only triage and the fallback full-analysis phase
-  ran.
+  #68). A deterministic bridge in the malware tool executor posts and
+  auto-confirms a `finding: packed` ledger discovery when an ida-headless
+  result shows packing (UPX-style section names, a high-entropy section, or
+  an obfuscation verdict), so the confirmed-trust unpack phase activates on
+  the real analysis rather than on the panel choosing to post it. A
+  detector-derived discovery is operator code reading the binary's own
+  sections, not an unreviewed model claim, so it confirms without a quorum
+  vote. The malware agent prompt also guides the panel to post ledger
+  discoveries and raise or approve phase-activation requests. Previously the
+  packing finding stayed a private branch hypothesis and never reached the
+  ledger, so the two confirmed-trust phases could not activate and only
+  triage plus the fallback full-analysis phase ran.
 - Generic platform workflow and entity events (RFC-05 #30). The platform now
   owns ModuleWorkflowStarted, ModuleWorkflowCompleted, and
   ModuleEntityBatchUpserted; a module emits them with its own module id,
