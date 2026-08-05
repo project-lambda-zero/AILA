@@ -49,8 +49,7 @@ import json as _json_local
 import logging
 import os
 
-from sqlalchemy import cast, func, select, update
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql.functions import coalesce
 
@@ -90,7 +89,6 @@ from aila.modules.vr.workflow.task import run_vr_investigate
 from aila.platform.config_base import ModuleConfigReader
 from aila.platform.contracts import utc_now
 from aila.platform.services.branch_cleanup import close_orphan_branches_on_terminal
-from aila.platform.tasks.models import TaskRecord
 from aila.platform.uow import UnitOfWork
 
 __all__ = ["sweep_masvs_audit_parents"]
@@ -261,8 +259,7 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
     For each parent whose target is ``android_apk``, ensure no more than
     ``_batch_size()`` children are in-flight (RUNNING / QUEUED) at any
     given moment. When slots are free and CREATED children remain that
-    have never been enqueued (no TaskRecord row containing the child id),
-    submit the next slice on the ``vr`` queue.
+    have never been enqueued, submit the next slice on the ``vr`` queue.
 
     Returns the total number of children newly enqueued in this tick.
 
@@ -271,17 +268,17 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
     OOM'd OmniRoute when 30 streams hit simultaneously -- this throttle
     keeps that pressure bounded.
 
-    Why not a column for "enqueued?": adding one needs a migration. The
-    TaskRecord JOIN below uses a JSONB extract on ``kwargs_json``
-    (`(kwargs_json::jsonb)->>'investigation_id' = inv.id`) so the match
-    is on a typed JSON path, not a substring. Cheap enough for the
-    per-parent ≤46-child set we sweep once per minute, and removes the
-    false-positive class where a different task's kwargs_json happens
-    to embed the same UUID elsewhere.
+    RFC-05 crit 10: distinguishing "already enqueued" from "still
+    virgin" goes through :meth:`TaskQueue.enqueued_investigation_ids`
+    rather than a local correlated JSONB-extract subquery against
+    ``taskrecord``. The reconciler no longer reaches across the module
+    boundary into the platform-owned task table; the JSONB match is
+    now behind the queue API, and the CREATED partitioning happens in
+    Python on a per-parent set that is small by construction
+    (<=46 children).
     """
     inv = VRInvestigationRecord
     tgt = VRTargetRecord
-    tsk = TaskRecord
     batch_size = _batch_size()
 
     # APK MASVS parents currently in CREATED / RUNNING. Joined to the
@@ -306,24 +303,29 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
     enqueued_total = 0
     queue = default_task_queue()
 
-    for parent_id, _target_id in parent_rows:
-        # Count children currently consuming a slot. CREATED counts only
-        # when a TaskRecord exists (the child has been enqueued, just not
-        # picked up yet); CREATED children with no TaskRecord are the
-        # virgin pool we'll draw from.
-        def _scalar(row: object) -> int:
-            if row is None:
-                return 0
-            try:
-                return int(row[0]) if hasattr(row, "__getitem__") else int(row)
-            except (TypeError, ValueError, IndexError) as exc:
-                _log.warning(
-                    "masvs_batch_refill: unexpected count row shape (%r): %s",
-                    row, exc,
-                )
-                return 0
+    def _scalar(row: object) -> int:
+        if row is None:
+            return 0
+        try:
+            return int(row[0]) if hasattr(row, "__getitem__") else int(row)
+        except (TypeError, ValueError, IndexError) as exc:
+            _log.warning(
+                "masvs_batch_refill: unexpected count row shape (%r): %s",
+                row, exc,
+            )
+            return 0
 
-        in_flight_row = (
+    def _child_id(row: object) -> str:
+        # SQLModel session.exec returns Row tuples for a single-column
+        # select; unwrap to the plain UUID string.
+        if hasattr(row, "__getitem__") and not isinstance(row, str):
+            return str(row[0])
+        return str(row)
+
+    for parent_id, _target_id in parent_rows:
+        # RUNNING / PAUSED children directly consume a slot regardless
+        # of queue state -- they are already checked out to a worker.
+        running_paused_row = (
             await uow.session.exec(
                 select(func.count(inv.id))
                 .where(inv.parent_investigation_id == parent_id)
@@ -333,67 +335,40 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
                 ))),
             )
         ).first()
-        in_flight = _scalar(in_flight_row)
+        running_paused = _scalar(running_paused_row)
 
-        # Add CREATED children that ALREADY have a TaskRecord -- they're
-        # enqueued, just sitting in the queue waiting for a worker. They
-        # count toward in_flight so we don't double-enqueue.
-        created_with_task_row = (
+        # Every CREATED child under this parent, ordered oldest-first
+        # so the operator-visible MASVS control id order (assigned by
+        # the dispatcher) is preserved. The virgin slice we submit is
+        # drawn from this list in the same order.
+        created_rows = (
             await uow.session.exec(
-                select(func.count(inv.id))
+                select(inv.id)
                 .where(inv.parent_investigation_id == parent_id)
                 .where(inv.status == InvestigationStatus.CREATED.value)
-                .where(
-                    select(tsk.id)
-                    .where(
-                        # fix §41 -- JSONB extract on `investigation_id`
-                        # replaces substring ilike(%uuid%) which matched
-                        # any task whose kwargs_json contained the UUID
-                        # in any field (parent_investigation_id, etc.).
-                        cast(tsk.kwargs_json, JSONB)["investigation_id"]
-                        .astext == inv.id,
-                    )
-                    .exists(),
-                ),
+                .order_by(inv.created_at),
             )
-        ).first()
-        in_flight += _scalar(created_with_task_row)
+        ).all()
+        created_ids: list[str] = [_child_id(row) for row in created_rows]
+        if not created_ids:
+            continue
+
+        # Ask the task queue -- not the taskrecord table directly --
+        # which of these ids already have a task row. Partition in
+        # Python: enqueued CREATED children count toward in_flight; the
+        # rest are the virgin pool. The set is small (<=46 per parent)
+        # so a single membership pass is cheaper than a per-id lookup.
+        enqueued_ids = await queue.enqueued_investigation_ids(created_ids)
+        in_flight_created = sum(1 for cid in created_ids if cid in enqueued_ids)
+        in_flight = running_paused + in_flight_created
 
         slots = batch_size - int(in_flight)
         if slots <= 0:
             continue
 
-        # Virgin CREATED children: no TaskRecord for this investigation_id.
-        # Order by created_at to enqueue oldest-first (preserves the
-        # operator-visible MASVS control id order from the dispatcher).
-        virgin = (
-            await uow.session.exec(
-                select(inv.id)
-                .where(inv.parent_investigation_id == parent_id)
-                .where(inv.status == InvestigationStatus.CREATED.value)
-                .where(
-                    ~select(tsk.id)
-                    .where(
-                        # fix §41 -- JSONB extract on `investigation_id`
-                        # (see _refill_apk_batches in_flight count above).
-                        cast(tsk.kwargs_json, JSONB)["investigation_id"]
-                        .astext == inv.id,
-                    )
-                    .exists(),
-                )
-                .order_by(inv.created_at)
-                .limit(slots),
-            )
-        ).all()
+        virgin_ids = [cid for cid in created_ids if cid not in enqueued_ids][:slots]
 
-        for row in virgin:
-            # Row tuples → unwrap to scalar string. SQLModel session.exec
-            # returns Row tuples for select(scalar_column); we want the
-            # plain UUID/str value for the task kwarg.
-            if hasattr(row, "__getitem__") and not isinstance(row, str):
-                child_id = str(row[0])
-            else:
-                child_id = str(row)
+        for child_id in virgin_ids:
             try:
                 await queue.submit(
                     track="vr",
@@ -405,9 +380,10 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
                 )
                 enqueued_total += 1
             except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError, TimeoutError) as exc:
-                # fix §350 -- traceback surfaces ARQ/Redis transport vs
-                # dedup-table regression vs idempotency-key collision
-                # without forcing a second tick to compare.
+                # RFC-05 crit 10 rewrite retains the original traceback
+                # so a structural break (ARQ/Redis transport vs dedup
+                # regression vs idempotency-key collision) surfaces on
+                # the first failing tick instead of forcing a compare.
                 _log.warning(
                     "masvs batch refill: parent=%s child=%s enqueue failed: %s",
                     parent_id, child_id, exc,

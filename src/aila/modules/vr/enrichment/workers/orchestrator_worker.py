@@ -160,8 +160,8 @@ async def run_target_enrichment(
     recorder) and returns the JSON-serialised ``EnrichmentResult``.
     """
     del ctx
-    ida = IDABridgeTool(recorder=record_call)
-    audit_mcp = AuditMcpBridgeTool(recorder=record_call)
+    ida = IDABridgeTool(recorder=record_call, module_id="vr")
+    audit_mcp = AuditMcpBridgeTool(recorder=record_call, module_id="vr")
 
     result = await orchestrate_target_enrichment(
         target_id,

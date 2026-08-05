@@ -41,7 +41,7 @@ from typing import Any
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select
 
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.lifecycle.controller import AgentLifecycleController
 from aila.platform.prompts.version_store import PromptVersionStore
 from aila.platform.uow import UnitOfWork

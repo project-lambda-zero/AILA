@@ -40,8 +40,8 @@ async def run_capability_profile_build(
     applicable_* lists.
     """
     builder = CapabilityProfileBuilder(
-        ida=IDABridgeTool(recorder=record_call),
-        audit_mcp=AuditMcpBridgeTool(recorder=record_call),
+        ida=IDABridgeTool(recorder=record_call, module_id="vr"),
+        audit_mcp=AuditMcpBridgeTool(recorder=record_call, module_id="vr"),
     )
     profile = await builder.build(target_id)
     return profile.model_dump(mode="json")

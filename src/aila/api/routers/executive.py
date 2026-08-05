@@ -285,7 +285,7 @@ def _build_finding_rows_html(findings: list[dict]) -> str:
 
 
 async def _fetch_all_findings(module: object, auth: AuthContext) -> list[dict]:
-    """Fetch all latest vulnerability findings via the module boundary.
+    """Fetch all latest findings from the registered module boundary.
 
     #36: binds the caller's TeamContext to the session so the do_orm_execute
     listener filters the plain LatestFindingRecord select inside
@@ -299,7 +299,7 @@ async def _fetch_all_findings(module: object, auth: AuthContext) -> list[dict]:
 async def _fetch_system_findings(
     module: object, system_id: int, auth: AuthContext
 ) -> list[dict]:
-    """Fetch latest vulnerability findings for one system via the module boundary.
+    """Fetch latest findings for one system from the registered module boundary.
 
     #36: binds the caller's TeamContext so the listener filters the plain
     LatestFindingRecord select; combined with the caller-supplied system_id
@@ -321,12 +321,12 @@ def _build_severity_breakdown(findings: list[dict]) -> dict[str, int]:
 
 
 def _generate_risk_pdf_bytes(module: object, findings: list[dict]) -> bytes:
-    """Render executive risk summary PDF through the vulnerability module boundary."""
+    """Render executive risk summary PDF through the registered module boundary."""
     return module.build_risk_pdf_bytes(findings)
 
 
 def _build_evidence_zip(module: object, system_id: int, findings: list[dict]) -> bytes:
-    """Build a compliance evidence ZIP through the vulnerability module boundary."""
+    """Build a compliance evidence ZIP through the registered module boundary."""
     return module.build_evidence_zip(system_id, findings)
 
 

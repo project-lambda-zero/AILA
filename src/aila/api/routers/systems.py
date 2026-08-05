@@ -137,7 +137,7 @@ async def _build_connectivity_map(session: object, system_ids: list[int]) -> dic
 
 
 async def _build_tags_map(session: object, system_ids: list[int], platform: object) -> dict[int, list[dict[str, str]]]:
-    """Return tag lists for each system_id through the vulnerability module surface."""
+    """Return tag lists for each system_id through the registered module surface."""
     if platform is None or not system_ids:
         return {}
     try:

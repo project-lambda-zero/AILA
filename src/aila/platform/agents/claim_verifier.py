@@ -313,6 +313,8 @@ def is_negative_finding_claim(
 
 async def _fetch_audit_mcp_signatures(
     recorder: Callable[..., Any],
+    *,
+    module_id: str,
 ) -> tuple[str, bool]:
     """Pull live tool schemas from audit-mcp so the extractor LLM
     proposes probes with the right argument names. Returns a tuple of
@@ -324,8 +326,12 @@ async def _fetch_audit_mcp_signatures(
     operator can correlate verifier inconclusiveness with audit-mcp
     unavailability -- previously this swallowed silently and the
     verifier was inconclusive for unexplained reasons.
+
+    ``module_id`` is the owning module of the investigation being
+    verified so the bridge is namespaced under that module's config /
+    tool-name namespace (RFC-05 crit 4 hardening).
     """
-    bridge = AuditMcpBridgeTool(recorder=recorder)
+    bridge = AuditMcpBridgeTool(recorder=recorder, module_id=module_id)
     try:
         base_url = await bridge._resolve_base_url()
     except (OSError, RuntimeError) as exc:
@@ -482,9 +488,14 @@ class ClaimVerifierAgentBase:
       row insert + the skipped-eligibility check.
     * ``_outcome_state_approved`` -- ``OUTCOME_STATE_APPROVED`` string
       constant the new row's ``state`` column is set to.
+    * ``_MODULE_ID`` -- the owning module id (``"vr"``, ``"malware"``,
+      ...). Passed to every ``AuditMcpBridgeTool`` construction so the
+      platform bridge is namespaced under the module the investigation
+      belongs to (RFC-05 crit 4 hardening).
     """
 
     # ---- Required subclass attributes ----
+    _MODULE_ID: ClassVar[str]
     _EXTRACTOR_TASK_TYPE: ClassVar[str]
     _VERDICT_TASK_TYPE: ClassVar[str]
     _NEGATIVE_ANSWER_PREFIXES: ClassVar[tuple[str, ...]]
@@ -675,6 +686,7 @@ class ClaimVerifierAgentBase:
         services = ServiceFactory()
         signatures_block, signatures_ok = await _fetch_audit_mcp_signatures(
             self._bridge_recorder(),
+            module_id=self._MODULE_ID,
         )
         sig_section = (
             f"## Available audit-mcp probes (live signatures)\n\n{signatures_block}\n\n"
@@ -726,7 +738,10 @@ class ClaimVerifierAgentBase:
         # created per-call), and audit-mcp deduplicates identical tool
         # calls -- concurrent probes benefit from server-side dedup as
         # well as wall-clock overlap.
-        bridge = AuditMcpBridgeTool(recorder=self._bridge_recorder())
+        bridge = AuditMcpBridgeTool(
+            recorder=self._bridge_recorder(),
+            module_id=self._MODULE_ID,
+        )
         top_preconditions = preconditions[: self._MAX_PROBES]
 
         async def _run_one_probe(p: dict[str, Any]) -> dict[str, Any]:

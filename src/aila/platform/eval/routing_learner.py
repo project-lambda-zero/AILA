@@ -37,7 +37,7 @@ from datetime import datetime
 from statistics import mean
 from typing import Any
 
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 
 # Vote string literals held here as SINGLE SOURCE for the eval module.
 # See :mod:`aila.platform.eval.experience_writer` and

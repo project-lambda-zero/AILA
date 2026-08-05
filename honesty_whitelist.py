@@ -466,6 +466,13 @@ HONESTY_WHITELIST = [
     # so callers get a stable list[ServerSummary] return type. Lifted to
     # the platform base in RFC-04 Phase 1; the module subclasses inherit it.
     ("platform/mcp/registry.py", "probe_all", "consider inlining"),
+    # reasoning.StrategyRegistry.sorted_declarations: public accessor that
+    # hides the private _by_family dict and owns the (match_priority,
+    # family) classification order consumed by select_strategy_family.
+    # Inlining would leak the registry's internal representation into the
+    # reasoning engine (RFC-05 crit 6). Same stable-return-type shape as
+    # probe_all above.
+    ("platform/services/reasoning.py", "sorted_declarations", "consider inlining"),
     # disclosure.info: dataclass-like accessor returning the bound
     # DisclosureTrackInfo singleton.
     ("vr/disclosure/base.py", "info", "consider inlining"),

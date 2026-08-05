@@ -40,8 +40,8 @@ async def run_function_ranking(
     JSON-serializable for SSE push / audit trail.
     """
     dispatcher = FunctionRankingDispatcher(
-        ida=IDABridgeTool(recorder=record_call),
-        audit_mcp=AuditMcpBridgeTool(recorder=record_call),
+        ida=IDABridgeTool(recorder=record_call, module_id="vr"),
+        audit_mcp=AuditMcpBridgeTool(recorder=record_call, module_id="vr"),
     )
     ranking = await dispatcher.rank(target_id)
     return ranking.model_dump(mode="json")

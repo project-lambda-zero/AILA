@@ -80,7 +80,7 @@ class VRWorkflowServices:
         """
         settings = get_settings()
         config = await _resolve_vr_config()
-        ida = IDABridgeTool(recorder=record_call)
+        ida = IDABridgeTool(recorder=record_call, module_id="vr")
         ssh = SSHService(build_platform_settings(settings))
         return cls(
             run_id=run_id,

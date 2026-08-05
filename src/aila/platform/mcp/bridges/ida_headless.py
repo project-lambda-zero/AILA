@@ -109,11 +109,11 @@ class IDABridgeTool(Tool):
         timeout: float | None = None,
         recorder: BridgeRecorder | None = None,
         *,
-        module_id: str = "vr",
+        module_id: str,
     ) -> None:
         # Owning module id drives the public tool name and config
-        # namespace. Defaults to "vr" so existing callers keep the exact
-        # name "vr.ida_bridge" and the "vr" config namespace unchanged.
+        # namespace. Required kwarg: every construction site names its
+        # owning module explicitly (RFC-05 crit 4 hardening).
         self.module_id = module_id
         self.name = f"{module_id}.ida_bridge"
         self._fixed_base_url = base_url.rstrip("/") if base_url else None

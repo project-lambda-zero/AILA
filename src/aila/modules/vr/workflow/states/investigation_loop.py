@@ -87,9 +87,9 @@ def _get_executor() -> ToolExecutor:
     global _EXECUTOR_SINGLETON
     if _EXECUTOR_SINGLETON is None:
         _EXECUTOR_SINGLETON = ToolExecutor(
-            ida=IDABridgeTool(recorder=record_call),
-            audit_mcp=AuditMcpBridgeTool(recorder=record_call),
-            android_mcp=AndroidMcpBridgeTool(recorder=record_call),
+            ida=IDABridgeTool(recorder=record_call, module_id="vr"),
+            audit_mcp=AuditMcpBridgeTool(recorder=record_call, module_id="vr"),
+            android_mcp=AndroidMcpBridgeTool(recorder=record_call, module_id="vr"),
             knowledge=KnowledgeBridgeTool(recorder=record_call),
         )
     return _EXECUTOR_SINGLETON

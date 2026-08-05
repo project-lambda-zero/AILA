@@ -644,7 +644,7 @@ async def _resolve_code_excerpts(
             if fp and fn:
                 normalized.append((fp, fn))
 
-    bridge = AuditMcpBridgeTool(recorder=record_call)
+    bridge = AuditMcpBridgeTool(recorder=record_call, module_id="vr")
     excerpts: list[dict[str, Any]] = []
     for fp, fn in normalized:
         try:

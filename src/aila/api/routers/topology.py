@@ -6,11 +6,12 @@ Provides:
 - GET /topology/subnets -- subnet groupings for quick filtering
 
 Per RADAR-05 / D-12: platform builds the graph from network discovery data;
-vulnerability module decorates nodes with severity counts when data exists.
-Topology works without vulnerability data (severity_counts=None on each node).
+the module providing severity data decorates nodes with severity counts when
+data exists. Topology works without severity data (severity_counts=None on
+each node).
 
 Per T-138-25: requires operator+ role; rate limited to prevent scraping.
-Per D-01: topology is platform-owned, not vulnerability-module-specific.
+Per D-01: topology is platform-owned, not tied to any single module.
 """
 from __future__ import annotations
 
@@ -71,12 +72,12 @@ def _utc_now() -> datetime:
 
 
 # ---------------------------------------------------------------------------
-# Vulnerability severity overlay (D-02)
+# Severity overlay (D-02) -- resolved through a registered module
 # ---------------------------------------------------------------------------
 
 
 async def _load_severity_counts(system_ids: list[int], platform: object) -> dict[int, SeverityCounts]:
-    """Load vulnerability severity counts per system through the module boundary."""
+    """Load per-system severity counts through the registered module boundary."""
     if platform is None or not system_ids:
         return {}
     try:
@@ -124,10 +125,10 @@ async def get_topology(
     3. SystemConnectionRecord as edges (active inter-system connections).
     4. Subnet groupings via detect_subnets() (D-11).
     5. Group tags from AssetTagRecord (key="group") per system.
-    6. Vulnerability severity counts from LatestFindingRecord as overlay (D-02).
+    6. Severity counts from the module providing severity data as overlay (D-02).
 
-    Per D-12: topology is valid even when no vulnerability scans have run.
-    severity_counts will be None on nodes with no vulnerability data.
+    Per D-12: topology is valid even when no severity data has been produced.
+    severity_counts will be None on nodes with no severity data.
 
     Per T-138-25: operator+ role enforced; 30/minute rate limit.
     Per T-138-31: response limited to registered systems only (bounded set).

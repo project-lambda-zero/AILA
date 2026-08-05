@@ -408,13 +408,12 @@ class AuditMcpBridgeTool(Tool):
         timeout: float | None = None,
         recorder: BridgeRecorder | None = None,
         *,
-        module_id: str = "vr",
+        module_id: str,
     ) -> None:
         # The owning module id drives the public tool name and the config
-        # namespace so the platform bridge never hard-codes a module. It
-        # defaults to "vr" -- the historical owner -- so existing callers
-        # keep the exact name "vr.audit_mcp_bridge" and the "vr" config
-        # namespace with no change.
+        # namespace so the platform bridge never hard-codes a module.
+        # Required kwarg: every construction site names its owning module
+        # explicitly (RFC-05 crit 4 hardening).
         self.module_id = module_id
         self.name = f"{module_id}.audit_mcp_bridge"
         # `base_url` if explicitly supplied wins forever (tests, DI).

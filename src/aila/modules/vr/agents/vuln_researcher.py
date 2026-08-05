@@ -2531,15 +2531,15 @@ async def _fetch_tool_specs(
     if "knowledge" in applicable:
         out["knowledge"] = await KnowledgeBridgeTool().list_tool_specs()
     if "audit_mcp" in applicable:
-        specs = await AuditMcpBridgeTool(recorder=record_call).list_tool_specs()
+        specs = await AuditMcpBridgeTool(recorder=record_call, module_id="vr").list_tool_specs()
         allowed = tools_for_language("audit_mcp", primary_language)
         out["audit_mcp"] = [s for s in specs if s.get("name", "") in allowed]
     if "ida_headless" in applicable:
-        specs = await IDABridgeTool(recorder=record_call).list_tool_specs()
+        specs = await IDABridgeTool(recorder=record_call, module_id="vr").list_tool_specs()
         allowed = tools_for_language("ida_headless", primary_language)
         out["ida_headless"] = [s for s in specs if s.get("name", "") in allowed]
     if "android_mcp" in applicable:
-        specs = await AndroidMcpBridgeTool(recorder=record_call).list_tool_specs()
+        specs = await AndroidMcpBridgeTool(recorder=record_call, module_id="vr").list_tool_specs()
         allowed = tools_for_language("android_mcp", primary_language)
         out["android_mcp"] = [s for s in specs if s.get("name", "") in allowed]
     return out

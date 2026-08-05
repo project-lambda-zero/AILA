@@ -2801,7 +2801,7 @@ def create_vr_router() -> APIRouter:
         upload_cap = await _cfg.get_int("upload_max_bytes")
         contents = await read_upload_bounded(file, upload_cap)
 
-        bridge = IDABridgeTool(recorder=record_call)
+        bridge = IDABridgeTool(recorder=record_call, module_id="vr")
         base_url = await bridge._resolve_base_url()
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:

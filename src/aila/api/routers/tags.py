@@ -174,7 +174,7 @@ async def list_system_tags(
     if platform is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Platform not initialized -- vulnerability module unavailable",
+            detail="Platform not initialized -- system tags unavailable",
         )
     module = platform.runtime.module_registry.first_with("list_system_tags")
     if module is None:
@@ -241,7 +241,7 @@ async def assign_system_tag(
         if platform is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Platform not initialized -- vulnerability module unavailable",
+                detail="Platform not initialized -- system tags unavailable",
             )
         module = platform.runtime.module_registry.first_with("assign_system_tag")
         if module is None:
@@ -286,7 +286,7 @@ async def delete_system_tag(
     if platform is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Platform not initialized -- vulnerability module unavailable",
+            detail="Platform not initialized -- system tags unavailable",
         )
     module = platform.runtime.module_registry.first_with("delete_system_tag")
     if module is None:

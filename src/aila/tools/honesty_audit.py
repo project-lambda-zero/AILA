@@ -1,6 +1,6 @@
 """honesty_audit -- AST-based structural honesty checker for Python code.
 
-Detects seventy-one categories of structural dishonesty:
+Detects seventy-two categories of structural dishonesty:
 
 1. unused_parameter    -- function parameter accepted but never referenced in body.
 2. misleading_name     -- function name implies intelligence but body only forwards.
@@ -73,6 +73,7 @@ Detects seventy-one categories of structural dishonesty:
 69. lifecycle_binding_copy_of_platform -- a module ``workflow/pause_resume.py`` binding is a full copy of ``platform/services/investigation_lifecycle.py`` instead of a thin dispatcher over ``pause_investigation`` / ``resume_investigation`` / ``reenqueue_investigation``. RFC-02 Phase 4 owns the four-source-of-truth atomic pause/resume/re-enqueue on the platform; a module keeps only the per-module enum coercion + record-model bindings. Sibling of rule 41 with its own scope + corpus.
 70. mcp_catalog_placement -- a subclass of :class:`McpRegistryServiceBase` defined inside ``src/aila/platform/**`` binds ``_servers`` to a literal MCP server catalog (a tuple/list of dict specs). The MCP server catalog is module domain: each module owns ``MCP_SERVERS`` in ``modules/<id>/services/mcp_registry.py`` and binds it onto the platform base via the ``_servers`` ClassVar. The platform base takes the catalog as class state supplied by the subclass and never hardcodes one -- a platform-side placement re-imports module domain into the platform layer and reopens the RFC-04 boundary. Structural guardrail (fires zero on the current tree).
 71. service_env_read -- a module ``modules/*/services/**`` file reads config via ``os.environ`` / ``os.getenv`` (attribute access or ``from os import environ/getenv``) instead of ``ConfigRegistry(module_id, key)``. Sibling of rule 49 (``agent_env_read``) for the services layer: RFC-04's config-drift closure removed every direct env read from module services so the DB override and per-module schema default both participate on one path. AST-based -- docstring or comment mentions of ``os.environ`` are invisible and never trip this.
+72. platform_hardcodes_strategy_family -- a file under ``src/aila/platform/**`` contains a string-literal AST node equal to one of the known module reasoning-strategy family names (``mobile_reverse`` / ``vulnerability_research`` / ``web_pentest`` / ``network_forensics`` / ``memory_forensics`` / ``persistence_hunt`` / ``malware_static`` / ``filesystem_triage``). The platform reasoning surface must not name a family owned by a module; strategy families are declared by each module via ``ModuleProtocol.reasoning_strategies()`` and resolved through the registry. The family literal ``generic`` is allowed because it is the platform's fallback family; ``tests/`` paths are exempt. Sibling of rule 48 for the reasoning-strategy surface (RFC-05 crit 6).
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -975,6 +976,35 @@ def _is_literal_server_catalog(value: ast.expr) -> bool:
 _SERVICES_SCOPE_PATTERN = _re.compile(
     r"[/\\]aila[/\\]modules[/\\][^/\\]+[/\\]services[/\\]"
 )
+
+# Rule 72 -- platform_hardcodes_strategy_family. Scope pattern matches any
+# file under ``src/aila/platform/**``. Reasoning-strategy families are
+# module domain (each module declares its families via
+# ``ModuleProtocol.reasoning_strategies()``); a platform file that names
+# one of these families in a string literal has re-imported module
+# domain into the platform layer. The family ``generic`` is the
+# platform's fallback and is deliberately absent from the banned set.
+# ``tests/`` paths are exempt so fixture strings that name a family
+# (e.g. a registry unit test that constructs a
+# ``ReasoningStrategyDeclaration(family="vulnerability_research")``) do
+# not trip the rule. Structural guardrail: green only after the
+# module-owned family literals move off the platform surface.
+_PLATFORM_STRATEGY_SCOPE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]platform[/\\]"
+)
+_PLATFORM_STRATEGY_TESTS_EXEMPT_PATTERN = _re.compile(
+    r"[/\\]tests[/\\]"
+)
+_MODULE_STRATEGY_FAMILIES: frozenset[str] = frozenset({
+    "mobile_reverse",
+    "vulnerability_research",
+    "web_pentest",
+    "network_forensics",
+    "memory_forensics",
+    "persistence_hunt",
+    "malware_static",
+    "filesystem_triage",
+})
 
 # Rule 50 -- static_node_mutation. Mutating a WorkflowDefinition.states map
 # after construction reopens the node set the dispatch-hub / phase-graph
@@ -5023,6 +5053,55 @@ class _HonestyVisitor(ast.NodeVisitor):
                             f"{alias.name}' (RFC-04 config-drift closure)",
                         )
 
+    def _check_platform_hardcodes_strategy_family(self, tree: ast.Module) -> None:
+        """Rule 72: platform_hardcodes_strategy_family -- a file under
+        ``src/aila/platform/**`` contains a string literal equal to a
+        module-owned reasoning-strategy family name.
+
+        Sibling of rule 48 (``platform_names_module``) for the
+        reasoning-strategy surface (RFC-05 crit 6). The platform must
+        not name a family owned by a module; each module declares its
+        families via ``ModuleProtocol.reasoning_strategies()`` and the
+        platform resolves the set through the registry.
+
+        The banned set (:data:`_MODULE_STRATEGY_FAMILIES`) covers every
+        family a module currently owns. The family ``generic`` is the
+        platform's fallback and is deliberately absent so a
+        ``ReasoningStrategyDeclaration(family="generic")`` on the
+        platform side stays green.
+
+        Scope: any file under ``src/aila/platform/**`` except paths
+        under ``tests/`` (fixture code that constructs a declaration
+        with a named family stays out of scope). Detection is a plain
+        walk of every ``ast.Constant`` whose value is a string; a
+        docstring or comment mention of the same family name is not a
+        string-literal node the platform reasoning surface would
+        read, so it never trips this. The check is unconditional:
+        it runs on every file and self-scopes on the path pattern.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if not _PLATFORM_STRATEGY_SCOPE_PATTERN.search(normalized):
+            return
+        if _PLATFORM_STRATEGY_TESTS_EXEMPT_PATTERN.search(normalized):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant):
+                continue
+            if not isinstance(node.value, str):
+                continue
+            if node.value not in _MODULE_STRATEGY_FAMILIES:
+                continue
+            self._emit(
+                node.lineno,
+                "platform_hardcodes_strategy_family",
+                f"platform_hardcodes_strategy_family: string literal "
+                f"{node.value!r} names a module-owned reasoning-strategy "
+                f"family from a platform file -- families are declared "
+                f"by each module via ModuleProtocol.reasoning_strategies() "
+                f"and resolved through the registry; the platform layer "
+                f"never hard-codes a module family (RFC-05 crit 6)",
+            )
+
 
 class HonestyAuditor:
     """Audit one or more Python source files for structural dishonesty.
@@ -5148,6 +5227,11 @@ class HonestyAuditor:
         # to modules/*/services/**), so the dispatch site is unconditional.
         visitor._check_mcp_catalog_placement(tree)
         visitor._check_service_env_read(tree)
+        # Rule 72: RFC-05 crit 6 -- the platform reasoning surface must
+        # not hard-code a module-owned strategy family. Self-scopes to
+        # src/aila/platform/** (with tests/ exempt), so the dispatch
+        # site is unconditional.
+        visitor._check_platform_hardcodes_strategy_family(tree)
         return visitor.findings
 
     def audit_directory(self, directory: Path) -> list[Finding]:

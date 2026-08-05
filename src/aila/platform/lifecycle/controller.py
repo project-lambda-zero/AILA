@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from sqlmodel import func, select
 
 from aila.platform.config import PlatformConfigSchema
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.eval.runner import EvalRunner
 from aila.platform.lifecycle.assignments import (
     AssignmentKind,

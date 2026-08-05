@@ -114,7 +114,7 @@ class TestDeadWorkerDetection:
         assert IDABridgeTool._looks_like_dead_worker(self._payload(phase=""))
 
     def test_error_message_names_symptom_and_action(self) -> None:
-        bridge = IDABridgeTool()
+        bridge = IDABridgeTool(module_id="vr")
         err = bridge._dead_worker_error("xrefs_to", {
             "binary_id": "b_abc123",
             "heartbeat_age_s": 75123,
@@ -140,25 +140,25 @@ class TestDedupCache:
     """Per-call dedup of ready payloads by sha256(action, kwargs)."""
 
     def test_fingerprint_stable_across_kwarg_order(self) -> None:
-        bridge = IDABridgeTool()
+        bridge = IDABridgeTool(module_id="vr")
         fp1 = bridge._dedup_fingerprint("xrefs_to", {"a": 1, "b": 2})
         fp2 = bridge._dedup_fingerprint("xrefs_to", {"b": 2, "a": 1})
         assert fp1 == fp2
 
     def test_fingerprint_diverges_on_kwargs(self) -> None:
-        bridge = IDABridgeTool()
+        bridge = IDABridgeTool(module_id="vr")
         fp1 = bridge._dedup_fingerprint("xrefs_to", {"binary_id": "b1"})
         fp2 = bridge._dedup_fingerprint("xrefs_to", {"binary_id": "b2"})
         assert fp1 != fp2
 
     def test_fingerprint_diverges_on_action(self) -> None:
-        bridge = IDABridgeTool()
+        bridge = IDABridgeTool(module_id="vr")
         fp1 = bridge._dedup_fingerprint("xrefs_to", {"binary_id": "b1"})
         fp2 = bridge._dedup_fingerprint("xrefs_from", {"binary_id": "b1"})
         assert fp1 != fp2
 
     def test_store_and_lookup_round_trip(self) -> None:
-        bridge = IDABridgeTool()
+        bridge = IDABridgeTool(module_id="vr")
         fp = bridge._dedup_fingerprint("xrefs_to", {"binary_id": "b1"})
         payload = {"status": "ready", "xrefs": [{"addr": "0x1"}]}
         bridge._dedup_store(fp, payload)
@@ -166,19 +166,19 @@ class TestDedupCache:
         assert cached == payload
 
     def test_lookup_miss_returns_none(self) -> None:
-        bridge = IDABridgeTool()
+        bridge = IDABridgeTool(module_id="vr")
         assert bridge._dedup_lookup("never-stored") is None
 
     def test_zero_ttl_disables_cache(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("IDA_HEADLESS_DEDUP_TTL_S", "0")
-        bridge = IDABridgeTool()
+        bridge = IDABridgeTool(module_id="vr")
         fp = bridge._dedup_fingerprint("xrefs_to", {"binary_id": "b1"})
         bridge._dedup_store(fp, {"status": "ready"})
         # store() with ttl=0 short-circuits; lookup returns None.
         assert bridge._dedup_lookup(fp) is None
 
     def test_expired_entry_evicted_on_lookup(self) -> None:
-        bridge = IDABridgeTool()
+        bridge = IDABridgeTool(module_id="vr")
         bridge._dedup_ttl_s = 0.01
         fp = bridge._dedup_fingerprint("xrefs_to", {"binary_id": "b1"})
         bridge._dedup_store(fp, {"status": "ready"})
@@ -188,7 +188,7 @@ class TestDedupCache:
         assert fp not in bridge._dedup_cache
 
     def test_dedup_actions_includes_canonical_read_tools(self) -> None:
-        bridge = IDABridgeTool()
+        bridge = IDABridgeTool(module_id="vr")
         # Read-only graph queries every sibling branch issues.
         for action in (
             "xrefs_to", "xrefs_from", "decompile",
@@ -199,7 +199,7 @@ class TestDedupCache:
             assert action in bridge._dedup_actions, action
 
     def test_dedup_actions_excludes_state_mutators(self) -> None:
-        bridge = IDABridgeTool()
+        bridge = IDABridgeTool(module_id="vr")
         for action in (
             "open_binary", "upload", "patch_assemble", "poll_analysis",
         ):

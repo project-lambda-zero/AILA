@@ -453,7 +453,7 @@ async def test_generic_client_wire_shape_matches_android_bridge(
         _android_bridge_mod, "_get_shared_client",
         new=lambda: _return(bridge_mock),
     ):
-        bridge = AndroidMcpBridgeTool(base_url=base_url)
+        bridge = AndroidMcpBridgeTool(base_url=base_url, module_id="vr")
         bridge_result = await bridge.forward(action=action, **kwargs)
 
     assert bridge_result.get("status") == "ready"

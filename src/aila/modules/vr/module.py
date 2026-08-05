@@ -79,16 +79,50 @@ class VRModule(ModuleProtocol):
                 family="vulnerability_research",
                 task_type="vulnerability_research",
                 description="Exploitability, advisory, and remediation reasoning.",
+                match_priority=20,
+                match_keywords=[
+                    "cve",
+                    "cvss",
+                    "advisory",
+                    "package version",
+                    "exploitability",
+                    "kev",
+                    "epss",
+                ],
             ),
             ReasoningStrategyDeclaration(
                 family="web_pentest",
                 task_type="web_pentest",
                 description="Web application attack-path reasoning.",
+                match_priority=60,
+                match_keywords=[
+                    "xss",
+                    "sqli",
+                    "idor",
+                    "csrf",
+                    "jwt",
+                    "token",
+                    "auth bypass",
+                    "request",
+                    "response",
+                    "endpoint",
+                    "burp",
+                ],
             ),
             ReasoningStrategyDeclaration(
                 family="mobile_reverse",
                 task_type="mobile_reverse",
                 description="Mobile app reverse-engineering and threat analysis.",
+                match_priority=10,
+                match_keywords=[
+                    "apk",
+                    "ipa",
+                    "android",
+                    "ios",
+                    "mobile",
+                    "dexclassloader",
+                    "manifest",
+                ],
             ),
         ]
 
@@ -171,7 +205,7 @@ class VRModule(ModuleProtocol):
         from aila.modules.vr.tools.poc_runner import PoCRunnerTool
         from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 
-        ida_bridge = IDABridgeTool(recorder=record_call)
+        ida_bridge = IDABridgeTool(recorder=record_call, module_id="vr")
         tool_registry.register(TOOL_IDA_BRIDGE, ida_bridge)
         tool_registry.register(TOOL_POC_RUNNER, PoCRunnerTool(settings))
         tool_registry.register(TOOL_PATCH_DIFFER, PatchDifferTool(ida_bridge))

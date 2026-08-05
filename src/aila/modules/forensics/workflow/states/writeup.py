@@ -8,6 +8,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from aila.platform.events import (
+    ModuleWorkflowCompleted,
+    ModuleWorkflowCompletedPayload,
+    publish,
+)
+
 __all__ = ["state_writeup"]
 
 _log = logging.getLogger(__name__)
@@ -99,6 +105,36 @@ async def state_writeup(
         f"Write-up persisted: {writeup_id[:8]} -- ready in the Write-ups tab",
         {"stage": "writeup_persisted", "writeup_id": writeup_id},
     )
+
+    # Domain-event emission for the investigation workflow terminal
+    # state (RFC-05 Phase 3). Fired after the write-up row is
+    # persisted; the following ``response_emit`` state is a terminal
+    # gate only. Guarded so a payload-construction fault cannot break
+    # the write-up handoff.
+    try:
+        run_id = str(getattr(services, "run_id", "") or "")
+        publish(
+            ModuleWorkflowCompleted(
+                source_module="forensics",
+                payload=ModuleWorkflowCompletedPayload(
+                    module_id="forensics",
+                    run_id=run_id,
+                    workflow_id="investigation",
+                    metrics={
+                        "writeup_id": writeup_id,
+                        "content_chars": content_chars,
+                        "build_elapsed_s": round(build_elapsed, 3),
+                        "step_count": len(steps),
+                    },
+                ),
+            ),
+        )
+    except (RuntimeError, ValueError, TypeError, AttributeError) as exc:
+        _log.warning(
+            "module.workflow.completed publish failed for project %s: %s",
+            project_id,
+            exc,
+        )
 
     from aila.platform.workflows.types import StateResult
 

@@ -325,7 +325,7 @@ class AndroidMcpBridgeTool(Tool):
 
     Usage::
 
-        bridge = AndroidMcpBridgeTool()
+        bridge = AndroidMcpBridgeTool(module_id="vr")
         resp = await bridge.forward(
             action="apktool_decode",
             apk_path="/path/to/app.apk",
@@ -382,12 +382,11 @@ class AndroidMcpBridgeTool(Tool):
         timeout: float | None = None,
         recorder: BridgeRecorder | None = None,
         *,
-        module_id: str = "vr",
+        module_id: str,
     ) -> None:
         # Owning module id drives the public tool name and config
-        # namespace. Defaults to "vr" so existing callers keep the exact
-        # name "vr.android_mcp_bridge" and the "vr" config namespace
-        # unchanged.
+        # namespace. Required kwarg: every construction site names its
+        # owning module explicitly (RFC-05 crit 4 hardening).
         self.module_id = module_id
         self.name = f"{module_id}.android_mcp_bridge"
         # ``base_url`` if explicitly supplied wins forever (tests, DI).

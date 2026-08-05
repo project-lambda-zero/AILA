@@ -154,6 +154,18 @@ class StrategyRegistry:
     def is_registered(self, family: str) -> bool:
         return family in self._by_family
 
+    def sorted_declarations(self) -> list[ReasoningStrategyDeclaration]:
+        """Return every registered declaration in classification order.
+
+        Ordered by ``(match_priority, family)`` so the deterministic
+        strategy classifier visits higher-precedence families first and
+        ties break on family name.
+        """
+        return sorted(
+            self._by_family.values(),
+            key=lambda decl: (decl.match_priority, decl.family),
+        )
+
     def clear(self) -> None:
         """Reset to the platform baseline (``generic`` only)."""
         self._by_family.clear()
@@ -188,25 +200,6 @@ class DomainProfileRegistry:
 # platform seeds only ``generic``; domains and families arrive from modules.
 _STRATEGY_REGISTRY = StrategyRegistry()
 _DOMAIN_PROFILE_REGISTRY = DomainProfileRegistry()
-
-# The strategy families the platform recognises without a module
-# registration. These are exactly the families ``select_strategy_family``
-# can return; keep the two in sync. ``resolve_domain_profile`` uses this
-# set to adapt a domain_id that names a built-in family into a
-# single-family profile, while a domain_id that names neither a
-# registered profile nor a built-in family falls back to ``generic``.
-_BUILTIN_STRATEGY_FAMILIES: frozenset[str] = frozenset({
-    "generic",
-    "mobile_reverse",
-    "vulnerability_research",
-    "network_forensics",
-    "memory_forensics",
-    "persistence_hunt",
-    "web_pentest",
-    "malware_static",
-    "filesystem_triage",
-})
-
 
 def register_reasoning_strategy(declaration: ReasoningStrategyDeclaration) -> None:
     """Register a module-declared strategy family into the platform registry."""
@@ -263,10 +256,11 @@ class CyberReasoningEngine:
            ``reasoning_domain_profile_{domain_id}`` (cached).
         2. Module-registered profile from the DomainProfileRegistry.
         3. Single-strategy self-adapter when ``domain_id`` names a
-           built-in strategy family (``_BUILTIN_STRATEGY_FAMILIES``).
+           strategy family already present in the StrategyRegistry
+           (a module-registered family other than ``generic``).
         4. Generic single-strategy profile (final fallback for a
            domain_id that names neither a registered profile nor a
-           built-in family).
+           registered family).
         """
         override = self._load_profile_override(domain_id)
         if override is not None:
@@ -274,11 +268,11 @@ class CyberReasoningEngine:
         profile = _DOMAIN_PROFILE_REGISTRY.resolve(domain_id)
         if profile is not None:
             return profile
-        if domain_id in _BUILTIN_STRATEGY_FAMILIES and domain_id != "generic":
+        if _STRATEGY_REGISTRY.is_registered(domain_id) and domain_id != "generic":
             return ReasoningDomainProfile(
                 domain_id=domain_id,
                 task_type=domain_id,
-                description="Cross-domain adapter for a built-in strategy family.",
+                description="Cross-domain adapter for a registered strategy family.",
                 allowed_strategies=[domain_id],
                 default_strategy=domain_id,
             )
@@ -1199,22 +1193,13 @@ class CyberReasoningEngine:
             ]
         ).lower()
 
-        if any(token in joined for token in ("apk", "ipa", "android", "ios", "mobile", "dexclassloader", "manifest")):
-            return "mobile_reverse"
-        if any(token in joined for token in ("cve", "cvss", "advisory", "package version", "exploitability", "kev", "epss")):
-            return "vulnerability_research"
-        if any(token in joined for token in ("pcap", "dns", "http", "tls", "sni", "beacon", "network traffic")):
-            return "network_forensics"
-        if any(token in joined for token in ("memory", "volatility", "lsass", "dll injection", "process tree", "memdump")):
-            return "memory_forensics"
-        if any(token in joined for token in ("run key", "autorun", "scheduled task", "service persistence", "launchagent", "startup folder", "registry")):
-            return "persistence_hunt"
-        if any(token in joined for token in ("xss", "sqli", "idor", "csrf", "jwt", "token", "auth bypass", "request", "response", "endpoint", "burp")):
-            return "web_pentest"
-        if any(token in joined for token in ("malware", "dropper", "loader", "payload", "packed", "shellcode")):
-            return "malware_static"
-        if project_kind == "raw_directory" or any(token in joined for token in ("filesystem", "archive", ".zip", ".7z", ".rar", ".tar")):
-            return "filesystem_triage"
+        for decl in _STRATEGY_REGISTRY.sorted_declarations():
+            if decl.family == "generic":
+                continue
+            if project_kind and project_kind in decl.match_project_kinds:
+                return decl.family
+            if any(tok in joined for tok in decl.match_keywords):
+                return decl.family
         return "generic"
 
     def validate_submission(

@@ -30,13 +30,15 @@ import inspect
 import json
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from graphlib import CycleError, TopologicalSorter
 
 from arq.connections import RedisSettings, create_pool
 from redis import asyncio as aioredis
+from sqlalchemy import cast
 from sqlalchemy import delete as _delete
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlmodel import func, select
 
@@ -551,6 +553,55 @@ class TaskQueue:
                 .where(TaskRecord.status == "queued")
             )).one()
             return count
+
+    async def enqueued_investigation_ids(
+        self, investigation_ids: Sequence[str],
+    ) -> set[str]:
+        """Return the subset of ``investigation_ids`` that already have
+        at least one ``TaskRecord`` row on file.
+
+        Read-only. Matches on the typed JSONB extract
+        ``(kwargs_json::jsonb)->>'investigation_id'`` so the check is on
+        a JSON path, not a substring, and cannot false-positive on
+        tasks that embed the same UUID in a different kwarg
+        (``parent_investigation_id`` etc.). Returned set is a subset of
+        the input; ids with no matching row are simply absent. Empty
+        input returns an empty set without touching the database.
+
+        RFC-05 crit 10: modules never query the platform-owned
+        ``taskrecord`` table directly. Cross-module reconcilers that
+        need to distinguish "child investigation already handed off to
+        the queue" from "child investigation still virgin" call this
+        method instead of importing :class:`TaskRecord` and running a
+        local JSONB-extract subquery. The platform owns the task
+        table; this is the public read side of that boundary.
+        """
+        if not investigation_ids:
+            return set()
+        # Preserve caller's ordering, drop duplicates -- IN (...) is
+        # unordered anyway and we return a set, so dedup keeps the
+        # bound-parameter list minimal without changing semantics.
+        ids = list(dict.fromkeys(investigation_ids))
+        extracted = cast(TaskRecord.kwargs_json, JSONB)[
+            "investigation_id"
+        ].astext
+        async with async_session_scope() as session:
+            rows = (await session.exec(
+                select(extracted)
+                .where(extracted.in_(ids))
+                .distinct()
+            )).all()
+        found: set[str] = set()
+        for row in rows:
+            # SQLModel session.exec returns Row tuples for a
+            # single-column select; unwrap to the plain string.
+            if hasattr(row, "__getitem__") and not isinstance(row, str):
+                value = row[0]
+            else:
+                value = row
+            if value is not None:
+                found.add(str(value))
+        return found
 
     async def requeue_failed(self, max_age_hours: int = 24) -> int:
         """Requeue recently failed tasks.

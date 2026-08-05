@@ -50,7 +50,7 @@ from uuid import uuid4
 from sqlalchemy import Column, DateTime, Text, UniqueConstraint, func
 from sqlmodel import Field, SQLModel, select
 
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.storage.database import async_session_scope
 
 __all__ = [

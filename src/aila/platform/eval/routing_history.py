@@ -31,7 +31,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from datetime import timedelta
 from typing import Any
 
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.eval.routing_learner import RoutingSample
 
 __all__ = [

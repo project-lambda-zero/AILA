@@ -55,6 +55,7 @@ def _template_record_call(*_args: Any, **_kwargs: Any) -> None:
 class ClaimVerifierAgent(ClaimVerifierAgentBase):
     """Template-scoped adversarial claim verifier."""
 
+    _MODULE_ID = "_template"
     _EXTRACTOR_TASK_TYPE = "template.verifier_extractor"
     _VERDICT_TASK_TYPE = "template.verifier_verdict"
 

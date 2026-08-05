@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from sqlmodel import select
 
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.prompts.version_models import (
     PromptAliasChangeRecord,
     PromptAliasRecord,

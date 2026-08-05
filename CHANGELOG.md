@@ -19,6 +19,18 @@ operator action.
 
 ### Added
 
+- Generic platform workflow and entity events (RFC-05 #30). The platform now
+  owns ModuleWorkflowStarted, ModuleWorkflowCompleted, and
+  ModuleEntityBatchUpserted; a module emits them with its own module id,
+  workflow id, and free-form payload. The vulnerability scan, the forensics
+  investigation, and the module template publish these at workflow start and
+  completion, and every published event lands in the platform journal.
+- A platform-owned task-queue query (RFC-05 #30). A module reconciler now asks
+  TaskQueue which investigations already have a queued task instead of querying
+  the task table directly, so a module never reads a platform-owned table.
+- Honesty rule 72 (`platform_hardcodes_strategy_family`) blocks a platform file
+  from naming a module reasoning-strategy family as a string literal; families
+  are declared by each module and resolved through the registry (RFC-05 #30).
 - The module config base is now complete (RFC-04 #29). ModuleConfigBase
   carries an llm_model field defaulting to the platform default model, and
   ModuleConfigReader gains get_typed and get_bool alongside the existing typed
@@ -609,6 +621,19 @@ operator action.
 
 ### Changed
 
+- Reasoning strategy families are module-declared (RFC-05 #30). Each module
+  publishes its families with their own match keywords and priority; the
+  platform seeds only the generic family and classifies a turn by consulting
+  the registry. The platform no longer hardcodes a fixed set of module-domain
+  strategy families or a keyword router that names them. Turn classification is
+  unchanged for the shipped modules.
+- The platform MCP bridge tools require an explicit owning module id
+  (RFC-05 #30). The tool name and config namespace derive from that id; the
+  previous implicit default is removed, so every construction site names the
+  module it belongs to and the platform bridge never assumes a specific module.
+- Platform-internal modules import the shared contract helpers (utc_now and the
+  JSON type aliases) from the public contracts path rather than the private
+  submodule (RFC-05 #30).
 - Module config reads consolidate onto a single module-scoped
   ModuleConfigReader (RFC-04 #29). The per-module config-helpers indirection is
   gone; each consumer resolves typed config through the shared reader, and

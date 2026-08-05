@@ -249,6 +249,9 @@ class ReasoningStrategyDeclaration(BaseModel):
     family: str
     task_type: str
     description: str = ""
+    match_keywords: list[str] = Field(default_factory=list)
+    match_priority: int = 100
+    match_project_kinds: list[str] = Field(default_factory=list)
 
 
 class ReasoningDomainProfile(BaseModel):

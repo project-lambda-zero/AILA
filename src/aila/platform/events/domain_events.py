@@ -23,8 +23,9 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from ..contracts import JsonObject
 from ..contracts._common import utc_now
 from ..llm.correlation import current_join_keys
 
@@ -38,6 +39,12 @@ __all__ = [
     "DomainEvent",
     "LlmCallCompleted",
     "LlmCallCompletedPayload",
+    "ModuleEntityBatchUpserted",
+    "ModuleEntityBatchUpsertedPayload",
+    "ModuleWorkflowCompleted",
+    "ModuleWorkflowCompletedPayload",
+    "ModuleWorkflowStarted",
+    "ModuleWorkflowStartedPayload",
     "SystemDeregistered",
     "SystemDeregisteredPayload",
     "SystemRegistered",
@@ -128,6 +135,49 @@ class LlmCallCompletedPayload(BaseModel):
     duration: float
 
 
+class ModuleWorkflowStartedPayload(BaseModel):
+    """Payload for module.workflow.started events.
+
+    ``module_id`` names the owning module (e.g. "vulnerability",
+    "forensics"); ``workflow_id`` is the module-scoped workflow name
+    (e.g. "scan", "investigation"). The payload identifies WHICH module
+    started WHAT workflow -- the platform event class itself carries no
+    module vocabulary.
+    """
+
+    module_id: str
+    run_id: str
+    workflow_id: str
+    metadata: JsonObject = Field(default_factory=dict)
+
+
+class ModuleWorkflowCompletedPayload(BaseModel):
+    """Payload for module.workflow.completed events.
+
+    ``metrics`` carries whatever counters the module considers salient
+    for the completed run (finding_count, duration_s, artifact_count).
+    """
+
+    module_id: str
+    run_id: str
+    workflow_id: str
+    metrics: JsonObject = Field(default_factory=dict)
+
+
+class ModuleEntityBatchUpsertedPayload(BaseModel):
+    """Payload for module.entity.batch_upserted events.
+
+    Generic bulk-upsert notification. ``entity_type`` is a
+    module-scoped table/entity name; ``items`` carries the upserted
+    rows as plain JSON objects so subscribers do not need module
+    imports.
+    """
+
+    module_id: str
+    entity_type: str
+    items: list[JsonObject] = Field(default_factory=list)
+
+
 # --- Events (frozen dataclasses inheriting DomainEvent) ---
 
 
@@ -193,5 +243,46 @@ class LlmCallCompleted(DomainEvent):
     payload: LlmCallCompletedPayload = field(
         default_factory=lambda: LlmCallCompletedPayload(
             model="", tokens=0, cost=0.0, duration=0.0,
+        ),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleWorkflowStarted(DomainEvent):
+    """Emitted when a module's workflow run starts.
+
+    Generic across every module. The owning module identifies itself
+    through ``payload.module_id`` and ``payload.workflow_id``; the
+    platform class holds no module vocabulary (rule 46).
+    """
+
+    event_type: str = "module.workflow.started"
+    payload: ModuleWorkflowStartedPayload = field(
+        default_factory=lambda: ModuleWorkflowStartedPayload(
+            module_id="", run_id="", workflow_id="",
+        ),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleWorkflowCompleted(DomainEvent):
+    """Emitted when a module's workflow run reaches its terminal state."""
+
+    event_type: str = "module.workflow.completed"
+    payload: ModuleWorkflowCompletedPayload = field(
+        default_factory=lambda: ModuleWorkflowCompletedPayload(
+            module_id="", run_id="", workflow_id="",
+        ),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleEntityBatchUpserted(DomainEvent):
+    """Emitted when a module upserts a batch of domain entities."""
+
+    event_type: str = "module.entity.batch_upserted"
+    payload: ModuleEntityBatchUpsertedPayload = field(
+        default_factory=lambda: ModuleEntityBatchUpsertedPayload(
+            module_id="", entity_type="",
         ),
     )

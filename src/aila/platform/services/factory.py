@@ -254,7 +254,7 @@ def _build_system_emitter() -> EventEmitter:
     live-fan-out for admin UIs injects a custom ``system_emitter``
     on the factory constructor.
     """
-    from aila.platform.contracts._common import utc_now
+    from aila.platform.contracts import utc_now
     from aila.platform.events.event import PlatformEvent
 
     log = _logging.getLogger("aila.platform.services.system.emitter")

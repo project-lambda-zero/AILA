@@ -26,7 +26,7 @@ from uuid import uuid4
 from sqlalchemy import DateTime, Index, Text
 from sqlmodel import Field, SQLModel
 
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 
 __all__ = [
     "AssignmentKind",

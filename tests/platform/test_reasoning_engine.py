@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from aila.modules.vr.module import VRModule
 from aila.platform.contracts.reasoning import (
     EvidenceProvenance,
     Hypothesis,
@@ -13,7 +14,11 @@ from aila.platform.contracts.reasoning import (
     RejectedHypothesis,
  )
 from aila.platform.exceptions import ValidationError
-from aila.platform.services.reasoning import CyberReasoningEngine
+from aila.platform.services.reasoning import (
+    CyberReasoningEngine,
+    register_reasoning_strategy,
+    reset_reasoning_registries,
+)
 
 
 class _FakeResponse:
@@ -227,24 +232,33 @@ def test_render_case_model_partitions_tool_observables_across_three_mcp_servers(
 
 
 def test_select_strategy_family_routes_mobile_and_vuln_cases() -> None:
-    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
-    empty_state = ReasoningCaseState()
+    # RFC-05 (d): strategy families are module-declared. The platform seeds
+    # only ``generic``; register VR's families so the classifier can route
+    # to them via their declared match_keywords/match_priority.
+    reset_reasoning_registries()
+    for decl in VRModule().reasoning_strategies():
+        register_reasoning_strategy(decl)
+    try:
+        engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+        empty_state = ReasoningCaseState()
 
-    mobile = engine.select_strategy_family(
-        question="Does this APK use dynamic code loading?",
-        case_state=empty_state,
-        evidence_listing="sample.apk",
-        project_kind="disk_evidence",
-    )
-    vuln = engine.select_strategy_family(
-        question="Is CVE-2026-1234 exploitable in this package version?",
-        case_state=empty_state,
-        evidence_listing="inventory.txt",
-        project_kind="disk_evidence",
-    )
+        mobile = engine.select_strategy_family(
+            question="Does this APK use dynamic code loading?",
+            case_state=empty_state,
+            evidence_listing="sample.apk",
+            project_kind="disk_evidence",
+        )
+        vuln = engine.select_strategy_family(
+            question="Is CVE-2026-1234 exploitable in this package version?",
+            case_state=empty_state,
+            evidence_listing="inventory.txt",
+            project_kind="disk_evidence",
+        )
 
-    assert mobile == "mobile_reverse"
-    assert vuln == "vulnerability_research"
+        assert mobile == "mobile_reverse"
+        assert vuln == "vulnerability_research"
+    finally:
+        reset_reasoning_registries()
 
 
 def test_build_user_prompt_embeds_strategy_and_context() -> None:
@@ -311,13 +325,23 @@ def test_validate_submission_accepts_prior_output_and_observables() -> None:
 
 
 def test_resolve_domain_profile_returns_cross_domain_adapter() -> None:
-    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
-    profile = engine.resolve_domain_profile("mobile_reverse")
+    # RFC-05 (d) step 3: a domain_id that names a registered strategy family
+    # but has no registered domain profile resolves to a single-strategy
+    # self-adapter. Register VR's families (not its profiles) so
+    # ``mobile_reverse`` is a known family without a profile of its own.
+    reset_reasoning_registries()
+    for decl in VRModule().reasoning_strategies():
+        register_reasoning_strategy(decl)
+    try:
+        engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+        profile = engine.resolve_domain_profile("mobile_reverse")
 
-    assert profile.domain_id == "mobile_reverse"
-    assert profile.task_type == "mobile_reverse"
-    assert "mobile_reverse" in profile.allowed_strategies
-    assert profile.default_strategy == "mobile_reverse"
+        assert profile.domain_id == "mobile_reverse"
+        assert profile.task_type == "mobile_reverse"
+        assert "mobile_reverse" in profile.allowed_strategies
+        assert profile.default_strategy == "mobile_reverse"
+    finally:
+        reset_reasoning_registries()
 
 
 def test_select_strategy_family_respects_operator_pin() -> None:

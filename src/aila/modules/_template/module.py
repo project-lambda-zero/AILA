@@ -281,11 +281,20 @@ class TemplateModule(ModuleProtocol):
         ``modules/forensics/module.py`` for populated examples.
 
         Returns:
-            A list of ReasoningStrategyDeclaration. Empty (as here) means the
-            module does not publish reasoning strategies of its own and the
-            engine falls back to the platform ``generic`` family.
+            A list of ReasoningStrategyDeclaration. The example below carries
+            a non-domain family name so it never collides with a real module
+            or trips the crit-6 hardcoded-family guard. Replace or extend it
+            with real families when copying this template.
         """
-        return []
+        return [
+            ReasoningStrategyDeclaration(
+                family="template_example",
+                task_type="template_example",
+                description="Example strategy for a copied module.",
+                match_keywords=["template_example_keyword"],
+                match_priority=100,
+            ),
+        ]
 
     def reasoning_domain_profiles(self) -> list[ReasoningDomainProfile]:
         """Reasoning domain profiles this module publishes (RFC-05 concern d).

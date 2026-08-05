@@ -52,7 +52,7 @@ from uuid import uuid4
 from sqlalchemy import DateTime, Index, Text
 from sqlmodel import Field, SQLModel, select
 
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.storage.database import async_session_scope
 
 # Vote string literals held here as SINGLE SOURCE for the eval module.

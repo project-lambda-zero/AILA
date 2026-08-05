@@ -165,7 +165,7 @@ def _make_bridge(root: Path, index_id: str = "idx1") -> AuditMcpBridgeTool:
     ``_INDEX_ROOTS`` is class-level; each test overrides it wholesale
     so the previous test can't leak an index_id / root pair.
     """
-    tool = AuditMcpBridgeTool(base_url="http://127.0.0.1:1")
+    tool = AuditMcpBridgeTool(base_url="http://127.0.0.1:1", module_id="vr")
     AuditMcpBridgeTool._INDEX_ROOTS = {index_id: str(root)}
     return tool
 

@@ -104,6 +104,7 @@ class ClaimVerifierAgent(ClaimVerifierAgentBase):
     # keys are populated they fall back to ``llm_default_model``;
     # routing the verdict stage to a different model is the meaningful
     # follow-up.
+    _MODULE_ID = "vr"
     _EXTRACTOR_TASK_TYPE = "vulnerability_research.verifier_extractor"
     _VERDICT_TASK_TYPE = "vulnerability_research.verifier_verdict"
 

@@ -32,6 +32,11 @@ from aila.modules._template.db_models import (
     TemplateTargetRecord,
 )
 from aila.platform.contracts.enums import PersonaVoice
+from aila.platform.events import (
+    ModuleWorkflowStarted,
+    ModuleWorkflowStartedPayload,
+    publish,
+)
 from aila.platform.workflows.investigation_setup_base import (
     InvestigationStateBindings,
     InvestigationStateHooks,
@@ -44,6 +49,13 @@ from aila.platform.workflows.persona_spawn import spawn_persona_siblings
 __all__ = ["state_investigation_setup"]
 
 _log = logging.getLogger(__name__)
+
+# The module id under which this scaffold registers with the platform
+# module registry. A real module renames this string alongside every
+# other ``template`` reference (queue name, group id, etc). Kept as a
+# top-level constant so the domain-event emission below and the
+# ``_SETUP_BINDINGS`` binding share the same source of truth.
+MODULE_ID = "template"
 
 # ARQ track (== queue name) and cross-module group id for the sibling
 # spawn fan-out. Rename in one place; every submit below picks it up.
@@ -141,15 +153,60 @@ _SETUP_BINDINGS = InvestigationStateBindings(
     unspecified_persona_value=PersonaVoice.UNSPECIFIED.value,
     spawn_fn=_spawn_persona_siblings_and_enqueue,
     auto_deliberation_enabled=_is_auto_deliberation_enabled,
-    module_id="template",
+    module_id=MODULE_ID,
 )
 # A real module adds its per-module hooks here (CVE intel resolver,
 # retrieved-knowledge resolver, etc.). Every hook is optional; unset
 # leaves the platform default in place.
 _SETUP_HOOKS = InvestigationStateHooks()
 
-# The setup handler IS the platform factory bound to the template's
-# models + hooks. No local body: the factory owns the entire setup
-# behavior and rule 41 in ``aila.tools.honesty_audit`` locks this file
-# out of drifting a copy back in.
-state_investigation_setup = _build_setup_state(_SETUP_BINDINGS, _SETUP_HOOKS)
+# The setup body IS the platform factory bound to the template's
+# models + hooks. No local reimplementation: the factory owns the
+# entire setup behavior and rule 41 in ``aila.tools.honesty_audit``
+# locks vr/malware copies out. The public ``state_investigation_setup``
+# below is a thin wrapper that publishes the canonical
+# ``module.workflow.started`` domain event (RFC-05 Phase 3) and then
+# delegates to the platform factory. Copiers keep the wrapper and
+# swap ``MODULE_ID`` / ``workflow_id`` to their module's vocabulary.
+_platform_state_investigation_setup = _build_setup_state(
+    _SETUP_BINDINGS, _SETUP_HOOKS,
+)
+
+
+async def state_investigation_setup(
+    input: dict[str, Any],
+    services: Any,
+) -> Any:
+    """Publish ``module.workflow.started``, then run the platform setup.
+
+    Canonical example emit for a new module (RFC-05 Phase 3, crit 13).
+    A copier keeps this wrapper shape and swaps ``MODULE_ID`` /
+    ``workflow_id`` for their module. The publish is guarded so a
+    payload-construction fault cannot break setup; the bus itself
+    isolates subscriber errors, so a successful publish always reaches
+    the journal-persist subscriber.
+    """
+    try:
+        run_id = str(getattr(services, "run_id", "") or "")
+        publish(
+            ModuleWorkflowStarted(
+                source_module=MODULE_ID,
+                payload=ModuleWorkflowStartedPayload(
+                    module_id=MODULE_ID,
+                    run_id=run_id,
+                    workflow_id="investigation",
+                    metadata={
+                        "investigation_id": str(
+                            input.get("investigation_id") or "",
+                        ),
+                    },
+                ),
+            ),
+        )
+    except (RuntimeError, ValueError, TypeError, AttributeError) as exc:
+        _log.warning(
+            "module.workflow.started publish failed for run %s: %s",
+            getattr(services, "run_id", ""),
+            exc,
+        )
+    return await _platform_state_investigation_setup(input, services)

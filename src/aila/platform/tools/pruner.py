@@ -37,7 +37,7 @@ from typing import TypedDict
 import sqlalchemy.exc
 from sqlalchemy import delete, func, select
 
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import ArtifactRecord
 from aila.storage.memory import PermanentMemoryStore
