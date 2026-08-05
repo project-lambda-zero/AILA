@@ -636,7 +636,7 @@ class AgentTurnRunnerBase:
             except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError, LLMError) as exc:
                 # Wrap every engine failure as self._error_cls so the loop's
                 # researcher_error handler catches it, sets
-                # exit_reason='researcher_error:<msg>', and _resolve_final_status
+                # exit_reason='researcher_error:<msg>', and resolve_final_status
                 # leaves the investigation RUNNING while auto_continue
                 # re-enqueues this branch. LLMError was previously absent from
                 # this tuple: a non-retryable provider error (a 400 model

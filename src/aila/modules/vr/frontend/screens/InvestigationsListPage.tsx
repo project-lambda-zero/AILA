@@ -59,6 +59,7 @@ const STATUS_DOT: Record<InvestigationStatus, string> = {
   completed: "#8ec5ff",
   failed: "#f0a8c7",
   abandoned: "#9aa0a6",
+  stalled: "#9aa0a6",
 };
 
 // Priority for the default "Smart" sort: live and actionable first.
@@ -67,8 +68,9 @@ const STATUS_PRIORITY: Record<InvestigationStatus, number> = {
   paused: 1,
   completed: 2,
   failed: 3,
-  created: 4,
-  abandoned: 5,
+  stalled: 4,
+  created: 5,
+  abandoned: 6,
 };
 
 const KIND_ICON: Record<InvestigationKind, Icon> = {
@@ -661,9 +663,8 @@ export function InvestigationsListPage() {
           </div>
           <p className="text-xs text-text-muted mb-4 leading-relaxed">
             Pick a target you already onboarded under{" "}
-            <strong>Workspaces → Targets</strong>. Workflow{" "}
-            <code className="font-mono">VR_INVESTIGATE_V1</code> fires
-            immediately on create.
+            <strong>Workspaces → Targets</strong>. The adaptive
+            investigation hub fires immediately on create.
           </p>
           <div className="space-y-3">
             <input

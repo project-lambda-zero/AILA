@@ -1,13 +1,25 @@
 """Dispatch-hub graph run through the real DurableStateMachine (RFC-13 Phase 4)."""
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from aila.platform.services.ledger import LedgerService, make_discovery_condition
+from aila.platform.contracts.enums import InvestigationStatus
+from aila.platform.services.ledger import (
+    InvestigationLedgerRecord,
+    LedgerService,
+    make_discovery_condition,
+)
 from aila.platform.services.oracle import Oracle
 from aila.platform.workflows import DurableStateMachine, StateResult
+from aila.platform.workflows.investigation_emit_base import (
+    _NON_CONTINUE_EXIT_REASONS,
+    resolve_final_status,
+)
 from aila.platform.workflows.phase_graph import (
     DISPATCH_STATE,
+    DispatchEscalationModels,
     PhaseSpec,
     build_dispatch_workflow,
 )
@@ -23,7 +35,12 @@ async def _svc(run_id: str) -> Any:
     return object()
 
 
-def _make_wf(phases: tuple[PhaseSpec, ...], ran: list[str]) -> Any:
+def _make_wf(
+    phases: tuple[PhaseSpec, ...],
+    ran: list[str],
+    *,
+    escalation_models: DispatchEscalationModels | None = None,
+) -> Any:
     def setup_builder(next_state: str) -> Any:
         async def _h(state_input: dict[str, Any], services: Any) -> StateResult:
             del services
@@ -47,6 +64,7 @@ def _make_wf(phases: tuple[PhaseSpec, ...], ran: list[str]) -> Any:
         setup_builder=setup_builder,
         loop_builder=loop_builder,
         emit_handler=emit_handler,
+        escalation_models=escalation_models,
     )
 
 
@@ -231,3 +249,148 @@ async def test_full_loop_unratified_request_does_not_activate_confirmed_phase(
     )
     assert ran == ["recon"]  # deep never activated -- discovery unconfirmed
     assert out.get("stalled") is True
+
+
+# -- RFC-13 #68 stall-to-escalation ------------------------------------------
+
+
+async def _seed_old_replan(investigation_id: str, age_seconds: float) -> None:
+    """Pre-write an OLD unratified replan row so the hub's stall handler
+    finds an aged idempotency-keyed duplicate on its own append attempt.
+
+    Uses the exact idempotency key the hub itself computes for the
+    empty-visited-set case (``replan:``), so ``append_general`` on the
+    hub side is a no-op and the row this test inserted survives with
+    its backdated ``created_at``.
+    """
+    backdated = datetime.now(UTC) - timedelta(seconds=age_seconds)
+    async with async_session_scope() as session:
+        session.add(
+            InvestigationLedgerRecord(
+                investigation_id=investigation_id,
+                author_branch_id="__hub__",
+                kind="request",
+                payload_json=json.dumps({
+                    "intent": "replan",
+                    "reason": "pre-existing aged replan (test seed)",
+                    "blocked": ["blocked"],
+                }),
+                idempotency_key="replan:",
+                created_at=backdated,
+            )
+        )
+        await session.commit()
+
+
+async def test_stall_timed_out_escalates_and_emits_hub_stalled_timeout(
+    workflow_run_id: str, monkeypatch,
+) -> None:
+    """An unratified replan aged past ``platform.dispatch_replan_timeout_s``
+    causes the hub to emit ``hub_stalled_timeout`` (distinct from the
+    within-window ``hub_stalled``) AND call ``post_dispatch_stall_escalation``
+    with the configured escalation_models. Default window is 1800s; we
+    seed a replan aged 3600s so age > window unconditionally."""
+    ran: list[str] = []
+    calls: list[dict[str, Any]] = []
+
+    async def _spy(
+        *, investigation_id: str, blocked_phases: list[str],
+        replan_age_s: float, message_model: Any, branch_model: Any,
+    ) -> str | None:
+        calls.append({
+            "investigation_id": investigation_id,
+            "blocked_phases": list(blocked_phases),
+            "replan_age_s": replan_age_s,
+            "message_model": message_model,
+            "branch_model": branch_model,
+        })
+        return "spy-msg-id"
+
+    monkeypatch.setattr(
+        "aila.platform.agents.auto_steering.post_dispatch_stall_escalation",
+        _spy,
+    )
+
+    class _FakeMessageModel:
+        pass
+
+    class _FakeBranchModel:
+        pass
+
+    await _seed_old_replan(workflow_run_id, age_seconds=3600.0)
+
+    phases = (PhaseSpec(name="blocked", condition=_never),)
+    wf = _make_wf(
+        phases, ran,
+        escalation_models=DispatchEscalationModels(
+            message_model=_FakeMessageModel,
+            branch_model=_FakeBranchModel,
+        ),
+    )
+    out = await DurableStateMachine.execute(
+        workflow_run_id, wf, {"investigation_id": workflow_run_id},
+    )
+
+    assert out.get("stalled") is True
+    assert out.get("exit_reason") == "hub_stalled_timeout"
+    assert out.get("blocked_phases") == ["blocked"]
+    assert out.get("replan_age_s", 0) >= 3600.0
+    assert ran == []
+
+    assert len(calls) == 1, calls
+    call = calls[0]
+    assert call["investigation_id"] == workflow_run_id
+    assert call["blocked_phases"] == ["blocked"]
+    assert call["replan_age_s"] >= 3600.0
+    assert call["message_model"] is _FakeMessageModel
+    assert call["branch_model"] is _FakeBranchModel
+
+
+async def test_stall_timed_out_without_escalation_models_still_flips_status(
+    workflow_run_id: str, monkeypatch,
+) -> None:
+    """The STALLED terminal-status flip must NOT be gated on
+    ``escalation_models``: when a module has not (yet) bound its record
+    types, the hub still emits ``hub_stalled_timeout`` so the operator
+    sees the stall in the investigation status column. The escalation
+    post is simply skipped (verified via the spy never firing)."""
+    ran: list[str] = []
+    calls: list[dict[str, Any]] = []
+
+    async def _spy(**kwargs: Any) -> str | None:
+        calls.append(kwargs)
+        return None
+
+    monkeypatch.setattr(
+        "aila.platform.agents.auto_steering.post_dispatch_stall_escalation",
+        _spy,
+    )
+
+    await _seed_old_replan(workflow_run_id, age_seconds=3600.0)
+
+    phases = (PhaseSpec(name="blocked", condition=_never),)
+    wf = _make_wf(phases, ran, escalation_models=None)
+    out = await DurableStateMachine.execute(
+        workflow_run_id, wf, {"investigation_id": workflow_run_id},
+    )
+
+    assert out.get("exit_reason") == "hub_stalled_timeout"
+    assert out.get("stalled") is True
+    assert calls == []  # escalation post skipped, terminal flip preserved
+
+
+def test_hub_stalled_timeout_is_terminal_and_maps_to_stalled() -> None:
+    """Contract assertions the emit-state relies on: ``hub_stalled_timeout``
+    is in the non-continue set (so auto_continue never re-enqueues on it)
+    and ``resolve_final_status`` maps it to ``InvestigationStatus.STALLED``.
+    The plain ``hub_stalled`` reason must still fall through to COMPLETED
+    so within-window stalls preserve their historical behavior."""
+    assert "hub_stalled_timeout" in _NON_CONTINUE_EXIT_REASONS
+    assert "hub_stalled" in _NON_CONTINUE_EXIT_REASONS  # unchanged
+    assert resolve_final_status("hub_stalled_timeout") == (
+        InvestigationStatus.STALLED.value
+    )
+    assert resolve_final_status("hub_stalled") == (
+        InvestigationStatus.COMPLETED.value
+    )
+    assert InvestigationStatus.STALLED.value == "stalled"

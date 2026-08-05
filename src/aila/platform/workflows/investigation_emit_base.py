@@ -53,7 +53,7 @@ from aila.platform.workflows.types import (
 
 _log = logging.getLogger(__name__)
 
-__all__ = ["state_investigation_emit"]
+__all__ = ["resolve_final_status", "state_investigation_emit"]
 
 # RFC-13 wiring audit: bound the researcher_error auto_continue path. That
 # path re-enqueues on the SAME turn (turn_count is not advanced), so
@@ -64,17 +64,85 @@ __all__ = ["state_investigation_emit"]
 _MAX_AUTO_CONTINUE_CYCLES: int = 30
 
 # RFC-13 wiring audit: exit_reasons that mean "the branch or hub is DONE,
-# do NOT auto-continue". phase_graph.make_dispatch_router emits the three
+# do NOT auto-continue". phase_graph.make_dispatch_router emits the four
 # ``hub_*`` reasons at hub->emit transitions; ``tool_loop_blocked`` is the
 # tool-executor's breaker signal. Any of these MUST short-circuit
 # _should_auto_continue regardless of the historical
 # ``exit_reason == 'max_turns'`` matcher.
+#
+# RFC-13 #68: ``hub_stalled_timeout`` is a distinct reason from
+# ``hub_stalled`` -- a stalled hub raises one replan request and stays
+# ``hub_stalled`` (COMPLETED, historical behavior) inside the window; if
+# no sibling ratifies the replan before ``platform.dispatch_replan_timeout_s``
+# elapses, the hub emits ``hub_stalled_timeout`` which flips the
+# investigation to STALLED via ``resolve_final_status`` and fires the
+# operator escalation from ``phase_graph``.
 _NON_CONTINUE_EXIT_REASONS: frozenset[str] = frozenset({
     "hub_complete",
     "hub_stalled",
+    "hub_stalled_timeout",
     "hub_budget_exhausted",
     "tool_loop_blocked",
 })
+
+
+def resolve_final_status(exit_reason: str) -> str | None:
+    """Pick the final InvestigationStatus given the loop's exit reason.
+
+    Returns None when the status should NOT be touched -- the investigation
+    stays RUNNING so sibling branches can continue. Only terminal_submit
+    with no active siblings sets COMPLETED (handled in state_investigation_emit
+    body, not here). researcher_error returns None so the branch fails
+    silently without killing the whole investigation -- other branches
+    continue, and auto_continue re-enqueues this branch.
+
+    Pure function -- no closure over bindings/hooks -- so tests can call
+    it directly to assert the exit_reason -> status contract without
+    building an emit-state handler.
+    """
+    if exit_reason == "terminal_submit":
+        return InvestigationStatus.COMPLETED.value
+    if exit_reason == "max_turns":
+        return InvestigationStatus.COMPLETED.value
+    if exit_reason == "hub_stalled_timeout":
+        # RFC-13 #68: distinct terminal status for a dispatch hub
+        # whose replan request went unratified past the configured
+        # window (``platform.dispatch_replan_timeout_s``). Falling
+        # through to the default COMPLETED here would silently
+        # succeed the exact failure mode the escalation exists to
+        # surface -- the whole point of ``hub_stalled_timeout`` is
+        # that the operator needs to see it, so map it to STALLED.
+        # The plain ``hub_stalled`` reason (within-window) still
+        # falls through to COMPLETED below, matching the historical
+        # behavior a stalled panel gets one bounded retry window.
+        return InvestigationStatus.STALLED.value
+    if exit_reason.startswith(("status_flipped:", "inv_status_flipped:", "branch_status_flipped:")):
+        # Loop saw the investigation OR branch flipped underneath it
+        # mid-execution -- e.g. operator just paused, sibling just hit
+        # terminal_submit, etc. The new status is already authoritative;
+        # do NOT overwrite it with a fresh COMPLETED here. The historical
+        # bug: only ``status_flipped:`` (no ``inv_`` prefix) was matched,
+        # so every ``inv_status_flipped:completed`` reason fell through
+        # to the default fallback and triggered a second flip to
+        # COMPLETED. Harmless when the prior status WAS completed, but
+        # catastrophic on operator reopen -- the moment any worker saw
+        # the freshly-set RUNNING state and exited with a transient
+        # flipped reason, this path re-flipped to COMPLETED, closing
+        # the reopen window inside the same second.
+        return None
+    if exit_reason.startswith("status_locked:"):
+        # Setup hit a PAUSED / COMPLETED / FAILED row and short-circuited.
+        # Whatever the operator (or prior cap_exceeded) set is already
+        # correct -- emit must NOT overwrite it. Without this, paused
+        # investigations get flipped to completed because the default
+        # fallthrough below returns COMPLETED.
+        return None
+    if exit_reason.startswith("researcher_error"):
+        # ALL researcher errors (retryable or not) leave status untouched.
+        # A single branch hitting a provider 500 should NOT kill the
+        # entire investigation. auto_continue will re-enqueue the branch.
+        return None
+    return InvestigationStatus.COMPLETED.value
 
 
 def state_investigation_emit(
@@ -88,47 +156,7 @@ def state_investigation_emit(
     other at run time, so definition order does not matter.
     """
 
-    def _resolve_final_status(exit_reason: str) -> str | None:
-        """Pick the final InvestigationStatus given the loop's exit reason.
 
-        Returns None when the status should NOT be touched -- the investigation
-        stays RUNNING so sibling branches can continue. Only terminal_submit
-        with no active siblings sets COMPLETED (handled in state_investigation_emit
-        body, not here). researcher_error returns None so the branch fails
-        silently without killing the whole investigation -- other branches
-        continue, and auto_continue re-enqueues this branch.
-        """
-        if exit_reason == "terminal_submit":
-            return InvestigationStatus.COMPLETED.value
-        if exit_reason == "max_turns":
-            return InvestigationStatus.COMPLETED.value
-        if exit_reason.startswith(("status_flipped:", "inv_status_flipped:", "branch_status_flipped:")):
-            # Loop saw the investigation OR branch flipped underneath it
-            # mid-execution -- e.g. operator just paused, sibling just hit
-            # terminal_submit, etc. The new status is already authoritative;
-            # do NOT overwrite it with a fresh COMPLETED here. The historical
-            # bug: only ``status_flipped:`` (no ``inv_`` prefix) was matched,
-            # so every ``inv_status_flipped:completed`` reason fell through
-            # to the default fallback and triggered a second flip to
-            # COMPLETED. Harmless when the prior status WAS completed, but
-            # catastrophic on operator reopen -- the moment any worker saw
-            # the freshly-set RUNNING state and exited with a transient
-            # flipped reason, this path re-flipped to COMPLETED, closing
-            # the reopen window inside the same second.
-            return None
-        if exit_reason.startswith("status_locked:"):
-            # Setup hit a PAUSED / COMPLETED / FAILED row and short-circuited.
-            # Whatever the operator (or prior cap_exceeded) set is already
-            # correct -- emit must NOT overwrite it. Without this, paused
-            # investigations get flipped to completed because the default
-            # fallthrough below returns COMPLETED.
-            return None
-        if exit_reason.startswith("researcher_error"):
-            # ALL researcher errors (retryable or not) leave status untouched.
-            # A single branch hitting a provider 500 should NOT kill the
-            # entire investigation. auto_continue will re-enqueue the branch.
-            return None
-        return InvestigationStatus.COMPLETED.value
 
     async def _should_auto_continue(
         investigation_id: str,
@@ -339,7 +367,7 @@ def state_investigation_emit(
                 },
             )
 
-        final_status = _resolve_final_status(exit_reason)
+        final_status = resolve_final_status(exit_reason)
 
         # Investigation-level caps (turns/messages/wall-clock). If exceeded,
         # halt ALL active branches + flip investigation to COMPLETED with a
@@ -601,11 +629,13 @@ def state_investigation_emit(
                         InvestigationStatus.COMPLETED.value,
                         InvestigationStatus.FAILED.value,
                         InvestigationStatus.ABANDONED.value,
+                        InvestigationStatus.STALLED.value,
                     ):
                         _reason_map = {
                             InvestigationStatus.COMPLETED.value: "investigation_completed",
                             InvestigationStatus.FAILED.value: "investigation_failed",
                             InvestigationStatus.ABANDONED.value: "investigation_abandoned",
+                            InvestigationStatus.STALLED.value: "investigation_stalled",
                         }
                         await close_orphan_branches_on_terminal(
                             uow, investigation_id,

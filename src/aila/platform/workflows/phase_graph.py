@@ -17,8 +17,11 @@ control flow and live here.
 """
 from __future__ import annotations
 
+import logging
+import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from aila.platform.workflows.types import (
@@ -33,6 +36,7 @@ __all__ = [
     "DISPATCH_STATE",
     "EMIT_STATE",
     "SETUP_STATE",
+    "DispatchEscalationModels",
     "GateFn",
     "LoopBuilder",
     "PhaseGraphSpec",
@@ -45,6 +49,86 @@ __all__ = [
     "make_gate_state",
     "make_router_state",
 ]
+
+_log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class DispatchEscalationModels:
+    """Module-specific SQLModel record types the dispatch-hub escalation posts against.
+
+    RFC-13 #68 stall escalation writes an operator-steering message using
+    the module's own ``<Module>InvestigationMessageRecord`` and
+    ``<Module>InvestigationBranchRecord`` tables, so the message lands in
+    the same view the module's UI and its agent-side broadcast reader
+    consume from. The dispatch handler is platform-generic and cannot
+    reach into a module's ``db_models`` on its own; a module opts into
+    live escalation by threading this tuple into
+    :func:`build_dispatch_workflow` at graph-registration time.
+
+    When omitted, the hub still emits ``hub_stalled_timeout`` and the
+    emit-state ``resolve_final_status`` still flips the investigation
+    to STALLED -- only the operator-facing message post is skipped, and
+    one info line records the skip so the miss is observable.
+    """
+
+    message_model: type[Any]
+    branch_model: type[Any]
+
+
+# Module-level cached ConfigRegistry so per-stall reads share its TTL
+# cache instead of building a fresh registry (and losing every prior
+# cache hit) on every hub tick. Mirrors ``sse_gate._get_registry``.
+_CONFIG_REGISTRY: Any = None
+_CONFIG_REGISTRY_LOCK = threading.Lock()
+
+
+def _get_registry() -> Any:
+    """Return the module-cached ConfigRegistry, building it on first call."""
+    global _CONFIG_REGISTRY
+    if _CONFIG_REGISTRY is not None:
+        return _CONFIG_REGISTRY
+    with _CONFIG_REGISTRY_LOCK:
+        if _CONFIG_REGISTRY is None:
+            # Lazy import: aila.storage.registry pulls in db_models and
+            # this module is imported early on module-loading; deferring
+            # to first-call is the safe (already-established) pattern.
+            from aila.storage.registry import ConfigRegistry
+
+            _CONFIG_REGISTRY = ConfigRegistry()
+    return _CONFIG_REGISTRY
+
+
+def _resolve_replan_timeout_s() -> float:
+    """Read ``platform.dispatch_replan_timeout_s`` via ConfigRegistry.
+
+    Fall back to the schema default (imported lazily so bootstrap
+    ordering never chokes) on any registry failure -- a broken
+    registry never turns every stall into a runtime crash. A value
+    <= 0 disables the escalation entirely (documented on the schema
+    field).
+    """
+    # Lazy import: config module pulls storage which pulls db_models;
+    # keeping this at first-call keeps import order matching sse_gate.
+    from aila.platform.config import PlatformConfigSchema
+
+    default_val = float(PlatformConfigSchema().dispatch_replan_timeout_s)
+    registry = _get_registry()
+    try:
+        raw = registry.get_sync("platform", "dispatch_replan_timeout_s")
+    except (OSError, RuntimeError, TimeoutError, ValueError, TypeError) as exc:
+        _log.debug(
+            "dispatch_replan_timeout_s registry read failed: %s -- "
+            "falling back to schema default %.0f",
+            exc, default_val,
+        )
+        return default_val
+    if raw is None:
+        return default_val
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default_val
 
 SETUP_STATE = "investigation_setup"
 EMIT_STATE = "investigation_emit"
@@ -222,7 +306,11 @@ def build_phase_workflow(
     )
 
 
-def make_dispatch_router(phases: tuple[PhaseSpec, ...]) -> HandlerFn:
+def make_dispatch_router(
+    phases: tuple[PhaseSpec, ...],
+    *,
+    escalation_models: DispatchEscalationModels | None = None,
+) -> HandlerFn:
     """Build the dispatch-hub handler over *phases* (activation, not decision).
 
     The hub is the per-branch control loop of a discovery-driven graph. On
@@ -245,6 +333,18 @@ def make_dispatch_router(phases: tuple[PhaseSpec, ...]) -> HandlerFn:
     branch; ``MAX_STEPS_PER_JOB`` bounds the whole walk. A phase loops back
     to the hub, so a discovery written during one phase can enable a later
     phase on the next visit.
+
+    RFC-13 #68 stall escalation: when the hub stalls (no phase qualifies)
+    it raises one ``replan`` request per distinct visited-set. If the
+    replan stays unratified longer than ``platform.dispatch_replan_timeout_s``,
+    the hub emits the distinct ``hub_stalled_timeout`` exit_reason (the
+    emit state flips the investigation to STALLED via
+    ``resolve_final_status``) and -- when ``escalation_models`` is
+    provided -- posts an operator-steering escalation via
+    :func:`aila.platform.agents.auto_steering.post_dispatch_stall_escalation`.
+    Within-window stalls continue to emit ``hub_stalled`` (COMPLETED)
+    unchanged; ratified replans continue to relax trust for one pass
+    unchanged.
     """
 
     async def _pick(
@@ -284,13 +384,16 @@ def make_dispatch_router(phases: tuple[PhaseSpec, ...]) -> HandlerFn:
             },
         )
 
-    async def _replan_ratified(investigation_id: str) -> bool:
+    async def _read_replan_rows(investigation_id: str) -> list[dict[str, Any]]:
+        # Shared ledger fetch for ratified-check + oldest-replan-age.
         # Lazy import: phase_graph is imported while db_models is still
         # loading (tasks -> workflows -> phase_graph), so importing the
         # services package at module scope would re-enter a half-built
         # db_models. Deferring to call time breaks that cycle.
         from aila.platform.services.ledger import LedgerService
-        rows = await LedgerService().read_general(investigation_id)
+        return await LedgerService().read_general(investigation_id)
+
+    def _replan_ratified_from_rows(rows: list[dict[str, Any]]) -> bool:
         replan_ids = {
             int(r["id"]) for r in rows
             if r["kind"] == "request"
@@ -304,6 +407,73 @@ def make_dispatch_router(phases: tuple[PhaseSpec, ...]) -> HandlerFn:
                 return True
         return False
 
+    def _oldest_unratified_replan_created_at(
+        rows: list[dict[str, Any]],
+    ) -> datetime | None:
+        replan_ids = [
+            int(r["id"]) for r in rows
+            if r["kind"] == "request"
+            and (r.get("payload") or {}).get("intent") == "replan"
+        ]
+        if not replan_ids:
+            return None
+        ratified_targets = {
+            int((row.get("payload") or {}).get("target", -1))
+            for row in rows
+            if row["kind"] == "decision"
+            and (row.get("payload") or {}).get("approved")
+        }
+        unratified = [
+            row for row in rows
+            if row["kind"] == "request"
+            and (row.get("payload") or {}).get("intent") == "replan"
+            and int(row["id"]) not in ratified_targets
+        ]
+        if not unratified:
+            return None
+        # ``rows`` come back oldest-first (LedgerService orders by id), so
+        # the first hit is already the earliest. Guard with an explicit
+        # min() anyway -- id order tracks created_at monotonically today
+        # but I would rather anchor on the timestamp we actually care
+        # about than on an incidental ordering.
+        oldest_dt: datetime | None = None
+        for row in unratified:
+            created_at = row.get("created_at")
+            if not isinstance(created_at, datetime):
+                continue
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=UTC)
+            if oldest_dt is None or created_at < oldest_dt:
+                oldest_dt = created_at
+        return oldest_dt
+
+    async def _post_stall_escalation(
+        investigation_id: str, blocked: list[str], replan_age_s: float,
+    ) -> None:
+        # RFC-13 #68: post one operator-steering escalation for a stall
+        # that has aged past the configured window. Best-effort -- the
+        # escalation function swallows every error internally, but we
+        # log the skip when the module has not bound its record models
+        # so the miss is observable during rollout.
+        if escalation_models is None:
+            _log.info(
+                "dispatch stall escalation skipped: no escalation_models "
+                "bound for investigation=%s (blocked=%s replan_age_s=%.0f)",
+                investigation_id, blocked, replan_age_s,
+            )
+            return
+        # Lazy import matches every other cross-package import in this
+        # module -- avoids the db_models load-time cycle.
+        from aila.platform.agents.auto_steering import post_dispatch_stall_escalation
+
+        await post_dispatch_stall_escalation(
+            investigation_id=investigation_id,
+            blocked_phases=blocked,
+            replan_age_s=replan_age_s,
+            message_model=escalation_models.message_model,
+            branch_model=escalation_models.branch_model,
+        )
+
     async def _handle_stall(
         investigation_id: str,
         visited: set[str],
@@ -314,7 +484,7 @@ def make_dispatch_router(phases: tuple[PhaseSpec, ...]) -> HandlerFn:
         # Raise one replan request per distinct visited-set (idempotent), then
         # relax confirmed trust for one pass if a replan is already ratified.
         # Lazy import breaks the db_models load-time cycle (see
-        # _replan_ratified).
+        # _read_replan_rows).
         from aila.platform.services.ledger import LedgerService
         from aila.platform.uow import UnitOfWork
         service = LedgerService()
@@ -327,7 +497,8 @@ def make_dispatch_router(phases: tuple[PhaseSpec, ...]) -> HandlerFn:
                 session=uow.session,
             )
             await uow.session.commit()
-        if await _replan_ratified(investigation_id):
+        rows = await _read_replan_rows(investigation_id)
+        if _replan_ratified_from_rows(rows):
             relaxed = {**state_input, "_dispatch_replan_relax": True}
             phase, reason = await _pick(relaxed, visited, branch_capability)
             if phase is not None:
@@ -335,6 +506,27 @@ def make_dispatch_router(phases: tuple[PhaseSpec, ...]) -> HandlerFn:
                     state_input, visited, phase, f"replan-relaxed: {reason}",
                 )
         return None
+
+    async def _resolve_stall_timeout(
+        investigation_id: str,
+    ) -> tuple[bool, float]:
+        # Return (timed_out, replan_age_s). A value <= 0 on the window
+        # disables escalation and we always return (False, 0.0). Called
+        # AFTER _handle_stall's relaxation attempt failed, so the ledger
+        # already contains the replan request row we just wrote.
+        window_s = _resolve_replan_timeout_s()
+        if window_s <= 0:
+            return False, 0.0
+        rows = await _read_replan_rows(investigation_id)
+        earliest = _oldest_unratified_replan_created_at(rows)
+        if earliest is None:
+            return False, 0.0
+        # ``utc_now`` lives in platform.contracts; lazy-import for the
+        # same db_models cycle reason as the ledger.
+        from aila.platform.contracts import utc_now
+
+        replan_age_s = (utc_now() - earliest).total_seconds()
+        return replan_age_s > window_s, replan_age_s
 
     async def _apply_ratified_requests(investigation_id: str) -> None:
         # Apply every ratified, not-yet-applied ledger request before the hub
@@ -388,12 +580,34 @@ def make_dispatch_router(phases: tuple[PhaseSpec, ...]) -> HandlerFn:
         if blocked and investigation_id and not state_input.get(
             "_dispatch_replan_relax"
         ):
+            inv_id_str = str(investigation_id)
             relaxed = await _handle_stall(
-                str(investigation_id), visited, blocked, state_input,
+                inv_id_str, visited, blocked, state_input,
                 branch_capability,
             )
             if relaxed is not None:
                 return relaxed
+            # RFC-13 #68: within-window unratified stall keeps emitting
+            # ``hub_stalled`` (COMPLETED via resolve_final_status);
+            # timed-out unratified stall emits ``hub_stalled_timeout``
+            # and fires the operator escalation, and the emit state
+            # flips the investigation to STALLED. Ratified replans
+            # never reach here (relaxed is not None).
+            timed_out, replan_age_s = await _resolve_stall_timeout(inv_id_str)
+            if timed_out:
+                await _post_stall_escalation(
+                    inv_id_str, blocked, replan_age_s,
+                )
+                return StateResult(
+                    next_state=EMIT_STATE,
+                    output={
+                        **state_input,
+                        "stalled": True,
+                        "blocked_phases": blocked,
+                        "replan_age_s": replan_age_s,
+                        "exit_reason": "hub_stalled_timeout",
+                    },
+                )
             return StateResult(
                 next_state=EMIT_STATE,
                 # See the ``hub_budget_exhausted`` branch above -- explicit
@@ -425,6 +639,7 @@ def build_dispatch_workflow(
     loop_builder: LoopBuilder,
     emit_handler: HandlerFn,
     allow_phase_handoff: bool = False,
+    escalation_models: DispatchEscalationModels | None = None,
 ) -> WorkflowDefinition:
     """Expand a discovery-driven phase graph into an engine WorkflowDefinition.
 
@@ -441,6 +656,15 @@ def build_dispatch_workflow(
     the dispatcher's terminal state to this graph's start_state. A graph bound
     directly to a task (VR, malware) runs under its own fresh run_id and leaves
     this at the default.
+
+    ``escalation_models`` opts the module in to live RFC-13 #68 stall
+    escalation: when the hub emits ``hub_stalled_timeout``, the substrate
+    calls :func:`aila.platform.agents.auto_steering.post_dispatch_stall_escalation`
+    with the module's own message + branch record types so the operator
+    steering message lands in the module's own investigation-messages
+    surface. When None, the exit_reason and STALLED flip still fire
+    (never gated on the models) but no message is posted; the miss is
+    logged so rollout is observable.
     """
     if not phases:
         raise ValueError(
@@ -453,7 +677,9 @@ def build_dispatch_workflow(
             max_retries=1,
         ),
         DISPATCH_STATE: StateSpec(
-            handler=make_dispatch_router(phases),
+            handler=make_dispatch_router(
+                phases, escalation_models=escalation_models,
+            ),
             timeout_s=30.0,
         ),
     }

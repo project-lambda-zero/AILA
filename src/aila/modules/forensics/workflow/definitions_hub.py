@@ -28,6 +28,10 @@ from typing import Any, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from aila.modules.forensics.db_models import (
+    ForensicsInvestigationBranchRecord,
+    ForensicsInvestigationMessageRecord,
+)
 from aila.modules.forensics.workflow.definitions import (
     _build_services,
     _state_response_emit,
@@ -43,6 +47,7 @@ from aila.modules.forensics.workflow.states.resolution import state_resolution
 from aila.modules.forensics.workflow.states.writeup import state_writeup
 from aila.platform.services.ledger import LedgerService, make_evidence_condition
 from aila.platform.workflows.phase_graph import (
+    DispatchEscalationModels,
     PhaseSpec,
     build_dispatch_workflow,
 )
@@ -166,6 +171,10 @@ FORENSICS_INVESTIGATE_HUB = build_dispatch_workflow(
     setup_builder=_setup_builder,
     loop_builder=_loop_builder,
     emit_handler=cast("HandlerFn", _state_response_emit),
+    escalation_models=DispatchEscalationModels(
+        message_model=ForensicsInvestigationMessageRecord,
+        branch_model=ForensicsInvestigationBranchRecord,
+    ),
     # Runs as the inner definition of FORENSICS_DISPATCHER_V1 (two-phase
     # dispatch), sharing the dispatcher's run_id -- reset the cursor from the
     # dispatcher's terminal to this graph's start_state, like the fixed-mode

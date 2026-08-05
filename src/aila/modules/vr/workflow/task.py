@@ -48,7 +48,7 @@ from aila.modules.vr.reporting.poc_writer import PocWriter
 from aila.modules.vr.services import TargetAnalysisService
 from aila.modules.vr.services.followup_discovery import maybe_spawn_vr_followup
 from aila.modules.vr.services.fuzz_service import FuzzCampaignService
-from aila.modules.vr.workflow.definitions import VR_INVESTIGATE_V1, VR_NDAY_V1
+from aila.modules.vr.workflow.definitions import VR_NDAY_V1
 from aila.modules.vr.workflow.definitions_hub import VR_INVESTIGATE_HUB
 from aila.platform.contracts import utc_now
 from aila.platform.services.factory import ServiceFactory
@@ -123,7 +123,7 @@ async def run_vr_nday(
     max_tries=1,
     timeout_s=7800.0,  # 2h+ -- covers a full investigation_loop run
     # fix §142 -- explicit retriable_on so the single retry budget is
-    # only spent on transport-class transients. VR_INVESTIGATE_V1's
+    # only spent on transport-class transients. VR_INVESTIGATE_HUB's
     # investigation_setup state opens a DB session + does CVE-intel
     # network calls; a transient DB / network blip is worth the
     # retry, a Pydantic ValidationError / KeyError / PermissionError
@@ -135,7 +135,7 @@ async def run_vr_investigate(
     ctx: TaskContext,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Seed function for the ``VR_INVESTIGATE_V1`` workflow definition.
+    """Seed function for the ``VR_INVESTIGATE_HUB`` workflow definition.
 
     fix §83 -- this body deliberately contains a single ``...`` Ellipsis.
     The ``@platform_task`` decorator wraps the function so the platform
@@ -143,7 +143,7 @@ async def run_vr_investigate(
     kwarg above instead of executing this body. The body would only
     run if the platform decorator were removed; the docstring is the
     visible contract for readers. Do NOT add logic inside this function
-    -- phase-handoff / state transitions live on ``VR_INVESTIGATE_V1``.
+    -- phase-handoff / state transitions live on ``VR_INVESTIGATE_HUB``.
 
     Required kwarg: ``investigation_id``. The setup state resolves the
     primary branch from the DB; operator does not provide branch_id.

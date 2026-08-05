@@ -125,7 +125,17 @@ class BranchOperation(StrEnum):
 
 
 class InvestigationStatus(StrEnum):
-    """Lifecycle states for an investigation."""
+    """Lifecycle states for an investigation.
+
+    ``STALLED`` is the RFC-13 #68 terminal state a dispatch hub reaches when
+    it emits ``hub_stalled_timeout`` -- the panel raised at least one
+    ``replan`` request that stayed unratified past ``platform.dispatch_replan_timeout_s``.
+    Distinct from ``FAILED`` (which implies an operational error) and
+    ``ABANDONED`` (operator-initiated); STALLED means the hub cannot
+    activate any further phase without operator intervention. Every
+    per-module status column is a plain ``character varying`` (no Postgres
+    enum), so adding this value needs no migration.
+    """
 
     CREATED = "created"
     RUNNING = "running"
@@ -133,6 +143,7 @@ class InvestigationStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
     ABANDONED = "abandoned"
+    STALLED = "stalled"
 
 
 class InvestigationPauseReason(StrEnum):

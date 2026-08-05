@@ -108,6 +108,7 @@ const STATUS_META: Record<
   completed: { color: "#8ec5ff", label: "Completed", pulse: false },
   failed:    { color: "#f0a8c7", label: "Failed",    pulse: false },
   abandoned: { color: "#9aa0a6", label: "Abandoned", pulse: false },
+  stalled:   { color: "#9aa0a6", label: "Stalled",   pulse: false },
 };
 
 const _BRANCH_STATUS_FALLBACK = { color: "#9aa0a6", label: "Unknown" };

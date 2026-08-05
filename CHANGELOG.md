@@ -19,6 +19,26 @@ operator action.
 
 ### Added
 
+- A dispatch-hub stall escalation and a STALLED terminal investigation
+  status (RFC-13 #68). When the adaptive investigation hub raises a replan
+  request that stays unratified past a configured wall-clock window
+  (`platform.dispatch_replan_timeout_s`, default 1800s), the hub posts an
+  operator-steering escalation naming the blocked phases and flips the
+  investigation to the new STALLED status. Previously the hub emitted the
+  stall as a completed run, so a wedged panel looked successful. A
+  within-window unratified stall and a ratified replan keep their prior
+  behavior; a value of 0 or less disables the escalation. The frontend
+  investigation lists and detail views render STALLED as a distinct
+  terminal state.
+- Malware dispatch-hub deep phases activate on real discoveries (RFC-13
+  #68). The malware agent prompt now guides the panel to post packer and
+  config findings to the shared ledger and to raise and approve
+  phase-activation requests; the unpack phase activates on a
+  quorum-confirmed `finding: packed` discovery and config_extract on a
+  confirmed `finding: config_present` discovery. Previously the malware
+  hub never posted these discoveries, so the two confirmed-trust phases
+  could not activate and only triage and the fallback full-analysis phase
+  ran.
 - Generic platform workflow and entity events (RFC-05 #30). The platform now
   owns ModuleWorkflowStarted, ModuleWorkflowCompleted, and
   ModuleEntityBatchUpserted; a module emits them with its own module id,
@@ -621,6 +641,15 @@ operator action.
 
 ### Changed
 
+- The shared dispatch-hub discovery condition (`make_discovery_condition`)
+  takes an optional `payload_match` filter so a phase activates only on a
+  discovery whose payload carries a matching key and value (RFC-13 #68). The
+  default preserves the prior any-entry-of-the-kind behavior, so the
+  vulnerability and forensics hub conditions are unchanged.
+- The dispatch-hub investigation seeds and the vulnerability investigations
+  list help text now name the adaptive hub definition they bind rather than a
+  removed linear-workflow name, so the source and the UI describe the live
+  execution path (RFC-13 #68).
 - Reasoning strategy families are module-declared (RFC-05 #30). Each module
   publishes its families with their own match keywords and priority; the
   platform seeds only the generic family and classifies a turn by consulting

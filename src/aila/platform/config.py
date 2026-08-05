@@ -369,3 +369,28 @@ class PlatformConfigSchema(BaseModel):
     tool_storage_artifact_max_age_days: int = 180
     tool_storage_artifact_max_rows_per_module: int = 10_000
 
+    # RFC-13 #68 dispatch-hub stall escalation window.
+    # ``phase_graph.make_dispatch_router._handle_stall`` raises one
+    # ``replan`` request per distinct visited-set the first time the hub
+    # cannot activate any next phase. Within this window the branch simply
+    # emits ``hub_stalled`` (existing behavior); if the earliest unratified
+    # replan request has been sitting in the ledger for longer than
+    # ``dispatch_replan_timeout_s`` seconds without a sibling ratifying it,
+    # the hub emits the distinct ``hub_stalled_timeout`` exit_reason,
+    # posts an operator-steering escalation via
+    # ``post_dispatch_stall_escalation``, and the emit state flips the
+    # investigation to ``InvestigationStatus.STALLED`` instead of silently
+    # completing.
+    #
+    # Default of 1800s (30 minutes) is the point at which a panel that
+    # has NOT gotten sibling quorum on a replan is almost certainly stuck
+    # -- confirmed-trust chains take one or two full agent turns to
+    # ratify, each capped at ~5-10 minutes by the phase timeout. Beyond
+    # that we are wasting worker cycles and the operator needs to see it.
+    # Operators can widen or narrow via
+    # ``PUT /config/platform/dispatch_replan_timeout_s`` (or env
+    # ``AILA_PLATFORM_DISPATCH_REPLAN_TIMEOUT_S``); a value <= 0 disables
+    # the escalation entirely and keeps the pre-RFC-13-#68 behavior where
+    # a stalled hub always emits ``hub_stalled`` -> COMPLETED.
+    dispatch_replan_timeout_s: float = 1800.0
+

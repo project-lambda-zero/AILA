@@ -321,7 +321,8 @@ export type InvestigationStatus =
   | "paused"
   | "completed"
   | "failed"
-  | "abandoned";
+  | "abandoned"
+  | "stalled";
 
 export type InvestigationPauseReason =
   | "operator"

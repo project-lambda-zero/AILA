@@ -46,7 +46,7 @@ from aila.platform.contracts.enums import OperatorIntent, SenderKind
 from aila.platform.contracts.mcp_payload import PayloadKind
 from aila.platform.uow import UnitOfWork
 
-__all__ = ["maybe_post_auto_steering"]
+__all__ = ["maybe_post_auto_steering", "post_dispatch_stall_escalation"]
 
 _log = logging.getLogger(__name__)
 
@@ -757,3 +757,108 @@ async def maybe_post_auto_steering(
     if _consecutive_failures:
         _consecutive_failures = 0
     return result
+
+
+# ---------------------------------------------------------------------
+# Dispatch-hub stall escalation (RFC-13 #68)
+# ---------------------------------------------------------------------
+
+# Stable dedup key. Scoped per investigation by _already_posted, so one
+# escalation per stalled hub survives across turns; a fresh escalation
+# can re-post only after the operator acks the prior one.
+_DISPATCH_STALL_KEY: str = "dispatch_stall_timeout"
+
+
+def _format_dispatch_stall_text(
+    blocked_phases: list[str], replan_age_s: float,
+) -> str:
+    """Build the operator-facing escalation body.
+
+    Named the blocked phases (the actual missing evidence surface) and
+    the age of the ignored replan so the operator can see at a glance
+    that this is a real stall, not a transient hub tick.
+    """
+    blocked_line = ", ".join(blocked_phases) if blocked_phases else "(none)"
+    return (
+        "*** DISPATCH HUB STALLED -- OPERATOR ACTION REQUIRED ***\n"
+        "\n"
+        "The dispatch hub raised a replan request that has not been "
+        f"ratified for {replan_age_s:.0f}s (window exceeded).\n"
+        f"Blocked phases: {blocked_line}\n"
+        "\n"
+        "No sibling has approved the outstanding replan, so the confirmed-"
+        "trust chain cannot advance and every remaining phase in the graph "
+        "is gated on evidence that is not being produced.\n"
+        "\n"
+        "Recommended next steps:\n"
+        "  - Ratify the open replan request (approve it from the ledger UI) "
+        "if the panel should widen its trust tier and revisit the graph.\n"
+        "  - Post an operator steering message with the concrete phase to "
+        "activate next if you want to override the confirmed-trust gate.\n"
+        "  - Terminate the investigation (STALLED) if no further work is "
+        "warranted and reclaim the worker slot.\n"
+        "\n"
+        "The investigation has been flipped to STALLED terminal status. "
+        "Any operator action above will re-enter the RUNNING state."
+    )
+
+
+async def post_dispatch_stall_escalation(
+    *,
+    investigation_id: str,
+    blocked_phases: list[str],
+    replan_age_s: float,
+    message_model: Any,
+    branch_model: Any,
+) -> str | None:
+    """Post an operator-steering escalation for a timed-out dispatch stall.
+
+    Sibling to :func:`maybe_post_auto_steering` for the RFC-13 #68 stall
+    path. The tool-executor caller of that function shapes its input as
+    ``(server_id, tool_name, args, raw_result)`` because it runs against
+    a live tool result; there is no tool result at hub-stall time, so
+    this function takes only what the stall handler actually knows.
+
+    Reuses :func:`_already_posted` + :func:`_post` for identical dedup and
+    broadcast semantics: one escalation per investigation (keyed on the
+    stable :data:`_DISPATCH_STALL_KEY`), addressed to the primary branch
+    so every sibling loader sees it, sender_kind=OPERATOR /
+    operator_intent=STEERING so the agent's next turn injects it at the
+    operator-steering prompt slot. A concurrent race lost at the UNIQUE
+    constraint returns ``None`` and lets the surviving row propagate.
+
+    Returns the posted message id on success, ``None`` when a matching
+    unacked steering is already in flight, or on best-effort failure.
+    Never raises: any DB / serialization error is logged and swallowed so
+    the hub emit path (which flips the investigation to STALLED
+    regardless) is never derailed by an escalation-post problem.
+    """
+    try:
+        if await _already_posted(
+            investigation_id, _DISPATCH_STALL_KEY,
+            message_model=message_model, branch_model=branch_model,
+        ):
+            return None
+        text = _format_dispatch_stall_text(blocked_phases, replan_age_s)
+        posted = await _post(
+            investigation_id, None, text, _DISPATCH_STALL_KEY,
+            message_model=message_model, branch_model=branch_model,
+        )
+        if posted:
+            _log.info(
+                "post_dispatch_stall_escalation POSTED inv=%s msg=%s "
+                "blocked=%s replan_age_s=%.0f",
+                investigation_id, posted, blocked_phases, replan_age_s,
+            )
+        return posted
+    except (
+        OSError, RuntimeError, ValueError, TypeError, AttributeError,
+        KeyError, SQLAlchemyError, json.JSONDecodeError,
+    ) as exc:
+        _log.warning(
+            "post_dispatch_stall_escalation failed (best-effort) "
+            "inv=%s err=%s",
+            investigation_id, exc,
+            exc_info=True,
+        )
+        return None

@@ -441,6 +441,7 @@ def make_discovery_condition(
     *,
     confirmed_only: bool = False,
     input_key: str = "investigation_id",
+    payload_match: dict[str, Any] | None = None,
 ) -> Callable[[dict[str, Any]], Awaitable[tuple[bool, str]]]:
     """Build a dispatch-hub condition that fires when the ledger holds a
     matching entry (RFC-13 #68).
@@ -451,6 +452,14 @@ def make_discovery_condition(
     discoveries to those a quorum decision confirmed (a confirmed-trust
     phase). The discovery-driven module graphs use it to activate a phase
     only once a real discovery exists, rather than on a static edge.
+
+    ``payload_match`` narrows the match to entries whose ``payload`` carries
+    every listed key with the exact listed value (post-quorum filter). None
+    (the default) preserves the pre-existing any-entry-of-the-kind behavior;
+    every legacy caller keeps its semantics without change. The malware hub
+    uses this to route confirmed ``{finding: packed}`` discoveries to the
+    unpack phase and confirmed ``{finding: config_present}`` discoveries to
+    the config-extraction phase off the same shared ledger.
     """
 
     async def _condition(state_input: dict[str, Any]) -> tuple[bool, str]:
@@ -465,9 +474,20 @@ def make_discovery_condition(
             kinds=[kind],
             confirmed_only=effective_confirmed,
         )
+        if payload_match:
+            entries = [
+                e for e in entries
+                if all(
+                    (e.get("payload") or {}).get(k) == v
+                    for k, v in payload_match.items()
+                )
+            ]
         if entries:
             scope = "confirmed " if effective_confirmed else ""
-            return True, f"{len(entries)} {scope}{kind} entries on ledger"
+            match_note = f" matching {sorted(payload_match)}" if payload_match else ""
+            return True, f"{len(entries)} {scope}{kind} entries on ledger{match_note}"
+        if payload_match:
+            return False, f"no {kind} entries matching {sorted(payload_match)} on ledger yet"
         return False, f"no {kind} entries on ledger yet"
 
     return _condition

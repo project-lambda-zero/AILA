@@ -22,7 +22,12 @@ from typing import Any, cast
 
 from sqlmodel import select
 
-from aila.modules.vr.db_models import VRInvestigationRecord, VRTargetRecord
+from aila.modules.vr.db_models import (
+    VRInvestigationBranchRecord,
+    VRInvestigationMessageRecord,
+    VRInvestigationRecord,
+    VRTargetRecord,
+)
 from aila.modules.vr.workflow.definitions import _build_services
 from aila.modules.vr.workflow.definitions_v2 import (
     _BINARY_AUDIT_DIRECTIVE,
@@ -39,6 +44,7 @@ from aila.modules.vr.workflow.states.investigation_emit import (
 from aila.platform.services.ledger import make_discovery_condition
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.phase_graph import (
+    DispatchEscalationModels,
     PhaseSpec,
     build_dispatch_workflow,
 )
@@ -259,4 +265,8 @@ VR_INVESTIGATE_HUB = build_dispatch_workflow(
     setup_builder=_setup_builder,
     loop_builder=_loop_builder,
     emit_handler=cast("HandlerFn", state_investigation_emit),
+    escalation_models=DispatchEscalationModels(
+        message_model=VRInvestigationMessageRecord,
+        branch_model=VRInvestigationBranchRecord,
+    ),
 )
