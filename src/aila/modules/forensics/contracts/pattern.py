@@ -15,7 +15,12 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from aila.platform.contracts.enums import PatternConfidence, PatternScope, PatternStatus
+from aila.platform.contracts.enums import (
+    PatternConfidence,
+    PatternScope,
+    PatternStatus,
+    PatternTrustTier,
+)
 
 __all__ = [
     "ForensicsPatternCreate",
@@ -79,6 +84,9 @@ class ForensicsPatternCreate(BaseModel):
         description="Message / outcome IDs that demonstrate the pattern.",
     )
     scope: PatternScope = PatternScope.LOCAL
+    # RFC-08 memory-poisoning fields (mirror ``PatternCreateBase``).
+    trust_tier: PatternTrustTier = PatternTrustTier.UNREVIEWED
+    provenance: dict[str, Any] = Field(default_factory=dict)
 
 
 class ForensicsPatternPatch(BaseModel):
@@ -121,3 +129,6 @@ class ForensicsPatternSummary(BaseModel):
     last_used_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    # RFC-08 memory-poisoning fields (mirror ``PatternSummaryBase``).
+    trust_tier: PatternTrustTier = PatternTrustTier.UNREVIEWED
+    provenance: dict[str, Any] = Field(default_factory=dict)

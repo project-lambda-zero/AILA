@@ -27,7 +27,7 @@ from aila.storage.mixins import TeamScopedMixin
 
 from ._common import utc_now
 from ._naming import TableDerivedConstraintsMixin, TabledFk
-from .enums import PatternConfidence, PatternScope, PatternStatus
+from .enums import PatternConfidence, PatternScope, PatternStatus, PatternTrustTier
 
 __all__ = [
     "PatternCreateBase",
@@ -70,6 +70,21 @@ class PatternRecordBase(TableDerivedConstraintsMixin, TeamScopedMixin, SQLModel)
     scope: str = Field(default="local", max_length=16, index=True)
     superseded_by: str | None = Field(default=None, max_length=64, index=True)
 
+    # RFC-08 memory-poisoning trust tier + provenance envelope.
+    # ``trust_tier`` is stamped by the sole write path that produced this
+    # row (:class:`ExperienceWriter` -> verified/negative on a signed
+    # quorum outcome, :class:`PatternExtractorBase` /
+    # ``PatternProposerService`` -> unreviewed for sanctioned draft
+    # proposers). ``provenance_json`` carries a compact envelope
+    # (``source`` + originating ids) so an operator inspecting a poisoned
+    # row can trace which pipeline wrote it. Retrieval reads both:
+    # NEGATIVE rows never enter the actionable result list, and their
+    # applicability overlap lowers a positive's score as a prior.
+    trust_tier: str = Field(default="unreviewed", max_length=16, index=True)
+    provenance_json: str = Field(
+        default="{}", sa_type=Text, sa_column_kwargs={"nullable": True},
+    )
+
     # Mirror entry id in KnowledgeService -- populated on insert by PatternStore.
     knowledge_entry_id: int | None = Field(default=None, index=True)
 
@@ -103,6 +118,9 @@ class PatternSummaryBase(BaseModel):
     last_used_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    # RFC-08 memory-poisoning fields -- projected from the DB row.
+    trust_tier: PatternTrustTier = PatternTrustTier.UNREVIEWED
+    provenance: dict[str, Any] = PField(default_factory=dict)
 
 
 class PatternCreateBase(BaseModel):
@@ -144,6 +162,15 @@ class PatternCreateBase(BaseModel):
         description="Observation / message / outcome ids supporting the pattern.",
     )
     scope: PatternScope = PatternScope.LOCAL
+    # RFC-08 memory-poisoning fields. Callers that route through
+    # :class:`ExperienceWriter` set ``trust_tier`` to VERIFIED / NEGATIVE
+    # from a signed quorum verdict; sanctioned DRAFT proposers
+    # (``pattern_extractor``, ``pattern_proposer``) leave the default
+    # UNREVIEWED. ``provenance`` carries the audit envelope (source +
+    # originating outcome / investigation ids) so a poisoned catalog can
+    # be traced back to the pipeline that wrote it.
+    trust_tier: PatternTrustTier = PatternTrustTier.UNREVIEWED
+    provenance: dict[str, Any] = PField(default_factory=dict)
 
 
 class PatternPatchBase(BaseModel):

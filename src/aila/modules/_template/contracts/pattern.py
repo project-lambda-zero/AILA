@@ -18,6 +18,7 @@ from aila.platform.contracts.enums import (
     PatternConfidence,
     PatternScope,
     PatternStatus,
+    PatternTrustTier,
 )
 
 __all__ = [
@@ -50,6 +51,9 @@ class TemplatePatternCreate(BaseModel):
     confidence: PatternConfidence = PatternConfidence.MEDIUM
     evidence_refs: list[str] = Field(default_factory=list)
     scope: PatternScope = PatternScope.LOCAL
+    # RFC-08 memory-poisoning fields (mirror ``PatternCreateBase``).
+    trust_tier: PatternTrustTier = PatternTrustTier.UNREVIEWED
+    provenance: dict[str, Any] = Field(default_factory=dict)
 
 
 class TemplatePatternSummary(BaseModel):
@@ -74,3 +78,6 @@ class TemplatePatternSummary(BaseModel):
     last_used_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+    # RFC-08 memory-poisoning fields (mirror ``PatternSummaryBase``).
+    trust_tier: PatternTrustTier = PatternTrustTier.UNREVIEWED
+    provenance: dict[str, Any] = Field(default_factory=dict)

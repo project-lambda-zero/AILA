@@ -2,11 +2,17 @@
 
 Scope of THIS increment
 -----------------------
-The runner scores a candidate against a benchmark of ``CaseOutcome`` rows
-that are ALREADY resolved (predicted_verdict / verified_verdict /
-confidence per case, per outcome_kind, per version). It does NOT replay
-the agent loop against fresh inputs; recorded-replay is a later
-increment (see the metrics module docstring).
+The runner covers two entry points:
+
+1. :meth:`EvalRunner.run` scores a candidate against a benchmark of
+   ``CaseOutcome`` rows that are ALREADY resolved (predicted_verdict /
+   verified_verdict / confidence per case, per outcome_kind, per version)
+   and gates promotion through the strict-beat gate.
+2. :meth:`EvalRunner.replay` delegates to the decision-level replay
+   harness (``platform/eval/replay.py``) to score ONE recorded turn
+   under a candidate prompt version with frozen retrieval + tool
+   outputs + clock -- returning a :class:`DecisionDiff` of determinism
+   + faithfulness against the recorded decision.
 
 Benchmark schema (``cases_json``)
 --------------------------------
@@ -56,11 +62,13 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import asdict
+from typing import TYPE_CHECKING
 
 from sqlmodel import select
 
 from aila.platform.eval.metrics import (
     CaseOutcome,
+    DecisionDiff,
     EvalReport,
     ece,
     faithfulness_score,
@@ -69,6 +77,9 @@ from aila.platform.eval.metrics import (
 from aila.platform.eval.models import EvalBenchmarkRecord, EvalRunRecord
 from aila.platform.prompts.version_store import PromptVersionStore
 from aila.storage.database import async_session_scope
+
+if TYPE_CHECKING:
+    from aila.platform.eval.replay import ReplayLLMClient
 
 __all__ = ["BenchmarkNotFoundError", "EmptyCaseBundleError", "EvalRunner", "PRODUCTION_ALIAS"]
 
@@ -90,7 +101,8 @@ def _score_cases(cases: list[CaseOutcome]) -> EvalReport:
 
     Determinism is 1.0 by definition on a pre-supplied case bundle: no
     replay happened, so there is no cross-replay divergence to score.
-    Recorded-replay ingest is a later increment.
+    Real replay-derived determinism lives on :class:`DecisionDiff` via
+    :meth:`EvalRunner.replay`.
     """
     confidences = [c.confidence for c in cases]
     correct = [c.predicted_verdict == c.verified_verdict for c in cases]
@@ -295,3 +307,35 @@ class EvalRunner:
                 .limit(limit)
             )).all()
         return list(rows)
+
+    async def replay(
+        self,
+        *,
+        transcript_id: str,
+        candidate_version: str,
+        llm_client: ReplayLLMClient | None = None,
+    ) -> DecisionDiff:
+        """Decision-level replay of one recorded turn under a candidate.
+
+        Thin delegate onto :func:`aila.platform.eval.replay.replay`: loads
+        the transcript, freezes the retrieval hits + tool outputs +
+        clock, renders the prompt under ``candidate_version`` (resolved
+        via :class:`PromptVersionStore`), runs the candidate replay twice
+        for determinism, runs the ORIGINAL prompt version once for
+        faithfulness against the recorded decision, and returns a
+        :class:`DecisionDiff`. ``llm_client`` defaults to the platform
+        client bridge; tests inject a deterministic fake.
+        """
+        # Deferred import: importing the replay module at runner-import
+        # time transitively pulls transcript.py -> db_models via
+        # PlatformJournalRecord, which is loaded through the shared
+        # eval package init chain and closes a cycle. Deferring the
+        # import to first-use keeps eval.runner safely importable
+        # from anywhere in the storage graph.
+        from aila.platform.eval.replay import replay as _replay
+        return await _replay(
+            transcript_id=transcript_id,
+            candidate_version=candidate_version,
+            llm_client=llm_client,
+            version_store=self._store,
+        )

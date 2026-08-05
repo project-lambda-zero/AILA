@@ -38,6 +38,7 @@ from aila.platform.contracts.enums import (
     PatternConfidence,
     PatternScope,
     PatternStatus,
+    PatternTrustTier,
 )
 from aila.platform.services.knowledge import KnowledgeService
 from aila.platform.uow import UnitOfWork
@@ -59,7 +60,20 @@ PATTERN_RELEVANCE_FLOOR_DEFAULT: float = 0.3
 _RELEVANCE_FLOOR_CONFIG_NS: str = "platform"
 _RELEVANCE_FLOOR_CONFIG_KEY: str = "knowledge_pattern_relevance_floor"
 
+# RFC-08 memory-poisoning negative-prior penalty. When a returned positive
+# overlaps with a filtered-out NEGATIVE pattern, its score is multiplied by
+# this factor per overlap. Positives whose own trust_tier is UNREVIEWED get
+# one additional multiplication. Same resolution chain as the relevance
+# floor: env AILA_PLATFORM_KNOWLEDGE_NEGATIVE_PRIOR_PENALTY -> cache -> DB
+# row -> ``PlatformConfigSchema.knowledge_negative_prior_penalty`` default.
+# NEGATIVE_PRIOR_PENALTY_DEFAULT is the last-resort fallback when the
+# registry lookup itself fails; the schema default is 0.5.
+NEGATIVE_PRIOR_PENALTY_DEFAULT: float = 0.5
+_NEGATIVE_PRIOR_PENALTY_CONFIG_NS: str = "platform"
+_NEGATIVE_PRIOR_PENALTY_CONFIG_KEY: str = "knowledge_negative_prior_penalty"
+
 __all__ = [
+    "NEGATIVE_PRIOR_PENALTY_DEFAULT",
     "PATTERN_RELEVANCE_FLOOR_DEFAULT",
     "PatternRetrievalResult",
     "PatternStoreBase",
@@ -91,6 +105,37 @@ def _scope_widens(old: PatternScope, new: PatternScope) -> bool:
         PatternScope.GLOBAL: 3,
     }
     return order[new] >= order[old]
+
+
+def _applicability_overlaps(
+    neg_app: dict[str, Any], pos_app: dict[str, Any],
+) -> bool:
+    """True when a NEGATIVE pattern's scope could apply to a positive's.
+
+    RFC-08 says a NEGATIVE lowers a prior when it applies to the same
+    context as the positive it's near. Determinism: only compare
+    list-valued applicability keys (``target_kinds``, ``languages``,
+    ``bug_classes``, ``families``, ``capabilities``, ...); a scalar key
+    like the ExperienceWriter-stamped ``polarity`` is ignored because
+    the two patterns naturally disagree on it by construction.
+
+    Two dicts overlap unless there exists at least one list-valued key
+    they both restrict on with zero intersection -- in that single case
+    the negative provably does not apply to the positive's context and
+    the score is left alone. Absence of a key on either side is treated
+    as ``matches all`` (the standard applicability-filter semantics used
+    at Stage 1 above).
+    """
+    for key, neg_val in neg_app.items():
+        if not isinstance(neg_val, list) or not neg_val:
+            continue
+        pos_val = pos_app.get(key)
+        if not isinstance(pos_val, list) or not pos_val:
+            # positive doesn't restrict on this key -> overlaps
+            continue
+        if not set(neg_val) & set(pos_val):
+            return False
+    return True
 
 
 class PatternStoreBase:
@@ -125,6 +170,21 @@ class PatternStoreBase:
         return f"{self._namespace_prefix}.workspace.{workspace_id}"
 
     def _to_summary(self, row: Any) -> Any:
+        # RFC-08 memory-poisoning fields. ``trust_tier`` defaults to
+        # UNREVIEWED for rows that pre-date the tier column (a live
+        # DB where migration 113 has run and rows carry ``'unreviewed'``
+        # server-default already matches this fallback). ``provenance``
+        # decodes to an empty envelope for rows without one.
+        try:
+            trust_tier = PatternTrustTier(row.trust_tier or PatternTrustTier.UNREVIEWED.value)
+        except (TypeError, ValueError):
+            trust_tier = PatternTrustTier.UNREVIEWED
+        try:
+            provenance = json.loads(row.provenance_json or "{}")
+        except (TypeError, ValueError):
+            provenance = {}
+        if not isinstance(provenance, dict):
+            provenance = {}
         return self._summary_cls(
             id=row.id,
             workspace_id=row.workspace_id,
@@ -143,6 +203,8 @@ class PatternStoreBase:
             last_used_at=row.last_used_at,
             created_at=row.created_at,
             updated_at=row.updated_at,
+            trust_tier=trust_tier,
+            provenance=provenance,
         )
 
     async def create(
@@ -183,6 +245,17 @@ class PatternStoreBase:
         body_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
         dedup_key = f"{body.workspace_id}|{body.kind.value}|{body_hash}"
 
+        # RFC-08 memory-poisoning stamp. Callers that route through
+        # :class:`ExperienceWriter` supply VERIFIED / NEGATIVE from a
+        # signed quorum verdict; sanctioned DRAFT proposers stamp
+        # UNREVIEWED. Fallbacks keep back-compat with any legacy
+        # caller that constructs the create body without the fields.
+        trust_tier = getattr(body, "trust_tier", PatternTrustTier.UNREVIEWED)
+        if not isinstance(trust_tier, PatternTrustTier):
+            trust_tier = PatternTrustTier(str(trust_tier))
+        provenance = getattr(body, "provenance", {}) or {}
+        if not isinstance(provenance, dict):
+            provenance = {}
         async with UnitOfWork() as uow:
             row = self._record_model(
                 team_id=team_id,
@@ -196,6 +269,8 @@ class PatternStoreBase:
                 evidence_refs_json=json.dumps(body.evidence_refs),
                 status=PatternStatus.DRAFT.value,
                 scope=scope.value,
+                trust_tier=trust_tier.value,
+                provenance_json=json.dumps(provenance),
             )
             uow.session.add(row)
             # Flush so row.id is populated for the metadata payload and
@@ -447,7 +522,13 @@ class PatternStoreBase:
                 )
             rows = (await uow.session.exec(stmt)).all()
 
-        candidates: dict[str, Any] = {}
+        # Split into positive + negative candidate pools by trust_tier.
+        # NEGATIVE patterns are RFC-08 poisoning-defense priors: they
+        # never enter the actionable results list; they only lower a
+        # colliding positive's score. UNREVIEWED + VERIFIED can be
+        # returned, but UNREVIEWED positives eat one additional penalty.
+        positive_candidates: dict[str, Any] = {}
+        negative_candidates: dict[str, Any] = {}
         for row in rows:
             applicability = json.loads(row.applicability_json or "{}")
             if target_kind and "target_kinds" in applicability:
@@ -462,9 +543,19 @@ class PatternStoreBase:
                     and primary_language not in lang_list
                 ):
                     continue
-            candidates[row.id] = row
+            tier_raw = getattr(row, "trust_tier", None) or PatternTrustTier.UNREVIEWED.value
+            try:
+                tier = PatternTrustTier(tier_raw)
+            except (TypeError, ValueError):
+                tier = PatternTrustTier.UNREVIEWED
+            if tier == PatternTrustTier.NEGATIVE:
+                negative_candidates[row.id] = row
+            else:
+                positive_candidates[row.id] = row
 
-        if not candidates:
+        if not positive_candidates:
+            # No positives to return, and NEGATIVEs alone never surface
+            # as standalone actionable hits. Nothing to send upstream.
             return []
 
         # Stage 2 -- semantic search across scope-chain namespaces.
@@ -490,19 +581,29 @@ class PatternStoreBase:
             min_score=floor,
         )
 
+        # Build the positives-only result list preserving retrieve() order.
+        # Semantic hits whose pattern_id resolves to a NEGATIVE candidate
+        # are dropped silently -- the KB mirror still returns them (the
+        # mirror has no trust_tier column) but the pattern layer strips
+        # them here so they never reach a researcher prompt.
         results: list[PatternRetrievalResult] = []
         seen: set[str] = set()
         for hit in hits:
             meta = hit.get("metadata") or {}
             pid = meta.get("pattern_id") if isinstance(meta, dict) else None
-            if pid is None or pid not in candidates or pid in seen:
+            if pid is None or pid in seen:
+                continue
+            if pid in negative_candidates:
+                seen.add(pid)
+                continue
+            if pid not in positive_candidates:
                 continue
             score = float(hit.get("score") or 0.0)
             if score < floor:
                 continue
             results.append(
                 PatternRetrievalResult(
-                    pattern=self._to_summary(candidates[pid]),
+                    pattern=self._to_summary(positive_candidates[pid]),
                     score=score,
                     matched_by="both",
                 ),
@@ -511,11 +612,11 @@ class PatternStoreBase:
             if len(results) >= k:
                 break
 
-        # Backfill from structured candidates not matched by search so
-        # the engine still sees relevant patterns even when semantic
-        # signal is weak.
+        # Backfill from structured positive candidates not matched by
+        # search so the engine still sees relevant patterns even when
+        # semantic signal is weak. Negatives never backfill.
         if len(results) < k:
-            for pid, row in candidates.items():
+            for pid, row in positive_candidates.items():
                 if pid in seen:
                     continue
                 results.append(
@@ -528,6 +629,41 @@ class PatternStoreBase:
                 seen.add(pid)
                 if len(results) >= k:
                     break
+
+        # RFC-08 memory-poisoning down-weight. For every returned positive:
+        #   * multiply score by ``penalty`` per NEGATIVE candidate whose
+        #     applicability overlaps it (a NEGATIVE lowering a prior on
+        #     a colliding positive) -- never a hard-block.
+        #   * multiply once more when the positive itself is UNREVIEWED
+        #     (an unreviewed positive that reached ACTIVE retrieves at
+        #     reduced weight until an operator promotes it to VERIFIED).
+        # Both multiplications are order-stable and deterministic; the
+        # ordering of the ``results`` list is not re-sorted so a caller
+        # that relies on the retrieve() ranking still sees it.
+        if results:
+            penalty = await self._resolve_negative_prior_penalty()
+            if penalty < 1.0:
+                penalised: list[PatternRetrievalResult] = []
+                neg_apps = [
+                    json.loads(r.applicability_json or "{}")
+                    for r in negative_candidates.values()
+                ]
+                for r in results:
+                    factor = 1.0
+                    pos_app = r.pattern.applicability or {}
+                    for neg_app in neg_apps:
+                        if _applicability_overlaps(neg_app, pos_app):
+                            factor *= penalty
+                    if r.pattern.trust_tier == PatternTrustTier.UNREVIEWED:
+                        factor *= penalty
+                    penalised.append(
+                        PatternRetrievalResult(
+                            pattern=r.pattern,
+                            score=r.score * factor,
+                            matched_by=r.matched_by,
+                        ),
+                    )
+                results = penalised
 
         # Update usage counters for retrieved patterns (single-shot UoW).
         if results:
@@ -570,3 +706,36 @@ class PatternStoreBase:
             return float(raw)
         except (TypeError, ValueError):
             return PATTERN_RELEVANCE_FLOOR_DEFAULT
+
+    @staticmethod
+    async def _resolve_negative_prior_penalty() -> float:
+        """Resolve the RFC-08 memory-poisoning penalty via ConfigRegistry.
+
+        Env -> cache -> DB -> ``PlatformConfigSchema.knowledge_negative_prior_penalty``
+        (default 0.5). :data:`NEGATIVE_PRIOR_PENALTY_DEFAULT` is the
+        last-resort fallback when the registry lookup itself raises or
+        returns a non-numeric value -- a bad DB row must never silently
+        disable the down-weight defense.
+
+        Values are clamped to ``[0.0, 1.0]``. Above 1.0 would amplify a
+        prior instead of lowering it (breaks the RFC-08 contract);
+        below 0.0 would flip the sign of a positive's score.
+        """
+        try:
+            raw = await ConfigRegistry().get(
+                _NEGATIVE_PRIOR_PENALTY_CONFIG_NS,
+                _NEGATIVE_PRIOR_PENALTY_CONFIG_KEY,
+            )
+        except (OSError, RuntimeError, ValueError, TypeError):
+            return NEGATIVE_PRIOR_PENALTY_DEFAULT
+        if raw is None:
+            return NEGATIVE_PRIOR_PENALTY_DEFAULT
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return NEGATIVE_PRIOR_PENALTY_DEFAULT
+        if value < 0.0:
+            return 0.0
+        if value > 1.0:
+            return 1.0
+        return value

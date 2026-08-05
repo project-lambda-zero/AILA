@@ -112,6 +112,17 @@ _PLATFORM_DYNAMIC_FAMILIES: tuple[DynamicKeyFamily, ...] = (
     DynamicKeyFamily("llm_pipeline_post_call_steps_", str),
     # Generic pipeline step enable and fail-mode (bool or open/closed; callers coerce).
     DynamicKeyFamily("llm_pipeline_", str, description="Pipeline step enable or fail-mode override."),
+    # RFC-08 Tier D per-outcome_kind live threshold. Written by
+    # ``POST /admin/eval/calibration-proposals/{id}/promote`` when the
+    # eval + quorum gate clears; read by module confidence gates as
+    # ``calibration_threshold_{outcome_kind}``. Threshold-shaped so
+    # honesty audit rule 57 recognises the .set() key as a versioned
+    # promotion (the CalibrationProposalRecord reference in the same
+    # function body is what discharges the rule).
+    DynamicKeyFamily(
+        "calibration_threshold_", float,
+        description="Per-outcome_kind live confidence threshold promoted from a CalibrationProposalRecord.",
+    ),
 )
 
 
@@ -189,6 +200,18 @@ class PlatformConfigSchema(BaseModel):
     llm_pipeline_verify_threshold_default: float = 0.7
     llm_pipeline_verify_model_default: str = ""
 
+    # RFC-08 Tier D post-hoc confidence calibrator (contract C6).
+    # When True (default), the gate step reads the active
+    # :class:`CalibratorVersionRecord` for the request's ``task_type``
+    # via :func:`load_active_calibrator` and applies its ``apply(raw)``
+    # to the number :func:`extract_confidence` produced BEFORE
+    # ``_map_confidence_level`` runs. When False (or no active
+    # calibrator exists yet), the gate falls through to the raw score
+    # -- safe to deploy before any fit has landed. The kill-switch is
+    # deliberate: an operator can force raw-passthrough by flipping
+    # this in a hot moment without reverting the calibrator rows.
+    llm_calibrator_enabled: bool = True
+
     # LLM cost estimation fallback (Phase 175 / D-04)
     # Used when a team has no historical data for a task_type.
     # worst_case = target_count * fallback_max_tokens * (fallback_price_per_1k / 1000)
@@ -213,6 +236,18 @@ class PlatformConfigSchema(BaseModel):
     # via ConfigRegistry so operators can override per-deployment through the
     # env or PUT /config without a schema change.
     knowledge_pattern_relevance_floor: float = 0.3
+
+    # RFC-08 memory-poisoning negative-prior penalty. Applied by
+    # PatternStoreBase.applicable to each returned positive whose
+    # applicability overlaps a filtered-out NEGATIVE pattern, and once to
+    # every positive whose trust_tier is UNREVIEWED. The score is
+    # multiplied by this factor per overlapping NEGATIVE and once for
+    # UNREVIEWED, so a positive collocated with two overlapping
+    # NEGATIVEs at penalty 0.5 emerges at 0.25 * base score. A value of
+    # 1.0 disables the down-weight (the pattern-poisoning defense stays
+    # informational only). RFC-08 explicitly forbids hard-blocking on a
+    # NEGATIVE -- always a prior, never a gate.
+    knowledge_negative_prior_penalty: float = 0.5
 
     # RFC-12 Phase 5 ranking controls, applied by
     # KnowledgeService.retrieve_routed AFTER the relevance gate as a

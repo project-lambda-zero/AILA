@@ -1,6 +1,6 @@
 """honesty_audit -- AST-based structural honesty checker for Python code.
 
-Detects seventy-two categories of structural dishonesty:
+Detects seventy-three categories of structural dishonesty:
 
 1. unused_parameter    -- function parameter accepted but never referenced in body.
 2. misleading_name     -- function name implies intelligence but body only forwards.
@@ -74,6 +74,7 @@ Detects seventy-two categories of structural dishonesty:
 70. mcp_catalog_placement -- a subclass of :class:`McpRegistryServiceBase` defined inside ``src/aila/platform/**`` binds ``_servers`` to a literal MCP server catalog (a tuple/list of dict specs). The MCP server catalog is module domain: each module owns ``MCP_SERVERS`` in ``modules/<id>/services/mcp_registry.py`` and binds it onto the platform base via the ``_servers`` ClassVar. The platform base takes the catalog as class state supplied by the subclass and never hardcodes one -- a platform-side placement re-imports module domain into the platform layer and reopens the RFC-04 boundary. Structural guardrail (fires zero on the current tree).
 71. service_env_read -- a module ``modules/*/services/**`` file reads config via ``os.environ`` / ``os.getenv`` (attribute access or ``from os import environ/getenv``) instead of ``ConfigRegistry(module_id, key)``. Sibling of rule 49 (``agent_env_read``) for the services layer: RFC-04's config-drift closure removed every direct env read from module services so the DB override and per-module schema default both participate on one path. AST-based -- docstring or comment mentions of ``os.environ`` are invisible and never trip this.
 72. platform_hardcodes_strategy_family -- a file under ``src/aila/platform/**`` contains a string-literal AST node equal to one of the known module reasoning-strategy family names (``mobile_reverse`` / ``vulnerability_research`` / ``web_pentest`` / ``network_forensics`` / ``memory_forensics`` / ``persistence_hunt`` / ``malware_static`` / ``filesystem_triage``). The platform reasoning surface must not name a family owned by a module; strategy families are declared by each module via ``ModuleProtocol.reasoning_strategies()`` and resolved through the registry. The family literal ``generic`` is allowed because it is the platform's fallback family; ``tests/`` paths are exempt. Sibling of rule 48 for the reasoning-strategy surface (RFC-05 crit 6).
+73. structural_self_modification -- the RFC-08 self-improvement layer (``platform/eval/**`` and the sanctioned proposer files ``platform/agents/pattern_extractor.py`` / ``platform/agents/persona_router.py`` / ``platform/agents/calibrator.py``) proposes parameters (thresholds / persona-selection / patterns / routing weights) only. A structural graph edit from within that layer -- a ``PhaseSpec(...)`` / ``WorkflowDefinition(...)`` construction, a ``make_dispatch_router(...)`` / ``build_dispatch_workflow(...)`` call, a subscript / delete / mutator-method mutation of a ``.states`` / ``.nodes`` / ``.edges`` mapping, or a subscript / mutator write to a persona-roster binding (``PERSONA_ROLE_MAP`` / ``persona_task_type`` / ``role_task_type``) -- lets a self-improvement writer mint a new node, phase, or roster entry outside the operator-authored workflow definition. Fire is scoped to the self-improvement files only so the workflow / engine layer (which legitimately builds the graph) is not flagged; precision over recall by design.
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -1006,6 +1007,78 @@ _MODULE_STRATEGY_FAMILIES: frozenset[str] = frozenset({
     "filesystem_triage",
 })
 
+# Rule 73 -- structural_self_modification. The RFC-08 self-improvement
+# layer is a PARAMETER proposer: it moves thresholds, persona-selection
+# weights, patterns, and routing tuning within the operator-authored
+# workflow graph. Emitting a STRUCTURAL edit from that layer (a new
+# phase, a new node, a new dispatch router, a mutation of the frozen
+# .states / .nodes / .edges map, or a rewrite of the persona roster)
+# lets a self-improvement writer mint a graph shape the operator did
+# not sign off on -- the exact class of change RFC-08 rules 55-57
+# gate at the row / threshold level. This rule closes the shape-level
+# equivalent.
+#
+# Scope is DELIBERATELY narrow so the workflow / engine layer
+# (``platform/workflows/**``) which legitimately builds the graph is
+# never flagged: only files under ``platform/eval/`` and the specific
+# proposer files in ``platform/agents/`` (``pattern_extractor.py``,
+# ``persona_router.py``, ``calibrator.py``) are in scope. Precision
+# over recall -- a false positive on the engine costs more than a
+# miss because the engine's every commit would trip it. A future
+# proposer added under ``platform/agents/`` MUST also be listed here.
+_SELF_IMPROVEMENT_EVAL_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]platform[/\\]eval[/\\]"
+)
+_SELF_IMPROVEMENT_AGENT_FILES: tuple[str, ...] = (
+    "platform/agents/pattern_extractor.py",
+    "platform/agents/persona_router.py",
+    "platform/agents/calibrator.py",
+)
+# Constructors / factories whose call constructs a structural graph
+# element. A Name (``PhaseSpec(...)``) or Attribute
+# (``phase_graph.PhaseSpec(...)``) call whose terminal is in this set
+# fires the rule.
+_STRUCTURAL_GRAPH_CALLABLES: frozenset[str] = frozenset({
+    "PhaseSpec",
+    "WorkflowDefinition",
+    "make_dispatch_router",
+    "build_dispatch_workflow",
+})
+# Attribute names that carry the frozen node / edge map on a
+# ``WorkflowDefinition`` / phase graph. A subscript write, del, or
+# mutator-method call targeting any of these on any receiver fires
+# the rule. Rule 50 already guards ``.states`` universally; the
+# additional coverage of ``.nodes`` / ``.edges`` scoped to the self-
+# improvement layer is the added value here (the two rules may
+# double-fire on a ``.states`` mutation inside eval / a proposer,
+# which is the intended, non-noisy overlap).
+_STRUCTURAL_MAP_ATTRS: frozenset[str] = frozenset({
+    "states", "nodes", "edges",
+})
+# Names whose subscript-assign / del / mutator-method call is a
+# persona-roster rewrite. ``PERSONA_ROLE_MAP`` is the top-level
+# module dict; ``persona_task_type`` / ``role_task_type`` are
+# ClassVar dicts on :class:`PersonaRouter` subclasses. A subclass
+# BODY that binds these to a new literal (``persona_task_type = {...}``
+# as an AnnAssign / Assign with a bare Name target) is a legitimate
+# override and NOT a runtime mutation, so only Subscript / Delete /
+# mutator-method shapes fire.
+_STRUCTURAL_ROSTER_TOKENS: frozenset[str] = frozenset({
+    "PERSONA_ROLE_MAP",
+    "persona_task_type",
+    "role_task_type",
+})
+# Mutator method calls treated as a structural edit on a
+# ``.states`` / ``.nodes`` / ``.edges`` map or a persona-roster
+# binding. Extends the rule-50 set with the sequence mutators
+# ``append`` / ``extend`` / ``insert`` so a future tuple/list roster
+# is caught too.
+_STRUCTURAL_MUTATOR_METHODS: frozenset[str] = frozenset({
+    "update", "pop", "setdefault", "clear", "popitem",
+    "__setitem__", "__delitem__",
+    "append", "extend", "insert",
+})
+
 # Rule 50 -- static_node_mutation. Mutating a WorkflowDefinition.states map
 # after construction reopens the node set the dispatch-hub / phase-graph
 # substrates freeze so every transition target stays auditable (RFC-13 #68).
@@ -1159,23 +1232,50 @@ _JOURNAL_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
 # ``self.pattern_store.create(...)`` / ``self._pattern_store.create(...)``
 # / ``store.create(...)`` (when ``store`` was bound from a
 # ``pattern_store``-typed attribute) all trigger the check while a
-# bare ``kb.create(...)`` on the KnowledgeService does not.
+# bare ``kb.create(...)`` on the KnowledgeService does not. The
+# ``_store`` token also matches because ExperienceWriter, the
+# pattern_extractor DRAFT proposer, and the pattern_proposer service
+# all bind the pattern store to ``self._store`` -- rule 55 needs to see
+# through the shortened name so a fourth writer file cannot slip in
+# under a bare ``self._store`` binding.
 _PATTERN_STORE_WRITE_METHODS: frozenset[str] = frozenset({
     "create", "add", "insert", "bulk_create", "record",
 })
 _PATTERN_STORE_RECEIVER_TOKENS: tuple[str, ...] = (
-    "pattern_store", "_pattern_store",
+    "pattern_store", "_pattern_store", "_store",
+)
+# ``store`` alone is matched ONLY as a dotted attribute (``self.store``,
+# ``obj.store``) because a bare ``store = PatternStore(...); store.create(...)``
+# local is a common api_router / factory idiom and not intrinsic to the
+# pattern-store shape; treating a plain Name.id ``store`` as the receiver
+# would fire on every legitimate operator-manual write helper.
+_PATTERN_STORE_ATTR_ONLY_TOKENS: tuple[str, ...] = (
+    "store",
 )
 # Files that OWN a pattern-store write path and legitimately call
-# ``.create(...)`` directly on the store instance: :class:`ExperienceWriter`
-# (the only reviewed-verdict-gated writer) and the store implementation
-# files themselves. Everything else must go through ExperienceWriter.
+# ``.create(...)`` directly on the store instance. Two shapes are
+# exempted here:
+#
+#   * The RFC-08 review-gated writer :class:`ExperienceWriter` and the
+#     store implementation files (the store's own ``.create`` cannot
+#     recurse through itself).
+#   * The sanctioned DRAFT proposers -- ``platform/agents/pattern_extractor.py``
+#     and ``modules/<mod>/services/pattern_proposer.py`` -- which stamp
+#     ``trust_tier=UNREVIEWED`` + provenance on every row they write.
+#     Those rows are inert (the retrieval path down-weights UNREVIEWED
+#     to zero standalone influence) until an operator / reviewer
+#     promotes them via ExperienceWriter, so they are proposals
+#     awaiting the gate, not a bypass of it. Rule 55 continues to
+#     guard against a FOURTH unsanctioned write path from a service /
+#     agent turn / workflow state.
 _PATTERN_STORE_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
     "platform/eval/experience_writer.py",
     "platform/services/pattern_store.py",
     "modules/vr/services/pattern_store.py",
     "modules/malware/services/pattern_store.py",
     "modules/forensics/services/pattern_store.py",
+    "agents/pattern_extractor.py",
+    "services/pattern_proposer.py",
 )
 
 # Rule 56 -- self_labeled_reward. Kwarg / attribute names that carry a
@@ -1452,17 +1552,24 @@ def _pattern_store_receiver_tail(node: ast.expr) -> str | None:
 
     Rule 55 uses this to detect a ``.create(...)`` call whose receiver's
     dotted-attribute tail is a pattern-store binding. ``.pattern_store``
-    / ``._pattern_store`` on an object (``self.pattern_store.create``,
-    ``services._pattern_store.create``) all match. A bare
-    ``pattern_store.create(...)`` where ``pattern_store`` is a local
-    variable also matches by Name.id. Returns the matched terminal name
-    for the diagnostic message, or ``None`` when the receiver is not a
-    pattern-store shape.
+    / ``._pattern_store`` / ``._store`` on an object
+    (``self.pattern_store.create``, ``services._pattern_store.create``,
+    ``self._store.create``) all match, as does a bare
+    ``pattern_store.create(...)`` / ``_store.create(...)`` where the
+    name is bound as a local. The bare token ``store`` matches ONLY as
+    a dotted attribute (``self.store``, ``obj.store``) -- a bare local
+    ``store = PatternStore(...); store.create(...)`` is a common
+    api_router / factory idiom and is not intrinsic to the pattern-
+    store shape. Returns the matched terminal name for the diagnostic
+    message, or ``None`` when the receiver is not a pattern-store shape.
     """
     if isinstance(node, ast.Name):
         return node.id if node.id in _PATTERN_STORE_RECEIVER_TOKENS else None
     if isinstance(node, ast.Attribute):
-        return node.attr if node.attr in _PATTERN_STORE_RECEIVER_TOKENS else None
+        if node.attr in _PATTERN_STORE_RECEIVER_TOKENS:
+            return node.attr
+        if node.attr in _PATTERN_STORE_ATTR_ONLY_TOKENS:
+            return node.attr
     return None
 
 
@@ -4232,18 +4339,36 @@ class _HonestyVisitor(ast.NodeVisitor):
 
     def _check_ungated_self_improvement_write(self, tree: ast.Module) -> None:
         """Rule 55: ungated_self_improvement_write -- a pattern-store
-        write outside :class:`ExperienceWriter` and the store itself.
+        write outside :class:`ExperienceWriter`, the store's own file,
+        and the sanctioned DRAFT proposers.
 
         The RFC-08 write path is:
 
             reviewed QuorumOutcome  ->  ExperienceWriter.record(...)
                                     ->  pattern_store.create(...)
 
-        Every experience row must carry a reviewer-signed polarity
-        (positive / negative). A direct ``.create(...)`` on the store
-        from an agent turn, a workflow state, or a service reopens
-        that write path and lets the module insert a "learned"
-        pattern without ever passing the eval + quorum gate.
+        Every ``VERIFIED`` (retrievable at full weight) experience row
+        must carry a reviewer-signed polarity (positive / negative).
+        A direct ``.create(...)`` on the store from an agent turn, a
+        workflow state, or an unsanctioned service reopens that write
+        path and lets the module insert a "learned" pattern without
+        ever passing the eval + quorum gate.
+
+        Two categories of file are exempted:
+
+        * The canonical review-gated writer :class:`ExperienceWriter`
+          and the ``PatternStore`` implementation files (the store
+          itself is what ``.create`` writes to).
+        * The sanctioned DRAFT proposers
+          ``platform/agents/pattern_extractor.py`` and
+          ``modules/<mod>/services/pattern_proposer.py``. Those two
+          stamp ``trust_tier=UNREVIEWED`` (+ provenance) on every row
+          they write; the RFC-08 retrieval path down-weights
+          ``UNREVIEWED`` to zero standalone influence, so the rows are
+          inert proposals awaiting operator / reviewer promotion via
+          ExperienceWriter. Rule 55 continues to guard against a
+          FOURTH unsanctioned write path (a service, an agent turn, a
+          workflow state) that would bypass the review-gate closure.
 
         The rule fires on any ``<recv>.<method>(...)`` call where
         ``<method>`` is one of :data:`_PATTERN_STORE_WRITE_METHODS` and
@@ -4420,6 +4545,164 @@ class _HonestyVisitor(ast.NodeVisitor):
                     "behind a versioned, reversible proposal row"
                 ),
             )
+
+    def _check_structural_self_modification(self, tree: ast.Module) -> None:
+        """Rule 73: structural_self_modification -- the self-improvement
+        layer emits a structural graph edit instead of a parameter move.
+
+        RFC-08's self-improvement layer (calibrator, routing_learner,
+        pattern_extractor, experience_writer, calibration, persona_router)
+        is a PARAMETER proposer: it moves thresholds, persona-selection
+        weights, patterns, and routing tuning WITHIN the operator-
+        authored workflow graph. Rules 55-57 gate the row-level and
+        threshold-level writes; this rule is the shape-level sibling.
+
+        A structural edit from that layer -- constructing a
+        :class:`PhaseSpec` / :class:`WorkflowDefinition`, calling
+        :func:`make_dispatch_router` / :func:`build_dispatch_workflow`,
+        a subscript / del / mutator-method mutation of a ``.states`` /
+        ``.nodes`` / ``.edges`` mapping, or a subscript / mutator write
+        to a persona-roster binding (``PERSONA_ROLE_MAP`` /
+        ``persona_task_type`` / ``role_task_type``) -- lets the
+        writer mint a phase, node, or roster entry the operator did
+        not sign off on. The workflow / engine layer
+        (``platform/workflows/**``) legitimately builds the graph, so
+        scope is deliberately narrow: only ``platform/eval/`` and the
+        specific proposer files
+        (:data:`_SELF_IMPROVEMENT_AGENT_FILES`) are matched.
+
+        Precision over recall: a false positive on the engine costs
+        more than a miss, because the engine's every commit would
+        trip it. A future proposer added under ``platform/agents/``
+        MUST be listed in :data:`_SELF_IMPROVEMENT_AGENT_FILES`.
+
+        The rule fires on FOUR AST shapes (all scoped to the self-
+        improvement layer):
+
+        1. A :class:`ast.Call` whose callee's terminal name is in
+           :data:`_STRUCTURAL_GRAPH_CALLABLES` (matches
+           ``PhaseSpec(...)``, ``phase_graph.PhaseSpec(...)``,
+           ``make_dispatch_router(...)`` and the workflow
+           constructor / factory).
+        2. A :class:`ast.Assign` / :class:`ast.AugAssign` /
+           :class:`ast.AnnAssign` / :class:`ast.Delete` whose target
+           is a :class:`ast.Subscript` whose value is an
+           :class:`ast.Attribute` with ``.attr`` in
+           :data:`_STRUCTURAL_MAP_ATTRS` (matches
+           ``workflow.states[x] = ...``, ``def.nodes[x] = ...``, ...).
+           Rule 50 already covers ``.states`` universally; the added
+           coverage of ``.nodes`` / ``.edges`` and the RFC-08 framing
+           are the value here.
+        3. A :class:`ast.Call` whose callee is a :class:`ast.Attribute`
+           where ``.attr`` is in :data:`_STRUCTURAL_MUTATOR_METHODS`
+           and the receiver is an :class:`ast.Attribute` whose
+           ``.attr`` is in :data:`_STRUCTURAL_MAP_ATTRS` (matches
+           ``workflow.states.update({...})``, ``spec.nodes.pop(x)``,
+           ...).
+        4. A subscript / del / mutator-method write against one of
+           :data:`_STRUCTURAL_ROSTER_TOKENS` (matches
+           ``PERSONA_ROLE_MAP[x] = y``, ``persona_task_type.update({...})``,
+           ``roster.append(...)`` when ``roster`` is one of those
+           tokens). A subclass BODY that binds
+           ``persona_task_type = {...}`` with a bare Name target is a
+           legitimate override (not a runtime mutation) and does NOT
+           fire.
+        """
+        normalized = self.filename.replace("\\", "/")
+        in_eval = bool(_SELF_IMPROVEMENT_EVAL_PATTERN.search(normalized))
+        in_agent = any(
+            normalized.endswith(suffix)
+            for suffix in _SELF_IMPROVEMENT_AGENT_FILES
+        )
+        if not (in_eval or in_agent):
+            return
+
+        def _terminal(node: ast.expr) -> str | None:
+            if isinstance(node, ast.Name):
+                return node.id
+            if isinstance(node, ast.Attribute):
+                return node.attr
+            return None
+
+        def _is_structural_map_receiver(node: ast.expr) -> bool:
+            # ``x.states`` / ``x.nodes`` / ``x.edges`` on any receiver.
+            return (
+                isinstance(node, ast.Attribute)
+                and node.attr in _STRUCTURAL_MAP_ATTRS
+            )
+
+        def _is_roster_receiver(node: ast.expr) -> bool:
+            tail = _terminal(node)
+            return tail in _STRUCTURAL_ROSTER_TOKENS
+
+        def _emit_here(line: int, detail: str) -> None:
+            self._emit(
+                line,
+                "structural_self_modification",
+                (
+                    f"structural_self_modification: {detail} -- the RFC-08 "
+                    "self-improvement layer proposes parameters "
+                    "(thresholds / persona-selection / patterns / routing), "
+                    "not graph structure; a structural edit here mints a "
+                    "phase, node, or roster entry the operator did not "
+                    "sign off on"
+                ),
+            )
+
+        for node in ast.walk(tree):
+            # Shape 1: structural constructor / factory call.
+            if isinstance(node, ast.Call):
+                tail = _terminal(node.func)
+                if tail in _STRUCTURAL_GRAPH_CALLABLES:
+                    _emit_here(node.lineno, f"{tail}(...) call")
+                    continue
+                # Shape 3: mutator-method call on a .states / .nodes /
+                # .edges attribute, or on a persona-roster binding.
+                if (
+                    isinstance(node.func, ast.Attribute)
+                    and node.func.attr in _STRUCTURAL_MUTATOR_METHODS
+                ):
+                    recv = node.func.value
+                    if _is_structural_map_receiver(recv):
+                        _emit_here(
+                            node.lineno,
+                            f".{recv.attr}.{node.func.attr}(...) mutator",
+                        )
+                        continue
+                    if _is_roster_receiver(recv):
+                        tail = _terminal(recv) or "<roster>"
+                        _emit_here(
+                            node.lineno,
+                            f"{tail}.{node.func.attr}(...) mutator",
+                        )
+                        continue
+
+            # Shape 2 / 4: subscript-write / del against a
+            # structural map or roster binding.
+            targets: tuple[ast.expr, ...] = ()
+            if isinstance(node, ast.Assign):
+                targets = tuple(node.targets)
+            elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+                targets = (node.target,)
+            elif isinstance(node, ast.Delete):
+                targets = tuple(node.targets)
+            for tgt in targets:
+                if not isinstance(tgt, ast.Subscript):
+                    continue
+                base = tgt.value
+                if _is_structural_map_receiver(base):
+                    _emit_here(
+                        tgt.lineno,
+                        f".{base.attr}[...] subscript write",
+                    )
+                    break
+                if _is_roster_receiver(base):
+                    tail = _terminal(base) or "<roster>"
+                    _emit_here(
+                        tgt.lineno,
+                        f"{tail}[...] subscript write",
+                    )
+                    break
 
     def _check_inline_prompt_literal(self, tree: ast.Module) -> None:
         """Rule 58: inline_prompt_literal -- a module-level ``_*_PROMPT*``
@@ -5231,6 +5514,12 @@ class HonestyAuditor:
         visitor._check_ungated_self_improvement_write(tree)
         visitor._check_self_labeled_reward(tree)
         visitor._check_unversioned_config_promotion(tree)
+        # Rule 73: structural_self_modification -- the RFC-08 shape-level
+        # sibling of rules 55-57. Self-scopes to platform/eval/** plus the
+        # specific proposer files in platform/agents/**, so the dispatch
+        # site is unconditional (the workflow / engine layer is never in
+        # scope and is not flagged by an unconditional call).
+        visitor._check_structural_self_modification(tree)
         visitor._check_inline_prompt_literal(tree)
         visitor._check_untagged_llm_call(tree)
         visitor._check_unaudited_alias_flip(tree)

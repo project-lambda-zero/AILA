@@ -96,6 +96,57 @@ def _map_confidence_level(
     return "REJECT"
 
 
+async def _apply_calibration(
+    config_provider: LLMConfigProvider,
+    task_type: str,
+    raw_score: float,
+) -> float:
+    """Recalibrate ``raw_score`` via the active post-hoc calibrator.
+
+    Contract C6 seam: sits between :func:`extract_confidence` and
+    :func:`_resolve_thresholds` in the gate hot path. When no active
+    :class:`CalibratorVersionRecord` exists for ``task_type`` -- or the
+    platform ``llm_calibrator_enabled`` flag is False -- returns the raw
+    score unchanged so the gate stays safe to deploy before any fit has
+    landed.
+
+    Never raises: any DB / config lookup fault degrades to raw-
+    passthrough (logged inside :func:`load_active_calibrator`). The
+    length-heuristic fallback inside :func:`extract_confidence` is
+    preserved; the calibrator sits AFTER it and reshapes the number the
+    extractor already produced.
+    """
+    registry = config_provider._registry
+    try:
+        enabled_raw = await registry.get("platform", "llm_calibrator_enabled")
+    except (OSError, RuntimeError, ValueError, TypeError):
+        enabled_raw = None
+    enabled = True
+    if enabled_raw is not None:
+        if isinstance(enabled_raw, bool):
+            enabled = enabled_raw
+        else:
+            enabled = str(enabled_raw).strip().lower() not in {
+                "false", "0", "no", "off", "",
+            }
+    if not enabled:
+        return raw_score
+    from aila.platform.eval.calibrator import load_active_calibrator
+
+    calibrator = await load_active_calibrator(task_type)
+    if calibrator is None:
+        return raw_score
+    try:
+        return float(calibrator.apply(raw_score))
+    except (ValueError, TypeError, ArithmeticError) as exc:
+        logger.warning(
+            "_apply_calibration: apply failed for task_type=%s (%s); "
+            "returning raw score",
+            task_type, type(exc).__name__, exc_info=exc,
+        )
+        return raw_score
+
+
 async def _resolve_thresholds(
     config_provider: LLMConfigProvider,
     task_type: str,
@@ -301,8 +352,15 @@ def make_gate_step(
         content = response.content if response.content else ""
         finish_reason = response.finish_reason if response.finish_reason else ""
 
-        # Extract confidence score
-        score = extract_confidence(content, finish_reason)
+        # Extract confidence score (raw)
+        raw_score = extract_confidence(content, finish_reason)
+
+        # C6: post-hoc recalibration. Passes through when no active
+        # calibrator exists OR platform.llm_calibrator_enabled is off
+        # (safe before any fit ships).
+        score = await _apply_calibration(
+            config_provider, routing.task_type, raw_score,
+        )
 
         # Read thresholds from config
         high, medium, reject = await _resolve_thresholds(config_provider, routing.task_type)
@@ -337,11 +395,19 @@ def make_gate_step(
             )
 
             if result is not None:
-                winner_resp, winner_score = result
+                winner_resp, winner_raw = result
+                # C6: the consensus winner's raw score also flows through
+                # the calibrator so downstream thresholding sees a
+                # consistently-shaped number regardless of which branch
+                # produced it.
+                winner_score = await _apply_calibration(
+                    config_provider, routing.task_type, winner_raw,
+                )
                 ctx["response"] = winner_resp
                 new_level = _map_confidence_level(winner_score, high, medium, reject)
                 ctx["confidence"] = new_level
                 ctx["consensus_winner_score"] = winner_score
+                ctx["consensus_winner_raw_score"] = winner_raw
         elif level == "REJECT":
             # Emit audit event before raising
             _emit_gate_event(ctx, routing, score, level, emitter)
@@ -349,8 +415,13 @@ def make_gate_step(
                 f"Response rejected: confidence {score:.2f} below threshold {reject}"
             )
 
-        # Build pipeline_metadata
+        # Build pipeline_metadata. ``raw_confidence_score`` is what
+        # :func:`extract_confidence` produced pre-calibration;
+        # ``confidence_score`` is what the gate acted on post-calibration.
+        # The pair lets an audit reconstruct calibrator drift without
+        # replaying the fit set.
         gate_meta: dict[str, Any] = {
+            "raw_confidence_score": raw_score,
             "confidence_score": score,
             "confidence_level": ctx["confidence"],
             "flagged": ctx.get("confidence_flagged", False),
@@ -358,6 +429,7 @@ def make_gate_step(
             "consensus_retries": ctx.get("consensus_retries", 0),
             "consensus_strategy": ctx.get("consensus_strategy", ""),
             "consensus_winner_score": ctx.get("consensus_winner_score"),
+            "consensus_winner_raw_score": ctx.get("consensus_winner_raw_score"),
         }
 
         existing_meta = ctx.get("pipeline_metadata")

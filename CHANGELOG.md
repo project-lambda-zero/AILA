@@ -19,6 +19,51 @@ operator action.
 
 ### Added
 
+- Eval-gated experience, calibration, and learned routing (RFC-08 #32).
+  Reviewed investigation outcomes now feed a bounded self-improvement
+  loop that proposes parameter changes and gates them, never rewriting
+  its own structure. An offline eval harness scores a candidate config
+  against a frozen benchmark of verified findings and verified non-bugs
+  and reports per-case diffs; a per-outcome_kind calibration proposal is
+  generated from accept/reject history and is versioned and reversible;
+  a routing recommendation feeds pre-execution sibling sizing; and
+  accepted or rejected outcomes write signed patterns into the platform
+  pattern store. No pattern, threshold, or routing change reaches
+  production without both beating the eval and passing the review quorum.
+- A record-replay path for the eval harness (RFC-08 #32). A recorded
+  investigation turn can be replayed against a candidate config with the
+  clock, retrieval results, and tool outputs frozen from the recording,
+  so only the config varies. The replay reports a decision diff plus a
+  determinism score (identical re-runs must match) and a faithfulness
+  score (the reconstruction reproduces the recorded decision). Previously
+  the harness scored only pre-supplied case bundles and could not replay
+  a real turn.
+- A post-hoc confidence calibrator for the LLM gate (RFC-08 #32). A
+  monotone recalibration model (isotonic or temperature scaling) is fit
+  on accept/reject history, scored by expected calibration error, and
+  persisted as a versioned candidate. Promoting a calibrator to active
+  requires a strict ECE improvement over the current active version and a
+  distinct-approver quorum. New admin routes train a calibrator, list
+  versions, promote a calibrator, and promote a calibration threshold
+  into live config, each behind the eval-plus-quorum gate.
+- Per-pattern trust tiering and provenance in the pattern store
+  (RFC-08 #32). Every stored pattern now carries a trust tier (verified,
+  unreviewed, or negative) and a provenance record naming what produced
+  it. Review-signed patterns are verified; per-turn auto-extracted
+  patterns are unreviewed proposals; rejected-outcome patterns are
+  negative. At retrieval a negative pattern is never returned as
+  standalone guidance and instead lowers the score of an overlapping
+  positive (a prior, never a hard block); unreviewed patterns retrieve at
+  a reduced weight. Previously all patterns retrieved at equal weight
+  with no provenance.
+- A fourth self-improvement honesty guardrail (RFC-08 #32,
+  `structural_self_modification`). The self-improvement layer may propose
+  parameter changes only; a proposer that constructs or mutates graph
+  structure (a new node, edge, dispatch router, or persona roster) is now
+  a build-time finding. The three prior guardrails (ungated pattern
+  write, self-labeled reward, unversioned threshold promotion) were also
+  tightened: the ungated-write rule now recognizes the `_store` receiver
+  shape and exempts only the sanctioned draft proposers.
 - An automated investigation-level stuck-investigation healer (RFC-07 #31).
   A periodic platform sweep detects an investigation stuck at RUNNING with
   no live task and no resumable cursor, and re-enqueues it through the
@@ -661,6 +706,16 @@ operator action.
 
 ### Changed
 
+- The confidence-gate score now passes through the active post-hoc
+  calibrator before it is mapped to a HIGH/MEDIUM/LOW/REJECT level
+  (RFC-08 #32). When a calibrator is fitted and active for the task type,
+  the recalibrated probability is the authoritative gate confidence,
+  replacing the length-of-response heuristic as the number that drives
+  the decision; the heuristic remains only as the raw fallback when a
+  response carries no structured confidence, and the gate falls through
+  to the raw score when no calibrator is active or the calibrator flag is
+  off. Gate audit metadata now records both the raw and the calibrated
+  score.
 - The shared dispatch-hub discovery condition (`make_discovery_condition`)
   takes an optional `payload_match` filter so a phase activates only on a
   discovery whose payload carries a matching key and value (RFC-13 #68). The

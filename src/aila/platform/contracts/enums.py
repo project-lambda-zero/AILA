@@ -27,6 +27,7 @@ __all__ = [
     "PatternConfidence",
     "PatternScope",
     "PatternStatus",
+    "PatternTrustTier",
     "PersonaVoice",
     "SenderKind",
     "StageName",
@@ -240,6 +241,34 @@ class PatternConfidence(StrEnum):
     MEDIUM = "medium"
     CAVEATED = "caveated"
     UNKNOWN = "unknown"
+
+
+class PatternTrustTier(StrEnum):
+    """RFC-08 memory-poisoning trust tier stamped on every pattern row.
+
+    A pattern's ``trust_tier`` is orthogonal to its lifecycle ``status``
+    (draft / active / archived) and its ``confidence`` (extraction-time
+    quality). The tier records *how the pattern reached the catalog*:
+
+    * ``VERIFIED`` -- signed by an approved :class:`QuorumOutcome` via
+      :class:`ExperienceWriter`. Full-weight retrieval.
+    * ``UNREVIEWED`` -- draft proposal from a sanctioned proposer
+      (``pattern_extractor`` / ``pattern_proposer``). Inert until an
+      operator promotes it; if it somehow reaches ACTIVE it retrieves
+      at reduced weight to keep unreviewed content from swaying
+      prompts on par with reviewed content.
+    * ``NEGATIVE`` -- signed by a rejected :class:`QuorumOutcome`.
+      Never returned as a standalone actionable retrieval hit;
+      instead lowers the score of overlapping positives as a prior
+      (RFC-08 says the negative lowers a prior, never hard-blocks).
+
+    Values are the durable DB contract (persisted to
+    ``<module>_patterns.trust_tier``).
+    """
+
+    VERIFIED = "verified"
+    UNREVIEWED = "unreviewed"
+    NEGATIVE = "negative"
 
 
 class HypothesisState(StrEnum):

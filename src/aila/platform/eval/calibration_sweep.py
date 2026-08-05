@@ -31,8 +31,10 @@ from __future__ import annotations
 
 __all__ = [
     "CalibrationSweepReport",
+    "CalibratorTrainerSweepReport",
     "DEFAULT_CALIBRATION_TABLES",
     "run_calibration_sweep",
+    "run_calibrator_trainer_sweep",
 ]
 
 import logging
@@ -439,6 +441,117 @@ async def run_calibration_sweep(**kwargs: object) -> CalibrationSweepReport:
         "below_min_evidence=%d errors=%d",
         report["kinds_seen"], report["samples_read"],
         report["proposals_persisted"], report["kinds_below_min_evidence"],
+        len(report["errors"]),
+    )
+    return report
+
+
+# ---------------------------------------------------------------------------
+# RFC-08 Tier D: calibrator trainer sweep (contract C6 fit path).
+#
+# Complements ``run_calibration_sweep`` (which writes threshold
+# CalibrationProposalRecord rows) by fitting a per-task_type
+# CalibratorVersionRecord candidate via CalibrationTrainer. Kept in
+# this file so both sweeps share the DEFAULT_CALIBRATION_TABLES /
+# _read_samples_from_table_pair machinery -- the trainer reuses the
+# same accept/reject history the proposer sees.
+# ---------------------------------------------------------------------------
+
+
+class CalibratorTrainerSweepReport(TypedDict):
+    """Structured result of one ``run_calibrator_trainer_sweep`` invocation."""
+
+    task_types_requested: int
+    versions_persisted: int
+    errors: list[str]
+
+
+_TRAINER_ACTOR: str = "platform.calibrator_trainer_sweep"
+
+
+def _coerce_task_types(raw: object) -> tuple[str, ...]:
+    """Validate an operator-supplied ``task_types`` override.
+
+    The trainer needs an explicit list of task types (the accept/reject
+    review row itself carries no task_type field, so the sweep cannot
+    infer them). Empty override -> empty tuple; the sweep no-ops in
+    that case and reports it in ``errors`` so the operator sees
+    "nothing was fit" instead of a silent success.
+    """
+    if not isinstance(raw, list) or not raw:
+        return ()
+    out: list[str] = []
+    for entry in raw:
+        if not isinstance(entry, str):
+            continue
+        candidate = entry.strip()
+        if candidate and len(candidate) <= 64:
+            out.append(candidate)
+    return tuple(out)
+
+
+async def run_calibrator_trainer_sweep(
+    **kwargs: object,
+) -> CalibratorTrainerSweepReport:
+    """Fit a candidate calibrator per requested ``task_type``.
+
+    ``action_kwargs_json`` on the schedule row MAY carry:
+
+    * ``task_types``: ``list[str]`` of task types to fit. REQUIRED -
+      the trainer has no way to enumerate task types from the review
+      history itself. An empty / missing list makes the sweep a no-op
+      and adds a ``"no_task_types"`` entry to ``errors``.
+    * ``sample_cap``: max samples per (outcome, review) pair.
+    * ``window_days``: recent-review window (int > 0); default 90.
+
+    Every fit stays best-effort + isolated: a failure fitting one
+    task_type does not stop the next. The sweep NEVER raises; the
+    returned report carries the error trail.
+    """
+    # Deferred import: :mod:`aila.platform.eval.calibrator` imports back
+    # into this module for ``_read_samples_from_table_pair``, so a
+    # module-scope import would form a circular reference at load time.
+    from aila.platform.eval.calibrator import CalibrationTrainer
+
+    _ = kwargs.pop("target_name", None)
+    _ = kwargs.pop("execution_context", None)
+
+    task_types = _coerce_task_types(kwargs.get("task_types"))
+    sample_cap = _coerce_int(kwargs.get("sample_cap"), _DEFAULT_SAMPLE_CAP)
+    window_days = _coerce_int(kwargs.get("window_days"), 90)
+
+    report: CalibratorTrainerSweepReport = {
+        "task_types_requested": len(task_types),
+        "versions_persisted": 0,
+        "errors": [],
+    }
+    if not task_types:
+        _log.info(
+            "calibrator_trainer_sweep: no task_types supplied; no-op",
+        )
+        report["errors"].append("no_task_types")
+        return report
+
+    trainer = CalibrationTrainer(
+        sample_cap=sample_cap, window_days=window_days,
+    )
+    for task_type in task_types:
+        try:
+            await trainer.fit_and_propose(
+                task_type=task_type, actor=_TRAINER_ACTOR,
+            )
+        except _SWEEP_ERRORS as exc:
+            _log.warning(
+                "calibrator_trainer_sweep: fit failed for task_type=%s (%s)",
+                task_type, type(exc).__name__, exc_info=exc,
+            )
+            report["errors"].append(f"fit:{task_type}:{type(exc).__name__}")
+            continue
+        report["versions_persisted"] += 1
+
+    _log.info(
+        "calibrator_trainer_sweep completed requested=%d persisted=%d errors=%d",
+        report["task_types_requested"], report["versions_persisted"],
         len(report["errors"]),
     )
     return report

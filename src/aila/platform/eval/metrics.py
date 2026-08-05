@@ -23,13 +23,16 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 __all__ = [
     "CaseOutcome",
     "CalibrationBucket",
+    "DecisionDiff",
     "EvalReport",
     "calibration_curve",
+    "decision_field_diffs",
     "determinism_score",
     "ece",
     "faithfulness_score",
@@ -241,3 +244,62 @@ def _regressed(
         if base is not None and cand is not None and cand < base - tol:
             return True
     return False
+
+
+def decision_field_diffs(
+    recorded: dict[str, Any],
+    replayed: dict[str, Any],
+) -> dict[str, str]:
+    """Per-key change report between a recorded and a replayed decision.
+
+    Every key that appears in either dict maps to one of:
+
+    * ``"equal"`` -- present in both with the same value.
+    * ``"changed"`` -- present in both with different values.
+    * ``"added"`` -- only in the replayed decision.
+    * ``"removed"`` -- only in the recorded decision.
+
+    Equality is Python ``==``; nested dicts / lists compare structurally,
+    which is the honest surface a downstream reviewer wants when auditing
+    what a candidate prompt version changed vs the recorded truth.
+    """
+    keys = set(recorded) | set(replayed)
+    diffs: dict[str, str] = {}
+    for key in keys:
+        in_recorded = key in recorded
+        in_replayed = key in replayed
+        if in_recorded and in_replayed:
+            diffs[key] = "equal" if recorded[key] == replayed[key] else "changed"
+        elif in_replayed:
+            diffs[key] = "added"
+        else:
+            diffs[key] = "removed"
+    return diffs
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionDiff:
+    """The result of one decision-level replay against a recorded turn.
+
+    ``determinism_score`` scores the candidate replay against itself (two
+    passes with frozen inputs, byte-match on the response bodies).
+    ``faithfulness`` scores a replay under the transcript's ORIGINAL
+    prompt version against the recorded decision -- how much of the
+    recorded decision the ORIGINAL prompt still reproduces given the
+    same frozen inputs -- as the fraction of decision fields that
+    matched (over the union of keys). ``faithful`` is a convenience
+    flag: ``faithfulness == 1.0``.
+
+    ``field_diffs`` is the per-key change report from
+    :func:`decision_field_diffs` between the recorded decision and the
+    faithfulness-scored replay, so a reviewer can see exactly which
+    keys diverged when ``faithful`` is False.
+    """
+
+    transcript_id: str
+    recorded_decision: dict[str, Any] = field(default_factory=dict)
+    replayed_decision: dict[str, Any] = field(default_factory=dict)
+    determinism_score: float = 0.0
+    faithfulness: float = 0.0
+    faithful: bool = False
+    field_diffs: dict[str, str] = field(default_factory=dict)

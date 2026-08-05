@@ -38,7 +38,11 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from aila.platform.contracts.enums import PatternConfidence, PatternScope
+from aila.platform.contracts.enums import (
+    PatternConfidence,
+    PatternScope,
+    PatternTrustTier,
+)
 
 if TYPE_CHECKING:
     from aila.platform.services.outcome_review import QuorumOutcome
@@ -196,6 +200,24 @@ class ExperienceWriter:
         signed_applicability = self._merge_polarity(applicability, polarity)
         signed_refs = list(evidence_refs) if evidence_refs else []
 
+        # RFC-08 memory-poisoning stamp. A signed review verdict is the
+        # ONLY channel that stamps VERIFIED (approved) or NEGATIVE
+        # (rejected) on a pattern; sanctioned DRAFT proposers
+        # (pattern_extractor / pattern_proposer) stamp UNREVIEWED. The
+        # provenance envelope carries the audit trail so an operator
+        # inspecting a poisoned catalog can trace which quorum verdict
+        # signed the row.
+        trust_tier = (
+            PatternTrustTier.VERIFIED
+            if polarity == EXPERIENCE_POLARITY_POSITIVE
+            else PatternTrustTier.NEGATIVE
+        )
+        provenance: dict[str, Any] = {
+            "source": "review",
+            "quorum_outcome_id": verdict.outcome_id,
+            "state": state,
+        }
+
         create_body = self._create_cls(
             workspace_id=workspace_id,
             investigation_id=investigation_id,
@@ -206,6 +228,8 @@ class ExperienceWriter:
             confidence=signed_confidence,
             evidence_refs=signed_refs,
             scope=scope,
+            trust_tier=trust_tier,
+            provenance=provenance,
         )
         row = await self._store.create(create_body, team_id=team_id)
         _log.info(

@@ -47,7 +47,7 @@ from sqlmodel import select as _select
 
 from aila.platform.agents.idempotent_llm import idempotent_llm_call
 from aila.platform.contracts import utc_now
-from aila.platform.contracts.enums import SenderKind
+from aila.platform.contracts.enums import PatternTrustTier, SenderKind
 from aila.platform.contracts.mcp_payload import PayloadKind
 from aila.platform.uow import UnitOfWork
 
@@ -235,10 +235,16 @@ class PatternExtractorBase:
             if not isinstance(entry, dict):
                 continue
             try:
+                # Thread the originating outcome + investigation ids so
+                # the create body carries an RFC-08 provenance envelope.
+                # The extractor is a sanctioned DRAFT proposer -- every
+                # write is stamped UNREVIEWED and stays inert until an
+                # operator promotes it.
                 create_body = self._entry_to_create(
                     entry,
                     workspace_id=target.workspace_id,
                     investigation_id=investigation.id,
+                    outcome_id=outcome_id,
                 )
             except (ValueError, KeyError) as exc:
                 _log.warning(
@@ -417,11 +423,19 @@ class PatternExtractorBase:
         *,
         workspace_id: str,
         investigation_id: str,
+        outcome_id: str | None = None,
     ) -> Any:
         """Convert one LLM-emitted pattern dict into the module's PatternCreate.
 
         Defensive: raises ValueError on unknown enum values so the caller
         can drop the entry without crashing the whole extraction pass.
+
+        RFC-08 memory-poisoning stamp: sanctioned DRAFT proposers write
+        every extracted pattern with ``trust_tier=UNREVIEWED`` and an
+        audit envelope naming this pipeline + originating outcome +
+        investigation. The row stays inert (``status=draft``) until an
+        operator promotes it through the review path (which would
+        overwrite the tier to VERIFIED via :class:`ExperienceWriter`).
         """
         kind = cls._pattern_kind_enum(entry["kind"])
         confidence_raw = entry.get("confidence") or "medium"
@@ -445,6 +459,12 @@ class PatternExtractorBase:
         if not isinstance(evidence_refs, list):
             evidence_refs = []
 
+        provenance: dict[str, Any] = {
+            "source": "pattern_extractor",
+            "outcome_id": outcome_id,
+            "investigation_id": investigation_id,
+        }
+
         return cls._pattern_create_cls(
             workspace_id=workspace_id,
             investigation_id=investigation_id,
@@ -455,6 +475,8 @@ class PatternExtractorBase:
             confidence=confidence,
             evidence_refs=[str(r) for r in evidence_refs],
             scope=cls._pattern_scope_enum.LOCAL,
+            trust_tier=PatternTrustTier.UNREVIEWED,
+            provenance=provenance,
         )
 
     @classmethod
