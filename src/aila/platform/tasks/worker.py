@@ -35,6 +35,7 @@ from aila.platform.tasks.cursor_reaper import (
 )
 from aila.platform.tasks.hooks import _on_job_end, _on_job_start
 from aila.platform.tasks.models import TaskRecord, TaskStatus
+from aila.platform.tasks.state_reconciler import _extract_investigation_id
 from aila.platform.tasks.sweeps import all_periodic_sweeps
 from aila.platform.tasks.template import _REGISTRY
 from aila.platform.workflows.log import purge_old_transitions
@@ -501,6 +502,7 @@ async def _reconcile_orphan_arq_locks() -> None:
         # (e.g. forensics_investigations pending → failed when task is failed)
         # can observe the change on the next GET.
         if tasks_to_fail:
+            healed_events: list[tuple[str, str | None, str]] = []
             async with async_session_scope() as session:
                 ids_to_update = [tid for tid, _ in tasks_to_fail]
                 to_update = (await session.exec(
@@ -521,7 +523,31 @@ async def _reconcile_orphan_arq_locks() -> None:
                         "reaper.task_marked_failed task_id=%s reason=%s",
                         rec.id, reason_by_id.get(rec.id, "unknown"),
                     )
+                    healed_events.append((
+                        rec.id,
+                        _extract_investigation_id(rec.kwargs_json),
+                        reason_by_id.get(rec.id, "unknown"),
+                    ))
                 await session.commit()
+            # RFC-07 #31 -- each reaped row is a durable recovery event
+            # so an operator can reconstruct why a task moved to FAILED
+            # without grepping the worker log. Emitted after commit so
+            # the ledger row and the taskrecord flip land in order.
+            if healed_events:
+                from aila.platform.services.resilience import (
+                    get_default_resilience_layer,
+                )
+                resilience = get_default_resilience_layer()
+                for reaped_id, inv_id, reason in healed_events:
+                    await resilience.emit_recovery_event(
+                        investigation_id=inv_id,
+                        action="orphan_lock_reconcile",
+                        detail={
+                            "task_id": reaped_id,
+                            "reason": reason,
+                        },
+                        source="worker.reconcile_orphan_arq_locks",
+                    )
     finally:
         try:
             await client.aclose()
@@ -739,6 +765,12 @@ async def _sweep_orphan_running_tasks(
 
     client = aioredis.Redis.from_url(redis_url, socket_connect_timeout=2.0)
     now = utc_now()
+    # RFC-07 #31 -- every heal below (D-86 SKIP cancel-and-reenqueue,
+    # reap-to-FAILED) records a durable recovery event so an operator
+    # can reconstruct which orphan-running rows were healed and why.
+    # Buffered until after the session commits so the ledger row lands
+    # in order with the mutation it describes.
+    healed_events: list[tuple[str, str, str | None, dict[str, Any]]] = []
     try:
         async with async_session_scope() as session:
             running = (await session.exec(
@@ -876,6 +908,20 @@ async def _sweep_orphan_running_tasks(
                                     "(fn=%s queue=%s)",
                                     rec.id, new_job_id, fn_short, queue_key,
                                 )
+                                healed_events.append((
+                                    "orphan_task_reenqueue",
+                                    rec.id,
+                                    _extract_investigation_id(
+                                        rec.kwargs_json,
+                                    ),
+                                    {
+                                        "task_id": rec.id,
+                                        "new_job_id": new_job_id,
+                                        "fn": fn_short,
+                                        "queue": queue_key,
+                                        "track": rec.track,
+                                    },
+                                ))
                             finally:
                                 try:
                                     await arq_pool.close()
@@ -964,6 +1010,16 @@ async def _sweep_orphan_running_tasks(
                     "worker.reverse_sweep: task_id=%s reason=%s -- marking failed",
                     rec.id, reason,
                 )
+                healed_events.append((
+                    "orphan_task_fail",
+                    rec.id,
+                    _extract_investigation_id(rec.kwargs_json),
+                    {
+                        "task_id": rec.id,
+                        "reason": reason,
+                        "grace_seconds": grace_seconds,
+                    },
+                ))
             # Always commit -- the D-86 resumable-workflow path also
             # mutates rec.status (-> CANCELLED) and re-enqueues, but
             # never increments `reaped`. Without an unconditional
@@ -977,6 +1033,21 @@ async def _sweep_orphan_running_tasks(
                 _log.warning(
                     "worker.reverse_sweep: reaped %d orphan running task(s)",
                     reaped,
+                )
+        # After the mutation commit, journal each heal. Best-effort: a
+        # ledger write failure never propagates, matching the contract
+        # ResilienceLayer.emit_recovery_event owns internally.
+        if healed_events:
+            from aila.platform.services.resilience import (
+                get_default_resilience_layer,
+            )
+            resilience = get_default_resilience_layer()
+            for action, _task_id, inv_id, detail in healed_events:
+                await resilience.emit_recovery_event(
+                    investigation_id=inv_id,
+                    action=action,
+                    detail=detail,
+                    source="worker.sweep_orphan_running_tasks",
                 )
     except Exception:
         _log.warning("worker.reverse_sweep failed", exc_info=True)

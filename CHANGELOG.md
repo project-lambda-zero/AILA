@@ -19,6 +19,22 @@ operator action.
 
 ### Added
 
+- An automated investigation-level stuck-investigation healer (RFC-07 #31).
+  A periodic platform sweep detects an investigation stuck at RUNNING with
+  no live task and no resumable cursor, and re-enqueues it through the
+  lifecycle service instead of leaving it running with no worker forever.
+  Registered for the vulnerability, malware, and forensics modules; the
+  idle grace and per-tick heal cap are config-tunable. Previously only
+  task-level zombies were healed automatically; an investigation whose
+  tasks all died with no resumable cursor required an operator to
+  re-enqueue it by hand.
+- Durable, auditable recovery events (RFC-07 #31). Every heal (state
+  reconcile, orphan-task re-enqueue, investigation re-enqueue, stuck-heal)
+  now writes a durable recovery entry to the shared investigation ledger
+  through the resilience layer, so a repair is a record the run keeps, not
+  only a log line. The recovery entries are filtered out of the agent
+  prompt board. Honesty rule 54 (heal_without_journal) was narrowed so the
+  heal orchestrators must journal rather than being blanket-exempt.
 - A dispatch-hub stall escalation and a STALLED terminal investigation
   status (RFC-13 #68). When the adaptive investigation hub raises a replan
   request that stays unratified past a configured wall-clock window

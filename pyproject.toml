@@ -343,6 +343,13 @@ ignore = [
 "src/aila/modules/vr/services/followup_discovery.py" = ["PLC0415"]
 "src/aila/modules/_template/services/stall_recovery.py" = ["PLC0415"]
 "src/aila/modules/vr/services/stall_recovery.py" = ["PLC0415"]
+# stuck_healer bindings: PLC0415 for the deferred ``_task_queue`` /
+# ``workflow.task`` imports the module submitter uses. Same worker
+# boot-path -> task-registration import cycle the stall_recovery
+# bindings break, mirroring their entries.
+"src/aila/modules/vr/services/stuck_healer.py" = ["PLC0415"]
+"src/aila/modules/malware/services/stuck_healer.py" = ["PLC0415"]
+"src/aila/modules/forensics/services/stuck_healer.py" = ["PLC0415"]
 "src/aila/modules/vr/services/target_analysis.py" = ["PLC0415"]
 "src/aila/modules/vr/workflow/definitions.py" = ["PLC0415"]
 "src/aila/modules/vr/workflow/finalize.py" = ["PLC0415"]
@@ -449,11 +456,23 @@ ignore = [
 "src/aila/platform/tasks/progress.py" = ["PLC0415"]
 "src/aila/platform/tasks/queue.py" = ["PLC0415", "BLE001"]
 "src/aila/platform/tasks/report_tasks.py" = ["PLC0415", "BLE001"]
+# state_reconciler.py: PLC0415 for the deferred get_default_resilience_layer
+# import inside ``reconcile``. state_reconciler is imported by
+# aila.platform.tasks.__init__, which db_models depends on; a top-level
+# services.resilience import re-enters aila.platform.services -> audit ->
+# journal -> db_models mid initialisation and fails.
+"src/aila/platform/tasks/state_reconciler.py" = ["PLC0415"]
 "src/aila/platform/tasks/sweeps.py" = ["BLE001"]
 "src/aila/platform/tasks/template.py" = ["PLC0415", "BLE001"]
 "src/aila/platform/tasks/worker.py" = ["PLC0415", "BLE001", "F401", "ARG001"]
 "src/aila/platform/tools/_common.py" = ["PLC0414"]
 "src/aila/platform/tools/knowledge.py" = ["PLC0415"]
+# investigation_lifecycle.py: PLC0415 for the deferred
+# get_default_resilience_layer import inside ``reenqueue_investigation``.
+# services/__init__ pulls in the audit + journal chain which imports
+# db_models; a top-level services.resilience import from inside a service
+# module re-enters services.__init__ mid init and fails.
+"src/aila/platform/services/investigation_lifecycle.py" = ["PLC0415"]
 "src/aila/platform/workflows/engine.py" = ["BLE001", "PLC0415"]
 "src/aila/platform/workflows/errors.py" = ["N818"]
 "src/aila/platform/workflows/log.py" = ["PLC0415", "BLE001"]

@@ -724,4 +724,28 @@ async def reenqueue_investigation(
         branch_model=branch_model,
         branch_status_active=branch_status_active,
     )
+
+    # RFC-07 #31 -- the full re-enqueue is a durable, replayable
+    # recovery event: an operator (or an automated healer) reset an
+    # investigation back to CREATED, cancelled its stale tasks, wiped
+    # its crashed cursors, and submitted fresh workers. Journal after
+    # every mutation has committed so the ledger row and the state
+    # change land in order. Best-effort: emit_recovery_event never
+    # raises on a ledger write failure, so a journal miss cannot fail
+    # the heal that already succeeded.
+    from aila.platform.services.resilience import (
+        get_default_resilience_layer,
+    )
+    await get_default_resilience_layer().emit_recovery_event(
+        investigation_id=investigation_id,
+        action="reenqueue",
+        detail={
+            "submitted": summary["submitted"],
+            "cancelled_stale_tasks": summary["cancelled_stale_tasks"],
+            "wiped_crashed_cursors": summary["wiped_crashed_cursors"],
+            "new_kind": new_kind,
+            "new_strategy": new_strategy,
+        },
+        source="investigation_lifecycle.reenqueue_investigation",
+    )
     return summary

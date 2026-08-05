@@ -42,6 +42,7 @@ from .runtime import VRRuntime
 from .services.branch_reaper import sweep_orphan_active_branches
 from .services.stage_tracker import reap_stuck_stages
 from .services.stall_recovery import sweep_stalled_investigations
+from .services.stuck_healer import sweep_stuck_investigations
 from .tool_keys import (
     ALL_TOOL_KEYS,
     TOOL_ADVISORY_BUILDER,
@@ -398,6 +399,17 @@ def _register_vr_periodic_sweeps() -> None:
     register_periodic_sweep(
         "vr.stall_recovery", sweep_stalled_investigations,
     )
+
+    # vr.stuck_healer -- RFC-07 #31 criterion 6. Sibling of
+    # ``vr.stall_recovery``: stall_recovery re-enqueues rows whose tasks
+    # are cursor-agnostic-eligible via the operator-tuned rate model,
+    # while stuck_healer targets the narrower "RUNNING with no live task
+    # AND no resumable cursor" zombie the task-level state reconciler
+    # cannot heal (a crashed / absent cursor gives it nothing to resume
+    # from). Emits a durable ``kind='recovery'`` ledger event per heal
+    # via :func:`ResilienceLayer.emit_recovery_event` so the RFC-07
+    # audit trail carries every automated re-enqueue.
+    register_periodic_sweep("vr.stuck_healer", sweep_stuck_investigations)
 
 
 # Module-load-time registration. _register_vr_periodic_sweeps() is only

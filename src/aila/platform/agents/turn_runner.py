@@ -195,6 +195,9 @@ class AgentTurnRunnerBase:
             entries = await LedgerService().read_general(
                 self.investigation_id, session=uow.session,
             )
+        # RFC-07 #31: recovery events are an operator / audit trail, not an
+        # agent-facing observable -- keep them out of the prompt board.
+        entries = [e for e in entries if e.get("kind") != "recovery"]
         if not entries:
             return ""
         recent = entries[-_LEDGER_BOARD_MAX_ENTRIES:]

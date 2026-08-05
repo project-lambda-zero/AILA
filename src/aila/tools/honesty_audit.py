@@ -1107,22 +1107,36 @@ _JOURNAL_WRITE_MARKERS: frozenset[str] = frozenset({
     "record_healed", "record_signal", "record_and_check",
     "emit_recovery_event", "log_recovery",
 })
-# Files exempt from rule 54 because they ARE the journal implementation
-# (LedgerService itself) or the recovery-event emitter -- writing the
-# journal without also calling the journal would be circular.
+# Files exempt from rule 54. Two categories:
+#   (a) Journal INFRASTRUCTURE files: the ledger writer, the recovery-
+#       event emitter, the domain-event bus. A heal that writes the
+#       journal without calling the journal would be circular.
+#   (b) Low-level primitives / observability files that legitimately
+#       never journal on their own: pure-observability signal emitters
+#       (drift.py, emitter.py), the batch cursor reaper (SQL-only sweep
+#       operating on rows with no per-investigation resolution), and
+#       the rate-limit / storage helpers whose mutation is not a
+#       run-state heal.
+# Narrowed under RFC-07 #31: the real heal orchestrators
+# (state_reconciler.py, worker.py, investigation_lifecycle.py) are NOT
+# exempt -- they MUST call emit_recovery_event so recovery is itself
+# auditable. A file added to this list must satisfy category (a) or (b);
+# an orchestrator whose journal call genuinely does not fit belongs in
+# honesty_whitelist.py as a NARROW per-function entry, not here as a
+# blanket file exemption.
 _JOURNAL_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
+    # (a) journal infrastructure -- circular exempt.
     "platform/services/ledger.py",
     "platform/services/resilience.py",
     "platform/events/domain_events.py",
+    # (b) pure-observability signal emitters (never mutate run state).
     "platform/events/emitter.py",
     "platform/llm/drift.py",
-    # The reconciler helper file owns the mutation primitives (delete
-    # cursor, flip status, drop lock) that the actual reconcile
-    # dispatch composes -- the helpers write the journal via their
-    # callers, not themselves.
-    "platform/tasks/state_reconciler.py",
+    # (b) low-level SQL sweep / rate-limit / storage helpers. cursor_reaper
+    # runs a batch DELETE with no per-investigation resolution (no id to
+    # pass to emit_recovery_event); queue / storage are rate-limit + row-
+    # persistence helpers whose mutation isn't a run-state heal.
     "platform/tasks/cursor_reaper.py",
-    "platform/tasks/worker.py",
     "platform/tasks/queue.py",
     "platform/tasks/storage.py",
 )
@@ -4021,7 +4035,18 @@ class _HonestyVisitor(ast.NodeVisitor):
             ):
                 continue
             body_calls = _call_names_in_body(node)
-            mutation_hits = body_calls & _STATE_MUTATION_MARKERS
+            # Substring match so a heal dispatching through a private
+            # wrapper (``self._flip_status(...)``) or a composed helper
+            # (``_fan_out_reenqueue_submit(...)``, ``_should_drop_lock(...)``)
+            # still counts as "this function's body mutates run state".
+            # Exact-match would silently skip every heal that owns a
+            # module-private mutation helper, which is precisely the
+            # shape state_reconciler.reconcile and
+            # investigation_lifecycle.reenqueue_investigation take.
+            mutation_hits = {
+                call for call in body_calls
+                if any(marker in call for marker in _STATE_MUTATION_MARKERS)
+            }
             if not mutation_hits:
                 continue
             if body_calls & _JOURNAL_WRITE_MARKERS:

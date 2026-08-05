@@ -35,7 +35,9 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal, TypeVar
+from typing import Any, Literal, TypeVar
+
+from sqlalchemy.exc import SQLAlchemyError
 
 from aila.platform.services.infra_death import (
     RETRYABLE_INFRA_CLASSES,
@@ -53,6 +55,13 @@ __all__ = [
 _log = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+# Ledger author for a heal record. A recovery event is operational, not a
+# persona contribution, so it carries a distinct system author and a
+# distinct kind the agent-prompt board filters out (see turn_runner
+# _load_ledger_board).
+_RECOVERY_ACTOR = "__resilience__"
+_RECOVERY_KIND = "recovery"
 
 
 # Operation names that ALSO bump SSE_WRITE_FAILURES_TOTAL for dashboard
@@ -262,6 +271,55 @@ class ResilienceLayer:
         """
         self.record_signal(op=op, source=source, exc=exc)
         return value
+
+    async def emit_recovery_event(
+        self,
+        *,
+        investigation_id: str | None,
+        action: str,
+        detail: dict[str, Any] | None = None,
+        source: str = "resilience",
+    ) -> None:
+        """Record a heal as a durable, replayable event so recovery is
+        itself auditable (RFC-07 #31).
+
+        A heal (reconcile, re-enqueue, reroute, model downgrade, infra
+        close) calls this so the run RECORDS the repair instead of only
+        logging it. The umbrella signal always fires; when an
+        ``investigation_id`` is resolvable, a durable ``kind='recovery'``
+        entry is appended to the shared investigation ledger through
+        :class:`LedgerService` (the sole ledger writer, so honesty rule 51
+        holds). ``_load_ledger_board`` filters ``kind='recovery'`` out of
+        the agent prompt, so a recovery event is an operator / audit trail,
+        never an agent-facing observable.
+
+        Best-effort on the durable write: a journal failure logs and the
+        signal remains the record; the heal must never fail because its
+        audit row could not be written. With no resolvable
+        ``investigation_id`` (a task-level heal that cannot map to a run)
+        the umbrella signal is the record.
+        """
+        self.record_signal(op="recovery", source=f"{source}:{action}")
+        if not investigation_id:
+            return
+        try:
+            # Lazy import: resilience is imported before db_models finishes
+            # loading (tasks -> services -> resilience); deferring to call
+            # time breaks the cycle (same pattern as phase_graph).
+            from aila.platform.services.ledger import LedgerService
+
+            payload: dict[str, Any] = {"action": action, "source": source}
+            if detail:
+                payload["detail"] = detail
+            await LedgerService().append_general(
+                str(investigation_id), _RECOVERY_ACTOR, _RECOVERY_KIND, payload,
+            )
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
+            _log.warning(
+                "emit_recovery_event durable write failed (best-effort) "
+                "inv=%s action=%s: %s",
+                investigation_id, action, exc,
+            )
 
 
 _DEFAULT_LAYER: ResilienceLayer = ResilienceLayer()

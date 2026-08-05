@@ -27,8 +27,10 @@ from aila.platform.modules import (
     action_id_for,
 )
 from aila.platform.runtime import ToolRegistry
+from aila.platform.tasks.sweeps import all_periodic_sweeps, register_periodic_sweep
 
 from .capabilities import CAPABILITY_DESCRIPTION, CAPABILITY_EXAMPLES
+from .services.stuck_healer import sweep_stuck_investigations
 
 __all__ = ["ForensicsModule", "create_module"]
 
@@ -436,6 +438,33 @@ class ForensicsModule(ModuleProtocol):
         return {"forensics.ssh_reachability": _ssh_reachability}
 
 
+def _register_forensics_periodic_sweeps() -> None:
+    """Register forensics's per-tick maintenance sweeps with the platform reaper.
+
+    Called from :func:`create_module` so registration is a side-effect
+    of module instantiation -- the same lifecycle hook every module
+    uses. Idempotent: probe the registry for the well-known sentinel
+    name; if the sentinel is already registered, every forensics sweep
+    is registered too and re-registration would raise. Probing the
+    registry rather than a module-level flag means tests that clear
+    the registry in an autouse fixture automatically re-register on
+    the next ``create_module()`` call.
+    """
+    if "forensics.stuck_healer" in all_periodic_sweeps():
+        return
+
+    # forensics.stuck_healer -- RFC-07 #31 criterion 6. Detects
+    # investigations stuck at ``running`` with no live task and no
+    # resumable cursor and drives the four-source-of-truth reset +
+    # fresh submit via ``reenqueue_investigation``. Emits a durable
+    # ``kind='recovery'`` ledger event per heal so the RFC-07 audit
+    # trail carries every automated re-enqueue.
+    register_periodic_sweep(
+        "forensics.stuck_healer", sweep_stuck_investigations,
+    )
+
+
 def create_module() -> ModuleProtocol:
     """Return a new ForensicsModule instance for the platform module loader."""
+    _register_forensics_periodic_sweeps()
     return ForensicsModule()

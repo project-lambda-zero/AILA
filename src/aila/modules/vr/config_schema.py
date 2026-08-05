@@ -375,4 +375,28 @@ class VRConfigSchema(ModuleConfigBase):
     )
 
 
+    # --- RFC-07 #31 stuck-investigation healer ---------------------------
+    stuck_healer_idle_grace_s: int = Field(
+        default=600,
+        ge=30,
+        description=(
+            "Idle grace before an investigation stuck at ``running`` is a "
+            "candidate for the RFC-07 stuck-investigation healer, in "
+            "seconds. Rows whose ``updated_at`` is fresher than this are "
+            "never touched so a slow turn is not mistaken for a stall. "
+            "Env: AILA_VR_STUCK_HEALER_IDLE_GRACE_S."
+        ),
+    )
+    stuck_healer_max_heals_per_tick: int = Field(
+        default=5,
+        ge=1,
+        le=50,
+        description=(
+            "Per-tick cap on stuck-investigation re-enqueues so a mass "
+            "backlog cannot saturate the task queue in one sweep. "
+            "Env: AILA_VR_STUCK_HEALER_MAX_HEALS_PER_TICK."
+        ),
+    )
+
+
 VR_DEFAULTS = VRConfigSchema()

@@ -56,6 +56,7 @@ respected -- the reconciler never resurrects an operator-terminated task.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 from dataclasses import dataclass
@@ -76,6 +77,16 @@ from .constants import (
 )
 from .models import TaskRecord, TaskStatus
 
+# ``get_default_resilience_layer`` is imported lazily inside ``reconcile``
+# because ``aila.platform.services.__init__`` pulls in the audit / journal
+# chain which imports ``aila.storage.db_models``, while this module is
+# imported by ``aila.platform.tasks.__init__`` which db_models itself
+# depends on (TaskRecord). A top-level services.resilience import re-
+# enters db_models mid initialisation and fails; deferring the import to
+# call time breaks the cycle without changing the call-site shape. The
+# corresponding PLC0415 suppression lives in pyproject.toml's
+# per-file-ignores (repo policy is per-file-ignores, not inline noqa).
+
 __all__ = [
     "ReconcileAction",
     "ReconcileReport",
@@ -84,6 +95,39 @@ __all__ = [
 ]
 
 _log = logging.getLogger(__name__)
+
+
+def _extract_investigation_id(kwargs_json: str | None) -> str | None:
+    """Return the ``investigation_id`` value carried by ``kwargs_json``, or None.
+
+    ARQ task kwargs are persisted as a JSON string on
+    ``TaskRecord.kwargs_json``. Every workflow-owned task the reconciler
+    heals carries an ``investigation_id`` key on that payload; other
+    task shapes (a periodic sweep, a cron-scheduled report) do not, so
+    a missing key returns None instead of raising and the caller falls
+    back to the umbrella signal alone.
+    """
+    if not kwargs_json:
+        return None
+    try:
+        payload = json.loads(kwargs_json)
+    except (TypeError, ValueError) as exc:
+        # A malformed kwargs_json is a data-integrity issue on the
+        # TaskRecord row itself; the heal path never fails because of
+        # it -- the recovery event just loses its investigation_id
+        # and falls back to the umbrella signal.
+        _log.debug(
+            "_extract_investigation_id: kwargs_json JSON decode failed: %s",
+            exc,
+        )
+        return None
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("investigation_id")
+    if isinstance(value, str) and value:
+        return value
+    return None
+
 
 # Reserved terminal cursor states. Kept in sync with cursor_reaper's list
 # (fix §58); duplicated here rather than imported so a rename lands in
@@ -118,6 +162,13 @@ class TaskSignals:
     every heal path that requires knowing whether ARQ owns the slot, so
     behaviour degrades gracefully to a read-only report rather than
     dispatching a heal without full evidence.
+
+    ``investigation_id`` is resolved from ``TaskRecord.kwargs_json`` so
+    every heal path can attach its RFC-07 recovery event to the owning
+    investigation ledger without a second DB read. ``None`` when the
+    task's kwargs carry no ``investigation_id`` (a task not tied to an
+    investigation, or a row whose kwargs failed to decode); the recovery
+    event still records the umbrella signal in that case.
     """
 
     task_id: str
@@ -126,6 +177,7 @@ class TaskSignals:
     task_started_at: datetime | None
     cursor_state: str | None
     lock_present: bool | None
+    investigation_id: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,6 +271,7 @@ class StateReconciler:
             status = rec.status if rec is not None else None
             hb = rec.heartbeat_at if rec is not None else None
             started = rec.started_at if rec is not None else None
+            kwargs_json = rec.kwargs_json if rec is not None else None
             cursor_row = (await session.exec(
                 _sql_text(
                     "SELECT current_state FROM workflow_state_cursor "
@@ -236,6 +289,7 @@ class StateReconciler:
             task_started_at=started,
             cursor_state=cursor_state,
             lock_present=lock_present,
+            investigation_id=_extract_investigation_id(kwargs_json),
         )
 
     async def reconcile(self, task_id: str) -> ReconcileReport:
@@ -245,7 +299,21 @@ class StateReconciler:
         the periodic reaper already knows how to perform; the
         reconciler just packages them for an on-demand per-task call
         so an operator can heal one runaway task without a cron wait.
+
+        Every mutation branch writes a durable ``kind='recovery'`` entry
+        to the shared investigation ledger via
+        :meth:`ResilienceLayer.emit_recovery_event` (RFC-07 #31) so the
+        heal itself is replayable and auditable, not just logged.
         """
+        # Lazy import: see module docstring on the circular-import chain
+        # through ``aila.platform.services.__init__`` -> journal ->
+        # db_models. Deferring to call time breaks it without spreading
+        # the import to every callsite.
+        from aila.platform.services.resilience import (
+            get_default_resilience_layer,
+        )
+        resilience = get_default_resilience_layer()
+
         signals = await self.read_signals(task_id)
         actions: list[ReconcileAction] = []
 
@@ -278,6 +346,16 @@ class StateReconciler:
                     "cursor deleted"
                 ),
             ))
+            await resilience.emit_recovery_event(
+                investigation_id=signals.investigation_id,
+                action="reconcile_stale_cursor",
+                detail={
+                    "task_id": task_id,
+                    "task_status": signals.task_status,
+                    "cursor_state": signals.cursor_state,
+                },
+                source="state_reconciler",
+            )
             return ReconcileReport(
                 task_id=task_id, signals=signals,
                 healed=True, actions=tuple(actions),
@@ -326,6 +404,16 @@ class StateReconciler:
                         "status -> CANCELLED, cursor left intact"
                     ),
                 ))
+                await resilience.emit_recovery_event(
+                    investigation_id=signals.investigation_id,
+                    action="reconcile_cancel_resumable",
+                    detail={
+                        "task_id": task_id,
+                        "reap_reason": reap_reason,
+                        "cursor_state": signals.cursor_state,
+                    },
+                    source="state_reconciler",
+                )
                 return ReconcileReport(
                     task_id=task_id, signals=signals,
                     healed=True, actions=tuple(actions),
@@ -361,6 +449,16 @@ class StateReconciler:
                         f"({signals.cursor_state}); deleted post-heal"
                     ),
                 ))
+            await resilience.emit_recovery_event(
+                investigation_id=signals.investigation_id,
+                action="reconcile_fail",
+                detail={
+                    "task_id": task_id,
+                    "reap_reason": reap_reason,
+                    "cursor_state": signals.cursor_state,
+                },
+                source="state_reconciler",
+            )
             return ReconcileReport(
                 task_id=task_id, signals=signals,
                 healed=True, actions=tuple(actions),
@@ -396,6 +494,21 @@ class StateReconciler:
                         f"({signals.cursor_state}); cursor deleted"
                     ),
                 ))
+            if actions:
+                # Only journal when at least one mutation ran; a Redis
+                # probe that comes back True but ``client.delete`` finds
+                # nothing (races the reaper) is a no-op, not a heal.
+                await resilience.emit_recovery_event(
+                    investigation_id=signals.investigation_id,
+                    action="reconcile_drop_lock",
+                    detail={
+                        "task_id": task_id,
+                        "task_status": signals.task_status,
+                        "lock_dropped": bool(dropped),
+                        "cursor_state": signals.cursor_state,
+                    },
+                    source="state_reconciler",
+                )
             return ReconcileReport(
                 task_id=task_id, signals=signals,
                 healed=bool(actions), actions=tuple(actions),

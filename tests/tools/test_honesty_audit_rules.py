@@ -2070,13 +2070,15 @@ class TestHealWithoutJournal:
         )
         assert "heal_without_journal" not in _rules(_audit(src))
 
-    def test_reconciler_helper_file_exempt(
+    def test_state_reconciler_no_longer_exempt(
         self, tmp_path: Path,
     ) -> None:
-        """``platform/tasks/state_reconciler.py`` owns the mutation
-        primitives that higher-level heal paths compose; it is exempt so
-        the rule fires on the CALLER of these helpers, not the helpers
-        themselves."""
+        """RFC-07 #31 narrowing: ``platform/tasks/state_reconciler.py`` is
+        the REAL heal orchestrator and MUST journal every mutation. The
+        blanket file exemption was removed so this file now fires the
+        rule like any other heal orchestrator when no journal call is
+        present.
+        """
         src = _write(
             tmp_path,
             "aila/platform/tasks/state_reconciler.py",
@@ -2084,7 +2086,110 @@ class TestHealWithoutJournal:
             "    flip_status(t, 'failed')\n"
             "    return t\n",
         )
+        assert "heal_without_journal" in _rules(_audit(src))
+
+    def test_worker_no_longer_exempt(
+        self, tmp_path: Path,
+    ) -> None:
+        """RFC-07 #31 narrowing: ``platform/tasks/worker.py`` (the reaper
+        orchestrator) is no longer blanket-exempt; a reconcile function
+        there that mutates state without journaling fires the rule.
+        """
+        src = _write(
+            tmp_path,
+            "aila/platform/tasks/worker.py",
+            "async def _reconcile_orphan_arq_locks():\n"
+            "    drop_lock('x')\n",
+        )
+        assert "heal_without_journal" in _rules(_audit(src))
+
+    def test_journal_infra_still_exempt(
+        self, tmp_path: Path,
+    ) -> None:
+        """Journal infrastructure files (ledger, resilience, events) MUST
+        stay exempt -- writing the journal from inside the journal writer
+        would be circular.
+        """
+        src = _write(
+            tmp_path,
+            "aila/platform/services/resilience.py",
+            "async def reconcile_x(t):\n"
+            "    flip_status(t, 'failed')\n",
+        )
         assert "heal_without_journal" not in _rules(_audit(src))
+
+    def test_cursor_reaper_still_exempt(
+        self, tmp_path: Path,
+    ) -> None:
+        """``platform/tasks/cursor_reaper.py`` runs a batch SQL sweep with
+        no per-investigation resolution; the narrowed exemption keeps it
+        as a low-level primitive whose caller journals instead.
+        """
+        src = _write(
+            tmp_path,
+            "aila/platform/tasks/cursor_reaper.py",
+            "async def reconcile_cursors():\n"
+            "    purge_cursor()\n",
+        )
+        assert "heal_without_journal" not in _rules(_audit(src))
+
+    def test_private_wrapper_dispatch_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """Substring matching: a heal that dispatches through a private
+        wrapper (``self._flip_status(...)`` or
+        ``_fan_out_reenqueue_submit(...)``) still fires -- exact-match
+        would silently skip every heal that owns a module-private
+        mutation helper, which is the exact shape
+        ``state_reconciler.reconcile`` and
+        ``investigation_lifecycle.reenqueue_investigation`` take.
+        """
+        src = _write(
+            tmp_path,
+            "aila/platform/services/heal_dispatch.py",
+            "class R:\n"
+            "    async def reconcile(self, t):\n"
+            "        await self._flip_status(t)\n"
+            "        await self._delete_cursor(t)\n"
+            "        await self._drop_lock(t)\n",
+        )
+        assert "heal_without_journal" in _rules(_audit(src))
+
+    def test_private_wrapper_dispatch_with_journal_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """Substring matching still respects the journal-write escape:
+        a private-wrapper heal that ALSO calls ``emit_recovery_event``
+        clears the rule.
+        """
+        src = _write(
+            tmp_path,
+            "aila/platform/services/heal_dispatch.py",
+            "class R:\n"
+            "    async def reconcile(self, t):\n"
+            "        await self._flip_status(t)\n"
+            "        await emit_recovery_event(\n"
+            "            investigation_id=t.inv_id,\n"
+            "            action='reconcile', detail={},\n"
+            "        )\n",
+        )
+        assert "heal_without_journal" not in _rules(_audit(src))
+
+    def test_reenqueue_via_fan_out_helper_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """Substring matching catches
+        ``investigation_lifecycle.reenqueue_investigation`` shape: heal-
+        marked function dispatching to a longer-named private helper
+        whose name contains the marker (``_fan_out_reenqueue_submit``).
+        """
+        src = _write(
+            tmp_path,
+            "aila/platform/services/lifecycle.py",
+            "async def reenqueue_investigation(inv):\n"
+            "    await _fan_out_reenqueue_submit(inv)\n",
+        )
+        assert "heal_without_journal" in _rules(_audit(src))
 
     def test_whitelist_suppresses(self, tmp_path: Path) -> None:
         """A matching whitelist entry suppresses the finding."""

@@ -633,5 +633,21 @@ HONESTY_WHITELIST = [
     # no stored or retrieved knowledge data is trimmed here.
     ("api/routers/scans.py", "_audit", "[:200]"),
     ("api/routers/tasks.py", "_audit_submit", "[:200]"),
+
+    # Category (g): rule 54 heal_without_journal. The three module
+    # re-enqueue HTTP endpoints below are thin dispatchers that call the
+    # platform lifecycle service ``reenqueue_investigation``. The
+    # underlying service now emits the durable RFC-07 recovery event on
+    # every successful re-enqueue, so a second journal call from the
+    # router would just duplicate the same ledger row. Narrow per-
+    # function exemption (RFC-07 #31 pattern) rather than a blanket file
+    # exemption in _JOURNAL_SELF_EXEMPT_SUFFIXES; a router that grows a
+    # NEW mutation path must journal that path directly.
+    ("_template/api_router.py", "reenqueue_template_investigation",
+     "heal_without_journal"),
+    ("malware/api_router.py", "reenqueue_investigation",
+     "heal_without_journal"),
+    ("vr/api_router.py", "reenqueue_investigation",
+     "heal_without_journal"),
 ]
 
