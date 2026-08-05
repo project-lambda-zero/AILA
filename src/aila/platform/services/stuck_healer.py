@@ -72,9 +72,12 @@ __all__ = [
 _log = logging.getLogger(__name__)
 
 # ``ModuleConfigReader.get_int`` keys the operator-tunable knobs land at.
-# One key per knob; each module's ``config_schema.py`` declares matching
-# fields with the same defaults so ``ConfigRegistry.get`` resolves the
-# fallback without ever returning None.
+# One key per knob; each module's ``config_schema.py`` declares a matching
+# field with the same default. An operator DB override resolves through
+# ``ConfigRegistry.get`` (env -> DB); when unset, ``get`` returns None (it
+# does not fall through to the Pydantic schema default for module keys --
+# the existing stall-recovery knobs behave the same), so the code default
+# below is the real fallback and matches the schema value.
 CONFIG_KEY_IDLE_GRACE_S = "stuck_healer_idle_grace_s"
 CONFIG_KEY_MAX_HEALS_PER_TICK = "stuck_healer_max_heals_per_tick"
 
@@ -108,21 +111,29 @@ SubmitOneFn = Callable[[str, str | None], Awaitable[None]]
 async def _resolve_int_config(
     module_id: str, key: str, default: int,
 ) -> int:
-    """Resolve a positive int config value with a schema-default fallback.
+    """Resolve a positive int config value with a code-default fallback.
 
-    ``ModuleConfigReader.get_int`` raises ``TypeError`` when the resolved
-    value is not coercible (unregistered schema returns None). Callers
-    tolerate that by falling back to :data:`DEFAULT_IDLE_GRACE_S` /
-    :data:`DEFAULT_MAX_HEALS_PER_TICK`; the fallback is logged once per
-    resolution so an operator can spot a missing schema field without
-    trawling the DB.
+    ``ModuleConfigReader.get_int`` coerces ``ConfigRegistry.get``'s value.
+    An UNSET key (no env / no DB override) yields None -> ``int(None)``
+    raises ``TypeError``: that is the NORMAL path (the code default equals
+    the schema value), logged at DEBUG so a per-tick sweep does not spam
+    the worker log. A MALFORMED override (a non-numeric DB / env value)
+    raises ``ValueError``: that is a real operator misconfiguration and is
+    logged at WARNING. Either way the conservative code default is used.
     """
     reader = ModuleConfigReader(module_id)
     try:
         value = await reader.get_int(key)
-    except (TypeError, ValueError) as exc:
+    except TypeError:
+        # Unset key -- the expected fallback, not a fault.
+        _log.debug(
+            "stuck_healer: config %s/%s unset; using default=%d",
+            module_id, key, default,
+        )
+        return default
+    except ValueError as exc:
         _log.warning(
-            "stuck_healer: config %s/%s unresolved (%s); using default=%d",
+            "stuck_healer: config %s/%s malformed (%s); using default=%d",
             module_id, key, exc, default,
         )
         return default
