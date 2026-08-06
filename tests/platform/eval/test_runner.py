@@ -1,15 +1,19 @@
-"""Tests for the RFC-08 eval runner and promotion gate.
+"""Tests for the RFC-08 eval runner.
 
-Covers the five acceptance scenarios:
+Covers the scoring / verdict contract. The runner NEVER flips the
+'production' alias -- promotion is exclusively owned by the RFC-10
+lifecycle controller behind the eval + quorum gate. Every test that
+touches the alias asserts it stays UNCHANGED regardless of verdict.
 
-1. Candidate beats baseline -> verdict 'pass'; production alias flipped
-   when auto_promote is True.
+Scenarios:
+
+1. Candidate beats baseline -> verdict 'pass'; alias unchanged.
 2. Candidate regresses vs baseline -> verdict 'fail'; alias unchanged.
 3. Missing benchmark id -> ``BenchmarkNotFoundError``.
 4. No production baseline (first ever eval) -> verdict 'pass' via the
-   warning-logged auto-pass path.
-5. Candidate beats baseline but auto_promote=False -> verdict 'pass';
-   alias still unchanged.
+   warning-logged auto-pass path; alias stays unset.
+5. Report payload carries candidate + baseline reports and NEVER a
+   'promoted' key (promotion is not the runner's concern).
 """
 from __future__ import annotations
 
@@ -81,15 +85,17 @@ async def _register_versions(
 
 
 @pytest.mark.asyncio
-async def test_candidate_beats_baseline_promotes_when_opted_in(
+async def test_candidate_beats_baseline_pass_verdict_alias_unchanged(
     test_db,
 ) -> None:
+    """A passing verdict does NOT flip the alias -- promotion is the
+    lifecycle controller's exclusive responsibility."""
     del test_db
     store = PromptVersionStore()
     runner = EvalRunner(store)
     key = _key()
 
-    # Register two versions; promote v1 to production first.
+    # Register two versions; point production at the baseline.
     v_base, v_cand = await _register_versions(store, key, ["BODY A", "BODY B"])
     await store.set_alias(key, PRODUCTION_ALIAS, v_base, actor="setup")
 
@@ -105,21 +111,21 @@ async def test_candidate_beats_baseline_promotes_when_opted_in(
         key=key,
         candidate_version=v_cand,
         benchmark_id=bench.id,
-        auto_promote=True,
         actor="op",
     )
     assert run.verdict == "pass"
     assert run.baseline_version == v_base
     assert run.candidate_version == v_cand
     payload = json.loads(run.report_json)
-    assert payload["promoted"] is True
     assert payload["baseline"] is not None
     assert payload["candidate"]["ece"] < payload["baseline"]["ece"]
+    # The runner has no promotion side-effect any more.
+    assert "promoted" not in payload
 
-    # Production alias flipped to the candidate.
+    # Production alias UNCHANGED -- promotion is not the runner's job.
     resolved = await store.resolve(key, alias=PRODUCTION_ALIAS)
     assert resolved is not None
-    assert resolved.version == v_cand
+    assert resolved.version == v_base
 
 
 @pytest.mark.asyncio
@@ -146,12 +152,11 @@ async def test_candidate_regresses_verdict_fails_and_alias_unchanged(
         key=key,
         candidate_version=v_cand,
         benchmark_id=bench.id,
-        auto_promote=True,
         actor="op",
     )
     assert run.verdict == "fail"
     payload = json.loads(run.report_json)
-    assert payload["promoted"] is False
+    assert "promoted" not in payload
 
     # Alias unchanged: still pointing at the baseline version.
     resolved = await store.resolve(key, alias=PRODUCTION_ALIAS)
@@ -168,7 +173,6 @@ async def test_missing_benchmark_raises(test_db) -> None:
             key=_key(),
             candidate_version="1.0.0",
             benchmark_id="does-not-exist",
-            auto_promote=False,
             actor="op",
         )
 
@@ -177,6 +181,9 @@ async def test_missing_benchmark_raises(test_db) -> None:
 async def test_no_baseline_first_eval_auto_passes_with_warning(
     test_db, caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """First-ever eval with no production alias auto-passes on the
+    warning-logged path, but the alias remains UNSET -- the runner does
+    not create a production pointer on its own."""
     del test_db
     store = PromptVersionStore()
     runner = EvalRunner(store)
@@ -195,7 +202,6 @@ async def test_no_baseline_first_eval_auto_passes_with_warning(
             key=key,
             candidate_version=v_cand,
             benchmark_id=bench.id,
-            auto_promote=True,
             actor="op",
         )
     assert run.verdict == "pass"
@@ -203,17 +209,21 @@ async def test_no_baseline_first_eval_auto_passes_with_warning(
     assert any(
         "first-ever eval" in rec.message for rec in caplog.records
     ), "expected the first-eval auto-pass warning to be logged"
+    payload = json.loads(run.report_json)
+    assert "promoted" not in payload
 
-    # auto_promote=True + verdict=pass -> alias set to candidate.
+    # Alias must NOT be created by the runner even on a first-ever pass.
     resolved = await store.resolve(key, alias=PRODUCTION_ALIAS)
-    assert resolved is not None
-    assert resolved.version == v_cand
+    assert resolved is None
 
 
 @pytest.mark.asyncio
-async def test_pass_but_auto_promote_false_leaves_alias_unchanged(
+async def test_report_payload_shape_has_candidate_and_baseline_only(
     test_db,
 ) -> None:
+    """The report envelope carries exactly the candidate + baseline
+    reports. Any 'promoted' or promotion-shaped key here would be a
+    resurgence of the removed alias-flip capability."""
     del test_db
     store = PromptVersionStore()
     runner = EvalRunner(store)
@@ -224,7 +234,7 @@ async def test_pass_but_auto_promote_false_leaves_alias_unchanged(
 
     bench = await runner.register_benchmark(
         key=key,
-        name="dry-run",
+        name="shape",
         cases=[*_mediocre_cases(v_base), *_perfect_cases(v_cand)],
         created_by="op",
     )
@@ -233,13 +243,16 @@ async def test_pass_but_auto_promote_false_leaves_alias_unchanged(
         key=key,
         candidate_version=v_cand,
         benchmark_id=bench.id,
-        auto_promote=False,
         actor="op",
     )
-    assert run.verdict == "pass"
     payload = json.loads(run.report_json)
-    assert payload["promoted"] is False
+    assert set(payload.keys()) == {"candidate", "baseline"}, (
+        "report payload must expose only candidate/baseline reports -- "
+        "any promotion-shaped key indicates the alias-flip capability "
+        "has been re-introduced"
+    )
 
+    # Alias untouched regardless of verdict.
     resolved = await store.resolve(key, alias=PRODUCTION_ALIAS)
     assert resolved is not None
-    assert resolved.version == v_base, "alias must NOT flip when auto_promote is False"
+    assert resolved.version == v_base

@@ -2,13 +2,19 @@
 
 Operator surface for the eval runner: register a benchmark of pre-scored
 cases, run an eval for a candidate prompt version (which resolves the
-current production baseline, scores both bundles, and optionally flips
-the production alias on a passing verdict), and list prior eval runs.
+current production baseline, scores both bundles, and records a
+verdict), and list prior eval runs.
+
+The eval runner NEVER flips the 'production' alias -- that promotion
+is exclusively owned by
+:class:`aila.platform.lifecycle.controller.AgentLifecycleController.promote`
+behind the eval + quorum gate (RFC-10 criterion 1). This router only
+exposes scoring and listing.
 
 All endpoints require god-tier admin (team_id=None): prompt evaluation
-and promotion is platform-wide, not team-scoped, exactly like the
-underlying prompt version store (RFC-09). Every request is
-rate-limited to match the admin-prompts pattern.
+is platform-wide, not team-scoped, exactly like the underlying prompt
+version store (RFC-09). Every request is rate-limited to match the
+admin-prompts pattern.
 
 Endpoints:
     POST /admin/eval/benchmarks   register a benchmark of scored cases
@@ -74,10 +80,10 @@ def _calibration_threshold_key(outcome_kind: str) -> str:
 async def _require_admin(
     ctx: AuthContext = Depends(require_user_or_api_key),
 ) -> AuthContext:
-    """Eval promotion flips the production prompt alias platform-wide, so a
+    """Eval scoring feeds the platform-wide promotion gate, so a
     team-scoped admin is refused; only a god-tier admin (team_id=None)
-    may register benchmarks or run evals that gate every team's
-    investigations."""
+    may register benchmarks or run evals whose verdicts gate every
+    team's investigations."""
     if ctx.role != ROLE_ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -133,7 +139,6 @@ class RunEvalRequest(BaseModel):
     key: str = Field(min_length=1, max_length=256)
     candidate_version: str = Field(min_length=1, max_length=32)
     benchmark_id: str = Field(min_length=1, max_length=64)
-    auto_promote: bool = False
 
 
 class EvalRunInfo(BaseModel):
@@ -240,14 +245,18 @@ async def run_eval(
     body: RunEvalRequest,
     ctx: AuthContext = Depends(_require_admin),
 ) -> DataEnvelope[EvalRunInfo]:
-    """Score a candidate against a benchmark. Optionally flip production."""
+    """Score a candidate against a benchmark and record a verdict.
+
+    The 'production' alias is not touched here. A passing verdict is a
+    necessary input to promotion, which is a separate, quorum-gated
+    decision on the RFC-10 lifecycle controller.
+    """
     del request
     try:
         run_record = await _RUNNER.run(
             key=body.key,
             candidate_version=body.candidate_version,
             benchmark_id=body.benchmark_id,
-            auto_promote=body.auto_promote,
             actor=ctx.user_id,
         )
     except BenchmarkNotFoundError as exc:

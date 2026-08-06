@@ -437,6 +437,18 @@ ignore = [
 "src/aila/platform/llm/gate.py" = ["PLC0415"]
 "src/aila/platform/llm/human_cost.py" = ["PLC0415"]
 "src/aila/platform/llm/idempotency_cache.py" = ["PLC0415"]
+# lifecycle/controller.py: PLC0415 for the deferred shadow-runner + resilience
+# imports inside AgentLifecycleController.run_shadow and
+# _surface_canary_hold_alert. shadow.py imports controller symbols back for
+# StageTransitionError so a module-scope import would close a cycle; the
+# resilience import pulls the metrics + ledger graph on demand for the same
+# reason the resilience.py entry above documents.
+"src/aila/platform/lifecycle/controller.py" = ["PLC0415"]
+# lifecycle/shadow.py: PLC0415 for the deferred controller + models imports
+# inside run_shadow. The runner imports AgentLifecycleController.run_shadow
+# lazily from the same file, so a module-scope reverse import would close a
+# cycle at load time.
+"src/aila/platform/lifecycle/shadow.py" = ["PLC0415"]
 "src/aila/platform/llm/pipeline.py" = ["BLE001"]
 "src/aila/platform/llm/seal.py" = ["PLC0415"]
 "src/aila/platform/llm/validate.py" = ["PLC0415"]

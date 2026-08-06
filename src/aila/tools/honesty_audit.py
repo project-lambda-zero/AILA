@@ -75,6 +75,7 @@ Detects seventy-four categories of structural dishonesty:
 71. service_env_read -- a module ``modules/*/services/**`` file reads config via ``os.environ`` / ``os.getenv`` (attribute access or ``from os import environ/getenv``) instead of ``ConfigRegistry(module_id, key)``. Sibling of rule 49 (``agent_env_read``) for the services layer: RFC-04's config-drift closure removed every direct env read from module services so the DB override and per-module schema default both participate on one path. AST-based -- docstring or comment mentions of ``os.environ`` are invisible and never trip this.
 72. platform_hardcodes_strategy_family -- a file under ``src/aila/platform/**`` contains a string-literal AST node equal to one of the known module reasoning-strategy family names (``mobile_reverse`` / ``vulnerability_research`` / ``web_pentest`` / ``network_forensics`` / ``memory_forensics`` / ``persistence_hunt`` / ``malware_static`` / ``filesystem_triage``). The platform reasoning surface must not name a family owned by a module; strategy families are declared by each module via ``ModuleProtocol.reasoning_strategies()`` and resolved through the registry. The family literal ``generic`` is allowed because it is the platform's fallback family; ``tests/`` paths are exempt. Sibling of rule 48 for the reasoning-strategy surface (RFC-05 crit 6).
 74. unpinned_investigation_prompt -- agent-runtime code (``platform/agents/**`` or ``modules/*/agents/**``) resolves a prompt / bundle by LIVE ALIAS instead of the per-investigation pin. The canonical path is :func:`aila.platform.prompts.pinning.resolve_pinned_prompt`, which reads or persists the investigation pin before ever looking at the alias; a raw ``.resolve(alias=...)`` on the prompt store or the prompt registry in a turn function bypasses that pin and lets an operator alias flip mid-run bleed the new prompt into an already-running investigation's transcript. RFC-09 criterion 4 / threat T6. Scope is the agent-runtime tree; the platform prompts package owns the raw resolve and is naturally out of scope. ``seed_prompt_versions`` functions are exempt because seed / registration legitimately talks to the store directly. Sibling of rules 58 / 59 / 60 on the pin surface.
+75. adlc_structural_change -- a file under ``platform/lifecycle/**`` (the RFC-10 ADLC control plane) constructs a graph-structure element (``PhaseSpec(...)`` / ``WorkflowDefinition(...)`` / ``make_dispatch_router(...)`` / ``build_dispatch_workflow(...)``), mutates a ``.states`` / ``.nodes`` / ``.edges`` mapping, writes a persona-roster binding (``PERSONA_ROLE_MAP`` / ``persona_task_type`` / ``role_task_type``), calls ``.register_tool(...)`` or ``.register(...)`` on a tool-registry-shaped receiver (``tool_registry`` / ``tool_scope``), or constructs a ``Tool`` subclass (a callee terminal ending in ``Tool``). The ADLC promotes versioned agent bundles behind the eval + quorum gate -- an alias flip + a journaled ``LifecycleTransitionRecord`` + a ``LifecycleCanaryAssignment`` state stamp. It must NOT mint a new phase, node, edge, roster entry, or tool; those go through the CODE lifecycle (PR / review / deploy), not through the ADLC bundle promotion path. RFC-10 criterion 6 / design doc ``.run/designs/DESIGN_reasoning_platform.md`` sec 3.7 -- a bundle body whose diff adds a new tool call, a new node kind, or a new graph edge is a finding. Sibling of rule 73 rescoped from the RFC-08 self-improvement layer to the RFC-10 ADLC control plane.
 73. structural_self_modification -- the RFC-08 self-improvement layer (``platform/eval/**`` and the sanctioned proposer files ``platform/agents/pattern_extractor.py`` / ``platform/agents/persona_router.py`` / ``platform/agents/calibrator.py``) proposes parameters (thresholds / persona-selection / patterns / routing weights) only. A structural graph edit from within that layer -- a ``PhaseSpec(...)`` / ``WorkflowDefinition(...)`` construction, a ``make_dispatch_router(...)`` / ``build_dispatch_workflow(...)`` call, a subscript / delete / mutator-method mutation of a ``.states`` / ``.nodes`` / ``.edges`` mapping, or a subscript / mutator write to a persona-roster binding (``PERSONA_ROLE_MAP`` / ``persona_task_type`` / ``role_task_type``) -- lets a self-improvement writer mint a new node, phase, or roster entry outside the operator-authored workflow definition. Fire is scoped to the self-improvement files only so the workflow / engine layer (which legitimately builds the graph) is not flagged; precision over recall by design.
 
 Usage (CLI):
@@ -1447,9 +1448,11 @@ _UNPINNED_INVESTIGATION_PROMPT_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
 # body that constructs ``LifecycleTransitionRecord(to_stage=...
 # .PRODUCTION)`` or calls ``set_alias(<key>, "production", ...)``
 # without any gate marker is promoting without the eval + quorum guard
-# the RFC-10 controller enforces. ``EvalRunner`` alone counts as a
-# gate because its ``auto_promote`` path only flips the alias after
-# the run's ``verdict == 'pass'`` check.
+# :class:`AgentLifecycleController` enforces (RFC-10). ``EvalRunner``
+# stays in the marker set because a caller that ties the promotion
+# decision to a completed :class:`EvalRunResult` verdict + delegates
+# to ``AgentLifecycleController.promote`` legitimately references it
+# in the same body.
 _PROMOTE_GATE_MARKERS: frozenset[str] = frozenset({
     "_passing_evaluate",
     "_distinct_approver_count",
@@ -1466,10 +1469,34 @@ _LIFECYCLE_STAGE_KWARGS: frozenset[str] = frozenset({
 })
 _LIFECYCLE_CONTROLLER_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
     "platform/lifecycle/controller.py",
-    # EvalRunner.run(auto_promote=True) flips the alias behind the
-    # run's own eval verdict; the check IS the gate on that path.
-    "platform/eval/runner.py",
     "tools/honesty_audit.py",
+)
+
+# Rule 75 -- adlc_structural_change. The RFC-10 ADLC (Agent Development
+# Lifecycle) control plane under ``platform/lifecycle/**`` promotes
+# versioned agent bundles behind an eval + quorum gate: it flips an alias,
+# writes a ``LifecycleTransitionRecord``, and stamps a
+# ``LifecycleCanaryAssignment`` state. It MUST NOT mint new graph
+# structure (a phase, node, edge, or persona-roster entry) and MUST NOT
+# register a new tool. Those go through the code lifecycle (a PR, a
+# review, a deploy), not through a bundle promotion. The scope regex
+# below is the file-path gate for rule 75; the four structural AST
+# shapes reuse the rule-73 constants (``_STRUCTURAL_GRAPH_CALLABLES`` /
+# ``_STRUCTURAL_MAP_ATTRS`` / ``_STRUCTURAL_MUTATOR_METHODS`` /
+# ``_STRUCTURAL_ROSTER_TOKENS``); the tool-registration shape uses the
+# helpers below.
+_ADLC_LIFECYCLE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]platform[/\\]lifecycle[/\\]"
+)
+# Receiver-token tokens that identify a tool-registry-shaped receiver on
+# a ``.register(...)`` call. The platform binds a ``ToolRegistry`` /
+# ``ToolScope`` (see ``platform/runtime/tools.py``); local names for the
+# instance follow the convention ``tool_registry`` / ``tool_scope``. A
+# ``.register_tool(...)`` call is caught by its method-name alone (no
+# receiver check needed).
+_ADLC_TOOL_REGISTRY_RECEIVER_TOKENS: tuple[str, ...] = (
+    "tool_registry",
+    "tool_scope",
 )
 
 # Rule 63 -- canary_below_min_sample. Function-name markers that
@@ -4753,6 +4780,193 @@ class _HonestyVisitor(ast.NodeVisitor):
                     )
                     break
 
+    def _check_adlc_structural_change(self, tree: ast.Module) -> None:
+        """Rule 75: adlc_structural_change -- the RFC-10 ADLC control
+        plane emits a graph-structure edit or a tool registration
+        instead of a bundle promotion.
+
+        The Agent Development Lifecycle controller under
+        ``platform/lifecycle/**`` promotes a versioned agent bundle
+        behind the eval + quorum gate: it flips an alias, writes a
+        :class:`LifecycleTransitionRecord`, and stamps a
+        :class:`LifecycleCanaryAssignment` state. That is a BUNDLE
+        promotion. It is NOT a code deploy: new graph structure (a
+        new phase, node kind, graph edge, or persona-roster entry)
+        and new tool registration go through the code lifecycle (a
+        PR, review, deploy), not through the ADLC bundle promotion
+        path. RFC-10 criterion 6 / design doc
+        ``.run/designs/DESIGN_reasoning_platform.md`` sec 3.7 -- a
+        bundle body whose diff adds a new tool call, a new node
+        kind, or a new graph edge is a finding.
+
+        Sibling of rule 73 (:meth:`_check_structural_self_modification`)
+        on the RFC-08 self-improvement layer. Rule 73's four
+        structural AST shapes are reused verbatim (the constants
+        :data:`_STRUCTURAL_GRAPH_CALLABLES` /
+        :data:`_STRUCTURAL_MAP_ATTRS` /
+        :data:`_STRUCTURAL_MUTATOR_METHODS` /
+        :data:`_STRUCTURAL_ROSTER_TOKENS`) but the scope is the ADLC
+        control plane (:data:`_ADLC_LIFECYCLE_PATTERN`) instead of
+        ``platform/eval/**`` + the sanctioned proposers. Additionally,
+        the rule flags tool registration entering via the lifecycle
+        path:
+
+        - a :class:`ast.Call` whose callee terminal is
+          ``register_tool`` (matches ``registry.register_tool(...)``
+          on any receiver);
+        - a :class:`ast.Call` whose callee terminal is ``register``
+          on a tool-registry-shaped receiver (a receiver whose
+          terminal name contains one of
+          :data:`_ADLC_TOOL_REGISTRY_RECEIVER_TOKENS` -- matches
+          ``tool_registry.register(key, tool)`` /
+          ``tool_scope.register(...)``);
+        - a :class:`ast.Call` whose callee terminal is an identifier
+          ending in ``Tool`` (matches a ``Tool`` subclass
+          construction like ``PermanentMemoryTool(...)`` /
+          ``SystemRegistryTool(...)`` -- the naming convention the
+          platform tool set follows).
+
+        Precision over recall: the live lifecycle controller
+        legitimately flips an alias, writes assignment rows, and
+        constructs / journals :class:`LifecycleTransitionRecord`
+        rows. None of those are structural graph edits or tool
+        registrations, so the rule fires zero on the current
+        ``platform/lifecycle/**`` tree. A tightening (or a targeted
+        whitelist entry) is required if a future legitimate shape
+        in that scope hits one of these callee terminals; that
+        review IS the point of the rule.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if not _ADLC_LIFECYCLE_PATTERN.search(normalized):
+            return
+
+        def _terminal(node: ast.expr) -> str | None:
+            if isinstance(node, ast.Name):
+                return node.id
+            if isinstance(node, ast.Attribute):
+                return node.attr
+            return None
+
+        def _is_structural_map_receiver(node: ast.expr) -> bool:
+            # ``x.states`` / ``x.nodes`` / ``x.edges`` on any receiver.
+            return (
+                isinstance(node, ast.Attribute)
+                and node.attr in _STRUCTURAL_MAP_ATTRS
+            )
+
+        def _is_roster_receiver(node: ast.expr) -> bool:
+            tail = _terminal(node)
+            return tail in _STRUCTURAL_ROSTER_TOKENS
+
+        def _is_tool_registry_receiver(node: ast.expr) -> bool:
+            tail = _terminal(node)
+            if tail is None:
+                return False
+            low = tail.lower()
+            return any(
+                token in low for token in _ADLC_TOOL_REGISTRY_RECEIVER_TOKENS
+            )
+
+        def _is_tool_subclass_ctor_name(name: str | None) -> bool:
+            # ``PermanentMemoryTool(...)`` etc. -- the platform naming
+            # convention for Tool subclasses. The bare ``Tool`` name is
+            # excluded so a helper ``Tool(...)`` factory is not caught
+            # by a happy-accident identifier collision.
+            return name is not None and len(name) > 4 and name.endswith("Tool")
+
+        def _emit_here(line: int, detail: str) -> None:
+            self._emit(
+                line,
+                "adlc_structural_change",
+                (
+                    f"adlc_structural_change: {detail} -- the RFC-10 "
+                    "ADLC control plane (platform/lifecycle/**) promotes "
+                    "versioned agent bundles behind the eval + quorum "
+                    "gate; new graph structure (phase / node / edge / "
+                    "persona-roster entry) and new tool registration go "
+                    "through the CODE lifecycle (PR / review / deploy), "
+                    "not through the ADLC bundle promotion path"
+                ),
+            )
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                tail = _terminal(node.func)
+                # Shape 1: structural constructor / factory call.
+                if tail in _STRUCTURAL_GRAPH_CALLABLES:
+                    _emit_here(node.lineno, f"{tail}(...) call")
+                    continue
+                # Shape T-ctor: Tool subclass construction.
+                if _is_tool_subclass_ctor_name(tail):
+                    _emit_here(
+                        node.lineno,
+                        f"{tail}(...) Tool subclass construction",
+                    )
+                    continue
+                if isinstance(node.func, ast.Attribute):
+                    method = node.func.attr
+                    recv = node.func.value
+                    # Shape T-reg-1: ``.register_tool(...)`` on any receiver.
+                    if method == "register_tool":
+                        recv_tail = _terminal(recv) or "<receiver>"
+                        _emit_here(
+                            node.lineno,
+                            f"{recv_tail}.register_tool(...) call",
+                        )
+                        continue
+                    # Shape T-reg-2: ``.register(...)`` on a
+                    # tool-registry-shaped receiver.
+                    if method == "register" and _is_tool_registry_receiver(recv):
+                        recv_tail = _terminal(recv) or "<registry>"
+                        _emit_here(
+                            node.lineno,
+                            f"{recv_tail}.register(...) tool registration",
+                        )
+                        continue
+                    # Shape 3: mutator-method call on a .states / .nodes /
+                    # .edges attribute, or on a persona-roster binding.
+                    if method in _STRUCTURAL_MUTATOR_METHODS:
+                        if _is_structural_map_receiver(recv):
+                            _emit_here(
+                                node.lineno,
+                                f".{recv.attr}.{method}(...) mutator",
+                            )
+                            continue
+                        if _is_roster_receiver(recv):
+                            rtail = _terminal(recv) or "<roster>"
+                            _emit_here(
+                                node.lineno,
+                                f"{rtail}.{method}(...) mutator",
+                            )
+                            continue
+
+            # Shape 2 / 4: subscript-write / del against a
+            # structural map or roster binding.
+            targets: tuple[ast.expr, ...] = ()
+            if isinstance(node, ast.Assign):
+                targets = tuple(node.targets)
+            elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+                targets = (node.target,)
+            elif isinstance(node, ast.Delete):
+                targets = tuple(node.targets)
+            for tgt in targets:
+                if not isinstance(tgt, ast.Subscript):
+                    continue
+                base = tgt.value
+                if _is_structural_map_receiver(base):
+                    _emit_here(
+                        tgt.lineno,
+                        f".{base.attr}[...] subscript write",
+                    )
+                    break
+                if _is_roster_receiver(base):
+                    rtail = _terminal(base) or "<roster>"
+                    _emit_here(
+                        tgt.lineno,
+                        f"{rtail}[...] subscript write",
+                    )
+                    break
+
     def _check_inline_prompt_literal(self, tree: ast.Module) -> None:
         """Rule 58: inline_prompt_literal -- a module-level ``_*_PROMPT*``
         constant binds a multi-line prompt string.
@@ -5062,9 +5276,10 @@ class _HonestyVisitor(ast.NodeVisitor):
         or calls ``set_alias(..., "production", ...)`` outside the
         controller AND without any gate marker in its body
         (:data:`_PROMOTE_GATE_MARKERS`) is promoting without the gate.
-        The controller itself and :class:`EvalRunner` (whose
-        ``auto_promote`` path IS the gate on its own call) are exempt
-        via :data:`_LIFECYCLE_CONTROLLER_SELF_EXEMPT_SUFFIXES`.
+        The controller file itself is the sole exemption
+        (:data:`_LIFECYCLE_CONTROLLER_SELF_EXEMPT_SUFFIXES`) because it
+        OWNS the eval + quorum gate; every other flip site must carry
+        a gate marker in the same body.
         """
         normalized = self.filename.replace("\\", "/")
         for suffix in _LIFECYCLE_CONTROLLER_SELF_EXEMPT_SUFFIXES:
@@ -5688,6 +5903,11 @@ class HonestyAuditor:
         visitor._check_promotion_without_gate(tree)
         visitor._check_untransitioned_stage_change(tree)
         visitor._check_canary_below_min_sample(tree)
+        # Rule 75: adlc_structural_change -- the RFC-10 4th ADLC
+        # guardrail. Self-scopes to platform/lifecycle/**, so the
+        # dispatch site is unconditional (every other tree is out
+        # of scope and is not flagged by an unconditional call).
+        visitor._check_adlc_structural_change(tree)
         # Rules 64-67: RFC-12 knowledge-base integrity + retrieval gate.
         # Every file is in scope; each rule self-exempts or scopes to the
         # surface it locks in.

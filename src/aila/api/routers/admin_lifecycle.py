@@ -19,11 +19,19 @@ Endpoints:
     POST /admin/lifecycle/approve        sign off on a passing eval (RFC-10 quorum vote)
     POST /admin/lifecycle/promote        flip production alias if eval + quorum pass
     POST /admin/lifecycle/rollback       flip production alias back to a prior version
+    POST /admin/lifecycle/shadow         register a shadow assignment for a candidate
+    POST /admin/lifecycle/canary         register a canary assignment at cohort_percent
+    POST /admin/lifecycle/canary/signal  feed one drift+cost sample into the hold gate
+    POST /admin/lifecycle/shadow/run     off-path replay report for the active shadow
+    GET  /admin/lifecycle/shadow/report  latest shadow report for (key, version)
     GET  /admin/lifecycle/transitions    list transitions for a key (newest first)
+    GET  /admin/lifecycle/route          preview the cohort route for one investigation
+    GET  /admin/lifecycle/metrics/versions  per-version metrics aggregation for a key
 
-The RFC-08 eval-runner ``auto_promote`` fast path stays admin-opt-in
-and is eval-only by design; the quorum-gated path lives here on the
-lifecycle controller.
+Promotion is exclusively owned here: the RFC-08 eval-runner scores
+and records a verdict but NEVER flips the 'production' alias -- that
+flip requires both a passing eval and a distinct-approver quorum, and
+both conditions are enforced by ``AgentLifecycleController.promote``.
 """
 from __future__ import annotations
 
@@ -56,6 +64,10 @@ from aila.platform.lifecycle.controller import (
 from aila.platform.lifecycle.models import (
     LifecycleStage,
     LifecycleTransitionRecord,
+)
+from aila.platform.lifecycle.shadow import (
+    ShadowReportRecord,
+    latest_shadow_report,
 )
 
 __all__ = ["router"]
@@ -148,6 +160,38 @@ class CanarySignalRequest(BaseModel):
     key: str = Field(min_length=1, max_length=256)
     drift: float = Field(ge=0.0)
     cost: float = Field(ge=0.0)
+
+
+class ShadowRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: str = Field(min_length=1, max_length=256)
+    version: str = Field(min_length=1, max_length=32)
+    sample_n: int = Field(default=5, ge=1, le=100)
+
+
+class ShadowReportInfo(BaseModel):
+    """Response contract for a persisted shadow report row.
+
+    Mirrors :class:`ShadowReportRecord` field-for-field so the API
+    envelope reads the same shape a stored row does. ``diff_summary``
+    is the decoded ``diff_summary_json`` payload -- a dict with
+    ``attempts`` + ``successes`` trails and the faithfulness floor the
+    run scored against.
+    """
+
+    id: str
+    key: str
+    version: str
+    assignment_id: str | None
+    sample_attempted: int
+    sample_succeeded: int
+    mean_faithfulness: float
+    mean_determinism: float
+    regressions: int
+    diff_summary: dict[str, Any]
+    actor: str
+    created_at: datetime
 
 
 class CanarySignalResponse(BaseModel):
@@ -469,6 +513,105 @@ async def canary_signal(
         actor=ctx.user_id or "canary_monitor",
     )
     return DataEnvelope(data=_signal_to_response(outcome))
+
+
+@router.post("/shadow/run", status_code=status.HTTP_201_CREATED)
+@limiter.limit("6/minute")
+async def shadow_run(
+    request: Request,
+    body: ShadowRunRequest,
+    ctx: AuthContext = Depends(_require_admin),
+) -> DataEnvelope[ShadowReportInfo]:
+    """Run the off-path shadow comparison for (key, version).
+
+    Samples recent turns from ``llm_idempotency_cache`` (prefer rows
+    matching the module's task_type), rebuilds each into a frozen
+    transcript via :class:`TranscriptRecorder`, replays each transcript
+    under ``version`` through :meth:`EvalRunner.replay`, and persists a
+    single :class:`ShadowReportRecord` row. Returns the report summary
+    -- reads only recorded state, never touches a live investigation.
+    Requires an ACTIVE shadow assignment on (key, version); returns 409
+    otherwise.
+
+    Rate limit is deliberately lower than the other lifecycle writes
+    because each call fans out to ``sample_n`` LLM replays through the
+    replay bridge; six runs per operator per minute is generous for
+    interactive inspection.
+    """
+    del request
+    try:
+        record = await _CONTROLLER.run_shadow(
+            key=body.key,
+            version=body.version,
+            sample_n=body.sample_n,
+            actor=ctx.user_id or "shadow_runner",
+        )
+    except StageTransitionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc),
+        ) from exc
+    if not isinstance(record, ShadowReportRecord):
+        # Defensive: run_shadow's declared runtime type is object to
+        # avoid a circular import, but the delegate always returns
+        # ShadowReportRecord. A shape drift is a bug, not a data issue.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="internal: run_shadow returned an unexpected type",
+        )
+    return DataEnvelope(data=_shadow_report_to_info(record))
+
+
+@router.get("/shadow/report")
+@limiter.limit("60/minute")
+async def shadow_report(
+    request: Request,
+    key: str = Query(min_length=1, max_length=256),
+    version: str = Query(min_length=1, max_length=32),
+    ctx: AuthContext = Depends(_require_admin),
+) -> DataEnvelope[ShadowReportInfo | None]:
+    """Return the latest shadow report for (key, version), or null.
+
+    Read-only inspection: the report table is append-only, so a caller
+    that wants a history uses the transition journal filtered on
+    SHADOW-to-SHADOW rows (each such row carries the report id in its
+    metrics snapshot).
+    """
+    del request, ctx
+    record = await latest_shadow_report(key=key, version=version)
+    if record is None:
+        return DataEnvelope(data=None)
+    return DataEnvelope(data=_shadow_report_to_info(record))
+
+
+def _shadow_report_to_info(record: ShadowReportRecord) -> ShadowReportInfo:
+    """Render a persisted report row as the response contract."""
+    diff_summary: dict[str, Any]
+    if not record.diff_summary_json:
+        diff_summary = {}
+    else:
+        try:
+            parsed = json.loads(record.diff_summary_json)
+            diff_summary = parsed if isinstance(parsed, dict) else {}
+        except (TypeError, ValueError) as exc:
+            _log.warning(
+                "shadow report diff_summary_json decode failed id=%s: %s",
+                record.id, exc,
+            )
+            diff_summary = {}
+    return ShadowReportInfo(
+        id=record.id,
+        key=record.key,
+        version=record.version,
+        assignment_id=record.assignment_id,
+        sample_attempted=record.sample_attempted,
+        sample_succeeded=record.sample_succeeded,
+        mean_faithfulness=record.mean_faithfulness,
+        mean_determinism=record.mean_determinism,
+        regressions=record.regressions,
+        diff_summary=diff_summary,
+        actor=record.actor,
+        created_at=record.created_at,
+    )
 
 
 @router.get("/route")

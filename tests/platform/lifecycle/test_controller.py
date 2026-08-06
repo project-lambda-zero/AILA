@@ -121,7 +121,11 @@ async def test_evaluate_passes_and_journals_evaluated(test_db) -> None:
     assert payload["verdict"] == "pass"
     assert payload["eval_run_id"]
     assert payload["candidate_version"] == version
-    assert payload["report"]["promoted"] is False
+    # The eval report snapshot embeds the aggregate candidate metrics;
+    # ``verdict`` above is the promotion signal (RFC-10 acceptance 1),
+    # not a runner-side ``promoted`` flag -- the eval runner no longer
+    # flips the alias, so no such flag exists on the report payload.
+    assert "candidate" in payload["report"]
 
 
 @pytest.mark.asyncio

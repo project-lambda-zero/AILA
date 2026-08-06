@@ -1,4 +1,4 @@
-"""Eval runner: score a candidate prompt version and gate promotion (RFC-08).
+"""Eval runner: score a candidate prompt version and record a verdict (RFC-08).
 
 Scope of THIS increment
 -----------------------
@@ -7,7 +7,12 @@ The runner covers two entry points:
 1. :meth:`EvalRunner.run` scores a candidate against a benchmark of
    ``CaseOutcome`` rows that are ALREADY resolved (predicted_verdict /
    verified_verdict / confidence per case, per outcome_kind, per version)
-   and gates promotion through the strict-beat gate.
+   and returns the persisted ``EvalRunRecord``. The runner NEVER flips
+   the 'production' alias -- promotion is exclusively owned by
+   :class:`aila.platform.lifecycle.controller.AgentLifecycleController`
+   which gates on the eval verdict AND a distinct-approver quorum
+   (RFC-10 criterion 1). The runner scores and records; promotion is a
+   separate, quorum-gated decision.
 2. :meth:`EvalRunner.replay` delegates to the decision-level replay
    harness (``platform/eval/replay.py``) to score ONE recorded turn
    under a candidate prompt version with frozen retrieval + tool
@@ -47,15 +52,12 @@ Runner flow
 3. Build an ``EvalReport`` for the candidate bundle. Build the baseline
    report from the baseline bundle when a baseline version exists.
 4. Verdict = 'pass' when no baseline exists (first eval; a warning is
-   logged so an operator sees the auto-pass) OR when
+   logged so an operator sees the auto-pass verdict) OR when
    ``candidate.beats(baseline)`` per the strict-beat gate. Otherwise
    'fail'.
-5. When verdict == 'pass' AND ``auto_promote`` is True, call
-   ``PromptVersionStore.set_alias`` to point the 'production' alias at
-   ``candidate_version``. On 'fail' or when auto_promote is False, the
-   alias is left untouched.
-6. Persist and return an ``EvalRunRecord`` with the serialized report
-   bundle.
+5. Persist and return an ``EvalRunRecord`` with the serialized report
+   bundle. The 'production' alias is NEVER touched here; a passing
+   verdict is a necessary input to promotion, not the promotion itself.
 """
 from __future__ import annotations
 
@@ -158,12 +160,15 @@ def _report_to_dict(report: EvalReport) -> dict[str, object]:
 
 
 class EvalRunner:
-    """Score a candidate prompt version and (optionally) flip 'production'.
+    """Score a candidate prompt version and record a verdict.
 
-    Composed with a ``PromptVersionStore`` for baseline resolution and
-    alias flips. Both collaborators open their own async sessions through
+    Composed with a ``PromptVersionStore`` for baseline resolution.
+    Both collaborators open their own async sessions through
     ``async_session_scope``; there is no shared unit-of-work handle in
-    this codebase.
+    this codebase. The runner NEVER flips the 'production' alias --
+    promotion is exclusively owned by
+    :class:`aila.platform.lifecycle.controller.AgentLifecycleController`
+    behind the eval + quorum gate (RFC-10 criterion 1).
     """
 
     def __init__(self, version_store: PromptVersionStore | None = None) -> None:
@@ -213,17 +218,20 @@ class EvalRunner:
         key: str,
         candidate_version: str,
         benchmark_id: str,
-        auto_promote: bool,
         actor: str = "",
     ) -> EvalRunRecord:
-        """Score ``candidate_version`` against ``benchmark_id``.
+        """Score ``candidate_version`` against ``benchmark_id`` and record a verdict.
 
         Raises ``BenchmarkNotFoundError`` when the benchmark row is absent.
         Raises ``EmptyCaseBundleError`` when the candidate has no scored
-        cases in the benchmark. On verdict == 'pass' AND ``auto_promote``,
-        flips the 'production' alias to ``candidate_version`` via
-        ``PromptVersionStore.set_alias``. Returns the persisted
-        ``EvalRunRecord``.
+        cases in the benchmark. Returns the persisted ``EvalRunRecord``.
+
+        The 'production' alias is NEVER flipped here. A passing verdict
+        is a necessary input to promotion; the promotion itself is a
+        separate, quorum-gated decision owned by
+        :class:`aila.platform.lifecycle.controller.AgentLifecycleController.promote`
+        (RFC-10 criterion 1: cannot reach production without passing the
+        eval gate AND a distinct-approver quorum).
         """
         async with async_session_scope() as session:
             benchmark = (await session.exec(
@@ -265,18 +273,9 @@ class EvalRunner:
         else:
             verdict = "fail"
 
-        promoted = False
-        if verdict == "pass" and auto_promote:
-            await self._store.set_alias(
-                key, PRODUCTION_ALIAS, candidate_version,
-                actor=actor, reason=f"eval auto-promote benchmark_id={benchmark_id}",
-            )
-            promoted = True
-
         report_payload: dict[str, object] = {
             "candidate": _report_to_dict(candidate_report),
             "baseline": _report_to_dict(baseline_report) if baseline_report is not None else None,
-            "promoted": promoted,
         }
         run_record = EvalRunRecord(
             key=key,

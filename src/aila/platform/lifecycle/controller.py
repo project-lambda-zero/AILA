@@ -11,16 +11,16 @@ alongside ours.
 
 The four primary entry points are ``evaluate``, ``approve``, ``promote``
 and ``rollback``. Each writes exactly one ``LifecycleTransitionRecord``
-row and returns it. ``evaluate`` delegates scoring to the runner with
-``auto_promote=False`` so the runner never flips ``production`` behind
-the controller's back; only ``promote`` may do that, and only when the
-most recent evaluated transition for the (key, version) pair carries a
-passing verdict AND at least ``platform.agent_promotion_quorum`` distinct
-actor strings appear on ``approved`` rows for that same (key, version).
-The RFC-10 acceptance criterion 1 ("cannot reach production without
-passing the eval gate AND a quorum approval") is enforced here; the
-RFC-08 eval-runner ``auto_promote`` fast path stays admin-opt-in and
-rides the eval-only gate by design, not through this controller.
+row and returns it. ``evaluate`` delegates scoring to the runner; the
+runner never flips the ``production`` alias itself, so ``promote`` is
+the SOLE path that can. ``promote`` requires the most recent evaluated
+transition for the (key, version) pair to carry a passing verdict AND
+at least ``platform.agent_promotion_quorum`` distinct actor strings on
+``approved`` rows for that same (key, version). RFC-10 acceptance
+criterion 1 ("cannot reach production without passing the eval gate AND
+a quorum approval") is enforced here; the RFC-08 eval-runner exposes no
+competing auto-promotion path because the runner-side flip was removed
+in lockstep with this controller taking single ownership of promotion.
 """
 from __future__ import annotations
 
@@ -102,20 +102,22 @@ class AgentLifecycleController:
     ) -> LifecycleTransitionRecord:
         """Score ``version`` against ``benchmark_id`` and journal a transition.
 
-        Delegates to ``EvalRunner.run`` with ``auto_promote=False``. The
-        eval verdict, referenced eval run id, and the full report
-        payload land in ``metrics_snapshot_json`` on the resulting
-        transition row so ``promote`` can gate on the verdict without
-        replaying the scoring. ``from_stage`` is ``built`` on the
-        first-ever evaluate for the (key, version) pair; a re-eval
-        preserves whatever the version's most recent ``to_stage`` was
-        (typically ``evaluated``).
+        Delegates to ``EvalRunner.run``. The runner never flips the
+        production alias itself; only ``promote`` on this controller
+        can, so ``evaluate`` is safe to call as a scoring probe without
+        any promotion side effect. The eval verdict, referenced eval
+        run id, and the full report payload land in
+        ``metrics_snapshot_json`` on the resulting transition row so
+        ``promote`` can gate on the verdict without replaying the
+        scoring. ``from_stage`` is ``built`` on the first-ever
+        evaluate for the (key, version) pair; a re-eval preserves
+        whatever the version's most recent ``to_stage`` was (typically
+        ``evaluated``).
         """
         run = await self._runner.run(
             key=key,
             candidate_version=version,
             benchmark_id=benchmark_id,
-            auto_promote=False,
             actor=actor,
         )
         prior_to_stage = await self._latest_stage(key=key, version=version)
@@ -524,6 +526,43 @@ class AgentLifecycleController:
             metrics_snapshot_json=json.dumps(snapshot),
         )
 
+    async def run_shadow(
+        self,
+        *,
+        key: str,
+        version: str,
+        sample_n: int = 5,
+        actor: str = "shadow_runner",
+        llm_client: object | None = None,
+    ) -> object:
+        """Off-path replay report for the ACTIVE shadow (key, version).
+
+        Delegates to :func:`aila.platform.lifecycle.shadow.run_shadow`;
+        exposed as a controller method so admin routers and scheduled
+        jobs reach it through the same handle they use for every other
+        lifecycle write. Guard, sampling, replay, and journal semantics
+        are documented on the delegate. ``llm_client`` accepts a
+        :class:`aila.platform.eval.replay.ReplayLLMClient` (declared as
+        ``object`` here to keep the runtime module import cycle-safe;
+        the delegate re-narrows the type).
+        """
+        # Deferred import: shadow.py imports lifecycle.controller for
+        # StageTransitionError inside run_shadow; deferring the reverse
+        # edge to first-use keeps both modules importable in isolation.
+        from aila.platform.lifecycle.shadow import ShadowReportRecord
+        from aila.platform.lifecycle.shadow import (
+            run_shadow as _run_shadow,
+        )
+        result: ShadowReportRecord = await _run_shadow(
+            controller=self,
+            key=key,
+            version=version,
+            sample_n=sample_n,
+            actor=actor,
+            llm_client=llm_client,  # type: ignore[arg-type]
+        )
+        return result
+
     async def canary(
         self,
         *,
@@ -648,6 +687,7 @@ class AgentLifecycleController:
         drift: float,
         cost: float,
         actor: str = "canary_monitor",
+        investigation_id: str | None = None,
     ) -> CanarySignalOutcome:
         """Feed one drift + cost sample into the canary hold gate.
 
@@ -658,11 +698,17 @@ class AgentLifecycleController:
         ``platform.agent_canary_cost_ceiling_usd``, with ``0.0``
         disabling that half), the assignment row is flipped to
         ``held`` in the same transaction that stamps the breach into
-        ``last_signal_json``, a ``canary`` to ``held`` transition is
-        journaled, and a WARN log records the breach payload so an
-        operator alert path (RFC-07 monitor) sees the signal. Returns
-        the outcome envelope so callers can surface the hold to their
-        own UI without re-reading the DB.
+        ``last_signal_json`` and a ``canary`` to ``held`` transition is
+        journaled. RFC-10 G3 alert: on breach the resilience layer's
+        ``record_signal(op='canary_hold', source='lifecycle')`` fires
+        so the operator dashboard's ``RESILIENCE_SIGNALS_TOTAL`` counter
+        surfaces the hold as an operator-facing alert (distinct from the
+        WARN log line). When an ``investigation_id`` is supplied, a
+        durable recovery event is also appended through the RFC-07
+        ledger path so the hold is auditable end-to-end. Both alert
+        writes are best-effort: an observability failure never breaks
+        the hold itself. Returns the outcome envelope so callers can
+        surface the hold to their own UI without re-reading the DB.
         """
         canary_row = await self._active_assignment(
             key=key, kind=AssignmentKind.CANARY.value,
@@ -734,12 +780,96 @@ class AgentLifecycleController:
             reason="canary drift/cost breach",
             metrics_snapshot_json=json.dumps(snapshot),
         )
+        # RFC-10 G3: surface the hold as an operator-facing alert on
+        # top of the WARN log. Two writes:
+        #   * record_signal bumps ``RESILIENCE_SIGNALS_TOTAL`` on the
+        #     dashboard (the umbrella operator alert counter);
+        #   * emit_recovery_event appends a durable ledger entry for
+        #     the hold when an investigation context is available.
+        # Both are best-effort: a Prometheus / ledger write hiccup must
+        # not undo the hold that already committed above.
+        await self._surface_canary_hold_alert(
+            key=key,
+            version=canary_row.version,
+            signal=signal,
+            investigation_id=investigation_id,
+        )
         return CanarySignalOutcome(
             fired=True,
             reason="held",
             signal=signal,
             transition=transition,
         )
+
+    async def _surface_canary_hold_alert(
+        self,
+        *,
+        key: str,
+        version: str,
+        signal: CanaryHoldSignal,
+        investigation_id: str | None,
+    ) -> None:
+        """Emit the RFC-07 alert pair for a canary hold breach.
+
+        Split from :meth:`record_canary_signal` so the hold-commit path
+        stays linear and the two best-effort writes are visibly grouped.
+        Any observability failure logs and returns -- the hold itself
+        already committed and MUST NOT be undone by an alert-side hiccup.
+        """
+        # Deferred import: services.resilience pulls the platform
+        # metrics + ledger graph; importing at module load pulls
+        # unrelated storage code that this module does not otherwise
+        # need. Keeping the import call-local also matches the RFC-07
+        # ResilienceLayer's own lazy-import guidance.
+        try:
+            from aila.platform.services.resilience import (
+                get_default_resilience_layer,
+            )
+        except (ImportError, AttributeError) as exc:
+            _log.warning(
+                "canary_hold alert import failed key=%s version=%s: %s",
+                key, version, exc,
+            )
+            return
+        try:
+            layer = get_default_resilience_layer()
+        except (RuntimeError, OSError) as exc:
+            _log.warning(
+                "canary_hold alert layer bootstrap failed key=%s version=%s: %s",
+                key, version, exc,
+            )
+            return
+        try:
+            layer.record_signal(op="canary_hold", source="lifecycle")
+        except (RuntimeError, OSError, ValueError, TypeError) as exc:
+            _log.warning(
+                "canary_hold record_signal failed key=%s version=%s: %s",
+                key, version, exc,
+            )
+        if not investigation_id:
+            return
+        try:
+            await layer.emit_recovery_event(
+                investigation_id=investigation_id,
+                action="canary_hold",
+                detail={
+                    "key": key,
+                    "version": version,
+                    "drift": signal.drift,
+                    "cost": signal.cost,
+                    "drift_ceiling": signal.drift_ceiling,
+                    "cost_ceiling": signal.cost_ceiling,
+                    "drift_breach": signal.drift_breach,
+                    "cost_breach": signal.cost_breach,
+                },
+                source="lifecycle",
+            )
+        except (RuntimeError, OSError, ValueError, TypeError) as exc:
+            _log.warning(
+                "canary_hold emit_recovery_event failed key=%s version=%s "
+                "inv=%s: %s",
+                key, version, investigation_id, exc,
+            )
 
     async def active_shadow(
         self, key: str,

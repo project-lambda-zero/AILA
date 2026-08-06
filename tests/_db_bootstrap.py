@@ -77,6 +77,7 @@ _MODEL_MODULES: tuple[str, ...] = (
     "aila.platform.eval.transcript",
     "aila.platform.lifecycle.assignments",
     "aila.platform.lifecycle.models",
+    "aila.platform.lifecycle.shadow",
     "aila.platform.llm.cost_record",
     "aila.platform.llm.idempotency_cache",
     "aila.platform.mcp.instance_catalog",

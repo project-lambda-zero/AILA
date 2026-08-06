@@ -19,6 +19,36 @@ operator action.
 
 ### Added
 
+- An agent development lifecycle for prompt and agent-config change
+  (RFC-10 #34). Agent behavior now has its own governed release path,
+  separate from and faster than the code release: a candidate bundle is
+  evaluated against a frozen benchmark, shadowed off the critical path,
+  canaried to a cohort of new investigations, monitored, then promoted by
+  an alias flip or rolled back by one. Every stage transition is journaled
+  with actor, a metrics snapshot, and a reason. A candidate cannot reach
+  production without both passing the eval gate and a distinct-approver
+  quorum, and per-version metrics (eval verdict, cost, quorum accept rate,
+  drift) are observable through an admin endpoint.
+- A shadow runner for the lifecycle (RFC-10 #34). An operator can replay a
+  sample of recorded investigation turns against a candidate bundle off
+  the critical path (reusing the record-replay path), producing a shadow
+  report that scores mean faithfulness, mean determinism, and a regression
+  count per candidate, so a canary decision rests on data rather than
+  faith. The runner reads recorded state only and has no effect on any
+  running investigation; a turn whose transcript cannot be reconstructed
+  is skipped and counted, never aborting the run.
+- An operator-facing alert on a canary hold (RFC-10 #34). When a canary
+  bundle version breaches the drift or cost ceiling, the assignment is
+  held and, in addition to the journaled transition, a first-class
+  resilience signal is raised on the operator dashboard (and a durable
+  recovery entry is written when an investigation context is present),
+  so a hold surfaces to the operator rather than only to a worker log.
+- A fourth RFC-10 honesty guardrail, `adlc_structural_change` (#34). A
+  structural change (a new node kind, a graph edge, or a tool
+  registration) entering through the lifecycle control plane is now a
+  build-time finding, enforcing the boundary that the lifecycle tunes
+  prompts, config, and routing only, while structural changes go through
+  the code lifecycle.
 - Prompt registry with per-investigation pinning and alias deployment
   (RFC-09 #33). Prompts are now immutable, content-hashed, versioned
   entries resolved at runtime through the platform registry and addressed
@@ -741,6 +771,13 @@ operator action.
 
 ### Changed
 
+- The offline eval runner no longer promotes on its own (RFC-10 #34). The
+  eval-run path scores a candidate and records a verdict; it can no longer
+  flip the production alias on an eval pass. Promotion to production is now
+  exclusively the lifecycle controller's gated path (a passing evaluation
+  plus a distinct-approver quorum), so no code path reaches production on
+  the eval score alone. The `auto_promote` option is removed from the eval
+  run API.
 - Model selection now consults the pinned agent-config bundle first
   (RFC-09 #33). When a running investigation's pinned bundle specifies a
   model for the task type, that routing wins; an empty bundle routing
