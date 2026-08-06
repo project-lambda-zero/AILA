@@ -5,7 +5,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased] -- Investigation-engine extraction program (RFC-01 through RFC-12)
+## [Unreleased]
+
+## [0.3.0] - 2026-08-05 -- Investigation-engine extraction program plus security, correctness, and reliability hardening
 
 The vulnerability-research and malware investigation engines are unified
 onto a shared platform: one turn runner, one tool executor, one set of
@@ -16,6 +18,12 @@ deployment, an eval-gated agent lifecycle, a DB-backed MCP catalog, and
 per-vector knowledge provenance. Read the Changed section: the agent
 config env-var names and the promotion contract changed and may require
 operator action.
+
+A broad hardening pass across authentication and tenant isolation,
+secret handling, LLM cost and resilience, audit integrity, and
+per-module correctness, plus a migration of the test suite onto
+PostgreSQL. Read the Changed section first: the CORS and OIDC
+credential defaults changed and may require caller action.
 
 ### Added
 
@@ -797,6 +805,81 @@ operator action.
   (migration 099); and opt-in LLM contextual enrichment of chunks on
   ingest.
 
+- Observability join keys on cost and MCP-call records (#39):
+  `llm_cost_records` and `vr_mcp_call_log` gain nullable
+  `investigation_id`, `branch_id`, and `turn_number` columns. The agent
+  turn loop sets an ambient correlation (a ContextVar) before it drives
+  the LLM and MCP calls, and the cost-record writer and VR MCP-call
+  logger stamp it, so a cost row or a tool-call row can be joined back to
+  the investigation, branch, and turn that produced it. Calls outside a
+  turn (scoring, report generation) leave the columns null. Migration
+  082 adds the columns and their indexes.
+- Append-only, hash-chained platform journal for tamper-evident audit;
+  the CLI audit trail now writes to it. (C2)
+- Evidence packs sealed with a merkle digest so later tampering is
+  detectable.
+- Per-run LLM token budget with a hard stop and a pre-call check;
+  embedding computation offloaded off the event loop. (#38, #64)
+- Team-scope request resolver and an `owned_or_404` helper for
+  single-resource authorization. (C1, #36, #57)
+- Secret redaction at the log boundary and for non-admin config reads.
+  (C6, #50)
+- Optional `page` and `page_size` params on the forensics list
+  endpoints (evidence, findings, investigations); the response stays a
+  `DataEnvelope` list. (#59)
+- Workflow-transition validation on findings bulk-update: an off-graph
+  transition is now rejected with 422. (#55)
+- Per-call LLM cost ceiling and output-size bound for forensics
+  writeups. (#48)
+- Freeflow investigation cost ceiling
+  (`forensics.freeflow_max_cost_usd`, default 25.0) with a monitor that
+  cancels a run once its cost crosses the ceiling. Known limitation: it
+  is inert in production until the reasoning engine threads the
+  investigation run_id into its LLM cost records; the mechanism and
+  termination path are unit-tested with seeded cost rows. (#59)
+- TLS hardening for report email: admin CA bundle, implicit TLS, and
+  certificate verification. (#48)
+- `ConfigRegistry.get_sync` for synchronous call sites. (C3)
+- Eval metric functions: expected calibration error, precision,
+  recall, determinism, faithfulness. (C7)
+- Deduplication of malware observation writes via a partial unique
+  index. (#61)
+- Per-tool-execution LLM timeout and pooled AsyncOpenAI clients that
+  stop a per-call file-descriptor leak. (#44)
+- Supervised automation tick loop: a malformed schedule row can no
+  longer kill the loop and silently halt automation. Faults are caught,
+  counted on `aila_automation_tick_failures_total`, and backed off
+  exponentially (60s base, 300s cap) with a reset on the next success.
+  (#46)
+- Database connection pool sizing is tunable via env vars
+  (`AILA_DB_POOL_SIZE`, `AILA_DB_MAX_OVERFLOW`, `AILA_DB_POOL_TIMEOUT`,
+  `AILA_DB_POOL_RECYCLE`); the defaults match the previous hardcoded
+  values, so nothing changes unless an operator opts in. (#45)
+- Task-engine team propagation: a task inherits the submitting caller's
+  team through a context var set by the task wrapper, so worker and
+  agent follow-up submits carry it without per-site changes; task list
+  and read queries are team-scoped for non-god-tier callers. (#53, #36)
+- Confidence-drift retention sweep prunes drift records past their
+  configured window. (#45)
+- Hot-column indexes on the workflow-run, audit-event, and
+  report-artifact query columns. (#45)
+- Composite index on notification reads (`user_id`, `created_at`) so the
+  per-user notifications list and unread queries stop scanning
+  sequentially. (#45)
+- Platform LLM config keys that were read but never declared -- the
+  routing defaults (`llm_default_model`, `llm_base_url`,
+  `llm_default_max_tokens`, `llm_default_temperature`,
+  `llm_tool_timeout_s`) and `llm_kill_switch` -- are now schema fields,
+  so `PUT /config` sets them instead of rejecting them as unknown; the
+  defaults match the prior hardcoded fallbacks. Per-task-type and
+  per-team keys (`llm_model_{task_type}`, `llm_monthly_budget_usd_{team_id}`,
+  the pipeline gate and verify overrides, ...) are declared as typed
+  dynamic-key families, so an open key space stays settable and cast on
+  read through the same contract as static fields. (#45)
+- The knowledge base embedding provider is selected by the platform
+  config key `knowledge_embedding_model` (default `bge-m3`), read once
+  when a KnowledgeService is constructed. (#49)
+
 ### Changed
 
 - The offline eval runner no longer promotes on its own (RFC-10 #34). The
@@ -1006,6 +1089,25 @@ operator action.
   unreachable. The threshold is still derived from the static
   non-proposing count, so stale-abandoned siblings cannot shrink it.
 
+- The vulnerability findings list pushes its pagination, ordering, and
+  count into SQL instead of slicing in Python. The response envelope
+  (`total`, `items`, `page`, `page_size`) is unchanged. (#55)
+- Behavior: CORS credentials are disabled when origins are wildcarded,
+  and OIDC cookies are marked `secure` by default. A client that relied
+  on credentials with a wildcard origin must now configure explicit
+  origins. (#36)
+- `POST /sessions/{id}/messages` awaits the platform and returns a real
+  assistant response on both the JSON and SSE paths; it previously
+  discarded the un-awaited coroutine and echoed the request text.
+- The event emitter reuses a pooled synchronous Redis client, and SSE
+  streams are bounded by a lifetime cap with disconnect detection and
+  an active-connection gauge. (#60)
+- `upsert_many` batches its writes; observation reads are bounded and
+  keyset-paginated. (#61)
+- Legacy `AILAError` subclasses map to their real HTTP status codes.
+- The test suite runs against PostgreSQL with async fixtures instead of
+  SQLite. (#62)
+
 ### Removed
 
 - The three bespoke MCP bridge classes (RFC-11 #35). Their transport and
@@ -1065,6 +1167,18 @@ operator action.
   same static-summary shape without importing each other. The malware APK
   STATIC_SUMMARY stage now runs after APK_DECODE (it reads the decoded
   manifest) instead of alongside it.
+
+
+- Duplicated agent primitives, support services, and data-model records
+  across the vr and malware modules, consolidated onto the platform bases
+  above.
+
+---
+
+- Dead `notification_types` and an unreachable unscoped cross-tenant
+  cost query. (#41, #57)
+
+---
 
 ### Fixed
 
@@ -1704,122 +1818,6 @@ operator action.
   configurable rejection cap (`draft_pending_reject_cap`), matching the
   variant-hunt and unresolved-hypothesis submit gates.
 
-### Removed
-
-- Duplicated agent primitives, support services, and data-model records
-  across the vr and malware modules, consolidated onto the platform bases
-  above.
-
----
-
-## [0.3.0] - 2026-07-21 -- Security, correctness, and reliability hardening
-
-A broad hardening pass across authentication and tenant isolation,
-secret handling, LLM cost and resilience, audit integrity, and
-per-module correctness, plus a migration of the test suite onto
-PostgreSQL. Read the Changed section first: the CORS and OIDC
-credential defaults changed and may require caller action.
-
-### Added
-
-- Observability join keys on cost and MCP-call records (#39):
-  `llm_cost_records` and `vr_mcp_call_log` gain nullable
-  `investigation_id`, `branch_id`, and `turn_number` columns. The agent
-  turn loop sets an ambient correlation (a ContextVar) before it drives
-  the LLM and MCP calls, and the cost-record writer and VR MCP-call
-  logger stamp it, so a cost row or a tool-call row can be joined back to
-  the investigation, branch, and turn that produced it. Calls outside a
-  turn (scoring, report generation) leave the columns null. Migration
-  082 adds the columns and their indexes.
-- Append-only, hash-chained platform journal for tamper-evident audit;
-  the CLI audit trail now writes to it. (C2)
-- Evidence packs sealed with a merkle digest so later tampering is
-  detectable.
-- Per-run LLM token budget with a hard stop and a pre-call check;
-  embedding computation offloaded off the event loop. (#38, #64)
-- Team-scope request resolver and an `owned_or_404` helper for
-  single-resource authorization. (C1, #36, #57)
-- Secret redaction at the log boundary and for non-admin config reads.
-  (C6, #50)
-- Optional `page` and `page_size` params on the forensics list
-  endpoints (evidence, findings, investigations); the response stays a
-  `DataEnvelope` list. (#59)
-- Workflow-transition validation on findings bulk-update: an off-graph
-  transition is now rejected with 422. (#55)
-- Per-call LLM cost ceiling and output-size bound for forensics
-  writeups. (#48)
-- Freeflow investigation cost ceiling
-  (`forensics.freeflow_max_cost_usd`, default 25.0) with a monitor that
-  cancels a run once its cost crosses the ceiling. Known limitation: it
-  is inert in production until the reasoning engine threads the
-  investigation run_id into its LLM cost records; the mechanism and
-  termination path are unit-tested with seeded cost rows. (#59)
-- TLS hardening for report email: admin CA bundle, implicit TLS, and
-  certificate verification. (#48)
-- `ConfigRegistry.get_sync` for synchronous call sites. (C3)
-- Eval metric functions: expected calibration error, precision,
-  recall, determinism, faithfulness. (C7)
-- Deduplication of malware observation writes via a partial unique
-  index. (#61)
-- Per-tool-execution LLM timeout and pooled AsyncOpenAI clients that
-  stop a per-call file-descriptor leak. (#44)
-- Supervised automation tick loop: a malformed schedule row can no
-  longer kill the loop and silently halt automation. Faults are caught,
-  counted on `aila_automation_tick_failures_total`, and backed off
-  exponentially (60s base, 300s cap) with a reset on the next success.
-  (#46)
-- Database connection pool sizing is tunable via env vars
-  (`AILA_DB_POOL_SIZE`, `AILA_DB_MAX_OVERFLOW`, `AILA_DB_POOL_TIMEOUT`,
-  `AILA_DB_POOL_RECYCLE`); the defaults match the previous hardcoded
-  values, so nothing changes unless an operator opts in. (#45)
-- Task-engine team propagation: a task inherits the submitting caller's
-  team through a context var set by the task wrapper, so worker and
-  agent follow-up submits carry it without per-site changes; task list
-  and read queries are team-scoped for non-god-tier callers. (#53, #36)
-- Confidence-drift retention sweep prunes drift records past their
-  configured window. (#45)
-- Hot-column indexes on the workflow-run, audit-event, and
-  report-artifact query columns. (#45)
-- Composite index on notification reads (`user_id`, `created_at`) so the
-  per-user notifications list and unread queries stop scanning
-  sequentially. (#45)
-- Platform LLM config keys that were read but never declared -- the
-  routing defaults (`llm_default_model`, `llm_base_url`,
-  `llm_default_max_tokens`, `llm_default_temperature`,
-  `llm_tool_timeout_s`) and `llm_kill_switch` -- are now schema fields,
-  so `PUT /config` sets them instead of rejecting them as unknown; the
-  defaults match the prior hardcoded fallbacks. Per-task-type and
-  per-team keys (`llm_model_{task_type}`, `llm_monthly_budget_usd_{team_id}`,
-  the pipeline gate and verify overrides, ...) are declared as typed
-  dynamic-key families, so an open key space stays settable and cast on
-  read through the same contract as static fields. (#45)
-- The knowledge base embedding provider is selected by the platform
-  config key `knowledge_embedding_model` (default `bge-m3`), read once
-  when a KnowledgeService is constructed. (#49)
-
-### Changed
-
-- The vulnerability findings list pushes its pagination, ordering, and
-  count into SQL instead of slicing in Python. The response envelope
-  (`total`, `items`, `page`, `page_size`) is unchanged. (#55)
-- Behavior: CORS credentials are disabled when origins are wildcarded,
-  and OIDC cookies are marked `secure` by default. A client that relied
-  on credentials with a wildcard origin must now configure explicit
-  origins. (#36)
-- `POST /sessions/{id}/messages` awaits the platform and returns a real
-  assistant response on both the JSON and SSE paths; it previously
-  discarded the un-awaited coroutine and echoed the request text.
-- The event emitter reuses a pooled synchronous Redis client, and SSE
-  streams are bounded by a lifetime cap with disconnect detection and
-  an active-connection gauge. (#60)
-- `upsert_many` batches its writes; observation reads are bounded and
-  keyset-paginated. (#61)
-- Legacy `AILAError` subclasses map to their real HTTP status codes.
-- The test suite runs against PostgreSQL with async fixtures instead of
-  SQLite. (#62)
-
-### Fixed
-
 Security and tenant isolation:
 
 - OIDC callback validates the state against the signed cookie; every
@@ -2019,13 +2017,6 @@ Platform, async, and correctness:
     the LLM is recently unhealthy, matching the guard already present in
     the vulnerability-research finalizer, so an outage is not recorded
     as a clean "no finding" audit.
-
-### Removed
-
-- Dead `notification_types` and an unreachable unscoped cross-tenant
-  cost query. (#41, #57)
-
----
 
 ## [0.2.1] - 2026-07-12 -- Reconciler no longer fabricates completions
 
