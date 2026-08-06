@@ -5,6 +5,7 @@ import { Navigate, useLocation, useNavigate } from "react-router";
 import { useAuthStore } from "@platform/auth/useAuthStore";
 import { fetchOidcAuthorizeUrl } from "@platform/api/auth";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
+import { pickPostLoginTarget } from "@/lib/redirectAllowlist";
 
 // Code-split terminal background so the ogl bundle isn't pulled into the
 // main chunk for routes that don't need it.
@@ -33,8 +34,13 @@ export function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [oidcLoading, setOidcLoading] = useState(false);
 
+  // #47: sanitize redirect target so `?next=https://evil.example`,
+  // `?next=//evil.example`, or `?next=javascript:...` collapse to `/`.
+  // The router-state `from` value comes from `ProtectedRoute`, the query
+  // string comes from the 401 interceptor in apiErrorHandler; both are
+  // treated as untrusted and clamped to same-origin paths.
   const state = location.state as { from?: string } | null;
-  const target = state?.from ?? "/";
+  const target = pickPostLoginTarget(state?.from, location.search);
 
   if (status === "authenticated") {
     return <Navigate to={target} replace />;

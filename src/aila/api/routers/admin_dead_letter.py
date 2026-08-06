@@ -55,10 +55,21 @@ _slog = structlog.get_logger(__name__)
 async def _require_admin(
     ctx: AuthContext = Depends(require_user_or_api_key),
 ) -> AuthContext:
+    """#36: dead-letter administration is god-tier only. The dead-letter queue
+    holds task-failure metadata across every team, and requeue acts on any
+    team's TaskRecord, so a team-scoped admin (team_id set) is refused rather
+    than allowed to read or requeue other teams' failed tasks. God-tier admins
+    carry team_id=None (TEAM-06).
+    """
     if ctx.role != ROLE_ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Requires '{ROLE_ADMIN}' role; current role: '{ctx.role}'",
+        )
+    if ctx.team_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Dead-letter administration is restricted to god-tier administrators.",
         )
     return ctx
 

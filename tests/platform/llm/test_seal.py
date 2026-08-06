@@ -10,22 +10,20 @@ Covers: SEAL-01, SEAL-02, SEAL-04, SEAL-05, SEAL-06.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import patch
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, select
+from sqlmodel import select
 
 from aila.platform.events.event import PlatformEvent
 from aila.platform.llm.client import LLMResponse
 from aila.platform.llm.config import LLMRouting
+from aila.platform.llm.pipeline import PipelineRunner
 from aila.platform.llm.seal import compute_seal, make_seal_step
+from aila.storage.database import async_session_scope
 from aila.storage.db_models import AuditSealRecord
 
 # ---------------------------------------------------------------------------
@@ -49,10 +47,10 @@ class FakeConfigRegistry:
     def __init__(self, overrides: dict[str, Any] | None = None) -> None:
         self._data = overrides or {}
 
-    def get(self, namespace: str, key: str) -> Any:
+    async def get(self, namespace: str, key: str) -> Any:
         return self._data.get(key)
 
-    def set(self, namespace: str, key: str, value: Any) -> None:
+    async def set(self, namespace: str, key: str, value: Any) -> None:
         self._data[key] = value
 
 
@@ -62,10 +60,10 @@ class FakeConfigProvider:
     def __init__(self, overrides: dict[str, Any] | None = None) -> None:
         self._registry = FakeConfigRegistry(overrides)
 
-    def is_step_enabled(self, step: str, task_type: str) -> bool:
+    async def is_step_enabled(self, step: str, task_type: str) -> bool:
         return True
 
-    def resolve_fail_mode(self, step: str, task_type: str) -> str:
+    async def resolve_fail_mode(self, step: str, task_type: str) -> str:
         return "open"
 
 
@@ -111,46 +109,6 @@ def hmac_key() -> str:
     return "a" * 64
 
 
-@pytest.fixture()
-def in_memory_engine():
-    """Create an in-memory SQLite engine with all tables.
-
-    Uses StaticPool so all connections (including those from asyncio.to_thread)
-    share the same underlying database connection. Import db_models first to
-    ensure AuditSealRecord is registered in SQLModel.metadata before create_all.
-    """
-    import aila.storage.db_models  # noqa: F401 -- registers all table classes
-    engine = create_engine(
-        "sqlite://",
-        echo=False,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    SQLModel.metadata.create_all(engine)
-    return engine
-
-
-@pytest.fixture()
-def _patch_session_scope(in_memory_engine):
-    """Patch session_scope wherever it's imported to use the in-memory engine.
-
-    seal.py imports session_scope inside a nested function via
-    ``from ...storage.database import session_scope``. We patch the
-    canonical location so the import picks up our fake.
-    """
-    from contextlib import contextmanager
-
-    @contextmanager
-    def fake_session_scope(settings=None):
-        with Session(in_memory_engine) as session:
-            yield session
-
-    with patch("aila.storage.database.session_scope", fake_session_scope):
-        # Also ensure the table exists on this engine (import forces registration)
-        SQLModel.metadata.create_all(in_memory_engine)
-        yield
-
-
 # ---------------------------------------------------------------------------
 # SEAL-01: TestSealComputation
 # ---------------------------------------------------------------------------
@@ -159,7 +117,7 @@ def _patch_session_scope(in_memory_engine):
 class TestSealComputation:
     """Pure function: compute_seal produces deterministic HMAC-SHA256 digest."""
 
-    def test_compute_seal_deterministic(
+    async def test_compute_seal_deterministic(
         self, sample_messages: list[dict[str, Any]], hmac_key: str
     ) -> None:
         """Same inputs produce same seal_hash."""
@@ -181,7 +139,7 @@ class TestSealComputation:
         assert result1[1] == result2[1]  # input_hash
         assert result1[2] == result2[2]  # output_hash
 
-    def test_compute_seal_different_inputs(
+    async def test_compute_seal_different_inputs(
         self, sample_messages: list[dict[str, Any]], hmac_key: str
     ) -> None:
         """Different model_id produces different seal_hash."""
@@ -199,7 +157,7 @@ class TestSealComputation:
         seal_b, _, _ = compute_seal(model_id="model-b", **base)
         assert seal_a != seal_b
 
-    def test_canonical_json_sort_keys(
+    async def test_canonical_json_sort_keys(
         self, sample_messages: list[dict[str, Any]], hmac_key: str
     ) -> None:
         """Verify input_hash matches manual SHA-256 of sorted JSON messages."""
@@ -219,7 +177,7 @@ class TestSealComputation:
         ).hexdigest()
         assert input_hash == expected
 
-    def test_seal_hash_is_valid_hex(
+    async def test_seal_hash_is_valid_hex(
         self, sample_messages: list[dict[str, Any]], hmac_key: str
     ) -> None:
         """seal_hash is a 64-char hex string (SHA-256 digest length)."""
@@ -237,7 +195,7 @@ class TestSealComputation:
         assert len(seal_hash) == 64
         int(seal_hash, 16)  # Raises ValueError if not valid hex
 
-    def test_input_hash_output_hash_correct(
+    async def test_input_hash_output_hash_correct(
         self, sample_messages: list[dict[str, Any]], hmac_key: str
     ) -> None:
         """input_hash and output_hash match manual computation."""
@@ -269,13 +227,12 @@ class TestSealComputation:
 class TestSealStorage:
     """make_seal_step persists AuditSealRecord to DB."""
 
-    @pytest.mark.usefixtures("_patch_session_scope")
-    def test_seal_step_writes_record(
+    @pytest.mark.usefixtures("test_db")
+    async def test_seal_step_writes_record(
         self,
         routing: LLMRouting,
         sample_messages: list[dict[str, Any]],
         sample_response: LLMResponse,
-        in_memory_engine,
     ) -> None:
         config = FakeConfigProvider({"llm_seal_hmac_key": "b" * 64})
         step = make_seal_step(config_provider=config, emitter=None)
@@ -286,13 +243,11 @@ class TestSealStorage:
             "run_id": "run-123",
         }
 
-        asyncio.get_event_loop().run_until_complete(
-            step(ctx, sample_messages, routing)
-        )
+        await step(ctx, sample_messages, routing)
 
         # Verify record in DB
-        with Session(in_memory_engine) as session:
-            records = session.exec(select(AuditSealRecord)).all()
+        async with async_session_scope() as session:
+            records = (await session.exec(select(AuditSealRecord))).all()
             assert len(records) == 1
             rec = records[0]
             assert rec.seal_hash == ctx["seal_id"]
@@ -303,6 +258,52 @@ class TestSealStorage:
             assert len(rec.input_hash) == 64
             assert len(rec.output_hash) == 64
 
+    @pytest.mark.usefixtures("test_db")
+    async def test_seal_tags_prompt_content_hash(
+        self,
+        routing: LLMRouting,
+        sample_messages: list[dict[str, Any]],
+        sample_response: LLMResponse,
+    ) -> None:
+        """The seal records the correlation prompt_content_hash when set."""
+        from aila.platform.llm.correlation import correlation_scope
+
+        config = FakeConfigProvider({"llm_seal_hmac_key": "b" * 64})
+        step = make_seal_step(config_provider=config, emitter=None)
+        ctx: dict[str, Any] = {
+            "task_type": "scoring",
+            "response": sample_response,
+            "run_id": "run-phash",
+        }
+        phash = "deadbeef" * 8
+        with correlation_scope(prompt_content_hash=phash):
+            await step(ctx, sample_messages, routing)
+        async with async_session_scope() as session:
+            rec = (await session.exec(select(AuditSealRecord))).first()
+            assert rec is not None
+            assert rec.prompt_content_hash == phash
+
+    @pytest.mark.usefixtures("test_db")
+    async def test_seal_prompt_hash_none_outside_turn(
+        self,
+        routing: LLMRouting,
+        sample_messages: list[dict[str, Any]],
+        sample_response: LLMResponse,
+    ) -> None:
+        """With no correlation scope the seal leaves prompt_content_hash NULL."""
+        config = FakeConfigProvider({"llm_seal_hmac_key": "b" * 64})
+        step = make_seal_step(config_provider=config, emitter=None)
+        ctx: dict[str, Any] = {
+            "task_type": "scoring",
+            "response": sample_response,
+            "run_id": "run-nophash",
+        }
+        await step(ctx, sample_messages, routing)
+        async with async_session_scope() as session:
+            rec = (await session.exec(select(AuditSealRecord))).first()
+            assert rec is not None
+            assert rec.prompt_content_hash is None
+
 
 # ---------------------------------------------------------------------------
 # SEAL-04: TestSealFullChain
@@ -312,13 +313,12 @@ class TestSealStorage:
 class TestSealFullChain:
     """Seal step reads classification/confidence/evidence_validation from ctx."""
 
-    @pytest.mark.usefixtures("_patch_session_scope")
-    def test_seal_covers_full_chain(
+    @pytest.mark.usefixtures("test_db")
+    async def test_seal_covers_full_chain(
         self,
         routing: LLMRouting,
         sample_messages: list[dict[str, Any]],
         sample_response: LLMResponse,
-        in_memory_engine,
     ) -> None:
         config = FakeConfigProvider({"llm_seal_hmac_key": "c" * 64})
         step = make_seal_step(config_provider=config, emitter=None)
@@ -338,24 +338,21 @@ class TestSealFullChain:
             "confidence": "HIGH",
         }
 
-        asyncio.get_event_loop().run_until_complete(
-            step(ctx, sample_messages, routing)
-        )
+        await step(ctx, sample_messages, routing)
 
-        with Session(in_memory_engine) as session:
-            rec = session.exec(select(AuditSealRecord)).first()
+        async with async_session_scope() as session:
+            rec = (await session.exec(select(AuditSealRecord))).first()
             assert rec is not None
             assert rec.classification == "INTERNAL"
             assert rec.confidence == "HIGH"
             assert rec.evidence_validation_pass is True
 
-    @pytest.mark.usefixtures("_patch_session_scope")
-    def test_seal_handles_missing_ctx_values(
+    @pytest.mark.usefixtures("test_db")
+    async def test_seal_handles_missing_ctx_values(
         self,
         routing: LLMRouting,
         sample_messages: list[dict[str, Any]],
         sample_response: LLMResponse,
-        in_memory_engine,
     ) -> None:
         """Missing pipeline chain values become None in the record."""
         config = FakeConfigProvider({"llm_seal_hmac_key": "d" * 64})
@@ -366,12 +363,10 @@ class TestSealFullChain:
             "response": sample_response,
         }
 
-        asyncio.get_event_loop().run_until_complete(
-            step(ctx, sample_messages, routing)
-        )
+        await step(ctx, sample_messages, routing)
 
-        with Session(in_memory_engine) as session:
-            rec = session.exec(select(AuditSealRecord)).first()
+        async with async_session_scope() as session:
+            rec = (await session.exec(select(AuditSealRecord))).first()
             assert rec is not None
             assert rec.classification is None
             assert rec.confidence is None
@@ -386,13 +381,12 @@ class TestSealFullChain:
 class TestContentStorage:
     """Content opt-in/opt-out per task_type via config."""
 
-    @pytest.mark.usefixtures("_patch_session_scope")
-    def test_content_not_stored_default(
+    @pytest.mark.usefixtures("test_db")
+    async def test_content_not_stored_default(
         self,
         routing: LLMRouting,
         sample_messages: list[dict[str, Any]],
         sample_response: LLMResponse,
-        in_memory_engine,
     ) -> None:
         """Content not stored when config key is absent."""
         config = FakeConfigProvider({"llm_seal_hmac_key": "e" * 64})
@@ -403,24 +397,21 @@ class TestContentStorage:
             "response": sample_response,
         }
 
-        asyncio.get_event_loop().run_until_complete(
-            step(ctx, sample_messages, routing)
-        )
+        await step(ctx, sample_messages, routing)
 
-        with Session(in_memory_engine) as session:
-            rec = session.exec(select(AuditSealRecord)).first()
+        async with async_session_scope() as session:
+            rec = (await session.exec(select(AuditSealRecord))).first()
             assert rec is not None
             assert rec.content_stored is False
             assert rec.prompt_content is None
             assert rec.response_content is None
 
-    @pytest.mark.usefixtures("_patch_session_scope")
-    def test_content_stored_when_enabled(
+    @pytest.mark.usefixtures("test_db")
+    async def test_content_stored_when_enabled(
         self,
         routing: LLMRouting,
         sample_messages: list[dict[str, Any]],
         sample_response: LLMResponse,
-        in_memory_engine,
     ) -> None:
         """Content stored when llm_seal_store_content_{task_type} = 'true'."""
         config = FakeConfigProvider({
@@ -434,17 +425,18 @@ class TestContentStorage:
             "response": sample_response,
         }
 
-        asyncio.get_event_loop().run_until_complete(
-            step(ctx, sample_messages, routing)
-        )
+        await step(ctx, sample_messages, routing)
 
-        with Session(in_memory_engine) as session:
-            rec = session.exec(select(AuditSealRecord)).first()
+        async with async_session_scope() as session:
+            rec = (await session.exec(select(AuditSealRecord))).first()
             assert rec is not None
             assert rec.content_stored is True
-            assert rec.prompt_content is not None
-            assert json.loads(rec.prompt_content) is not None  # Valid JSON
-            assert rec.response_content == sample_response.content
+            # Content is stored encrypted (LLM-SEC-03 encrypt-on-write): the
+            # plaintext columns are cleared and the encrypted columns are set.
+            assert rec.prompt_content is None
+            assert rec.response_content is None
+            assert rec.prompt_content_encrypted is not None
+            assert rec.response_content_encrypted is not None
 
 
 # ---------------------------------------------------------------------------
@@ -455,18 +447,17 @@ class TestContentStorage:
 class TestRetentionPruning:
     """Expired records deleted after each seal write."""
 
-    @pytest.mark.usefixtures("_patch_session_scope")
-    def test_pruning_expired_records(
+    @pytest.mark.usefixtures("test_db")
+    async def test_pruning_expired_records(
         self,
         routing: LLMRouting,
         sample_messages: list[dict[str, Any]],
         sample_response: LLMResponse,
-        in_memory_engine,
     ) -> None:
         """Records older than retention_days are pruned."""
         # Insert an old record (100 days ago)
         old_time = datetime.now(UTC) - timedelta(days=100)
-        with Session(in_memory_engine) as session:
+        async with async_session_scope() as session:
             old_record = AuditSealRecord(
                 run_id="old-run",
                 seal_hash="old_hash",
@@ -478,7 +469,7 @@ class TestRetentionPruning:
                 created_at=old_time,
             )
             session.add(old_record)
-            session.commit()
+            await session.commit()
 
         config = FakeConfigProvider({
             "llm_seal_hmac_key": "1" * 64,
@@ -491,27 +482,24 @@ class TestRetentionPruning:
             "response": sample_response,
         }
 
-        asyncio.get_event_loop().run_until_complete(
-            step(ctx, sample_messages, routing)
-        )
+        await step(ctx, sample_messages, routing)
 
-        with Session(in_memory_engine) as session:
-            records = session.exec(select(AuditSealRecord)).all()
+        async with async_session_scope() as session:
+            records = (await session.exec(select(AuditSealRecord))).all()
             # Old record pruned, only the new one remains
             assert len(records) == 1
             assert records[0].seal_hash != "old_hash"
 
-    @pytest.mark.usefixtures("_patch_session_scope")
-    def test_retention_configurable(
+    @pytest.mark.usefixtures("test_db")
+    async def test_retention_configurable(
         self,
         routing: LLMRouting,
         sample_messages: list[dict[str, Any]],
         sample_response: LLMResponse,
-        in_memory_engine,
     ) -> None:
         """A record 50 days old is pruned when retention is 30 days."""
         old_time = datetime.now(UTC) - timedelta(days=50)
-        with Session(in_memory_engine) as session:
+        async with async_session_scope() as session:
             old_record = AuditSealRecord(
                 run_id="semi-old-run",
                 seal_hash="semi_old_hash",
@@ -523,7 +511,7 @@ class TestRetentionPruning:
                 created_at=old_time,
             )
             session.add(old_record)
-            session.commit()
+            await session.commit()
 
         config = FakeConfigProvider({
             "llm_seal_hmac_key": "2" * 64,
@@ -536,12 +524,10 @@ class TestRetentionPruning:
             "response": sample_response,
         }
 
-        asyncio.get_event_loop().run_until_complete(
-            step(ctx, sample_messages, routing)
-        )
+        await step(ctx, sample_messages, routing)
 
-        with Session(in_memory_engine) as session:
-            records = session.exec(select(AuditSealRecord)).all()
+        async with async_session_scope() as session:
+            records = (await session.exec(select(AuditSealRecord))).all()
             assert len(records) == 1
             assert records[0].seal_hash != "semi_old_hash"
 
@@ -554,8 +540,8 @@ class TestRetentionPruning:
 class TestSealHMACKey:
     """HMAC key auto-generation and usage."""
 
-    @pytest.mark.usefixtures("_patch_session_scope")
-    def test_auto_generates_key_when_not_set(
+    @pytest.mark.usefixtures("test_db")
+    async def test_auto_generates_key_when_not_set(
         self,
         routing: LLMRouting,
         sample_messages: list[dict[str, Any]],
@@ -570,17 +556,15 @@ class TestSealHMACKey:
             "response": sample_response,
         }
 
-        asyncio.get_event_loop().run_until_complete(
-            step(ctx, sample_messages, routing)
-        )
+        await step(ctx, sample_messages, routing)
 
-        stored_key = config._registry.get("platform", "llm_seal_hmac_key")
+        stored_key = await config._registry.get("platform", "llm_seal_hmac_key")
         assert stored_key is not None
         assert len(stored_key) == 64  # 32 bytes = 64 hex chars
         int(stored_key, 16)  # Valid hex
 
-    @pytest.mark.usefixtures("_patch_session_scope")
-    def test_uses_existing_key(
+    @pytest.mark.usefixtures("test_db")
+    async def test_uses_existing_key(
         self,
         routing: LLMRouting,
         sample_messages: list[dict[str, Any]],
@@ -596,9 +580,7 @@ class TestSealHMACKey:
             "response": sample_response,
         }
 
-        asyncio.get_event_loop().run_until_complete(
-            step(ctx, sample_messages, routing)
-        )
+        await step(ctx, sample_messages, routing)
 
         seal_id = ctx["seal_id"]
         # Verify it was computed with the known key by recomputing
@@ -617,7 +599,7 @@ class TestSealHMACKey:
             hmac_key=known_key,
         )
         # The key was used (not auto-generated)
-        assert config._registry.get("platform", "llm_seal_hmac_key") == known_key
+        assert await config._registry.get("platform", "llm_seal_hmac_key") == known_key
         assert len(seal_id) == 64
 
 
@@ -629,8 +611,8 @@ class TestSealHMACKey:
 class TestSealAuditEvent:
     """Audit event emission via emitter."""
 
-    @pytest.mark.usefixtures("_patch_session_scope")
-    def test_emits_audit_event(
+    @pytest.mark.usefixtures("test_db")
+    async def test_emits_audit_event(
         self,
         routing: LLMRouting,
         sample_messages: list[dict[str, Any]],
@@ -646,9 +628,7 @@ class TestSealAuditEvent:
             "run_id": "run-456",
         }
 
-        asyncio.get_event_loop().run_until_complete(
-            step(ctx, sample_messages, routing)
-        )
+        await step(ctx, sample_messages, routing)
 
         assert len(emitter.events) == 1
         evt = emitter.events[0]
@@ -662,8 +642,8 @@ class TestSealAuditEvent:
         assert isinstance(evt.details["content_stored"], bool)
         assert len(evt.details["seal_hash"]) == 64
 
-    @pytest.mark.usefixtures("_patch_session_scope")
-    def test_skips_event_when_no_emitter(
+    @pytest.mark.usefixtures("test_db")
+    async def test_skips_event_when_no_emitter(
         self,
         routing: LLMRouting,
         sample_messages: list[dict[str, Any]],
@@ -679,9 +659,7 @@ class TestSealAuditEvent:
         }
 
         # Should not raise
-        asyncio.get_event_loop().run_until_complete(
-            step(ctx, sample_messages, routing)
-        )
+        await step(ctx, sample_messages, routing)
 
         assert "seal_id" in ctx  # Still computed successfully
 
@@ -694,13 +672,12 @@ class TestSealAuditEvent:
 class TestSealCtxOutput:
     """ctx['seal_id'] is written with the seal_hash value."""
 
-    @pytest.mark.usefixtures("_patch_session_scope")
-    def test_writes_seal_id_to_ctx(
+    @pytest.mark.usefixtures("test_db")
+    async def test_writes_seal_id_to_ctx(
         self,
         routing: LLMRouting,
         sample_messages: list[dict[str, Any]],
         sample_response: LLMResponse,
-        in_memory_engine,
     ) -> None:
         config = FakeConfigProvider({"llm_seal_hmac_key": "5" * 64})
         step = make_seal_step(config_provider=config, emitter=None)
@@ -710,9 +687,7 @@ class TestSealCtxOutput:
             "response": sample_response,
         }
 
-        asyncio.get_event_loop().run_until_complete(
-            step(ctx, sample_messages, routing)
-        )
+        await step(ctx, sample_messages, routing)
 
         assert "seal_id" in ctx
         seal_id = ctx["seal_id"]
@@ -720,8 +695,8 @@ class TestSealCtxOutput:
         int(seal_id, 16)  # Valid hex
 
         # Verify it matches the DB record
-        with Session(in_memory_engine) as session:
-            rec = session.exec(select(AuditSealRecord)).first()
+        async with async_session_scope() as session:
+            rec = (await session.exec(select(AuditSealRecord))).first()
             assert rec is not None
             assert rec.seal_hash == seal_id
 
@@ -734,7 +709,7 @@ class TestSealCtxOutput:
 class TestSealPipelineIntegration:
     """Integration tests: seal step in a real PipelineRunner."""
 
-    @pytest.mark.usefixtures("_patch_session_scope")
+    @pytest.mark.usefixtures("test_db")
     @pytest.mark.asyncio
     async def test_seal_step_in_pipeline(
         self,
@@ -743,8 +718,6 @@ class TestSealPipelineIntegration:
         sample_response: LLMResponse,
     ) -> None:
         """Register only the seal step. Verify seal_id appears in ctx after run."""
-        from aila.platform.llm.pipeline import PipelineRunner
-
         config = FakeConfigProvider({"llm_seal_hmac_key": "6" * 64})
         runner = PipelineRunner(config_provider=config)
 
@@ -766,18 +739,15 @@ class TestSealPipelineIntegration:
         assert len(ctx["seal_id"]) == 64
         int(ctx["seal_id"], 16)  # Valid hex
 
-    @pytest.mark.usefixtures("_patch_session_scope")
+    @pytest.mark.usefixtures("test_db")
     @pytest.mark.asyncio
     async def test_full_pipeline_chain(
         self,
         routing: LLMRouting,
         sample_messages: list[dict[str, Any]],
         sample_response: LLMResponse,
-        in_memory_engine,
     ) -> None:
         """classify + validate + gate + seal registered; seal record captures chain values."""
-        from aila.platform.llm.pipeline import PipelineRunner
-
         config = FakeConfigProvider({"llm_seal_hmac_key": "7" * 64})
         runner = PipelineRunner(config_provider=config)
 
@@ -833,8 +803,8 @@ class TestSealPipelineIntegration:
         assert "seal_id" in ctx
 
         # Verify DB record captured all chain values
-        with Session(in_memory_engine) as session:
-            rec = session.exec(select(AuditSealRecord)).first()
+        async with async_session_scope() as session:
+            rec = (await session.exec(select(AuditSealRecord))).first()
             assert rec is not None
             assert rec.classification == "PUBLIC"
             assert rec.confidence == "HIGH"
@@ -849,10 +819,8 @@ class TestSealPipelineIntegration:
         sample_response: LLMResponse,
     ) -> None:
         """Disabled seal step via config: no seal_id in ctx."""
-        from aila.platform.llm.pipeline import PipelineRunner
-
         class DisabledSealConfig(FakeConfigProvider):
-            def is_step_enabled(self, step: str, task_type: str) -> bool:
+            async def is_step_enabled(self, step: str, task_type: str) -> bool:
                 if step == "seal":
                     return False
                 return True

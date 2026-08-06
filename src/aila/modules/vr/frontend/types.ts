@@ -170,10 +170,9 @@ export interface VRTargetCreate {
 
 /** APK-specific projection from mcp_handles_json. Each field is
  * optional because the pipeline writes them in stages -- the operator
- * sees what's ready as it appears. `static_summary` and `mobsf_scan`
- * are passed through as opaque records because both vary by
- * androguard/MobSF version and the renderer reads only the keys it
- * recognises (defensive parsing). */
+ * sees what's ready as it appears. `static_summary` is passed through
+ * as an opaque record because it varies by APK and the
+ * renderer reads only the keys it recognises (defensive parsing). */
 export interface ApkOverview {
   sha256?: string;
   decoded_dir?: string;
@@ -184,7 +183,6 @@ export interface ApkOverview {
   audit_mcp_index_id?: string;
   audit_mcp_indexed_at?: string;
   static_summary?: Record<string, unknown>;
-  mobsf_scan?: Record<string, unknown>;
 }
 
 export interface VRTargetSummary {
@@ -196,8 +194,8 @@ export interface VRTargetSummary {
   uploaded_filename?: string | null;
   android_package_name?: string | null;
   /** APK-specific projection from mcp_handles_json. Populated as the
-   * 5-stage pipeline progresses (APK_DECODE → JADX_DECOMPILE →
-   * INDEX_DECOMPILED → STATIC_SUMMARY → MOBSF_SCAN). Null for
+   * pipeline progresses (APK_DECODE → JADX_DECOMPILE →
+   * INDEX_DECOMPILED → STATIC_SUMMARY). Null for
    * non-APK kinds and before the first stage writes anything. */
   apk_overview?: ApkOverview | null;
   primary_language?: string | null;
@@ -323,7 +321,8 @@ export type InvestigationStatus =
   | "paused"
   | "completed"
   | "failed"
-  | "abandoned";
+  | "abandoned"
+  | "stalled";
 
 export type InvestigationPauseReason =
   | "operator"
@@ -342,6 +341,11 @@ export type BranchStatus =
 
 export type PersonaVoice =
   | "halvar" | "maddie" | "yuki" | "renzo" | "noor" | "wei"
+  // On-demand specialist agents (backend specialist_registry _BUILTINS
+  // "vr"): named panelists spawned when a case needs an expert eye.
+  // persona_voice is an open string server-side, but these are the
+  // built-ins the UI ships dedicated swatches for.
+  | "snake" | "jak" | "kratos" | "lara"
   // Phase E §177/§178/§180 -- synthetic voices written by branch_manager
   // when no agent persona is meaningful. Backend's PersonaVoice enum
   // gained these values + alembic 064 sets the column DEFAULT to
@@ -379,7 +383,7 @@ export type OutcomeConfidence =
   | "exact" | "strong" | "medium" | "caveated" | "unknown";
 
 export type OutcomeDispatchStatus =
-  | "pending" | "dispatched" | "failed" | "skipped";
+  | "pending" | "claimed" | "dispatched" | "failed" | "skipped";
 
 export interface VRInvestigationSummary {
   id: string;
@@ -405,6 +409,20 @@ export interface VRInvestigationSummary {
   primary_outcome_kind?: string | null;
   primary_outcome_confidence?: string | null;
   primary_outcome_verdict_head?: string | null;
+  /**
+   * Polarity of the primary outcome. Backend derivation contract (mirror
+   * of `OutcomePolarityBadge`'s `outcomePolarity`):
+   *   1. `payload.verifier_report.verdict === 'confirmed'` -> `finding`
+   *      `payload.verifier_report.verdict === 'refuted'` -> `no_finding`
+   *   2. `outcome_kind === 'direct_finding'` -> `finding`
+   *   3. `outcome_kind === 'audit_memo' && payload.verdict === 'no_finding'`
+   *      -> `no_finding`
+   *   4. otherwise -> `inconclusive`
+   * `null` when there is no primary outcome. Investigation list uses this
+   * directly; the detail page prefers to re-derive from the full payload
+   * (which is present there) so a stale summary can't lie.
+   */
+  primary_outcome_polarity?: "finding" | "no_finding" | "inconclusive" | null;
   verifier_verdict?: string | null;
   verifier_confidence?: number | null;
   linked_campaign_ids: string[];
@@ -420,7 +438,11 @@ export interface VRBranchSummary {
   investigation_id: string;
   parent_branch_id?: string | null;
   status: BranchStatus;
-  persona_voice?: PersonaVoice | null;
+  // Core persona name OR an on-demand specialist name (e.g. 'exploit-dev').
+  // Specialists are user-extensible, so this is a plain string, not the
+  // narrow PersonaVoice union. personaMeta()/formatBranchDisplayName() both
+  // fall back gracefully for names outside PersonaVoice.
+  persona_voice?: PersonaVoice | string | null;
   fork_reason: string;
   fork_at_turn?: number | null;
   turn_count: number;
@@ -759,6 +781,21 @@ export interface MasvsControlVerdict {
   primary_outcome_id: string | null;
   reason: string | null;
   evidence_locations: MasvsEvidenceLocation[];
+  /** Panel-summary projection carried from the child investigation's
+   *  canonical outcome (`payload.panel_summary`). All three fields are
+   *  optional -- historical rows written before the synthesis-scope
+   *  contract was introduced omit them, and the aggregate leaves them
+   *  unset for children that never resolved a panel_summary (timeout,
+   *  cost cap, no primary outcome). */
+  /** What the panel examined before the verdict: the control under
+   *  audit, the code surface inspected, and the evidence base. */
+  scope?: string | null;
+  /** One-sentence headline verdict written by the synthesizer. */
+  headline?: string | null;
+  /** Up to 12 bullet points merged from the child synthesis'
+   *  points_of_agreement + points_of_disagreement (disagreement rows
+   *  are prefixed with ``Disagreement: `` by the aggregator). */
+  key_points?: string[];
 }
 
 export interface MasvsAuditAggregate {
@@ -769,4 +806,69 @@ export interface MasvsAuditAggregate {
   verdicts: MasvsControlVerdict[];
   by_group: Partial<Record<MasvsGroup, MasvsControlVerdict[]>>;
   summary_counts: Partial<Record<MasvsVerdict, number>>;
+}
+
+// ─── APK static-analysis audit aggregate (mirrors MASVS shape) ────────
+//
+// Wire schema matching ``aila.modules.vr.contracts.apk_static``. The
+// endpoint ``GET /vr/targets/{id}/apk-static-audit-aggregate`` returns
+// ``DataEnvelope<ApkStaticAuditAggregate>`` once the parent
+// ``kind=apk_static_audit`` investigation exists. Verdict + group string
+// unions mirror the enums on the backend; keep them in sync when adding
+// new values to either side.
+//
+// NOTE: These types are landed ahead of the full aggregate SCREEN --
+// downstream shell code (dispatcher, list types) needs the shape
+// available for type-checking. Rendering the per-check table is
+// tracked as a follow-up phase.
+
+export type ApkStaticVerdict = MasvsVerdict;
+
+export type ApkStaticGroup =
+  | "MANIFEST"
+  | "SECRETS"
+  | "WEBVIEW"
+  | "STORAGE"
+  | "IPC"
+  | "CRYPTO"
+  | "NETWORK"
+  | "NATIVE"
+  | "SBOM"
+  | "CHAINS"
+  | "AUTH_LOCAL"
+  | "DESERIALIZATION"
+  | "CODELOAD"
+  | "RESILIENCE"
+  | "PRIVACY"
+  | "FLUTTER";
+
+export interface ApkStaticEvidenceLocation {
+  file: string;
+  function: string;
+}
+
+export interface ApkStaticControlVerdict {
+  /** ApkStaticCheck.id -- e.g. ``APK-MANIFEST-DEBUGGABLE``. */
+  control_id: string;
+  verdict: ApkStaticVerdict;
+  confidence: number;
+  child_investigation_id: string;
+  primary_outcome_id: string | null;
+  reason: string | null;
+  evidence_locations: ApkStaticEvidenceLocation[];
+  /** See :func:`MasvsControlVerdict.scope`. Optional for the same
+   *  historical-compat reason. */
+  scope?: string | null;
+  headline?: string | null;
+  key_points?: string[];
+}
+
+export interface ApkStaticAuditAggregate {
+  parent_id: string;
+  target_id: string;
+  apk_static_spec_version: string;
+  generated_at: string; // ISO 8601 UTC
+  verdicts: ApkStaticControlVerdict[];
+  by_group: Partial<Record<ApkStaticGroup, ApkStaticControlVerdict[]>>;
+  summary_counts: Partial<Record<ApkStaticVerdict, number>>;
 }

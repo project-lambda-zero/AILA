@@ -33,5 +33,6 @@ async def run_platform_handle(
         module_payload=module_payload or {},
         module_options=options or {},
         run_id=ctx.task_id,
+        team_id=ctx.team_id,
     )
     return {"response": response.model_dump(mode="json")}

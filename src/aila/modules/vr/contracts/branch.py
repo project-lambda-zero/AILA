@@ -12,9 +12,10 @@ prompt prefix when calling the LLM.
 from __future__ import annotations
 
 from datetime import datetime
-from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from aila.platform.contracts.enums import BranchOperation, BranchStatus, PersonaVoice
 
 __all__ = [
     "BranchOperation",
@@ -23,60 +24,6 @@ __all__ = [
     "StrategyBranchSpawn",
     "VRBranchSummary",
 ]
-
-
-class BranchStatus(StrEnum):
-    """Lifecycle states for one branch within an investigation."""
-
-    ACTIVE = "active"
-    PAUSED = "paused"
-    MERGED = "merged"
-    PROMOTED = "promoted"
-    ABANDONED = "abandoned"
-    COMPLETED = "completed"
-
-
-class PersonaVoice(StrEnum):
-    """Per-D-39 persona voice modifiers. Each is a prompt-prefix.
-
-    Voices are not separate agents -- they're stylistic prompt prefixes
-    that bias the reasoning toward a particular kind of skepticism /
-    aggression / pattern-matching. The same model produces all of them.
-    """
-
-    HALVAR = "halvar"
-    MADDIE = "maddie"
-    YUKI = "yuki"
-    RENZO = "renzo"
-    NOOR = "noor"
-    WEI = "wei"
-    # Phase E §177/§178/§180 -- synthetic voices written by branch_manager
-    # when no agent persona is meaningful. Alembic 064 backfilled NULL
-    # rows with UNSPECIFIED and set the column NOT NULL with default
-    # 'unspecified'. Both must round-trip through this enum so the
-    # api_router serializer doesn't crash with "is not a valid
-    # PersonaVoice".
-    UNSPECIFIED = "unspecified"
-    MERGE_RESULT = "merge_result"
-    FORK_UNNAMED = "fork_unnamed"
-
-
-class BranchOperation(StrEnum):
-    """Branch lifecycle operations (D-41).
-
-    Recorded on every transition for audit trail. Triggered by engine
-    (when confidence + evidence justify) OR operator (manual override
-    via API). The branch_manager service (M3.R-5) emits an
-    AgentStepRecord for each operation.
-    """
-
-    FORK = "fork"
-    MERGE = "merge"
-    PROMOTE = "promote"
-    ABANDON = "abandon"
-    PAUSE = "pause"
-    RESUME = "resume"
-    SPAWN_STRATEGY = "spawn_strategy"
 
 
 class VRBranchSummary(BaseModel):
@@ -88,7 +35,15 @@ class VRBranchSummary(BaseModel):
     investigation_id: str
     parent_branch_id: str | None = None
     status: BranchStatus
-    persona_voice: PersonaVoice | None = None
+    # Voice identifier for the branch. One of the core PersonaVoice values
+    # (halvar/maddie/yuki/renzo/noor/wei + the synthetic
+    # unspecified/merge_result/fork_unnamed) for a core-role branch, OR a
+    # specialist name (e.g. 're', 'exploit-dev') for an on-demand specialist
+    # branch. Typed as str -- NOT the PersonaVoice enum -- because specialists
+    # are user-extensible (specialist_registry), so the set of valid voices is
+    # open. A PersonaVoice-typed field 500'd this summary (and the SSE branch
+    # event) for any investigation that spawned a specialist.
+    persona_voice: str | None = None
     fork_reason: str = ""
     fork_at_turn: int | None = None
     turn_count: int = 0

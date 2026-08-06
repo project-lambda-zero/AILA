@@ -113,14 +113,51 @@ async def test_search_envelope_shape(async_client, admin_token, seeded_system):
 
 
 @pytest.mark.asyncio
-async def test_search_finds_findings(async_client, admin_token, seeded_findings):
-    """GET /search?q=CVE-2023 returns matching findings."""
-    resp = await async_client.get(
-        "/search",
-        params={"q": "CVE-2023-0001", "entity_types": "finding"},
-        headers={"Authorization": f"Bearer {admin_token}"},
+async def test_search_finds_findings(test_db, admin_token, seeded_findings):
+    """GET /search?q=CVE-2023 returns matching findings.
+
+    Production goes through the vulnerability module
+    (src/aila/api/routers/search.py:113 -> module.search_entities). The
+    shared async_client fixture pins app.state.platform=None so the
+    finding branch is skipped; this test builds its own client with a
+    stub platform whose module_registry.require("vulnerability")
+    returns the real VulnerabilityModule so the DB-backed search runs.
+    """
+    import time  # noqa: PLC0415
+    from unittest.mock import MagicMock  # noqa: PLC0415
+
+    from httpx import ASGITransport, AsyncClient  # noqa: PLC0415
+
+    from aila.api.app import create_app  # noqa: PLC0415
+    from aila.modules.vulnerability.module import create_module as create_vuln_module  # noqa: PLC0415
+
+    vuln_module = create_vuln_module()
+    stub_registry = MagicMock()
+    stub_registry.require.return_value = vuln_module
+    stub_registry.modules = [vuln_module]
+    stub_registry.first_with.side_effect = (
+        lambda cap: vuln_module if callable(getattr(vuln_module, cap, None)) else None
     )
-    assert resp.status_code == 200
+    stub_runtime = MagicMock()
+    stub_runtime.module_registry = stub_registry
+    stub_platform = MagicMock()
+    stub_platform.runtime = stub_runtime
+
+    test_app = create_app()
+    test_app.state.platform = stub_platform
+    test_app.state.start_time = time.monotonic()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=test_app),
+        base_url="http://testserver",
+    ) as client:
+        resp = await client.get(
+            "/search",
+            params={"q": "CVE-2023-0001", "entity_types": "finding"},
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+
+    assert resp.status_code == 200, resp.text
     results = resp.json()["data"]
     finding_results = [r for r in results if r["entity_type"] == "finding"]
     assert len(finding_results) >= 1
@@ -222,39 +259,75 @@ async def test_tag_assignment_validates_vocabulary(async_client, admin_token, se
 
 
 @pytest.mark.asyncio
-async def test_tag_assignment_full_cycle(async_client, admin_token, seeded_system):
-    """POST /tags/systems/{id} assigns tag after vocab entry created; DELETE removes it."""
-    # Create vocab entry first
-    await async_client.post(
-        "/tags/vocabulary",
-        json={"tag_key": "tier", "description": "system tier"},
-        headers={"Authorization": f"Bearer {admin_token}"},
-    )
+async def test_tag_assignment_full_cycle(test_db, admin_token, seeded_system):
+    """POST /tags/systems/{id} assigns tag after vocab entry created; DELETE removes it.
 
-    # Assign tag
-    resp = await async_client.post(
-        f"/tags/systems/{seeded_system.id}",
-        json={"tag_key": "tier", "tag_value": "production"},
-        headers={"Authorization": f"Bearer {admin_token}"},
-    )
-    assert resp.status_code == 201, resp.text
-    tag_id = resp.json()["data"]["id"]
+    src/aila/api/routers/tags.py:225 and 253 both require app.state.platform
+    to be populated so the router can resolve
+    module_registry.require("vulnerability"); the shared async_client
+    fixture pins platform=None, so the assign path 503s before reaching
+    the tag write. Build a fresh client whose platform exposes the real
+    VulnerabilityModule for the DB-backed assign/list/delete cycle.
+    """
+    import time  # noqa: PLC0415
+    from unittest.mock import MagicMock  # noqa: PLC0415
 
-    # List tags
-    resp = await async_client.get(
-        f"/tags/systems/{seeded_system.id}",
-        headers={"Authorization": f"Bearer {admin_token}"},
-    )
-    assert resp.status_code == 200
-    tags = resp.json()["data"]
-    assert any(t["tag_key"] == "tier" for t in tags)
+    from httpx import ASGITransport, AsyncClient  # noqa: PLC0415
 
-    # Delete tag
-    resp = await async_client.delete(
-        f"/tags/systems/{seeded_system.id}/{tag_id}",
-        headers={"Authorization": f"Bearer {admin_token}"},
+    from aila.api.app import create_app  # noqa: PLC0415
+    from aila.modules.vulnerability.module import create_module as create_vuln_module  # noqa: PLC0415
+
+    vuln_module = create_vuln_module()
+    stub_registry = MagicMock()
+    stub_registry.require.return_value = vuln_module
+    stub_registry.modules = [vuln_module]
+    stub_registry.first_with.side_effect = (
+        lambda cap: vuln_module if callable(getattr(vuln_module, cap, None)) else None
     )
-    assert resp.status_code == 204
+    stub_runtime = MagicMock()
+    stub_runtime.module_registry = stub_registry
+    stub_platform = MagicMock()
+    stub_platform.runtime = stub_runtime
+
+    test_app = create_app()
+    test_app.state.platform = stub_platform
+    test_app.state.start_time = time.monotonic()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=test_app),
+        base_url="http://testserver",
+    ) as client:
+        # Create vocab entry first
+        await client.post(
+            "/tags/vocabulary",
+            json={"tag_key": "tier", "description": "system tier"},
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+
+        # Assign tag
+        resp = await client.post(
+            f"/tags/systems/{seeded_system.id}",
+            json={"tag_key": "tier", "tag_value": "production"},
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert resp.status_code == 201, resp.text
+        tag_id = resp.json()["data"]["id"]
+
+        # List tags
+        resp = await client.get(
+            f"/tags/systems/{seeded_system.id}",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert resp.status_code == 200
+        tags = resp.json()["data"]
+        assert any(t["tag_key"] == "tier" for t in tags)
+
+        # Delete tag
+        resp = await client.delete(
+            f"/tags/systems/{seeded_system.id}/{tag_id}",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert resp.status_code == 204
 
 
 # ---------------------------------------------------------------------------

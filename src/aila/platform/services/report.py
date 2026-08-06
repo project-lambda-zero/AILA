@@ -1,6 +1,5 @@
 """ReportService -- run management, finding upserts, report generation, severity queries per D-02.
 
-Emits: finding.upserted (batch), finding.resolved domain events.
 Uses PersistContract for atomic finding upserts.
 Each method accepts an optional external session (from UoW) for atomicity.
 When session is None, creates a short-lived session via async_session_scope (SDA-06).
@@ -8,10 +7,9 @@ When session is None, creates a short-lived session via async_session_scope (SDA
 
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +19,9 @@ from ...storage.database import async_session_scope
 from ...storage.report_repository import ReportRepository
 from ..contracts.persist import PersistContract
 from ..exceptions import NotFoundError
+
+if TYPE_CHECKING:
+    from aila.api.auth import TeamContext
 
 # Phase 176a: criticality (DB) -> severity (API) translation. DB stores
 # upper-case labels (CRITICAL, HIGH, MEDIUM, LOW, UNKNOWN); the API contract
@@ -48,12 +49,20 @@ def _empty_severity_counts() -> dict[str, int]:
 
 
 @asynccontextmanager
-async def _session_or_new(session: AsyncSession | None) -> AsyncGenerator[tuple[AsyncSession, bool], None]:
-    """Yield (session, owns_session). If session is None, create a short-lived one."""
+async def _session_or_new(
+    session: AsyncSession | None,
+    team_context: TeamContext | None = None,
+) -> AsyncGenerator[tuple[AsyncSession, bool], None]:
+    """Yield (session, owns_session). If session is None, create a short-lived one.
+
+    ``team_context`` is threaded into ``async_session_scope`` on new-session
+    creation (#53) so factory-supplied tenant scope reaches every bare query.
+    When ``None`` the session scope falls back to the ambient TeamContext.
+    """
     if session is not None:
         yield session, False
     else:
-        async with async_session_scope() as new_session:
+        async with async_session_scope(team_context=team_context) as new_session:
             yield new_session, True
 
 
@@ -64,8 +73,17 @@ class ReportService:
     Domain events are emitted via EventEmitter, not EventBus.
     """
 
-    def __init__(self, repository: ReportRepository | None = None) -> None:
+    def __init__(
+        self,
+        repository: ReportRepository | None = None,
+        *,
+        team_context: TeamContext | None = None,
+    ) -> None:
         self._repository = repository or ReportRepository()
+        # #53: factory-supplied tenant scope threaded through to every
+        # short-lived session opened by this service. When None, the
+        # ambient TeamContext still applies via async_session_scope.
+        self._team_context = team_context
 
     async def upsert_finding(
         self,
@@ -73,7 +91,7 @@ class ReportService:
         session: AsyncSession | None = None,
     ) -> None:
         """Upsert a single finding via PersistContract."""
-        async with _session_or_new(session) as (sess, owns):
+        async with _session_or_new(session, self._team_context) as (sess, owns):
             await PersistContract.upsert(sess, record)
             if owns:
                 await sess.commit()
@@ -83,8 +101,8 @@ class ReportService:
         records: list[SQLModel],
         session: AsyncSession | None = None,
     ) -> None:
-        """Batch upsert findings. Emits FindingUpserted with batch payload."""
-        async with _session_or_new(session) as (sess, owns):
+        """Batch upsert findings via PersistContract in one transaction."""
+        async with _session_or_new(session, self._team_context) as (sess, owns):
             await PersistContract.upsert_many(sess, records)
             if owns:
                 await sess.commit()
@@ -95,8 +113,8 @@ class ReportService:
         resolution: str,
         session: AsyncSession | None = None,
     ) -> None:
-        """Mark a finding as resolved. Emits FindingResolved event."""
-        async with _session_or_new(session) as (sess, owns):
+        """Mark a finding as resolved and persist it via PersistContract."""
+        async with _session_or_new(session, self._team_context) as (sess, owns):
             if hasattr(record, "resolution"):
                 setattr(record, "resolution", resolution)
             await PersistContract.upsert(sess, record)
@@ -110,7 +128,7 @@ class ReportService:
         session: AsyncSession | None = None,
     ) -> list[SQLModel]:
         """Query findings by severity, host, CVE, etc."""
-        async with _session_or_new(session) as (sess, owns):
+        async with _session_or_new(session, self._team_context) as (sess, owns):
             stmt = select(model_class)
             if filters:
                 stmt = stmt.where(*filters)
@@ -123,7 +141,7 @@ class ReportService:
         session: AsyncSession | None = None,
     ) -> None:
         """Save a report record."""
-        async with _session_or_new(session) as (sess, owns):
+        async with _session_or_new(session, self._team_context) as (sess, owns):
             await PersistContract.upsert(sess, record)
             if owns:
                 await sess.commit()
@@ -157,7 +175,7 @@ class ReportService:
         from aila.api.schemas.reports import ReportSummary
         from aila.storage.db_models import WorkflowRunRecord
 
-        async with _session_or_new(session) as (sess, _owns):
+        async with _session_or_new(session, self._team_context) as (sess, _owns):
             base = select(WorkflowRunRecord).where(
                 WorkflowRunRecord.module_id == "vulnerability"
             )
@@ -225,7 +243,7 @@ class ReportService:
         )
         from aila.storage.db_models import WorkflowRunRecord
 
-        async with _session_or_new(session) as (sess, _owns):
+        async with _session_or_new(session, self._team_context) as (sess, _owns):
             stmt = select(WorkflowRunRecord).where(
                 WorkflowRunRecord.id == report_id,
                 WorkflowRunRecord.module_id == "vulnerability",
@@ -295,14 +313,13 @@ def _title_from_run(run: Any) -> str:
 def _extract_target_from_run(run: Any) -> list[str]:
     """Derive the scanned target hosts from a run's route_json blob.
 
-    Returns an empty list when the route_json is malformed or does not
-    declare a target -- callers treat this as "fleet-wide".
+    #45: ``route_json`` is a JSONB column that returns a ``dict`` uniformly
+    through SQLAlchemy on both drivers (asyncpg async, psycopg sync). The
+    defensive ``isinstance(..., dict)`` guard handles legacy in-memory
+    fixtures that still assign a raw string or ``None`` -- callers treat a
+    missing/malformed payload as "fleet-wide" and return an empty list.
     """
-    raw = getattr(run, "route_json", None) or "{}"
-    try:
-        decoded = json.loads(raw)
-    except (ValueError, TypeError):
-        return []
+    decoded = getattr(run, "route_json", None)
     if not isinstance(decoded, dict):
         return []
     target = decoded.get("target")
@@ -317,12 +334,12 @@ def _extract_target_from_run(run: Any) -> list[str]:
 
 
 def _decode_metadata(run: Any) -> dict[str, Any]:
-    """Return a dict of metadata for the detail response."""
-    raw = getattr(run, "route_json", None) or "{}"
-    try:
-        decoded = json.loads(raw)
-    except (ValueError, TypeError):
-        decoded = {}
+    """Return a dict of metadata for the detail response.
+
+    #45: ``route_json`` is JSONB -- SQLAlchemy hands us the parsed ``dict``
+    uniformly. Non-dict values (legacy fixtures) collapse to an empty route.
+    """
+    decoded = getattr(run, "route_json", None)
     meta: dict[str, Any] = {
         "action_id": getattr(run, "action_id", ""),
         "module_id": getattr(run, "module_id", ""),

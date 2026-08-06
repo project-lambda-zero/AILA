@@ -1,8 +1,16 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+import json
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 __all__ = [
     "ReasoningAction",
@@ -18,11 +26,15 @@ __all__ = [
     "ReasoningGraphNodeKind",
     "ReasoningOperatorSteering",
     "ReasoningPromptContext",
+    "ReasoningStrategyDeclaration",
     "ReasoningStrategyFamily",
     "ReasoningTurnDecision",
     "EvidenceProvenance",
     "Hypothesis",
+    "LedgerWrite",
+    "ObservablesDict",
     "RejectedHypothesis",
+    "ResolvedHypothesis",
 ]
 
 ReasoningAction = Literal[
@@ -35,17 +47,11 @@ ReasoningAction = Literal[
     "edit_outcome",
 ]
 ReasoningConfidence = Literal["exact", "strong", "medium", "caveated", "unknown"]
-ReasoningStrategyFamily = Literal[
-    "filesystem_triage",
-    "persistence_hunt",
-    "memory_forensics",
-    "network_forensics",
-    "malware_static",
-    "vulnerability_research",
-    "web_pentest",
-    "mobile_reverse",
-    "generic",
-]
+# Strategy families are runtime-validated by the platform StrategyRegistry
+# (populated from each module's reasoning_strategies() at load), not a
+# closed Literal -- the platform no longer names module-domain strategies.
+# ``"generic"`` is the one family the platform itself owns.
+ReasoningStrategyFamily = str
 ReasoningGraphNodeKind = Literal[
     "contract",
     "hypothesis",
@@ -158,6 +164,49 @@ class ReasoningGraphDiff(BaseModel):
     added_edges: list[ReasoningGraphEdge] = Field(default_factory=list)
     removed_edges: list[ReasoningGraphEdge] = Field(default_factory=list)
 
+def _require_json_serializable(value: dict[str, Any]) -> dict[str, Any]:
+    """Reject an observables dict that cannot round-trip through json.dumps.
+
+    observables is persisted to the DB and passed as task kwargs, both of which
+    json-encode it. A datetime, bytes, set, or custom object passes Pydantic's
+    ``dict[str, Any]`` check but crashes later at serialization time (issue
+    #61). Fail fast at construction with the offending detail instead.
+    """
+    try:
+        json.dumps(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"observables must be JSON-serializable (DB + task-kwarg persistence): {exc}"
+        ) from exc
+    return value
+
+
+def _validate_json_serializable(v: dict[str, Any]) -> dict[str, Any]:
+    """Reject non-JSON observables at construction time (#61-2).
+
+    Observables are persisted as ``case_state_json`` and forwarded as
+    task kwargs, both of which require JSON encoding; a ``datetime`` /
+    ``bytes`` / ``set`` slipping in passes Pydantic construction, survives
+    every in-process mutation, and only crashes later at ``model_dump
+    (mode='json')`` / ``task_queue.submit`` -- far from the code that
+    introduced it. One ``json.dumps`` here proves every key and value has
+    a JSON encoding and surfaces the offender at the source.
+    """
+    try:
+        json.dumps(v, sort_keys=True)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"observables must be JSON-serializable: {exc}",
+        ) from exc
+    return v
+
+
+ObservablesDict = Annotated[
+    dict[str, Any],
+    AfterValidator(_validate_json_serializable),
+]
+
+
 class ReasoningCaseState(BaseModel):
     """Normalized reasoning state carried across investigation turns."""
 
@@ -165,12 +214,17 @@ class ReasoningCaseState(BaseModel):
     hypotheses: list[Hypothesis] = Field(default_factory=list)
     rejected: list[RejectedHypothesis] = Field(default_factory=list)
     resolved: list[ResolvedHypothesis] = Field(default_factory=list)
-    observables: dict[str, Any] = Field(default_factory=dict)
+    observables: ObservablesDict = Field(default_factory=dict)
     # Most recent turn number this state was absorbed at. Used by
     # ``render_case_model`` to compute hypothesis age (current_turn -
     # hypothesis.opened_at_turn). 0 means "never absorbed with a turn
     # number" (legacy rows). Filled in by ``absorb(turn_number=N)``.
     current_turn: int = 0
+
+    @field_validator("observables")
+    @classmethod
+    def _observables_serializable(cls, v: dict[str, Any]) -> dict[str, Any]:
+        return _require_json_serializable(v)
 
 
 class ReasoningOperatorSteering(BaseModel):
@@ -181,6 +235,23 @@ class ReasoningOperatorSteering(BaseModel):
     guidance: list[str] = Field(default_factory=list)
     pinned_strategy_family: ReasoningStrategyFamily | None = None
     required_artifacts: list[str] = Field(default_factory=list)
+
+
+class ReasoningStrategyDeclaration(BaseModel):
+    """A reasoning strategy family published by a module.
+
+    Modules declare their strategy families through
+    ``ModuleProtocol.reasoning_strategies()``; the platform collects them
+    into the StrategyRegistry at load. The platform itself owns only the
+    ``generic`` family.
+    """
+
+    family: str
+    task_type: str
+    description: str = ""
+    match_keywords: list[str] = Field(default_factory=list)
+    match_priority: int = 100
+    match_project_kinds: list[str] = Field(default_factory=list)
 
 
 class ReasoningDomainProfile(BaseModel):
@@ -196,6 +267,14 @@ class ReasoningDomainProfile(BaseModel):
 class ReasoningPromptContext(BaseModel):
     """Normalized prompt inputs for one reasoning turn."""
 
+    # ``prebuilt_sections`` carries an already-tiered section list built
+    # by a module-specific prompt builder (VR / malware). It holds
+    # :class:`ContextSection` dataclass instances, which are not Pydantic
+    # models -- ``arbitrary_types_allowed`` lets Pydantic accept them
+    # without a validator, and ``exclude=True`` keeps them out of any
+    # ``model_dump`` serialization (they are not persisted anywhere).
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     turn: int
     max_turns: int
     question: str
@@ -208,6 +287,51 @@ class ReasoningPromptContext(BaseModel):
     domain_profile: str = "generic"
     operator_steering: ReasoningOperatorSteering = Field(default_factory=ReasoningOperatorSteering)
     strategy_family: ReasoningStrategyFamily = "generic"
+    # RFC-24: cap the assembled user-prompt token count. 0 or a negative
+    # value tells ``CyberReasoningEngine.build_user_prompt`` to resolve
+    # the platform-configured default (``reasoning_context_budget_tokens``)
+    # so the caller can never accidentally produce an unbounded prompt
+    # after ``render_case_model``'s hardcoded display caps were removed.
+    # ``system_prompt_tokens`` accounts for the caller's separately-sent
+    # system message so the assembler leaves budget for it. Both values
+    # are approximate token counts using ``estimate_tokens`` (len // 4)
+    # -- the same heuristic ``turn_runner.PROMPT_SIZE_DIAG`` already
+    # reports on, so an operator tuning the budget can compare it
+    # against the size-diag log directly.
+    context_budget_tokens: int = 0
+    system_prompt_tokens: int = 0
+    # Module-provided tiered section list. When set, the engine bypasses
+    # its built-in section generator (``_prompt_sections``) and feeds
+    # these directly into the assembler. Modules with domain-specific
+    # prompt shapes (VR: operator messages + directives + target snapshot
+    # + CVE intel + patterns + case_model + prior/sibling + tools; malware
+    # mirrors VR minus the CVE-intel block) build their own list and pass
+    # it in, still routed through the shared budget-driven pipeline. The
+    # ``list[Any]`` typing lets the field carry ``ContextSection``
+    # dataclass instances without importing the service layer up here.
+    prebuilt_sections: list[Any] | None = Field(default=None, exclude=True)
+
+
+class LedgerWrite(BaseModel):
+    """One append the agent asks the turn runner to post to the shared
+    investigation ledger (RFC-13 #68).
+
+    Rides alongside the turn's main action -- an agent can record a
+    discovery, note, or capability request WHILE running a tool, without
+    spending a whole turn on the write. The runner caps the list per turn
+    and derives an idempotency key so an ARQ retry never double-appends.
+    Objective and decision entries are not agent-writable here: objectives
+    are opened by the owner path and decisions are recorded by quorum, so
+    only these three kinds are accepted.
+    """
+
+    kind: Literal["discovery", "note", "request"] = "discovery"
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("payload")
+    @classmethod
+    def _payload_serializable(cls, v: dict[str, Any]) -> dict[str, Any]:
+        return _require_json_serializable(v)
 
 
 class ReasoningTurnDecision(BaseModel):
@@ -219,7 +343,7 @@ class ReasoningTurnDecision(BaseModel):
     contract: ReasoningContract | None = None
     hypotheses: list[Hypothesis] = Field(default_factory=list)
     rejected: list[RejectedHypothesis] = Field(default_factory=list)
-    observables: dict[str, Any] = Field(default_factory=dict)
+    observables: ObservablesDict = Field(default_factory=dict)
     script_content: str | None = None
     command: str | None = None
     # Names observable keys the engine MUST pull into the next turn's
@@ -241,14 +365,19 @@ class ReasoningTurnDecision(BaseModel):
     # Sibling-corroborated draft outcome review (vr draft workflow).
     # When ``action == "submit_outcome_review"`` the agent MUST set
     # ``review_outcome_id`` (the draft being reviewed) and ``review_vote``
-    # (approve | reject | request_edit | abstain). ``review_comment``
-    # carries the rationale that the operator sees on the outcome
-    # detail card; if absent, ``reasoning`` is used as a fallback.
+    # (approve | reject | request_edit | abstain | not_ready).
+    # ``review_comment`` carries the rationale that the operator sees on
+    # the outcome detail card; if absent, ``reasoning`` is used as a
+    # fallback. ``not_ready`` MUST carry a stated blocker in
+    # ``review_comment`` (the reason the branch cannot yet approve or
+    # reject); it does NOT move approve or reject quorum but records
+    # that the branch responded so the draft is not held for operator
+    # purely because it never assembled quorum.
     # Suggested payload edits ride on the existing ``payload`` dict
     # so the schema doesn't grow another free-form field.
     review_outcome_id: str | None = None
     review_vote: Literal[
-        "approve", "reject", "request_edit", "abstain",
+        "approve", "reject", "request_edit", "abstain", "not_ready",
     ] | None = None
     review_comment: str | None = None
     # ``edit_outcome`` action: directly merge ``edit_patches`` into a
@@ -266,6 +395,19 @@ class ReasoningTurnDecision(BaseModel):
     edit_patches: dict[str, Any] = Field(default_factory=dict)
     edit_comment: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
+    # RFC-13 (#68): optional appends to the shared investigation ledger
+    # posted after the engine call, capped per turn by the runner. Empty
+    # by default so a V1 decision round-trips byte-identically.
+    ledger_writes: list[LedgerWrite] = Field(default_factory=list)
+    # RFC-13 (#68): request ids on the shared ledger this branch approves
+    # this turn. The runner routes each through the oracle, which enforces
+    # the distinct-approver rule (a branch cannot approve its own request).
+    ledger_approvals: list[int] = Field(default_factory=list)
+
+    @field_validator("observables")
+    @classmethod
+    def _observables_serializable(cls, v: dict[str, Any]) -> dict[str, Any]:
+        return _require_json_serializable(v)
 
     @model_validator(mode="after")
     def _validate_tool_run_command(self) -> ReasoningTurnDecision:
@@ -386,8 +528,8 @@ class ReasoningTurnDecision(BaseModel):
         if not self.review_vote:
             raise ValueError(
                 "action='submit_outcome_review' requires `review_vote` "
-                "in {approve, reject, request_edit, abstain}. Got: "
-                f"{self.review_vote!r}."
+                "in {approve, reject, request_edit, abstain, not_ready}. "
+                f"Got: {self.review_vote!r}."
             )
         return self
 

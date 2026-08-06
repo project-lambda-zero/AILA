@@ -24,8 +24,13 @@ from aila.modules.vr._task_queue import (
     enqueue_downstream_target_stages,
 )
 from aila.modules.vr.agents.claim_verifier import ClaimVerifierAgent
+from aila.modules.vr.agents.narrative_agent import (
+    NarrativeAgent,
+    NarrativeOptions,
+)
 from aila.modules.vr.agents.outcome_dispatcher import OutcomeDispatcher
 from aila.modules.vr.agents.synthesis_agent import SynthesisAgent
+from aila.modules.vr.contracts.evidence_ref import EvidenceRefList
 from aila.modules.vr.db_models import VRFindingRecord, VRInvestigationOutcomeRecord
 
 # Re-export enrichment-pipeline tasks so the platform worker bootstrap
@@ -36,13 +41,16 @@ from aila.modules.vr.db_models import VRFindingRecord, VRInvestigationOutcomeRec
 from aila.modules.vr.enrichment.workers import (
     run_capability_profile_build,
     run_function_ranking,
+    run_target_enrichment,
 )
 from aila.modules.vr.reporting.pdf_report import _collect_facts
 from aila.modules.vr.reporting.poc_writer import PocWriter
 from aila.modules.vr.services import TargetAnalysisService
+from aila.modules.vr.services.followup_discovery import maybe_spawn_vr_followup
 from aila.modules.vr.services.fuzz_service import FuzzCampaignService
-from aila.modules.vr.workflow.definitions import VR_INVESTIGATE_V1, VR_NDAY_V1
-from aila.platform.contracts._common import utc_now
+from aila.modules.vr.workflow.definitions import VR_NDAY_V1
+from aila.modules.vr.workflow.definitions_hub import VR_INVESTIGATE_HUB
+from aila.platform.contracts import utc_now
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.tasks.context import TaskContext
 from aila.platform.tasks.template import platform_task
@@ -73,12 +81,17 @@ _TASK_TRANSIENT: tuple[type[BaseException], ...] = (
     httpx.HTTPError,
 )
 
+_log = logging.getLogger(__name__)
+
 __all__ = [
     "run_capability_profile_build",
     "run_function_ranking",
     "run_fuzz_campaign_launch",
     "run_target_analysis",
+    "run_target_enrichment",
+    "run_vr_claim_verifier",
     "run_vr_investigate",
+    "run_vr_narrative",
     "run_vr_nday",
     "run_vr_outcome_dispatch",
     "run_vr_synthesis",
@@ -110,19 +123,19 @@ async def run_vr_nday(
     max_tries=1,
     timeout_s=7800.0,  # 2h+ -- covers a full investigation_loop run
     # fix §142 -- explicit retriable_on so the single retry budget is
-    # only spent on transport-class transients. VR_INVESTIGATE_V1's
+    # only spent on transport-class transients. VR_INVESTIGATE_HUB's
     # investigation_setup state opens a DB session + does CVE-intel
     # network calls; a transient DB / network blip is worth the
     # retry, a Pydantic ValidationError / KeyError / PermissionError
     # / CancelledError is not.
     retriable_on=_TASK_TRANSIENT,
-    definition=VR_INVESTIGATE_V1,
+    definition=VR_INVESTIGATE_HUB,
 )
 async def run_vr_investigate(
     ctx: TaskContext,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Seed function for the ``VR_INVESTIGATE_V1`` workflow definition.
+    """Seed function for the ``VR_INVESTIGATE_HUB`` workflow definition.
 
     fix §83 -- this body deliberately contains a single ``...`` Ellipsis.
     The ``@platform_task`` decorator wraps the function so the platform
@@ -130,7 +143,7 @@ async def run_vr_investigate(
     kwarg above instead of executing this body. The body would only
     run if the platform decorator were removed; the docstring is the
     visible contract for readers. Do NOT add logic inside this function
-    -- phase-handoff / state transitions live on ``VR_INVESTIGATE_V1``.
+    -- phase-handoff / state transitions live on ``VR_INVESTIGATE_HUB``.
 
     Required kwarg: ``investigation_id``. The setup state resolves the
     primary branch from the DB; operator does not provide branch_id.
@@ -340,7 +353,9 @@ async def run_vr_draft_poc(
             "caveats": draft.caveats,
             "safety_notes": draft.safety_notes,
         })
-        finding.evidence_refs_json = _json.dumps(existing_refs)
+        finding.evidence_refs_json = EvidenceRefList.model_validate(
+            existing_refs,
+        ).model_dump_json()
         uow.session.add(finding)
         await uow.session.commit()
 
@@ -383,6 +398,66 @@ async def run_vr_synthesis(
     """
     del ctx
     agent = SynthesisAgent(investigation_id=investigation_id)
+    result = await agent.run()
+    # Autonomous take-over of the panel's recommended further
+    # discoveries. Gated on the primitive (only fires on
+    # ``no_finding`` / ``inconclusive`` polarity + non-empty
+    # recommendations + depth cap + budget floor + idempotency), so
+    # calling it unconditionally is safe -- every skip returns a
+    # ``{'status': 'skipped', 'reason': ...}`` dict. A follow-up
+    # failure MUST NOT fail the synthesis task itself: the panel_summary
+    # is already committed, the operator surface has already updated,
+    # and the follow-up chain is a best-effort autonomy layer on top.
+    if isinstance(result, dict) and result.get("status") == "ok":
+        try:
+            followup = await maybe_spawn_vr_followup(investigation_id)
+        except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
+            _log.warning(
+                "run_vr_synthesis follow-up spawn failed inv=%s err=%s",
+                investigation_id, exc,
+            )
+            followup = {"status": "failed", "reason": f"{type(exc).__name__}"}
+        result["followup"] = followup
+    return result
+
+
+@platform_task(
+    track="vr",
+    module_id="vr",
+    max_tries=2,
+    timeout_s=900.0,  # 15 min -- one long-form LLM call + DB writes
+    # Retries only on transport-class transients. An LLM 5xx / DB blip
+    # is worth one retry; an LLM-disabled-by-operator, structured-
+    # parse failure, or state-corruption KeyError is not (mirrors the
+    # rationale on run_vr_synthesis above).
+    retriable_on=_TASK_TRANSIENT,
+)
+async def run_vr_narrative(
+    ctx: TaskContext,
+    investigation_id: str,
+    options: dict[str, Any] | None = None,
+    **_: Any,
+) -> dict[str, Any]:
+    """Generate the long-form narrative writeup for one investigation.
+
+    Separate artifact from :func:`run_vr_synthesis` -- the narrative
+    is a chronological vulnerability-research story stored under
+    ``payload["investigation_narrative"]`` on the canonical outcome,
+    alongside (not replacing) ``payload["panel_summary"]`` from the
+    synthesis path.
+
+    Reachable from ``POST /vr/investigations/{id}/narrative`` with
+    optional ``options`` carrying tone / length / focus knobs.
+    Idempotent without ``options.force``: skips when a narrative is
+    already present on the canonical outcome.
+    """
+    del ctx
+    opts = NarrativeOptions()
+    if options:
+        for key in ("force", "tone", "length", "operator_focus"):
+            if key in options:
+                setattr(opts, key, options[key])
+    agent = NarrativeAgent(investigation_id=investigation_id, options=opts)
     return await agent.run()
 
 

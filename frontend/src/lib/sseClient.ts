@@ -19,7 +19,7 @@
  * Authentication reuses the same bearer-token pattern as authorizedRequestJson
  * so callers do not need to reimplement token fetch / 401 refresh.
  */
-import { buildApiError, buildApiUrl } from "@platform/api/http";
+import { buildApiError, buildApiUrl, CSRF_HEADER_NAME, getCsrfToken } from "@platform/api/http";
 
 export interface SseTokenPayload {
   type: "token";
@@ -73,6 +73,9 @@ export async function sseStreamPost(
         Accept: "text/event-stream",
         "Content-Type": "application/json",
         Authorization: `Bearer ${options.token}`,
+        // #47 -- POST-based SSE is a mutating request; keep it aligned with
+        // the double-submit CSRF pattern enforced by requestJson.
+        [CSRF_HEADER_NAME]: getCsrfToken(),
       },
       body: JSON.stringify(options.body ?? {}),
       signal: options.signal,

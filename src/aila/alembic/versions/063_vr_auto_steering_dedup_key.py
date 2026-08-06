@@ -4,7 +4,7 @@ Adds:
   - ``vr_investigation_messages.auto_steering_key`` (nullable VARCHAR(128))
   - ``ix_vr_investigation_messages_auto_steering_key``
     (composite index on ``(investigation_id, auto_steering_key)`` for the
-    dedup query in :func:`aila.modules.vr.agents.auto_steering._already_posted`)
+    dedup query in :func:`aila.platform.agents.auto_steering._already_posted`)
   - ``uq_vr_investigation_messages_auto_steering_key``
     UNIQUE constraint on ``(investigation_id, auto_steering_key)`` so the
     fire-then-check race (§338) collapses to ``ON CONFLICT DO NOTHING`` at

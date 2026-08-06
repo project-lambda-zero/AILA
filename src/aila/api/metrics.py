@@ -26,6 +26,9 @@ __all__ = [
     "TASK_CHECKPOINT_CORRUPT_TOTAL",
     "TASK_ORPHANED_DEPENDENT_SWEPT_TOTAL",
     "TASK_CHECKPOINT_WRITES_TOTAL",
+    "AUTOMATION_TICK_FAILURES_TOTAL",
+    "SSE_WRITE_FAILURES_TOTAL",
+    "RESILIENCE_SIGNALS_TOTAL",
 ]
 
 from prometheus_client import Counter, Gauge, Histogram, Info
@@ -168,10 +171,59 @@ TASK_ORPHANED_DEPENDENT_SWEPT_TOTAL = Counter(
     "Number of WAITING tasks reconciled after their parents terminated",
     labelnames=("outcome",),
 )
+# Automation tick supervisor failures (#46), labelled by the exception type a
+# supervised tick raised, so a persistently broken schedule row surfaces as a
+# dominant label instead of a silent halt.
+AUTOMATION_TICK_FAILURES_TOTAL = Counter(
+    "aila_automation_tick_failures_total",
+    "Automation tick loop failures, labelled by exception class",
+    ["exception"],
+)
+
 # Phase 178b: checkpoint write volume. Useful for spotting stuck stages and
 # confirms that in-flight tasks are actually persisting progress.
 TASK_CHECKPOINT_WRITES_TOTAL = Counter(
     "aila_task_checkpoint_writes_total",
     "Number of successful checkpoint writes",
     labelnames=("module",),
+)
+
+# ---------------------------------------------------------------------------
+# SSE progress write failure counter (RFC-07 first increment)
+# ---------------------------------------------------------------------------
+# Increments each time an SSE / progress-stream write is swallowed by a
+# fail-safe except clause on the emitter or workflow-transition path.
+# The swallow is deliberate (a progress-write failure must not kill the
+# owning turn) but was previously silent; the counter surfaces the drop
+# to operators without flipping the fail-safe posture.
+# Labels:
+#   source -- "emitter" for aila.platform.events.emitter destinations;
+#             "workflow_log" for aila.platform.workflows.log XADD writes.
+SSE_WRITE_FAILURES_TOTAL = Counter(
+    "aila_sse_write_failures_total",
+    "SSE / progress-stream write failures swallowed by fail-safe handlers",
+    labelnames=("source",),
+)
+
+# ---------------------------------------------------------------------------
+# Resilience signal counter (RFC-07 acceptance bullet 2 -- single ResilienceLayer)
+# ---------------------------------------------------------------------------
+# Umbrella counter for every fail-closed signal funneled through
+# ``aila.platform.services.resilience.ResilienceLayer.record_signal``. Every
+# fail-open site that used to log-then-bump-its-own-counter now routes here
+# so a new site is a single call and operator dashboards read one series.
+# Labels:
+#   op     -- the operation name (e.g. "queue_investigation_defer",
+#             "sse_write", "workflow_log_emit"). Names are stable per
+#             call site and MUST NOT be templated with per-invocation ids.
+#   source -- the failing subsystem or classifier tag (e.g. "db_error",
+#             "emitter", "workflow_log"). Second dimension so an operator
+#             can slice one op by the failing dependency.
+# When ``op`` names an SSE / progress-stream call site the layer ALSO
+# bumps ``SSE_WRITE_FAILURES_TOTAL{source=<source>}`` so existing
+# dashboards keep reading from the counter they were built on.
+RESILIENCE_SIGNALS_TOTAL = Counter(
+    "aila_resilience_signals_total",
+    "Fail-closed signals surfaced by the ResilienceLayer facade",
+    labelnames=("op", "source"),
 )

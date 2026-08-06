@@ -202,6 +202,51 @@ class MasvsControlVerdict(BaseModel):
             "an answer field (audit_memo, no_primary_outcome, etc.)."
         ),
     )
+    scope: str | None = Field(
+        default=None,
+        max_length=1000,
+        description=(
+            "What the child investigation examined before reaching its "
+            "verdict: the control under audit, the code surface "
+            "inspected (files / functions / manifest / resources), and "
+            "the evidence base. Read verbatim from the child's "
+            "``payload['panel_summary']['scope']`` (the synthesis "
+            "agent's leading section) so the operator sees the audit's "
+            "coverage on the aggregate row without opening the child. "
+            "``None`` when no primary outcome was emitted or the "
+            "outcome pre-dates the synthesis ``scope`` field (historical "
+            "payloads still validate against the ``max_length=1000`` "
+            "bound because the field is optional)."
+        ),
+    )
+    headline: str | None = Field(
+        default=None,
+        max_length=800,
+        description=(
+            "The panel's one-sentence headline verdict, read verbatim "
+            "from ``payload['panel_summary']['headline_verdict']``. "
+            "Sits above :attr:`key_points` on the PDF and the aggregate "
+            "row so the reader sees the synthesised conclusion before "
+            "the supporting bullets. Falls back to ``None`` when the "
+            "child outcome carries no ``panel_summary`` (older payloads "
+            "predate the synthesis surface)."
+        ),
+    )
+    key_points: list[str] = Field(
+        default_factory=list,
+        max_length=12,
+        description=(
+            "Up to 12 short bullet strings assembled from the child "
+            "synthesis: ``payload['panel_summary']['points_of_agreement']``"
+            " first, followed by "
+            "``payload['panel_summary']['points_of_disagreement']`` "
+            "prefixed with ``'Disagreement: '`` so the reader can tell "
+            "consensus points from panel dissent at a glance. Empty "
+            "list when the child outcome carries no ``panel_summary`` "
+            "or the synthesis produced no bullets (older payloads "
+            "validate unchanged because the default is an empty list)."
+        ),
+    )
     report_section: dict[str, Any] | None = Field(
         default=None,
         description=(

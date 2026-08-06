@@ -22,7 +22,7 @@ import sqlalchemy as sa
 from sqlalchemy import Column, Text
 from sqlmodel import Field, SQLModel
 
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.storage.mixins import TeamScopedMixin
 
 if TYPE_CHECKING:

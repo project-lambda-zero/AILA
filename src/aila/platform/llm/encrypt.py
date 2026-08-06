@@ -22,6 +22,12 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 _NONCE_SIZE = 12  # 96-bit nonce for AES-GCM (NIST SP 800-38D)
 _KEY_SIZE = 32  # 256-bit key
 _HKDF_INFO = b"aila-seal-content-encryption"
+# Fixed, non-secret application salt for the HKDF extract step. A concrete
+# salt (rather than None, which HKDF treats as a hash-length zero block)
+# strengthens derivation when the input HMAC key is low-entropy. It is a
+# constant so derivation stays deterministic: the same HMAC key always
+# yields the same content key, which the encrypt-on-write seal path requires.
+_HKDF_SALT = b"aila-seal-hkdf-salt-v1"
 
 
 def derive_encryption_key(hmac_key: str) -> bytes:
@@ -44,7 +50,7 @@ def derive_encryption_key(hmac_key: str) -> bytes:
     hkdf = HKDF(
         algorithm=hashes.SHA256(),
         length=_KEY_SIZE,
-        salt=None,
+        salt=_HKDF_SALT,
         info=_HKDF_INFO,
     )
     return hkdf.derive(hmac_key.encode("utf-8"))

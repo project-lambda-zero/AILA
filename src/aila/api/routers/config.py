@@ -27,6 +27,7 @@ from aila.api.schemas.config import ConfigEntryResponse, ConfigListResponse, Con
 from aila.platform.services.audit import record_audit_event
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import ConfigEntryRecord
+from aila.storage.registry import ConfigRegistry, is_secret_config_key
 
 __all__ = ["router"]
 
@@ -37,22 +38,50 @@ router = APIRouter(
 )
 
 
-def _entry_to_response(record: ConfigEntryRecord) -> ConfigEntryResponse:
+_REDACTED_CONFIG_VALUE = "[REDACTED]"
+
+
+def _entry_to_response(
+    record: ConfigEntryRecord,
+    *,
+    registry: ConfigRegistry,
+    redact: bool = False,
+) -> ConfigEntryResponse:
+    res = registry.describe_resolution(record.namespace, record.key, db_value=record.value)
+    secret = redact and is_secret_config_key(record.key)
+    value = _REDACTED_CONFIG_VALUE if secret else record.value
+    env_value = res.env_value
+    if secret and env_value is not None:
+        env_value = _REDACTED_CONFIG_VALUE
+    default_value = res.default_value
+    if secret and default_value is not None:
+        default_value = _REDACTED_CONFIG_VALUE
+    effective_value = _REDACTED_CONFIG_VALUE if secret else res.effective_value
     return ConfigEntryResponse(
         namespace=record.namespace,
         key=record.key,
-        value=record.value,
+        value=value,
         value_type=record.value_type,
         updated_at=record.updated_at,
+        env_key=res.env_key,
+        env_value=env_value,
+        default_value=default_value,
+        effective_value=effective_value,
+        effective_source=res.source,
+        overridden_by_env=res.env_value is not None,
     )
 
 
 @router.get("", response_model=ConfigListResponse, summary="List all config entries")
 async def list_all_config(
+    request: Request,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=250),
+    auth: AuthContext = Depends(require_user_or_api_key),
 ) -> ConfigListResponse:
     """List all configuration entries across all namespaces."""
+    redact = auth.role != "admin"
+    registry = get_config_registry(request)
 
     async def _query() -> list[ConfigEntryRecord]:
         async with async_session_scope() as session:
@@ -70,17 +99,21 @@ async def list_all_config(
         page=page,
         page_size=page_size,
         pages=math.ceil(total / page_size) if total > 0 else 0,
-        items=[_entry_to_response(r) for r in page_rows],
+        items=[_entry_to_response(r, registry=registry, redact=redact) for r in page_rows],
     )
 
 
 @router.get("/{namespace}", response_model=ConfigListResponse, summary="List config entries for a namespace")
 async def list_namespace_config(
     namespace: str,
+    request: Request,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=250),
+    auth: AuthContext = Depends(require_user_or_api_key),
 ) -> ConfigListResponse:
     """List all configuration entries for a module namespace."""
+    redact = auth.role != "admin"
+    registry = get_config_registry(request)
 
     async def _query() -> list[ConfigEntryRecord]:
         async with async_session_scope() as session:
@@ -100,7 +133,7 @@ async def list_namespace_config(
         page=page,
         page_size=page_size,
         pages=math.ceil(total / page_size) if total > 0 else 0,
-        items=[_entry_to_response(r) for r in page_rows],
+        items=[_entry_to_response(r, registry=registry, redact=redact) for r in page_rows],
     )
 
 
@@ -108,8 +141,12 @@ async def list_namespace_config(
 async def get_config_value(
     namespace: str,
     key: str,
+    request: Request,
+    auth: AuthContext = Depends(require_user_or_api_key),
 ) -> ConfigEntryResponse:
     """Get a single configuration value by namespace and key."""
+    redact = auth.role != "admin"
+    registry = get_config_registry(request)
 
     async def _query() -> ConfigEntryRecord | None:
         async with async_session_scope() as session:
@@ -126,7 +163,7 @@ async def get_config_value(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Config key '{namespace}/{key}' not found -- list available keys via GET /config/{namespace}",
         )
-    return _entry_to_response(record)
+    return _entry_to_response(record, registry=registry, redact=redact)
 
 
 @limiter.limit("60/minute")
@@ -154,6 +191,8 @@ async def update_config_value(
             )
             result: ConfigEntryRecord | None = (await session.exec(stmt)).first()
             if result is not None:
+                secret = is_secret_config_key(key)
+                audit_value = _REDACTED_CONFIG_VALUE if secret else body.value
                 record_audit_event(
                     session,
                     run_id=f"{namespace}/{key}",
@@ -162,7 +201,13 @@ async def update_config_value(
                     status=AUDIT_STATUS_COMPLETED,
                     target=f"{namespace}/{key}",
                     user_id=admin.user_id,
-                    details={"namespace": namespace, "key": key, "value": body.value},
+                    team_id=admin.team_id,
+                    details={
+                        "namespace": namespace,
+                        "key": key,
+                        "value": audit_value,
+                        "was_secret": secret,
+                    },
                 )
                 await session.commit()
                 await session.refresh(result)
@@ -180,4 +225,4 @@ async def update_config_value(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Config key '{namespace}/{key}' not found after update -- the registry set() call may have failed silently",
         )
-    return _entry_to_response(record)
+    return _entry_to_response(record, registry=registry)

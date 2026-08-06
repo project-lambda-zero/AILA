@@ -16,12 +16,12 @@ import json as _json
 import logging
 import os as _os
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import func as sa_func
 from sqlalchemy import text as sa_text
 from sqlalchemy.exc import SQLAlchemyError
@@ -31,11 +31,20 @@ from aila.api.deps import get_task_queue
 from aila.api.limiter import limiter
 from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
 from aila.modules.vr.services.mcp_call_logger import record_call
-from aila.platform.contracts._common import utc_now
+from aila.modules.vr.services.outcome_polarity import derive_outcome_polarity
+from aila.platform.config_base import ModuleConfigReader
+from aila.platform.contracts import utc_now
 from aila.platform.contracts.auth import AuthContext, require_auth
-from aila.platform.llm.cost_record import LLMCostRecord
 from aila.platform.services.factory import ServiceFactory
-from aila.platform.tasks.models import TaskRecord, TaskStatus
+from aila.platform.services.investigation_cost import (
+    compute_live_investigation_cost,
+)
+from aila.platform.services.investigation_summaries import (
+    build_branch_summary,
+    build_investigation_summary,
+    build_message_summary,
+    build_outcome_summary,
+)
 from aila.platform.uow import UnitOfWork
 from aila.storage.db_models import WorkflowStateCursor
 
@@ -43,6 +52,8 @@ from ._task_queue import default_task_queue
 from .agents.outcome_dispatcher import OutcomeDispatcher
 from .contracts import (
     AnalysisState,
+    ApkStaticAuditAggregate,
+    ApkStaticAuditDispatchResponse,
     BranchStatus,
     CampaignStatus,
     CrashSeverity,
@@ -68,8 +79,6 @@ from .contracts import (
     InvestigationStatus,
     MasvsAuditAggregate,
     MasvsAuditDispatchResponse,
-    OperatorIntent,
-    OutcomeConfidence,
     OutcomeDispatchStatus,
     OutcomeKind,
     PatternKind,
@@ -126,7 +135,11 @@ from .db_models import (
     VRInvestigationOutcomeRecord,
     VRInvestigationRecord,
 )
-from .workflow.task import run_vr_claim_verifier, run_vr_investigate
+from .workflow.task import (
+    run_vr_claim_verifier,
+    run_vr_investigate,
+    run_vr_narrative,
+)
 
 # SSE polling cadence for the messages stream -- 1s feels live without
 # hammering the DB. Heartbeat every 15s keeps proxies from idling out.
@@ -186,6 +199,7 @@ def _descriptor_from_spec(spec: Any) -> str:
 __all__ = ["DisclosureUpdate", "create_vr_router"]
 
 _log = logging.getLogger(__name__)
+_cfg = ModuleConfigReader("vr")
 
 
 class DisclosureUpdate(BaseModel):
@@ -276,6 +290,58 @@ class _ProposalAcceptResponse(BaseModel):
     dictionary_written: bool
     auto_launched: bool
     build_log: str
+
+
+class VRNarrativeRequest(BaseModel):
+    """Body for the narrative-writeup endpoint.
+
+    The narrative is a SEPARATE artifact from the structured
+    synthesis -- a long-form chronological vulnerability-research
+    writeup suitable for a blog post, incident writeup, RE thriller,
+    academic paper, or casual community post. Stored under
+    ``payload['investigation_narrative']`` on the canonical outcome
+    row alongside (not replacing) ``panel_summary``.
+
+    Module-scoped so the ``VRNarrativeRequest | None`` forward
+    reference on the route handler resolves against module globals
+    at OpenAPI schema-generation time (see ``_ReenqueueBody`` for
+    the full rationale on why nested-in-factory request models
+    break ``/openapi.json``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    force: bool = False
+    """Re-run and overwrite when a narrative is already present on
+    the canonical outcome. Defaults False so a repeat POST is a
+    no-op; the frontend passes True on operator-driven regenerate."""
+
+    tone: Literal[
+        "blog",
+        "incident_report",
+        "thriller",
+        "academic",
+        "casual",
+    ] = "blog"
+    """Voice the narrative writes in.
+      ``blog``            -- mid-friction blog-post voice, second
+                            person asides, technical but readable;
+                            the default
+      ``incident_report`` -- vulnerability-research writeup;
+                            chronological, evidence-cited, no
+                            flourishes
+      ``thriller``        -- pulpy reverse-engineering long-read
+                            voice; tension + reveal beats; for
+                            community writeups
+      ``academic``        -- conference-paper voice; passive,
+                            citation-dense, structured abstract ->
+                            body -> discussion
+      ``casual``          -- discord / mastodon thread voice;
+                            lower formality, still technically
+                            precise
+    """
+    length: Literal["short", "standard", "long"] = "standard"
+    operator_focus: str = Field(default="", max_length=2000)
 
 
 def _summary_from_record(
@@ -536,7 +602,7 @@ def _target_summary(record: Any) -> VRTargetSummary:
     uploaded_filename = handles.get("uploaded_filename")
     if not isinstance(uploaded_filename, str):
         uploaded_filename = None
-    # PRD §C-21: surface the androguard-discovered package name so the
+    # PRD §C-21: surface the discovered package name so the
     # TargetsPage row label can fall back to it once STATIC_SUMMARY
     # finishes. Storage shape set by services/target_analysis._android_static_summary.
     android_package_name = handles.get("android_mcp_package_name")
@@ -553,16 +619,9 @@ def _target_summary(record: Any) -> VRTargetSummary:
         # Pull each handle if present. Order mirrors the pipeline so an
         # operator can see how far the chain has progressed.
         overview: dict[str, Any] = {}
-        # Per-key projection. NOTE: android_mcp_mobsf_scan (the raw MobSF
-        # report) is intentionally NOT projected verbatim -- it's a
-        # multi-MB JSON blob that bloated vuln_researcher prompts to >1M
-        # tokens per turn and OOM'd the LLM proxy. Instead we surface a
-        # one-line summary (count + severity buckets) that fits the prompt
-        # context. Operators can still query the full report via
-        # GET /vr/targets/{id}/mobsf-report (NOT YET IMPLEMENTED -- read
-        # _mcp_handles_json.android_mcp_mobsf_scan directly from DB for
-        # now). Same for android_mcp_static_summary: project the digest,
-        # not the full androguard dump.
+        # Per-key projection. android_mcp_static_summary is projected as
+        # a digest (see below) rather than the full static-summary dump so
+        # the payload stays small enough for the prompt context.
         for handle_key, out_key in (
             ("android_mcp_apk_sha256", "sha256"),
             ("android_mcp_decoded_dir", "decoded_dir"),
@@ -578,7 +637,7 @@ def _target_summary(record: Any) -> VRTargetSummary:
                 overview[out_key] = value
 
         # static_summary digest: keep only the load-bearing fields. The full
-        # androguard output (34KB+ per-package metadata) is excessive to
+        # static summary (large per-package metadata) is excessive to
         # include in every LLM turn.
         #
         # fix §268 -- `android_mcp_static_summary` now stores a pointer
@@ -610,47 +669,15 @@ def _target_summary(record: Any) -> VRTargetSummary:
                     digest[count_key] = len(v)
                 elif isinstance(static_full.get(count_key), int):
                     digest[count_key] = static_full[count_key]
+            # Forward the in-repo native-analysis + SBOM sub-summaries so
+            # the apk_static seed builder can render them for NATIVE /
+            # SBOM checks. Both are bounded upstream (native_analysis.py
+            # caps, digest trims the SBOM component list).
+            for sub_key in ("native_analysis", "sbom"):
+                sub = static_full.get(sub_key)
+                if isinstance(sub, dict):
+                    digest[sub_key] = sub
             overview["static_summary"] = digest
-
-        # mobsf_scan digest: bucket-count summary. The full report is at
-        # most operator-facing -- agents don't need it in every prompt.
-        #
-        # fix §269 -- ``android_mcp_mobsf_scan`` now stores a pointer
-        # to ``target_artifacts/{target_id}/mobsf_scan.json`` plus a
-        # pre-computed digest (``security_score``, ``trackers_detected``,
-        # ``findings_by_severity``) and an explicit ``prompt_safe=False``.
-        # The legacy inline-full form (rows ingested pre-§269) is still
-        # accepted -- we recompute the buckets when no pre-computed
-        # digest is present.
-        mobsf_full = handles.get("android_mcp_mobsf_scan") or {}
-        if isinstance(mobsf_full, dict) and mobsf_full:
-            if mobsf_full.get("skipped"):
-                overview["mobsf_scan"] = {"skipped": True, "reason": mobsf_full.get("reason", "")}
-            elif "_artifact_path" in mobsf_full:
-                projected: dict[str, Any] = {}
-                if mobsf_full.get("security_score") is not None:
-                    projected["security_score"] = mobsf_full["security_score"]
-                if mobsf_full.get("trackers_detected") is not None:
-                    projected["trackers_detected"] = mobsf_full["trackers_detected"]
-                buckets = mobsf_full.get("findings_by_severity")
-                if isinstance(buckets, dict):
-                    projected["findings_by_severity"] = buckets
-                overview["mobsf_scan"] = projected
-            else:
-                buckets = {"high": 0, "warning": 0, "info": 0, "good": 0, "secure": 0}
-                for section_key in ("code_analysis", "manifest_analysis", "android_api", "network_security"):
-                    section = mobsf_full.get(section_key)
-                    if isinstance(section, dict):
-                        for finding in section.values():
-                            if isinstance(finding, dict):
-                                sev = (finding.get("severity") or finding.get("status") or "").lower()
-                                if sev in buckets:
-                                    buckets[sev] += 1
-                overview["mobsf_scan"] = {
-                    "security_score": mobsf_full.get("security_score"),
-                    "trackers_detected": mobsf_full.get("trackers", {}).get("detected_trackers") if isinstance(mobsf_full.get("trackers"), dict) else None,
-                    "findings_by_severity": buckets,
-                }
 
         if overview:
             apk_overview = overview
@@ -693,6 +720,18 @@ def _target_summary(record: Any) -> VRTargetSummary:
     )
 
 
+# Private-alias re-export of the polarity helper.
+#
+# The reducer moved to ``vr/services/outcome_polarity.py`` so the
+# follow-up-discovery take-over service (and any other non-router
+# consumer) can pull it without dragging in the FastAPI router.
+# ``_derive_outcome_polarity`` is preserved as a module-level name so
+# both list/single summary builders below and the polarity test module
+# (``tests/modules/vr/test_outcome_polarity.py``) keep working
+# unchanged.
+_derive_outcome_polarity = derive_outcome_polarity
+
+
 def _investigation_summary(
     record: Any,
     branch_count: int = 0,
@@ -701,88 +740,41 @@ def _investigation_summary(
     primary_outcome_kind: str | None = None,
     primary_outcome_confidence: str | None = None,
     primary_outcome_verdict_head: str | None = None,
+    primary_outcome_polarity: Literal["finding", "no_finding", "inconclusive"] | None = None,
     verifier_verdict: str | None = None,
     verifier_confidence: float | None = None,
     live_cost_usd: float | None = None,
 ) -> VRInvestigationSummary:
     """Project a VRInvestigationRecord row to the public summary.
 
-    ``live_cost_usd`` overrides the stored ``cost_actual_usd`` when
-    provided. The stored field has had no writers since inception, so
-    every read previously returned $0.00 regardless of actual spend.
-    Callers that aggregate ``LLMCostRecord`` per investigation pass the
-    sum here so the budget gauge reflects reality.
-    """
-    import json as _json
+    Binds the shared platform builder to VR's contract class. VR does not
+    set ``workspace_id`` from this path (callers that need it join it
+    separately). ``live_cost_usd`` overrides the stored
+    ``cost_actual_usd`` when provided.
 
-    actual_cost = live_cost_usd if live_cost_usd is not None else record.cost_actual_usd
-    return VRInvestigationSummary(
-        id=record.id,
-        title=record.title,
-        target_id=record.target_id,
-        workspace_id=None,  # joined separately by callers that need it
-        parent_investigation_id=record.parent_investigation_id,
-        kind=InvestigationKind(record.kind),
-        status=InvestigationStatus(record.status),
-        pause_reason=(
-            InvestigationPauseReason(record.pause_reason)
-            if record.pause_reason else None
-        ),
-        auto_pilot=record.auto_pilot,
-        is_favorite=getattr(record, "is_favorite", False),
-        strategy_family=record.strategy_family,
-        cost_budget_usd=record.cost_budget_usd,
-        cost_actual_usd=actual_cost,
-        llm_tokens_cost_usd=record.llm_tokens_cost_usd,
-        mcp_calls_cost_usd=record.mcp_calls_cost_usd,
-        fuzz_infra_cost_usd=record.fuzz_infra_cost_usd,
+    ``primary_outcome_polarity`` is injected via ``model_copy`` after
+    the shared platform builder returns, because the shared builder
+    also projects the malware summary contract (which does not carry
+    this field). Keeping polarity out of the platform builder avoids
+    breaking malware's ``extra='forbid'`` summary at serialization
+    time.
+    """
+    summary = build_investigation_summary(
+        record,
+        summary_cls=VRInvestigationSummary,
         branch_count=branch_count,
         message_count=message_count,
         outcome_count=outcome_count,
-        primary_outcome_id=record.primary_outcome_id,
         primary_outcome_kind=primary_outcome_kind,
         primary_outcome_confidence=primary_outcome_confidence,
         primary_outcome_verdict_head=primary_outcome_verdict_head,
         verifier_verdict=verifier_verdict,
         verifier_confidence=verifier_confidence,
-        linked_campaign_ids=_json.loads(record.linked_campaign_ids_json or "[]"),
-        linked_finding_ids=_json.loads(record.linked_finding_ids_json or "[]"),
-        started_at=record.started_at,
-        stopped_at=record.stopped_at,
-        created_at=record.created_at,
-        updated_at=record.updated_at,
+        live_cost_usd=live_cost_usd,
     )
-
-
-async def _compute_live_investigation_cost(
-    uow: Any, investigation_id: str,
-) -> float:
-    """Aggregate LLMCostRecord.cost_usd over all task runs for this
-    investigation. Joins via TaskRecord.kwargs_json containing the
-    investigation_id since LLMCostRecord.run_id == TaskRecord.id.
-
-    Returns 0.0 on any error (best-effort -- budget gauge degrades to
-    the stored zero rather than crashing the read path).
-    """
-    try:
-
-
-        # Find all run_ids belonging to this investigation
-        task_ids_q = select(TaskRecord.id).where(
-            TaskRecord.fn_path.like("%run_vr_investigate%"),
-            TaskRecord.kwargs_json.like(f'%"{investigation_id}"%'),
-        )
-        task_ids = [r for r in (await uow.session.exec(task_ids_q)).all()]
-        if not task_ids:
-            return 0.0
-        sum_q = select(sa_func.coalesce(sa_func.sum(LLMCostRecord.cost_usd), 0.0)).where(
-            LLMCostRecord.run_id.in_(task_ids),
-        )
-        total = (await uow.session.exec(sum_q)).one()
-        return float(total)
-    except (AttributeError, ImportError, ValueError) as exc:
-        _log.warning("_compute_live_investigation_cost failed reason=%s", exc)
-        return 0.0
+    return summary.model_copy(
+        update={"primary_outcome_polarity": primary_outcome_polarity},
+    )
 
 
 def _branch_summary(
@@ -792,30 +784,16 @@ def _branch_summary(
 ) -> VRBranchSummary:
     """Project a VRInvestigationBranchRecord row to summary.
 
-    ``cursor_state`` + ``cursor_archived_state`` come from
-    :class:`WorkflowStateCursor` joined by ``run_id == branch.id``.
-    Callers that haven't joined the cursor table pass ``None``; the
-    UI then falls back to the legacy ``status`` field for paused-state
-    detection (which has the Phase B precision loss noted in the
+    Thin binding to the platform builder. ``cursor_state`` +
+    ``cursor_archived_state`` come from :class:`WorkflowStateCursor`
+    joined by ``run_id == branch.id``; callers that haven't joined pass
+    ``None`` and the UI falls back to the legacy ``status`` field for
+    paused-state detection (Phase B precision loss noted in the
     contract docstring).
     """
-    return VRBranchSummary(
-        id=record.id,
-        investigation_id=record.investigation_id,
-        parent_branch_id=record.parent_branch_id,
-        status=BranchStatus(record.status),
-        persona_voice=PersonaVoice(record.persona_voice) if record.persona_voice else None,
-        fork_reason=record.fork_reason or "",
-        fork_at_turn=record.fork_at_turn,
-        turn_count=record.turn_count,
-        branch_cost_usd=record.branch_cost_usd,
-        closed_reason=record.closed_reason or "",
-        merged_into_branch_id=record.merged_into_branch_id,
-        promoted=record.promoted,
-        closed_at=record.closed_at,
-        created_at=record.created_at,
-        updated_at=record.updated_at,
-        strategy_family=record.strategy_family,
+    return build_branch_summary(
+        record,
+        summary_cls=VRBranchSummary,
         cursor_state=cursor_state,
         cursor_archived_state=cursor_archived_state,
     )
@@ -823,44 +801,17 @@ def _branch_summary(
 
 def _message_summary(record: Any) -> VRMessageSummary:
     """Project a VRInvestigationMessageRecord row to summary."""
-    import json as _json
-
-    return VRMessageSummary(
-        id=record.id,
-        investigation_id=record.investigation_id,
-        branch_id=record.branch_id,
-        sender_kind=SenderKind(record.sender_kind),
-        sender_id=record.sender_id,
-        payload_kind=PayloadKind(record.payload_kind),
-        payload=_json.loads(record.payload_json or "{}"),
-        operator_intent=(
-            OperatorIntent(record.operator_intent) if record.operator_intent else None
-        ),
-        at_turn=record.at_turn,
-        evidence_refs=_json.loads(record.evidence_refs_json or "[]"),
-        created_at=record.created_at,
-    )
+    return build_message_summary(record, summary_cls=VRMessageSummary)
 
 
 def _outcome_summary(record: Any) -> VROutcomeSummary:
-    """Project a VRInvestigationOutcomeRecord row to summary."""
-    import json as _json
+    """Project a VRInvestigationOutcomeRecord row to summary.
 
-    return VROutcomeSummary(
-        id=record.id,
-        investigation_id=record.investigation_id,
-        branch_id=record.branch_id,
-        outcome_kind=OutcomeKind(record.outcome_kind),
-        payload=_json.loads(record.payload_json or "{}"),
-        confidence=OutcomeConfidence(record.confidence),
-        evidence_refs=_json.loads(record.evidence_refs_json or "[]"),
-        accepted_by_operator=record.accepted_by_operator,
-        accepted_at=record.accepted_at,
-        dispatch_status=OutcomeDispatchStatus(record.dispatch_status),
-        dispatch_target=record.dispatch_target,
-        created_at=record.created_at,
-        state=record.state or "dispatched",  # legacy NULL rows
-    )
+    VR does not surface sibling-review vote counts (contract fields
+    default to 0), so no ``review_counts`` is passed. The platform
+    builder maps legacy NULL ``state`` to ``'dispatched'``.
+    """
+    return build_outcome_summary(record, summary_cls=VROutcomeSummary)
 
 
 # Default strategy_family per InvestigationKind. Used both at create-time
@@ -1305,6 +1256,11 @@ def create_vr_router() -> APIRouter:
         ),
         auth: AuthContext = Depends(require_auth),
     ) -> StreamingResponse:
+        from aila.api.sse_gate import enforce_sse_cap
+
+        # #60 global SSE ceiling: refuse new streams when ACTIVE_SSE is
+        # at or above the configured cap.
+        enforce_sse_cap()
         del request
         from datetime import datetime as _dt
 
@@ -1347,21 +1303,28 @@ def create_vr_router() -> APIRouter:
         async def _generator() -> AsyncGenerator[str, None]:
             import json as _json
 
-            last_heartbeat = utc_now()
-            local_cursor = cursor
+            # #60 global SSE ceiling: count this stream against ACTIVE_SSE
+            # so enforce_sse_cap sees every live SSE connection. The
+            # try/finally guarantees .dec() on every exit path (normal
+            # completion, client disconnect, mid-stream exception).
+            from aila.api.metrics import ACTIVE_SSE
 
-            open_env = VREventEnvelope(
-                type=VREventType.HEARTBEAT,
-                ts=utc_now().isoformat(),
-                project_id=project_id,
-                payload={"connected": True},
-            )
-            yield (
-                "event: open\n"
-                f"data: {_json.dumps(open_env.model_dump(mode='json'))}\n\n"
-            )
+            ACTIVE_SSE.inc()
+            try:
+              last_heartbeat = utc_now()
+              local_cursor = cursor
 
-            while True:
+              open_env = VREventEnvelope(
+                  type=VREventType.HEARTBEAT,
+                  ts=utc_now().isoformat(),
+                  project_id=project_id,
+                  payload={"connected": True},
+              )
+              yield (
+                  "event: open\n"
+                  f"data: {_json.dumps(open_env.model_dump(mode='json'))}\n\n"
+              )
+              while True:
                 async with UnitOfWork() as poll_uow:
                     # All investigations rooted at this project.
                     inv_ids = [
@@ -1516,6 +1479,8 @@ def create_vr_router() -> APIRouter:
                     last_heartbeat = now
 
                 await asyncio.sleep(_SSE_POLL_INTERVAL_S)
+            finally:
+                ACTIVE_SSE.dec()
 
         return StreamingResponse(
             _generator(),
@@ -1763,7 +1728,7 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRFinding]:
         del request
-        from aila.platform.contracts._common import utc_now
+        from aila.platform.contracts import utc_now
 
         from .db_models import VRFindingRecord, VRProjectRecord
 
@@ -1948,7 +1913,7 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRWorkspaceSummary]:
         del request
-        from aila.platform.contracts._common import utc_now
+        from aila.platform.contracts import utc_now
 
         from .db_models import VRWorkspaceRecord
 
@@ -2214,7 +2179,7 @@ def create_vr_router() -> APIRouter:
         del request
         import json as _json
 
-        from aila.platform.contracts._common import utc_now
+        from aila.platform.contracts import utc_now
 
         from .contracts.target import TargetTag, TargetTagSource
         from .db_models import VRTargetRecord
@@ -2471,11 +2436,11 @@ def create_vr_router() -> APIRouter:
         import json as _json
 
         from aila.api.deps import get_task_queue
-        from aila.modules.vr.contracts.target_stages import StageState
         from aila.modules.vr.services.stage_tracker import (
             parse_stages,
             save_target_stages,
         )
+        from aila.platform.contracts.target_stages import StageState
 
         from ._task_queue import enqueue_downstream_target_stages
         from .db_models import VRTargetRecord
@@ -2511,15 +2476,15 @@ def create_vr_router() -> APIRouter:
                 reset_count += 1
         await save_target_stages(target_id, stages)
 
-        # Fan out per non-DONE stage. CAPABILITY_PROFILE + FUNCTION_RANKING
-        # both depend on INGESTION (need handles/index_id). If ingestion is
-        # not yet DONE we enqueue ingestion alone; the worker's
-        # run_target_analysis auto-chains the downstream pair when it
-        # finishes (see _task_queue.enqueue_downstream_target_stages, also
-        # invoked from the end of that task). When ingestion is already
-        # DONE we skip straight to fanning out the downstream pair from
-        # here so the operator gets immediate progress and skips
-        # the ingestion no-op cycle.
+        # Fan out enrichment. CAPABILITY_PROFILE + FUNCTION_RANKING both
+        # depend on INGESTION (need handles/index_id) and are now sequenced
+        # inside the ``run_target_enrichment`` orchestrator (M3.T-4). If
+        # ingestion is not yet DONE we enqueue ingestion alone; the worker's
+        # run_target_analysis auto-chains the orchestrator when it finishes
+        # (see _task_queue.enqueue_downstream_target_stages, also invoked
+        # from the end of that task). When ingestion is already DONE we skip
+        # straight to enqueuing the orchestrator from here so the operator
+        # gets immediate progress and skips the ingestion no-op cycle.
         task_queue = get_task_queue("vr", request)
         enqueued: list[dict[str, str]] = []
         ingestion_state = stages.ingestion.state
@@ -2585,7 +2550,7 @@ def create_vr_router() -> APIRouter:
 
         For ``kind=android_apk`` targets the call resets every
         applicable APK stage (APK_DECODE / JADX_DECOMPILE /
-        INDEX_DECOMPILED / STATIC_SUMMARY / MOBSF_SCAN) back to
+        INDEX_DECOMPILED / STATIC_SUMMARY) back to
         PENDING -- leaving any stage currently RUNNING untouched so
         the reaper owns it -- and re-enqueues
         ``run_target_analysis`` on the vr worker queue. The
@@ -2629,11 +2594,11 @@ def create_vr_router() -> APIRouter:
         # ``run_target_analysis`` on the vr worker queue.
         if kind_str == TargetKind.ANDROID_APK.value:
             from aila.api.deps import get_task_queue
-            from aila.modules.vr.contracts.target_stages import StageName, StageState
             from aila.modules.vr.services.stage_tracker import (
                 parse_stages,
                 save_target_stages,
             )
+            from aila.platform.contracts.target_stages import StageName, StageState
 
             from .workflow.task import run_target_analysis
 
@@ -2643,7 +2608,6 @@ def create_vr_router() -> APIRouter:
                 StageName.JADX_DECOMPILE,
                 StageName.INDEX_DECOMPILED,
                 StageName.STATIC_SUMMARY,
-                StageName.MOBSF_SCAN,
             )
             reset_count = 0
             for stage_name in android_stage_names:
@@ -2753,6 +2717,7 @@ def create_vr_router() -> APIRouter:
                     h["audit_mcp_index_id"] = new_index_id
                     refreshed_row.mcp_handles_json = _json.dumps(h)
                     uow.session.add(refreshed_row)
+                    await uow.commit()
 
         return DataEnvelope(data={
             "target_id": target_id,
@@ -2784,7 +2749,7 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[dict]:
         from aila.api.deps import get_task_queue
-        from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
+        from aila.platform.mcp.factory import make_bridge
 
         from .db_models import VRTargetRecord
         from .workflow.task import run_target_analysis
@@ -2825,7 +2790,18 @@ def create_vr_router() -> APIRouter:
             )
 
 
-        bridge = IDABridgeTool(recorder=record_call)
+        # #57: buffer the body through the bounded reader so a chunked
+        # upload that omits Content-Length cannot OOM the worker. The
+        # previous streaming shape (passing file.file straight into
+        # httpx multipart) had no cap and slipped past the global
+        # _reject_oversized_requests middleware which only inspects
+        # Content-Length. Buffered upload matches the malware-side
+        # sample flow: bytes live in flight but never on local disk.
+        from aila.api.uploads import read_upload_bounded
+        upload_cap = await _cfg.get_int("upload_max_bytes")
+        contents = await read_upload_bounded(file, upload_cap)
+
+        bridge = make_bridge("ida_headless", module_id="vr", recorder=record_call)
         base_url = await bridge._resolve_base_url()
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:
@@ -2834,7 +2810,7 @@ def create_vr_router() -> APIRouter:
                     files={
                         "file": (
                             file.filename,
-                            file.file,
+                            contents,
                             file.content_type or "application/octet-stream",
                         ),
                     },
@@ -2915,7 +2891,7 @@ def create_vr_router() -> APIRouter:
             "`ANDROID_MCP_UPLOAD_DIR`), creates a VRTargetRecord with "
             "kind=android_apk and an apk_path descriptor, and auto-enqueues "
             "the APK_DECODE / JADX_DECOMPILE / INDEX_DECOMPILED / "
-            "STATIC_SUMMARY / MOBSF_SCAN ingestion stages."
+            "STATIC_SUMMARY ingestion stages."
         ),
     )
     @limiter.limit("10/minute")
@@ -2936,7 +2912,7 @@ def create_vr_router() -> APIRouter:
         on a different volume without symlink tricks.
 
         Per-stage ingestion (APK_DECODE / JADX_DECOMPILE / INDEX_DECOMPILED
-        / STATIC_SUMMARY / MOBSF_SCAN) is dispatched via
+        / STATIC_SUMMARY) is dispatched via
         ``run_target_analysis``; ``TargetAnalysisService.analyze()`` routes
         ``android_apk`` through ``_analyze_android_apk`` so each stage runs
         under its own ``StageTracker`` and persists handles in
@@ -3002,6 +2978,16 @@ def create_vr_router() -> APIRouter:
         # 3) Stream to a temp file in the same directory and hash on the
         #    fly. Atomic rename only after we know the digest -- keeps
         #    half-written partials out of the SHA-named slot.
+        #
+        #    #57: iter_upload_bounded caps the total bytes drained from
+        #    the multipart body and raises HTTP 413 mid-stream if the
+        #    client tries to push past the configured cap. This closes
+        #    the chunked-without-Content-Length hole that the global
+        #    _reject_oversized_requests middleware misses. The
+        #    partially-written temp file is unlinked in the except
+        #    branches below so a rejected upload leaves no residue.
+        from aila.api.uploads import iter_upload_bounded
+        upload_cap = await _cfg.get_int("upload_max_bytes")
         sha256 = hashlib.sha256()
         fd, tmp_str = tempfile.mkstemp(
             prefix=".upload-", suffix=".apk.partial", dir=str(team_dir),
@@ -3010,13 +2996,18 @@ def create_vr_router() -> APIRouter:
         bytes_written = 0
         try:
             with os.fdopen(fd, "wb") as out:
-                while True:
-                    chunk = await file.read(1 << 20)  # 1 MiB
-                    if not chunk:
-                        break
+                async for chunk in iter_upload_bounded(
+                    file, upload_cap, chunk_size=1 << 20,
+                ):
                     sha256.update(chunk)
                     out.write(chunk)
                     bytes_written += len(chunk)
+        except HTTPException:
+            # 413 from the bounded iterator: drop the partial and
+            # re-raise so FastAPI turns it into the 413 response the
+            # client sees.
+            tmp_path.unlink(missing_ok=True)
+            raise
         except OSError as exc:
             tmp_path.unlink(missing_ok=True)
             raise HTTPException(
@@ -3471,6 +3462,334 @@ def create_vr_router() -> APIRouter:
             ),
         )
 
+    @router.post(
+        "/targets/{target_id}/apk-static-audit",
+        response_model=DataEnvelope[ApkStaticAuditDispatchResponse],
+        status_code=status.HTTP_201_CREATED,
+        summary=(
+            "Dispatch an APK static-analysis audit against an "
+            "android_apk target. Creates one parent VRInvestigation "
+            "(kind=apk_static_audit) + one child VRInvestigation per "
+            "STATIC catalog check (kind=audit). Each child carries a "
+            "verification prompt built from the check's evidence hints."
+        ),
+    )
+    @limiter.limit("6/minute")
+    async def dispatch_apk_static_audit(
+        request: Request,
+        target_id: str,
+        response: Response,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[ApkStaticAuditDispatchResponse]:
+        """Fan one APK static audit out into per-check child investigations.
+
+        Mirrors the MASVS dispatcher: refuses with 409 when the target is
+        not an ``android_apk`` or when ``STATIC_SUMMARY`` has not yet
+        populated ``apk_overview.static_summary``. Only
+        :attr:`ApkStaticMode.STATIC` catalog checks are dispatched --
+        EXTRACTOR checks depend on a pipeline stage not yet built and are
+        skipped so no child is asked a question the current pipeline
+        cannot answer.
+
+        Idempotency: an existing active parent (``kind=apk_static_audit``,
+        status CREATED / RUNNING / PAUSED) whose pinned
+        ``apk_static_spec_version`` matches the current
+        :data:`APK_STATIC_CATALOG_VERSION` is returned verbatim with
+        ``idempotent_reuse=True`` and HTTP 200. Terminal parents do not
+        block a fresh dispatch.
+
+        Enqueue is throttled the same way as the MASVS batch (shared
+        ``MASVS_AUDIT_BATCH_SIZE`` knob -- the constraint is the shared
+        LLM proxy, not the catalog): only the first batch of children is
+        submitted here, the rest are deferred and the parent reconciler
+        enqueues them as slots free.
+        """
+        import json as _json
+
+        from aila.api.deps import get_task_queue
+        from aila.modules.vr.apk_static import (
+            APK_STATIC_CATALOG_VERSION,
+            APK_STATIC_CHECKS,
+            ApkStaticMode,
+            ApkStaticSeedBuilder,
+        )
+
+        from .db_models import (
+            VRInvestigationBranchRecord,
+            VRInvestigationRecord,
+            VRTargetRecord,
+        )
+        from .workflow.task import run_vr_investigate
+
+        async with UnitOfWork() as uow:
+            target = (await uow.session.exec(
+                _team_filter(
+                    select(VRTargetRecord).where(
+                        VRTargetRecord.id == target_id,
+                    ),
+                    VRTargetRecord, auth,
+                ),
+            )).first()
+            if target is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"Target {target_id} not found or not owned by "
+                        "your team."
+                    ),
+                )
+            if target.kind != TargetKind.ANDROID_APK.value:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Target {target_id} kind is {target.kind!r}; APK "
+                        "static audit applies to android_apk targets only."
+                    ),
+                )
+
+            target_summary = _target_summary(target)
+            apk_overview = target_summary.apk_overview
+            static_summary: dict[str, Any] = {}
+            if isinstance(apk_overview, dict):
+                maybe_static = apk_overview.get("static_summary")
+                if isinstance(maybe_static, dict):
+                    static_summary = maybe_static
+            if not static_summary:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Target {target_id} has not completed the "
+                        "STATIC_SUMMARY ingestion stage; the APK static "
+                        "dispatcher needs the package / version / "
+                        "decompiled-index cells before fanning out."
+                    ),
+                )
+
+            _active_parent_statuses = (
+                InvestigationStatus.CREATED.value,
+                InvestigationStatus.RUNNING.value,
+                InvestigationStatus.PAUSED.value,
+            )
+            candidate_parents = (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord)
+                    .where(VRInvestigationRecord.target_id == target.id)
+                    .where(
+                        VRInvestigationRecord.kind
+                        == InvestigationKind.APK_STATIC_AUDIT.value,
+                    )
+                    .where(
+                        VRInvestigationRecord.parent_investigation_id.is_(
+                            None,
+                        ),
+                    )
+                    .where(
+                        VRInvestigationRecord.status.in_(
+                            _active_parent_statuses,
+                        ),
+                    )
+                    .order_by(VRInvestigationRecord.created_at.desc()),
+                    VRInvestigationRecord, auth,
+                ),
+            )).all()
+            existing_parent: VRInvestigationRecord | None = None
+            for candidate in candidate_parents:
+                try:
+                    refs = _json.loads(
+                        candidate.secondary_target_refs_json or "[]",
+                    )
+                except ValueError:
+                    continue
+                if not isinstance(refs, list):
+                    continue
+                for ref in refs:
+                    if (
+                        isinstance(ref, dict)
+                        and ref.get("apk_static_spec_version")
+                        == APK_STATIC_CATALOG_VERSION
+                    ):
+                        existing_parent = candidate
+                        break
+                if existing_parent is not None:
+                    break
+            if existing_parent is not None:
+                existing_children = (await uow.session.exec(
+                    select(VRInvestigationRecord)
+                    .where(
+                        VRInvestigationRecord.parent_investigation_id
+                        == existing_parent.id,
+                    )
+                    .order_by(VRInvestigationRecord.created_at.asc()),
+                )).all()
+                response.status_code = status.HTTP_200_OK
+                return DataEnvelope(
+                    data=ApkStaticAuditDispatchResponse(
+                        parent_investigation_id=existing_parent.id,
+                        child_investigation_ids=[
+                            c.id for c in existing_children
+                        ],
+                        total_checks=len(existing_children),
+                        apk_static_spec_version=APK_STATIC_CATALOG_VERSION,
+                        cost_budget_total_usd=existing_parent.cost_budget_usd,
+                        enqueue_errors={},
+                        idempotent_reuse=True,
+                    ),
+                )
+
+            static_checks = tuple(
+                c for c in APK_STATIC_CHECKS
+                if c.mode == ApkStaticMode.STATIC
+            )
+            if not static_checks:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=(
+                        "APK static catalog has zero STATIC checks; "
+                        "refusing to dispatch an empty audit. Check "
+                        "aila.modules.vr.apk_static.catalog."
+                        "APK_STATIC_CHECKS."
+                    ),
+                )
+
+            package_label = static_summary.get("package")
+            if (
+                not isinstance(package_label, str)
+                or not package_label.strip()
+            ):
+                package_label = target.display_name
+            child_budget_usd = 30.0
+            total_budget_usd = child_budget_usd * len(static_checks)
+
+            parent = VRInvestigationRecord(
+                target_id=target.id,
+                team_id=auth.team_id,
+                secondary_target_refs_json=_json.dumps(
+                    [{"apk_static_spec_version": APK_STATIC_CATALOG_VERSION}],
+                ),
+                kind=InvestigationKind.APK_STATIC_AUDIT.value,
+                title=f"APK static audit: {package_label}",
+                initial_question=(
+                    f"APK static audit batch parent -- {len(static_checks)} "
+                    "child investigations dispatched, one per STATIC "
+                    f"catalog check (catalog {APK_STATIC_CATALOG_VERSION}). "
+                    "See child investigations for per-check evidence and "
+                    "findings."
+                ),
+                status=InvestigationStatus.CREATED.value,
+                auto_pilot=False,
+                strategy_family="vulnerability_research.apk_static_audit",
+                cost_budget_usd=total_budget_usd,
+            )
+            uow.session.add(parent)
+            await uow.session.flush()
+
+            child_ids: list[str] = []
+            for check in static_checks:
+                child_title = f"APK {check.id}: {check.title[:200]}"
+                child_question = ApkStaticSeedBuilder.build(
+                    check,
+                    apk_overview if isinstance(apk_overview, dict) else None,
+                )
+                child = VRInvestigationRecord(
+                    target_id=target.id,
+                    team_id=auth.team_id,
+                    parent_investigation_id=parent.id,
+                    secondary_target_refs_json=_json.dumps([
+                        {
+                            "apk_static_check_id": check.id,
+                            "apk_static_spec_version": (
+                                APK_STATIC_CATALOG_VERSION
+                            ),
+                        },
+                    ]),
+                    kind=InvestigationKind.AUDIT.value,
+                    title=child_title[:255],
+                    initial_question=child_question,
+                    status=InvestigationStatus.CREATED.value,
+                    auto_pilot=True,
+                    strategy_family=_KIND_DEFAULT_STRATEGY[
+                        InvestigationKind.AUDIT
+                    ],
+                    cost_budget_usd=child_budget_usd,
+                )
+                uow.session.add(child)
+                await uow.session.flush()
+                child_ids.append(child.id)
+
+                primary_branch = VRInvestigationBranchRecord(
+                    investigation_id=child.id,
+                    status=BranchStatus.ACTIVE.value,
+                    fork_reason="primary",
+                    persona_voice=PersonaVoice.HALVAR.value,
+                )
+                uow.session.add(primary_branch)
+
+            await uow.session.commit()
+            await uow.session.refresh(parent)
+
+        # Throttled enqueue -- identical rationale to the MASVS batch: a
+        # full fan-out of ~80 children streaming through the shared LLM
+        # proxy at once OOMs it. Only MASVS_AUDIT_BATCH_SIZE children go
+        # in now; the parent reconciler enqueues the rest as slots free.
+        try:
+            _batch_size_raw = int(
+                _os.environ.get("MASVS_AUDIT_BATCH_SIZE", "5"),
+            )
+        except ValueError:
+            _batch_size_raw = 5
+        apk_batch_size = max(1, min(_batch_size_raw, len(child_ids)))
+        initial_batch = child_ids[:apk_batch_size]
+        deferred = child_ids[apk_batch_size:]
+
+        enqueue_errors: dict[str, str] = {}
+        try:
+            task_queue = get_task_queue("vr", request)
+        except HTTPException as exc:
+            err_msg = f"task queue unavailable: {exc.detail}"
+            _log.warning(
+                "APK static audit %s could not acquire the vr task queue: "
+                "%s; all %d children remain in CREATED status awaiting "
+                "/re-enqueue.", parent.id, exc.detail, len(child_ids),
+            )
+            enqueue_errors = {cid: err_msg for cid in child_ids}
+        else:
+            for cid in initial_batch:
+                try:
+                    await task_queue.submit(
+                        track="vr",
+                        fn=run_vr_investigate,
+                        kwargs={"investigation_id": cid},
+                        user_id=auth.user_id,
+                        group_id=auth.role,
+                        team_id=auth.team_id,
+                    )
+                except (OSError, RuntimeError, HTTPException) as exc:
+                    err_msg = f"failed to enqueue: {exc}"
+                    enqueue_errors[cid] = err_msg
+                    _log.warning(
+                        "APK static audit %s child %s failed to enqueue: "
+                        "%s", parent.id, cid, exc,
+                    )
+            if deferred:
+                _log.info(
+                    "APK static audit %s batched: enqueued %d/%d children, "
+                    "%d deferred (parent reconciler enqueues as slots free). "
+                    "batch_size=%d via MASVS_AUDIT_BATCH_SIZE env.",
+                    parent.id, len(initial_batch), len(child_ids),
+                    len(deferred), apk_batch_size,
+                )
+
+        return DataEnvelope(
+            data=ApkStaticAuditDispatchResponse(
+                parent_investigation_id=parent.id,
+                child_investigation_ids=child_ids,
+                total_checks=len(static_checks),
+                apk_static_spec_version=APK_STATIC_CATALOG_VERSION,
+                cost_budget_total_usd=total_budget_usd,
+                enqueue_errors=enqueue_errors,
+            ),
+        )
+
     @router.get(
         "/targets/{target_id}/masvs-report",
         summary=(
@@ -3524,8 +3843,8 @@ def create_vr_router() -> APIRouter:
           ``GET /investigations/{id}/report.pdf`` route.
 
         The PDF is rendered synchronously via ReportLab; the render is
-        pushed onto a worker thread via :func:`asyncio.to_thread` so a
-        large aggregate (~46 L1 controls plus subsections) doesn't
+        pushed onto a platform worker thread via :func:`run_blocking_io`
+        so a large aggregate (~46 L1 controls plus subsections) doesn't
         block the event loop while reportlab walks the flow.
         """
         del request
@@ -3534,6 +3853,7 @@ def create_vr_router() -> APIRouter:
             build_pdf,
             collect_findings,
         )
+        from aila.platform.services.runtime import run_blocking_io
 
         from .db_models import VRInvestigationRecord, VRTargetRecord
 
@@ -3613,12 +3933,14 @@ def create_vr_router() -> APIRouter:
         # the workflow lifecycle, NOT inline here). When no cached
         # section is present, the renderer falls back to the raw
         # agent_summary. The PDF endpoint never makes LLM calls.
-        # build_pdf is sync (CPU-bound ReportLab render). The
-        # investigation-report endpoint follows the same pattern --
-        # render directly on the event loop. The aggregate is bounded
-        # (≤53 L1 verdicts), so the render stays well inside ASGI
-        # request-budget territory.
-        pdf_bytes = build_pdf(aggregate, target_summary, handles=handles_dict)
+        # build_pdf is sync (CPU-bound ReportLab render); offload it to
+        # the platform worker pool via run_blocking_io so a large
+        # aggregate does not stall the event loop for other requests on
+        # this worker. Matches the investigation-report endpoint, which
+        # offloads its render inside render_investigation_pdf.
+        pdf_bytes = await run_blocking_io(
+            build_pdf, aggregate, target_summary, handles=handles_dict,
+        )
 
         filename = _masvs_report_filename(
             target_summary,
@@ -3743,6 +4065,125 @@ def create_vr_router() -> APIRouter:
             # race between the lookup above and the aggregate query
             # (parent deleted mid-request) surfaces as 404 so the
             # caller gets the same shape as the up-front guard.
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=str(exc),
+            ) from exc
+
+        return DataEnvelope(data=aggregate)
+
+    @router.get(
+        "/targets/{target_id}/apk-static-audit-aggregate",
+        response_model=DataEnvelope[ApkStaticAuditAggregate],
+        summary=(
+            "Return the structured APK static-analysis audit aggregate "
+            "as JSON. Mirrors the MASVS aggregate endpoint: one verdict "
+            "row per child investigation, grouped by APK static group, "
+            "with verifier confidence and evidence links. Partial "
+            "aggregates are valid -- children still in flight render "
+            "as INCONCLUSIVE."
+        ),
+    )
+    @limiter.limit("30/minute")
+    async def get_apk_static_audit_aggregate(
+        request: Request,
+        target_id: str,
+        audit_id: str = Query(
+            ...,
+            description=(
+                "Parent VRInvestigation id (kind=apk_static_audit) "
+                "returned by "
+                "POST /vr/targets/{target_id}/apk-static-audit."
+            ),
+        ),
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[ApkStaticAuditAggregate]:
+        """Return the JSON aggregate for ``audit_id`` under ``target_id``.
+
+        Refuses with the same shape as the MASVS aggregate endpoint so a
+        frontend can rely on consistent error semantics across the two
+        audit surfaces:
+
+        * **404** when the target is not visible to the caller's team,
+          when the parent investigation does not exist, or when it
+          exists but points at a different target (defensive guard
+          against pasted audit ids under the wrong target context).
+        * **409** when the parent exists but its ``kind`` is not
+          ``apk_static_audit`` -- the collector is specific to APK
+          static batches.
+
+        Aggregation is forwarded to :func:`collect_apk_static_findings`.
+        The endpoint does *not* materialize a PDF -- the APK static PDF
+        renderer lands in a later phase and will consume the same
+        aggregate.
+        """
+        del request
+
+        from aila.modules.vr.apk_static.aggregate import (
+            collect_apk_static_findings,
+        )
+
+        from .db_models import VRInvestigationRecord, VRTargetRecord
+
+        async with UnitOfWork() as uow:
+            target = (await uow.session.exec(
+                _team_filter(
+                    select(VRTargetRecord).where(
+                        VRTargetRecord.id == target_id,
+                    ),
+                    VRTargetRecord, auth,
+                ),
+            )).first()
+            if target is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"Target {target_id} not found or not owned "
+                        "by your team."
+                    ),
+                )
+            parent = (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == audit_id,
+                    ),
+                    VRInvestigationRecord, auth,
+                ),
+            )).first()
+            if parent is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"APK static audit {audit_id} not found or not "
+                        "owned by your team."
+                    ),
+                )
+            if parent.kind != InvestigationKind.APK_STATIC_AUDIT.value:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Investigation {audit_id} kind={parent.kind!r}; "
+                        "APK static aggregate requires a parent "
+                        "investigation with kind='apk_static_audit'."
+                    ),
+                )
+            if parent.target_id != target_id:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"APK static audit {audit_id} does not belong "
+                        f"to target {target_id}."
+                    ),
+                )
+
+        try:
+            aggregate = await collect_apk_static_findings(audit_id)
+        except ValueError as exc:
+            # collect_apk_static_findings re-validates parent kind /
+            # existence; a race between the lookup above and the
+            # aggregate query (parent deleted mid-request) surfaces as
+            # 404 so the caller gets the same shape as the up-front
+            # guard.
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=str(exc),
@@ -3940,6 +4381,7 @@ def create_vr_router() -> APIRouter:
                 verdict_head: str | None = None
                 verifier_verdict: str | None = None
                 verifier_confidence: float | None = None
+                primary_outcome_polarity: Literal["finding", "no_finding", "inconclusive"] | None = None
                 if primary is not None:
                     try:
                         payload = _json.loads(primary.payload_json or "{}")
@@ -3956,6 +4398,9 @@ def create_vr_router() -> APIRouter:
                         vc = vr.get("confidence")
                         if isinstance(vc, (int, float)):
                             verifier_confidence = float(vc)
+                    primary_outcome_polarity = _derive_outcome_polarity(
+                        primary.outcome_kind, payload,
+                    )
                 items.append(_investigation_summary(
                     r,
                     branch_count=br_counts.get(r.id, 0),
@@ -3964,6 +4409,7 @@ def create_vr_router() -> APIRouter:
                     primary_outcome_kind=primary.outcome_kind if primary else None,
                     primary_outcome_confidence=primary.confidence if primary else None,
                     primary_outcome_verdict_head=verdict_head or None,
+                    primary_outcome_polarity=primary_outcome_polarity,
                     verifier_verdict=verifier_verdict,
                     verifier_confidence=verifier_confidence,
                 ))
@@ -4039,6 +4485,7 @@ def create_vr_router() -> APIRouter:
             primary_outcome_kind: str | None = None
             primary_outcome_confidence: str | None = None
             primary_outcome_verdict_head: str | None = None
+            primary_outcome_polarity: Literal["finding", "no_finding", "inconclusive"] | None = None
             verifier_verdict: str | None = None
             verifier_confidence: float | None = None
             if inv.primary_outcome_id:
@@ -4069,13 +4516,19 @@ def create_vr_router() -> APIRouter:
                         vc = vr.get("confidence")
                         if isinstance(vc, (int, float)):
                             verifier_confidence = float(vc)
+                    primary_outcome_polarity = _derive_outcome_polarity(
+                        primary.outcome_kind, payload,
+                    )
 
-        # Live cost -- aggregate LLMCostRecord by run_id matching this
-        # investigation's TaskRecord ids. The stored cost_actual_usd has
-        # no writers so without this override every read returned $0
-        # regardless of actual spend, making the budget gauge decorative.
+        # Live cost -- sum LLMCostRecord by run_id (which the reasoning
+        # engine threads as the investigation id). The stored
+        # cost_actual_usd has no writers so without this override every
+        # read returned $0 regardless of actual spend, making the budget
+        # gauge decorative.
         async with UnitOfWork() as uow_cost:
-            live_cost = await _compute_live_investigation_cost(uow_cost, investigation_id)
+            live_cost = await compute_live_investigation_cost(
+                uow_cost, investigation_id,
+            )
         return DataEnvelope(data=_investigation_summary(
             inv,
             branch_count=int(branch_count),
@@ -4084,6 +4537,7 @@ def create_vr_router() -> APIRouter:
             primary_outcome_kind=primary_outcome_kind,
             primary_outcome_confidence=primary_outcome_confidence,
             primary_outcome_verdict_head=primary_outcome_verdict_head,
+            primary_outcome_polarity=primary_outcome_polarity,
             verifier_verdict=verifier_verdict,
             verifier_confidence=verifier_confidence,
             live_cost_usd=live_cost,
@@ -4192,6 +4646,75 @@ def create_vr_router() -> APIRouter:
             "canonical_outcome_id": oc.id,
             "cleared_prior_report": had_prior,
         }
+
+    @router.post(
+        "/investigations/{investigation_id}/narrative",
+        response_model=DataEnvelope[dict[str, Any]],
+        status_code=status.HTTP_202_ACCEPTED,
+        summary=(
+            "Enqueue the long-form vulnerability-research narrative "
+            "writeup for one investigation. Separate artifact from the "
+            "structured synthesis -- the narrative is a chronological "
+            "story stored under ``payload['investigation_narrative']`` "
+            "on the canonical outcome, alongside (not replacing) "
+            "``panel_summary``. Idempotent without ``force``; poll "
+            "the canonical outcome for "
+            "``payload.investigation_narrative.generated_at`` to "
+            "detect completion."
+        ),
+    )
+    @limiter.limit("10/minute")
+    async def trigger_narrative(
+        request: Request,
+        investigation_id: str,
+        body: VRNarrativeRequest | None = None,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[dict[str, Any]]:
+        """Enqueue the long-form narrative writeup for one investigation.
+
+        Body fields map to :class:`NarrativeOptions`. Defaults are
+        ``force=False`` + ``tone='blog'`` + ``length='standard'`` --
+        the frontend passes ``force=True`` on operator-driven
+        regenerate. Returns the queued task id; poll the canonical
+        outcome for
+        ``payload.investigation_narrative.generated_at`` to detect
+        completion.
+        """
+        del request
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord).where(
+                        VRInvestigationRecord.id == investigation_id,
+                    ),
+                    VRInvestigationRecord, auth,
+                ),
+            )).first()
+            if inv is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Investigation {investigation_id} not found.",
+                )
+            team_id = inv.team_id
+
+        opts = body or VRNarrativeRequest()
+        task_handle = await default_task_queue().submit(
+            track="vr",
+            fn=run_vr_narrative,
+            kwargs={
+                "investigation_id": investigation_id,
+                "options": opts.model_dump(),
+            },
+            user_id=auth.user_id,
+            group_id="vr_narrative_manual",
+            team_id=team_id,
+        )
+        return DataEnvelope(data={
+            "investigation_id": investigation_id,
+            "task_id": task_handle.task_id,
+            "options": opts.model_dump(),
+            "queued_at": utc_now().isoformat(),
+        })
 
     class PromoteOutcomeResponse(BaseModel):
         """Result of promoting an assessment_report -> direct_finding."""
@@ -4413,10 +4936,14 @@ def create_vr_router() -> APIRouter:
         §32/§33/§35/§47.
         """
         del request
-        from .db_models import VRInvestigationRecord
-        from .workflow.pause_resume import (
+        from aila.platform.services.investigation_lifecycle import (
             PauseInvestigationError,
-            pause_investigation_atomic,
+            pause_investigation,
+        )
+
+        from .db_models import (
+            VRInvestigationBranchRecord,
+            VRInvestigationRecord,
         )
 
         # Team filter: confirm the auth context can see this row before
@@ -4438,10 +4965,14 @@ def create_vr_router() -> APIRouter:
                 )
 
         try:
-            summary = await pause_investigation_atomic(
+            summary = await pause_investigation(
                 investigation_id,
+                inv_model=VRInvestigationRecord,
+                branch_model=VRInvestigationBranchRecord,
+                branch_table="vr_investigation_branches",
+                track="vr",
+                pause_reason=InvestigationPauseReason.OPERATOR.value,
                 user_id=auth.user_id,
-                reason=InvestigationPauseReason.OPERATOR.value,
             )
         except PauseInvestigationError as exc:
             raise HTTPException(
@@ -4491,12 +5022,16 @@ def create_vr_router() -> APIRouter:
         Closes §34.
         """
         from aila.api.deps import get_task_queue
-
-        from .db_models import VRInvestigationRecord
-        from .workflow.pause_resume import (
+        from aila.platform.services.investigation_lifecycle import (
             ResumeInvestigationError,
-            resume_investigation_atomic,
+            resume_investigation,
         )
+
+        from .db_models import (
+            VRInvestigationBranchRecord,
+            VRInvestigationRecord,
+        )
+        from .workflow.task import run_vr_investigate
 
         # Team filter first.
         async with UnitOfWork() as uow:
@@ -4516,10 +5051,15 @@ def create_vr_router() -> APIRouter:
 
         task_queue = get_task_queue("vr", request)
         try:
-            summary = await resume_investigation_atomic(
+            summary = await resume_investigation(
                 investigation_id,
-                user_id=auth.user_id,
+                inv_model=VRInvestigationRecord,
+                branch_model=VRInvestigationBranchRecord,
+                branch_table="vr_investigation_branches",
+                track="vr",
+                task_fn=run_vr_investigate,
                 task_queue=task_queue,
+                user_id=auth.user_id,
                 auth_user_id=auth.user_id,
                 auth_role=auth.role,
                 auth_team_id=auth.team_id,
@@ -4842,11 +5382,18 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[VRInvestigationSummary]:
         from aila.api.deps import get_task_queue
-        from aila.platform.contracts._common import utc_now
+        from aila.platform.services.investigation_lifecycle import (
+            reenqueue_investigation,
+        )
 
         from .db_models import VRInvestigationRecord
         from .workflow.task import run_vr_investigate
 
+        # Auth visibility check: confirm the caller can see this row
+        # before mutating it. The platform reenqueue service owns the
+        # atomic reset (status to CREATED, stale-task cancel, crashed
+        # cursor wipe, commit before submit) across the four sources of
+        # truth; the handler keeps the team filter and the summary.
         async with UnitOfWork() as uow:
             inv = (await uow.session.exec(
                 _team_filter(
@@ -4861,80 +5408,48 @@ def create_vr_router() -> APIRouter:
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Investigation {investigation_id} not found.",
                 )
-            # Always sync strategy_family to kind's default when the
-            # operator re-enqueues with an explicit kind -- covers both
-            # 'change the kind' and 'fix a mismatch where the strategy
-            # was stuck on the wrong default from earlier create-time
-            # bug'. Without this, an investigation created with
-            # kind=variant_hunt but strategy_family=discovery_research
-            # (the pre-006047d default-fallback bug) couldn't be
-            # repaired without a direct DB edit.
-            if body and body.kind is not None:
-                inv.kind = body.kind.value
-                inv.strategy_family = _KIND_DEFAULT_STRATEGY[body.kind]
-            inv.status = InvestigationStatus.CREATED.value
-            inv.pause_reason = None
-            inv.updated_at = utc_now()
-            uow.session.add(inv)
 
-            # Cancel any stale run_vr_investigate TaskRecord still in
-            # queued/running/waiting for THIS investigation. Without
-            # this, TaskQueue.submit() (SEC-07 dedup, queue.py L128)
-            # returns the existing handle when input_hash matches --
-            # and the matching hash is exactly (fn=run_vr_investigate,
-            # kwargs={investigation_id: <id>}). When a previous worker
-            # crashed leaving its TaskRecord in 'running' without a
-            # live arq job, every re-enqueue silently no-op'd. Operator
-            # sees status=created, clicks 'Start', nothing happens.
-
-            stale_q = select(TaskRecord).where(
-                TaskRecord.fn_path.like("%run_vr_investigate%"),
-                TaskRecord.status.in_(["queued", "running", "waiting"]),
-                TaskRecord.kwargs_json.like(f'%"{investigation_id}"%'),
-            )
-            stale_rows = (await uow.session.exec(stale_q)).all()
-            for row in stale_rows:
-                row.status = TaskStatus.CANCELLED.value
-                uow.session.add(row)
-
-            # Branch cleanup is handled by investigation_setup's
-            # _spawn_persona_siblings_and_enqueue which now searches ALL
-            # branches by persona (not just current primary's children),
-            # reuses the best branch per persona, and abandons duplicates.
-            # Also wipe __crashed__ cursors for this investigation so the
-            # workflow engine starts fresh on next dispatch. Without this,
-            # crashed cursors persist forever and re-enqueue fires a new
-            # TaskRecord but the engine refuses to resume cleanly. I had
-            # to manually DELETE 219 such orphan crashed cursors today.
-            try:
-                await uow.session.exec(  # type: ignore[call-arg]
-                    sa_text(
-                        "DELETE FROM workflow_state_cursor "
-                        "WHERE current_state = '__crashed__' "
-                        "AND run_id IN (SELECT id FROM taskrecord "
-                        "WHERE kwargs_json LIKE :pat)"
-                    ).bindparams(pat=f'%"{investigation_id}"%')
-                )
-            except (SQLAlchemyError, OSError, RuntimeError) as exc:
-                logging.getLogger(__name__).warning(
-                    "re-enqueue: cursor cleanup failed: %s", exc,
-                    exc_info=True,
-                )
-            await uow.session.commit()
-            await uow.session.refresh(inv)
-        # (committed before submit so the next submit() sees a clean
-        # dedup table -- same UoW would race with the dedup_session
-        # opened inside TaskQueue.submit.)
+        # Resolve the kind change + its strategy default here (the
+        # kind-to-strategy map is VR policy); the service applies them.
+        new_kind: str | None = None
+        new_strategy: str | None = None
+        if body and body.kind is not None:
+            new_kind = body.kind.value
+            new_strategy = _KIND_DEFAULT_STRATEGY[body.kind]
 
         task_queue = get_task_queue("vr", request)
-        await task_queue.submit(
-            track="vr",
-            fn=run_vr_investigate,
-            kwargs={"investigation_id": investigation_id},
-            user_id=auth.user_id,
-            group_id=auth.role,
-            team_id=auth.team_id,
+
+        async def _submit_one(inv_id: str, branch_id: str | None) -> None:
+            del branch_id  # VR submits once; setup owns branch spawn
+            await task_queue.submit(
+                track="vr",
+                fn=run_vr_investigate,
+                kwargs={"investigation_id": inv_id},
+                user_id=auth.user_id,
+                group_id=auth.role,
+                team_id=auth.team_id,
+            )
+
+        await reenqueue_investigation(
+            investigation_id,
+            inv_model=VRInvestigationRecord,
+            fn_path_pattern="%run_vr_investigate%",
+            submit_one=_submit_one,
+            new_kind=new_kind,
+            new_strategy=new_strategy,
         )
+
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                select(VRInvestigationRecord).where(
+                    VRInvestigationRecord.id == investigation_id,
+                ),
+            )).first()
+        if inv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Investigation {investigation_id} not found.",
+            )
         return DataEnvelope(data=_investigation_summary(inv))
 
     @router.post(
@@ -4953,7 +5468,8 @@ def create_vr_router() -> APIRouter:
         del request
         import json as _json
 
-        from .agents.intent_classifier import classify_intent
+        from aila.platform.agents.intent_classifier import classify_intent
+
         from .db_models import (
             VRInvestigationBranchRecord,
             VRInvestigationMessageRecord,
@@ -5194,6 +5710,11 @@ def create_vr_router() -> APIRouter:
         seconds. Terminates when the investigation reaches a terminal
         status or when the connection drops.
         """
+        from aila.api.sse_gate import enforce_sse_cap
+
+        # #60 global SSE ceiling: refuse new streams when ACTIVE_SSE is
+        # at or above the configured cap.
+        enforce_sse_cap()
         del request
         from datetime import datetime as _dt
 
@@ -5228,17 +5749,23 @@ def create_vr_router() -> APIRouter:
         async def _generator() -> AsyncGenerator[str, None]:
             import json as _json
 
-            last_heartbeat = utc_now()
-            local_cursor = cursor
-            terminal = {
-                InvestigationStatus.COMPLETED.value,
-                InvestigationStatus.FAILED.value,
-                InvestigationStatus.ABANDONED.value,
-            }
+            # #60 global SSE ceiling: count this stream against ACTIVE_SSE
+            # so enforce_sse_cap sees every live SSE connection.
+            from aila.api.metrics import ACTIVE_SSE
 
-            yield 'event: open\ndata: {"connected":true}\n\n'
+            ACTIVE_SSE.inc()
+            try:
+              last_heartbeat = utc_now()
+              local_cursor = cursor
+              terminal = {
+                  InvestigationStatus.COMPLETED.value,
+                  InvestigationStatus.FAILED.value,
+                  InvestigationStatus.ABANDONED.value,
+              }
 
-            while True:
+              yield 'event: open\ndata: {"connected":true}\n\n'
+
+              while True:
                 async with UnitOfWork() as poll_uow:
                     stmt = select(VRInvestigationMessageRecord).where(
                         VRInvestigationMessageRecord.investigation_id == investigation_id,
@@ -5260,31 +5787,48 @@ def create_vr_router() -> APIRouter:
                     )).first()
 
                 for row in rows:
-                    summary = _message_summary(row)
-                    # Discriminate operator-steering messages from
-                    # agent turns so the consumer can branch on the
-                    # typed event name without parsing the payload
-                    # (08_FRONTEND_UX.md §2.1).
-                    is_operator = row.sender_kind == SenderKind.OPERATOR.value
-                    event_type = (
-                        VREventType.OPERATOR_STEERING
-                        if is_operator
-                        else VREventType.MESSAGE_CREATED
-                    )
-                    envelope = VREventEnvelope(
-                        type=event_type,
-                        ts=(
-                            row.created_at.isoformat()
-                            if row.created_at else utc_now().isoformat()
-                        ),
-                        investigation_id=investigation_id,
-                        branch_id=row.branch_id,
-                        payload=summary.model_dump(mode="json"),
-                    )
-                    yield (
-                        f"event: {event_type.value}\n"
-                        f"data: {_json.dumps(envelope.model_dump(mode='json'))}\n\n"
-                    )
+                    # A single row that fails to project or serialize MUST
+                    # NOT kill the generator -- otherwise one bad message
+                    # closes the stream and the investigation stops live-
+                    # refreshing entirely. Build the event defensively; on
+                    # failure log (ASCII-only, cp1252-safe) and skip the row.
+                    event_data: str | None = None
+                    try:
+                        summary = _message_summary(row)
+                        # Discriminate operator-steering messages from agent
+                        # turns so the consumer can branch on the typed event
+                        # name without parsing the payload (08_FRONTEND_UX.md).
+                        is_operator = row.sender_kind == SenderKind.OPERATOR.value
+                        event_type = (
+                            VREventType.OPERATOR_STEERING
+                            if is_operator
+                            else VREventType.MESSAGE_CREATED
+                        )
+                        envelope = VREventEnvelope(
+                            type=event_type,
+                            ts=(
+                                row.created_at.isoformat()
+                                if row.created_at else utc_now().isoformat()
+                            ),
+                            investigation_id=investigation_id,
+                            branch_id=row.branch_id,
+                            payload=summary.model_dump(mode="json"),
+                        )
+                        event_data = (
+                            f"event: {event_type.value}\n"
+                            f"data: {_json.dumps(envelope.model_dump(mode='json'))}\n\n"
+                        )
+                    except (ValidationError, ValueError, TypeError, KeyError, AttributeError):
+                        _log.warning(
+                            "vr.sse: skipping unserializable message row id=%s "
+                            "inv=%s -- live tail continues",
+                            getattr(row, "id", "?"), investigation_id,
+                        )
+                    if event_data is not None:
+                        yield event_data
+                    # Advance the cursor past this row whether or not it
+                    # serialized, so a bad row is skipped for good instead of
+                    # re-crashing / re-logging on every poll.
                     if row.created_at and row.created_at > local_cursor:
                         local_cursor = row.created_at
 
@@ -5315,6 +5859,8 @@ def create_vr_router() -> APIRouter:
                     return
 
                 await asyncio.sleep(_SSE_POLL_INTERVAL_S)
+            finally:
+                ACTIVE_SSE.dec()
 
         return StreamingResponse(
             _generator(),
@@ -5431,6 +5977,29 @@ def create_vr_router() -> APIRouter:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Investigation {investigation_id} not found.",
             )
+        # #57: cross-check that the outcome actually belongs to this
+        # investigation. Without this the URL's investigation_id would
+        # only prove the caller owns some investigation while the
+        # outcome_id could point at another team's outcome, letting a
+        # caller cast a vote on a cross-team draft. Mirror the shape
+        # used by promote_outcome_to_finding above.
+        async with UnitOfWork() as uow:
+            oc = (await uow.session.exec(
+                select(VRInvestigationOutcomeRecord)
+                .where(VRInvestigationOutcomeRecord.id == outcome_id)
+                .where(
+                    VRInvestigationOutcomeRecord.investigation_id
+                    == investigation_id,
+                ),
+            )).first()
+        if oc is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"Outcome {outcome_id} not found on investigation "
+                    f"{investigation_id}."
+                ),
+            )
         from .services.outcome_review import (
             OUTCOME_STATE_APPROVED,
             evaluate_quorum,
@@ -5514,6 +6083,26 @@ def create_vr_router() -> APIRouter:
         from .db_models import VRInvestigationOutcomeReviewRecord
 
         async with UnitOfWork() as uow:
+            # #57: cross-check the outcome-to-investigation link before
+            # returning reviews. Without this a caller who owns any
+            # investigation could probe reviews on any team's outcome
+            # by supplying a foreign outcome_id in the URL.
+            oc = (await uow.session.exec(
+                select(VRInvestigationOutcomeRecord)
+                .where(VRInvestigationOutcomeRecord.id == outcome_id)
+                .where(
+                    VRInvestigationOutcomeRecord.investigation_id
+                    == investigation_id,
+                ),
+            )).first()
+            if oc is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"Outcome {outcome_id} not found on investigation "
+                        f"{investigation_id}."
+                    ),
+                )
             rows = (await uow.session.exec(
                 select(VRInvestigationOutcomeReviewRecord)
                 .where(

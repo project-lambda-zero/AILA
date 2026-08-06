@@ -23,17 +23,23 @@ TEST_DB_URL: str = os.environ.get(
 
 @pytest_asyncio.fixture(scope="session")
 async def _session_async_engine() -> AsyncGenerator[object, None]:
-    """Session-scoped async engine: create tables once, shared across all tests."""
-    import aila.modules.vulnerability.db_models  # noqa: F401
+    """Session-scoped async engine: bootstrap the aila_test schema once.
+
+    Bootstrap goes through ``tests/_db_bootstrap.py`` which mirrors
+    ``scripts/db_init.py``: drop the ``public`` schema, ``create_all`` the
+    current models, then ``alembic stamp head``. That closes the #62 drift
+    channel by making the test DB carry the same ``alembic_version`` row a
+    fresh production DB gets, and by loading every ``table=True`` module
+    (including the platform-owned ones outside ``aila.storage.db_models``)
+    before ``create_all`` runs.
+    """
     import aila.storage.database as _db_module
-    import aila.storage.db_models  # noqa: F401
+
+    from tests._db_bootstrap import bootstrap_test_database
+
+    bootstrap_test_database(TEST_DB_URL)
 
     engine = create_async_engine(TEST_DB_URL, echo=False, pool_pre_ping=True)
-
-    async with engine.begin() as conn:
-        # Drop and recreate to pick up schema changes (e.g., new team_id columns)
-        await conn.run_sync(SQLModel.metadata.drop_all)
-        await conn.run_sync(SQLModel.metadata.create_all)
 
     with _db_module._ENGINE_LOCK:
         _db_module._ASYNC_ENGINES[TEST_DB_URL] = engine

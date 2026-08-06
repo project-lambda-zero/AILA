@@ -29,6 +29,7 @@ import {
 } from "@/components/aila/StaggeredList";
 
 import { OutcomeKindBadge, outcomeKindSeverity } from "../components/OutcomeKindBadge";
+import { OutcomePolarityBadge } from "../components/OutcomePolarityBadge";
 import { DeleteButton } from "../components/DeleteButton";
 import {
   useCreateInvestigation,
@@ -58,6 +59,7 @@ const STATUS_DOT: Record<InvestigationStatus, string> = {
   completed: "#8ec5ff",
   failed: "#f0a8c7",
   abandoned: "#9aa0a6",
+  stalled: "#9aa0a6",
 };
 
 // Priority for the default "Smart" sort: live and actionable first.
@@ -66,8 +68,9 @@ const STATUS_PRIORITY: Record<InvestigationStatus, number> = {
   paused: 1,
   completed: 2,
   failed: 3,
-  created: 4,
-  abandoned: 5,
+  stalled: 4,
+  created: 5,
+  abandoned: 6,
 };
 
 const KIND_ICON: Record<InvestigationKind, Icon> = {
@@ -111,6 +114,20 @@ function verdictTextColor(verdict?: string | null): string {
   if (verdict === "refuted") return "#f0a8c7";
   return "var(--color-text-muted)";
 }
+
+// Inline label + color for the compact "\u00b7 <polarity>" fragment inside
+// the row-header span (which is color-locked to the status dot). A nested
+// span with an override color renders the polarity in its own hue without
+// leaking into siblings. Colors mirror OutcomePolarityBadge's semantic
+// vocabulary (finding=danger, no_finding=success, inconclusive=warning).
+const POLARITY_INLINE: Record<
+  "finding" | "no_finding" | "inconclusive",
+  { label: string; color: string }
+> = {
+  finding: { label: "finding", color: "#f0a8c7" },
+  no_finding: { label: "no finding", color: "#97dbbe" },
+  inconclusive: { label: "inconclusive", color: "#f0c97a" },
+};
 
 // ─────────────────────────────────────────────────────────────────────
 // InvestigationCard -- one investigation per row, ~80px tall.
@@ -226,7 +243,14 @@ function InvestigationCard({
             {isRunning && inv.message_count > 0 && (
               <span className="text-text-muted ml-1">
                 · {inv.message_count} turns
-                {inv.primary_outcome_kind ? " · has finding" : ""}
+                {inv.primary_outcome_polarity && (
+                  <span
+                    style={{ color: POLARITY_INLINE[inv.primary_outcome_polarity].color }}
+                  >
+                    {" · "}
+                    {POLARITY_INLINE[inv.primary_outcome_polarity].label}
+                  </span>
+                )}
               </span>
             )}
           </span>
@@ -262,6 +286,9 @@ function InvestigationCard({
             <Bug className="h-3 w-3" weight="bold" />
             {findingsCount}
           </span>
+        )}
+        {inv.primary_outcome_polarity && (
+          <OutcomePolarityBadge polarity={inv.primary_outcome_polarity} />
         )}
         {inv.primary_outcome_kind && (
           <AilaBadge
@@ -636,9 +663,8 @@ export function InvestigationsListPage() {
           </div>
           <p className="text-xs text-text-muted mb-4 leading-relaxed">
             Pick a target you already onboarded under{" "}
-            <strong>Workspaces → Targets</strong>. Workflow{" "}
-            <code className="font-mono">VR_INVESTIGATE_V1</code> fires
-            immediately on create.
+            <strong>Workspaces → Targets</strong>. The adaptive
+            investigation hub fires immediately on create.
           </p>
           <div className="space-y-3">
             <input

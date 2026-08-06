@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from aila.modules.vr.module import VRModule
 from aila.platform.contracts.reasoning import (
     EvidenceProvenance,
     Hypothesis,
@@ -13,7 +14,11 @@ from aila.platform.contracts.reasoning import (
     RejectedHypothesis,
  )
 from aila.platform.exceptions import ValidationError
-from aila.platform.services.reasoning import CyberReasoningEngine
+from aila.platform.services.reasoning import (
+    CyberReasoningEngine,
+    register_reasoning_strategy,
+    reset_reasoning_registries,
+)
 
 
 class _FakeResponse:
@@ -31,12 +36,30 @@ class _FakeLLMClient:
         self.calls.append({"task_type": task_type, "messages": messages})
         return self._response
 
+    async def chat_structured(
+        self,
+        *,
+        task_type: str,
+        messages: list[dict[str, str]],
+        model_class: object,
+        run_id: str | None = None,
+        team_id: str | None = None,
+    ) -> _FakeResponse:
+        self.calls.append({
+            "task_type": task_type,
+            "messages": messages,
+            "run_id": run_id,
+            "team_id": team_id,
+        })
+        return self._response
+
 
 @pytest.mark.asyncio
 async def test_decide_next_turn_parses_valid_json() -> None:
     client = _FakeLLMClient(
         _FakeResponse(
-            '{"reasoning":"Inspect manifest first","action":"tool_run","command":"jadx -h",'
+            '{"reasoning":"Inspect manifest first","action":"tool_run",'
+            '"command":"{\\"tool\\": \\"jadx\\", \\"args\\": {}}",'
             '"hypotheses":[{"id":"H1","claim":"APK is packed"}],'
             '"observables":{"surface":"mobile"}}'
         )
@@ -50,10 +73,37 @@ async def test_decide_next_turn_parses_valid_json() -> None:
     )
 
     assert decision.action == "tool_run"
-    assert decision.command == "jadx -h"
+    # tool_run command is a JSON dispatch object ({tool, args}), validated by
+    # ReasoningTurnDecision._validate_tool_run_command and kept as-is.
+    assert decision.command == '{"tool": "jadx", "args": {}}'
     assert decision.hypotheses[0].id == "H1"
     assert decision.observables["surface"] == "mobile"
     assert client.calls[0]["task_type"] == "mobile_research"
+
+
+@pytest.mark.asyncio
+async def test_decide_next_turn_forwards_run_id() -> None:
+    """run_id threads to chat_structured so per-run cost records, budget
+    checks, and the forensics freeflow ceiling attribute this turn's spend
+    to the caller's investigation (#59/#39). A None run_id stays None."""
+    client = _FakeLLMClient(
+        _FakeResponse(
+            '{"reasoning":"r","action":"tool_run",'
+            '"command":"{\\"tool\\": \\"x\\", \\"args\\": {}}",'
+            '"hypotheses":[],"observables":{}}'
+        )
+    )
+    engine = CyberReasoningEngine(client)  # type: ignore[arg-type]
+
+    await engine.decide_next_turn(
+        task_type="mobile_research",
+        system_prompt="s",
+        user_prompt="u",
+        run_id="inv-abc123",
+    )
+
+    assert client.calls[0]["run_id"] == "inv-abc123"
+    assert client.calls[0]["team_id"] is None
 
 
 @pytest.mark.asyncio
@@ -104,7 +154,9 @@ def test_absorb_preserves_locked_contract_and_dedupes_rejected() -> None:
     )
 
     assert merged.contract.answer_type == "filename"
-    assert [h.id for h in merged.hypotheses] == ["H2"]
+    # absorb merges live hypotheses across turns (nothing the agent proposed
+    # vanishes unless explicitly rejected), so H1 survives alongside new H2.
+    assert [h.id for h in merged.hypotheses] == ["H1", "H2"]
     assert len(merged.rejected) == 2
     assert merged.observables["package"] == "com.example.app"
     assert merged.observables["loader"] == "DexClassLoader"
@@ -128,7 +180,8 @@ def test_render_case_model_includes_contract_hypotheses_and_rejections() -> None
 
     assert "Contract:" in rendered
     assert "answer_type   = path" in rendered
-    assert "Live hypotheses:" in rendered
+    # populated hypothesis header carries the live count
+    assert "Live hypotheses (1):" in rendered
     assert "Persistence via Run key" in rendered
     assert "Rejected (do not re-propose" in rendered
 
@@ -137,7 +190,7 @@ def test_render_case_model_partitions_tool_observables_across_three_mcp_servers(
     """G-8: tool keys from all three MCP servers (audit_mcp, ida_headless,
     android_mcp) must land in the uncapped "tool readings" bucket -- not
     the 15-key agent scratchpad bucket. Without this, android_mcp tool
-    observations (e.g. ``android_mcp.androguard_summary.apk_path=...``)
+    observations (e.g. ``android_mcp.jadx_decompile.apk_path=...``)
     get evicted alongside agent scratchpad keys and the agent re-issues
     APK static-summary calls it already paid for.
     """
@@ -146,7 +199,7 @@ def test_render_case_model_partitions_tool_observables_across_three_mcp_servers(
         observables={
             "audit_mcp.read_function.name=Foo": "fn body",
             "ida_headless.decompile.address=0x1234": "decompiled",
-            "android_mcp.androguard_summary.apk_path=/tmp/x.apk": "perms+certs",
+            "android_mcp.jadx_decompile.apk_path=/tmp/x.apk": "perms+certs",
             "audit_mcp:legacy_colon_form": "still tool",
             "android_mcp:legacy_colon_form": "still tool",
             "_directive.pivot": "must not appear",
@@ -159,13 +212,19 @@ def test_render_case_model_partitions_tool_observables_across_three_mcp_servers(
 
     # All five tool-prefixed keys (3 dot + 2 colon) land under "tool readings".
     assert "Observables -- tool readings" in rendered
-    assert "audit_mcp.read_function.name=Foo = fn body" in rendered
-    assert "ida_headless.decompile.address=0x1234 = decompiled" in rendered
-    assert "android_mcp.androguard_summary.apk_path=/tmp/x.apk = perms+certs" in rendered
-    assert "audit_mcp:legacy_colon_form = still tool" in rendered
-    assert "android_mcp:legacy_colon_form = still tool" in rendered
-    # Agent scratchpad keys land separately.
-    assert "Observables -- agent scratchpad (most recent 15):" in rendered
+    # All five tool-prefixed keys (3 dot + 2 colon) render in the tool-readings
+    # section; the current format puts the key and its body on separate lines.
+    assert "audit_mcp.read_function.name=Foo" in rendered
+    assert "ida_headless.decompile.address=0x1234" in rendered
+    assert "android_mcp.jadx_decompile.apk_path=/tmp/x.apk" in rendered
+    assert "audit_mcp:legacy_colon_form" in rendered
+    assert "android_mcp:legacy_colon_form" in rendered
+    assert "fn body" in rendered
+    assert "decompiled" in rendered
+    assert "perms+certs" in rendered
+    # Agent scratchpad keys land separately; the header reports the total count
+    # (2), which also proves the five tool keys did NOT leak into this bucket.
+    assert "Observables -- agent scratchpad (2 total):" in rendered
     assert "sibling_h7 = agent scratchpad" in rendered
     assert "mandatory_next = agent scratchpad" in rendered
     # _directive.* is lifted to its own section, not rendered here.
@@ -173,24 +232,33 @@ def test_render_case_model_partitions_tool_observables_across_three_mcp_servers(
 
 
 def test_select_strategy_family_routes_mobile_and_vuln_cases() -> None:
-    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
-    empty_state = ReasoningCaseState()
+    # RFC-05 (d): strategy families are module-declared. The platform seeds
+    # only ``generic``; register VR's families so the classifier can route
+    # to them via their declared match_keywords/match_priority.
+    reset_reasoning_registries()
+    for decl in VRModule().reasoning_strategies():
+        register_reasoning_strategy(decl)
+    try:
+        engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+        empty_state = ReasoningCaseState()
 
-    mobile = engine.select_strategy_family(
-        question="Does this APK use dynamic code loading?",
-        case_state=empty_state,
-        evidence_listing="sample.apk",
-        project_kind="disk_evidence",
-    )
-    vuln = engine.select_strategy_family(
-        question="Is CVE-2026-1234 exploitable in this package version?",
-        case_state=empty_state,
-        evidence_listing="inventory.txt",
-        project_kind="disk_evidence",
-    )
+        mobile = engine.select_strategy_family(
+            question="Does this APK use dynamic code loading?",
+            case_state=empty_state,
+            evidence_listing="sample.apk",
+            project_kind="disk_evidence",
+        )
+        vuln = engine.select_strategy_family(
+            question="Is CVE-2026-1234 exploitable in this package version?",
+            case_state=empty_state,
+            evidence_listing="inventory.txt",
+            project_kind="disk_evidence",
+        )
 
-    assert mobile == "mobile_reverse"
-    assert vuln == "vulnerability_research"
+        assert mobile == "mobile_reverse"
+        assert vuln == "vulnerability_research"
+    finally:
+        reset_reasoning_registries()
 
 
 def test_build_user_prompt_embeds_strategy_and_context() -> None:
@@ -257,13 +325,23 @@ def test_validate_submission_accepts_prior_output_and_observables() -> None:
 
 
 def test_resolve_domain_profile_returns_cross_domain_adapter() -> None:
-    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
-    profile = engine.resolve_domain_profile("mobile_reverse")
+    # RFC-05 (d) step 3: a domain_id that names a registered strategy family
+    # but has no registered domain profile resolves to a single-strategy
+    # self-adapter. Register VR's families (not its profiles) so
+    # ``mobile_reverse`` is a known family without a profile of its own.
+    reset_reasoning_registries()
+    for decl in VRModule().reasoning_strategies():
+        register_reasoning_strategy(decl)
+    try:
+        engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+        profile = engine.resolve_domain_profile("mobile_reverse")
 
-    assert profile.domain_id == "mobile_reverse"
-    assert profile.task_type == "mobile_reverse"
-    assert "mobile_reverse" in profile.allowed_strategies
-    assert profile.default_strategy == "mobile_reverse"
+        assert profile.domain_id == "mobile_reverse"
+        assert profile.task_type == "mobile_reverse"
+        assert "mobile_reverse" in profile.allowed_strategies
+        assert profile.default_strategy == "mobile_reverse"
+    finally:
+        reset_reasoning_registries()
 
 
 def test_select_strategy_family_respects_operator_pin() -> None:
@@ -317,3 +395,533 @@ def test_build_evidence_graph_links_contract_evidence_and_answer() -> None:
     assert "answer" in node_ids
     assert ("hyp:H1", "contract", "depends_on") in edge_kinds
     assert ("evidence:artifact-123", "answer", "answered_by") in edge_kinds
+
+
+# ----------------------------------------------------------------------
+# #61-2 -- observables must be JSON-serializable at construction time.
+# A datetime/bytes slipping into observables used to pass Pydantic
+# construction and only crash later at model_dump(mode='json') /
+# task_queue.submit. The AfterValidator surfaces it at the source.
+# ----------------------------------------------------------------------
+
+
+def test_case_state_rejects_non_json_observable() -> None:
+    from datetime import datetime
+
+    from pydantic import ValidationError as PydanticValidationError
+
+    with pytest.raises(PydanticValidationError, match="JSON-serializable"):
+        ReasoningCaseState(observables={"ts": datetime(2026, 7, 20)})
+
+
+def test_case_state_rejects_bytes_observable() -> None:
+    from pydantic import ValidationError as PydanticValidationError
+
+    with pytest.raises(PydanticValidationError, match="JSON-serializable"):
+        ReasoningCaseState(observables={"blob": b"\x00\x01"})
+
+
+def test_turn_decision_rejects_non_json_observable() -> None:
+    from datetime import datetime
+
+    from pydantic import ValidationError as PydanticValidationError
+
+    with pytest.raises(PydanticValidationError, match="JSON-serializable"):
+        ReasoningTurnDecision(
+            reasoning="x",
+            action="reasoning",
+            observables={"ts": datetime(2026, 7, 20)},
+        )
+
+
+# ----------------------------------------------------------------------
+# Recall durable-history backing (STEP 2). The absorb() recall branch
+# accepts a module-supplied ``fetch_observable_body`` callable and uses
+# it to rehydrate any pinned key that has already been evicted from the
+# live observables. When no fetcher is wired (malware/forensics today),
+# the branch injects a short not-available marker so the render layer
+# still surfaces the recall attempt instead of dropping it silently.
+# ----------------------------------------------------------------------
+
+
+def _recall_decision(*keys: str) -> ReasoningTurnDecision:
+    return ReasoningTurnDecision(
+        reasoning="pull those bodies back",
+        action="recall",
+        recall_keys=list(keys),
+        provenance=EvidenceProvenance(),
+    )
+
+
+def test_absorb_recall_present_key_no_rehydrate() -> None:
+    """When the recalled key IS still in live observables, the fetcher
+    is not consulted and the existing body stays put -- recall on a
+    live key is a pure pin operation."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    calls: list[str] = []
+
+    def _boom(key: str) -> str | None:
+        calls.append(key)
+        raise AssertionError(f"fetcher must not be consulted for live key {key!r}")
+
+    initial = ReasoningCaseState(
+        observables={"audit_mcp.read_function.source.foo": "int foo() { return 1; }"},
+    )
+    merged = engine.absorb(
+        initial,
+        _recall_decision("audit_mcp.read_function.source.foo"),
+        fetch_observable_body=_boom,
+    )
+
+    assert merged.observables["audit_mcp.read_function.source.foo"] == "int foo() { return 1; }"
+    assert merged.observables["_recall.pinned"] == ["audit_mcp.read_function.source.foo"]
+    assert calls == []
+
+
+def test_absorb_recall_evicted_key_rehydrates_from_fetcher() -> None:
+    """When the recalled key is ABSENT from live observables, the
+    fetcher rehydrates it and absorb re-injects the returned body under
+    the same key so the render layer can render it full."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    history = {
+        "audit_mcp.read_function.source.foo": "int foo(void) { return 42; }",
+        "audit_mcp.read_function.source.bar": "void bar(int x) { }",
+    }
+    seen: list[str] = []
+
+    def _fake_fetcher(key: str) -> str | None:
+        seen.append(key)
+        return history.get(key)
+
+    initial = ReasoningCaseState()
+    merged = engine.absorb(
+        initial,
+        _recall_decision(
+            "audit_mcp.read_function.source.foo",
+            "audit_mcp.read_function.source.bar",
+        ),
+        fetch_observable_body=_fake_fetcher,
+    )
+
+    assert merged.observables["audit_mcp.read_function.source.foo"] == "int foo(void) { return 42; }"
+    assert merged.observables["audit_mcp.read_function.source.bar"] == "void bar(int x) { }"
+    assert merged.observables["_recall.pinned"] == [
+        "audit_mcp.read_function.source.foo",
+        "audit_mcp.read_function.source.bar",
+    ]
+    assert seen == [
+        "audit_mcp.read_function.source.foo",
+        "audit_mcp.read_function.source.bar",
+    ]
+
+
+def test_absorb_recall_fetcher_none_result_injects_marker() -> None:
+    """When the fetcher returns None for a key (durable history has no
+    hit), absorb injects a short marker under the key so the render
+    layer surfaces the recall attempt instead of silently dropping it."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+
+    def _empty_fetcher(_key: str) -> str | None:
+        return None
+
+    merged = engine.absorb(
+        ReasoningCaseState(),
+        _recall_decision("audit_mcp.read_function.source.missing"),
+        fetch_observable_body=_empty_fetcher,
+    )
+
+    marker = merged.observables["audit_mcp.read_function.source.missing"]
+    assert "recall" in marker.lower()
+    assert "not available" in marker.lower() or "not retrievable" in marker.lower()
+    assert merged.observables["_recall.pinned"] == ["audit_mcp.read_function.source.missing"]
+
+
+def test_absorb_recall_no_fetcher_wired_degrades_gracefully() -> None:
+    """Malware/forensics-style engine construction (no fetcher wired):
+    a recall of an absent key MUST NOT crash. Absorb injects the
+    not-available marker under the pinned key."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+
+    merged = engine.absorb(
+        ReasoningCaseState(),
+        _recall_decision("audit_mcp.read_function.source.orphan"),
+        # No fetch_observable_body -- default None, current malware/forensics behavior.
+    )
+
+    marker = merged.observables["audit_mcp.read_function.source.orphan"]
+    assert isinstance(marker, str)
+    assert marker != ""
+    assert "recall" in marker.lower()
+    assert merged.observables["_recall.pinned"] == ["audit_mcp.read_function.source.orphan"]
+
+
+def test_absorb_recall_fetcher_raises_falls_back_to_marker() -> None:
+    """A misbehaving fetcher (raises an expected class) MUST NOT crash
+    the turn -- absorb catches the error and injects the marker."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+
+    def _raising(_key: str) -> str | None:
+        raise RuntimeError("DB connection reset")
+
+    merged = engine.absorb(
+        ReasoningCaseState(),
+        _recall_decision("audit_mcp.read_function.source.broken"),
+        fetch_observable_body=_raising,
+    )
+
+    marker = merged.observables["audit_mcp.read_function.source.broken"]
+    assert isinstance(marker, str) and marker
+    assert "recall" in marker.lower()
+
+
+# ----------------------------------------------------------------------
+# STEP 3 -- storage caps resolve via ConfigRegistry under the platform
+# namespace with the schema defaults preserved when no registry is
+# wired.
+# ----------------------------------------------------------------------
+
+
+class _FakeConfigRegistry:
+    """Minimal ConfigRegistry stub: dict-backed sync reads for tests."""
+
+    def __init__(self, values: dict[tuple[str, str], object] | None = None) -> None:
+        self._values = dict(values or {})
+
+    def get_sync(self, namespace: str, key: str) -> object:
+        return self._values.get((namespace, key))
+
+
+def test_absorb_agent_key_cap_defaults_to_150() -> None:
+    """No config registry wired -> the schema default (150) applies."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    seed = {f"scratch_{i}": i for i in range(200)}
+    initial = ReasoningCaseState(observables=seed)
+    merged = engine.absorb(
+        initial,
+        ReasoningTurnDecision(
+            reasoning="noop",
+            action="reasoning",
+            provenance=EvidenceProvenance(),
+        ),
+    )
+    agent_keys = [k for k in merged.observables if not k.startswith(("audit_mcp", "ida_headless", "_directive.", "_recall."))]
+    assert len(agent_keys) == 150
+
+
+def test_absorb_agent_key_cap_resolves_from_platform_registry() -> None:
+    """Wire a ConfigRegistry that returns 25 -> absorb enforces 25."""
+    registry = _FakeConfigRegistry(
+        {("platform", "reasoning_max_agent_keys_total"): 25},
+    )
+    engine = CyberReasoningEngine(
+        _FakeLLMClient(_FakeResponse("{}")),  # type: ignore[arg-type]
+        config_registry=registry,
+    )
+    seed = {f"scratch_{i}": i for i in range(80)}
+    initial = ReasoningCaseState(observables=seed)
+    merged = engine.absorb(
+        initial,
+        ReasoningTurnDecision(
+            reasoning="noop",
+            action="reasoning",
+            provenance=EvidenceProvenance(),
+        ),
+    )
+    agent_keys = [k for k in merged.observables if not k.startswith(("audit_mcp", "ida_headless", "_directive.", "_recall."))]
+    assert len(agent_keys) == 25
+
+
+def test_absorb_recall_pinned_cap_defaults_to_8() -> None:
+    """No config wired -> pinned working set caps at 8."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    # Prior state already has 5 pins.
+    initial = ReasoningCaseState(
+        observables={
+            "_recall.pinned": [f"audit_mcp.old_pin.{i}" for i in range(5)],
+        },
+    )
+    merged = engine.absorb(
+        initial,
+        _recall_decision(*(f"audit_mcp.new_pin.{i}" for i in range(6))),
+    )
+    assert len(merged.observables["_recall.pinned"]) == 8
+    # Newest arrivals win.
+    assert merged.observables["_recall.pinned"][-1] == "audit_mcp.new_pin.5"
+
+
+def test_absorb_recall_pinned_cap_resolves_from_platform_registry() -> None:
+    """Registry override 3 -> pinned working set trims to 3."""
+    registry = _FakeConfigRegistry(
+        {("platform", "reasoning_recall_pinned_max"): 3},
+    )
+    engine = CyberReasoningEngine(
+        _FakeLLMClient(_FakeResponse("{}")),  # type: ignore[arg-type]
+        config_registry=registry,
+    )
+    merged = engine.absorb(
+        ReasoningCaseState(),
+        _recall_decision(*(f"audit_mcp.k{i}" for i in range(10))),
+    )
+    assert len(merged.observables["_recall.pinned"]) == 3
+    assert merged.observables["_recall.pinned"] == [
+        "audit_mcp.k7", "audit_mcp.k8", "audit_mcp.k9",
+    ]
+
+
+def test_json_safe_observables_pass() -> None:
+    # The shapes the reasoning loop actually stores: strings, ints,
+    # nested json-dicts, and lists all round-trip cleanly.
+    state = ReasoningCaseState(
+        observables={
+            "_directive.note": "steering text",
+            "_reject_count": 3,
+            "_pending": {"answer": "a", "blocked_at_turn": 2},
+            "_recall.pinned": ["artifact-1", "artifact-2"],
+        },
+    )
+    assert state.observables["_reject_count"] == 3
+    assert state.observables["_pending"]["blocked_at_turn"] == 2
+
+
+# ----------------------------------------------------------------------
+# Acceptance (c): render_case_model no longer applies the 7 hardcoded
+# display caps (hyp_ceiling=60 / scratchpad_ceiling=150 /
+# scratchpad_preview=240 / index_ceiling=400 / recent_full_count=12 /
+# recent_full_cap=4000 / index_firstline_cap=80). Every hypothesis,
+# every tool reading, and every scratchpad entry now renders in full;
+# the RFC-24 ContextAssembler sizes the LIVE section against a real
+# token budget instead. Trimmed content stays recall-able through the
+# durable message history (see absorb path).
+# ----------------------------------------------------------------------
+
+
+def test_render_case_model_renders_all_hypotheses_past_former_60_cap() -> None:
+    """Former hyp_ceiling=60 truncated live hypothesis lists; renders now
+    emit every hypothesis (RFC-24 budget layer decides fit)."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    case_state = ReasoningCaseState(
+        hypotheses=[Hypothesis(id=f"H{i}", claim=f"claim {i}") for i in range(120)],
+    )
+
+    rendered = engine.render_case_model(case_state)
+
+    for i in range(120):
+        assert f"H{i}: claim {i}" in rendered, (
+            f"hypothesis {i} missing -- former hyp_ceiling still capping"
+        )
+    # No overflow note.
+    assert "rendering ceiling" not in rendered
+
+
+def test_render_case_model_renders_all_scratchpad_full_body_past_former_150_240() -> None:
+    """Former caps: scratchpad_ceiling=150 (drop past 150 keys) and
+    scratchpad_preview=240 (per-value truncation). Neither applies now:
+    every agent-set key renders with its full value."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    long_value = "X" * 500  # > former 240 preview
+    observables: dict[str, object] = {
+        f"scratch_key_{i}": long_value for i in range(160)  # > former 150 ceiling
+    }
+    case_state = ReasoningCaseState(observables=observables)
+
+    rendered = engine.render_case_model(case_state)
+
+    # Every key surfaces.
+    for i in range(160):
+        assert f"scratch_key_{i} = " in rendered, (
+            f"scratchpad key {i} missing -- former scratchpad_ceiling still capping"
+        )
+    # Full value renders (no 240-char truncation).
+    assert long_value in rendered
+    # Header total reflects the full count.
+    assert "agent scratchpad (160 total)" in rendered
+    # No overflow note.
+    assert "scratchpad rendering ceiling" not in rendered
+
+
+def test_render_case_model_renders_all_tool_readings_past_former_400_12_4000() -> None:
+    """Former caps: index_ceiling=400 (drop past 400 tool keys),
+    recent_full_count=12 (only last 12 in full-body block), and
+    recent_full_cap=4000 (per-body preview truncation). Removed:
+    every tool key renders in full both in the INDEX and in the
+    full-body block; large bodies render verbatim so file:line
+    anchors survive."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    # 450 tool readings past the former 400 index ceiling. Each body
+    # is 4500 chars past the former 4000 full-body preview cap so we
+    # can also assert per-body cap removal on the last one.
+    big_body = "BODY_LINE_1\nBODY_LINE_2\n" + ("Z" * 4500)
+    observables: dict[str, object] = {
+        f"audit_mcp.read_function.k{i}": big_body for i in range(450)
+    }
+    case_state = ReasoningCaseState(observables=observables)
+
+    rendered = engine.render_case_model(case_state)
+
+    # Every key surfaces in the INDEX (past former 400 cap).
+    for i in (0, 200, 399, 400, 449):
+        assert f"audit_mcp.read_function.k{i}" in rendered, (
+            f"tool key {i} missing -- former index_ceiling still capping"
+        )
+    # Header total reflects the full count.
+    assert "tool readings INDEX (450 total" in rendered
+    # No overflow note.
+    assert "indexing ceiling" not in rendered
+    # Full-body section: keys past former 12-recent window render in
+    # full without the "preview; recall this key" tail.
+    assert "[preview; recall this key for full body]" not in rendered
+    # Body is preserved verbatim (past former 4000 cap).
+    assert ("Z" * 4500) in rendered
+
+
+def test_render_case_model_first_line_preview_uncapped() -> None:
+    """Former index_firstline_cap=80: the INDEX line's preview was
+    cropped to 80 chars. Removed: the first line renders verbatim so
+    an operator scanning the INDEX sees the full label."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    long_first_line = "first-line marker: " + ("F" * 300)  # > former 80 cap
+    case_state = ReasoningCaseState(
+        observables={"audit_mcp.k": long_first_line + "\nsecond line"},
+    )
+
+    rendered = engine.render_case_model(case_state)
+
+    assert long_first_line in rendered, (
+        "first-line preview truncated -- former index_firstline_cap still capping"
+    )
+
+
+# ----------------------------------------------------------------------
+# #3 convergence fix -- hypothesis staleness directive. absorb() reads
+# ``platform.reasoning_hyp_stale_turns`` and writes
+# ``_directive.stale_hypotheses`` naming any live hypothesis whose age
+# (current_turn - opened_at_turn) has crossed the threshold. Nudge-only
+# (never auto-rejects). Clears on the same call when no stale ids
+# remain so a resolved directive never lingers.
+# ----------------------------------------------------------------------
+
+
+def _noop_decision() -> ReasoningTurnDecision:
+    return ReasoningTurnDecision(
+        reasoning="noop",
+        action="reasoning",
+        provenance=EvidenceProvenance(),
+    )
+
+
+def test_absorb_stale_hypothesis_sets_stale_directive_at_default_threshold() -> None:
+    """A hypothesis opened at turn 1 that has aged 8 turns (default
+    threshold) triggers ``_directive.stale_hypotheses``."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    initial = ReasoningCaseState(
+        hypotheses=[
+            Hypothesis(id="h_old", claim="long-lived vector", opened_at_turn=1),
+            Hypothesis(id="h_new", claim="just proposed", opened_at_turn=8),
+        ],
+    )
+
+    merged = engine.absorb(initial, _noop_decision(), turn_number=9)
+
+    directive = merged.observables.get("_directive.stale_hypotheses")
+    assert isinstance(directive, str) and directive
+    assert "h_old" in directive
+    assert "long-lived vector" in directive
+    assert "alive 8 turns" in directive
+    # h_new is age=1, well under threshold -- must NOT be flagged.
+    assert "h_new" not in directive
+    # Contract check: directive names actionable next steps.
+    assert "(a) resolve" in directive
+    assert "(b) explicitly defer" in directive
+
+
+def test_absorb_fresh_hypotheses_do_not_set_stale_directive() -> None:
+    """When every live hypothesis is younger than the threshold, the
+    directive MUST NOT be set (and any prior stamp MUST clear)."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    initial = ReasoningCaseState(
+        hypotheses=[
+            Hypothesis(id="h_a", claim="a", opened_at_turn=5),
+            Hypothesis(id="h_b", claim="b", opened_at_turn=6),
+        ],
+    )
+
+    merged = engine.absorb(initial, _noop_decision(), turn_number=7)
+
+    assert "_directive.stale_hypotheses" not in merged.observables
+
+
+def test_absorb_stale_directive_clears_when_hypothesis_resolved() -> None:
+    """When the offending hypothesis is rejected on this turn, the
+    directive stamped previously MUST clear (no scolding for closed
+    work)."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    initial = ReasoningCaseState(
+        hypotheses=[
+            Hypothesis(id="h_old", claim="long", opened_at_turn=1),
+        ],
+        observables={
+            "_directive.stale_hypotheses": "prior stale banner",
+        },
+    )
+    decision = ReasoningTurnDecision(
+        reasoning="disproved by source read",
+        action="reasoning",
+        provenance=EvidenceProvenance(),
+        rejected=[
+            RejectedHypothesis(
+                id="h_old",
+                claim="long",
+                reason="source-read shows path guarded",
+            ),
+        ],
+    )
+
+    merged = engine.absorb(initial, decision, turn_number=12)
+
+    assert "_directive.stale_hypotheses" not in merged.observables
+    assert not any(h.id == "h_old" for h in merged.hypotheses)
+
+
+def test_absorb_stale_threshold_resolves_from_platform_registry() -> None:
+    """Operator override lowers the threshold: a hypothesis of age 4
+    now trips the directive even though the schema default (8) would
+    let it pass."""
+    registry = _FakeConfigRegistry(
+        {("platform", "reasoning_hyp_stale_turns"): 4},
+    )
+    engine = CyberReasoningEngine(
+        _FakeLLMClient(_FakeResponse("{}")),  # type: ignore[arg-type]
+        config_registry=registry,
+    )
+    initial = ReasoningCaseState(
+        hypotheses=[
+            Hypothesis(id="h_mid", claim="aging fast", opened_at_turn=2),
+        ],
+    )
+
+    merged = engine.absorb(initial, _noop_decision(), turn_number=6)
+
+    directive = merged.observables.get("_directive.stale_hypotheses")
+    assert isinstance(directive, str) and "h_mid" in directive
+    assert "alive 4 turns" in directive
+
+
+def test_absorb_stale_threshold_zero_disables_directive() -> None:
+    """``reasoning_hyp_stale_turns <= 0`` disables the directive so a
+    stress-mode override can silence the nudge."""
+    registry = _FakeConfigRegistry(
+        {("platform", "reasoning_hyp_stale_turns"): 0},
+    )
+    engine = CyberReasoningEngine(
+        _FakeLLMClient(_FakeResponse("{}")),  # type: ignore[arg-type]
+        config_registry=registry,
+    )
+    initial = ReasoningCaseState(
+        hypotheses=[
+            Hypothesis(id="h_ancient", claim="very old", opened_at_turn=1),
+        ],
+    )
+
+    merged = engine.absorb(initial, _noop_decision(), turn_number=100)
+
+    assert "_directive.stale_hypotheses" not in merged.observables

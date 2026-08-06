@@ -1,14 +1,7 @@
 from __future__ import annotations
 
-import json
 import threading
 
-from sqlalchemy import func
-from sqlmodel import select, update
-
-from ...platform.contracts._common import utc_now
-from ...storage.database import async_session_scope
-from ...storage.db_models import KnowledgeEntryRecord
 from ..config import PlatformSettings
 from ._common import Tool, normalize_limit, require_text
 
@@ -17,20 +10,26 @@ __all__ = [
     "KnowledgeStoreTool",
 ]
 
-# Module-level lazy singleton -- never loaded unless a knowledge tool is actually used (per D-08).
-_EMBEDDING_MODEL = None
-_EMBEDDING_LOCK = threading.Lock()
+# Module-level lazy singleton (per D-08): constructed only when a knowledge
+# tool is first used. #37: the store/retrieve tools MUST embed with the same
+# provider as KnowledgeService (the service store/retrieve path), or vectors
+# written by one path and queried by the other land in incompatible embedding
+# spaces and retrieval returns garbage. Both paths now go through
+# KnowledgeService.embed (canonical resolve_provider selection + the shared
+# 1024-dim BGE-M3 space), so a single cached service is reused here.
+_KNOWLEDGE_SERVICE = None
+_SERVICE_LOCK = threading.Lock()
 
 
-def _get_embedding_model() -> object:
-    """Return the cached SentenceTransformer, loading on first call."""
-    global _EMBEDDING_MODEL
-    if _EMBEDDING_MODEL is None:
-        with _EMBEDDING_LOCK:
-            if _EMBEDDING_MODEL is None:
-                from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped]
-                _EMBEDDING_MODEL = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-    return _EMBEDDING_MODEL
+def _knowledge_service() -> object:
+    """Return the cached KnowledgeService, constructing it on first call."""
+    global _KNOWLEDGE_SERVICE
+    if _KNOWLEDGE_SERVICE is None:
+        with _SERVICE_LOCK:
+            if _KNOWLEDGE_SERVICE is None:
+                from ..services.knowledge import KnowledgeService
+                _KNOWLEDGE_SERVICE = KnowledgeService()
+    return _KNOWLEDGE_SERVICE
 
 
 class KnowledgeStoreTool(Tool):
@@ -71,87 +70,60 @@ class KnowledgeStoreTool(Tool):
         # Extract dedup sentinel before storing -- do not persist _dedup_key inside entry_metadata (per D-06)
         dedup_key: str | None = meta.pop("_dedup_key", None)
 
-        model = _get_embedding_model()
-        # Embedding computed outside transaction -- keep write lock short (per research pitfall 2)
-        # pgvector accepts list[float], not raw bytes (Pitfall 3)
-        embedding_list = model.encode(content).tolist()
-        meta_json = json.dumps(meta)
-
-        async with async_session_scope(self.settings) as session:
-            existing_id: int | None = None
-            if dedup_key is not None:
-                stmt = select(KnowledgeEntryRecord.id).where(
-                    KnowledgeEntryRecord.namespace == self.namespace,
-                    KnowledgeEntryRecord.dedup_key == dedup_key,
-                )
-                row = (await session.exec(stmt)).first()
-                if row is not None:
-                    existing_id = row[0]
-
-            if existing_id is not None:
-                # UPDATE path -- search_vector auto-maintained by PostgreSQL generated column
-                update_stmt = (
-                    update(KnowledgeEntryRecord)
-                    .where(KnowledgeEntryRecord.id == existing_id)
-                    .values(
-                        content=content,
-                        embedding=embedding_list,
-                        entry_metadata=meta_json,
-                        dedup_key=dedup_key,
-                    )
-                )
-                await session.exec(update_stmt)
-                await session.commit()
-                entry_id = existing_id
-                operation = "updated"
-            else:
-                # INSERT path (dedup_key may be None for unconstrained inserts)
-                record = KnowledgeEntryRecord(
-                    namespace=self.namespace,
-                    content=content,
-                    embedding=embedding_list,
-                    entry_metadata=meta_json,
-                    dedup_key=dedup_key,
-                    created_at=utc_now(),
-                )
-                session.add(record)
-                await session.commit()
-                await session.refresh(record)
-                entry_id = record.id
-                operation = "inserted"
-
-        return {
-            "status": "stored",
-            "operation": operation,
-            "entry_id": entry_id,
-            "namespace": self.namespace,
-            "embedding_dim": 384,
-            "content_length": len(content),
-        }
+        # #37/RFC-12: delegate to KnowledgeService.store so this tool shares the
+        # one embedding path, stamps provenance (model_id / content_hash /
+        # source_type / updated_at) on every vector, upserts under the
+        # advisory-lock dedup, and links semantic neighbours -- instead of
+        # running a second, provenance-less INSERT path that wrote vectors the
+        # #37 guardrails now forbid. extract_entities tags CVE / CWE / technique
+        # ids so retrieval can scope through metadata_filter.
+        return await _knowledge_service().store(
+            namespace=self.namespace,
+            content=content,
+            metadata=meta,
+            dedup_key=dedup_key,
+            extract_entities=True,
+            link_neighbors=True,
+        )
 
 
 class KnowledgeRetrieveTool(Tool):
-    """Platform tool for pgvector + tsvector hybrid retrieval from the knowledge store.
+    """Platform tool for adaptive namespace-scoped retrieval from the knowledge store.
 
-    Runs two queries -- a pgvector cosine distance KNN query and a PostgreSQL
-    tsvector full-text search -- then merges results by scoring each entry on a
-    weighted sum: 0.6 * vector_similarity + 0.4 * FTS_rank. Results are
-    namespace-scoped so each agent only retrieves its own stored knowledge.
+    Consults the RFC-12 :class:`KnowledgeRouter` on every call so the
+    query is served by the cheapest adequate path -- stable-core CAG,
+    the hybrid pgvector + tsvector path, or the multi-hop graph
+    traversal. The router pick propagates back to the caller as the
+    ``route`` key on the return dict; per-hit provenance and the
+    sanitize/classify gate are guaranteed regardless of the path.
 
-    The SentenceTransformer model is loaded lazily and shared with KnowledgeStoreTool
-    via the module-level singleton.
+    Namespace scoping still applies -- the tool passes its bound
+    ``namespace`` to :meth:`KnowledgeService.retrieve_routed` so
+    hybrid and graph seeds stay inside the agent's own store; the
+    stable-core path is deliberately cross-namespace (the CAG core is
+    platform-scoped by design).
     """
 
     name = "knowledge_retrieve"
-    description = "Retrieve knowledge entries semantically similar to a query, scoped to the agent's namespace."
+    description = "Retrieve knowledge entries with adaptive routing (stable-core / hybrid / graph), scoped to the agent's namespace."
     inputs = {
         "query": {
             "type": "string",
-            "description": "Query text to embed and search for similar knowledge.",
+            "description": "Query text -- the router classifies its shape and picks the retrieval path.",
         },
         "limit": {
             "type": "integer",
             "description": "Maximum results to return (default: 10, max: 50).",
+            "nullable": True,
+        },
+        "route": {
+            "type": "string",
+            "description": "Optional retrieval route override: 'stable_core' | 'simple' | 'graph'. Omit to let the router classify.",
+            "nullable": True,
+        },
+        "max_hops": {
+            "type": "integer",
+            "description": "Graph-path hop bound (default 2). Ignored on stable-core and simple.",
             "nullable": True,
         },
     }
@@ -161,128 +133,36 @@ class KnowledgeRetrieveTool(Tool):
         self.namespace = require_text(namespace, tool_name="KnowledgeRetrieveTool", field_name="namespace")
         self.settings = settings
 
-    async def forward(self, query: str, limit: int | None = None) -> dict:
+    async def forward(
+        self,
+        query: str,
+        limit: int | None = None,
+        route: str | None = None,
+        max_hops: int | None = None,
+    ) -> dict:
         query = require_text(query, tool_name="KnowledgeRetrieveTool", field_name="query")
         limit = normalize_limit(limit, default=10, maximum=50)
-        model = _get_embedding_model()
-        # pgvector accepts list[float], not raw bytes (Pitfall 3)
-        query_embedding = model.encode(query).tolist()
-        candidate_limit = limit * 10
 
-        async with async_session_scope(self.settings) as session:
-            # --- Vector leg: pgvector cosine distance ---
-            vec_stmt = (
-                select(
-                    KnowledgeEntryRecord.id,
-                    KnowledgeEntryRecord.content,
-                    KnowledgeEntryRecord.entry_metadata,
-                    KnowledgeEntryRecord.embedding.cosine_distance(query_embedding).label("distance"),
-                )
-                .where(KnowledgeEntryRecord.namespace == self.namespace)
-                .order_by(KnowledgeEntryRecord.embedding.cosine_distance(query_embedding))
-                .limit(candidate_limit)
-            )
-            vec_result = await session.exec(vec_stmt)
-            vec_rows = vec_result.all()
-
-            # --- FTS leg: PostgreSQL tsvector + plainto_tsquery ---
-            ts_query = func.plainto_tsquery("english", query)
-            fts_stmt = (
-                select(
-                    KnowledgeEntryRecord.id,
-                    func.ts_rank(KnowledgeEntryRecord.search_vector, ts_query).label("rank"),
-                )
-                .where(
-                    KnowledgeEntryRecord.namespace == self.namespace,
-                    KnowledgeEntryRecord.search_vector.op("@@")(ts_query),
-                )
-                .order_by(func.ts_rank(KnowledgeEntryRecord.search_vector, ts_query).desc())
-                .limit(candidate_limit)
-            )
-            fts_result = await session.exec(fts_stmt)
-            fts_rows = fts_result.all()
-
-            # --- Build lookup maps ---
-            vec_map: dict[int, dict] = {
-                row.id: {
-                    "content": row.content,
-                    "entry_metadata": row.entry_metadata,
-                    "distance": float(row.distance),
-                }
-                for row in vec_rows
-            }
-            fts_map: dict[int, float] = {row.id: float(row.rank) for row in fts_rows}
-
-            # For FTS-only results, fetch content via secondary query since
-            # the FTS query only returns id and rank
-            fts_only_ids = set(fts_map) - set(vec_map)
-            if fts_only_ids:
-                content_stmt = select(
-                    KnowledgeEntryRecord.id,
-                    KnowledgeEntryRecord.content,
-                    KnowledgeEntryRecord.entry_metadata,
-                ).where(KnowledgeEntryRecord.id.in_(list(fts_only_ids)))
-                content_result = await session.exec(content_stmt)
-                content_rows = content_result.all()
-                fts_content_map: dict[int, dict] = {
-                    r.id: {"content": r.content, "entry_metadata": r.entry_metadata}
-                    for r in content_rows
-                }
-            else:
-                fts_content_map = {}
-
-        # --- Merge by record ID ---
-        all_ids = set(vec_map) | set(fts_map)
-
-        merged: list[dict] = []
-        for entry_id in all_ids:
-            vec_info = vec_map.get(entry_id)
-            fts_rank = fts_map.get(entry_id)
-
-            # Normalise scores -- missing leg contributes 0.0
-            # pgvector cosine_distance: 0.0 (identical) to 2.0 (opposite)
-            vec_score = 1.0 - (vec_info["distance"] / 2.0) if vec_info is not None else 0.0
-            # ts_rank: positive values, typically 0.0-1.0, can exceed 1.0
-            fts_score = min(float(fts_rank), 1.0) if fts_rank is not None else 0.0
-            combined = 0.6 * vec_score + 0.4 * fts_score
-
-            # Determine result source
-            if vec_info is not None and fts_rank is not None:
-                source = "hybrid"
-            elif vec_info is not None:
-                source = "vec_only"
-            else:
-                source = "fts_only"
-
-            # Use content/metadata from whichever leg has it
-            if vec_info is not None:
-                content = vec_info["content"]
-                entry_metadata = vec_info["entry_metadata"]
-            elif entry_id in fts_content_map:
-                content = fts_content_map[entry_id]["content"]
-                entry_metadata = fts_content_map[entry_id]["entry_metadata"]
-            else:
-                content = ""
-                entry_metadata = "{}"
-
-            merged.append({
-                "id": entry_id,
-                "content": content,
-                "metadata": json.loads(entry_metadata or "{}"),
-                "score": round(combined, 6),
-                "vec_score": round(vec_score, 6),
-                "fts_score": round(fts_score, 6),
-                "source": source,
-            })
-
-        merged.sort(key=lambda r: r["score"], reverse=True)
-        results = merged[:limit]
+        service = _knowledge_service()
+        # Cross-namespace stable-core (platform:stable_core:*) is served
+        # cache-only, so we scope hybrid + graph seeds to the tool's
+        # namespace and leave the stable-core path unrestricted -- the
+        # CAG membership is namespace-driven at the retrieval layer.
+        routed = await service.retrieve_routed(
+            query=query,
+            route=route,
+            limit=limit,
+            namespaces=[self.namespace],
+            max_hops=max_hops,
+        )
 
         return {
             "status": "retrieved",
             "namespace": self.namespace,
-            "query": query,
-            "count": len(results),
-            "hybrid": True,
-            "results": results,
+            "query": routed.get("query", query),
+            "route": routed.get("route"),
+            "hop_bound": routed.get("hop_bound"),
+            "count": routed.get("count", 0),
+            "hybrid": routed.get("route") == "simple",
+            "results": routed.get("results", []),
         }

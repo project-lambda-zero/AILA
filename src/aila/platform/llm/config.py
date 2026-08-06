@@ -1,8 +1,8 @@
 """LLM configuration provider -- routing, key resolution, kill switch.
 
 Reads all configuration from ConfigRegistry (namespace "platform") and
-SecretStore.  Zero caching -- every call reads current state so runtime
-changes via PUT /config take effect immediately.
+SecretStore.  ConfigRegistry caches resolved values for up to 60 seconds,
+so a change via PUT /config takes effect within that window.
 
 API key resolution order (per D-05):
   1. SecretStore("provider", "openai_api_key")
@@ -49,6 +49,7 @@ class LLMRouting:
         max_tokens: Maximum completion tokens for this task_type.
         temperature: Sampling temperature for this task_type.
         max_tool_steps: Maximum tool-calling loop iterations (per D-20).
+        tool_timeout_s: Per-tool-call executor timeout in seconds (#44).
     """
 
     model_id: str
@@ -58,6 +59,7 @@ class LLMRouting:
     temperature: float
     max_tool_steps: int
     task_type: str = ""
+    tool_timeout_s: float = 300.0
 
 
 class LLMConfigProvider:
@@ -75,6 +77,16 @@ class LLMConfigProvider:
         self._registry = registry
         self._secret_store = secret_store
 
+    @property
+    def registry(self) -> ConfigRegistry:
+        """The backing ConfigRegistry (read-only accessor for collaborators).
+
+        Lets pipeline steps that already hold the provider reach the same
+        registry for helpers such as ``calculate_cost_usd`` without a
+        private-attribute reach-through.
+        """
+        return self._registry
+
     async def resolve_api_key(self) -> str | None:
         """Resolve API key: SecretStore first, then OPENAI_API_KEY env var.
 
@@ -91,7 +103,27 @@ class LLMConfigProvider:
 
         Lookup: llm_model_{task_type} in ConfigRegistry.
         Fallback: llm_default_model in ConfigRegistry.
-        Final fallback: "openai/gpt-4o-mini" (safe default).
+        Final fallback: "antigravity/claude-opus-4-6-thinking".
+
+        When an operator has configured an ordered comma-separated
+        fallback list at ``llm_model_{task_type}_fallback``, this
+        method consults the process-wide :class:`ModelHealthRouter`
+        for per-model drift bias: a primary model whose seal drift
+        tracker reported a persistent ``degrading`` or ``volatile``
+        status for this task_type routes to the next non-degraded
+        candidate. The primary is still returned when every fallback
+        is also drift-biased (a drifting primary is preferable to
+        blind rerouting against no evidence).
+
+        RFC-09 Amendment 2 (bundle routing): when the pinned
+        agent-config bundle for the current turn carries a
+        ``routing_json`` entry for ``task_type``, that model wins
+        over the registry lookup. An empty routing dict (every
+        prompt-only bundle, and every non-investigation call) leaves
+        this behaviour byte-identical to before -- the override only
+        applies when an operator explicitly wired routing into the
+        bundle. Runs on the LLM hot path; the ContextVar read is a
+        single attribute access.
 
         Args:
             task_type: The task type string (e.g. "scoring", "synthesis").
@@ -99,13 +131,48 @@ class LLMConfigProvider:
         Returns:
             OpenRouter model identifier string.
         """
+        # Bundle routing override -- pinned bundle wins when present. An
+        # empty bundle (nothing pinned, or a prompt-only bundle) falls
+        # through untouched to the existing registry lookup.
+        from aila.platform.prompts.bundle_ctx import current_pinned_bundle
+        bundle = current_pinned_bundle()
+        if bundle.routing:
+            override = bundle.routing.get(task_type)
+            if override and str(override).strip():
+                return str(override)
         specific = await self._registry.get("platform", f"llm_model_{task_type}")
+        primary: str | None = None
         if specific is not None and str(specific).strip():
-            return str(specific)
-        default = await self._registry.get("platform", "llm_default_model")
-        if default is not None and str(default).strip():
-            return str(default)
-        return "antigravity/claude-opus-4-6-thinking"
+            primary = str(specific)
+        else:
+            default = await self._registry.get("platform", "llm_default_model")
+            if default is not None and str(default).strip():
+                primary = str(default)
+        if primary is None:
+            return "antigravity/claude-opus-4-6-thinking"
+        fallback_raw = await self._registry.get(
+            "platform", f"llm_model_{task_type}_fallback",
+        )
+        if fallback_raw is None or not str(fallback_raw).strip():
+            return primary
+        fallbacks = [
+            token.strip()
+            for token in str(fallback_raw).split(",")
+            if token.strip() and token.strip() != primary
+        ]
+        if not fallbacks:
+            return primary
+        # Deferred import: health_router imports nothing from config.py,
+        # so a plain top-level import would be fine; keeping it inline
+        # matches the seal step's record_drift wiring one grep away
+        # from its call site.
+        from .health_router import get_default_health_router
+
+        return get_default_health_router().pick_model(
+            [primary, *fallbacks],
+            default=primary,
+            task_type=task_type,
+        )
 
     async def resolve_base_url(self) -> str:
         """Resolve API base URL from ConfigRegistry.
@@ -174,6 +241,22 @@ class LLMConfigProvider:
                 pass
         return 0
 
+    async def resolve_tool_timeout_s(self, task_type: str) -> float:
+        """Resolve the per-tool-call executor timeout (seconds) for a task_type.
+
+        Bounds a single tool execution so one hung tool (e.g. an audit-mcp
+        cold build) cannot block the whole LLM turn (#44). Task-specific key
+        wins over the global default; both fall back to 300s.
+        """
+        for key in (f"llm_tool_timeout_s_{task_type}", "llm_tool_timeout_s"):
+            val = await self._registry.get("platform", key)
+            if val is not None:
+                try:
+                    return float(val)
+                except (ValueError, TypeError):
+                    pass
+        return 300.0
+
     async def is_disabled(self) -> bool:
         """Check kill switch state.
 
@@ -218,13 +301,19 @@ class LLMConfigProvider:
             temperature=await self.resolve_temperature(task_type),
             max_tool_steps=await self.resolve_max_tool_steps(task_type),
             task_type=task_type,
+            tool_timeout_s=await self.resolve_tool_timeout_s(task_type),
         )
 
     async def is_step_enabled(self, step: str, task_type: str) -> bool:
         """Check if a pipeline step is enabled for a task_type.
 
         Reads key ``llm_pipeline_{step}_{task_type}`` from ConfigRegistry.
-        Missing key (None) means enabled (True).
+        When that per-task-type key is unset, falls back to the declared
+        static key ``llm_pipeline_{step}_default`` (classify/validate/gate/
+        seal=True, verify=False -- see PlatformConfigSchema) so operator
+        overrides via PUT /config take effect without requiring a per-task-
+        type write. Steps without a declared ``_default`` (e.g. sanitize)
+        resolve None again and keep the fail-open True below.
 
         Args:
             step: Pipeline step name (e.g. "classify").
@@ -234,6 +323,8 @@ class LLMConfigProvider:
             True if the step should run, False if disabled.
         """
         val = await self._registry.get("platform", f"llm_pipeline_{step}_{task_type}")
+        if val is None:
+            val = await self._registry.get("platform", f"llm_pipeline_{step}_default")
         if val is None:
             return True
         if isinstance(val, bool):

@@ -1,5 +1,20 @@
 """Tests for the text-first verdict analyzer in the SampleApp PDF.
 
+The analyzer under test lives in ``scripts/vr_masvs_report_sampleapp.py``,
+a private per-report driver that generates the SampleApp MASVS PDF. That
+script was never committed to the OSS tree (see commit 12c5c76 -- the
+commit message referenced local edits to the script, but only the tests
+landed in git). ``src/aila/modules/vr/masvs/verdict_mapper.py`` is the
+in-tree production verdict source but has no ``_analyze_verdict_from_text``
+sibling; the text-first analyzer is a report-driver-side concern that
+corrects the outcome-kind verdict when the LLM answer contradicts the
+kind classification.
+
+When the script is present locally the fixture loads it and every rung
+below runs. When it is absent (the default in a clean OSS checkout) the
+entire module skips instead of raising 40 collection ERRORS from the
+module-scoped ``analyzer`` fixture's ``exec_module`` FileNotFoundError.
+
 The analyzer reads the agent's full answer text and returns a corrected
 verdict label (PASS / FAIL / REVIEW / INFO / INCONCLUSIVE) when the
 production verdict_mapper would mis-attribute a compliance verdict to
@@ -30,10 +45,25 @@ from pathlib import Path
 
 import pytest
 
+# Path to the private SampleApp report driver that carries the analyzer.
+# Never committed; see module docstring. The skipif below turns a missing
+# script into 40 clean SKIPs instead of 40 fixture-setup ERRORs.
+_SAMPLEAPP_SCRIPT = Path("scripts/vr_masvs_report_sampleapp.py")
+
+pytestmark = pytest.mark.skipif(
+    not _SAMPLEAPP_SCRIPT.exists(),
+    reason=(
+        "scripts/vr_masvs_report_sampleapp.py is a private per-report driver "
+        "(SampleApp MASVS PDF generator) held out of the OSS tree; the "
+        "text-first verdict analyzer under test lives inside that script "
+        "and has no in-tree production sibling."
+    ),
+)
+
 
 def _load_analyzer():
     """Load the analyzer from scripts/ without making it a package."""
-    script_path = Path("scripts/vr_masvs_report_sampleapp.py").resolve()
+    script_path = _SAMPLEAPP_SCRIPT.resolve()
     spec = importlib.util.spec_from_file_location(
         "vr_masvs_report_sampleapp_test_module", script_path,
     )

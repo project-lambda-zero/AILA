@@ -44,6 +44,12 @@ class TestResolveTaskType:
     def test_unknown_string_falls_back_to_default(self) -> None:
         assert resolve_task_type("nobody") == "vulnerability_research.audit"
 
+    def test_open_set_specialist_voice_falls_back(self) -> None:
+        # Specialist branches carry their capability as the voice (e.g. 'variant');
+        # the router treats an open-set voice as an expected fallback, never raises.
+        assert resolve_task_type("variant") == "vulnerability_research.audit"
+        assert persona_to_role("variant") is None
+
     def test_researcher_personas_route_to_researcher_task_type(self) -> None:
         assert (
             resolve_task_type(PersonaVoice.HALVAR)
@@ -80,11 +86,28 @@ class TestDefaultTaskType:
         assert default_task_type() == "vulnerability_research.audit"
 
 
+# Synthetic voices added after v0.4 GA-52 (unspecified / merge_result /
+# fork_unnamed) are structural markers written by branch_manager when
+# no agent persona is meaningful -- they intentionally have no role,
+# because no LLM call is dispatched under them.
+_SYNTHETIC_VOICES: frozenset[PersonaVoice] = frozenset({
+    PersonaVoice.UNSPECIFIED,
+    PersonaVoice.MERGE_RESULT,
+    PersonaVoice.FORK_UNNAMED,
+})
+
+
 class TestAllPersonasCovered:
-    """Every PersonaVoice must map to a role -- no silent fallthrough."""
+    """Every real PersonaVoice must map to a role -- no silent fallthrough."""
 
     def test_no_persona_without_role(self) -> None:
         for persona in PersonaVoice:
+            if persona in _SYNTHETIC_VOICES:
+                assert persona_to_role(persona) is None, (
+                    f"synthetic voice PersonaVoice.{persona.name} must NOT "
+                    "resolve to a role"
+                )
+                continue
             role = persona_to_role(persona)
             assert role is not None, f"PersonaVoice.{persona.name} has no role"
 

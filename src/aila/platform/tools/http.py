@@ -1,56 +1,16 @@
 from __future__ import annotations
 
-import ipaddress
 import json
-import socket
-from urllib.parse import urlparse
+from urllib.parse import urljoin
 
 import httpx
 
 from ..config import PlatformSettings
 from ..services.http import build_http_client
+from ..services.log_redact import redact_secrets
+from ..services.ssrf import _MAX_REDIRECT_HOPS, _REDIRECT_CODES, SSRFBlockedError
+from ..services.ssrf import check_url as _check_url
 from ._common import Tool, require_text
-
-_BLOCKED_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
-    ipaddress.ip_network("127.0.0.0/8"),
-    ipaddress.ip_network("10.0.0.0/8"),
-    ipaddress.ip_network("172.16.0.0/12"),
-    ipaddress.ip_network("192.168.0.0/16"),
-    ipaddress.ip_network("169.254.0.0/16"),
-    ipaddress.ip_network("::1/128"),
-    ipaddress.ip_network("fc00::/7"),
-    ipaddress.ip_network("fe80::/10"),
-)
-
-
-def _check_ssrf(url: str) -> None:
-    """Reject URLs targeting private/internal IP ranges."""
-    parsed = urlparse(url)
-    hostname = parsed.hostname
-    if hostname is None:
-        raise ValueError("Cannot parse hostname from URL.")
-    try:
-        addr = ipaddress.ip_address(hostname)
-    except ValueError:
-        # hostname is a domain name -- resolve and check all addresses
-        try:
-            resolved = socket.getaddrinfo(hostname, None)
-        except socket.gaierror:
-            return  # DNS failure will be handled downstream by httpx
-        for info in resolved:
-            resolved_addr = ipaddress.ip_address(info[4][0])
-            for net in _BLOCKED_NETWORKS:
-                if resolved_addr in net:
-                    raise ValueError(
-                        f"http.fetch blocked: {hostname} resolves to private IP {resolved_addr}"
-                    )
-        return
-    # hostname is already an IP literal
-    for net in _BLOCKED_NETWORKS:
-        if addr in net:
-            raise ValueError(
-                f"http.fetch blocked: {hostname} is in private range {net}"
-            )
 
 
 class HTTPFetchTool(Tool):
@@ -135,7 +95,7 @@ class HTTPFetchTool(Tool):
             or normalized_url.startswith("http://")
         ):
             raise ValueError("http.fetch requires an absolute http:// or https:// URL.")
-        _check_ssrf(normalized_url)
+        # SSRF policy is enforced per hop inside the redirect loop below.
         if body is not None and json_body is not None:
             raise ValueError("http.fetch accepts either body or json_body, not both.")
         if params is not None and not isinstance(params, dict):
@@ -144,18 +104,54 @@ class HTTPFetchTool(Tool):
             raise ValueError("http.fetch headers must be an object.")
         normalized_timeout_seconds = normalize_timeout_seconds(timeout_seconds)
         normalized_max_text_chars = normalize_max_text_chars(max_text_chars)
+        request_timeout = (
+            normalized_timeout_seconds
+            if normalized_timeout_seconds is not None
+            else self.settings.request_timeout_seconds
+        )
         with build_http_client(self.settings) as client:
-            response = client.request(
-                normalized_method,
-                normalized_url,
-                params=params,
-                headers=headers,
-                json=json_body,
-                content=body.encode("utf-8") if body is not None else None,
-                timeout=normalized_timeout_seconds if normalized_timeout_seconds is not None else self.settings.request_timeout_seconds,
-            )
-            if normalized_raise_for_status:
-                response.raise_for_status()
+            current_url = normalized_url
+            request_params = params
+            response: httpx.Response | None = None
+            # Follow redirects manually so every hop is re-validated against
+            # the SSRF policy before its socket is opened. httpx's built-in
+            # follow_redirects would jump straight to the redirect target.
+            try:
+                for _hop in range(_MAX_REDIRECT_HOPS + 1):
+                    _check_url(current_url)
+                    response = client.request(
+                        normalized_method,
+                        current_url,
+                        params=request_params,
+                        headers=headers,
+                        json=json_body,
+                        content=body.encode("utf-8") if body is not None else None,
+                        timeout=request_timeout,
+                        follow_redirects=False,
+                    )
+                    if response.status_code in _REDIRECT_CODES:
+                        location = response.headers.get("location")
+                        if not location:
+                            break
+                        current_url = urljoin(current_url, location)
+                        request_params = None  # params apply to the first hop only
+                        continue
+                    break
+                else:
+                    raise SSRFBlockedError("http.fetch blocked: exceeded redirect limit")
+                if response is None:  # defensive: the loop always assigns response
+                    raise ValueError("http.fetch produced no response.")
+                if normalized_raise_for_status:
+                    response.raise_for_status()
+            except httpx.HTTPError as exc:
+                # Redact before surfacing: an httpx error string can carry the
+                # request URL (query-string tokens) or an Authorization header
+                # repr. SSRFBlockedError / ValueError raised above are policy
+                # errors, not httpx.HTTPError, so they propagate unredacted.
+                raise ValueError(
+                    f"http.fetch upstream error: {exc.__class__.__name__}: "
+                    f"{redact_secrets(str(exc))}"
+                ) from exc
         text = response.text
         truncated = False
         if normalized_max_text_chars is not None and len(text) > normalized_max_text_chars:

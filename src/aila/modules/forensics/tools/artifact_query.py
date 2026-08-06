@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from aila.config import Settings
-from aila.platform.tools._common import Tool
+from aila.platform.tools import Tool
 
 TOOL_ALIAS = "artifact_query"
 CAPABILITY = "Query normalized forensic artifacts by project, family, and type."

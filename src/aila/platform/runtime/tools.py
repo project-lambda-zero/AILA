@@ -102,6 +102,19 @@ class ToolRegistry:
         self._tools[key] = tool
         return tool
 
+    def unregister(self, key: str) -> ToolProtocol:
+        """Remove and return the tool registered under key.
+
+        Symmetric inverse of register(). Used by ModuleRegistry.unregister() to
+        strip a module's tools from the shared registry when the module is
+        deregistered (#41). Raises KeyError if the key is not registered so the
+        caller notices attempts to unregister a tool that was never installed.
+        """
+        if key not in self._tools:
+            available = ", ".join(sorted(self._tools))
+            raise KeyError(f"Tool {key!r} is not registered. Available: {available}.")
+        return self._tools.pop(key)
+
     def require(self, key: str, expected_type: type[TTool] | None = None) -> ToolProtocol | TTool:
         """Return the registered tool for key, optionally asserting its concrete type.
 

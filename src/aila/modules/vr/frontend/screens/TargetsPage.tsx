@@ -179,7 +179,7 @@ function KindIcon({ kind }: { kind: TargetKind }) {
 }
 
 // Row label resolver. For `android_apk` targets, once STATIC_SUMMARY
-// completes the androguard-discovered package name is the most useful
+// completes the discovered package name is the most useful
 // identifier (`com.examplecorp.selfservis` beats whatever the operator
 // typed for `display_name`). Falls back to `display_name` for every
 // other kind, and for `android_apk` rows whose static summary hasn't
@@ -396,7 +396,7 @@ export function TargetsPage() {
             {formKind === "android_apk" && (
               <p className="text-xs text-text-muted">
                 Backend pipeline: APK_DECODE → JADX_DECOMPILE →
-                INDEX_DECOMPILED → STATIC_SUMMARY → MOBSF_SCAN.
+                INDEX_DECOMPILED → STATIC_SUMMARY.
               </p>
             )}
 
@@ -612,8 +612,8 @@ export function TargetsPage() {
 // Per-row action: re-run a target's ingestion. For git-backed kinds
 // (source_repo / patch_diff / cve) this hits audit-mcp's refresh_index
 // -- idempotent when upstream did not move. For android_apk targets
-// it resets the apktool / jadx / index-decompiled / static-summary /
-// mobsf stages back to PENDING and re-enqueues the staged-analysis
+// it resets the apktool / jadx / index-decompiled / static-summary
+// stages back to PENDING and re-enqueues the staged-analysis
 // worker. Only enabled when analysis_state == "ready". Backend
 // returns HTTP 409 if a git-backed target lacks an
 // audit_mcp_index_id; the toast surfaces that message verbatim.
@@ -666,7 +666,7 @@ function RefreshSourceButton({
       ? `Refresh unavailable: ${kind} has no refresh path`
       : `Refresh unavailable: analysis_state=${analysisState}`
     : kind === "android_apk"
-      ? "Re-run apktool / jadx / static-summary / mobsf"
+      ? "Re-run apktool / jadx / static-summary"
       : "Refresh source from upstream git (shift-click = force rebuild)";
 
   return (

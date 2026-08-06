@@ -43,23 +43,39 @@ function pickEnvelope(err: unknown): ErrorEnvelope | null {
   return null;
 }
 
-function handleAuthFailure(err: unknown): boolean {
-  // A bubbled-up 401 means our in-flight refresh-once retry in
-  // authorizedRequestJson already failed (refresh token also dead). The
-  // only safe thing is to clear the session and punt the user back to
-  // /login instead of flashing an "Invalid token" toast on a page they
-  // no longer have access to.
+/**
+ * #47 sub-item -- distinguish 401 (session invalid, log out) from 403
+ * (authenticated but not authorized for this operation, DO NOT log
+ * out). Previously any status in {401, 403} punted the user back to
+ * /login: a legitimate permission-denied response therefore wiped
+ * the session, so an operator who clicked into an admin-only screen
+ * as a reader was force-logged-out instead of shown a normal error.
+ *
+ * A bubbled-up 401 means our in-flight refresh-once retry in
+ * authorizedRequestJson already failed (refresh token also dead).
+ * The only safe thing is to clear the session and punt the user back
+ * to /login instead of flashing an "Invalid token" toast on a page
+ * they no longer have access to. A 403 falls through to the generic
+ * envelope/toast renderer so the caller sees the real reason.
+ */
+function isSessionInvalidError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
-  const status = (err as { status?: number }).status;
-  const msg = (err as { message?: string }).message ?? "";
-  const looksLikeAuthError =
-    status === 401 ||
-    status === 403 ||
-    /invalid token|token.*expired|unauthorized/i.test(msg);
-  if (!looksLikeAuthError) return false;
+  const status = "status" in err ? err.status : undefined;
+  if (status === 401) return true;
+  const message = "message" in err ? err.message : undefined;
+  return (
+    typeof message === "string" &&
+    /invalid token|token.*expired|unauthorized/i.test(message)
+  );
+}
+
+function handleAuthFailure(err: unknown): boolean {
+  if (!isSessionInvalidError(err)) return false;
 
   void (async () => {
     try {
+      // Dynamic import required to break the circular dependency
+      // apiErrorHandler -> useAuthStore -> auth -> http -> apiErrorHandler.
       const { useAuthStore } = await import("@platform/auth/useAuthStore");
       useAuthStore.getState().logout();
     } catch {

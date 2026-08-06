@@ -1,9 +1,17 @@
 """Evidence obligation system for deterministic claim adjudication.
 
-Platform-level contracts any module (vr, forensics, ...) can use to enforce
-evidence requirements on LLM-generated claims. The adjudicator is a pure
-function that runs after the LLM produces text and returns one of three
-verdicts: accepted, downgraded, blocked. No DB, no IO, no module imports.
+Pure-function contracts available to any module that wants to gate claim
+emission on prior evidence. The adjudicator runs after the LLM produces
+text and returns one of three verdicts: accepted, downgraded, blocked.
+No DB, no IO, no module imports.
+
+Scope, honestly (#61): the platform runtime does NOT integrate this into
+the module lifecycle -- ``adjudicate()`` is a shared building block, not a
+platform-enforced gate. As of this writing the sole caller is
+``aila.modules.vr.agents.nday_researcher`` (nday research loop); every
+other module opts out. Modules that want obligation enforcement must call
+``adjudicate()`` from their own turn/workflow code. Do not read the
+previous "any module can use" framing as "every module already does".
 """
 from __future__ import annotations
 

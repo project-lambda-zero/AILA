@@ -84,6 +84,28 @@ case "$RUN_DIR_ABS" in
     ;;
 esac
 
+# Convert a path (git-bash /c/..., WSL /mnt/c/..., or already Windows) to the
+# C:/... form PowerShell + cmd + WMI Win32_Process.Create accept. Same three
+# fallbacks as the RUN_DIR_ABS conversion above -- cygpath, then wslpath, then
+# a hand-rolled /mnt/X/ -> X:/ so a spawned child gets a valid CurrentDirectory
+# regardless of shell. Without this, WMI Create gets a POSIX cwd, returns a
+# non-zero ReturnValue with an empty ProcessId, and nothing spawns.
+_winpath() {
+  local p="$1"
+  if command -v cygpath >/dev/null 2>&1; then
+    p=$(cygpath -m "$p" 2>/dev/null || echo "$p")
+  elif command -v wslpath >/dev/null 2>&1; then
+    p=$(wslpath -m "$p" 2>/dev/null || echo "$p")
+  fi
+  case "$p" in
+    /mnt/?/*)
+      local _d="${p:5:1}" _r="${p:6}"
+      p="${_d^^}:${_r}"
+      ;;
+  esac
+  printf '%s' "$p"
+}
+
 # ── PowerShell + taskkill detection ─────────────────────────────────────────
 PS=""
 for candidate in \
@@ -308,10 +330,11 @@ kill_aila_processes() {
   echo "[aila] Stopped."
 }
 
-# Spawn detached python via PowerShell Start-Process -PassThru. Captures
-# the spawned PID and records it under .run/<slug>.pid so ``stop`` can
-# tree-kill it reliably without having to grep cmdlines. Inherits the
-# CALLER's cwd -- caller must ``cd`` into the right repo before invoking.
+# Spawn detached python via WMI Win32_Process.Create (Job-Object breakaway).
+# Captures the spawned PID and records it under .run/<slug>.pid so ``stop``
+# can tree-kill it reliably without having to grep cmdlines. Passes the
+# CALLER's cwd explicitly as CurrentDirectory -- caller must ``cd`` into the
+# right repo before invoking (WMI would otherwise default cwd to System32).
 #
 # stdout + stderr are merged into ${RUN_DIR_ABS}/<slug>.log via a `cmd /c`
 # wrapper (Start-Process cannot redirect both streams to the SAME file --
@@ -363,9 +386,19 @@ spawn() {
   # session's tail (often where the crash that triggered the restart
   # lives). Keep only one .prev -- unbounded rotation accumulates trash.
   [[ -f "$log_path" ]] && mv -f "$log_path" "${log_path}.prev" 2>/dev/null
-  local pidv
+  local pidv win_cwd
+  win_cwd=$(_winpath "$PWD")
+  # Launch via WMI Win32_Process.Create, NOT Start-Process. A Start-Process
+  # child inherits the launching terminal's Windows Job Object
+  # (KILL_ON_JOB_CLOSE), so the whole stack died the moment the session that
+  # ran start.sh closed (agent/session teardown, tab close, SSH drop) --
+  # confirmed via IsProcessInJob()=True on every spawned service. A
+  # WMI-created process is reparented to WmiPrvSE and belongs to no job, so it
+  # survives terminal/session teardown (IsProcessInJob()=False). CurrentDirectory
+  # MUST be set: Win32_Process.Create defaults cwd to System32, and callers
+  # depend on cwd for `python -m aila...` package resolution.
   pidv=$("$PS" -NoProfile -Command \
-    "(Start-Process cmd -ArgumentList '/c','${env_prefix}python ${cmd_args} > \"${log_path}\" 2>&1' -WindowStyle Hidden -PassThru).Id" \
+    "(Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine='cmd /c ${env_prefix}python ${cmd_args} > \"${log_path}\" 2>&1'; CurrentDirectory='${win_cwd}'}).ProcessId" \
     2>/dev/null | tr -d '\r\n ')
   record_pid "$label" "$pidv"
   echo "[aila]   $label started (PID $pidv, log $log_path)"
@@ -381,9 +414,12 @@ spawn_shell() {
   slug=$(slugify "$label")
   log_path="${RUN_DIR_ABS}/${slug}.log"
   [[ -f "$log_path" ]] && mv -f "$log_path" "${log_path}.prev" 2>/dev/null
-  local pidv
+  local pidv win_cwd
+  win_cwd=$(_winpath "$PWD")
+  # WMI Win32_Process.Create for the same Job-Object breakaway reason as
+  # spawn() -- a Start-Process child dies with the launching terminal's job.
   pidv=$("$PS" -NoProfile -Command \
-    "(Start-Process cmd -ArgumentList '/c','${cmdline} > \"${log_path}\" 2>&1' -WindowStyle Hidden -PassThru).Id" \
+    "(Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine='cmd /c ${cmdline} > \"${log_path}\" 2>&1'; CurrentDirectory='${win_cwd}'}).ProcessId" \
     2>/dev/null | tr -d '\r\n ')
   record_pid "$label" "$pidv"
   echo "[aila]   $label started (PID $pidv, log $log_path)"
@@ -620,10 +656,12 @@ if [[ "$AILA_START_IDA_HEADLESS" == "1" && -d "$IDA_HEADLESS_DIR" ]]; then
   # PowerShell Start-Process on the .exe directly so the spawn helper
   # (which hardcodes `python` as the binary) doesn't apply.
   IDA_HEADLESS_EXE="${IDA_HEADLESS_EXE:-ida-headless-http}"
-  IDA_HEADLESS_PID=$(IDA_HEADLESS_HTTP_PORT="$IDA_HEADLESS_PORT" \
-    IDA_HEADLESS_HTTP_HOST="127.0.0.1" \
-    "$PS" -NoProfile -Command \
-      "(Start-Process '${IDA_HEADLESS_EXE}' -WindowStyle Hidden -PassThru).Id" \
+  _ida_cwd=$(_winpath "$PWD")
+  # WMI Win32_Process.Create (Job-Object breakaway) like spawn(); env vars
+  # are set through a cmd /c prefix so they survive regardless of how WMI
+  # seeds the child environment.
+  IDA_HEADLESS_PID=$("$PS" -NoProfile -Command \
+      "(Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine='cmd /c set IDA_HEADLESS_HTTP_PORT=${IDA_HEADLESS_PORT}&& set IDA_HEADLESS_HTTP_HOST=127.0.0.1&& ${IDA_HEADLESS_EXE}'; CurrentDirectory='${_ida_cwd}'}).ProcessId" \
     2>/dev/null | tr -d '\r\n ')
   if [[ -n "$IDA_HEADLESS_PID" ]]; then
     record_pid "ida-headless" "$IDA_HEADLESS_PID"

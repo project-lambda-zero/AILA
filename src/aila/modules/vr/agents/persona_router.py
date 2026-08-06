@@ -1,103 +1,61 @@
-"""Per-role model routing (v0.4 GA-52).
+"""VR persona -> LLM task_type router (RFC-03 Phase 5 thin binding).
 
-Each strategy branch can carry a PersonaVoice. v0.4 introduces a
-role-based mapping from persona → task_type, which the platform's
-LLM client uses to resolve routing (model, temperature, max_tokens).
+The persona -> role table, the resolution logic, and the base class
+live once in :mod:`aila.platform.agents.persona_router`. This module
+binds the vr-specific task_type table: personas that share a role
+share a task_type (researcher / implementer / critic).
 
-v1 ships a deterministic static map. v1.1 will read the mapping from
-``vr.branch_model_routing`` ConfigRegistry namespace so operators can
-override per-team without code changes.
+Default role -> task_type bindings:
 
-Default role → task_type bindings:
-
-  researcher (halvar, noor)      → vulnerability_research.researcher
-  implementer (renzo, wei)       → vulnerability_research.implementer
-  critic (maddie, yuki)          → vulnerability_research.critic
+  researcher (halvar, noor)      -> vulnerability_research.researcher
+  implementer (renzo, wei)       -> vulnerability_research.implementer
+  critic (maddie, yuki)          -> vulnerability_research.critic
 
 The task_type values resolve through the platform's existing LLM
 routing config. Operators tune them via the standard config UI:
 which model (Claude vs GPT-5), what temperature, what context window.
+When no persona is assigned (legacy single-persona flow), routing
+falls back to ``vulnerability_research.audit``.
 """
 from __future__ import annotations
 
-import logging
-from enum import StrEnum
+from typing import ClassVar
 
-from aila.modules.vr.contracts.branch import PersonaVoice
-
-_log = logging.getLogger(__name__)
+from aila.platform.agents.persona_router import (
+    PersonaRole,
+    persona_to_role,
+)
+from aila.platform.agents.persona_router import (
+    PersonaRouter as _PlatformPersonaRouter,
+)
 
 __all__ = [
     "PersonaRole",
+    "PersonaRouter",
     "default_task_type",
     "persona_to_role",
     "resolve_task_type",
 ]
 
 
-class PersonaRole(StrEnum):
-    """The 3 roles a persona maps to (GA-52)."""
+class PersonaRouter(_PlatformPersonaRouter):
+    """VR-bound router: personas grouped by role, one task_type per role."""
 
-    RESEARCHER = "researcher"
-    IMPLEMENTER = "implementer"
-    CRITIC = "critic"
-
-
-# Static persona → role table. Tuned by D-39 + GA-52:
-#   halvar = deliberate, considers fundamentals → researcher
-#   noor   = unconventional angles → researcher
-#   renzo  = builds PoCs + scripts → implementer
-#   wei    = systems engineer mindset → implementer
-#   maddie = adversarial, picks holes → critic
-#   yuki   = methodical verifier → critic
-_PERSONA_ROLE: dict[PersonaVoice, PersonaRole] = {
-    PersonaVoice.HALVAR: PersonaRole.RESEARCHER,
-    PersonaVoice.NOOR: PersonaRole.RESEARCHER,
-    PersonaVoice.RENZO: PersonaRole.IMPLEMENTER,
-    PersonaVoice.WEI: PersonaRole.IMPLEMENTER,
-    PersonaVoice.MADDIE: PersonaRole.CRITIC,
-    PersonaVoice.YUKI: PersonaRole.CRITIC,
-}
+    default_task_type: ClassVar[str] = "vulnerability_research.audit"
+    role_task_type: ClassVar[dict[PersonaRole, str]] = {
+        PersonaRole.RESEARCHER: "vulnerability_research.researcher",
+        PersonaRole.IMPLEMENTER: "vulnerability_research.implementer",
+        PersonaRole.CRITIC: "vulnerability_research.critic",
+    }
 
 
-# Role → task_type. Platform LLM client uses task_type for routing
-# (model selection, retry policy, cost ceiling).
-_ROLE_TASK_TYPE: dict[PersonaRole, str] = {
-    PersonaRole.RESEARCHER: "vulnerability_research.researcher",
-    PersonaRole.IMPLEMENTER: "vulnerability_research.implementer",
-    PersonaRole.CRITIC: "vulnerability_research.critic",
-}
-
-
-# Fallback when a branch has no persona -- single-persona / legacy flow.
-_DEFAULT_TASK_TYPE = "vulnerability_research.audit"
-
-
-def persona_to_role(persona: PersonaVoice | str | None) -> PersonaRole | None:
-    """Map a PersonaVoice (or its string form) to a PersonaRole."""
-    if persona is None:
-        return None
-    if isinstance(persona, str):
-        try:
-            persona = PersonaVoice(persona)
-        except ValueError as exc:
-            _log.warning("FAILED reason=%s", exc)
-            return None
-    return _PERSONA_ROLE.get(persona)
+# Module-level facade preserved so existing call sites
+# (``vuln_researcher.py`` imports ``resolve_task_type``) keep working
+# without churn. Both bindings are the classmethods on the vr subclass;
+# there is no wrapper function in between.
+resolve_task_type = PersonaRouter.resolve_task_type
 
 
 def default_task_type() -> str:
     """Task type used when no persona is assigned."""
-    return _DEFAULT_TASK_TYPE
-
-
-def resolve_task_type(persona: PersonaVoice | str | None) -> str:
-    """Resolve the LLM client task_type for a branch's persona.
-
-    Returns ``vulnerability_research.audit`` when persona is None or
-    unrecognized -- the legacy single-persona flow.
-    """
-    role = persona_to_role(persona)
-    if role is None:
-        return _DEFAULT_TASK_TYPE
-    return _ROLE_TASK_TYPE[role]
+    return PersonaRouter.default_task_type

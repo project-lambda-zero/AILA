@@ -18,9 +18,10 @@ connections (OPS-01).
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import AsyncGenerator
 
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.services.redis_pool import get_redis
 from aila.platform.tasks.constants import (
     PROGRESS_STREAM_MAXLEN,
@@ -28,9 +29,17 @@ from aila.platform.tasks.constants import (
     XREAD_BLOCK_MS,
 )
 
-__all__ = ["ProgressStream"]
+__all__ = ["MAX_STREAM_LIFETIME_S", "ProgressStream"]
 
 _log = logging.getLogger(__name__)
+
+# Bounded lifetime for stream_events generators (finding 60-3).
+# Mirrors ``aila.api.routers.sse_events.MAX_CONNECTION_S`` (300 seconds).
+# Without a cap, a well-behaved client with an open EventSource pins a
+# Redis connection through the pool indefinitely because the XREAD loop
+# never exits on its own. When the cap fires, the generator returns
+# cleanly and the browser EventSource auto-reconnects.
+MAX_STREAM_LIFETIME_S: int = 300
 
 
 class ProgressStream:
@@ -48,6 +57,17 @@ class ProgressStream:
     """
 
     _KEY_FMT = TASK_PROGRESS_KEY_TEMPLATE
+
+    @classmethod
+    def stream_key(cls, task_id: str) -> str:
+        """Redis stream key for a task's progress events.
+
+        The single public accessor for the key format. Callers that need a
+        custom XADD (workflow transition events, module stage events) use
+        this instead of reading the private template, so ``_KEY_FMT`` has
+        exactly one reader.
+        """
+        return cls._KEY_FMT.format(task_id=task_id)
 
     def __init__(self, maxlen: int | None = None) -> None:
         """Configure stream parameters.
@@ -75,7 +95,7 @@ class ProgressStream:
             message: Human-readable progress message.
             percent: Completion percentage 0-100.
         """
-        key = self._KEY_FMT.format(task_id=task_id)
+        key = self.stream_key(task_id)
         async with get_redis() as client:
             await client.xadd(
                 key,
@@ -104,7 +124,7 @@ class ProgressStream:
             List of event dicts with keys: stage, message, percent, timestamp.
             Empty list if no events exist yet.
         """
-        key = self._KEY_FMT.format(task_id=task_id)
+        key = self.stream_key(task_id)
         async with get_redis() as client:
             raw = await client.xrange(key, last_id, "+")
             return [fields for _, fields in raw]
@@ -129,9 +149,15 @@ class ProgressStream:
             Event dicts with stage/message/percent/timestamp keys, or
             {"type": "ping"} on 30-second timeout (SSE keepalive).
         """
-        key = self._KEY_FMT.format(task_id=task_id)
+        key = self.stream_key(task_id)
         current_id = last_id
+        started = time.monotonic()
         while True:
+            # 60-3: bounded lifetime cap. Checked at the top so any XREAD
+            # tick or subsequent iteration will exit once the cap elapses.
+            # The client EventSource auto-reconnects on stream end.
+            if time.monotonic() - started >= MAX_STREAM_LIFETIME_S:
+                return
             async with get_redis() as client:
                 raw_result = await client.xread(
                     {key: current_id}, block=XREAD_BLOCK_MS, count=100,

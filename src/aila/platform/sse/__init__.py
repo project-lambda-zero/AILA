@@ -7,6 +7,7 @@ the platform boundary.
 """
 from __future__ import annotations
 
+from .user_fanout import QUEUE_MAXSIZE, UserFanoutRegistry
 from .worker_stream import stream_from_worker
 
-__all__ = ["stream_from_worker"]
+__all__ = ["QUEUE_MAXSIZE", "UserFanoutRegistry", "stream_from_worker"]

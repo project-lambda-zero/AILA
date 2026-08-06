@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import type { ReactNode } from "react";
 
 import { type ModuleFrontendSpec } from "@platform/extension-registry/types";
@@ -6,6 +7,8 @@ import { CommandPalette } from "@/components/shell/CommandPalette";
 import { OfflineBanner } from "@/components/shell/OfflineBanner";
 import { OnboardingWizard } from "@platform/features/onboarding";
 import { buildIdentity } from "@platform/config/version";
+import { useAuthStore } from "@platform/auth/useAuthStore";
+import { useIdleTimeout } from "@/hooks/useIdleTimeout";
 import { AppSidebar } from "./AppSidebar";
 import { AppHeader } from "./AppHeader";
 
@@ -32,6 +35,17 @@ function getDefaultSidebarOpen(): boolean {
 }
 
 export function AppShell({ children, moduleSpecs }: AppShellProps) {
+  // #47 -- clear the session after 15 minutes of inactivity so a signed-in
+  // console left open on a shared workstation does not stay authenticated
+  // indefinitely. The shell only renders behind ProtectedRoute, so once
+  // logout() sets status="unauthenticated" the routing layer immediately
+  // redirects to /login. Any presence event (pointer, keyboard, scroll,
+  // visibilitychange) resets the timer.
+  const onIdle = useCallback(() => {
+    useAuthStore.getState().logout();
+  }, []);
+  useIdleTimeout({ onIdle });
+
   return (
     <SidebarProvider
       defaultOpen={getDefaultSidebarOpen()}

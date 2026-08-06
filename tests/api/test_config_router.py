@@ -47,7 +47,12 @@ async def config_client_with_schema(test_db) -> AsyncGenerator[AsyncClient, None
     from aila.platform.runtime.tools import ToolRegistry
 
     config_registry = ConfigRegistry()
-    config_registry.register("testmod", TestModConfig)
+    # ConfigRegistry.register is async (registry.py:114). Missing await -> the
+    # coroutine is discarded, _schemas['testmod'] stays empty, no DB rows get
+    # seeded, and every test that assumes the seeded schema fails: PUT hits the
+    # 'No schema registered for namespace' branch (registry.py:255) instead of
+    # writing (200) or the 'Key not found' branch (registry.py:258).
+    await config_registry.register("testmod", TestModConfig)
 
     tool_registry = ToolRegistry()
 

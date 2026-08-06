@@ -25,7 +25,10 @@ from aila.platform.tasks.constants import (
     ARQ_QUEUE_KEY_TEMPLATE,
 )
 from aila.platform.tasks.models import TaskRecord, TaskStatus
-from aila.platform.tasks.worker import _reconcile_orphan_arq_locks
+from aila.platform.tasks.worker import (
+    _reconcile_orphan_arq_locks,
+    _sweep_orphan_running_tasks,
+)
 
 from .conftest import sqlite_db_env
 
@@ -96,6 +99,62 @@ async def test_orphan_lock_with_stale_db_record_is_deleted(
 
             assert await client.exists(f"{ARQ_IN_PROGRESS_PREFIX}{job_id}") == 0
             assert await client.zscore(queue_key, job_id) is None
+        finally:
+            await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cron_reverse_sweep_trusts_present_lock(
+    tmp_path, redis_cleanup, monkeypatch
+) -> None:
+    """Cron reverse-sweep must NOT reap a RUNNING job whose arq in-progress
+    lock is present, even when its heartbeat is stale.
+
+    heartbeat_at is written per workflow state transition, not
+    continuously, so a job in one long state (a multi-minute LLM turn or a
+    slow MCP decode) legitimately goes stale while still running. A present
+    lock means arq still owns the job. Reaping it (deleting the lock +
+    re-enqueuing) lets arq re-dispatch the same job_id, which collides on
+    arq's job_tasks bookkeeping (del -> KeyError) and runs the
+    investigation twice. The reverse sweep is for lock-ABSENT orphans only.
+    """
+    monkeypatch.setenv("AILA_PLATFORM_REDIS_URL", redis_cleanup)
+
+    import redis.asyncio as aioredis
+
+    with sqlite_db_env(tmp_path, "trust_present_lock") as (engine, _):
+        job_id = "live-long-turn-job"
+        with Session(engine) as s:
+            s.add(TaskRecord(
+                id=job_id,
+                track="vr",
+                fn_path="aila.modules.vr.workflow.task.run_vr_investigate",
+                fn_module="vr",
+                user_id="u",
+                group_id="operator",
+                status=TaskStatus.RUNNING,
+                # 30 min stale -- far beyond the 600s cron grace, so the
+                # pre-fix sweep would have reaped it.
+                heartbeat_at=datetime.now(tz=UTC) - timedelta(seconds=1800),
+            ))
+            s.commit()
+
+        client = aioredis.Redis.from_url(redis_cleanup)
+        try:
+            await client.set(f"{ARQ_IN_PROGRESS_PREFIX}{job_id}", b"1", ex=86400)
+
+            await _sweep_orphan_running_tasks(
+                grace_seconds=600,
+                reap_null_heartbeat=False,
+                trust_present_lock=True,
+            )
+
+            # Lock left intact and the row is still RUNNING -- not reaped.
+            assert await client.exists(f"{ARQ_IN_PROGRESS_PREFIX}{job_id}") == 1
+            with Session(engine) as s:
+                rec = s.get(TaskRecord, job_id)
+                assert rec is not None
+                assert rec.status == TaskStatus.RUNNING.value
         finally:
             await client.aclose()
 

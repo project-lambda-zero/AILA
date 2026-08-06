@@ -231,10 +231,16 @@ class TestPaginatedResponseConcreteAliases:
         assert p.items[0].namespace == "vuln"
 
     def test_system_list_response(self) -> None:
-        """SystemListResponse wraps SystemResponse items."""
-        from aila.api.schemas.systems import SystemListResponse, SystemResponse
+        """SystemListResponse wraps SystemEnrichedResponse items.
 
-        item = SystemResponse(id=1, name="web-1", host="10.0.0.1", username="root")
+        src/aila/api/schemas/systems.py:75 aliases
+        SystemListResponse = PaginatedResponse[SystemEnrichedResponse], so items
+        must be SystemEnrichedResponse instances (SystemResponse alone fails
+        pydantic model_type validation).
+        """
+        from aila.api.schemas.systems import SystemEnrichedResponse, SystemListResponse
+
+        item = SystemEnrichedResponse(id=1, name="web-1", host="10.0.0.1", username="root")
         p = SystemListResponse(total=1, page=1, page_size=10, pages=0, items=[item])
         assert p.pages == 1
         assert len(p.items) == 1

@@ -49,8 +49,7 @@ import json as _json_local
 import logging
 import os
 
-from sqlalchemy import cast, func, select, text, update
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql.functions import coalesce
 
@@ -69,7 +68,6 @@ from aila.modules.vr.db_models import (
     VRTargetRecord,
 )
 from aila.modules.vr.db_models.outcome_review import VRInvestigationOutcomeReviewRecord
-from aila.modules.vr.services.branch_cleanup import close_orphan_branches_on_terminal
 
 # Phase C moved the implementations of these helpers out of this
 # MASVS-specific module into the canonical
@@ -88,13 +86,15 @@ from aila.modules.vr.services.investigation_finalizers import (
 )
 from aila.modules.vr.services.outcome_review import evaluate_quorum
 from aila.modules.vr.workflow.task import run_vr_investigate
-from aila.platform.contracts._common import utc_now
-from aila.platform.tasks.models import TaskRecord
+from aila.platform.config_base import ModuleConfigReader
+from aila.platform.contracts import utc_now
+from aila.platform.services.branch_cleanup import close_orphan_branches_on_terminal
 from aila.platform.uow import UnitOfWork
 
 __all__ = ["sweep_masvs_audit_parents"]
 
 _log = logging.getLogger(__name__)
+_cfg = ModuleConfigReader("vr")
 
 _TERMINAL_STATUSES: frozenset[str] = frozenset(
     (
@@ -102,6 +102,17 @@ _TERMINAL_STATUSES: frozenset[str] = frozenset(
         InvestigationStatus.FAILED.value,
         InvestigationStatus.ABANDONED.value,
     ),
+)
+
+# Batch-parent kinds this reconciler owns. The roll-up and batch-refill
+# logic is kind-agnostic (it counts children by parent_investigation_id
+# and enqueues deferred children), so both audit-batch kinds -- MASVS
+# and APK static -- ride the same sweep. Adding a kind here is all it
+# takes for its parents to transition CREATED -> RUNNING -> COMPLETED
+# and for its deferred children to be throttled-enqueued.
+_BATCH_PARENT_KINDS: tuple[str, ...] = (
+    InvestigationKind.MASVS_AUDIT.value,
+    InvestigationKind.APK_STATIC_AUDIT.value,
 )
 
 
@@ -248,8 +259,7 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
     For each parent whose target is ``android_apk``, ensure no more than
     ``_batch_size()`` children are in-flight (RUNNING / QUEUED) at any
     given moment. When slots are free and CREATED children remain that
-    have never been enqueued (no TaskRecord row containing the child id),
-    submit the next slice on the ``vr`` queue.
+    have never been enqueued, submit the next slice on the ``vr`` queue.
 
     Returns the total number of children newly enqueued in this tick.
 
@@ -258,17 +268,17 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
     OOM'd OmniRoute when 30 streams hit simultaneously -- this throttle
     keeps that pressure bounded.
 
-    Why not a column for "enqueued?": adding one needs a migration. The
-    TaskRecord JOIN below uses a JSONB extract on ``kwargs_json``
-    (`(kwargs_json::jsonb)->>'investigation_id' = inv.id`) so the match
-    is on a typed JSON path, not a substring. Cheap enough for the
-    per-parent ≤46-child set we sweep once per minute, and removes the
-    false-positive class where a different task's kwargs_json happens
-    to embed the same UUID elsewhere.
+    RFC-05 crit 10: distinguishing "already enqueued" from "still
+    virgin" goes through :meth:`TaskQueue.enqueued_investigation_ids`
+    rather than a local correlated JSONB-extract subquery against
+    ``taskrecord``. The reconciler no longer reaches across the module
+    boundary into the platform-owned task table; the JSONB match is
+    now behind the queue API, and the CREATED partitioning happens in
+    Python on a per-parent set that is small by construction
+    (<=46 children).
     """
     inv = VRInvestigationRecord
     tgt = VRTargetRecord
-    tsk = TaskRecord
     batch_size = _batch_size()
 
     # APK MASVS parents currently in CREATED / RUNNING. Joined to the
@@ -278,7 +288,7 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
         await uow.session.exec(
             select(inv.id, tgt.id)
             .join(tgt, tgt.id == inv.target_id)
-            .where(inv.kind == InvestigationKind.MASVS_AUDIT.value)
+            .where(inv.kind.in_(_BATCH_PARENT_KINDS))
             .where(inv.parent_investigation_id.is_(None))
             .where(inv.status.in_((
                 InvestigationStatus.CREATED.value,
@@ -293,24 +303,29 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
     enqueued_total = 0
     queue = default_task_queue()
 
-    for parent_id, _target_id in parent_rows:
-        # Count children currently consuming a slot. CREATED counts only
-        # when a TaskRecord exists (the child has been enqueued, just not
-        # picked up yet); CREATED children with no TaskRecord are the
-        # virgin pool we'll draw from.
-        def _scalar(row: object) -> int:
-            if row is None:
-                return 0
-            try:
-                return int(row[0]) if hasattr(row, "__getitem__") else int(row)
-            except (TypeError, ValueError, IndexError) as exc:
-                _log.warning(
-                    "masvs_batch_refill: unexpected count row shape (%r): %s",
-                    row, exc,
-                )
-                return 0
+    def _scalar(row: object) -> int:
+        if row is None:
+            return 0
+        try:
+            return int(row[0]) if hasattr(row, "__getitem__") else int(row)
+        except (TypeError, ValueError, IndexError) as exc:
+            _log.warning(
+                "masvs_batch_refill: unexpected count row shape (%r): %s",
+                row, exc,
+            )
+            return 0
 
-        in_flight_row = (
+    def _child_id(row: object) -> str:
+        # SQLModel session.exec returns Row tuples for a single-column
+        # select; unwrap to the plain UUID string.
+        if hasattr(row, "__getitem__") and not isinstance(row, str):
+            return str(row[0])
+        return str(row)
+
+    for parent_id, _target_id in parent_rows:
+        # RUNNING / PAUSED children directly consume a slot regardless
+        # of queue state -- they are already checked out to a worker.
+        running_paused_row = (
             await uow.session.exec(
                 select(func.count(inv.id))
                 .where(inv.parent_investigation_id == parent_id)
@@ -320,67 +335,40 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
                 ))),
             )
         ).first()
-        in_flight = _scalar(in_flight_row)
+        running_paused = _scalar(running_paused_row)
 
-        # Add CREATED children that ALREADY have a TaskRecord -- they're
-        # enqueued, just sitting in the queue waiting for a worker. They
-        # count toward in_flight so we don't double-enqueue.
-        created_with_task_row = (
+        # Every CREATED child under this parent, ordered oldest-first
+        # so the operator-visible MASVS control id order (assigned by
+        # the dispatcher) is preserved. The virgin slice we submit is
+        # drawn from this list in the same order.
+        created_rows = (
             await uow.session.exec(
-                select(func.count(inv.id))
+                select(inv.id)
                 .where(inv.parent_investigation_id == parent_id)
                 .where(inv.status == InvestigationStatus.CREATED.value)
-                .where(
-                    select(tsk.id)
-                    .where(
-                        # fix §41 -- JSONB extract on `investigation_id`
-                        # replaces substring ilike(%uuid%) which matched
-                        # any task whose kwargs_json contained the UUID
-                        # in any field (parent_investigation_id, etc.).
-                        cast(tsk.kwargs_json, JSONB)["investigation_id"]
-                        .astext == inv.id,
-                    )
-                    .exists(),
-                ),
+                .order_by(inv.created_at),
             )
-        ).first()
-        in_flight += _scalar(created_with_task_row)
+        ).all()
+        created_ids: list[str] = [_child_id(row) for row in created_rows]
+        if not created_ids:
+            continue
+
+        # Ask the task queue -- not the taskrecord table directly --
+        # which of these ids already have a task row. Partition in
+        # Python: enqueued CREATED children count toward in_flight; the
+        # rest are the virgin pool. The set is small (<=46 per parent)
+        # so a single membership pass is cheaper than a per-id lookup.
+        enqueued_ids = await queue.enqueued_investigation_ids(created_ids)
+        in_flight_created = sum(1 for cid in created_ids if cid in enqueued_ids)
+        in_flight = running_paused + in_flight_created
 
         slots = batch_size - int(in_flight)
         if slots <= 0:
             continue
 
-        # Virgin CREATED children: no TaskRecord for this investigation_id.
-        # Order by created_at to enqueue oldest-first (preserves the
-        # operator-visible MASVS control id order from the dispatcher).
-        virgin = (
-            await uow.session.exec(
-                select(inv.id)
-                .where(inv.parent_investigation_id == parent_id)
-                .where(inv.status == InvestigationStatus.CREATED.value)
-                .where(
-                    ~select(tsk.id)
-                    .where(
-                        # fix §41 -- JSONB extract on `investigation_id`
-                        # (see _refill_apk_batches in_flight count above).
-                        cast(tsk.kwargs_json, JSONB)["investigation_id"]
-                        .astext == inv.id,
-                    )
-                    .exists(),
-                )
-                .order_by(inv.created_at)
-                .limit(slots),
-            )
-        ).all()
+        virgin_ids = [cid for cid in created_ids if cid not in enqueued_ids][:slots]
 
-        for row in virgin:
-            # Row tuples → unwrap to scalar string. SQLModel session.exec
-            # returns Row tuples for select(scalar_column); we want the
-            # plain UUID/str value for the task kwarg.
-            if hasattr(row, "__getitem__") and not isinstance(row, str):
-                child_id = str(row[0])
-            else:
-                child_id = str(row)
+        for child_id in virgin_ids:
             try:
                 await queue.submit(
                     track="vr",
@@ -392,9 +380,10 @@ async def _refill_apk_batches(uow: UnitOfWork) -> int:
                 )
                 enqueued_total += 1
             except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError, TimeoutError) as exc:
-                # fix §350 -- traceback surfaces ARQ/Redis transport vs
-                # dedup-table regression vs idempotency-key collision
-                # without forcing a second tick to compare.
+                # RFC-05 crit 10 rewrite retains the original traceback
+                # so a structural break (ARQ/Redis transport vs dedup
+                # regression vs idempotency-key collision) surfaces on
+                # the first failing tick instead of forcing a compare.
                 _log.warning(
                     "masvs batch refill: parent=%s child=%s enqueue failed: %s",
                     parent_id, child_id, exc,
@@ -439,11 +428,10 @@ async def _enforce_total_turn_cap(uow: UnitOfWork) -> int:
 
     Returns the count of investigations force-closed this tick.
     """
-    try:
-        cap = int(os.environ.get("VR_INVESTIGATION_TOTAL_TURN_CAP", "200"))
-    except ValueError:
-        cap = 200
-    cap = max(50, cap)  # floor so a typo doesn't kill everything
+    # ConfigRegistry (namespace=vr, key=investigation_total_turn_cap).
+    # Schema field enforces ge=50 so a typo cannot fall below the floor.
+    cap = await _cfg.get_int("investigation_total_turn_cap")
+    cap = max(50, cap)
 
     inv = VRInvestigationRecord
 
@@ -542,7 +530,8 @@ async def _enforce_total_turn_cap(uow: UnitOfWork) -> int:
             target_inv.updated_at = now
             uow.session.add(target_inv)
             await close_orphan_branches_on_terminal(
-                uow, inv_id, reason="investigation_completed", now=now,
+                uow, inv_id, branch_table="vr_investigation_branches",
+                reason="investigation_completed", now=now,
             )
 
         force_closed += 1
@@ -855,194 +844,6 @@ async def _wake_stale_branches(uow: UnitOfWork) -> int:
 # keep working without source changes.
 
 
-async def _reap_zombie_tasks_and_cursors(uow: UnitOfWork) -> dict[str, int]:
-    """Reap zombie tasks and stale workflow_state_cursor rows.
-
-    Two coupled failure modes leave the queue silently jammed (D-283):
-
-    1. Zombie task: ``taskrecord.status='running'`` with
-       ``heartbeat_at`` older than ``VR_ZOMBIE_TASK_HEARTBEAT_MIN``
-       (default 10 min). Caused by worker crash mid-task,
-       OmniRoute retry-loop wedging the worker for hours, or any
-       hang the worker can't recover from. The TaskRecord row
-       stays at ``running`` indefinitely, and dedup at
-       queue.py:132-140 then refuses to re-enqueue the same
-       investigation+branch payload because there's still an
-       "in-flight" task -- but no worker is actually working it.
-
-    2. Stale workflow_state_cursor: rows persist after the owning
-       task terminates abnormally. When a fresh task for the same
-       run_id starts, the workflow engine sees a stale cursor in
-       a transient state (``investigation_loop`` etc.) and
-       silently blocks. Observed live: 19 fresh tasks at 01:35:01
-       all stuck at first heartbeat for 10+ min because of 169
-       leftover cursors from a prior crash window.
-
-    This sweep:
-      (a) marks any vr-track task at ``status=running`` with
-          stale heartbeat as ``cancelled`` (frees dedup slot),
-      (b) deletes orphan cursors (no matching TaskRecord at all),
-      (c) deletes cursors whose TaskRecord is already terminal
-          (cancelled / done / failed / dead_letter),
-      (d) deletes cursors at the success terminal state
-          ``__succeeded__`` regardless of TaskRecord linkage
-          (the workflow engine itself never reads these again).
-
-    Active in-flight tasks (status IN queued/running/waiting with
-    fresh heartbeat) are left strictly alone. Only the explicitly
-    dead state gets reaped.
-
-    Returns ``{zombies_cancelled, cursors_purged}``.
-
-    fix §42 -- Single-session-scope assumption.
-    --------------------------------------------------
-    The function issues four UPDATE/DELETE statements:
-      (1) UPDATE taskrecord SET status='cancelled' WHERE stale heartbeat
-      (2) DELETE workflow_state_cursor WHERE no matching taskrecord
-      (3) DELETE workflow_state_cursor WHERE taskrecord is terminal
-      (4) DELETE workflow_state_cursor WHERE current_state='__succeeded__'
-
-    Steps 1 → 3 are intentionally ordered so step 3 sees the rows step 1
-    just marked ``cancelled`` (the cancelled rows then become eligible
-    for cursor deletion in the same tick). This is correct ONLY when
-    all four statements run inside the SAME session/transaction, so
-    step 3's ``JOIN taskrecord`` sees step 1's uncommitted update --
-    Postgres' default READ COMMITTED visibility for statements within a
-    single transaction makes this work. If the caller ever split this
-    helper across two sessions, step 3 would miss the just-cancelled
-    rows and they'd survive until the next tick.
-
-    The assertion below enforces the assumption at function entry: the
-    caller MUST hand us a session that is already in a transaction.
-    Documentation-only change otherwise -- no statement reordering, no
-    new commits.
-    """
-
-    # fix §42 -- single-session-scope invariant. The caller's UnitOfWork
-    # implicitly begins a transaction on first session use; a stand-
-    # alone session that has not yet executed any statement raises
-    # here and surfaces the misuse loudly rather than silently
-    # losing the step-1→step-3 visibility chain. Explicit raise (not
-    # assert) so the invariant holds under ``python -O``.
-    if not uow.session.in_transaction():
-        raise RuntimeError(
-            "_reap_zombie_tasks_and_cursors must run inside a single "
-            "transaction so step 3's JOIN observes step 1's UPDATE",
-        )
-
-    heartbeat_min = int(os.environ.get("VR_ZOMBIE_TASK_HEARTBEAT_MIN", "10"))
-    batch_cap = int(os.environ.get("VR_CURSOR_CLEANUP_BATCH", "5000"))
-
-    # 1. Cancel zombie tasks: vr-track, status=running, heartbeat
-    #    older than threshold (also catches the case where
-    #    heartbeat is NULL but started_at is old -- both indicate
-    #    a worker that never reported life).
-    zombie_sql = text(
-        """
-        UPDATE taskrecord
-        SET status = 'cancelled',
-            completed_at = NOW(),
-            updated_at = NOW(),
-            error = COALESCE(error, '') || ' [reaped by parent_reconciler: stale heartbeat]'
-        WHERE track = 'vr'
-          AND status = 'running'
-          AND COALESCE(heartbeat_at, started_at) < NOW() - (:mins || ' minutes')::interval
-        """,
-    )
-    zombie_result = await uow.session.exec(zombie_sql, params={"mins": str(heartbeat_min)})
-    zombies_cancelled = getattr(zombie_result, "rowcount", 0) or 0
-
-    # 2. Purge orphan cursors (no matching TaskRecord row at all).
-    #    Use NOT EXISTS to dodge a self-join cost on huge tables.
-    orphan_sql = text(
-        """
-        DELETE FROM workflow_state_cursor
-        WHERE run_id IN (
-            SELECT c.run_id FROM workflow_state_cursor c
-            WHERE NOT EXISTS (
-                SELECT 1 FROM taskrecord t WHERE t.id::text = c.run_id::text
-            )
-            LIMIT :cap
-        )
-        """,
-    )
-    orphan_result = await uow.session.exec(orphan_sql, params={"cap": batch_cap})
-    orphan_purged = getattr(orphan_result, "rowcount", 0) or 0
-
-    # 3. Purge cursors whose TaskRecord is terminal AND whose cursor
-    #    state is also a reserved terminal.
-    #
-    #    Earlier this clause deleted any cursor whose TaskRecord was
-    #    cancelled/done/failed/dead_letter regardless of cursor state.
-    #    That fires a race with ARQ retry: when a task's first
-    #    attempt fails (e.g. LLM parse failure), ARQ flips its
-    #    TaskRecord to 'failed' and schedules a retry. If this sweep
-    #    runs between attempts, it deletes the cursor while the
-    #    workflow row is still mid-state. The retry then hits
-    #    cursor_missing_during_commit in the engine's _commit_and_
-    #    advance lock probe, raises WorkflowConflictError, and the
-    #    job expires after exhausting retries -- AUTO_CONTINUE never
-    #    fires, investigation stalls.
-    #
-    #    Aligning this step with cursor_reaper.sweep_orphan_crashed_
-    #    cursors: ONLY delete cursors whose state is one of the four
-    #    reserved workflow terminals. Cursors mid-state stay, ARQ
-    #    retry sees them, the workflow recovers.
-    #
-    #    Diagnosed on inv <inv-uuid-a> / <inv-uuid-b>, 2026-06-12.
-    terminal_sql = text(
-        """
-        DELETE FROM workflow_state_cursor
-        WHERE run_id IN (
-            SELECT c.run_id FROM workflow_state_cursor c
-            JOIN taskrecord t ON t.id::text = c.run_id::text
-            WHERE t.status IN ('cancelled', 'done', 'failed', 'dead_letter')
-              AND c.current_state IN (
-                  '__crashed__', '__failed__',
-                  '__cancelled__', '__succeeded__'
-              )
-            LIMIT :cap
-        )
-        """,
-    )
-    terminal_result = await uow.session.exec(terminal_sql, params={"cap": batch_cap})
-    terminal_purged = getattr(terminal_result, "rowcount", 0) or 0
-
-    # 4. Purge __succeeded__ cursors -- terminal in the workflow engine,
-    #    never re-read, just accumulate.
-    succeeded_sql = text(
-        """
-        DELETE FROM workflow_state_cursor
-        WHERE run_id IN (
-            SELECT run_id FROM workflow_state_cursor
-            WHERE current_state = '__succeeded__'
-            LIMIT :cap
-        )
-        """,
-    )
-    succeeded_result = await uow.session.exec(succeeded_sql, params={"cap": batch_cap})
-    succeeded_purged = getattr(succeeded_result, "rowcount", 0) or 0
-
-    cursors_purged = orphan_purged + terminal_purged + succeeded_purged
-
-    if zombies_cancelled or cursors_purged:
-        await uow.commit()
-        _log.info(
-            "zombie_reaper zombies=%d cursors_purged=%d "
-            "(orphan=%d terminal=%d succeeded=%d)",
-            zombies_cancelled, cursors_purged,
-            orphan_purged, terminal_purged, succeeded_purged,
-        )
-
-    return {
-        "zombies_cancelled": zombies_cancelled,
-        "cursors_purged": cursors_purged,
-    }
-
-
-
-
-
 async def _cascade_terminal_to_deferred_children(
     uow: UnitOfWork,
 ) -> int:
@@ -1084,8 +885,7 @@ async def _cascade_terminal_to_deferred_children(
             inv.parent_investigation_id.in_(
                 select(parent_alias.c.id)
                 .where(
-                    parent_alias.c.kind
-                    == InvestigationKind.MASVS_AUDIT.value,
+                    parent_alias.c.kind.in_(_BATCH_PARENT_KINDS),
                 )
                 .where(parent_alias.c.status.in_(_TERMINAL_STATUSES)),
             ),
@@ -1129,8 +929,6 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
          making progress.
       6. ``_synthesize_no_finding_outcomes`` -- fill in audit_memo
          outcomes for any investigation that orphaned at step 5.
-      7. ``_reap_zombie_tasks_and_cursors`` -- cancel stale ``running``
-         taskrecords and purge dead workflow_state_cursors.
       8. Parent ``CREATED/RUNNING → COMPLETED`` rollup (inline below).
       8.5. ``_cascade_terminal_to_deferred_children`` -- flip deferred
          ``CREATED`` children whose parent is already terminal
@@ -1182,12 +980,6 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
             "synthesize_no_finding_outcomes",
             _synthesize_no_finding_outcomes, uow, default=0,
         )
-        # 7. Reap zombie tasks + stale workflow_state_cursors (D-283).
-        await _run_sweep_step(
-            "reap_zombie_tasks_and_cursors",
-            _reap_zombie_tasks_and_cursors, uow,
-            default={"zombies_cancelled": 0, "cursors_purged": 0},
-        )
         # Candidate parents: kind=masvs_audit, parent_investigation_id
         # IS NULL (true batch root), status in {CREATED, RUNNING}. PAUSED
         # parents are intentionally excluded so an operator who paused
@@ -1195,7 +987,7 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
         parent_rows = (
             await uow.session.exec(
                 select(inv.id, inv.status)
-                .where(inv.kind == InvestigationKind.MASVS_AUDIT.value)
+                .where(inv.kind.in_(_BATCH_PARENT_KINDS))
                 .where(inv.parent_investigation_id.is_(None))
                 .where(
                     inv.status.in_(
@@ -1287,6 +1079,7 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
                     # BLOCK-state cleanup bug this guards against.
                     await close_orphan_branches_on_terminal(
                         uow, parent_id,
+                        branch_table="vr_investigation_branches",
                         reason="investigation_completed",
                         now=now,
                     )

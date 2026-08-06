@@ -3,25 +3,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy.dialects.sqlite import insert as sa_insert
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_settings(tmp_path):
-    from aila.config import Settings
-    return Settings(database_url=f"sqlite:///{(tmp_path / 'test.db').as_posix()}")
-
-
-def _setup_db(settings):
-    from aila.storage.database import init_db
-    init_db(settings)
-
-
 def _insert_finding(
-    settings,
     *,
     host: str,
     package_name: str,
@@ -36,47 +23,44 @@ def _insert_finding(
     from aila.storage.database import session_scope
 
     now = last_scanned_at or datetime.now(UTC)
-    stmt = (
-        sa_insert(LatestFindingRecord)
-        .values(
-            host=host,
-            package_name=package_name,
-            cve_id=cve_id,
-            system_id=system_id,
-            system_name=host,
-            distribution="ubuntu-22.04",
-            criticality=criticality,
-            score=score,
-            rationale="test",
-            fixed_version=fixed_version,
-            nvd_url=f"https://nvd.nist.gov/vuln/detail/{cve_id}",
-            compliance_tags_json="[]",
-            details_json="{}",
-            last_scanned_at=now,
-            created_at=now,
+    with session_scope() as session:
+        session.add(
+            LatestFindingRecord(
+                host=host,
+                package_name=package_name,
+                cve_id=cve_id,
+                system_id=system_id,
+                system_name=host,
+                distribution="ubuntu-22.04",
+                criticality=criticality,
+                score=score,
+                rationale="test",
+                fixed_version=fixed_version,
+                nvd_url=f"https://nvd.nist.gov/vuln/detail/{cve_id}",
+                compliance_tags_json="[]",
+                details_json="{}",
+                last_scanned_at=now,
+                created_at=now,
+            )
         )
-        .prefix_with("OR REPLACE")
-    )
-    with session_scope(settings) as session:
-        session.exec(stmt)  # type: ignore[arg-type]
         session.commit()
 
 
-def _insert_tag(settings, *, system_id: int, tag_key: str, tag_value: str) -> None:
+def _insert_tag(*, system_id: int, tag_key: str, tag_value: str) -> None:
     from aila.modules.vulnerability.db_models import AssetTagRecord
     from aila.storage.database import session_scope
 
     now = datetime.now(UTC)
-    stmt = (
-        sa_insert(AssetTagRecord)
-        .values(system_id=system_id, tag_key=tag_key, tag_value=tag_value, created_at=now, updated_at=now)
-        .on_conflict_do_update(
-            index_elements=["system_id", "tag_key"],
-            set_={"tag_value": tag_value, "updated_at": now},
+    with session_scope() as session:
+        session.add(
+            AssetTagRecord(
+                system_id=system_id,
+                tag_key=tag_key,
+                tag_value=tag_value,
+                created_at=now,
+                updated_at=now,
+            )
         )
-    )
-    with session_scope(settings) as session:
-        session.exec(stmt)  # type: ignore[arg-type]
         session.commit()
 
 
@@ -85,19 +69,16 @@ def _insert_tag(settings, *, system_id: int, tag_key: str, tag_value: str) -> No
 # ---------------------------------------------------------------------------
 
 
-def test_multi_host_blast_radius(tmp_path):
+async def test_multi_host_blast_radius(test_db):
     """CVE on 2 hosts with different env tags returns host_count=2 and correct tag_breakdown."""
     from aila.modules.vulnerability.tools.blast_radius import blast_radius
 
-    settings = _make_settings(tmp_path)
-    _setup_db(settings)
+    _insert_finding(host="host-a", package_name="libssl", cve_id="CVE-2024-1234", system_id=1)
+    _insert_finding(host="host-b", package_name="libssl", cve_id="CVE-2024-1234", system_id=2)
+    _insert_tag(system_id=1, tag_key="env", tag_value="production")
+    _insert_tag(system_id=2, tag_key="env", tag_value="staging")
 
-    _insert_finding(settings, host="host-a", package_name="libssl", cve_id="CVE-2024-1234", system_id=1)
-    _insert_finding(settings, host="host-b", package_name="libssl", cve_id="CVE-2024-1234", system_id=2)
-    _insert_tag(settings, system_id=1, tag_key="env", tag_value="production")
-    _insert_tag(settings, system_id=2, tag_key="env", tag_value="staging")
-
-    result = blast_radius(cve_id="CVE-2024-1234", settings=settings)
+    result = await blast_radius(cve_id="CVE-2024-1234")
 
     assert result["cve_id"] == "CVE-2024-1234"
     assert result["host_count"] == 2
@@ -108,30 +89,24 @@ def test_multi_host_blast_radius(tmp_path):
     assert result["tag_breakdown"]["env"]["staging"] == 1
 
 
-def test_single_host_no_tags(tmp_path):
+async def test_single_host_no_tags(test_db):
     """CVE on 1 host with no AssetTagRecord entries -- tags={} on that host entry."""
     from aila.modules.vulnerability.tools.blast_radius import blast_radius
 
-    settings = _make_settings(tmp_path)
-    _setup_db(settings)
+    _insert_finding(host="host-c", package_name="openssl", cve_id="CVE-2024-5678", system_id=10)
 
-    _insert_finding(settings, host="host-c", package_name="openssl", cve_id="CVE-2024-5678", system_id=10)
-
-    result = blast_radius(cve_id="CVE-2024-5678", settings=settings)
+    result = await blast_radius(cve_id="CVE-2024-5678")
 
     assert result["host_count"] == 1
     assert result["hosts"][0]["tags"] == {}
     assert result["tag_breakdown"] == {}
 
 
-def test_unknown_cve_returns_empty(tmp_path):
+async def test_unknown_cve_returns_empty(test_db):
     """CVE not in DB returns host_count=0, empty hosts and tag_breakdown. No error raised."""
     from aila.modules.vulnerability.tools.blast_radius import blast_radius
 
-    settings = _make_settings(tmp_path)
-    _setup_db(settings)
-
-    result = blast_radius(cve_id="CVE-9999-9999", settings=settings)
+    result = await blast_radius(cve_id="CVE-9999-9999")
 
     assert result["cve_id"] == "CVE-9999-9999"
     assert result["host_count"] == 0
@@ -139,17 +114,14 @@ def test_unknown_cve_returns_empty(tmp_path):
     assert result["tag_breakdown"] == {}
 
 
-def test_multiple_packages_same_host(tmp_path):
+async def test_multiple_packages_same_host(test_db):
     """CVE matching libssl + openssl on same host -- both appear as separate host entries."""
     from aila.modules.vulnerability.tools.blast_radius import blast_radius
 
-    settings = _make_settings(tmp_path)
-    _setup_db(settings)
+    _insert_finding(host="host-d", package_name="libssl", cve_id="CVE-2024-MULTI", system_id=20)
+    _insert_finding(host="host-d", package_name="openssl", cve_id="CVE-2024-MULTI", system_id=20)
 
-    _insert_finding(settings, host="host-d", package_name="libssl", cve_id="CVE-2024-MULTI", system_id=20)
-    _insert_finding(settings, host="host-d", package_name="openssl", cve_id="CVE-2024-MULTI", system_id=20)
-
-    result = blast_radius(cve_id="CVE-2024-MULTI", settings=settings)
+    result = await blast_radius(cve_id="CVE-2024-MULTI")
 
     # host_count is distinct hosts -- just 1
     assert result["host_count"] == 1
@@ -159,30 +131,23 @@ def test_multiple_packages_same_host(tmp_path):
     assert packages == {"libssl", "openssl"}
 
 
-def test_cve_id_normalized_to_uppercase(tmp_path):
+async def test_cve_id_normalized_to_uppercase(test_db):
     """CVE ID is normalized to uppercase before query."""
     from aila.modules.vulnerability.tools.blast_radius import blast_radius
 
-    settings = _make_settings(tmp_path)
-    _setup_db(settings)
+    _insert_finding(host="host-e", package_name="pkg", cve_id="CVE-2024-UPPER", system_id=30)
 
-    _insert_finding(settings, host="host-e", package_name="pkg", cve_id="CVE-2024-UPPER", system_id=30)
-
-    result = blast_radius(cve_id="cve-2024-upper", settings=settings)
+    result = await blast_radius(cve_id="cve-2024-upper")
 
     assert result["cve_id"] == "CVE-2024-UPPER"
     assert result["host_count"] == 1
 
 
-def test_host_entry_fields_present(tmp_path):
+async def test_host_entry_fields_present(test_db):
     """Each host entry has the required fields."""
     from aila.modules.vulnerability.tools.blast_radius import blast_radius
 
-    settings = _make_settings(tmp_path)
-    _setup_db(settings)
-
     _insert_finding(
-        settings,
         host="host-f",
         package_name="curl",
         cve_id="CVE-2024-FIELDS",
@@ -191,10 +156,10 @@ def test_host_entry_fields_present(tmp_path):
         score=9.8,
         fixed_version="8.0.0",
     )
-    _insert_tag(settings, system_id=40, tag_key="env", tag_value="production")
-    _insert_tag(settings, system_id=40, tag_key="team", tag_value="platform")
+    _insert_tag(system_id=40, tag_key="env", tag_value="production")
+    _insert_tag(system_id=40, tag_key="team", tag_value="platform")
 
-    result = blast_radius(cve_id="CVE-2024-FIELDS", settings=settings)
+    result = await blast_radius(cve_id="CVE-2024-FIELDS")
 
     assert result["host_count"] == 1
     entry = result["hosts"][0]

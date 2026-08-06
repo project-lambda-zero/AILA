@@ -1,6 +1,6 @@
 """ARQ entrypoint for function ranking dispatch.
 
-Wires ``IDABridgeTool`` + ``AuditMcpBridgeTool`` into the
+Wires MCP bridges into the
 ``FunctionRankingDispatcher`` and exposes via ``@platform_task``.
 Enqueued by:
   * api_router on operator-initiated /api/vr/targets/<id>/rank
@@ -12,8 +12,7 @@ from typing import Any
 
 from aila.modules.vr.enrichment.services import FunctionRankingDispatcher
 from aila.modules.vr.services.mcp_call_logger import record_call
-from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
-from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
+from aila.platform.mcp.factory import make_bridge
 from aila.platform.tasks.context import TaskContext
 from aila.platform.tasks.template import platform_task
 
@@ -40,8 +39,8 @@ async def run_function_ranking(
     JSON-serializable for SSE push / audit trail.
     """
     dispatcher = FunctionRankingDispatcher(
-        ida=IDABridgeTool(recorder=record_call),
-        audit_mcp=AuditMcpBridgeTool(recorder=record_call),
+        ida=make_bridge("ida_headless", module_id="vr", recorder=record_call),
+        audit_mcp=make_bridge("audit_mcp", module_id="vr", recorder=record_call),
     )
     ranking = await dispatcher.rank(target_id)
     return ranking.model_dump(mode="json")

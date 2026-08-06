@@ -4,6 +4,8 @@ from typing import Protocol
 
 import httpx
 
+from .ssrf import SSRFValidatingTransport
+
 __all__ = ["HTTPClientSettings", "build_http_client"]
 
 
@@ -32,12 +34,18 @@ def build_http_client(
     passed here as a single URL string. The platform User-Agent and timeout are
     always applied from settings.
     """
-    kwargs: dict[str, object] = {
-        "timeout": settings.request_timeout_seconds,
-        "headers": {"User-Agent": settings.user_agent},
-        "follow_redirects": True,
-        "verify": True if verify is None else verify,
-    }
+    inner_kwargs: dict[str, object] = {"verify": True if verify is None else verify}
     if proxies:
-        kwargs["proxies"] = {"http://": proxies, "https://": proxies}
-    return httpx.Client(**kwargs)  # type: ignore[arg-type]
+        inner_kwargs["proxy"] = proxies
+    # Wrap the real transport so every request hop -- initial URL AND each
+    # redirect target (follow_redirects stays on) -- is validated against the
+    # SSRF egress policy before its socket opens (issue #42). A redirect into
+    # a private/link-local address, a non-web scheme, or a disallowed port
+    # raises SSRFBlockedError and aborts the chain.
+    transport = SSRFValidatingTransport(httpx.HTTPTransport(**inner_kwargs))  # type: ignore[arg-type]
+    return httpx.Client(
+        transport=transport,
+        timeout=settings.request_timeout_seconds,
+        headers={"User-Agent": settings.user_agent},
+        follow_redirects=True,
+    )

@@ -32,6 +32,61 @@ _SUSPICIOUS_EXTENSIONS = frozenset({
 _MAX_BINARY_SIZE = 100 * 1024 * 1024  # 100 MB upper limit for tool runs
 
 
+async def _collect_deep_artifacts(
+    ssh: Any,
+    targets: list[dict[str, Any]],
+    integration: Any,
+    analyzer_os: str,
+    err_sink: str,
+) -> list[tuple[dict[str, Any], Any]]:
+    """Run the per-file SSH analysis phase off the pooled DB connection (#63).
+
+    _analyze_single_file runs strings/FLOSS/capa over SSH and can take seconds
+    per file; doing it inside an open UnitOfWork held a DB connection for the
+    whole pass. This collects every artifact first as (artifact, source id)
+    pairs so the caller persists them in one short transaction. A file whose
+    analysis raises is logged and skipped, matching the prior inline behavior.
+    """
+    collected: list[tuple[dict[str, Any], Any]] = []
+    for target in targets:
+        path = target["file_path"]
+        try:
+            file_artifacts = await _analyze_single_file(
+                ssh, integration, path, analyzer_os, err_sink,
+            )
+        except (OSError, TimeoutError, RuntimeError, AILAError):
+            _log.warning("Deep analysis failed for %s", path, exc_info=True)
+            continue
+        for art in file_artifacts:
+            collected.append((art, target.get("id")))
+    return collected
+
+
+def _persist_deep_artifacts(
+    uow: Any,
+    project_id: str,
+    collected: list[tuple[dict[str, Any], Any]],
+) -> tuple[int, dict[str, int]]:
+    """Add collected artifacts to the session; return (count, by_family)."""
+    from aila.modules.forensics.db_models import ArtifactRecord
+
+    artifact_count = 0
+    artifacts_by_family: dict[str, int] = {}
+    for art, source_evidence_id in collected:
+        uow.session.add(ArtifactRecord(
+            project_id=project_id,
+            artifact_family=art["family"],
+            artifact_type=art["type"],
+            source_tool=art["source_tool"],
+            source_evidence_id=source_evidence_id,
+            data_json=json.dumps(art["data"]),
+        ))
+        artifact_count += 1
+        family = art["family"]
+        artifacts_by_family[family] = artifacts_by_family.get(family, 0) + 1
+    return artifact_count, artifacts_by_family
+
+
 async def state_deep_analysis(
     input: dict[str, Any],
     services: Any,
@@ -62,35 +117,17 @@ async def state_deep_analysis(
     targets = _select_analysis_targets(evidence_files)
     _log.info("Deep analysis: %d targets selected out of %d files", len(targets), len(evidence_files))
 
-    from aila.modules.forensics.db_models import ArtifactRecord
     from aila.platform.uow import UnitOfWork
 
-    artifact_count = 0
-    artifacts_by_family: dict[str, int] = {}
-
+    # SSH analysis runs OUTSIDE any DB session (#63); only the fast in-memory
+    # adds + one commit hold the pooled connection.
+    collected = await _collect_deep_artifacts(
+        ssh, targets, integration, analyzer_os, err_sink,
+    )
     async with UnitOfWork() as uow:
-        for target in targets:
-            path = target["file_path"]
-            try:
-                file_artifacts = await _analyze_single_file(
-                    ssh, integration, path, analyzer_os, err_sink,
-                )
-                for art in file_artifacts:
-                    record = ArtifactRecord(
-                        project_id=project_id,
-                        artifact_family=art["family"],
-                        artifact_type=art["type"],
-                        source_tool=art["source_tool"],
-                        source_evidence_id=target.get("id"),
-                        data_json=json.dumps(art["data"]),
-                    )
-                    uow.session.add(record)
-                    artifact_count += 1
-                    family = art["family"]
-                    artifacts_by_family[family] = artifacts_by_family.get(family, 0) + 1
-            except (OSError, TimeoutError, RuntimeError, AILAError):
-                _log.warning("Deep analysis failed for %s", path, exc_info=True)
-
+        artifact_count, artifacts_by_family = _persist_deep_artifacts(
+            uow, project_id, collected,
+        )
         await uow.commit()
 
     await services.emitter.emit(

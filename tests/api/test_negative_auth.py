@@ -68,7 +68,12 @@ async def test_create_key_invalid_role(
     """POST /auth/keys with role='superadmin' returns 422 (invalid role).
 
     Schema-level Literal['admin', 'operator', 'reader'] validation fires
-    before the router, producing Pydantic's standard 422 response shape.
+    at request parsing time and raises RequestValidationError. Phase 176a
+    registers the envelope handler AFTER the Phase 80 handler, so it wins
+    (later ``add_exception_handler`` overwrites the earlier one). The body
+    is the four-field envelope {code, message, hint, trace_id}
+    -- see src/aila/api/errors/handlers.py:185-195 and
+    src/aila/api/errors/envelope.py:17-30.
     """
     resp = await async_client.post(
         "/auth/keys",
@@ -77,11 +82,13 @@ async def test_create_key_invalid_role(
     )
     assert resp.status_code == 422
     body = resp.json()
-    # Phase 80: custom validation handler reshapes 422 into ErrorResponse envelope
-    assert isinstance(body["detail"], str)
+    # Phase 176a envelope: {code, message, hint, trace_id}. No `detail` field,
+    # no per-field `errors` list -- that shape belonged to the superseded
+    # Phase 80 handler at src/aila/api/app.py:316-343.
+    assert set(body.keys()) == {"code", "message", "hint", "trace_id"}
     assert body["code"] == "VALIDATION_ERROR"
-    assert isinstance(body["errors"], list)
-    assert any(err["loc"] == ["body", "role"] for err in body["errors"])
+    assert body["message"] == "Request validation failed"
+    assert isinstance(body["hint"], str) and body["hint"]
 
 
 # -- GET /auth/keys ------------------------------------------------------------

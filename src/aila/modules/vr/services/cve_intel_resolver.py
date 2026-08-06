@@ -7,9 +7,9 @@ that signal it invents details ("recent/future RCE") instead of
 admitting it doesn't know. This helper:
 
   1. Extracts CVE-NNNN-NNNN tokens from a free-form question.
-  2. Resolves each via the vulnerability module's registered
-     ``IntelService`` -- the same aggregator the
-     ``GET /vulnerability/cves/{id}`` endpoint uses. That service
+  2. Resolves each via the platform-published ``IntelService`` (the
+     slot ``platform.runtime.intel_service``) -- the same aggregator
+     the ``GET /vulnerability/cves/{id}`` endpoint uses. That service
      already orchestrates NVD + EPSS + KEV with caching + graceful
      fallback.
   3. Catches every exception (transport error, NVD 404, module
@@ -20,10 +20,10 @@ admitting it doesn't know. This helper:
      it as a "## External CVE intel" prompt section so the agent
      can branch on ``status='not_found'`` instead of confabulating.
 
-We deliberately reach into the vulnerability module's already-wired
-runtime instead of constructing our own IntelService. That gives
-us the EPSS + KEV + cache + per-provider fallback the operator
-already configured, and we don't duplicate provider wiring.
+We deliberately resolve the platform-published ``IntelService``
+instead of constructing our own. That gives us the EPSS + KEV +
+cache + per-provider fallback the operator already configured, and
+we don't duplicate provider wiring or name the providing module.
 """
 from __future__ import annotations
 
@@ -143,12 +143,16 @@ def extract_cve_ids(text: str | None) -> list[str]:
 
 
 async def _get_intel_service() -> Any | None:
-    """Pull the vulnerability module's registered ``IntelService``.
+    """Return the platform-published CVE ``IntelService``, or None.
+
+    Reads ``platform.runtime.intel_service`` -- the slot the platform
+    builder fills from whichever module publishes an intel service via
+    ``provides_intel_service()``. This resolver never names the providing
+    module.
 
     Uses the worker-process platform singleton; returns ``None`` when
-    the vulnerability module isn't registered (e.g. running with
-    --modules vr only) so the resolver collapses to status=error
-    instead of raising.
+    no intel provider is registered (e.g. running with --modules vr
+    only) so the resolver collapses to status=error instead of raising.
     """
     try:
         from aila.platform.runtime.orchestrator import (
@@ -174,16 +178,11 @@ async def _get_intel_service() -> Any | None:
             exc_info=True,
         )
         return None
-    try:
-        vuln_runtime = platform.runtime.require_module("vulnerability")
-    except KeyError:
-        _log.info("cve_intel: vulnerability module not registered")
-        return None
-    intel = getattr(vuln_runtime, "intel", None)
+    intel = platform.runtime.intel_service
     if intel is None:
         _log.info(
-            "cve_intel: vulnerability runtime exposes no .intel attribute "
-            "(runtime type: %s)", type(vuln_runtime).__name__,
+            "cve_intel: no module publishes an intel service "
+            "(a CVE-intel provider module is absent from this worker)",
         )
         return None
     return intel

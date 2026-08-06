@@ -247,10 +247,19 @@ class TestFindingResponseFieldMapping:
     """FindingResponse fields map correctly to LatestFindingRecord columns."""
 
     def test_all_fields_present(self) -> None:
-        """FindingResponse declares the expected fields for the API surface."""
+        """FindingResponse declares the expected fields for the API surface.
+
+        Includes both the legacy ``kev`` bool and the materialized ``is_kev``
+        column mirror (populated by the vulnerability router from
+        LatestFindingRecord.is_kev), plus ``workflow_state`` for triage
+        (default ``"new"``, mapped from current_workflow_state).
+        """
         field_names = set(FindingResponse.model_fields.keys())
-        expected = {"id", "run_id", "cve_id", "package", "version", "host",
-                     "severity", "kev", "score", "status", "created_at"}
+        expected = {
+            "id", "run_id", "cve_id", "package", "version", "host",
+            "severity", "kev", "is_kev", "score", "status",
+            "workflow_state", "created_at",
+        }
         assert field_names == expected
 
     def test_minimal_construction(self) -> None:
@@ -524,14 +533,28 @@ class TestAuthExports:
 
 
 class TestFindingsExports:
-    """findings module __all__ exports match defined classes."""
+    """findings module __all__ exports match defined classes and constants."""
 
     def test_all_exports(self) -> None:
-        """findings.__all__ contains exactly the defined schema classes."""
+        """findings.__all__ contains the schema classes plus validation constants.
+
+        Covers the list/detail response shapes (FindingResponse,
+        FindingsListResponse, FindingDetailResponse), the bulk-update
+        request/response (BulkStatusUpdateRequest, BulkUpdateResponse) with
+        their allowed-value tuples (BULK_ALLOWED_STATUSES,
+        BULK_ALLOWED_WORKFLOW_STATES), the finding-level feedback endpoint
+        pair (FindingFeedbackRequest, FindingFeedbackResponse -- FIND-11),
+        and the extensible facet counts (FacetsResponse).
+        """
         expected = {
+            "BULK_ALLOWED_STATUSES",
+            "BULK_ALLOWED_WORKFLOW_STATES",
             "BulkStatusUpdateRequest",
             "BulkUpdateResponse",
             "FacetsResponse",
+            "FindingDetailResponse",
+            "FindingFeedbackRequest",
+            "FindingFeedbackResponse",
             "FindingResponse",
             "FindingsListResponse",
         }

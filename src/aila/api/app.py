@@ -60,7 +60,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     from aila.api.auth import hash_api_key
     from aila.logging_config import configure_logging
-    from aila.platform.contracts._common import utc_now
+    from aila.platform.contracts import utc_now
     from aila.storage.database import async_session_scope
     from aila.storage.db_models import ApiKeyRecord, UserRecord
 
@@ -75,6 +75,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     platform: AILAPlatform = AILAPlatform(settings=settings)
     await platform._ensure_initialized()
     app.state.platform = platform
+
+    # RFC-09/10 activation: register each module's file-backed prompts into
+    # the version store and set a production alias where none exists, so the
+    # pin-per-investigation and canary-routing paths run by default instead
+    # of falling back to disk. Alias-if-absent means an operator-promoted or
+    # canary version survives restart untouched. Best-effort: a seed fault
+    # degrades the module to its file baseline and must not block startup.
+    try:
+        from aila.platform.prompts.bootstrap import seed_module_prompts
+
+        _runtime = getattr(platform, "runtime", None)
+        _seeded = await seed_module_prompts(getattr(_runtime, "module_registry", None))
+        if any(_seeded.values()):
+            _log.info("Seeded module prompt versions: %s", _seeded)
+    except (OSError, TimeoutError, RuntimeError, ValueError, LookupError) as exc:
+        _log.warning("Module prompt seeding skipped: %s", exc)
 
     if not _os.getenv("AILA_JWT_SECRET_KEY"):
         _log.warning(
@@ -225,33 +241,33 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.automation_registry = None
         app.state.automation_runner = None
 
-    # Start background automation tick loop (60s interval).
-    # Wires the fully-implemented AutomationRunner that was previously
-    # instantiated but never invoked (AUDIT-01 fix).
+    # Start the supervised background automation tick loop (60s base interval,
+    # exponential backoff on repeated failure). Wires the AutomationRunner that
+    # was previously instantiated but never invoked (AUDIT-01 fix). The
+    # supervisor catches every realistic tick fault so a malformed schedule row
+    # can no longer kill the loop and silently halt automation (#46).
     _automation_tick_task: asyncio.Task[None] | None = None
+    _automation_stop: asyncio.Event | None = None
     if app.state.automation_runner is not None:
-        _runner = app.state.automation_runner
+        from aila.platform.automation.supervisor import run_tick_supervisor
 
-        async def _tick_loop() -> None:
-            import sqlalchemy.exc as _sa_exc
-
-            from aila.platform.exceptions import AILAError as _AILAError
-            while True:
-                try:
-                    await _runner.tick()
-                except asyncio.CancelledError:
-                    raise
-                except (_AILAError, _sa_exc.SQLAlchemyError, ValueError, OSError):
-                    _log.warning("Automation tick failed", exc_info=True)
-                await asyncio.sleep(60)
-
-        _automation_tick_task = asyncio.create_task(_tick_loop(), name="automation-tick")
-        _log.info("Automation tick loop started (60s interval)")
+        _automation_stop = asyncio.Event()
+        _automation_tick_task = asyncio.create_task(
+            run_tick_supervisor(
+                app.state.automation_runner, stop_event=_automation_stop,
+            ),
+            name="automation-tick",
+        )
+        _log.info(
+            "Automation tick supervisor started (60s base interval, exponential backoff)",
+        )
 
     yield
 
-    # Cancel automation tick loop before other shutdown.
+    # Signal the supervisor to stop, then cancel as a backstop.
     if _automation_tick_task is not None:
+        if _automation_stop is not None:
+            _automation_stop.set()
         _automation_tick_task.cancel()
         try:
             await _automation_tick_task
@@ -266,6 +282,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await close_redis_pool()
     except Exception:
         _log.warning("Redis pool close failed", exc_info=True)
+    # #44: close the LLM client's AsyncOpenAI pool so the underlying
+    # httpx.AsyncClient connection pool / TLS sessions release on
+    # process teardown instead of leaking to GC.
+    try:
+        platform = getattr(app.state, "platform", None)
+        runtime = getattr(platform, "_runtime", None) if platform is not None else None
+        llm_client = getattr(runtime, "runtime_model", None) if runtime is not None else None
+        aclose = getattr(llm_client, "aclose", None)
+        if aclose is not None:
+            await aclose()
+    except (OSError, RuntimeError, AttributeError):
+        _log.warning("AilaLLMClient aclose failed", exc_info=True)
     _log.info("AILA platform shutdown complete")
 
 
@@ -358,6 +386,23 @@ async def _http_exception_handler(
     )
 
 
+def _cors_allow_credentials(origins: list[str]) -> bool:
+    """Decide whether the CORS middleware should send credentials.
+
+    A wildcard entry in ``allow_origins`` combined with ``allow_credentials=True``
+    reflects ``Access-Control-Allow-Origin: *`` alongside credentialed cookies,
+    which every current browser refuses and which is a live security misconfiguration
+    against a background of tenant-scoped auth cookies.  This predicate returns
+    ``True`` only when the allowlist is a concrete set of origins (no ``"*"``
+    entry, and the list itself is not literally ``["*"]``).
+    """
+    if origins == ["*"]:
+        return False
+    if "*" in origins:
+        return False
+    return True
+
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -390,10 +435,25 @@ def create_app() -> FastAPI:
         "http://localhost:5173,http://127.0.0.1:5173",
     )
     cors_origins = [o.strip() for o in cors_origins_raw.split(",") if o.strip()]
+    cors_credentials = _cors_allow_credentials(cors_origins)
 
     # Correlation ID middleware: bind correlation_id/path/method to structlog contextvars
     from aila.api.middleware import CorrelationIdMiddleware
     application.add_middleware(CorrelationIdMiddleware)
+
+    # #47: security-headers baseline (CSP, nosniff, framing, referrer, COOP,
+    # CORP, permissions). Registered before CORS so it is inside the CORS
+    # wrapper -- CORS still owns the outermost response envelope and can
+    # inject Access-Control-* on preflight without clashing.
+    from aila.api.middleware import SecurityHeadersMiddleware
+    application.add_middleware(SecurityHeadersMiddleware)
+
+    # #53: bind the caller's TeamContext to the ambient ContextVar for the
+    # duration of the request so bare ``UnitOfWork()`` / ``async_session_scope()``
+    # sites inherit tenant scope. Decode is silent -- the real auth layer
+    # (require_user_or_api_key) still 401s on a bad or missing token.
+    from aila.api.middleware.team_context import TeamContextMiddleware
+    application.add_middleware(TeamContextMiddleware)
 
     # Idempotency middleware: replay cached POST responses for duplicate Idempotency-Key
     # headers (SEC-06). Uses shared Redis pool (OPS-01). Graceful degradation if pool unavailable.
@@ -408,7 +468,7 @@ def create_app() -> FastAPI:
     application.add_middleware(
         CORSMiddleware,
         allow_origins=cors_origins,
-        allow_credentials=True,
+        allow_credentials=cors_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -514,9 +574,34 @@ def create_app() -> FastAPI:
     from aila.api.routers.admin_dead_letter import router as admin_dead_letter_router
     application.include_router(admin_dead_letter_router)
 
+    # RFC-07 phase 3: Admin state reconciliation router (god-tier admin --
+    # on-demand per-task heal of TaskRecord + workflow cursor + ARQ lock).
+    from aila.api.routers.admin_reconcile import router as admin_reconcile_router
+    application.include_router(admin_reconcile_router)
+
     # Phase 181: Admin workflow inspection router (admin only -- run/transition audit)
     from aila.api.routers.admin_workflows import router as admin_workflows_router
     application.include_router(admin_workflows_router)
+
+    # RFC-09: Admin prompt-version router (god-tier admin -- deploy/rollback prompts)
+    from aila.api.routers.admin_prompts import router as admin_prompts_router
+    application.include_router(admin_prompts_router)
+
+    # RFC-11: Admin MCP instance catalog router (god-tier admin -- CRUD server rows)
+    from aila.api.routers.mcp_instances import router as mcp_instances_router
+    application.include_router(mcp_instances_router)
+
+    # RFC-08: Admin eval-harness router (god-tier admin -- score candidate + gate promotion)
+    from aila.api.routers.admin_eval import router as admin_eval_router
+    application.include_router(admin_eval_router)
+
+    # RFC-10: Admin agent-lifecycle router (god-tier admin -- evaluate/promote/rollback + journal)
+    from aila.api.routers.admin_lifecycle import router as admin_lifecycle_router
+    application.include_router(admin_lifecycle_router)
+
+    # RFC-13: user-extensible specialist-agent registry (optional panel members)
+    from aila.api.routers.specialist_agents import router as specialist_agents_router
+    application.include_router(specialist_agents_router)
 
     # Health router: /health and /status -- no auth required (public endpoints)
     from aila.api.routers.health import router as health_router

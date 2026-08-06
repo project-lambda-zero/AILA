@@ -12,20 +12,27 @@ Verifies:
 from __future__ import annotations
 
 import inspect
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import sqlalchemy
 
 # ---------------------------------------------------------------------------
-# _plan_enrichment batch call tests
+# _plan_enrichment batch call tests  (async: _plan_enrichment is async)
 # ---------------------------------------------------------------------------
 
+
 def _make_intel_service(batch_return: dict) -> object:
-    """Create an IntelService whose cache_tool.forward returns batch_return for cve_cache_get_batch."""
+    """Create an IntelService whose async cache_tool.forward returns batch_return.
+
+    IntelService now awaits ``cache_tool.forward(...)`` (Phase 46 async
+    migration), so the mock must produce awaitables. Everything else on the
+    service is a plain MagicMock because ``_plan_enrichment`` only touches
+    ``cache_tool``.
+    """
     from aila.modules.vulnerability.services.intel import IntelService
 
     mock_cache_tool = MagicMock()
-    mock_cache_tool.forward.return_value = batch_return
+    mock_cache_tool.forward = AsyncMock(return_value=batch_return)
 
     service = IntelService.__new__(IntelService)
     service.nvd_tool = MagicMock()
@@ -37,12 +44,12 @@ def _make_intel_service(batch_return: dict) -> object:
     return service
 
 
-def test_plan_enrichment_calls_batch_not_per_id():
+async def test_plan_enrichment_calls_batch_not_per_id():
     """_plan_enrichment must call cache_tool.forward exactly once with action='cve_cache_get_batch'."""
     service = _make_intel_service(batch_return={})
     cve_ids = ["CVE-2021-1", "CVE-2021-2", "CVE-2021-3"]
 
-    service._plan_enrichment(cve_ids, force_refresh=False)
+    await service._plan_enrichment(cve_ids, force_refresh=False)
 
     calls = service.cache_tool.forward.call_args_list
     assert len(calls) == 1, f"Expected 1 call, got {len(calls)}: {calls}"
@@ -58,49 +65,58 @@ def test_plan_enrichment_no_per_id_cve_cache_get_call():
     assert '"cve_cache_get"' not in src, "Per-ID 'cve_cache_get' action still used in _plan_enrichment"
 
 
-def test_plan_enrichment_fresh_cache_ids_populated(tmp_path):
-    """fresh_cache_ids should list CVEs returned by batch fetch (force_refresh=False)."""
+async def test_plan_enrichment_fresh_cache_ids_populated():
+    """fresh_cache_ids should list CVEs returned by batch fetch (force_refresh=False).
+
+    A cached payload must carry a recent ``last_synced_at`` stamp for
+    ``_cve_cache_is_fresh`` to accept it; otherwise the entry falls into
+    ``missing_ids`` regardless of the batch return value.
+    """
+    from datetime import UTC, datetime
+    now_iso = datetime.now(UTC).isoformat()
     batch_result = {
-        "CVE-2021-1": {"severity": "HIGH"},
-        "CVE-2021-2": {"severity": "MEDIUM"},
+        "CVE-2021-1": {"severity": "HIGH", "last_synced_at": now_iso},
+        "CVE-2021-2": {"severity": "MEDIUM", "last_synced_at": now_iso},
     }
     service = _make_intel_service(batch_return=batch_result)
     cve_ids = ["CVE-2021-1", "CVE-2021-2", "CVE-MISSING"]
 
-    plan = service._plan_enrichment(cve_ids, force_refresh=False)
+    plan = await service._plan_enrichment(cve_ids, force_refresh=False)
 
     assert "CVE-2021-1" in plan.fresh_cache_ids
     assert "CVE-2021-2" in plan.fresh_cache_ids
 
 
-def test_plan_enrichment_missing_ids_populated():
+async def test_plan_enrichment_missing_ids_populated():
     """missing_ids should contain CVEs absent from batch result."""
-    batch_result = {"CVE-2021-1": {"severity": "HIGH"}}
+    from datetime import UTC, datetime
+    batch_result = {"CVE-2021-1": {"severity": "HIGH", "last_synced_at": datetime.now(UTC).isoformat()}}
     service = _make_intel_service(batch_return=batch_result)
     cve_ids = ["CVE-2021-1", "CVE-MISSING-A", "CVE-MISSING-B"]
 
-    plan = service._plan_enrichment(cve_ids, force_refresh=False)
+    plan = await service._plan_enrichment(cve_ids, force_refresh=False)
 
     assert "CVE-MISSING-A" in plan.missing_ids
     assert "CVE-MISSING-B" in plan.missing_ids
     assert "CVE-2021-1" not in plan.missing_ids
 
 
-def test_plan_enrichment_force_refresh_all_ids_in_refresh_order():
+async def test_plan_enrichment_force_refresh_all_ids_in_refresh_order():
     """force_refresh=True must put all IDs in refresh_order regardless of batch result."""
     batch_result = {"CVE-2021-1": {"severity": "HIGH"}, "CVE-2021-2": {"severity": "LOW"}}
     service = _make_intel_service(batch_return=batch_result)
     cve_ids = ["CVE-2021-1", "CVE-2021-2", "CVE-2021-3"]
 
-    plan = service._plan_enrichment(cve_ids, force_refresh=True)
+    plan = await service._plan_enrichment(cve_ids, force_refresh=True)
 
     assert set(plan.refresh_order) == set(cve_ids)
     assert plan.fresh_cache_ids == []
 
 
 # ---------------------------------------------------------------------------
-# Compound index tests
+# Compound index tests  (pure structural, sync)
 # ---------------------------------------------------------------------------
+
 
 def test_cacherecord_has_namespace_index():
     """CacheRecord.__table_args__ must contain Index named 'ix_cacherecord_namespace'."""

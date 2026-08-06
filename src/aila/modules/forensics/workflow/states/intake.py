@@ -17,6 +17,11 @@ from sqlmodel import select as _select
 from aila.modules.forensics.contracts.status import ProjectStatus
 from aila.modules.forensics.db_models import ForensicsProjectRecord, ProjectEvidenceRecord
 from aila.modules.forensics.workflow.inputs import IntakeInput
+from aila.platform.events import (
+    ModuleWorkflowStarted,
+    ModuleWorkflowStartedPayload,
+    publish,
+)
 from aila.platform.exceptions import AILAError
 from aila.platform.uow import UnitOfWork
 
@@ -97,6 +102,33 @@ async def state_intake(
         project_id, evidence_directory, analyzer_os, project_kind,
     )
     await _set_project_status(project_id, ProjectStatus.ANALYZING)
+    # Domain-event emission for the investigation workflow start
+    # (RFC-05 Phase 3). The intake state is the first handler the
+    # forensics workflow runs. Guarded so a payload-construction fault
+    # never blocks intake; the bus isolates subscriber errors.
+    try:
+        run_id = str(getattr(services, "run_id", "") or "")
+        publish(
+            ModuleWorkflowStarted(
+                source_module="forensics",
+                payload=ModuleWorkflowStartedPayload(
+                    module_id="forensics",
+                    run_id=run_id,
+                    workflow_id="investigation",
+                    metadata={
+                        "project_id": project_id,
+                        "project_kind": project_kind,
+                        "analyzer_os": analyzer_os,
+                    },
+                ),
+            ),
+        )
+    except (RuntimeError, ValueError, TypeError, AttributeError) as exc:
+        _log.warning(
+            "module.workflow.started publish failed for project %s: %s",
+            project_id,
+            exc,
+        )
     await services.emitter.emit(
         "intake",
         f"Connecting to analyzer ({analyzer_os}) -- scanning: {evidence_directory}",

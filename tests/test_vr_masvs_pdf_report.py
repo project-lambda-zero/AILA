@@ -219,10 +219,16 @@ def test_build_pdf_executive_summary_lists_every_verdict_bucket() -> None:
     text = _extract_all_text(pdf)
 
     assert "Executive Summary" in text
-    for label in ("FINDING", "NO FINDING", "NOT APPLICABLE", "INCONCLUSIVE"):
+    # Executive-summary count grid now uses the security-audit-standard
+    # labels (FAIL / PASS / N/A / REVIEW) so a reviewer can tell at a
+    # glance which controls need attention; the old ``FINDING`` /
+    # ``NO FINDING`` labels both contained the word ``finding`` and
+    # were visually indistinguishable when the reader scanned a long
+    # report.
+    for label in ("FAIL", "PASS", "N/A", "REVIEW"):
         assert label in text, f"executive grid missing label {label!r}"
     # The interpretive sentence carries the total control count.
-    assert "1 controls" in text or "1 finding" in text
+    assert "1 controls" in text or "1 fail" in text
 
 
 def test_build_pdf_emits_section_per_group_with_toc_entries() -> None:
@@ -310,8 +316,10 @@ def test_build_pdf_handles_empty_aggregate() -> None:
     text = _extract_all_text(pdf)
     assert "OWASP MASVS Audit Report" in text
     # The posture badge falls into the "no findings + no inconclusive"
-    # branch, which renders "NO COMPLIANCE GAPS DETECTED".
-    assert "NO COMPLIANCE GAPS DETECTED" in text
+    # branch, which renders "ALL CONTROLS PASS" (updated from the
+    # older "NO COMPLIANCE GAPS DETECTED" wording in
+    # ``_overall_posture``).
+    assert "ALL CONTROLS PASS" in text
 
 
 def test_build_pdf_handles_target_without_apk_overview() -> None:
@@ -356,7 +364,9 @@ def test_build_pdf_overall_posture_reflects_findings() -> None:
         _make_aggregate([finding_verdict]),
         _make_target(),
     )
-    assert "1 FINDING" in _extract_all_text(pdf_with_finding)
+    # Posture wording is now ``N FAILING CONTROL(S)`` (singular /
+    # plural). One FINDING verdict renders as ``1 FAILING CONTROL``.
+    assert "1 FAILING CONTROL" in _extract_all_text(pdf_with_finding)
 
     clean_verdict = MasvsControlVerdict(
         control_id="MSTG-STORAGE-1",
@@ -369,4 +379,6 @@ def test_build_pdf_overall_posture_reflects_findings() -> None:
         _make_aggregate([clean_verdict]),
         _make_target(),
     )
-    assert "NO COMPLIANCE GAPS DETECTED" in _extract_all_text(pdf_clean)
+    # Clean posture wording is now ``ALL CONTROLS PASS`` (updated
+    # from the older ``NO COMPLIANCE GAPS DETECTED`` wording).
+    assert "ALL CONTROLS PASS" in _extract_all_text(pdf_clean)

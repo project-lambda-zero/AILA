@@ -18,7 +18,7 @@
 > | Outcome routing | `src/aila/modules/vr/agents/outcome_dispatcher.py` |
 > | DB schema (19 tables) | `src/aila/modules/vr/db_models/__init__.py` |
 > | Contract enums (TargetKind, InvestigationKind, InvestigationStatus, HypothesisState, OutcomeKind, PersonaVoice) | `src/aila/modules/vr/contracts/` |
-> | Alembic head | `src/aila/alembic/versions/067_workflow_state_cursor_archived_state.py` |
+> | Alembic head | `src/aila/alembic/versions/081_vr_schema_reconcile.py` |
 
 The complete persistent shape of the VR module: every table, every relationship, every state machine, every query the runtime is expected to run, every migration that gets us there. Brainstorm-grade -- what the data should look like if all the prior docs land coherently.
 
@@ -93,7 +93,8 @@ The shipped schema is the union of `db_models/` modules and the Alembic migratio
 |---|---|
 | `060_vr_target_analysis_stages` | `vr_target_analysis_stages_json` on `vr_targets` (per-stage status + timestamps + attempts + error); `aila.modules.vr.services.stage_tracker` owns idempotency + RUNNING-timeout reaping. |
 | `061_llm_idempotency_cache` | `llm_idempotency_cache` table keyed on `sha256(investigation_id, branch_id, turn_number, prompt_hash)`. Retries replay the cached decision so a transport hiccup never re-pays the LLM. Caller-supplied keys live in `vuln_researcher.run_turn`. |
-| `067_workflow_state_cursor_archived_state` (current head) | Adds `archived_state VARCHAR(128) NULL` to `workflow_state_cursor` for engine-level pause/resume -- see `docs/DURABLE_STATEMACHINE_DESIGN.md`. Intermediate VR migrations -- outcome review (`state` column on `vr_investigation_outcomes` plus `vr_outcome_reviews` table for sibling voting), `auto_steering_key` indexing on investigation messages, persona_voice NOT NULL backfill, TaskRecord `input_hash` + status CHECK constraint -- are catalogued in `docs/DATABASE_MIGRATIONS.md`. |
+| `067_workflow_state_cursor_archived_state` | Adds `archived_state VARCHAR(128) NULL` to `workflow_state_cursor` for engine-level pause/resume -- see `docs/DURABLE_STATEMACHINE_DESIGN.md`. Intermediate VR migrations -- outcome review (`state` column on `vr_investigation_outcomes` plus `vr_outcome_reviews` table for sibling voting), `auto_steering_key` indexing on investigation messages, persona_voice NOT NULL backfill, TaskRecord `input_hash` + status CHECK constraint -- are catalogued in `docs/DATABASE_MIGRATIONS.md`. |
+| `081_vr_schema_reconcile` (current head) | Renames two VR UNIQUE constraints to match the SQLModel definitions and the per-module naming convention: `vr_workspaces.uq_workspace_team_slug` -> `uq_vr_workspace_team_slug`, and `vr_target_tag_index.uq_target_tag_source` -> `uq_vr_target_tag_source`. Both renames are guarded with `IF EXISTS` so a re-run on an already-converged database is a no-op. Intermediate non-VR migrations (068 through 080) covered malware module tables, the platform journal, hot-column indexes, OIDC default team, knowledge embedding widened to `vector(1024)`, and platform schema drift reconciliation -- see `docs/DATABASE_MIGRATIONS.md`. |
 
 ---
 

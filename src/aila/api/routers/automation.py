@@ -14,7 +14,9 @@ from __future__ import annotations
 import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from croniter import croniter
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import func
 from sqlmodel import select
 
 from aila.api.auth import AuthContext, require_user_or_api_key
@@ -28,7 +30,7 @@ from aila.api.schemas.automation import (
 from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
 from aila.platform.automation.models import AutomationScheduleRecord
 from aila.platform.automation.registry import AutomationRegistry
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.storage.database import async_session_scope
 
 __all__ = ["router"]
@@ -60,17 +62,16 @@ def _validate_cron(expression: str) -> None:
 
     Follows the same pattern as scheduled_reports.py (T-138-20).
     Never passes cron expressions to shell -- only stores after validation.
-    """
-    try:
-        from croniter import croniter
 
-        if not croniter.is_valid(expression):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Invalid cron expression: '{expression}'. Example: '0 9 * * MON'",
-            )
-    except ImportError:
-        _log.warning("croniter not installed; skipping cron validation")
+    ``croniter`` is a hard runtime dependency (see ``pyproject.toml``); it is
+    imported at module top so an install-time drift surfaces at API boot
+    rather than silently accepting whatever cron string an operator posts.
+    """
+    if not croniter.is_valid(expression):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid cron expression: '{expression}'. Example: '0 9 * * MON'",
+        )
 
 
 def _record_to_response(record: AutomationScheduleRecord) -> AutomationScheduleResponse:
@@ -100,24 +101,34 @@ def _record_to_response(record: AutomationScheduleRecord) -> AutomationScheduleR
 @limiter.limit("60/minute")
 async def list_schedules(
     request: Request,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     auth: AuthContext = Depends(require_user_or_api_key),
 ) -> DataEnvelope[list[AutomationScheduleResponse]]:
     """List automation schedules scoped to the authenticated user's team.
 
-    Admin (team_id=None) sees all schedules.
+    Admin (team_id=None) sees all schedules. Pagination is server-side via
+    SQL ``LIMIT``/``OFFSET`` with a separate ``COUNT(*)`` for ``total`` so
+    a very large schedules table never materialises in the API worker.
     """
     async with async_session_scope() as session:
-        stmt = select(AutomationScheduleRecord).order_by(
-            AutomationScheduleRecord.created_at.desc()  # type: ignore[attr-defined]
+        count_stmt = select(func.count()).select_from(AutomationScheduleRecord)
+        rows_stmt = (
+            select(AutomationScheduleRecord)
+            .order_by(AutomationScheduleRecord.created_at.desc())  # type: ignore[attr-defined]
+            .offset(offset)
+            .limit(limit)
         )
         if auth.team_id is not None:
-            stmt = stmt.where(AutomationScheduleRecord.team_id == auth.team_id)
-        all_rows = (await session.exec(stmt)).all()
+            count_stmt = count_stmt.where(
+                AutomationScheduleRecord.team_id == auth.team_id
+            )
+            rows_stmt = rows_stmt.where(
+                AutomationScheduleRecord.team_id == auth.team_id
+            )
+        total = int((await session.execute(count_stmt)).scalar_one() or 0)
+        page_rows = (await session.exec(rows_stmt)).all()
 
-    total = len(all_rows)
-    page_rows = all_rows[offset : offset + limit]
     meta = PaginatedMeta(total=total, offset=offset, limit=limit).model_dump()
     return DataEnvelope(data=[_record_to_response(r) for r in page_rows], meta=meta)
 

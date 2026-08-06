@@ -13,7 +13,11 @@ if TYPE_CHECKING:
     from aila.storage.registry import SchemaRegistry
 
 from aila.config import Settings
-from aila.platform.contracts._common import JsonObject
+from aila.platform.contracts import JsonObject
+from aila.platform.contracts.reasoning import (
+    ReasoningDomainProfile,
+    ReasoningStrategyDeclaration,
+)
 from aila.platform.modules import (
     ModuleCapabilityProfile,
     ModuleContext,
@@ -23,8 +27,10 @@ from aila.platform.modules import (
     action_id_for,
 )
 from aila.platform.runtime import ToolRegistry
+from aila.platform.tasks.sweeps import all_periodic_sweeps, register_periodic_sweep
 
 from .capabilities import CAPABILITY_DESCRIPTION, CAPABILITY_EXAMPLES
+from .services.stuck_healer import sweep_stuck_investigations
 
 __all__ = ["ForensicsModule", "create_module"]
 
@@ -61,6 +67,103 @@ class ForensicsModule(ModuleProtocol):
     module_id = MODULE_ID
     analyze_action_id = ANALYZE_ACTION_ID
     investigate_action_id = INVESTIGATE_ACTION_ID
+
+    def reasoning_strategies(self) -> list[ReasoningStrategyDeclaration]:
+        """Reasoning strategy families this module owns (RFC-05 d)."""
+        return [
+            ReasoningStrategyDeclaration(
+                family="filesystem_triage",
+                task_type="filesystem_triage",
+                description="Filesystem timeline and artifact triage.",
+                match_priority=80,
+                match_keywords=[
+                    "filesystem",
+                    "archive",
+                    ".zip",
+                    ".7z",
+                    ".rar",
+                    ".tar",
+                ],
+                match_project_kinds=["raw_directory"],
+            ),
+            ReasoningStrategyDeclaration(
+                family="persistence_hunt",
+                task_type="persistence_hunt",
+                description="Persistence-mechanism hunting.",
+                match_priority=50,
+                match_keywords=[
+                    "run key",
+                    "autorun",
+                    "scheduled task",
+                    "service persistence",
+                    "launchagent",
+                    "startup folder",
+                    "registry",
+                ],
+            ),
+            ReasoningStrategyDeclaration(
+                family="memory_forensics",
+                task_type="memory_forensics",
+                description="Volatile-memory forensic analysis.",
+                match_priority=40,
+                match_keywords=[
+                    "memory",
+                    "volatility",
+                    "lsass",
+                    "dll injection",
+                    "process tree",
+                    "memdump",
+                ],
+            ),
+            ReasoningStrategyDeclaration(
+                family="network_forensics",
+                task_type="network_forensics",
+                description="Network-capture and flow forensic analysis.",
+                match_priority=30,
+                match_keywords=[
+                    "pcap",
+                    "dns",
+                    "http",
+                    "tls",
+                    "sni",
+                    "beacon",
+                    "network traffic",
+                ],
+            ),
+            ReasoningStrategyDeclaration(
+                family="malware_static",
+                task_type="malware_static",
+                description="Static malware examination.",
+                match_priority=70,
+                match_keywords=[
+                    "malware",
+                    "dropper",
+                    "loader",
+                    "payload",
+                    "packed",
+                    "shellcode",
+                ],
+            ),
+        ]
+
+    def reasoning_domain_profiles(self) -> list[ReasoningDomainProfile]:
+        """Reasoning domain profiles this module owns (RFC-05 d)."""
+        return [
+            ReasoningDomainProfile(
+                domain_id="forensics",
+                task_type="forensics_freeflow",
+                description="Evidence-driven static forensic investigation.",
+                allowed_strategies=[
+                    "filesystem_triage",
+                    "persistence_hunt",
+                    "memory_forensics",
+                    "network_forensics",
+                    "malware_static",
+                    "generic",
+                ],
+                default_strategy="filesystem_triage",
+            ),
+        ]
 
     def capability_profiles(self) -> list[ModuleCapabilityProfile]:
         """Return capability profiles advertising this module to the routing agent."""
@@ -110,6 +213,7 @@ class ForensicsModule(ModuleProtocol):
                 AgentStepRecord,
                 AnswerCandidateRecord,
                 ArtifactRecord,
+                ForensicsPatternRecord,
                 ForensicsProjectRecord,
                 InvestigationRunRecord,
                 LeadRecord,
@@ -119,6 +223,7 @@ class ForensicsModule(ModuleProtocol):
             schema_registry.push(
                 ForensicsProjectRecord,
                 ProjectEvidenceRecord,
+                ForensicsPatternRecord,
                 ArtifactRecord,
                 LeadRecord,
                 InvestigationRunRecord,
@@ -128,15 +233,22 @@ class ForensicsModule(ModuleProtocol):
             )
 
         if registry is not None:
-            from aila.modules.forensics.config_schema import FORENSICS_LLM_MODEL, ForensicsConfigSchema
+            from aila.modules.forensics.config_schema import ForensicsConfigSchema
             await registry.register(self.module_id, ForensicsConfigSchema)
 
+            # Resolve forensics.llm_model via ConfigRegistry so an operator
+            # override persisted before worker startup wins over the schema
+            # default. An empty-string value opts out (schema doc: falls back
+            # to the platform default) so we skip seeding the env in that case.
             import os
-            for task_type in ("forensics_freeflow", "forensics_resolver", "forensics_writeup"):
-                env_key = f"AILA_PLATFORM_LLM_MODEL_{task_type.upper()}"
-                if not os.environ.get(env_key):
-                    os.environ[env_key] = FORENSICS_LLM_MODEL
-                    _log.info("Seeded %s=%s for forensics LLM routing", env_key, FORENSICS_LLM_MODEL)
+            llm_model_value = await registry.get(self.module_id, "llm_model")
+            llm_model_str = str(llm_model_value) if llm_model_value is not None else ""
+            if llm_model_str:
+                for task_type in ("forensics_freeflow", "forensics_resolver", "forensics_writeup"):
+                    env_key = f"AILA_PLATFORM_LLM_MODEL_{task_type.upper()}"
+                    if not os.environ.get(env_key):
+                        os.environ[env_key] = llm_model_str
+                        _log.info("Seeded %s=%s for forensics LLM routing", env_key, llm_model_str)
 
         for spec in iter_tool_specs():
             tool_registry.register(spec.key(), spec.factory(settings))
@@ -195,7 +307,7 @@ class ForensicsModule(ModuleProtocol):
             session.add(SeedVersionRecord(module_id=self.module_id, seed_version=SEED_VERSION))
         else:
             existing.seed_version = SEED_VERSION
-            from aila.platform.contracts._common import utc_now
+            from aila.platform.contracts import utc_now
             existing.seeded_at = utc_now()
             session.add(existing)
         await session.commit()
@@ -239,6 +351,20 @@ class ForensicsModule(ModuleProtocol):
     async def report_count(self, _run_id: str, _session: Any) -> dict[str, int]:
         """Return empty dict -- forensics does not own workflow run reports."""
         return {}
+
+    async def seed_prompts(self) -> int:
+        """RFC-09 activation: seed the forensics free-flow prompts into the
+        version store and set production aliases where none exist.
+
+        Discovered by :func:`aila.platform.prompts.bootstrap.seed_module_prompts`
+        at app startup. Delegates to
+        :func:`aila.modules.forensics.agents.investigator.seed_prompt_versions`
+        so the prompt inventory lives with the agent that consumes it --
+        same shape vr and malware use.
+        """
+        from .agents.investigator import seed_prompt_versions
+
+        return await seed_prompt_versions()
 
     def health_checks(self) -> dict[str, object]:
         """Return SSH reachability probe callable for the platform health router.
@@ -326,6 +452,33 @@ class ForensicsModule(ModuleProtocol):
         return {"forensics.ssh_reachability": _ssh_reachability}
 
 
+def _register_forensics_periodic_sweeps() -> None:
+    """Register forensics's per-tick maintenance sweeps with the platform reaper.
+
+    Called from :func:`create_module` so registration is a side-effect
+    of module instantiation -- the same lifecycle hook every module
+    uses. Idempotent: probe the registry for the well-known sentinel
+    name; if the sentinel is already registered, every forensics sweep
+    is registered too and re-registration would raise. Probing the
+    registry rather than a module-level flag means tests that clear
+    the registry in an autouse fixture automatically re-register on
+    the next ``create_module()`` call.
+    """
+    if "forensics.stuck_healer" in all_periodic_sweeps():
+        return
+
+    # forensics.stuck_healer -- RFC-07 #31 criterion 6. Detects
+    # investigations stuck at ``running`` with no live task and no
+    # resumable cursor and drives the four-source-of-truth reset +
+    # fresh submit via ``reenqueue_investigation``. Emits a durable
+    # ``kind='recovery'`` ledger event per heal so the RFC-07 audit
+    # trail carries every automated re-enqueue.
+    register_periodic_sweep(
+        "forensics.stuck_healer", sweep_stuck_investigations,
+    )
+
+
 def create_module() -> ModuleProtocol:
     """Return a new ForensicsModule instance for the platform module loader."""
+    _register_forensics_periodic_sweeps()
     return ForensicsModule()

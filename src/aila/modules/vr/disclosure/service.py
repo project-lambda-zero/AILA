@@ -46,7 +46,7 @@ from aila.modules.vr.db_models import (
     VRFindingRecord,
     VRInvestigationRecord,
 )
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.uow import UnitOfWork
 
 from .registry import get_track

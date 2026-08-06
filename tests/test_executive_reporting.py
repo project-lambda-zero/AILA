@@ -184,10 +184,14 @@ def test_report_tasks_module_structure():
 
 def test_worker_settings_includes_report_job():
     """WorkerSettings.functions includes generate_scheduled_report_job."""
-    from aila.platform.tasks.report_tasks import generate_scheduled_report_job
     from aila.platform.tasks.worker import WorkerSettings
 
-    assert generate_scheduled_report_job in WorkerSettings.functions
+    # Registered via @platform_task, so it appears as an arq Function keyed on
+    # the fully-qualified registry name rather than the raw callable.
+    names = {getattr(fn, "name", None) for fn in WorkerSettings.functions}
+    assert (
+        "aila.platform.tasks.report_tasks.generate_scheduled_report_job" in names
+    )
 
 
 # ---------------------------------------------------------------------------

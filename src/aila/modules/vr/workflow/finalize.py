@@ -46,7 +46,6 @@ Two entry points expose the same primitive:
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -70,10 +69,12 @@ from aila.modules.vr.services.investigation_finalizers import (
 from aila.modules.vr.services.investigation_reaper import (
     evaluate_cap_for_investigation,
 )
-from aila.platform.contracts._common import utc_now
+from aila.platform.config_base import ModuleConfigReader
+from aila.platform.contracts import utc_now
 from aila.platform.uow import UnitOfWork
 
 _log = logging.getLogger(__name__)
+_cfg = ModuleConfigReader("vr")
 
 __all__ = [
     "FinalizeResult",
@@ -81,22 +82,6 @@ __all__ = [
     "finalize_investigation",
     "sweep_finalizable_investigations",
 ]
-
-
-def _float_env(name: str, default: float) -> float:
-    raw = os.environ.get(name, "").strip()
-    try:
-        return float(raw) if raw else default
-    except ValueError:
-        return default
-
-
-def _int_env(name: str, default: int) -> int:
-    raw = os.environ.get(name, "").strip()
-    try:
-        return int(raw) if raw else default
-    except ValueError:
-        return default
 
 
 # ----------------------------------------------------------------------
@@ -156,10 +141,15 @@ async def _detect_trigger(investigation_id: str) -> tuple[str, dict[str, Any]]:
     state is consistent. The returned ``context`` carries the data
     handlers need (cap thresholds, idle window, active/terminal counts).
     """
-    wallclock_hours = _float_env("VR_INVESTIGATION_WALL_CLOCK_HOURS", 6.0)
-    turn_cap = _int_env("VR_INVESTIGATION_TURN_CAP", 300)
-    message_cap = _int_env("VR_INVESTIGATION_MESSAGE_CAP", 1000)
-    idle_grace_s = _float_env("VR_WALL_CLOCK_IDLE_GRACE_S", 900.0)
+    # Resolve via ConfigRegistry (env -> DB -> schema default). The
+    # legacy VR_<KEY> env vars are no longer read here; operators who set
+    # them via shell env should switch to the canonical AILA_VR_<KEY>
+    # form or set values via PUT /config. See config_helpers.get_int /
+    # get_float and VRConfigSchema.
+    wallclock_hours = await _cfg.get_float("investigation_wall_clock_hours")
+    turn_cap = await _cfg.get_int("investigation_turn_cap")
+    message_cap = await _cfg.get_int("investigation_message_cap")
+    idle_grace_s = await _cfg.get_float("wall_clock_idle_grace_s")
     now = utc_now()
 
     async with UnitOfWork() as uow:

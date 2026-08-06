@@ -3,9 +3,11 @@ from __future__ import annotations
 import importlib.metadata as _importlib_metadata
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import ClassVar, Protocol, runtime_checkable
 
 from pydantic import BaseModel
+
+from ..storage.registry import DynamicKeyFamily
 
 _AILA_VERSION: str = _importlib_metadata.version("aila")
 
@@ -84,8 +86,56 @@ def build_platform_settings(
     )
 
 
+_PLATFORM_DYNAMIC_FAMILIES: tuple[DynamicKeyFamily, ...] = (
+    # Per-task-type routing overrides (fall back to the llm_default_* statics).
+    DynamicKeyFamily("llm_model_", str, description="Per-task-type model id."),
+    DynamicKeyFamily("llm_max_tokens_", int, description="Per-task-type max output tokens."),
+    DynamicKeyFamily("llm_temperature_", float, description="Per-task-type sampling temperature."),
+    DynamicKeyFamily("llm_max_tool_steps_", int, description="Per-task-type tool-call loop cap."),
+    DynamicKeyFamily("llm_tool_timeout_s_", float, description="Per-task-type per-tool timeout (s)."),
+    DynamicKeyFamily("llm_data_direction_", str, description="Per-task-type data-direction constraint."),
+    DynamicKeyFamily("llm_budget_max_total_tokens_", int, description="Per-task-type token budget ceiling."),
+    # Per-team monthly budget ceiling (USD).
+    DynamicKeyFamily("llm_monthly_budget_usd_", float, description="Per-team monthly budget ceiling (USD)."),
+    # Pipeline gate thresholds and consensus (per task type).
+    DynamicKeyFamily("llm_pipeline_gate_high_threshold_", float),
+    DynamicKeyFamily("llm_pipeline_gate_medium_threshold_", float),
+    DynamicKeyFamily("llm_pipeline_gate_reject_threshold_", float),
+    DynamicKeyFamily("llm_pipeline_gate_consensus_strategy_", str),
+    DynamicKeyFamily("llm_pipeline_gate_consensus_model_", str),
+    DynamicKeyFamily("llm_pipeline_gate_consensus_retries_", int),
+    # Pipeline verify (per task type).
+    DynamicKeyFamily("llm_pipeline_verify_threshold_", float),
+    DynamicKeyFamily("llm_pipeline_verify_model_", str),
+    # Pipeline step-order overrides (comma-separated step lists).
+    DynamicKeyFamily("llm_pipeline_pre_call_steps_", str),
+    DynamicKeyFamily("llm_pipeline_post_call_steps_", str),
+    # Generic pipeline step enable and fail-mode (bool or open/closed; callers coerce).
+    DynamicKeyFamily("llm_pipeline_", str, description="Pipeline step enable or fail-mode override."),
+    # RFC-08 Tier D per-outcome_kind live threshold. Written by
+    # ``POST /admin/eval/calibration-proposals/{id}/promote`` when the
+    # eval + quorum gate clears; read by module confidence gates as
+    # ``calibration_threshold_{outcome_kind}``. Threshold-shaped so
+    # honesty audit rule 57 recognises the .set() key as a versioned
+    # promotion (the CalibrationProposalRecord reference in the same
+    # function body is what discharges the rule).
+    DynamicKeyFamily(
+        "calibration_threshold_", float,
+        description="Per-outcome_kind live confidence threshold promoted from a CalibrationProposalRecord.",
+    ),
+)
+
+
 class PlatformConfigSchema(BaseModel):
-    """Runtime-editable platform settings -- registered under 'platform' namespace."""
+    """Runtime-editable platform settings -- registered under 'platform' namespace.
+
+    Static fields below are the fixed platform keys. Per-task-type and per-team
+    keys (llm_model_{task_type}, llm_monthly_budget_usd_{team_id}, ...) are
+    declared as typed dynamic-key families so they are settable via PUT /config
+    and cast on read, instead of being unvalidated free-form keys.
+    """
+
+    __dynamic_families__: ClassVar[tuple[DynamicKeyFamily, ...]] = _PLATFORM_DYNAMIC_FAMILIES
 
     request_timeout_seconds: float = 20.0
     user_agent: str = f"AILA/{_AILA_VERSION}"
@@ -114,6 +164,16 @@ class PlatformConfigSchema(BaseModel):
     arq_keep_result_s: int = 3600
     progress_stream_maxlen: int = 1000
 
+    # LLM routing global defaults (previously env-only ghost keys -- #45).
+    # Declared so PUT /config can set them; defaults match the prior hardcoded
+    # fallbacks in llm/config.py, so resolution behavior is unchanged.
+    llm_default_model: str = "antigravity/claude-opus-4-6-thinking"
+    llm_base_url: str = "https://openrouter.ai/api/v1"
+    llm_default_max_tokens: int = 4096
+    llm_default_temperature: float = 0.0
+    llm_tool_timeout_s: float = 300.0
+    llm_kill_switch: bool = False
+
     # LLM Pipeline step defaults (Phase 116)
     # Per-task-type overrides via PUT /config at runtime:
     #   llm_pipeline_{step}_{task_type} = true/false
@@ -140,6 +200,18 @@ class PlatformConfigSchema(BaseModel):
     llm_pipeline_verify_threshold_default: float = 0.7
     llm_pipeline_verify_model_default: str = ""
 
+    # RFC-08 Tier D post-hoc confidence calibrator (contract C6).
+    # When True (default), the gate step reads the active
+    # :class:`CalibratorVersionRecord` for the request's ``task_type``
+    # via :func:`load_active_calibrator` and applies its ``apply(raw)``
+    # to the number :func:`extract_confidence` produced BEFORE
+    # ``_map_confidence_level`` runs. When False (or no active
+    # calibrator exists yet), the gate falls through to the raw score
+    # -- safe to deploy before any fit has landed. The kill-switch is
+    # deliberate: an operator can force raw-passthrough by flipping
+    # this in a hot moment without reverting the calibrator rows.
+    llm_calibrator_enabled: bool = True
+
     # LLM cost estimation fallback (Phase 175 / D-04)
     # Used when a team has no historical data for a task_type.
     # worst_case = target_count * fallback_max_tokens * (fallback_price_per_1k / 1000)
@@ -149,4 +221,211 @@ class PlatformConfigSchema(BaseModel):
     # Human-equivalent hourly rate (Phase 175 / D-06a)
     # Operator sets their market rate; USD conversion = estimated_hours * rate.
     llm_human_consultant_hourly_rate: float = 150.0
+
+    # Knowledge base embedding provider (#49). Selects the EmbeddingProvider
+    # resolved by KnowledgeService: "bge-m3" (1024-dim, default) or
+    # "all-MiniLM-L6-v2" (384-dim, zero-padded to the 1024 column). Read once
+    # per process at service construction; a change needs a re-embed and a
+    # worker/service restart to take effect.
+    knowledge_embedding_model: str = "bge-m3"
+
+    # RFC-12 pattern retrieval relevance floor. Hybrid retrieval hits with a
+    # combined score (0.6*vec + 0.4*fts) below this value are dropped before
+    # they can enter a researcher prompt so orthogonal top-k noise never
+    # reaches the model. PatternStoreBase._resolve_relevance_floor reads this
+    # via ConfigRegistry so operators can override per-deployment through the
+    # env or PUT /config without a schema change.
+    knowledge_pattern_relevance_floor: float = 0.3
+
+    # RFC-08 memory-poisoning negative-prior penalty. Applied by
+    # PatternStoreBase.applicable to each returned positive whose
+    # applicability overlaps a filtered-out NEGATIVE pattern, and once to
+    # every positive whose trust_tier is UNREVIEWED. The score is
+    # multiplied by this factor per overlapping NEGATIVE and once for
+    # UNREVIEWED, so a positive collocated with two overlapping
+    # NEGATIVEs at penalty 0.5 emerges at 0.25 * base score. A value of
+    # 1.0 disables the down-weight (the pattern-poisoning defense stays
+    # informational only). RFC-08 explicitly forbids hard-blocking on a
+    # NEGATIVE -- always a prior, never a gate.
+    knowledge_negative_prior_penalty: float = 0.5
+
+    # RFC-12 Phase 5 ranking controls, applied by
+    # KnowledgeService.retrieve_routed AFTER the relevance gate as a
+    # config-gated post-rank. Both default to a no-op so the shipped
+    # ranking is byte-identical until an operator opts in and validates
+    # the change against the retrieval eval (aila eval-retrieval).
+    #
+    # knowledge_target_derived_weight multiplies the score of every hit
+    # whose namespace resolves to the target-derived trust tier (burned
+    # off untrusted tool output, e.g. *.observation.*). 1.0 = no change;
+    # below 1.0 down-weights untrusted memory so quorum/promotion-gated
+    # verified entries win ties (RFC-12 ASI06 poisoning defense). A hit
+    # pushed below knowledge_pattern_relevance_floor by the weight is
+    # dropped.
+    knowledge_target_derived_weight: float = 1.0
+
+    # knowledge_decay_half_life_hours applies exponential temporal decay
+    # to every hit that carries a provenance timestamp: score is scaled
+    # by 0.5 ** (age_hours / half_life). 0 = disabled (no decay). A
+    # positive value favors fresh memory; a hit decayed below the
+    # relevance floor is dropped.
+    knowledge_decay_half_life_hours: float = 0.0
+
+    # RFC-10 promotion quorum. The lifecycle controller counts DISTINCT
+    # actor strings on ``approved`` transitions for a (key, version) pair
+    # and refuses to flip the production alias until that count meets or
+    # exceeds this threshold, on top of the eval-pass gate. Default 1 =
+    # one explicit human approval on top of the passing eval; operators
+    # tune it upward per deployment via PUT /config/platform. A value of
+    # 0 keeps the eval-only gate (no approval required) for teams that
+    # want the RFC-08 auto-promote fast path routed through the
+    # controller; the RFC-08 auto-promote path itself stays admin-opt-in
+    # and skips the quorum gate by construction.
+    agent_promotion_quorum: int = 1
+
+    # RFC-10 canary drift + cost ceilings. record_canary_signal reads
+    # both via ConfigRegistry and holds an active canary when the
+    # observed drift score or observed per-turn cost breaches the
+    # matching ceiling. A ceiling of 0.0 disables that half of the
+    # gate (a signal on that axis never trips a hold). Drift is the
+    # normalized confidence-drift score the RFC-07 tracker emits
+    # (0.0 = flat, higher = worse); cost is USD per turn.
+    agent_canary_drift_ceiling: float = 0.2
+    agent_canary_cost_ceiling_usd: float = 5.0
+
+    # RFC-10 canary minimum observed-signal count. promote_from_canary
+    # blocks a candidate flip until at least this many drift + cost
+    # samples have been recorded on the active canary assignment
+    # (record_canary_signal bumps the counter on every call, whether
+    # the signal was within ceilings or fired a hold). Default 0
+    # disables the check so the pre-#34 behaviour is preserved for
+    # operators who have not tuned it; a positive value enforces "no
+    # promotion on empty history" so a candidate that never observed
+    # traffic cannot be promoted through an empty signal chain. The
+    # promote() eval + quorum gate still runs regardless.
+    agent_canary_min_sample: int = 0
+
+    # SMTP delivery for scheduled reports (#45 -- ghost config keys).
+    # report_tasks.py reads these through ConfigRegistry, but they were never
+    # declared here, so the registry never seeded them and
+    # PUT /config/platform/smtp_* was rejected as an unknown key -- email was
+    # configurable only through env vars while the config API pretended it was
+    # not. An empty smtp_host means delivery is skipped. smtp_password matches
+    # the is_secret_config_key "password" token, so it is redacted for
+    # non-admin readers (C6).
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_from: str = "aila@localhost"
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_ca_bundle_path: str = ""
+    smtp_use_implicit_tls: bool = False
+
+    # Reasoning / observable storage caps (platform-owned data structures).
+    # Live under the platform namespace because ``CyberReasoningEngine`` and
+    # the shared ``ToolExecutorHelpersBase`` are platform code; a module never
+    # names these keys. Defaults preserve the pre-config-ification behaviour
+    # (agent scratchpad ceiling 150, per-branch observables ceiling 400,
+    # recall-pin working set 8) so an operator with no override sees no drift.
+    # The caps only trim the LIVE case_state window -- the recall action
+    # rehydrates evicted keys from the durable message history, so shrinking
+    # them is safe.
+    reasoning_max_agent_keys_total: int = 150
+    reasoning_max_observables: int = 400
+    reasoning_recall_pinned_max: int = 8
+
+    # RFC-24 per-turn user-prompt token budget applied by
+    # ``CyberReasoningEngine.build_user_prompt``. Sized against a 200K
+    # context-window baseline (Claude 3.5 / 4.x) so that the assembled
+    # user prompt, the caller's system prompt (typically 5-10K), the
+    # tool-catalogue payload the LLM gateway may append, and the
+    # completion (~8K) all fit without hitting the model window.
+    # NEVER treated as unbounded: when a caller (VR / forensics /
+    # malware) sets ``ReasoningPromptContext.context_budget_tokens`` to
+    # 0 the engine resolves this cap and applies it, so removing the
+    # historical render_case_model display caps cannot regress into an
+    # unbounded prompt. Operator can widen or narrow via
+    # ``PUT /config/platform/reasoning_context_budget_tokens`` without
+    # a redeploy; a value <= 0 disables the safety net (the prompt
+    # runs unbounded again) and is intended for tests only.
+    reasoning_context_budget_tokens: int = 180_000
+
+    # Age (in turns) at which a live hypothesis becomes stale and
+    # ``CyberReasoningEngine.absorb`` writes the
+    # ``_directive.stale_hypotheses`` observable naming the offending
+    # ids so the agent resolves, rejects, or explicitly defers them
+    # instead of letting them linger and block convergence. Read via
+    # ``_resolve_platform_int`` (env AILA_PLATFORM_REASONING_HYP_STALE_TURNS
+    # -> DB -> this default) so an operator override lands on the next
+    # absorb without a worker restart. A value <= 0 disables the
+    # directive (no staleness nudge) and matches the render-side
+    # STALE age heuristic in ``render_case_model`` at 10; the default
+    # here fires slightly earlier (8) so the directive nudges before
+    # the render marker flips to STALE.
+    reasoning_hyp_stale_turns: int = 8
+
+    # #60 global SSE connection ceiling. The platform emits SSE from at
+    # least seven endpoints (events, tasks, scans, sessions, forensics
+    # investigation + readiness, vr investigation + messages, malware
+    # messages). ACTIVE_SSE is a shared process-wide gauge tracking the
+    # live count across all of them. When the observed count is at or
+    # above this ceiling every new SSE-opening request short-circuits
+    # with HTTP 503 + Retry-After -- preserving the ability of already
+    # connected clients to keep streaming while stopping unbounded
+    # connection growth from an infinite reconnect loop. Read once at
+    # request time via ConfigRegistry.get_sync so an operator can
+    # widen or narrow the ceiling with PUT /config/platform without a
+    # restart. Value <= 0 disables the cap (unbounded) -- intended for
+    # tests only.
+    sse_max_connections: int = 500
+
+    # Bounded retention for platform-owned tool storage tables (#56).
+    # ``permanentmemoryrecord`` (backing ``PermanentMemoryTool`` +
+    # ``DecisionCacheTool``) and ``artifactrecord`` (backing
+    # ``ArtifactStoreTool``) both accumulate rows indefinitely because
+    # every writer path uses upsert / append without an eviction pass.
+    # A periodic pruner (``platform.tool_storage_prune``, registered by
+    # ``aila.platform.automation.maintenance``) walks each table and
+    # applies the age + per-scope row-count caps below. A value <= 0
+    # on any knob disables that half of the prune (age-only, cap-only,
+    # or fully disabled if both are zero) without a code change.
+    #
+    # Age caps compare against the row ``updated_at`` so a rewritten
+    # entry (upsert of a cached decision, refresh of an artifact)
+    # resets the clock. Row-count caps keep the newest N rows per
+    # scope (namespace for memory, module_id for artifacts) and delete
+    # the tail. Decision-cache entries already fail closed at read
+    # against ``routing_decision_cache_ttl_hours`` above; the age cap
+    # here is the actual eviction that turns those stale rows into
+    # freed storage. Defaults are deliberately generous so an operator
+    # that has never tuned retention sees no surprise data loss.
+    tool_storage_memory_max_age_days: int = 90
+    tool_storage_memory_max_rows_per_namespace: int = 10_000
+    tool_storage_artifact_max_age_days: int = 180
+    tool_storage_artifact_max_rows_per_module: int = 10_000
+
+    # RFC-13 #68 dispatch-hub stall escalation window.
+    # ``phase_graph.make_dispatch_router._handle_stall`` raises one
+    # ``replan`` request per distinct visited-set the first time the hub
+    # cannot activate any next phase. Within this window the branch simply
+    # emits ``hub_stalled`` (existing behavior); if the earliest unratified
+    # replan request has been sitting in the ledger for longer than
+    # ``dispatch_replan_timeout_s`` seconds without a sibling ratifying it,
+    # the hub emits the distinct ``hub_stalled_timeout`` exit_reason,
+    # posts an operator-steering escalation via
+    # ``post_dispatch_stall_escalation``, and the emit state flips the
+    # investigation to ``InvestigationStatus.STALLED`` instead of silently
+    # completing.
+    #
+    # Default of 1800s (30 minutes) is the point at which a panel that
+    # has NOT gotten sibling quorum on a replan is almost certainly stuck
+    # -- confirmed-trust chains take one or two full agent turns to
+    # ratify, each capped at ~5-10 minutes by the phase timeout. Beyond
+    # that we are wasting worker cycles and the operator needs to see it.
+    # Operators can widen or narrow via
+    # ``PUT /config/platform/dispatch_replan_timeout_s`` (or env
+    # ``AILA_PLATFORM_DISPATCH_REPLAN_TIMEOUT_S``); a value <= 0 disables
+    # the escalation entirely and keeps the pre-RFC-13-#68 behavior where
+    # a stalled hub always emits ``hub_stalled`` -> COMPLETED.
+    dispatch_replan_timeout_s: float = 1800.0
 

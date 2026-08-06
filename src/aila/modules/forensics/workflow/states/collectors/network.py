@@ -15,11 +15,13 @@ Honest scope:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
 from collections import Counter
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from aila.modules.forensics.services.pcap_enrich import (
@@ -35,11 +37,35 @@ from aila.modules.forensics.services.pcap_enrich import (
     rank_top,
 )
 from aila.platform.exceptions import AILAError
+from aila.platform.llm.correlation import (
+    correlation_scope,
+    current_join_keys,
+    current_prompt_version,
+)
+from aila.platform.prompts import PromptRegistry
 from aila.platform.services.factory import ServiceFactory
 
 from ._helpers import err_sink, safe_emit, sq
 
 __all__ = ["collect_network_artifacts"]
+
+_PROMPT_DIR = Path(__file__).parent / "prompts"
+_PROMPT_REGISTRY = PromptRegistry(
+    _PROMPT_DIR,
+    module="forensics",
+    fallback_base="system_network_commentary.md",
+)
+
+
+def _load_commentary_system_prompt() -> str:
+    """Return the pcap-commentary system prompt from the registry.
+
+    RFC-09 criterion 1: body lives in
+    ``prompts/system_network_commentary.md`` resolved via
+    :class:`PromptRegistry` so cost / seal rows carry the resolved
+    ``prompt_content_hash`` for the pcap commentary LLM call.
+    """
+    return _PROMPT_REGISTRY.load("network_commentary")
 
 _log = logging.getLogger(__name__)
 
@@ -657,14 +683,12 @@ async def _try_llm_commentary(
     Fails soft -- on any error we emit a ``commentary_skipped`` event and
     return an empty list so the overall collection run does not fail.
     """
-    system = (
-        "You are a senior network-forensics analyst. You are given a compact "
-        "factual summary of a pcap capture. Produce short, specific, cited "
-        "commentary per subject. DO NOT invent data not in the summary. "
-        "If there is nothing notable for a subject, say so honestly in one "
-        "short sentence rather than padding. Ground every claim in specific "
-        "IPs, ports, SNIs, domains, or counts that appear in the summary."
-    )
+    # RFC-09 criterion 1: prompt body lives in
+    # ``prompts/system_network_commentary.md`` resolved via
+    # :class:`PromptRegistry` so the ``prompt_content_hash`` stamped on
+    # the LLMCostRecord / AuditSealRecord for this call attributes back
+    # to a versioned source of truth.
+    system = _load_commentary_system_prompt()
     user = (
         "Return JSON with schema:\n"
         "{\"commentary\": [\n"
@@ -695,16 +719,28 @@ async def _try_llm_commentary(
         },
         "required": ["commentary"],
     }
+    # RFC-09 criterion 2: stamp the resolved prompt's content hash so
+    # the LLMCostRecord + AuditSealRecord written under this chat_json
+    # attribute back to the exact prompt template. File-backed .md so
+    # ``prompt_version`` is None unless the caller already sits inside
+    # a pinned scope.
+    prompt_hash = hashlib.sha256(system.encode("utf-8")).hexdigest()
+    _inv, _br, _turn = current_join_keys()
     try:
         client = ServiceFactory().llm_client
-        resp = await client.chat_json(
-            task_type="forensics_freeflow",
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            schema=schema,
-        )
+        with correlation_scope(
+            investigation_id=_inv, branch_id=_br, turn_number=_turn,
+            prompt_content_hash=prompt_hash,
+            prompt_version=current_prompt_version(),
+        ):
+            resp = await client.chat_json(
+                task_type="forensics_freeflow",
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                schema=schema,
+            )
         if resp.disabled:
             await safe_emit(
                 emitter, "commentary_skipped",

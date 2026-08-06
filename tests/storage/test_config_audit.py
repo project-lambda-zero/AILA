@@ -4,16 +4,15 @@ Tests that ConfigRegistry.set() emits config_security_change PlatformEvent
 for security-relevant keys, does not emit for non-security keys, and
 handles emitter=None gracefully.
 
-All tests use an in-memory SQLite engine via monkeypatched session_scope.
+ConfigRegistry.register/set/get are async and run against the Postgres test DB
+(D-48/D-49: no SQLite); the storage_db fixture creates the schema and isolates
+each test.
 """
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-
 import pytest
 from pydantic import BaseModel
-from sqlmodel import Session, SQLModel, create_engine
 
 from aila.platform.events.event import PlatformEvent
 from aila.storage.registry import ConfigRegistry
@@ -52,35 +51,19 @@ class FakeEmitter:
 # ---------------------------------------------------------------------------
 
 @pytest.fixture()
-def mem_engine():
-    """Create an in-memory SQLite engine with all tables."""
-    engine = create_engine("sqlite://", echo=False)
-    SQLModel.metadata.create_all(engine)
-    return engine
-
-
-@pytest.fixture()
-def _patch_session(mem_engine, monkeypatch):
-    """Monkeypatch session_scope to use the in-memory engine."""
-
-    @contextmanager
-    def _test_session_scope(settings=None):
-        with Session(mem_engine) as session:
-            yield session
-
-    monkeypatch.setattr("aila.storage.registry.session_scope", _test_session_scope)
-
-
-@pytest.fixture()
 def emitter() -> FakeEmitter:
     return FakeEmitter()
 
 
 @pytest.fixture()
-def registry(_patch_session, emitter) -> ConfigRegistry:
-    """ConfigRegistry wired to in-memory DB with a FakeEmitter."""
+async def registry(storage_db, emitter) -> ConfigRegistry:
+    """ConfigRegistry wired to the Postgres test DB with a FakeEmitter.
+
+    register() persists the schema defaults but does not emit (it is initial
+    setup, not a change), so the per-test event count reflects only set() calls.
+    """
     reg = ConfigRegistry(emitter=emitter)
-    reg.register("platform", _AuditTestSchema)
+    await reg.register("platform", _AuditTestSchema)
     return reg
 
 
@@ -91,56 +74,56 @@ def registry(_patch_session, emitter) -> ConfigRegistry:
 class TestConfigAuditLogging:
     """ConfigRegistry.set() emits config_security_change for security-relevant keys."""
 
-    def test_llm_kill_switch_emits_event(self, registry, emitter) -> None:
-        registry.set("platform", "llm_kill_switch", "true")
+    async def test_llm_kill_switch_emits_event(self, registry, emitter) -> None:
+        await registry.set("platform", "llm_kill_switch", "true")
         assert len(emitter.events) == 1
         event = emitter.events[0]
         assert event.stage == "config_security_change"
         assert event.action == "update"
         assert "llm_kill_switch" in event.key
 
-    def test_llm_model_scoring_emits_event(self, registry, emitter) -> None:
-        registry.set("platform", "llm_model_scoring", "gpt-4o")
+    async def test_llm_model_scoring_emits_event(self, registry, emitter) -> None:
+        await registry.set("platform", "llm_model_scoring", "gpt-4o")
         assert len(emitter.events) == 1
         event = emitter.events[0]
         assert event.stage == "config_security_change"
 
-    def test_llm_pipeline_classify_emits_event(self, registry, emitter) -> None:
-        registry.set("platform", "llm_pipeline_classify_restricted_behavior_scoring", "redact")
+    async def test_llm_pipeline_classify_emits_event(self, registry, emitter) -> None:
+        await registry.set("platform", "llm_pipeline_classify_restricted_behavior_scoring", "redact")
         assert len(emitter.events) == 1
 
-    def test_llm_pipeline_gate_emits_event(self, registry, emitter) -> None:
-        registry.set("platform", "llm_pipeline_gate_threshold_scoring", "0.9")
+    async def test_llm_pipeline_gate_emits_event(self, registry, emitter) -> None:
+        await registry.set("platform", "llm_pipeline_gate_threshold_scoring", "0.9")
         assert len(emitter.events) == 1
 
-    def test_llm_seal_hmac_key_emits_event(self, registry, emitter) -> None:
-        registry.set("platform", "llm_seal_hmac_key", "new-secret-key")
+    async def test_llm_seal_hmac_key_emits_event(self, registry, emitter) -> None:
+        await registry.set("platform", "llm_seal_hmac_key", "new-secret-key")
         assert len(emitter.events) == 1
 
-    def test_fail_mode_pattern_emits_event(self, registry, emitter) -> None:
+    async def test_fail_mode_pattern_emits_event(self, registry, emitter) -> None:
         """Keys containing _fail_mode_ trigger audit (D-11 fail_mode pattern)."""
-        registry.set("platform", "llm_pipeline_validate_fail_mode_scoring", "closed")
+        await registry.set("platform", "llm_pipeline_validate_fail_mode_scoring", "closed")
         assert len(emitter.events) == 1
 
-    def test_event_contains_old_and_new_values(self, registry, emitter) -> None:
+    async def test_event_contains_old_and_new_values(self, registry, emitter) -> None:
         """Audit event details contain old_value and new_value."""
-        registry.set("platform", "llm_kill_switch", "true")
+        await registry.set("platform", "llm_kill_switch", "true")
         event = emitter.events[0]
         assert "old_value" in event.details
         assert "new_value" in event.details
         assert event.details["old_value"] == "false"
         assert event.details["new_value"] == "true"
 
-    def test_event_contains_namespace_and_key(self, registry, emitter) -> None:
+    async def test_event_contains_namespace_and_key(self, registry, emitter) -> None:
         """Audit event details contain namespace and key."""
-        registry.set("platform", "llm_kill_switch", "true")
+        await registry.set("platform", "llm_kill_switch", "true")
         event = emitter.events[0]
         assert event.details["namespace"] == "platform"
         assert event.details["key"] == "llm_kill_switch"
 
-    def test_event_message_descriptive(self, registry, emitter) -> None:
+    async def test_event_message_descriptive(self, registry, emitter) -> None:
         """Audit event message mentions the config change."""
-        registry.set("platform", "llm_kill_switch", "true")
+        await registry.set("platform", "llm_kill_switch", "true")
         event = emitter.events[0]
         assert "platform" in event.message
         assert "llm_kill_switch" in event.message
@@ -153,12 +136,12 @@ class TestConfigAuditLogging:
 class TestConfigAuditSkip:
     """Non-security config keys do NOT emit audit events."""
 
-    def test_scan_timeout_no_event(self, registry, emitter) -> None:
-        registry.set("platform", "scan_timeout", "600")
+    async def test_scan_timeout_no_event(self, registry, emitter) -> None:
+        await registry.set("platform", "scan_timeout", "600")
         assert len(emitter.events) == 0
 
-    def test_verbose_no_event(self, registry, emitter) -> None:
-        registry.set("platform", "verbose", "true")
+    async def test_verbose_no_event(self, registry, emitter) -> None:
+        await registry.set("platform", "verbose", "true")
         assert len(emitter.events) == 0
 
 
@@ -169,19 +152,19 @@ class TestConfigAuditSkip:
 class TestConfigAuditNoEmitter:
     """ConfigRegistry with emitter=None does not crash on security-relevant set()."""
 
-    def test_no_emitter_no_crash(self, _patch_session) -> None:
+    async def test_no_emitter_no_crash(self, storage_db) -> None:
         reg = ConfigRegistry(emitter=None)
-        reg.register("platform", _AuditTestSchema)
+        await reg.register("platform", _AuditTestSchema)
         # Should not raise
-        reg.set("platform", "llm_kill_switch", "true")
-        assert reg.get("platform", "llm_kill_switch") == "true"
+        await reg.set("platform", "llm_kill_switch", "true")
+        assert await reg.get("platform", "llm_kill_switch") == "true"
 
-    def test_no_emitter_default_init(self, _patch_session) -> None:
+    async def test_no_emitter_default_init(self, storage_db) -> None:
         """ConfigRegistry() with no emitter argument works (backwards compat)."""
         reg = ConfigRegistry()
-        reg.register("platform", _AuditTestSchema)
-        reg.set("platform", "llm_kill_switch", "true")
-        assert reg.get("platform", "llm_kill_switch") == "true"
+        await reg.register("platform", _AuditTestSchema)
+        await reg.set("platform", "llm_kill_switch", "true")
+        assert await reg.get("platform", "llm_kill_switch") == "true"
 
 
 # ---------------------------------------------------------------------------
@@ -191,14 +174,14 @@ class TestConfigAuditNoEmitter:
 class TestConfigAuditValidationError:
     """If set() raises ValueError (bad type), no audit event is emitted."""
 
-    def test_no_event_on_invalid_value(self, registry, emitter) -> None:
+    async def test_no_event_on_invalid_value(self, registry, emitter) -> None:
         """ValueError from bad type does not produce an audit event."""
         with pytest.raises(ValueError):
-            registry.set("platform", "scan_timeout", "not_a_number")
+            await registry.set("platform", "scan_timeout", "not_a_number")
         assert len(emitter.events) == 0
 
-    def test_no_event_on_unknown_key(self, registry, emitter) -> None:
+    async def test_no_event_on_unknown_key(self, registry, emitter) -> None:
         """ValueError from unknown key does not produce an audit event."""
         with pytest.raises(ValueError):
-            registry.set("platform", "nonexistent_key", "value")
+            await registry.set("platform", "nonexistent_key", "value")
         assert len(emitter.events) == 0

@@ -8,8 +8,22 @@ from sqlmodel import select
 from ...storage.database import async_session_scope
 from ...storage.db_models import AuditEventRecord
 from ..config import PlatformSettings
+from ..exceptions import ValidationError
 from ..services.audit import record_audit_event
+from ..tasks.queue import _current_task_user_id
 from ._common import Tool, normalize_limit, optional_text, require_text
+
+# #53: cap on the serialized ``details_json`` written per audit record.
+# 32 KiB matches the observation cap the platform uses elsewhere for
+# untrusted JSON blobs and keeps a single agent-produced entry from
+# blowing up the audit table row budget.
+_DETAILS_JSON_MAX_BYTES = 32 * 1024
+
+# #53: hard ceiling on list pagination. The auditor UI pages in
+# reasonable chunks; a 500-per-page cap keeps a run-away agent from
+# pulling the whole table in a single call.
+_AUDIT_LIST_DEFAULT = 50
+_AUDIT_LIST_MAX = 500
 
 
 class AuditLogTool(Tool):
@@ -62,9 +76,9 @@ class AuditLogTool(Tool):
             "description": "Maximum number of events to return for list.",
             "nullable": True,
         },
-        "user_id": {
-            "type": "string",
-            "description": "User identity to record or filter by.",
+        "offset": {
+            "type": "integer",
+            "description": "Zero-based offset for list pagination.",
             "nullable": True,
         },
     }
@@ -83,18 +97,26 @@ class AuditLogTool(Tool):
         target: str | None = None,
         details: dict | None = None,
         limit: int | None = None,
-        user_id: str | None = None,
+        offset: int | None = None,
     ) -> dict:
+        # #53: user_id is NOT accepted from the agent -- it is derived at
+        # tool-execution time via the authenticated task context. An agent
+        # attempting to write an audit row "as" another user cannot spoof.
+        authenticated_user_id = _current_task_user_id.get() or "system"
         normalized_action = require_text(action, tool_name="audit.log", field_name="action").lower()
         async with async_session_scope(self.settings) as session:
             if normalized_action == "record":
                 if limit is not None:
                     raise ValueError("audit.log record does not accept limit.")
+                if offset is not None:
+                    raise ValueError("audit.log record does not accept offset.")
                 normalized_run_id = require_text(run_id, tool_name="audit.log", field_name="run_id")
                 normalized_stage = require_text(stage, tool_name="audit.log", field_name="stage")
                 normalized_event_action = require_text(event_action, tool_name="audit.log", field_name="event_action")
                 if details is not None and not isinstance(details, dict):
                     raise ValueError("audit.log record requires details to be an object.")
+                if details is not None:
+                    _enforce_details_size(details)
                 record_audit_event(
                     session,
                     run_id=normalized_run_id,
@@ -102,7 +124,7 @@ class AuditLogTool(Tool):
                     action=normalized_event_action,
                     status=optional_text(status, tool_name="audit.log", field_name="status") or "completed",
                     target=optional_text(target, tool_name="audit.log", field_name="target") or "",
-                    user_id=optional_text(user_id, tool_name="audit.log", field_name="user_id") or "system",
+                    user_id=authenticated_user_id,
                     details=details,
                 )
                 await session.commit()
@@ -111,6 +133,7 @@ class AuditLogTool(Tool):
                     "run_id": normalized_run_id,
                     "stage": normalized_stage,
                     "action": normalized_event_action,
+                    "user_id": authenticated_user_id,
                 }
             if normalized_action == "list":
                 if details is not None:
@@ -120,7 +143,6 @@ class AuditLogTool(Tool):
                 normalized_event_action = optional_text(event_action, tool_name="audit.log", field_name="event_action")
                 normalized_status = optional_text(status, tool_name="audit.log", field_name="status")
                 normalized_target = optional_text(target, tool_name="audit.log", field_name="target")
-                normalized_user_id = optional_text(user_id, tool_name="audit.log", field_name="user_id")
                 if not any(
                     value is not None
                     for value in (
@@ -129,11 +151,13 @@ class AuditLogTool(Tool):
                         normalized_event_action,
                         normalized_status,
                         normalized_target,
-                        normalized_user_id,
                     )
                 ):
                     raise ValueError("audit.log list requires at least one selector.")
-                normalized_limit = normalize_limit(limit, default=50, maximum=500)
+                normalized_limit = normalize_limit(
+                    limit, default=_AUDIT_LIST_DEFAULT, maximum=_AUDIT_LIST_MAX,
+                )
+                normalized_offset = _normalize_offset(offset)
                 statement = select(AuditEventRecord).order_by(
                     desc(AuditEventRecord.created_at),
                     desc(AuditEventRecord.id),
@@ -148,13 +172,14 @@ class AuditLogTool(Tool):
                     statement = statement.where(AuditEventRecord.status == normalized_status)
                 if normalized_target:
                     statement = statement.where(AuditEventRecord.target == normalized_target)
-                if normalized_user_id:
-                    statement = statement.where(AuditEventRecord.user_id == normalized_user_id)
-                records = list(await session.exec(statement.limit(normalized_limit)))
+                records = list(await session.exec(
+                    statement.offset(normalized_offset).limit(normalized_limit),
+                ))
                 return {
                     "count": len(records),
                     "returned": len(records),
                     "limit": normalized_limit,
+                    "offset": normalized_offset,
                     "items": [_audit_event_payload(record) for record in records],
                 }
         raise ValueError(f"Unsupported audit.log action '{action}'.")
@@ -181,4 +206,33 @@ def _parse_json(payload: str | None) -> dict:
         return {}
     return loaded if isinstance(loaded, dict) else {}
 
+
+def _enforce_details_size(details: dict) -> None:
+    """Refuse an audit ``details`` payload that serializes to more than
+    :data:`_DETAILS_JSON_MAX_BYTES` (#53).
+
+    Serialization is deliberately done inside the tool (not later, inside
+    :func:`record_audit_event`) so the size check runs before the DB write
+    is attempted and the error carries the shape ``ValidationError`` --
+    consistent with the other input-guard rejections the tool raises.
+    """
+    try:
+        payload = json.dumps(details, separators=(",", ":"), sort_keys=True, default=str)
+    except (TypeError, ValueError) as exc:  # non-serializable content
+        raise ValidationError(f"audit.log details is not JSON-serializable: {exc}") from exc
+    if len(payload.encode("utf-8")) > _DETAILS_JSON_MAX_BYTES:
+        raise ValidationError(
+            f"audit.log details exceeds {_DETAILS_JSON_MAX_BYTES} bytes",
+        )
+
+
+def _normalize_offset(value: int | None) -> int:
+    """Return a non-negative int offset for list pagination (#53)."""
+    if value is None:
+        return 0
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValidationError("audit.log list offset must be an integer.")
+    if value < 0:
+        raise ValidationError("audit.log list offset must be >= 0.")
+    return value
 

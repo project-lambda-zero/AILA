@@ -30,7 +30,7 @@ from aila.api.auth import AuthContext, require_user_or_api_key
 from aila.api.constants import ROLE_ADMIN
 from aila.api.limiter import limiter
 from aila.api.schemas.envelope import DataEnvelope
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import (
     ManagedSystemRecord,
@@ -47,11 +47,24 @@ _slog = structlog.get_logger(__name__)
 
 
 async def _require_admin(ctx: AuthContext = Depends(require_user_or_api_key)) -> AuthContext:
-    """Reject non-admin callers from team administration."""
+    """Reject non-admin callers from team administration.
+
+    #36: the team registry is god-tier only. A team-scoped admin (team_id set)
+    administers a single team's data, not the cross-team registry, so it is
+    refused here rather than silently allowed to list, create, modify, or
+    delete other teams and their memberships. God-tier admins carry
+    team_id=None (TEAM-06). This is the conservative deny-default; relaxing it
+    to own-team management would be an additive feature, not a leak.
+    """
     if ctx.role != ROLE_ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"This endpoint requires '{ROLE_ADMIN}' role; current role: '{ctx.role}'",
+        )
+    if ctx.team_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Team administration is restricted to god-tier administrators.",
         )
     return ctx
 

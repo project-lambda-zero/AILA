@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import SQLModel, select
@@ -19,14 +19,25 @@ from sqlmodel import SQLModel, select
 from ...storage.database import async_session_scope
 from ..contracts.persist import PersistContract
 
+if TYPE_CHECKING:
+    from aila.api.auth import TeamContext
+
 
 @asynccontextmanager
-async def _session_or_new(session: AsyncSession | None) -> AsyncGenerator[tuple[AsyncSession, bool], None]:
-    """Yield (session, owns_session). If session is None, create a short-lived one."""
+async def _session_or_new(
+    session: AsyncSession | None,
+    team_context: TeamContext | None = None,
+) -> AsyncGenerator[tuple[AsyncSession, bool], None]:
+    """Yield (session, owns_session). If session is None, create a short-lived one.
+
+    ``team_context`` is threaded into ``async_session_scope`` on new-session
+    creation (#53) so factory-supplied tenant scope reaches every bare query.
+    When ``None`` the session scope falls back to the ambient TeamContext.
+    """
     if session is not None:
         yield session, False
     else:
-        async with async_session_scope() as new_session:
+        async with async_session_scope(team_context=team_context) as new_session:
             yield new_session, True
 
 
@@ -58,8 +69,11 @@ class StorageService:
     Handles: record storage, artifact blob management, generic table operations.
     """
 
-    def __init__(self) -> None:
-        pass
+    def __init__(self, team_context: TeamContext | None = None) -> None:
+        # #53: factory-supplied tenant scope threaded through to every
+        # short-lived session opened by this service. When None, the
+        # ambient TeamContext still applies via async_session_scope.
+        self._team_context = team_context
 
     async def save(
         self,
@@ -67,7 +81,7 @@ class StorageService:
         session: AsyncSession | None = None,
     ) -> None:
         """Persist a single record. Auto-stamps team_id for team-scoped records (D-07)."""
-        async with _session_or_new(session) as (sess, owns):
+        async with _session_or_new(session, self._team_context) as (sess, owns):
             _stamp_team_id(sess, record)
             await PersistContract.upsert(sess, record)
             if owns:
@@ -79,7 +93,7 @@ class StorageService:
         session: AsyncSession | None = None,
     ) -> None:
         """Batch persist multiple records. Auto-stamps team_id on each (D-07)."""
-        async with _session_or_new(session) as (sess, owns):
+        async with _session_or_new(session, self._team_context) as (sess, owns):
             for record in records:
                 _stamp_team_id(sess, record)
             await PersistContract.upsert_many(sess, records)
@@ -93,7 +107,7 @@ class StorageService:
         session: AsyncSession | None = None,
     ) -> SQLModel | None:
         """Fetch a single record by filter criteria."""
-        async with _session_or_new(session) as (sess, owns):
+        async with _session_or_new(session, self._team_context) as (sess, owns):
             stmt = select(model_class).where(*filters)
             result = (await sess.exec(stmt)).first()
             return result
@@ -105,7 +119,7 @@ class StorageService:
         session: AsyncSession | None = None,
     ) -> list[SQLModel]:
         """Fetch all records matching filter criteria."""
-        async with _session_or_new(session) as (sess, owns):
+        async with _session_or_new(session, self._team_context) as (sess, owns):
             stmt = select(model_class).where(*filters)
             results = (await sess.exec(stmt)).all()
             return list(results)
@@ -116,7 +130,7 @@ class StorageService:
         session: AsyncSession | None = None,
     ) -> None:
         """Delete a single record."""
-        async with _session_or_new(session) as (sess, owns):
+        async with _session_or_new(session, self._team_context) as (sess, owns):
             await sess.delete(record)
             if owns:
                 await sess.commit()

@@ -48,7 +48,8 @@ from aila.platform.mcp.adapters.ida_headless import (
     adapt_xrefs_from,
     adapt_xrefs_to,
 )
-from aila.modules.vr.agents.tool_executor import ToolExecutor, _parse_command
+from aila.modules.vr.agents.tool_executor import ToolExecutor
+from aila.platform.agents.tool_execution import parse_command
 from aila.modules.vr.contracts import PayloadKind
 
 
@@ -76,7 +77,7 @@ class TestRegistry:
         assert "android_mcp" in KNOWN_TOOLS
         assert len(IDA_HEADLESS_TOOLS) >= 80
         assert len(AUDIT_MCP_TOOLS) >= 50
-        assert len(ANDROID_MCP_TOOLS) >= 22
+        assert len(ANDROID_MCP_TOOLS) >= 20
 
     def test_registered_tools_includes_all_known(self) -> None:
         from aila.platform.mcp.adapters.known_tools import _ALWAYS_SUPPRESS
@@ -202,7 +203,7 @@ class TestAndroidMcpDispatch:
          parameter and ``self._bridges`` had no ``"android_mcp"`` key --
          the executor would emit "No bridge configured for MCP server
          'android_mcp'" at the bridge lookup step.
-      3. The ``_parse_command`` JSON parser rejected the dotted tool id
+      3. The ``parse_command`` JSON parser rejected the dotted tool id
          -- same failure mode as (1) one step earlier.
     """
 
@@ -222,18 +223,18 @@ class TestAndroidMcpDispatch:
         # this to surface "no such tool" instead of a silent 404.
         assert get_adapter("android_mcp", "bogus_handler") is None
 
-    def test_androguard_summary_parses_as_android_mcp_call(self) -> None:
+    def test_jadx_decompile_parses_as_android_mcp_call(self) -> None:
         command = json.dumps({
-            "tool": "android_mcp.androguard_summary",
+            "tool": "android_mcp.jadx_decompile",
             "args": {"apk_path": "/tmp/sample.apk"},
         })
-        parsed = _parse_command(command)
+        parsed = parse_command(command)
         assert parsed is not None
         tool_id, args = parsed
-        assert tool_id == "android_mcp.androguard_summary"
+        assert tool_id == "android_mcp.jadx_decompile"
         server_id, _, tool_name = tool_id.partition(".")
         assert server_id == "android_mcp"
-        assert tool_name == "androguard_summary"
+        assert tool_name == "jadx_decompile"
         assert args == {"apk_path": "/tmp/sample.apk"}
 
     def test_tool_executor_registers_android_mcp_bridge(self) -> None:
@@ -253,12 +254,12 @@ class TestAndroidMcpDispatch:
         audit = _FakeBridge()
         android = _FakeBridge()
         executor = ToolExecutor(ida=ida, audit_mcp=audit, android_mcp=android)
-        # The private dict is the dispatch surface inside execute(); a
-        # KeyError here at runtime would surface as the "No bridge
-        # configured" string the engine sees in its next turn.
-        assert executor._bridges["ida_headless"] is ida
-        assert executor._bridges["audit_mcp"] is audit
-        assert executor._bridges["android_mcp"] is android
+        # RFC-11 Tier C: _bridge_for() is the dispatch surface inside
+        # execute(); an injected bridge is returned as an override so the
+        # "No bridge configured" path never fires for a wired server.
+        assert executor._bridge_for("ida_headless") is ida
+        assert executor._bridge_for("audit_mcp") is audit
+        assert executor._bridge_for("android_mcp") is android
 
     def test_android_mcp_composite_handlers_registered(self) -> None:
         # The composite layer (verify_capabilities / classify_behavior /
@@ -520,6 +521,39 @@ class TestAdaptTaintPathsTo:
         ctx = _ctx(server="audit_mcp", tool="taint_paths_to", sink="exec")
         out = adapt_taint_paths_to({"paths": []}, ctx)
         assert "(no taint paths)" in out.observables_delta["audit_mcp.taint_paths_to.taint.exec"]
+
+    def test_reads_entrypoint_paths_and_path_count(self) -> None:
+        # Real audit-mcp shape: call chains live under ``entrypoint_paths``
+        # (list-of-lists) with an authoritative ``path_count``. The adapter
+        # previously read only ``paths`` / ``results`` / ``taint_paths`` and
+        # so reported 0 for every real result.
+        raw = {
+            "sink": "create_test_session",
+            "is_tainted": False,
+            "path_count": 7,
+            "caller_count": 5,
+            "exploitable": False,
+            "entrypoint_paths": [
+                ["m:main", "m:test_backend", "m:create_test_session"],
+                ["m:main", "m:test_resource", "m:create_test_session"],
+            ],
+        }
+        ctx = _ctx(
+            server="audit_mcp", tool="taint_paths_to",
+            name="create_test_session",
+        )
+        out = adapt_taint_paths_to(raw, ctx)
+        assert out.payload_kind == PayloadKind.TAINT_FLOW
+        # authoritative path_count, NOT len(entrypoint_paths)
+        assert out.payload["total"] == 7
+        assert out.payload["caller_count"] == 5
+        assert out.payload["sink"] == "create_test_session"
+        obs = out.observables_delta[
+            "audit_mcp.taint_paths_to.taint.create_test_session"
+        ]
+        assert "7 path(s)" in obs
+        # the call chain is rendered, not skipped as a non-dict
+        assert "m:main" in obs and "create_test_session" in obs
 
 
 class TestAdaptDefUse:
@@ -819,34 +853,34 @@ class TestCommandParser:
     def test_valid_command(self) -> None:
         raw = json.dumps({"tool": "ida_headless.decompile",
                           "args": {"binary_id": "abc", "address_or_name": "main"}})
-        parsed = _parse_command(raw)
+        parsed = parse_command(raw)
         assert parsed is not None
         tool_id, args = parsed
         assert tool_id == "ida_headless.decompile"
         assert args == {"binary_id": "abc", "address_or_name": "main"}
 
     def test_empty_string(self) -> None:
-        assert _parse_command("") is None
-        assert _parse_command("   ") is None
+        assert parse_command("") is None
+        assert parse_command("   ") is None
 
     def test_invalid_json(self) -> None:
-        assert _parse_command("not json") is None
-        assert _parse_command("{incomplete") is None
+        assert parse_command("not json") is None
+        assert parse_command("{incomplete") is None
 
     def test_non_dict_top_level(self) -> None:
-        assert _parse_command("[]") is None
-        assert _parse_command('"just a string"') is None
-        assert _parse_command("42") is None
+        assert parse_command("[]") is None
+        assert parse_command('"just a string"') is None
+        assert parse_command("42") is None
 
     def test_missing_tool_field(self) -> None:
-        assert _parse_command(json.dumps({"args": {}})) is None
+        assert parse_command(json.dumps({"args": {}})) is None
 
     def test_missing_args_defaults_empty(self) -> None:
         raw = json.dumps({"tool": "ida_headless.decompile"})
-        parsed = _parse_command(raw)
+        parsed = parse_command(raw)
         assert parsed is not None
         assert parsed[1] == {}
 
     def test_wrong_args_type(self) -> None:
         raw = json.dumps({"tool": "x.y", "args": "not a dict"})
-        assert _parse_command(raw) is None
+        assert parse_command(raw) is None

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from aila.config import Settings
-from aila.platform.tools._common import Tool
+from aila.platform.tools import Tool
 
 TOOL_ALIAS = "dissect_runner"
 CAPABILITY = "Run Dissect target-info, target-query, and target-fs commands on evidence via SSH."

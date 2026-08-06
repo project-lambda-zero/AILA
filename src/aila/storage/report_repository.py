@@ -128,29 +128,50 @@ class ReportRepository:
         self,
         session: Session,
         target: str | None = None,
+        team_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Return module-owned materialized findings rows from the registered query."""
+        """Return module-owned materialized findings rows from the registered query.
+
+        When ``team_id`` is provided, drop rows whose ``team_id`` key does not
+        match (#48: reporting cache MUST NOT surface another team's rows). A
+        callable that omits the ``team_id`` key is treated as team-unknown --
+        such rows are excluded from any team-scoped call, which is the secure
+        default. ``team_id=None`` preserves the god-tier admin bypass
+        (TEAM-06): every row is returned.
+        """
         query = self._materialized_query or self.__class__._default_materialized_query
         if query is None:
             raise NotFoundError(
                 "No materialized findings query registered. "
                 "The vulnerability module must register a query via ReportRepository."
             )
-        return list(await query(session, target))
+        rows = list(await query(session, target))
+        if team_id is None:
+            return rows
+        return [row for row in rows if str(row.get("team_id") or "") == team_id]
 
     async def run_findings(
         self,
         session: Session,
         run_id: str,
+        team_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Return honest per-run findings rows from the registered query."""
+        """Return honest per-run findings rows from the registered query.
+
+        ``team_id`` semantics mirror :meth:`materialized_findings` (#48): a
+        non-None value filters out any row whose ``team_id`` key does not
+        match; ``None`` returns every row (god-tier admin bypass).
+        """
         query = self._run_findings_query or self.__class__._default_run_findings_query
         if query is None:
             raise NotFoundError(
                 "No run findings query registered. "
                 "The vulnerability module must register a query via ReportRepository."
             )
-        return list(await query(session, run_id))
+        rows = list(await query(session, run_id))
+        if team_id is None:
+            return rows
+        return [row for row in rows if str(row.get("team_id") or "") == team_id]
 
     async def latest_report(
         self,
@@ -158,6 +179,7 @@ class ReportRepository:
         target: str | None = None,
         include_content: bool = False,
         module_id: str | None = None,
+        team_id: str | None = None,
     ) -> LatestReportResult:
         """Return the latest completed report, optionally filtered to a target system.
 
@@ -173,6 +195,10 @@ class ReportRepository:
             include_content: If True, reads artifact file content and populates
                 report_content, summary_document, and rows_document on the result.
             module_id: If provided, skips runs that do not match this module.
+            team_id: If provided, only walk runs stamped with this ``team_id``
+                (#48: the reporting cache MUST NOT surface another team's
+                stored report). ``None`` preserves the god-tier admin bypass
+                (TEAM-06) so admin sessions still see every completed run.
 
         Returns:
             LatestReportResult with report metadata and optionally file content.
@@ -180,10 +206,14 @@ class ReportRepository:
         Raises:
             NotFoundError: If no completed report is found for the given parameters.
         """
-        runs = (await session.exec(
+        runs_stmt = (
             select(WorkflowRunRecord)
             .where(WorkflowRunRecord.status == "completed")
-            .order_by(WorkflowRunRecord.completed_at.desc())
+        )
+        if team_id is not None:
+            runs_stmt = runs_stmt.where(WorkflowRunRecord.team_id == team_id)
+        runs = (await session.exec(
+            runs_stmt.order_by(WorkflowRunRecord.completed_at.desc())
         ))
         for run in runs:
             run_module_id = _module_id(run)
@@ -278,6 +308,7 @@ class ReportRepository:
         filters: JsonObject | None = None,
         row_filter: Callable[[list[JsonObject], JsonObject | None], list[JsonObject]] | None = None,
         module_id: str | None = None,
+        team_id: str | None = None,
     ) -> LatestReportRowsResult:
         """Return paginated rows from the latest report's rows_json artifact file.
 
@@ -294,6 +325,10 @@ class ReportRepository:
             filters: Arbitrary filter dict forwarded to row_filter.
             row_filter: Optional module-supplied callable that filters and sorts rows.
             module_id: Optional module filter forwarded to latest_report().
+            team_id: Forwarded to :meth:`latest_report` and (for the artifact
+                fall-back path) to :meth:`run_findings` so a cached report is
+                never surfaced across teams (#48). ``None`` preserves the
+                god-tier admin bypass.
 
         Returns:
             LatestReportRowsResult with total_rows, offset, limit, and the row slice.
@@ -308,10 +343,13 @@ class ReportRepository:
             target=target,
             include_content=True,
             module_id=module_id,
+            team_id=team_id,
         )
         rows_doc = report_payload.rows_document
         if rows_doc is None and report_payload.run_id and self._run_findings_query is not None:
-            rows_doc = await self._run_findings_query(session, report_payload.run_id)
+            rows_doc = await self.run_findings(
+                session, report_payload.run_id, team_id=team_id,
+            )
         if rows_doc is None:
             raise NotFoundError(
                 "Structured report rows are unavailable"
@@ -348,6 +386,7 @@ class ReportRepository:
         filters: JsonObject | None = None,
         row_filter: Callable[[list[JsonObject], JsonObject | None], list[JsonObject]] | None = None,
         module_id: str | None = None,
+        team_id: str | None = None,
     ) -> LatestReportRowsResult:
         """Return paginated findings from the module's materialized DB query.
 
@@ -368,6 +407,9 @@ class ReportRepository:
             filters: Arbitrary filter dict forwarded to row_filter.
             row_filter: Optional module-supplied callable that filters and sorts rows.
             module_id: Stored as module_id on the result; not used for filtering here.
+            team_id: Forwarded to :meth:`materialized_findings` so rows
+                stamped for another team are dropped before pagination (#48).
+                ``None`` preserves the god-tier admin bypass.
 
         Returns:
             LatestReportRowsResult with materialized findings and summary counts.
@@ -378,7 +420,9 @@ class ReportRepository:
         normalized_offset = max(0, int(offset))
         normalized_limit = max(1, min(int(limit), MAX_ROW_PAGE_SIZE))
 
-        records_as_dicts = await self.materialized_findings(session, target)
+        records_as_dicts = await self.materialized_findings(
+            session, target, team_id=team_id,
+        )
         if not records_as_dicts:
             raise NotFoundError(
                 "No materialized findings available."
@@ -409,7 +453,12 @@ class ReportRepository:
             rows=filtered_rows[normalized_offset : normalized_offset + normalized_limit],
         )
 
-    async def has_target_reports(self, session, module_id: str | None = None) -> bool:
+    async def has_target_reports(
+        self,
+        session,
+        module_id: str | None = None,
+        team_id: str | None = None,
+    ) -> bool:
         """Return True if any target-scoped report artifacts exist.
 
         Used by planning.has_cached_report() to decide whether to skip a scan.
@@ -418,23 +467,31 @@ class ReportRepository:
         Args:
             session: Active SQLModel Session.
             module_id: Optional module filter.  When None, checks across all modules.
+            team_id: If provided, restrict the probe to artifacts / runs
+                stamped with this ``team_id``. Without this filter the
+                function would report True on the first team's cached
+                report and short-circuit a fresh scan for a different team
+                (#48). ``None`` preserves the god-tier admin bypass
+                (TEAM-06).
 
         Returns:
             True if at least one target-scoped ReportArtifactRecord exists.
         """
         if module_id is None:
-            return (
-                (await session.exec(
-                    select(ReportArtifactRecord.id)
-                    .where(ReportArtifactRecord.scope == "target")
-                    .limit(1)
-                )).first()
-                is not None
+            stmt = select(ReportArtifactRecord.id).where(
+                ReportArtifactRecord.scope == "target"
             )
-        runs = (await session.exec(
+            if team_id is not None:
+                stmt = stmt.where(ReportArtifactRecord.team_id == team_id)
+            return (await session.exec(stmt.limit(1))).first() is not None
+        runs_stmt = (
             select(WorkflowRunRecord)
             .where(WorkflowRunRecord.status == "completed")
-            .order_by(WorkflowRunRecord.completed_at.desc())
+        )
+        if team_id is not None:
+            runs_stmt = runs_stmt.where(WorkflowRunRecord.team_id == team_id)
+        runs = (await session.exec(
+            runs_stmt.order_by(WorkflowRunRecord.completed_at.desc())
         ))
         for run in runs:
             if _module_id(run) != module_id:
@@ -458,21 +515,23 @@ def _find_target_report(target_reports: list[TargetReportReference], target: str
 
 
 def _module_id(run: WorkflowRunRecord) -> str | None:
+    # #45: route_json / summary_json are JSONB; SQLAlchemy hands us dicts on
+    # both the async (asyncpg) and sync (psycopg) engines uniformly. The
+    # ``_parse_json_object`` shim below still coerces legacy raw-string
+    # fixtures so unit tests that pass ``json.dumps(...)`` keep working.
     route_payload = _parse_json_object(run.route_json)
-    if isinstance(route_payload, dict):
-        selected_module = route_payload.get("selected_module")
-        if isinstance(selected_module, str):
-            normalized_module_id = selected_module.strip()
-            if normalized_module_id:
-                return normalized_module_id
+    selected_module = route_payload.get("selected_module")
+    if isinstance(selected_module, str):
+        normalized_module_id = selected_module.strip()
+        if normalized_module_id:
+            return normalized_module_id
 
     summary_payload = _parse_json_object(run.summary_json)
-    if isinstance(summary_payload, dict):
-        summary_module_id = summary_payload.get("module_id")
-        if isinstance(summary_module_id, str):
-            normalized_module_id = summary_module_id.strip()
-            if normalized_module_id:
-                return normalized_module_id
+    summary_module_id = summary_payload.get("module_id")
+    if isinstance(summary_module_id, str):
+        normalized_module_id = summary_module_id.strip()
+        if normalized_module_id:
+            return normalized_module_id
 
     action_id = str(run.action_id or "").strip()
     if "." in action_id:
@@ -482,13 +541,23 @@ def _module_id(run: WorkflowRunRecord) -> str | None:
     return None
 
 
-def _parse_json_object(payload: str | None) -> dict[str, object]:
-    try:
-        loaded = json.loads(payload or "{}")
-    except json.JSONDecodeError:
-        return {}
-    if isinstance(loaded, dict):
-        return loaded
+def _parse_json_object(payload: object) -> dict[str, object]:
+    """Coerce a JSONB column value (or a legacy JSON string) to a plain dict.
+
+    #45 (this file's callers): ``WorkflowRunRecord.route_json`` and
+    ``.summary_json`` are JSONB and arrive as ``dict`` via SQLAlchemy.  A
+    string-typed ``payload`` is still tolerated so in-memory test fixtures
+    that assign ``json.dumps({...})`` don't need a lockstep rewrite.
+    """
+    if isinstance(payload, dict):
+        return payload
+    if isinstance(payload, str):
+        try:
+            loaded = json.loads(payload or "{}")
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(loaded, dict):
+            return loaded
     return {}
 
 

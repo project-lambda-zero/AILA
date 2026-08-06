@@ -100,6 +100,39 @@ def test_direct_finding_exactly_at_floor_is_finding() -> None:
 
 
 def test_direct_finding_below_floor_is_inconclusive_with_reason() -> None:
+    """No verifier signal + below-floor enum confidence -> INCONCLUSIVE.
+
+    Per fix §218, a verifier ``verdict=='confirmed'`` now dominates the
+    numeric floor: a low-confidence-but-confirmed claim maps to FINDING
+    (see test_direct_finding_confirmed_by_verifier_dominates_numeric_floor).
+    The below-floor -> INCONCLUSIVE branch is only reachable when the
+    verifier did NOT emit a confirming verdict, so this test drops the
+    verifier_report and relies on the enum fallback for numeric_conf.
+    """
+    control = _first_l1()
+    outcome = _outcome(
+        outcome_kind=OutcomeKind.DIRECT_FINDING,
+        confidence=OutcomeConfidence.CAVEATED,  # 0.3, below floor 0.6
+        payload={},
+    )
+
+    v = child_outcome_to_verdict(
+        outcome, control, child_investigation_id="inv-child-1"
+    )
+
+    assert v.verdict == MasvsVerdict.INCONCLUSIVE
+    assert v.confidence == 0.0
+    assert v.reason is not None
+    assert "direct_finding_low_confidence" in v.reason
+    assert "0.30" in v.reason
+
+
+def test_direct_finding_confirmed_by_verifier_dominates_numeric_floor() -> None:
+    """Fix §218 -- verifier ``verdict=='confirmed'`` is the canonical
+    post-synthesis pass for a real finding, and now dominates the
+    numeric floor. A low-confidence-but-confirmed claim maps to
+    FINDING (was demoted to INCONCLUSIVE pre-§218).
+    """
     control = _first_l1()
     outcome = _outcome(
         outcome_kind=OutcomeKind.DIRECT_FINDING,
@@ -111,11 +144,9 @@ def test_direct_finding_below_floor_is_inconclusive_with_reason() -> None:
         outcome, control, child_investigation_id="inv-child-1"
     )
 
-    assert v.verdict == MasvsVerdict.INCONCLUSIVE
-    assert v.confidence == 0.0
-    assert v.reason is not None
-    assert "direct_finding_low_confidence" in v.reason
-    assert "0.42" in v.reason
+    assert v.verdict == MasvsVerdict.FINDING
+    assert v.confidence == 0.42
+    assert v.reason is None
 
 
 def test_direct_finding_without_verifier_report_uses_enum_fallback() -> None:
@@ -138,8 +169,15 @@ def test_direct_finding_without_verifier_report_uses_enum_fallback() -> None:
     assert v.confidence == 0.85
 
 
-def test_direct_finding_with_unknown_enum_and_no_verifier_is_inconclusive() -> None:
-    """UNKNOWN → 0.0; below the floor → inconclusive."""
+def test_direct_finding_with_unknown_enum_and_no_verifier_defaults_to_finding_at_floor() -> None:
+    """Fix §219 -- UNKNOWN maps to the FINDING floor (0.6), not 0.0.
+
+    The default behaviour for an unclassified confidence is now
+    'treat as finding pending operator review' rather than 'silently
+    demote to inconclusive'. A DIRECT_FINDING outcome with an UNKNOWN
+    confidence and no verifier_report crosses the floor exactly and
+    maps to FINDING.
+    """
     control = _first_l1()
     outcome = _outcome(
         outcome_kind=OutcomeKind.DIRECT_FINDING,
@@ -151,9 +189,9 @@ def test_direct_finding_with_unknown_enum_and_no_verifier_is_inconclusive() -> N
         outcome, control, child_investigation_id="inv-child-1"
     )
 
-    assert v.verdict == MasvsVerdict.INCONCLUSIVE
-    assert v.reason is not None
-    assert "direct_finding_low_confidence" in v.reason
+    assert v.verdict == MasvsVerdict.FINDING
+    assert v.confidence == 0.6
+    assert v.reason is None
 
 
 # --- Branch 2: refuted → NO_FINDING ----------------------------------------
@@ -397,13 +435,19 @@ def test_verifier_report_with_non_numeric_confidence_falls_back_to_enum() -> Non
 
 
 def test_verifier_report_with_boolean_confidence_falls_back_to_enum() -> None:
-    """``bool`` is a subclass of ``int``; reject it explicitly."""
+    """``bool`` is a subclass of ``int``; reject it explicitly.
+
+    Uses a verifier_report WITHOUT a ``verdict`` key so the §218
+    verifier-confirmed short-circuit does not fire; the mapper then
+    falls through to the numeric_conf gate and the enum fallback
+    (CAVEATED -> 0.3, below the floor) drives the outcome.
+    """
     control = _first_l1()
     outcome = _outcome(
         outcome_kind=OutcomeKind.DIRECT_FINDING,
         confidence=OutcomeConfidence.CAVEATED,
         payload={
-            "verifier_report": {"verdict": "confirmed", "confidence": True},
+            "verifier_report": {"confidence": True},
         },
     )
 
@@ -411,18 +455,24 @@ def test_verifier_report_with_boolean_confidence_falls_back_to_enum() -> None:
         outcome, control, child_investigation_id="inv-child-1"
     )
 
-    # CAVEATED → 0.3, below the floor → inconclusive.
+    # CAVEATED \u2192 0.3, below the floor \u2192 inconclusive.
     assert v.verdict == MasvsVerdict.INCONCLUSIVE
 
 
-def test_verifier_report_out_of_range_confidence_is_ignored() -> None:
-    """Confidence outside [0.0, 1.0] is rejected; fall back to enum."""
+def test_verifier_report_out_of_range_confidence_falls_back_to_enum() -> None:
+    """Confidence outside [0.0, 1.0] is rejected; fall back to enum.
+
+    Uses a verifier_report WITHOUT a ``verdict`` key so the §218
+    verifier-confirmed short-circuit does not fire and the fallback
+    behaviour is directly observable. STRONG's 0.85 -> FINDING confirms
+    the enum drove the outcome (rather than the ignored 1.5).
+    """
     control = _first_l1()
     outcome = _outcome(
         outcome_kind=OutcomeKind.DIRECT_FINDING,
-        confidence=OutcomeConfidence.UNKNOWN,
+        confidence=OutcomeConfidence.STRONG,
         payload={
-            "verifier_report": {"verdict": "confirmed", "confidence": 1.5},
+            "verifier_report": {"confidence": 1.5},
         },
     )
 
@@ -430,8 +480,10 @@ def test_verifier_report_out_of_range_confidence_is_ignored() -> None:
         outcome, control, child_investigation_id="inv-child-1"
     )
 
-    # UNKNOWN → 0.0, below the floor → inconclusive.
-    assert v.verdict == MasvsVerdict.INCONCLUSIVE
+    # STRONG \u2192 0.85, above the floor \u2192 finding; proves the
+    # invalid 1.5 was ignored (else confidence would read 1.5).
+    assert v.verdict == MasvsVerdict.FINDING
+    assert v.confidence == 0.85
 
 
 def test_verifier_report_non_dict_payload_is_ignored() -> None:

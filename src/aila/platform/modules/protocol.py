@@ -16,6 +16,10 @@ if TYPE_CHECKING:
     from ...storage.memory import PermanentMemoryStore
     from ...storage.registry import ConfigRegistry, SchemaRegistry
     from ...storage.report_store import ReportArtifactStore
+    from ..contracts.reasoning import (
+        ReasoningDomainProfile,
+        ReasoningStrategyDeclaration,
+    )
     from ..events import EventEmitter
     from ..llm import AilaLLMClient
     from ..services.knowledge import KnowledgeService
@@ -454,16 +458,6 @@ class ModuleProtocol(Protocol):
         """
         return {}
 
-    def notification_types(self) -> list[str]:
-        """Return notification type identifiers this module can emit (D-37/D-32).
-
-        OPTIONAL -- platform checks hasattr() before calling.
-
-        Returns:
-            List of notification type strings, e.g.: ['scan_complete', 'kev_added']
-        """
-        return []
-
     async def fleet_severity_summary(self, system_ids: list[int], session: Any) -> dict[int, str]:
         """Return top severity per system_id for the given fleet slice (optional, D-20).
 
@@ -482,3 +476,32 @@ class ModuleProtocol(Protocol):
             Omit a system_id if it has no findings. Return {} if the module has no data.
         """
         return {}
+
+    def reasoning_strategies(self) -> list[ReasoningStrategyDeclaration]:
+        """Return the reasoning strategy families this module publishes.
+
+        Collected by the platform builder at load into the platform
+        StrategyRegistry. The platform owns only the ``generic`` family;
+        every domain-specific family is module-declared. OPTIONAL --
+        defaults to none.
+        """
+        return []
+
+    def reasoning_domain_profiles(self) -> list[ReasoningDomainProfile]:
+        """Return the reasoning domain profiles this module publishes.
+
+        Collected by the platform builder at load into the platform
+        DomainProfileRegistry so the reasoning engine resolves a module's
+        domain profile without the platform naming the domain. OPTIONAL --
+        defaults to none.
+        """
+        return []
+
+    def scan_submission_track(self) -> str | None:
+        """Return the ARQ track a scan submitted via POST /analyze runs on.
+
+        The shared scan-submission endpoint resolves the track from whichever
+        registered module declares one, so the API layer never names a track.
+        OPTIONAL -- a module that accepts no scan submissions returns None.
+        """
+        return None

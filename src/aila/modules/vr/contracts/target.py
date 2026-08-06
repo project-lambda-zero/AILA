@@ -24,6 +24,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from aila.platform.contracts.enums import AnalysisState, TargetStatus, TargetTagSource
+
 __all__ = [
     "AnalysisState",
     "TargetKind",
@@ -53,37 +55,6 @@ class TargetKind(StrEnum):
     KERNEL_IMAGE = "kernel_image"
     KERNEL_MODULE = "kernel_module"
     HYPERVISOR_IMAGE = "hypervisor_image"
-
-
-class TargetStatus(StrEnum):
-    """Operator lifecycle state."""
-
-    ACTIVE = "active"
-    ARCHIVED = "archived"
-    QUARANTINED = "quarantined"
-
-
-class AnalysisState(StrEnum):
-    """Backend ingestion + capability-profile lifecycle (v0.4.5).
-
-    Operator-facing -- the UI renders each value as a clear sentence
-    ('Pulling from GitHub…' / 'Analyzing in IDA…' / 'Ready' /
-    'Failed: <reason>'). Code reads the enum; UI never shows the
-    raw value.
-    """
-
-    PENDING = "pending"        # created, ingestion not yet started
-    INGESTING = "ingesting"    # uploading / cloning / indexing in progress
-    READY = "ready"            # backend handles populated, ready for use
-    FAILED = "failed"          # ingestion errored; analysis_state_message has the reason
-
-
-class TargetTagSource(StrEnum):
-    """Provenance of a tag attached to a target (D-52)."""
-
-    OPERATOR = "operator"
-    SYSTEM = "system"
-    PATTERN = "pattern"
 
 
 class TargetTag(BaseModel):
@@ -148,8 +119,8 @@ class VRTargetSummary(BaseModel):
         default=None,
         description=(
             "For kind=android_apk only: the Android application package id "
-            "(e.g. 'com.examplecorp.selfservis') discovered by android-mcp's "
-            "androguard_summary during STATIC_SUMMARY. None until that stage "
+            "(e.g. 'com.examplecorp.selfservis') populated from the in-repo "
+            "static summary during STATIC_SUMMARY. None until that stage "
             "completes. Projected from mcp_handles_json.android_mcp_package_name "
             "-- never settable directly. Frontend uses this as the row "
             "label once it is populated."
@@ -159,16 +130,14 @@ class VRTargetSummary(BaseModel):
         default=None,
         description=(
             "For kind=android_apk only. Projected from mcp_handles_json "
-            "after the 5-stage pipeline completes (APK_DECODE → JADX_DECOMPILE "
-            "→ INDEX_DECOMPILED → STATIC_SUMMARY → MOBSF_SCAN). Keys:\n"
+            "after the pipeline completes (APK_DECODE \u2192 JADX_DECOMPILE "
+            "\u2192 INDEX_DECOMPILED \u2192 STATIC_SUMMARY). Keys:\n"
             "  - sha256, decoded_dir, manifest_path (APK_DECODE)\n"
             "  - decompiled_dir, jadx_root, jadx_class_count (JADX_DECOMPILE)\n"
             "  - audit_mcp_index_id, audit_mcp_indexed_at (INDEX_DECOMPILED)\n"
             "  - static_summary {package, version_name, version_code,\n"
             "    min_sdk, target_sdk, permissions, exported_*, native_libs,\n"
             "    certificates, signing_scheme, ...} (STATIC_SUMMARY)\n"
-            "  - mobsf_scan {issues, severity, ...} OR {skipped, reason}\n"
-            "    (MOBSF_SCAN)\n"
             "None when kind != android_apk OR the pipeline hasn't progressed "
             "far enough to write any handles. Frontend renders an "
             "Android APK overview card from this projection."

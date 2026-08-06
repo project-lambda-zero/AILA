@@ -13,8 +13,6 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 __all__ = [
-    "ALL_STATES",
-    "VALID_TRANSITIONS",
     "DashboardResponse",
     "ExecutiveHealthResponse",
     "FindingTransitionRequest",
@@ -94,28 +92,10 @@ class TagResponse(BaseModel):
     created_at: datetime
 
 
-VALID_TRANSITIONS: dict[str, list[str]] = {
-    "new": ["investigating"],
-    "investigating": ["new", "mitigated"],
-    "mitigated": ["investigating", "verified"],
-    "verified": ["closed"],
-    "closed": [],
-}
-
-ALL_STATES: list[str] = list(VALID_TRANSITIONS.keys())
-
-
 class FindingTransitionRequest(BaseModel):
     target_state: str
     notes: str = Field(default="", max_length=2048)
     module_id: str = Field(default="platform")
-
-    @field_validator("target_state")
-    @classmethod
-    def _validate_state(cls, v: str) -> str:
-        if v not in ALL_STATES:
-            raise ValueError(f"Unknown state '{v}'. Valid: {ALL_STATES}")
-        return v
 
 
 class FindingWorkflowHistoryResponse(BaseModel):

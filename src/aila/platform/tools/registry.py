@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from sqlalchemy import or_
 from sqlmodel import select
@@ -9,6 +9,7 @@ from ...storage.memory import PermanentMemoryStore
 from ...storage.secrets import SecretStore
 from ..config import PlatformSettings
 from ..contracts.platform import RegisteredSystem, SSHIntegrationInput
+from ..tasks.queue import _current_task_team_id
 from ._common import Tool, utc_now
 
 
@@ -88,6 +89,12 @@ class SystemRegistryTool(Tool):
                     message = f"Updated SSH integration '{existing.name}'."
                 else:
                     record = ManagedSystemRecord(
+                        # Stamp the calling team so the agent-tool registration
+                        # path matches the REST create path; team-scoped system
+                        # reads then surface it. The context var is set when an
+                        # agent runs this tool inside a task; None (god-tier) at
+                        # bootstrap/CLI (#36).
+                        team_id=_current_task_team_id.get(),
                         name=payload.name,
                         host=payload.host,
                         username=payload.username,

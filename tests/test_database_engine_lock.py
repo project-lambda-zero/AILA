@@ -1,29 +1,46 @@
-from __future__ import annotations
-
 """Tests for thread-safe engine cache (_ENGINE_LOCK) in aila.storage.database.
 
-RED phase -- these tests MUST fail before the implementation is in place.
-GREEN phase -- all tests pass after _ENGINE_LOCK is added and used.
-"""
+Contract update
+---------------
+SQLite is no longer supported (D-48/D-49): the sync ``get_engine`` factory
+and its ``_configure_sqlite_connection`` helper (which issued the WAL PRAGMA)
+were removed with the switch to PostgreSQL + asyncpg. The async cache
+``_ASYNC_ENGINES`` is now the primary path; ``get_async_engine`` reads and
+mutates it under ``_ENGINE_LOCK``, and ``dispose_engine`` is async and holds
+the same lock while popping the cache entry.
 
+These tests cover the surviving invariants:
+- ``_ENGINE_LOCK`` exists and is an ``RLock``.
+- Both cache mutators (``get_async_engine`` and ``dispose_engine``) hold the
+  lock in their sources.
+- 8 threads calling ``get_async_engine`` produce exactly one engine.
+- Concurrent get + dispose does not crash.
+
+The previous WAL PRAGMA test was dropped because the SQLite plumbing it
+guarded no longer exists.
+"""
+from __future__ import annotations
+
+import asyncio
 import inspect
 import threading
 
-
-def _patch_settings_to_memory(monkeypatch):
-    """Redirect get_settings() to an in-memory SQLite URL so no filesystem is touched."""
-    import aila.config as cfg
-
-    class _FakeSettings:
-        database_url = "sqlite:///:memory:"
-
-    monkeypatch.setattr(cfg, "get_settings", lambda: _FakeSettings())
+_CONCURRENT_URL = "postgresql+asyncpg://x@127.0.0.1/_engine_lock_concurrent"
+_DISPOSE_URL = "postgresql+asyncpg://x@127.0.0.1/_engine_lock_dispose"
 
 
-def _clear_engines():
-    from aila.storage import database as db
+class _FakeSettings:
+    def __init__(self, url: str) -> None:
+        self.database_url = url
 
-    db._ENGINES.clear()
+
+def _pop_cache_entry(url: str) -> None:
+    import aila.storage.database as db
+
+    with db._ENGINE_LOCK:
+        db._ASYNC_ENGINES.pop(url, None)
+        db._SESSION_FACTORIES.pop(url, None)
+        db._INITIALIZED_URLS.discard(url)
 
 
 def test_engine_lock_exists():
@@ -36,12 +53,14 @@ def test_engine_lock_exists():
     )
 
 
-def test_get_engine_uses_lock():
-    """get_engine() source must contain 'with _ENGINE_LOCK:'."""
+def test_get_async_engine_uses_lock():
+    """get_async_engine() source must contain 'with _ENGINE_LOCK:'."""
     import aila.storage.database as db
 
-    src = inspect.getsource(db.get_engine)
-    assert "with _ENGINE_LOCK" in src, "get_engine() is missing 'with _ENGINE_LOCK:' guard"
+    src = inspect.getsource(db.get_async_engine)
+    assert "with _ENGINE_LOCK" in src, (
+        "get_async_engine() is missing 'with _ENGINE_LOCK:' guard"
+    )
 
 
 def test_dispose_engine_uses_lock():
@@ -49,65 +68,76 @@ def test_dispose_engine_uses_lock():
     import aila.storage.database as db
 
     src = inspect.getsource(db.dispose_engine)
-    assert "with _ENGINE_LOCK" in src, "dispose_engine() is missing 'with _ENGINE_LOCK:' guard"
+    assert "with _ENGINE_LOCK" in src, (
+        "dispose_engine() is missing 'with _ENGINE_LOCK:' guard"
+    )
 
 
-def test_wal_pragma_present():
-    """_configure_sqlite_connection must issue PRAGMA journal_mode=WAL."""
+def test_concurrent_get_async_engine_single_instance():
+    """8 threads calling get_async_engine simultaneously produce exactly 1 engine.
+
+    Uses a throwaway URL that never opens a real connection: create_async_engine
+    is lazy for asyncpg URLs, so no network I/O occurs even when the URL is
+    unreachable.
+    """
     import aila.storage.database as db
 
-    src = inspect.getsource(db._configure_sqlite_connection)
-    assert "journal_mode=WAL" in src, "WAL PRAGMA missing from _configure_sqlite_connection"
+    _pop_cache_entry(_CONCURRENT_URL)
+    try:
+        results: list[int] = []
+        errors: list[BaseException] = []
+        barrier = threading.Barrier(8)
+
+        def worker():
+            try:
+                barrier.wait()
+                engine = db.get_async_engine(_FakeSettings(_CONCURRENT_URL))
+                results.append(id(engine))
+            except BaseException as exc:  # noqa: BLE001 -- surface any thread failure
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors, f"errors during concurrent get_async_engine: {errors}"
+        assert len(set(results)) == 1, (
+            f"Expected 1 engine object from 8 threads, got {len(set(results))}"
+        )
+        assert _CONCURRENT_URL in db._ASYNC_ENGINES, (
+            "Expected the throwaway URL to be present in _ASYNC_ENGINES"
+        )
+    finally:
+        engine = db._ASYNC_ENGINES.get(_CONCURRENT_URL)
+        if engine is not None:
+            asyncio.run(engine.dispose())
+        _pop_cache_entry(_CONCURRENT_URL)
 
 
-def test_concurrent_get_engine_single_instance(monkeypatch):
-    """8 threads calling get_engine() simultaneously must produce exactly 1 engine."""
-    _patch_settings_to_memory(monkeypatch)
-    _clear_engines()
+def test_dispose_engine_thread_safe():
+    """get_async_engine and dispose_engine run concurrently without crash.
 
-    from aila.storage.database import _ENGINES, get_engine
+    Runs 4 getter threads and 4 disposer threads on a throwaway URL. Each
+    disposer invokes the async ``dispose_engine`` inside its own asyncio loop.
+    The only expected outcome is a clean join with no thread-recorded errors.
+    """
+    import aila.storage.database as db
 
-    results: list[int] = []
-    barrier = threading.Barrier(8)
-
-    def worker():
-        barrier.wait()  # all threads start at the same instant
-        e = get_engine()
-        results.append(id(e))
-
-    threads = [threading.Thread(target=worker) for _ in range(8)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-
-    assert len(set(results)) == 1, (
-        f"Expected 1 engine object from 8 threads, got {len(set(results))}"
-    )
-    assert len(_ENGINES) == 1, (
-        f"Expected 1 key in _ENGINES after concurrent calls, got {len(_ENGINES)}"
-    )
-
-
-def test_dispose_engine_thread_safe(monkeypatch):
-    """dispose_engine() and get_engine() run concurrently without crash or corruption."""
-    _patch_settings_to_memory(monkeypatch)
-    _clear_engines()
-
-    from aila.storage.database import dispose_engine, get_engine
-
-    errors: list[Exception] = []
+    _pop_cache_entry(_DISPOSE_URL)
+    errors: list[BaseException] = []
 
     def getter():
         try:
-            get_engine()
-        except Exception as exc:  # noqa: BLE001
+            db.get_async_engine(_FakeSettings(_DISPOSE_URL))
+        except BaseException as exc:  # noqa: BLE001 -- surface any thread failure
             errors.append(exc)
 
     def disposer():
         try:
-            dispose_engine()
-        except Exception as exc:  # noqa: BLE001
+            asyncio.run(db.dispose_engine(_FakeSettings(_DISPOSE_URL)))
+        except BaseException as exc:  # noqa: BLE001 -- surface any thread failure
             errors.append(exc)
 
     threads = [threading.Thread(target=getter) for _ in range(4)]
@@ -117,5 +147,10 @@ def test_dispose_engine_thread_safe(monkeypatch):
         t.start()
     for t in threads:
         t.join()
+
+    engine = db._ASYNC_ENGINES.get(_DISPOSE_URL)
+    if engine is not None:
+        asyncio.run(engine.dispose())
+    _pop_cache_entry(_DISPOSE_URL)
 
     assert not errors, f"Thread safety errors during concurrent get/dispose: {errors}"

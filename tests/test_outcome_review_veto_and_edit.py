@@ -21,12 +21,15 @@ Two changes covered:
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 from pydantic import ValidationError
 
 from aila.modules.malware.services.outcome_review import VETO_K
 from aila.platform.contracts.mcp_payload import PayloadKind
 from aila.platform.contracts.reasoning import ReasoningTurnDecision
+from aila.platform.services.outcome_review import summarize_outcome_for_review
 
 
 class TestVetoThreshold:
@@ -160,3 +163,116 @@ class TestEditOutcomeServiceImports:
             "applied_by_synthesis",
         }
         assert _EDIT_OUTCOME_PROTECTED_KEYS == expected
+
+
+class TestSummarizeOutcomeForReview:
+    """A reviewer must see the finding it votes on, not raw JSON.
+
+    Before this helper the review directive handed siblings
+    ``payload_json[:400]`` -- brace + key plumbing, finding cut
+    mid-token -- so a reviewer could not judge the draft and abstained.
+    """
+
+    def test_vr_answer_surfaced_as_prose(self) -> None:
+        summarize = summarize_outcome_for_review
+        payload = json.dumps({
+            "answer": "Command injection in run() via shell=True.",
+            "vulnerable_function": "BaseSession.run",
+            "panel_contributions": [{"branch_id": "b1"}],
+        })
+        out = summarize(payload)
+        assert "Command injection in run() via shell=True." in out
+        assert "BaseSession.run" in out
+        # Not a raw JSON prefix: no leading brace + key plumbing.
+        assert not out.lstrip().startswith("{")
+
+    def test_malware_headline_surfaced(self) -> None:
+        summarize = summarize_outcome_for_review
+        payload = json.dumps({
+            "headline_verdict": "AsyncRAT: credential theft + backdoor.",
+            "family_attribution": "AsyncRAT",
+        })
+        out = summarize(payload)
+        assert "AsyncRAT: credential theft + backdoor." in out
+        assert "family_attribution: AsyncRAT" in out
+
+    def test_bounded_to_max_chars(self) -> None:
+        summarize = summarize_outcome_for_review
+        payload = json.dumps({"answer": "x" * 5000})
+        out = summarize(payload, max_chars=200)
+        assert len(out) <= 200 + len(" [...truncated]")
+        assert out.endswith("[...truncated]")
+
+    def test_no_finding_field_falls_back_without_panel_contributions(
+        self,
+    ) -> None:
+        summarize = summarize_outcome_for_review
+        payload = json.dumps({
+            "crash_type": "UAF",
+            "panel_contributions": [{"branch_id": "b1", "answer_brief": "x"}],
+        })
+        out = summarize(payload)
+        # High-signal field surfaces; the noisy panel plumbing does not.
+        assert "UAF" in out
+        assert "panel_contributions" not in out
+
+    def test_empty_or_bad_payload_is_safe(self) -> None:
+        summarize = summarize_outcome_for_review
+        assert summarize(None) == "(empty draft payload)"
+        assert summarize("") == "(empty draft payload)"
+        assert summarize("not json at all") == "(empty draft payload)"
+
+
+class TestNotReadyVoteContract:
+    """#6 convergence fix -- ``not_ready`` is a first-class review
+    vote both on the API-facing ``VROutcomeReviewCreate`` shape and on
+    the researcher-facing ``ReasoningTurnDecision`` shape. Contract
+    tests ensure a typo in either surface fails here, not at runtime.
+    """
+
+    def test_review_create_accepts_not_ready(self) -> None:
+        from aila.modules.vr.contracts.outcome import VROutcomeReviewCreate
+
+        row = VROutcomeReviewCreate(
+            reviewer_branch_id="b1",
+            vote="not_ready",
+            comment="awaiting audit_mcp read_function for parse_uri",
+        )
+        assert row.vote == "not_ready"
+        assert "parse_uri" in row.comment
+
+    def test_review_create_rejects_unknown_vote(self) -> None:
+        from aila.modules.vr.contracts.outcome import VROutcomeReviewCreate
+
+        with pytest.raises(ValidationError):
+            VROutcomeReviewCreate(
+                reviewer_branch_id="b1", vote="maybe", comment="?",
+            )
+
+    def test_reasoning_decision_review_vote_accepts_not_ready(self) -> None:
+        d = ReasoningTurnDecision(
+            reasoning="blocked on evidence",
+            action="submit_outcome_review",
+            review_outcome_id="outcome-xyz",
+            review_vote="not_ready",
+            review_comment="need MASVS-STORAGE-2 evidence",
+        )
+        assert d.review_vote == "not_ready"
+
+    def test_platform_valid_votes_include_not_ready(self) -> None:
+        """The platform kernel enforces the vote alphabet via
+        ``_VALID_VOTES``; not_ready MUST be in the frozenset or
+        ``upsert_review`` refuses the row with 'unknown vote'."""
+        from aila.platform.services import outcome_review as _svc
+
+        assert "not_ready" in _svc._VALID_VOTES
+        assert _svc.VOTE_NOT_READY == "not_ready"
+
+    def test_vr_binding_re_exports_not_ready(self) -> None:
+        """The VR binding re-exports the constant so module callers
+        that historically imported ``VOTE_*`` off the binding pick up
+        the new value without touching platform imports."""
+        from aila.modules.vr.services import outcome_review as _vr
+
+        assert "VOTE_NOT_READY" in _vr.__all__
+        assert _vr.VOTE_NOT_READY == "not_ready"

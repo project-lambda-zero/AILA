@@ -35,11 +35,6 @@ from typing import Any
 from sqlmodel import select as _select
 
 from aila.modules.vr.contracts.target import TargetKind
-from aila.modules.vr.contracts.target_stages import (
-    StageName,
-    StageState,
-    StageStatus,
-)
 from aila.modules.vr.db_models import VRTargetRecord
 from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.modules.vr.services.stage_tracker import (
@@ -49,10 +44,14 @@ from aila.modules.vr.services.stage_tracker import (
     load_target_stages,
     save_target_stages,
 )
-from aila.platform.contracts._common import utc_now
-from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
-from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
-from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
+from aila.platform.config_base import ModuleConfigReader
+from aila.platform.contracts import utc_now
+from aila.platform.contracts.target_stages import (
+    StageName,
+    StageState,
+    StageStatus,
+)
+from aila.platform.mcp.factory import make_bridge
 from aila.platform.uow import UnitOfWork
 
 __all__ = [
@@ -67,54 +66,43 @@ __all__ = [
 _log = logging.getLogger(__name__)
 
 _POLL_INTERVAL_SECONDS = 3.0
-# fix §241 -- operator-overridable poll timeout. Default 14400 (4h)
+# fix \u00a7241 -- operator-overridable poll timeout. Default 14400 (4h)
 # fits the chromium / firefox / android-mcp ingestion envelope; large
 # monorepos (chromium ~30min observed, mainline kernel possibly more)
-# benefit from an extension knob. Read once at module load -- workers
-# pick up changes on restart, which matches the rest of the VR env
-# surface (VR_*_TIMEOUT_S constants).
-def _read_poll_timeout_env() -> float:
-    raw = os.environ.get("VR_INGESTION_POLL_TIMEOUT_S")
-    if not raw:
-        return 14400.0
-    try:
-        value = float(raw)
-    except ValueError:
-        _log.warning(
-            "VR_INGESTION_POLL_TIMEOUT_S=%r is not a number -- using default 14400s",
-            raw,
-        )
-        return 14400.0
-    if value <= 0:
-        _log.warning(
-            "VR_INGESTION_POLL_TIMEOUT_S=%r is non-positive -- using default 14400s",
-            raw,
-        )
-        return 14400.0
-    return value
+# benefit from an extension knob. Resolved at USE site via
+# ConfigRegistry (namespace=vr, key=ingestion_poll_timeout_s); the
+# schema field enforces ge=60.0 so a bad override cannot fall to 0.
+# PUT /config or the AILA_VR_INGESTION_POLL_TIMEOUT_S env var picks
+# up on the next call without a worker restart.
 
 
-_POLL_TIMEOUT_SECONDS = _read_poll_timeout_env()
-
-
-# fix §268, §269 -- artifact-file storage for the heavy android-mcp
-# stage outputs (androguard summary + MobSF scan). The full payloads
-# (40KB-2MB each) used to live inline in ``mcp_handles_json`` where
-# every read of the row paid the parse cost. They now live in a
-# content-addressed JSON file under
-# ``VR_TARGET_ARTIFACT_DIR/{target_id}/{name}.json``; only a small
+# fix §268 -- artifact-file storage for the heavy android-mcp
+# static-summary output. The full payload (40KB-2MB) used to live
+# inline in ``mcp_handles_json`` where every read of the row paid the
+# parse cost. They now live in a content-addressed JSON file under
+# ``{target_artifact_dir}/{target_id}/{name}.json``; only a small
 # digest + pointer is kept inline so API projections and the MASVS
-# dispatcher stay cheap. Defaults to ``~/.aila/vr_target_artifacts``
-# (same shape as ANDROID_MCP_UPLOAD_DIR's ``~/.android-mcp/uploads``).
-def _artifact_root() -> Path:
-    raw = os.environ.get("VR_TARGET_ARTIFACT_DIR", "").strip()
+# dispatcher stay cheap. Root defaults to ``~/.aila/vr_target_artifacts``
+# (same shape as ANDROID_MCP_UPLOAD_DIR's ``~/.android-mcp/uploads``)
+# when the ``vr.target_artifact_dir`` config key is empty; a non-empty
+# override lands via ``PUT /config/vr/target_artifact_dir`` or the
+# ``AILA_VR_TARGET_ARTIFACT_DIR`` env var.
+_cfg = ModuleConfigReader("vr")
+
+
+async def _resolve_artifact_root() -> Path:
+    raw = (await _cfg.get_str("target_artifact_dir")).strip()
     if raw:
         return Path(raw).expanduser()
     return Path.home() / ".aila" / "vr_target_artifacts"
 
 
+async def _resolve_android_mcp_workdir() -> Path:
+    return Path(await _cfg.get_str("android_mcp_workdir")).expanduser()
+
+
 def _write_target_artifact(
-    target_id: str, name: str, payload: Mapping[str, Any],
+    root: Path, target_id: str, name: str, payload: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Persist a JSON payload to the per-target artifact dir.
 
@@ -129,7 +117,7 @@ def _write_target_artifact(
     so a crash mid-write can never leave a half-written JSON behind
     that a future ``_load_target_artifact_payload`` would choke on.
     """
-    target_dir = _artifact_root() / target_id
+    target_dir = root / target_id
     target_dir.mkdir(parents=True, exist_ok=True)
     artifact_path = target_dir / f"{name}.json"
     body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
@@ -151,9 +139,8 @@ def _load_target_artifact_payload(
 ) -> Mapping[str, Any]:
     """Resolve an inline handle reference to its full JSON payload.
 
-    ``handle_value`` is the value stored under one of the heavy
-    android-mcp keys (``android_mcp_static_summary``,
-    ``android_mcp_mobsf_scan``). Two shapes are supported:
+    ``handle_value`` is the value stored under a heavy android-mcp
+    key (``android_mcp_static_summary``). Two shapes are supported:
 
     * **Pointer form** (current): a dict carrying ``_artifact_path``
       plus any pre-computed digest fields. The JSON file at
@@ -163,7 +150,7 @@ def _load_target_artifact_payload(
       digest fields they can render.
     * **Legacy inline form**: a dict that already holds the full
       payload. Returned as-is. Covers rows ingested before the
-      §268 / §269 cutover.
+      §268 cutover.
 
     Non-mapping input returns an empty mapping.
     """
@@ -193,7 +180,7 @@ def _load_target_artifact_payload(
 
 
 def _static_summary_digest_fields(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Extract the small inline digest from an androguard summary.
+    """Extract the small inline digest from the composed static summary.
 
     Carries the scalars an api_router / masvs-seed call would project
     plus pre-computed list counts so the projection layer never has
@@ -218,48 +205,22 @@ def _static_summary_digest_fields(payload: Mapping[str, Any]) -> dict[str, Any]:
         value = payload.get(key)
         if isinstance(value, list):
             digest[f"{key}_count"] = len(value)
-    return digest
-
-
-def _mobsf_digest_fields(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Extract the operator-display digest from a MobSF scan response.
-
-    The full MobSF scan is multi-MB and must never enter LLM prompts
-    (PIPELINE_ONLY_TOOLS -- see ``android_mcp_bridge._PIPELINE_ONLY_TOOLS``
-    comment). The inline digest carries only fields safe to show on
-    the target overview / PDF cover (security score + tracker count +
-    per-severity finding buckets); everything else lives in the
-    artifact file behind ``prompt_safe=False``.
-    """
-    digest: dict[str, Any] = {}
-    if payload.get("skipped"):
-        digest["skipped"] = True
-        if payload.get("reason") is not None:
-            digest["reason"] = payload["reason"]
-        return digest
-    if payload.get("security_score") is not None:
-        digest["security_score"] = payload["security_score"]
-    trackers = payload.get("trackers")
-    if isinstance(trackers, Mapping):
-        detected = trackers.get("detected_trackers")
-        if detected is not None:
-            digest["trackers_detected"] = detected
-    buckets = {"high": 0, "warning": 0, "info": 0, "good": 0, "secure": 0}
-    for section_key in (
-        "code_analysis", "manifest_analysis",
-        "android_api", "network_security",
-    ):
-        section = payload.get(section_key)
-        if isinstance(section, dict):
-            for finding in section.values():
-                if isinstance(finding, dict):
-                    sev = str(
-                        finding.get("severity") or finding.get("status") or "",
-                    ).lower()
-                    if sev in buckets:
-                        buckets[sev] += 1
-    if any(buckets.values()):
-        digest["findings_by_severity"] = buckets
+    # Pass through the in-repo native-analysis + SBOM sub-summaries so the
+    # apk_static seed builder can render them for NATIVE / SBOM checks.
+    # native_analysis is already bounded (lib + symbol caps in
+    # native_analysis.py); the SBOM component list is trimmed here so the
+    # inline digest carried in mcp_handles_json stays small.
+    native = payload.get("native_analysis")
+    if isinstance(native, dict):
+        digest["native_analysis"] = native
+    sbom = payload.get("sbom")
+    if isinstance(sbom, dict):
+        trimmed = dict(sbom)
+        comps = trimmed.get("components")
+        if isinstance(comps, list) and len(comps) > 60:
+            trimmed["components"] = comps[:60]
+            trimmed["truncated"] = True
+        digest["sbom"] = trimmed
     return digest
 
 
@@ -403,7 +364,6 @@ _ANDROID_STAGES: frozenset[StageName] = frozenset({
     StageName.REACT_NATIVE_EXTRACT,
     StageName.INDEX_DECOMPILED,
     StageName.STATIC_SUMMARY,
-    StageName.MOBSF_SCAN,
 })
 
 
@@ -419,10 +379,10 @@ class TargetAnalysisError(Exception):
 
 
 # ─── React Native unification helpers ─────────────────────────────────
-
-_DEFAULT_APK_WORKDIR = Path(
-    os.environ.get("ANDROID_MCP_WORKDIR", "~/.android-mcp/work"),
-).expanduser()
+# ``_build_unified_staging`` accepts the android-mcp workdir as an
+# argument; the async caller resolves it via
+# ``_resolve_android_mcp_workdir`` (config-registry-backed) so a PUT
+# /config override lands without a worker restart.
 
 
 def _hash_path_for_cache(apk_path: str) -> str:
@@ -432,6 +392,7 @@ def _hash_path_for_cache(apk_path: str) -> str:
 
 
 def _build_unified_staging(
+    workdir: Path,
     apk_sha: str,
     java_dir: str | None,
     react_dir: str | None,
@@ -454,10 +415,23 @@ def _build_unified_staging(
     in place; only the link entry consumes filesystem state. On POSIX
     ``os.symlink`` always succeeds without admin.
     """
-    staging = _DEFAULT_APK_WORKDIR / f"apk-unified-{apk_sha[:16]}"
+    staging = workdir / f"apk-unified-{apk_sha[:16]}"
     if staging.exists():
+        # Tear down prior entries WITHOUT recursing into them. A junction
+        # child must be removed as a link (os.rmdir drops the junction,
+        # not its target); shutil.rmtree would descend the junction and
+        # delete the REAL jadx / apktool tree it points at.
         import shutil as _shutil
-        _shutil.rmtree(staging, ignore_errors=True)
+        for child in staging.iterdir():
+            try:
+                if child.is_symlink():
+                    child.unlink()
+                else:
+                    os.rmdir(child)  # junction link, or empty dir
+            except OSError:
+                # Real (copied) directory -- no reparse point back into
+                # the source, so a recursive delete is safe here.
+                _shutil.rmtree(child, ignore_errors=True)
     staging.mkdir(parents=True, exist_ok=True)
     if java_dir:
         _link_dir(Path(java_dir), staging / "java")
@@ -475,38 +449,39 @@ def _build_unified_staging(
 def _link_dir(source: Path, target: Path) -> None:
     """Cross-platform directory junction.
 
-    Windows: ``mklink /J`` via ``subprocess`` is the standard but
-    operator banned subprocess.run -- we use ``_winapi.CreateJunction``
-    when available (Python 3.13+ exposes it under ctypes.windll.kernel32)
-    via ``os.symlink`` with ``target_is_directory=True``. When that
-    fails (no developer-mode + no admin) we fall back to bulk copy via
-    ``shutil.copytree`` -- slower one-time, then the staging dir persists.
-    POSIX: ``os.symlink`` always works.
+    Windows uses a directory junction (via the winapi CreateJunction
+    primitive), NOT a directory symlink: the indexer's directory walk
+    descends into junctions but skips directory symlinks, so a symlink
+    would hide the whole source tree. Junctions also need neither admin
+    rights nor developer mode. If junction creation fails the code falls
+    back to a bulk copy, which is slower once but always walkable. On
+    POSIX a plain symlink is walked fine and is used directly.
     """
     if not source.exists():
         return
-    try:
-        os.symlink(source, target, target_is_directory=True)
-        return
-    except (OSError, NotImplementedError):
-        # Symlink failed -- Windows often denies non-admin symlinks.
-        # Fall through to junction or copy.
-        pass
     if os.name == "nt":
-        # Try Windows native junction via ctypes (no subprocess).
+        # Windows: create a JUNCTION, never a directory symlink. The
+        # indexer's recursive directory walk treats a junction as an
+        # ordinary folder and descends into it, but skips a directory
+        # symlink -- a symlinked source tree yields ZERO files to the
+        # indexer, which then reports no supported languages. Junctions
+        # need neither admin rights nor developer mode.
         try:
-            import ctypes
-            kernel32 = ctypes.windll.kernel32
-            kernel32.CreateSymbolicLinkW.restype = ctypes.c_ubyte
-            # SYMBOLIC_LINK_FLAG_DIRECTORY=0x1, ALLOW_UNPRIVILEGED=0x2
-            ok = kernel32.CreateSymbolicLinkW(
-                str(target), str(source), 0x3,
+            import _winapi
+            _winapi.CreateJunction(str(source), str(target))
+            return
+        except (OSError, ValueError, AttributeError, ImportError) as exc:
+            _log.warning(
+                "unified-staging junction %s -> %s failed (%s); "
+                "falling back to copy", target, source, type(exc).__name__,
             )
-            if ok:
-                return
-        except OSError:
+    else:
+        try:
+            os.symlink(source, target, target_is_directory=True)
+            return
+        except (OSError, NotImplementedError):
             pass
-    # Last-resort: copy. Slower but always works.
+    # Last-resort: copy. Slower but always walkable by the indexer.
     import shutil as _shutil
     _shutil.copytree(source, target, symlinks=False, dirs_exist_ok=False)
 
@@ -594,22 +569,22 @@ class TargetAnalysisService:
 
     def __init__(
         self,
-        ida: IDABridgeTool | Any | None = None,
-        audit_mcp: AuditMcpBridgeTool | Any | None = None,
-        android_mcp: AndroidMcpBridgeTool | Any | None = None,
+        ida: Any | None = None,
+        audit_mcp: Any | None = None,
+        android_mcp: Any | None = None,
     ) -> None:
-        self._ida = ida or IDABridgeTool(recorder=record_call)
-        self._audit_mcp = audit_mcp or AuditMcpBridgeTool(recorder=record_call)
-        self._android_mcp = android_mcp or AndroidMcpBridgeTool(recorder=record_call)
+        self._ida = ida or make_bridge("ida_headless", module_id="vr", recorder=record_call)
+        self._audit_mcp = audit_mcp or make_bridge("audit_mcp", module_id="vr", recorder=record_call)
+        self._android_mcp = android_mcp or make_bridge("android_mcp", module_id="vr", recorder=record_call)
 
     async def analyze(self, target_id: str) -> None:
         """Run the ingestion stage(s) for one target.
 
         Dispatches by target kind:
 
-        * ``android_apk`` → drives the five android-mcp stages
+        * ``android_apk`` → drives the android-mcp stages
           (APK_DECODE / JADX_DECOMPILE / INDEX_DECOMPILED /
-          STATIC_SUMMARY / MOBSF_SCAN)
+          STATIC_SUMMARY)
           sequentially, each under its own StageTracker. See
           :meth:`_analyze_android_apk`.
         * All other kinds → run the legacy INGESTION stage (clone /
@@ -663,11 +638,12 @@ class TargetAnalysisService:
             return
 
         # Legacy INGESTION flow -- source_repo / binary kinds / CVE etc.
+        poll_timeout_s = await _cfg.get_float("ingestion_poll_timeout_s")
         try:
             async with StageTracker(
                 target_id,
                 StageName.INGESTION,
-                stage_timeout_s=_POLL_TIMEOUT_SECONDS,
+                stage_timeout_s=poll_timeout_s,
             ) as tracker:
                 # Re-read inside the tracker -- the row may have changed
                 # between the dispatch-time load above and the tracker
@@ -769,18 +745,17 @@ class TargetAnalysisService:
     async def _analyze_android_apk(self, target_id: str) -> None:
         """Drive the android-mcp + audit-mcp ingestion stages.
 
-        fix §240 -- wall-clock optimisation: the four stages that take an
+        fix §240 -- wall-clock optimisation: the stages that take an
         APK path as their sole input are independent (apktool, jadx,
-        androguard, MobSF run against the same file with disjoint output
-        keys) so we fan them out via ``asyncio.gather``.
-        INDEX_DECOMPILED depends on JADX_DECOMPILE writing
-        ``android_mcp_decompiled_dir`` and runs sequentially after.
+        react-native extract run against the same file with disjoint
+        output keys) so we fan them out via ``asyncio.gather``.
+        INDEX_DECOMPILED and STATIC_SUMMARY depend on APK_DECODE /
+        JADX_DECOMPILE outputs and run in group 2.
 
         On a typical APK:
           - APK_DECODE        ~30s   (apktool)
           - JADX_DECOMPILE    5-15min
-          - STATIC_SUMMARY    ~30s   (androguard)
-          - MOBSF_SCAN        5-30min (optional, skipped if no API key)
+          - STATIC_SUMMARY    ~30s   (in-repo: manifest + signing + native + sbom)
           - INDEX_DECOMPILED  varies (audit-mcp index of jadx output)
 
         Sequential wall-clock: ~50min worst case.
@@ -797,38 +772,43 @@ class TargetAnalysisService:
         the operator resumes. A stage already DONE on a re-run is logged
         and the chain proceeds (idempotent).
         """
-        # GROUP 1: independent stages -- fan out.
-        # asyncio.gather propagates the FIRST exception and cancels
-        # outstanding tasks; that matches the existing sequential chain's
-        # "stop on first failure" contract.
-        # REACT_NATIVE_EXTRACT runs in this group too: it reads the APK
-        # directly (no apktool dependency) and produces decompiled JS
-        # the unified-index stage joins with the jadx Java tree.
+        # GROUP 1: android-mcp decode stages run SEQUENTIALLY. Each of
+        # apktool / jadx / react_native_extract spawns a heavy JVM
+        # subprocess on the single android-mcp host. Firing them
+        # concurrently caused CPU / RAM / disk contention that pushed
+        # every stage past its timeout, and a timed-out android-mcp call
+        # leaves an unkillable worker thread behind (the async runtime
+        # cannot kill a thread), which accumulates and saturates the
+        # pool. Running them one at a time gives each full machine
+        # resources and finishes faster in practice than the contended
+        # fan-out. A hard failure still stops the chain (the tracker
+        # re-raises), matching the prior stop-on-first-failure contract.
+        await self._run_android_stage(
+            target_id, StageName.APK_DECODE, self._android_apk_decode,
+        )
+        await self._run_android_stage(
+            target_id, StageName.JADX_DECOMPILE, self._android_jadx_decompile,
+        )
+        await self._run_android_stage(
+            target_id, StageName.REACT_NATIVE_EXTRACT,
+            self._android_react_native_extract,
+        )
+        # GROUP 2: stages that consume group-1 outputs. INDEX_DECOMPILED
+        # unifies the jadx Java tree + the React Native decompile into ONE
+        # audit-mcp index. STATIC_SUMMARY is composed in-repo and reads
+        # APK_DECODE's decoded AndroidManifest.xml (plus signing / native
+        # / SBOM straight from the APK), so it moved out of group 1 to
+        # here where the apktool output is guaranteed present. The two are
+        # independent, so fan them out.
         await asyncio.gather(
             self._run_android_stage(
-                target_id, StageName.APK_DECODE, self._android_apk_decode,
+                target_id, StageName.INDEX_DECOMPILED,
+                self._android_index_decompiled,
             ),
             self._run_android_stage(
-                target_id, StageName.JADX_DECOMPILE, self._android_jadx_decompile,
+                target_id, StageName.STATIC_SUMMARY,
+                self._android_static_summary,
             ),
-            self._run_android_stage(
-                target_id, StageName.REACT_NATIVE_EXTRACT,
-                self._android_react_native_extract,
-            ),
-            self._run_android_stage(
-                target_id, StageName.STATIC_SUMMARY, self._android_static_summary,
-            ),
-            self._run_android_stage(
-                target_id, StageName.MOBSF_SCAN, self._android_mobsf_scan,
-            ),
-        )
-        # GROUP 2: unified index over BOTH the jadx Java tree AND the
-        # React Native decompile (when present). Personas see ONE
-        # index_id whose semantic_search / read_function / callers_of
-        # span both languages -- no per-language index juggling at the
-        # bridge or in the system prompt.
-        await self._run_android_stage(
-            target_id, StageName.INDEX_DECOMPILED, self._android_index_decompiled,
         )
 
     async def _merge_handles_locked(
@@ -1145,8 +1125,10 @@ class TargetAnalysisService:
         # junctions inside re-resolve to the current jadx + rn dirs).
         apk_sha = current_handles.get("android_mcp_apk_sha256") or \
             _hash_path_for_cache(apk_path)
+        workdir = await _resolve_android_mcp_workdir()
         staging = await asyncio.to_thread(
             _build_unified_staging,
+            workdir,
             apk_sha=str(apk_sha),
             java_dir=java_dir if isinstance(java_dir, str) else None,
             react_dir=react_dir if isinstance(react_dir, str) else None,
@@ -1181,10 +1163,11 @@ class TargetAnalysisService:
                 f"audit_mcp.index_codebase returned no index_id: {kickoff!r}",
             )
 
-        # fix §270 -- long-tail audit-mcp indexing on a unified Java +
-        # React tree can run for hours, bounded by _POLL_TIMEOUT_SECONDS
-        # (default 4h, operator-overridable via VR_INGESTION_POLL_TIMEOUT_S).
-        # Inline poll at 60s intervals -- see prior §270 fallback note.
+        # fix \u00a7270 -- long-tail audit-mcp indexing on a unified Java +
+        # React tree can run for hours, bounded by the ingestion poll
+        # timeout (schema default 4h, operator-tunable via
+        # ConfigRegistry vr/ingestion_poll_timeout_s). Inline poll at
+        # 60s intervals -- see prior \u00a7270 fallback note.
         await self._poll_audit_mcp(index_id, interval_s=60.0)
 
         await self._merge_handles_locked(target_id, {
@@ -1206,19 +1189,74 @@ class TargetAnalysisService:
         current_handles: dict[str, Any],
         tracker: StageTracker,
     ) -> None:
-        del current_handles, tracker  # dispatch contract; consumed by sibling stages
+        del tracker  # dispatch contract; state owned by _run_android_stage
         apk_path = self._resolve_apk_path(descriptor)
-        resp = await self._android_mcp.forward(
-            action="androguard_summary", apk_path=apk_path,
+        # The static summary is composed in-repo:
+        # apktool's decoded text AndroidManifest.xml supplies package /
+        # version / permissions / exported components / sdk; the APK
+        # signing block supplies certificates + scheme; a LIEF pass over
+        # the bundled native libraries supplies hardening + JNI surface;
+        # and a component inventory supplies the SBOM. Runs after
+        # APK_DECODE so the decoded manifest is on disk.
+        from aila.platform.apk import (
+            analyze_apk_natives,
+            build_sbom,
+            parse_manifest,
+            parse_signing,
         )
-        if not isinstance(resp, dict) or resp.get("status") == "error":
-            err = resp.get("error") if isinstance(resp, dict) else resp
+
+        decoded_dir = current_handles.get("android_mcp_decoded_dir")
+        if not isinstance(decoded_dir, str) or not decoded_dir:
             raise TargetAnalysisError(
-                f"android-mcp.androguard_summary failed: {err}",
+                "static_summary needs the APK_DECODE output_dir "
+                "(android_mcp_decoded_dir); the apktool stage did not run.",
             )
-        # fix §268 -- the full androguard summary (manifest XML, full
-        # permission list, every certificate fingerprint, every
-        # exported-component class name) can hit 1-2 MB on real APKs.
+        manifest = await asyncio.to_thread(parse_manifest, decoded_dir)
+        signing = await asyncio.to_thread(parse_signing, apk_path)
+        native = await asyncio.to_thread(analyze_apk_natives, apk_path)
+        sbom = await asyncio.to_thread(build_sbom, apk_path, native)
+
+        native_libs = [
+            lib["path"] for lib in native.get("libraries", [])
+            if isinstance(lib, dict) and lib.get("path")
+        ]
+        resp: dict[str, Any] = {
+            "package": manifest.get("package", ""),
+            "version_name": manifest.get("version_name", ""),
+            "version_code": manifest.get("version_code", ""),
+            "min_sdk": manifest.get("min_sdk", ""),
+            "target_sdk": manifest.get("target_sdk", ""),
+            "compile_sdk": manifest.get("compile_sdk", ""),
+            "application_class": manifest.get("application_class", ""),
+            "main_activity": manifest.get("main_activity", ""),
+            "permissions": manifest.get("permissions", []),
+            "dangerous_permissions": manifest.get("dangerous_permissions", []),
+            "exported_activities": manifest.get("exported_activities", []),
+            "exported_services": manifest.get("exported_services", []),
+            "exported_receivers": manifest.get("exported_receivers", []),
+            "exported_providers": manifest.get("exported_providers", []),
+            "exported_components": manifest.get("exported_components", []),
+            "debuggable": manifest.get("debuggable"),
+            "allow_backup": manifest.get("allow_backup"),
+            "uses_cleartext_traffic": manifest.get("uses_cleartext_traffic"),
+            "network_security_config": manifest.get(
+                "network_security_config", "",
+            ),
+            "custom_schemes": manifest.get("custom_schemes", []),
+            "deep_link_hosts": manifest.get("deep_link_hosts", []),
+            "certificates": signing.get("certificates", []),
+            "signing_scheme": signing.get("signing_scheme", ""),
+            "signing_schemes": signing.get("schemes", []),
+            "native_libs": native_libs,
+            "native_analysis": native,
+            "sbom": sbom,
+            "summary_source": "in-repo",
+        }
+        if manifest.get("error"):
+            resp["manifest_error"] = manifest["error"]
+        # The full static summary (permission list, every certificate,
+        # every exported-component class name, per-library native detail)
+        # can be large on real APKs.
         # Embedding it verbatim in ``mcp_handles_json`` made every
         # /vr/targets list request parse + serialize the blob, and
         # bloated worker logs that echo the row state. Persist to a
@@ -1226,8 +1264,9 @@ class TargetAnalysisService:
         # and keep only the digest + pointer inline. The PDF renderer
         # and any other full-payload consumer pulls the file via
         # ``load_target_artifact_payload``.
+        artifact_root = await _resolve_artifact_root()
         artifact_ref = _write_target_artifact(
-            target_id, "static_summary", resp,
+            artifact_root, target_id, "static_summary", resp,
         )
         digest = _static_summary_digest_fields(resp)
         inline_ref: dict[str, Any] = {**artifact_ref, **digest}
@@ -1246,83 +1285,6 @@ class TargetAnalysisService:
             "artifact=%s size=%d",
             target_id, package,
             len(resp.get("permissions") or []),
-            artifact_ref["_artifact_path"], artifact_ref["_artifact_size"],
-        )
-
-    async def _android_mobsf_scan(
-        self,
-        target_id: str,
-        descriptor: dict[str, Any],
-        current_handles: dict[str, Any],
-        tracker: StageTracker,
-    ) -> None:
-        """MobSF static scan. Skipped when MOBSF_API_KEY is unset.
-
-        fix §269 -- MobSF output is multi-MB (every code/manifest
-        finding plus tracker fingerprints plus the original mapped
-        APK upload metadata) and is required off-policy for
-        LLM prompts (see ``android_mcp_bridge._PIPELINE_ONLY_TOOLS``
-        comment). Persist the full payload to
-        ``VR_TARGET_ARTIFACT_DIR/{target_id}/mobsf_scan.json`` and
-        keep an inline digest + pointer with an explicit
-        ``prompt_safe=False`` marker so any future prompt-builder
-        that lands on this key has an unambiguous denial in shape.
-        """
-        del current_handles, tracker  # dispatch contract; consumed by sibling stages
-        mobsf_api_key = os.environ.get("MOBSF_API_KEY", "").strip()
-        if not mobsf_api_key:
-            _log.info(
-                "vr.android.mobsf_scan target=%s skipped (MOBSF_API_KEY unset)",
-                target_id,
-            )
-            # fix §240 -- locked merge.
-            # Skipped stage stays inline (no artifact written) -- the
-            # ``skipped``/``reason`` fields are operator-display only
-            # and tiny enough to keep on the row. ``prompt_safe=False``
-            # still applies in case a future renderer treats skipped
-            # MobSF as a value to project.
-            await self._merge_handles_locked(target_id, {
-                "android_mcp_mobsf_scan": {
-                    "skipped": True,
-                    "reason": "MOBSF_API_KEY env var not set on the AILA host",
-                    "prompt_safe": False,
-                },
-            })
-            return
-
-        apk_path = self._resolve_apk_path(descriptor)
-        resp = await self._android_mcp.forward(
-            action="mobsf_scan", apk_path=apk_path, _agent_bypass=True,
-        )
-        if not isinstance(resp, dict) or resp.get("status") == "error":
-            err = resp.get("error") if isinstance(resp, dict) else resp
-            raise TargetAnalysisError(
-                f"android-mcp.mobsf_scan failed: {err}",
-            )
-        artifact_ref = _write_target_artifact(
-            target_id, "mobsf_scan", resp,
-        )
-        digest = _mobsf_digest_fields(resp)
-        inline_ref: dict[str, Any] = {
-            **artifact_ref,
-            **digest,
-            # Explicit prompt-safe marker -- load-bearing for D-100.
-            # MobSF output must NEVER reach LLM prompts. The marker
-            # makes intent unmistakable for the prompt builder and
-            # any future tool that surfaces the inline handle.
-            "prompt_safe": False,
-        }
-        scan_hash = resp.get("_scan_hash")
-        if scan_hash is not None:
-            inline_ref["_scan_hash"] = scan_hash
-        # fix §240 -- locked merge so parallel group-1 stages don't
-        # overwrite each other's disjoint keys.
-        await self._merge_handles_locked(
-            target_id, {"android_mcp_mobsf_scan": inline_ref},
-        )
-        _log.info(
-            "vr.android.mobsf_scan target=%s scan_hash=%s artifact=%s size=%d",
-            target_id, scan_hash,
             artifact_ref["_artifact_path"], artifact_ref["_artifact_size"],
         )
 
@@ -1524,7 +1486,8 @@ class TargetAnalysisService:
     # ─── polling ────────────────────────────────────────────────────────
 
     async def _poll_ida(self, binary_id: str) -> None:
-        deadline = utc_now().timestamp() + _POLL_TIMEOUT_SECONDS
+        poll_timeout_s = await _cfg.get_float("ingestion_poll_timeout_s")
+        deadline = utc_now().timestamp() + poll_timeout_s
         while utc_now().timestamp() < deadline:
             resp = await self._ida.forward(
                 action="poll_analysis", binary_id=binary_id,
@@ -1538,7 +1501,7 @@ class TargetAnalysisService:
                 )
             await asyncio.sleep(_POLL_INTERVAL_SECONDS)
         raise TargetAnalysisError(
-            f"ida analysis timed out after {_POLL_TIMEOUT_SECONDS:.0f}s",
+            f"ida analysis timed out after {poll_timeout_s:.0f}s",
         )
 
     async def _poll_audit_mcp(
@@ -1547,16 +1510,18 @@ class TargetAnalysisService:
         """Poll ``audit_mcp.poll_index`` until READY / FAILED / timeout.
 
         ``interval_s`` overrides the default ``_POLL_INTERVAL_SECONDS``
-        (3.0). The override exists for §270 -- long-tail audit-mcp
+        (3.0). The override exists for \u00a7270 -- long-tail audit-mcp
         indexing (decompiled APK Java trees in particular: trailmark +
         semble cold-build on a ~100k-class jadx output can run for
-        hours) is still bound by ``_POLL_TIMEOUT_SECONDS`` (default 4h)
-        but doesn't need a 3-second poll cadence the entire way. A 60s
+        hours) is still bound by the ingestion poll timeout (schema
+        default 4h, ConfigRegistry vr/ingestion_poll_timeout_s) but
+        doesn't need a 3-second poll cadence the entire way. A 60s
         cadence cuts the per-call HTTP traffic to audit-mcp by 20x and
         keeps log noise proportional to the wait.
         """
         sleep_for = interval_s if interval_s is not None else _POLL_INTERVAL_SECONDS
-        deadline = utc_now().timestamp() + _POLL_TIMEOUT_SECONDS
+        poll_timeout_s = await _cfg.get_float("ingestion_poll_timeout_s")
+        deadline = utc_now().timestamp() + poll_timeout_s
         while utc_now().timestamp() < deadline:
             resp = await self._audit_mcp.forward(
                 action="poll_index", index_id=index_id,
@@ -1570,7 +1535,7 @@ class TargetAnalysisService:
                 )
             await asyncio.sleep(sleep_for)
         raise TargetAnalysisError(
-            f"audit_mcp index timed out after {_POLL_TIMEOUT_SECONDS:.0f}s",
+            f"audit_mcp index timed out after {poll_timeout_s:.0f}s",
         )
 
     # ─── DB transitions ─────────────────────────────────────────────────

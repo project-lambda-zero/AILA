@@ -7,6 +7,9 @@ for adding custom injection patterns.
 
 from __future__ import annotations
 
+from aila.modules.vulnerability.agents.scoring.models import ScoringCandidate
+from aila.modules.vulnerability.agents.scoring.review import build_signal_payload
+from aila.platform.llm.client import LLMResponse, _enrich_response
 from aila.platform.llm.sanitize import (
     _INJECTION_PATTERNS,
     register_injection_pattern,
@@ -123,7 +126,9 @@ class TestRegisterInjectionPattern:
             assert "EVIL-INJECT-99" not in result
             assert "Check" in result
         finally:
-            _INJECTION_PATTERNS.pop()
+            # _INJECTION_PATTERNS is a dict keyed by name (idempotent registry),
+            # so cleanup pops by the registered key, not list-style.
+            _INJECTION_PATTERNS.pop("test_custom_inj", None)
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +261,6 @@ class TestEnrichResponseSanitization:
 
     def test_enrich_response_sanitizes_xss(self) -> None:
         """_enrich_response strips XSS patterns from response content."""
-        from aila.platform.llm.client import LLMResponse, _enrich_response
 
         response = LLMResponse(
             content='<script>alert(1)</script>Real analysis of CVE-2024-1234.',
@@ -271,7 +275,6 @@ class TestEnrichResponseSanitization:
 
     def test_enrich_response_no_metadata_for_clean_content(self) -> None:
         """_enrich_response does not set sanitization metadata for clean content."""
-        from aila.platform.llm.client import LLMResponse, _enrich_response
 
         response = LLMResponse(
             content="Clean analysis with no XSS.",
@@ -285,7 +288,6 @@ class TestEnrichResponseSanitization:
 
     def test_enrich_response_preserves_pipeline_metadata(self) -> None:
         """_enrich_response sanitizes content AND preserves classification/confidence/seal_id."""
-        from aila.platform.llm.client import LLMResponse, _enrich_response
 
         response = LLMResponse(
             content='<script>x</script>Good result.',
@@ -310,7 +312,6 @@ class TestEnrichResponseSanitization:
 
     def test_enrich_response_preserves_all_existing_fields(self) -> None:
         """_enrich_response preserves model, usage, disabled, finish_reason."""
-        from aila.platform.llm.client import LLMResponse, _enrich_response
 
         response = LLMResponse(
             content='<script>bad</script>Good.',
@@ -336,8 +337,6 @@ class TestBuildSignalPayloadSanitization:
 
     def test_sanitizes_cve_description_injection(self) -> None:
         """Injection patterns in cve_description are stripped."""
-        from aila.modules.vulnerability.agents.scoring.models import ScoringCandidate
-        from aila.modules.vulnerability.agents.scoring.review import build_signal_payload
 
         candidate = ScoringCandidate(
             system_id=1,
@@ -357,8 +356,6 @@ class TestBuildSignalPayloadSanitization:
 
     def test_sanitizes_host_description_injection(self) -> None:
         """Injection patterns in host_description are stripped."""
-        from aila.modules.vulnerability.agents.scoring.models import ScoringCandidate
-        from aila.modules.vulnerability.agents.scoring.review import build_signal_payload
 
         candidate = ScoringCandidate(
             system_id=1,
@@ -378,8 +375,6 @@ class TestBuildSignalPayloadSanitization:
 
     def test_clean_descriptions_pass_through(self) -> None:
         """Clean descriptions are not altered by sanitization."""
-        from aila.modules.vulnerability.agents.scoring.models import ScoringCandidate
-        from aila.modules.vulnerability.agents.scoring.review import build_signal_payload
 
         candidate = ScoringCandidate(
             system_id=1,
@@ -399,8 +394,6 @@ class TestBuildSignalPayloadSanitization:
 
     def test_empty_descriptions_return_empty_string(self) -> None:
         """Empty or None-like descriptions return empty string."""
-        from aila.modules.vulnerability.agents.scoring.models import ScoringCandidate
-        from aila.modules.vulnerability.agents.scoring.review import build_signal_payload
 
         candidate = ScoringCandidate(
             system_id=1,
@@ -428,7 +421,6 @@ class TestSanitizeIntegration:
 
     def test_enrich_response_sanitizes_xss(self) -> None:
         """_enrich_response strips XSS and sets sanitization metadata in ctx."""
-        from aila.platform.llm.client import LLMResponse, _enrich_response
 
         response = LLMResponse(
             content='<script>alert(1)</script>Real analysis.',
@@ -444,7 +436,6 @@ class TestSanitizeIntegration:
 
     def test_enrich_response_preserves_clean_content(self) -> None:
         """_enrich_response does not set sanitization metadata for clean content."""
-        from aila.platform.llm.client import LLMResponse, _enrich_response
 
         response = LLMResponse(
             content="Clean vulnerability analysis.",
@@ -457,7 +448,6 @@ class TestSanitizeIntegration:
 
     def test_enrich_response_preserves_pipeline_metadata(self) -> None:
         """_enrich_response sanitizes content AND preserves classification/confidence/seal_id."""
-        from aila.platform.llm.client import LLMResponse, _enrich_response
 
         response = LLMResponse(
             content='<script>x</script>Good result.',
@@ -479,8 +469,6 @@ class TestSanitizeIntegration:
 
     def test_input_sanitization_in_payload(self) -> None:
         """build_signal_payload sanitizes injection patterns from cve_description."""
-        from aila.modules.vulnerability.agents.scoring.models import ScoringCandidate
-        from aila.modules.vulnerability.agents.scoring.review import build_signal_payload
 
         candidate = ScoringCandidate(
             system_id=1,
@@ -500,7 +488,7 @@ class TestSanitizeIntegration:
 
     def test_sanitize_importable_from_llm_package(self) -> None:
         """sanitize_input, sanitize_output, register_injection_pattern are importable from aila.platform.llm."""
-        from aila.platform.llm import register_injection_pattern, sanitize_input, sanitize_output
+        from aila.platform.llm import register_injection_pattern, sanitize_input, sanitize_output  # noqa: PLC0415
 
         assert callable(sanitize_input)
         assert callable(sanitize_output)

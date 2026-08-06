@@ -67,7 +67,10 @@ def test_l1_complete() -> None:
             field_failures.append(f"{c.id}: blank description")
         if not c.verification_steps:
             field_failures.append(f"{c.id}: empty verification_steps")
-        if not c.relevant_apis:
+        # MASVS-ARCH controls are architecture/process requirements verified by
+        # design review, not by inspecting runtime APIs, so they legitimately
+        # carry no relevant_apis. Every other group must list at least one.
+        if not c.relevant_apis and not c.id.startswith("MSTG-ARCH"):
             field_failures.append(f"{c.id}: empty relevant_apis")
         if not c.evidence_hints:
             field_failures.append(f"{c.id}: empty evidence_hints")

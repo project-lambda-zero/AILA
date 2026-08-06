@@ -27,28 +27,24 @@ What this commit does NOT do:
 """
 from __future__ import annotations
 
-import functools
-import hashlib
 import json
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
 from aila.modules.vr._task_queue import default_task_queue
-from aila.modules.vr.agents.auto_steering import _normalize_acked_observable
+from aila.modules.vr.agents.claim_verifier import is_negative_finding_claim
 from aila.modules.vr.agents.persona_router import resolve_task_type
 from aila.modules.vr.contracts import (
-    OutcomeConfidence,
     OutcomeKind,
     PayloadKind,
     SenderKind,
 )
-from aila.modules.vr.contracts.branch import BranchStatus
 from aila.modules.vr.contracts.investigation import InvestigationKind
 from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
@@ -59,32 +55,49 @@ from aila.modules.vr.db_models import (
     VRTargetRecord,
 )
 from aila.modules.vr.services.mcp_call_logger import record_call
+from aila.modules.vr.services.outcome_polarity import derive_outcome_polarity
 from aila.modules.vr.services.outcome_review import (
     OUTCOME_STATE_APPROVED,
     OUTCOME_STATE_DRAFT,
     evaluate_quorum,
+    summarize_outcome_for_review,
     upsert_review,
 )
-from aila.platform.contracts._common import utc_now
+from aila.modules.vr.workflow.states.investigation_setup import (
+    _resolve_retrieved_knowledge,
+)
+from aila.platform.agents.auto_steering import _normalize_acked_observable
+from aila.platform.agents.turn_helpers import (
+    decode_case_state,
+)
+from aila.platform.agents.turn_runner import AgentTurnRunnerBase
+from aila.platform.config_base import ModuleConfigReader
+from aila.platform.contracts import utc_now
+from aila.platform.contracts.enums import PersonaVoice
 from aila.platform.contracts.reasoning import (
     ReasoningCaseState,
     ReasoningContract,
+    ReasoningPromptContext,
     ReasoningTurnDecision,
-    ResolvedHypothesis,
-)
-from aila.platform.llm.idempotency_cache import (
-    lookup_cached_response,
-    make_request_key,
-    store_response,
 )
 from aila.platform.mcp.adapters import (
     KNOWN_TOOLS,
     specialized_tools,
 )
 from aila.platform.mcp.adapters.known_tools import tools_for_language
-from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
-from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
-from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
+from aila.platform.mcp.adapters.registry import register_bridge_tools
+from aila.platform.mcp.bridges.knowledge import KnowledgeBridgeTool
+from aila.platform.mcp.factory import make_bridge
+from aila.platform.prompts import LoadedPrompt, PromptNotFoundError, PromptRegistry
+from aila.platform.prompts.pinning import (
+    resolve_canary_key_for_investigation,
+    resolve_pinned_prompt,
+)
+from aila.platform.prompts.version_store import PromptVersionStore
+from aila.platform.services.context_assembler import (
+    ContextSection,
+    ContextTier,
+)
 from aila.platform.services.reasoning import CyberReasoningEngine
 from aila.platform.uow import UnitOfWork
 
@@ -95,6 +108,7 @@ __all__ = [
 ]
 
 _log = logging.getLogger(__name__)
+_cfg = ModuleConfigReader("vr")
 
 
 # Variant-hunt submit gate (Option B): when the agent terminal-submits
@@ -116,29 +130,7 @@ _VARIANT_HUNT_EXHAUSTION_PATTERN = re.compile(
     r")\b"
 )
 
-# After this many consecutive rejected submits on the same branch, the
-# gate FORCES the submit through with a `variant_hunt_advisory:
-# forced_through_after_N_rejects` flag on the payload. The agent never
-# loops forever; the operator gets an audit trail of the over-forced
-# submissions. Configurable via env for operators tuning the trade-off
-# between "more variant fan-out" and "fewer no-op forced submits".
-_VARIANT_HUNT_REJECT_CAP = int(__import__("os").environ.get(
-    "VR_VARIANT_HUNT_REJECT_CAP", "3",
-))
-# Hypothesis-settlement gate on terminal submit. Every live hypothesis
-# must be either explicitly rejected (in decision.rejected[]) or folded
-# into the submitted answer/provenance as supported evidence -- no live
-# hypotheses are permitted to survive a submit. Without this gate, agents
-# accumulate live hypotheses across deep-search turns and submit while
-# the case still has 5+ unresolved claims, leaving the operator to
-# manually decide which ones the finding actually addresses.
-#
-# Cap mirrors variant_hunt: after N rejections the submit is FORCED
-# through with payload.unresolved_hypotheses_at_submit_advisory stamped
-# so the operator can grep the outcomes table.
-_UNRESOLVED_HYP_REJECT_CAP = int(__import__("os").environ.get(
-    "VR_UNRESOLVED_HYP_REJECT_CAP", "3",
-))
+
 
 
 _PROMPT_DIR = Path(__file__).parent / "prompts"
@@ -175,7 +167,7 @@ class VulnResearcherError(Exception):
         self.retryable = retryable
 
 
-class HonestVulnResearcher:
+class HonestVulnResearcher(AgentTurnRunnerBase):
     """Single-branch reasoning agent.
 
     Construction takes the reasoning engine + identifiers. The engine
@@ -190,554 +182,183 @@ class HonestVulnResearcher:
         branch_id: str,
         cve_intel: list[dict[str, Any]] | None = None,
         applicable_patterns: list[dict[str, Any]] | None = None,
+        retrieved_knowledge: list[dict[str, Any]] | None = None,
     ) -> None:
         self._engine = reasoning_engine
         self.investigation_id = investigation_id
         self.branch_id = branch_id
         self._cve_intel = list(cve_intel or [])
         self._applicable_patterns = list(applicable_patterns or [])
+        # RFC-12 read loop: prior knowledge (audit memos, findings, strategy
+        # descriptors) resolved at setup for the RETRIEVED prompt tier.
+        self._retrieved_knowledge = list(retrieved_knowledge or [])
+        # RFC-12 Phase 1 per-pivot refresh: the focus hash last retrieved on,
+        # so a turn only re-queries the knowledge base when the branch's live
+        # focus actually changed (bounds cost to real pivots).
+        self._last_retrieval_focus: int | None = None
 
-    async def run_turn(self) -> VulnResearcherTurnResult:
-        """Run one turn for this branch and write the result to the DB.
+    # ---- AgentTurnRunnerBase config + hooks (RFC-03 Phase 7) -----------
+    _LOG_LABEL = "vuln_researcher"
+    _error_cls = VulnResearcherError
+    _result_cls = VulnResearcherTurnResult
+    _message_model = VRInvestigationMessageRecord
+    _branch_model = VRInvestigationBranchRecord
+    _OUTCOME_STATE_APPROVED = OUTCOME_STATE_APPROVED
 
-        On a ``submit`` decision, also writes a VRInvestigationOutcomeRecord
-        and returns ``terminal=True`` so the workflow state knows to
-        stop driving the branch.
-        """
-        inv, branch, target_snapshot = await self._load()
-
-        case_state = _decode_case_state(branch.case_state_json)
-        turn_number = branch.turn_count + 1
-
-        pending_operator_messages = await self._consume_pending_operator_messages(
-            turn_number,
+    async def _load_turn_config(self) -> None:
+        self._variant_hunt_reject_cap = await _cfg.get_int("variant_hunt_reject_cap")
+        self._unresolved_hyp_reject_cap = await _cfg.get_int("unresolved_hyp_reject_cap")
+        self._draft_pending_reject_cap = await _cfg.get_int("draft_pending_reject_cap")
+        self._sibling_open_hyp_reject_cap = await _cfg.get_int(
+            "sibling_open_hyp_reject_cap",
         )
 
-        # Re-enqueue blindness fix: on a continuation run (operator
-        # re-enqueued a completed investigation), the agent has zero
-        # awareness it already submitted DIRECT_FINDINGs in prior
-        # passes. Without this, it re-investigates from scratch every
-        # time and lands on the same root cause -- 6 outcomes, 0 new
-        # variants. Loading prior outcomes into the prompt forces it
-        # to acknowledge prior work and EXTEND instead of REPEAT.
-        prior_outcomes = await self._load_prior_outcomes()
-        sibling_context = await self._load_sibling_context()
+    async def _build_recall_fetcher(
+        self, recall_keys: list[str],
+    ) -> Callable[[str], str | None] | None:
+        """Rehydrate recalled observable bodies from the VR message store.
 
-        # Sibling-consensus rejection pressure. When this branch's live
-        # hypotheses include an id that 2+ siblings have rejected (with
-        # source-citing claims), inject a directive forcing the agent
-        # to either reject it this turn or explain disagreement.
-        # Without this, the dialectic produces local rejection but
-        # never converges across branches: halvar keeps h1 alive
-        # forever even after maddie + renzo reject it with verbatim
-        # source proof (observed live on investigation <inv-uuid>).
-        my_live_ids = {h.id for h in case_state.hypotheses if h.id}
-        if my_live_ids and sibling_context:
-            sibling_rejection_count: dict[str, int] = {}
-            sibling_rejection_claims: dict[str, list[str]] = {}
-            for sib in sibling_context:
-                for rej in sib.get("rejected", []):
-                    rid = rej.get("id")
-                    if not rid or rid not in my_live_ids:
-                        continue
-                    sibling_rejection_count[rid] = sibling_rejection_count.get(rid, 0) + 1
-                    sibling_rejection_claims.setdefault(rid, []).append(
-                        f"{sib.get('persona_voice','?')}: {rej.get('claim','')[:120]}"
-                    )
-            consensus_rejections = {
-                rid: claims for rid, claims in sibling_rejection_claims.items()
-                if sibling_rejection_count.get(rid, 0) >= 2
-            }
-            if consensus_rejections:
-                directive_lines = [
-                    "*** SIBLING CONSENSUS REJECTION ***",
-                    f"You have {len(consensus_rejections)} hypothesis(es) still LIVE that ",
-                    "2+ sibling branches have already REJECTED with source-citing evidence:",
-                    "",
-                ]
-                for rid, claims in consensus_rejections.items():
-                    directive_lines.append(f"  hypothesis id={rid}")
-                    for c in claims:
-                        directive_lines.append(f"    - {c}")
-                directive_lines.append("")
-                directive_lines.append(
-                    "This turn you MUST either: (a) include these ids in your "
-                    "decision.rejected[] with your own short concurring claim, "
-                    "OR (b) explain in reasoning why you disagree AND cite the "
-                    "verbatim source contradicting the siblings' refutation. "
-                    "Passive 'keep alive without comment' is a deliberation "
-                    "integrity failure."
-                )
-                # fix §103 -- directive lives ONLY in the in-memory
-                # case_state.observables; the absorb()→branch_row write
-                # at the end of this turn persists it as part of the
-                # ONE consolidated case_state write per turn (was three
-                # writes: directive injection here, normal write at
-                # message-write site, terminal overwrite). The prompt
-                # builder below reads from `case_state` (line ~295) so
-                # this turn already sees the directive; absorb()
-                # preserves observables into new_case_state, which
-                # encodes to branch_row.case_state_json at end-of-turn.
-                # fix §89 -- eliminates the pre-LLM directive UoW
-                # (one of the three commits this method used to run
-                # per turn). On a crash before the end-of-turn UoW
-                # the directive recomputes deterministically from
-                # sibling_context on retry, so no audit loss.
-                case_state.observables["_directive.sibling_consensus_rejection"] = "\n".join(directive_lines)
-        system_prompt = _load_prompt(inv.strategy_family, branch.persona_voice)
-        tool_specs = await _fetch_tool_specs(
+        Reads the branch's message rows and pulls the reserved
+        ``_observable_bodies`` payload key that
+        :meth:`ToolExecutorHelpersBase._persist_result_and_observables`
+        writes on every successful tool result. The pre-load scan is
+        scoped to the requested ``recall_keys`` -- once every key has a
+        hit, the walk stops early -- so a recall of 3 keys on a
+        1000-message branch typically touches only the last few rows.
+
+        Returns ``dict.get`` (a sync callable) so the platform absorb
+        branch can rehydrate observables without an await; recall keys
+        the message history cannot satisfy simply return ``None`` and
+        absorb injects a short not-available marker under them.
+        """
+        wanted = {k for k in recall_keys if isinstance(k, str) and k}
+        if not wanted:
+            return None
+        hydrated: dict[str, str] = {}
+        # Newest first so recent bodies win when the same key was
+        # written across multiple turns; the loop breaks as soon as every
+        # requested key has been resolved.
+        async with UnitOfWork() as uow:
+            rows = (await uow.session.exec(
+                _select(VRInvestigationMessageRecord)
+                .where(VRInvestigationMessageRecord.branch_id == self.branch_id)
+                .order_by(VRInvestigationMessageRecord.created_at.desc())
+            )).all()
+        for row in rows:
+            if not wanted:
+                break
+            try:
+                payload = json.loads(row.payload_json or "{}")
+            except (ValueError, TypeError):
+                continue
+            bodies = payload.get("_observable_bodies")
+            if not isinstance(bodies, dict):
+                continue
+            # Copy only the keys we still need; skip empties / non-strings.
+            for key in list(wanted):
+                body = bodies.get(key)
+                if isinstance(body, str) and body:
+                    hydrated[key] = body
+                    wanted.discard(key)
+        if not hydrated:
+            # A branch that never wrote _observable_bodies (backfilled
+            # investigation from before this landed, or a fresh branch
+            # whose messages predate any tool result) -- return None so
+            # absorb emits the not-available marker instead of pretending
+            # we tried.
+            return None
+        return hydrated.get
+
+    def _extra_user_prompt_kwargs(self) -> dict[str, Any]:
+        return {
+            "cve_intel": self._cve_intel,
+            "retrieved_knowledge": self._retrieved_knowledge,
+        }
+
+    async def _refresh_retrieved_knowledge(
+        self,
+        *,
+        inv: Any,
+        target_snapshot: dict[str, Any] | None,
+        case_state: Any,
+    ) -> None:
+        """RFC-12 Phase 1: re-retrieve prior knowledge on the branch's live focus.
+
+        Derives the query from the branch's live hypotheses (the current
+        pivot). When that focus differs from the last retrieval, it re-runs
+        the setup-time resolver so the RETRIEVED prompt tier tracks what the
+        branch is investigating now rather than the boot question. Skips when
+        there is no live focus yet (setup retrieval stands), when the focus is
+        unchanged, or when no workspace id is resolvable. The resolver is
+        best-effort and never raises into the turn.
+        """
+        claims = [
+            h.claim for h in (case_state.hypotheses or [])
+            if getattr(h, "claim", None)
+        ]
+        if not claims:
+            return
+        focus = "; ".join(claims[:3])
+        focus_hash = hash(focus)
+        if focus_hash == self._last_retrieval_focus:
+            return
+        workspace_id = (target_snapshot or {}).get("workspace_id")
+        if not workspace_id:
+            return
+        self._retrieved_knowledge = await _resolve_retrieved_knowledge(
+            query=focus,
+            workspace_id=workspace_id,
+            team_id=inv.team_id,
             target_kind=(target_snapshot or {}).get("kind"),
             primary_language=(target_snapshot or {}).get("primary_language"),
-        )
-        user_prompt = self._build_user_prompt(
-            inv=inv,
-            branch=branch,
-            case_state=case_state,
-            turn=turn_number,
-            pending_operator_messages=pending_operator_messages,
-            cve_intel=self._cve_intel,
-            target_snapshot=target_snapshot,
-            tool_specs=tool_specs,
-            prior_outcomes=prior_outcomes,
-            sibling_context=sibling_context,
-            applicable_patterns=self._applicable_patterns,
-        )
-        # fix §88 -- per-component prompt-size logging stays as
-        # diagnostic visibility, demoted from WARNING to DEBUG. At
-        # WARNING level this fired ~22k times per MASVS audit (53
-        # children × 70 turns × 6 personas), flooding the worker log
-        # and drowning real warnings. Operators enable
-        # vuln_researcher logger at DEBUG when they want to see the
-        # bloat distribution.
-        if _log.isEnabledFor(logging.DEBUG):
-            sys_chars = len(system_prompt or "")
-            usr_chars = len(user_prompt or "")
-            tools_chars = len(json.dumps(tool_specs) if tool_specs else "")
-            snap_chars = len(json.dumps(target_snapshot) if target_snapshot else "")
-            cs_chars = len(json.dumps(case_state.model_dump() if hasattr(case_state, "model_dump") else {}))
-            _log.debug(
-                "PROMPT_SIZE_DIAG inv=%s branch=%s turn=%d persona=%s "
-                "sys=%d user=%d tools=%d snap=%d case=%d TOTAL=%d (~%dK tok)",
-                inv.id[:8], branch.id[:8], turn_number, branch.persona_voice,
-                sys_chars, usr_chars, tools_chars, snap_chars, cs_chars,
-                sys_chars + usr_chars + tools_chars,
-                (sys_chars + usr_chars + tools_chars) // 4000,
-            )
-
-        # v0.4 GA-52: branch persona maps to a per-role task_type
-        # (researcher / implementer / critic). Falls back to the
-        # investigation's strategy_family when no persona is assigned.
-        task_type = resolve_task_type(branch.persona_voice) if branch.persona_voice else inv.strategy_family
-
-        # Idempotency: derive a request_key from (investigation, branch,
-        # turn, prompts) and check the cache before the LLM call. If a
-        # prior attempt completed the LLM call but crashed before the
-        # tool result was durably saved, the retry replays the cached
-        # decision instead of paying for a duplicate Claude call.
-        prompt_hash = hashlib.sha256(
-            (system_prompt + "\x00" + user_prompt).encode()
-        ).hexdigest()
-        request_key = make_request_key(
-            self.investigation_id, self.branch_id, turn_number, prompt_hash,
-        )
-        cached_response: dict[str, Any] | None = None
-        async with UnitOfWork() as cache_uow:
-            cached_response = await lookup_cached_response(
-                cache_uow.session, request_key,
-            )
-        # decision is set in exactly one of two paths: from a valid
-        # cache HIT, or from the upstream LLM call. Any failure to
-        # validate the cache row falls through to the API path.
-        decision: ReasoningTurnDecision | None = None
-        # fix §89 -- `cache_hit` flag lets the post-LLM UoW skip the
-        # cache store when we already had the response. The previous
-        # separate `store_uow` here is folded into the message-write
-        # UoW further down so one UoW covers all post-LLM writes.
-        cache_hit = False
-        if cached_response is not None:
-            try:
-                decision = ReasoningTurnDecision.model_validate(cached_response)
-                cache_hit = True
-                _log.info(
-                    "vuln_researcher: idempotency cache HIT inv=%s branch=%s turn=%d "
-                    "(skipped duplicate LLM call)",
-                    self.investigation_id, self.branch_id, turn_number,
-                )
-            except (ValueError, TypeError, KeyError, AttributeError) as exc:
-                # ValidationError, KeyError, AttributeError, or any
-                # other cache-shape mismatch. We fall through to the
-                # API path; the bad cache row stays in DB but will be
-                # overwritten by store_response on the next success.
-                # fix §350 -- surface traceback so a malformed cache row's
-                # actual shape failure is debuggable on first occurrence
-                # instead of waiting for a second hit.
-                _log.warning(
-                    "vuln_researcher: cache validate failed (%s: %s) -- calling LLM",
-                    type(exc).__name__, exc,
-                    exc_info=True,
-                )
-                decision = None
-
-        if decision is None:
-            try:
-                decision = await self._engine.decide_next_turn(
-                    task_type=task_type,
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                )
-            except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError) as exc:
-                # must surface as VulnResearcherError so the loop catches
-                # it, marks exit_reason='researcher_error:<msg>', and
-                # the workflow finalises with status=FAILED instead of
-                # silently completing the task with no outcome and
-                # status=RUNNING.
-                raise VulnResearcherError(
-                    f"engine.decide_next_turn failed for investigation_id="
-                    f"{self.investigation_id} branch_id={self.branch_id}: "
-                    f"{type(exc).__name__}: {exc}",
-                    retryable=bool(getattr(exc, "retryable", False)),
-                ) from exc
-            # fix §89 -- store_response moved into the post-LLM UoW at
-            # the end of run_turn. Cache row + message write + branch
-            # update + outcome upsert now share ONE transaction instead
-            # of three. Failure to commit means the cache row is also
-            # not persisted, so a retry hits the API again -- correct
-            # behavior for transient failures.
-
-        # fix §87 -- was a production `assert`; stripped under `-O` and
-        # then a NoneType-has-no-attribute crashes later on the next
-        # decision use. Raise explicitly so the workflow finalizer
-        # marks the investigation FAILED instead of partial-completing.
-        # decision must be set by now: either the cache HIT branch
-        # assigned it OR the LLM call branch did. The only escape path
-        # is the raise VulnResearcherError above which exits entirely.
-        if decision is None:
-            raise VulnResearcherError(
-                f"decision unbound after cache + LLM paths "
-                f"(inv={self.investigation_id} branch={self.branch_id} "
-                f"turn={turn_number}) -- logic bug",
-            )
-
-        # ── variant_hunt submit gate ────────────────────────────────────
-        # When the agent terminal-submits on a kind=variant_hunt
-        # investigation, the dispatcher spawns ONE CHILD investigation
-        # per `variant_hunt_orders` entry on the payload. After the
-        # turn-budget bump (c912d5b: 25→60→70) + branch-aware auto-
-        # continue (fba2a08) landed, agents started investigating
-        # candidates inline for the whole 60+ turn budget and submitting
-        # carrying `variant_hunt_orders=[]` AND no exhaustion declaration --
-        # collapsing the variant-hunt fan-out from ~120 children/day to
-        # ~2/day overnight (5-21 → 5-22). The submit was technically
-        # valid but it produced ZERO downstream investigations on
-        # exactly the investigation kind whose entire purpose is to
-        # fan out variant probes.
-        #
-        # The gate intercepts that submit and forces the agent to either:
-        #   (a) populate variant_hunt_orders with the candidates it
-        #       investigated inline (child investigations confirm-and-
-        #       extend, not duplicate work), or
-        #   (b) explicitly declare exhaustion via a recognised phrase
-        #       (matches outcome_dispatcher._VARIANT_EXHAUSTION_PATTERN
-        #       -- NO FURTHER VARIANTS, VARIANT DEAD, etc.)
-        #
-        # On rejection we DON'T persist the outcome and DON'T mark the
-        # branch terminal. Instead we inject a loud
-        # `_directive.variant_hunt_submit_rejected` observable into
-        # case_state so next turn's prompt surfaces the rejection at
-        # PROMPT POSITION 2 (render_active_directives_section).
-        #
-        # Safety: after _VARIANT_HUNT_REJECT_CAP consecutive rejections
-        # on the same branch we force the submit through with a
-        # `variant_hunt_advisory: forced_through_after_N_rejects` flag
-        # on the payload so the operator can audit and the agent
-        # doesn't loop forever.
-        # Pre-submit: every live hypothesis must be either explicitly
-        # rejected (in decision.rejected[]) or folded into the answer
-        # as supported evidence. Runs BEFORE the variant_hunt gate so
-        # the agent fixes the hypothesis-resolution issue first; once
-        # resolved cleanly, the variant_hunt gate (if applicable)
-        # evaluates against the cleaned decision.
-        # Pre-submit gate (NEW): if another branch in this investigation
-        # has a draft outcome up for review and this branch has not yet
-        # voted, refuse the submit and inject a "vote first" directive.
-        # Otherwise multiple siblings race to terminal_submit before
-        # anyone votes on the first draft, and the first draft sits
-        # stuck in draft forever because every potential voter has
-        # closed itself out. See an observed investigation (renzo's draft
-        # never reached quorum because maddie/wei/yuki all submitted
-        # their own before voting on it).
-        if decision.action == "submit":
-            decision = await self._maybe_reject_submit_when_draft_pending(
-                decision=decision,
-                case_state=case_state,
-                turn_number=turn_number,
-            )
-
-        # Reciprocal gate (Option B follow-up): if the agent emits
-        # submit_outcome_review for an outcome this branch ALREADY voted
-        # on, reject and steer back to investigation work. Without this
-        # gate the agent re-emits the same vote every turn (idempotent at
-        # the DB level via UNIQUE (outcome_id, branch_id) -- so harmless
-        # -- but burns the entire 70-turn budget on re-voting instead of
-        # adding to quorum or doing useful audit work). Observed live on
-        # an observed investigation and branch (yuki): turns 29-40 all
-        # re-voted approve on the same outcome.
-        if (
-            decision.action == "submit_outcome_review"
-            and decision.review_outcome_id
-        ):
-            decision = await self._maybe_reject_revote_when_already_voted(
-                decision=decision,
-                case_state=case_state,
-                turn_number=turn_number,
-            )
-
-        if decision.action == "submit":
-            decision = self._maybe_reject_submit_with_unresolved_hypotheses(
-                decision=decision,
-                case_state=case_state,
-                turn_number=turn_number,
-            )
-
-        if (
-            decision.action == "submit"
-            and inv.kind == InvestigationKind.VARIANT_HUNT.value
-        ):
-            decision = self._maybe_reject_variant_hunt_submit(
-                decision=decision,
-                case_state=case_state,
-                turn_number=turn_number,
-            )
-
-        # FINAL GATE -- empty tool_run coerce. Runs AFTER every other
-        # gate (re-vote, submit-with-unresolved-hyp, variant-hunt-submit)
-        # because those gates THEMSELVES produce action=tool_run +
-        # empty command as a "rejection no-op" output. Only checks
-        # `command` (the field tool_executor parses).
-        # Swap to "reasoning" (valid Literal; falls through to TEXT
-        # payload in _decision_to_message_payload). The directive
-        # observable explains what happened so the next prompt picks a
-        # real action instead of looping.
-        if (
-            decision.action == "tool_run"
-            and not (decision.command or "").strip()
-        ):
-            _log.info(
-                "empty_tool_run COERCED→reasoning inv=%s branch=%s turn=%d",
-                self.investigation_id, self.branch_id, turn_number,
-            )
-            case_state.observables["_directive.empty_tool_run_coerced"] = (
-                "*** EMPTY tool_run COERCED TO reasoning ***\n\n"
-                "Your prior turn emitted action='tool_run' but command "
-                "was empty. (Could also have come from an internal gate "
-                "that rejected your submit and converted to tool_run as "
-                "a no-op.) Engine treated it as action='reasoning'.\n\n"
-                "Valid actions: tool_run / reasoning / submit / "
-                "submit_outcome_review / script_execute. There is no "
-                "'observe' action. Empty tool_run wastes a turn -- pick "
-                "'reasoning' to think, or check the directives in this "
-                "prompt for what you actually need to do next."
-            )
-            decision = decision.model_copy(update={
-                "action": "reasoning",
-                "command": "",
-                "script_content": "",
-            })
-
-        new_case_state = self._engine.absorb(case_state, decision, turn_number=turn_number)
-
-        payload_kind, payload = _decision_to_message_payload(decision)
-        terminal = decision.action == "submit"
-        outcome_id: str | None = None
-
-        # fix §89 -- ONE post-LLM UoW: cache store (if we made the LLM
-        # call) + message write + branch state update + outcome upsert.
-        # Was three separate UoWs (sibling-directive pre-LLM, cache
-        # store post-LLM, message-write post-LLM). The sibling-directive
-        # UoW was eliminated entirely by §103 (directive lives in
-        # in-memory case_state.observables and persists with the
-        # end-of-turn case_state_json write).
-        # fix §103 -- ONE branch_row.case_state_json write per turn (was
-        # three). The final write happens AFTER terminal auto-resolve
-        # mutates new_case_state, so the durable scratchpad reflects
-        # the post-auto-resolve state in a single observable transition.
-        # Concurrent readers (frontend polling, auto_steering) see only
-        # the pre- and post-turn states, not three intermediate flips.
-        async with UnitOfWork() as uow:
-            if not cache_hit:
-                # Store on success only -- failed LLM calls leave no
-                # cache entry so retry hits the API again (correct for
-                # transient failures).
-                await store_response(
-                    uow.session,
-                    request_key=request_key,
-                    investigation_id=self.investigation_id,
-                    branch_id=self.branch_id,
-                    turn_number=turn_number,
-                    response=decision.model_dump(mode="json"),
-                )
-
-            msg = VRInvestigationMessageRecord(
-                investigation_id=self.investigation_id,
-                branch_id=self.branch_id,
-                sender_kind=SenderKind.ENGINE.value,
-                sender_id="engine",
-                payload_kind=payload_kind.value,
-                payload_json=json.dumps(payload),
-                at_turn=turn_number,
-                evidence_refs_json="[]",
-            )
-            uow.session.add(msg)
-
-            branch_row = (await uow.session.exec(
-                _select(VRInvestigationBranchRecord).where(
-                    VRInvestigationBranchRecord.id == self.branch_id,
-                )
-            )).first()
-            if branch_row is None:
-                raise VulnResearcherError(
-                    f"branch {self.branch_id} disappeared during turn",
-                )
-            branch_row.turn_count = turn_number
-            branch_row.updated_at = utc_now()
-
-            if terminal:
-                outcome_kind = _terminal_outcome_kind(decision)
-                new_payload = _outcome_payload(decision)
-                new_confidence = _to_outcome_confidence(decision).value
-                # Auto-reject any hypothesis still in `hypotheses` at
-                # submit time. The agent had every prior turn to call
-                # reject_hypothesis manually; whatever survives to the
-                # terminal turn is "unresolved" and stays "live" in the
-                # frontend forever unless we close it here. Carries an
-                # explicit reason so the audit trail shows it was
-                # auto-closed rather than reasoned-through.
-                _auto_resolve_live_on_terminal(
-                    new_case_state,
-                    turn=turn_number,
-                    outcome_kind=outcome_kind.value,
-                )
-                outcome_id = await _upsert_canonical_outcome(
-                    uow=uow,
-                    investigation_id=self.investigation_id,
-                    branch_id=self.branch_id,
-                    persona_voice=branch_row.persona_voice,
-                    new_outcome_kind=outcome_kind.value,
-                    new_confidence=new_confidence,
-                    new_payload=new_payload,
-                    at_turn=turn_number,
-                    # fix §173 -- explicit terminal-submit contract marker.
-                    # _upsert_canonical_outcome is the ONE canonical-outcome
-                    # write path and asserts this value at function entry;
-                    # any non-terminal write path would have to call this
-                    # starting inside its own terminal_submit (no separate
-                    # submit_canonical_addition action exists by design).
-                    action="terminal_submit",
-                )
-                # Close the branch -- BranchStatus.COMPLETED + closed_reason
-                # + closed_at -- so _maybe_trigger_synthesis can count it
-                # against the "expected to submit" set and the UI shows
-                # the branch as done rather than perpetually active.
-                branch_row.status = BranchStatus.COMPLETED.value
-                branch_row.closed_reason = (
-                    f"terminal_submit:turn_{turn_number}:{outcome_kind.value}"
-                )
-                branch_row.closed_at = utc_now()
-
-            # fix §103 -- single case_state_json write, performed after
-            # the optional terminal auto-resolve so the persisted
-            # scratchpad reflects post-resolution state.
-            branch_row.case_state_json = _encode_case_state(new_case_state)
-            uow.session.add(branch_row)
-
-            await uow.session.commit()
-            await uow.session.refresh(msg)
-
-        # ------- submit_outcome_review handling (draft outcome workflow) -------
-        # The message was already written in the UoW above; here we
-        # turn the agent's vote into a row in vr_outcome_reviews and
-        # evaluate quorum. If quorum flips state to APPROVED, the
-        # dispatcher fires inline so the outcome ships immediately
-        # rather than waiting for the next worker poll.
-        review_state: str | None = None
-        if decision.action == "submit_outcome_review" and decision.review_outcome_id:
-            try:
-                await upsert_review(
-                    outcome_id=decision.review_outcome_id,
-                    reviewer_branch_id=self.branch_id,
-                    vote=decision.review_vote or "abstain",
-                    comment=(decision.review_comment or decision.reasoning or ""),
-                    suggested_edits=decision.payload or {},
-                )
-                quorum = await evaluate_quorum(decision.review_outcome_id)
-                review_state = quorum.new_state
-                _log.info(
-                    "vuln_researcher REVIEW inv=%s branch=%s outcome=%s "
-                    "vote=%s state=%s approve=%d reject=%d k=%d",
-                    self.investigation_id, self.branch_id,
-                    decision.review_outcome_id, decision.review_vote,
-                    quorum.new_state, quorum.approve_count,
-                    quorum.reject_count, quorum.quorum_k,
-                )
-                if quorum.new_state == OUTCOME_STATE_APPROVED:
-                    # fix §90 -- enqueue the dispatcher as a separate
-                    # platform task rather than calling
-                    # ``dispatcher.dispatch`` inline from this branch's
-                    # turn. The dispatcher cascades cross-branch (halts
-                    # sibling branches, flips inv to COMPLETED, purges
-                    # ARQ jobs); running that cascade inside one
-                    # branch's turn-execution context made other
-                    # branches' workers observe mid-flight cross-branch
-                    # state outside their own atomic-commit boundary.
-                    # The new ``run_vr_outcome_dispatch`` task runs
-                    # starting in its own worker context with its own UoW and
-                    # its own retry budget.
-                    from aila.modules.vr.workflow.task import (
-                        run_vr_outcome_dispatch,
-                    )
-
-                    await default_task_queue().submit(
-                        track="vr",
-                        fn=run_vr_outcome_dispatch,
-                        kwargs={"outcome_id": decision.review_outcome_id},
-                        user_id="system",
-                        group_id="vr_dispatcher",
-                    )
-            except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError, VulnResearcherError) as exc:
-                # Was `(OSError, TimeoutError, RuntimeError, ValueError)`;
-                # SQLAlchemyError, pydantic.ValidationError, KeyError,
-                # AttributeError from upsert_review / evaluate_quorum /
-                # dispatcher.dispatch all fell through silently as the
-                # turn-loop just continued, dropping the vote. Catch
-                # everything, log with the type, then re-raise the
-                # subtypes that the workflow finalizer recognises as
-                # retryable LLM failures so the runner can re-enqueue.
-                _log.exception(
-                    "vuln_researcher REVIEW failed inv=%s branch=%s "
-                    "outcome=%s err=%s: %s",
-                    self.investigation_id, self.branch_id,
-                    decision.review_outcome_id,
-                    type(exc).__name__, exc,
-                )
-                if isinstance(exc, VulnResearcherError):
-                    raise
-
-        _log.info(
-            "vuln_researcher TURN inv=%s branch=%s turn=%d action=%s terminal=%s "
-            "review_state=%s",
-            self.investigation_id, self.branch_id, turn_number,
-            decision.action, terminal, review_state or "-",
-        )
-
-        return VulnResearcherTurnResult(
             investigation_id=self.investigation_id,
-            branch_id=self.branch_id,
-            turn=turn_number,
-            decision=decision,
-            message_id=msg.id,
-            outcome_id=outcome_id,
-            terminal=terminal,
         )
+        self._last_retrieval_focus = focus_hash
+
+    def _maybe_reject_fanout_submit(
+        self, *, decision: Any, inv: Any, case_state: Any, turn_number: int,
+    ) -> Any:
+        if inv.kind == InvestigationKind.VARIANT_HUNT.value:
+            return self._maybe_reject_variant_hunt_submit(
+                decision=decision, case_state=case_state, turn_number=turn_number,
+            )
+        return decision
+
+    def _review_vote_and_comment(self, decision: Any) -> tuple[str, str]:
+        """Resolve the effective (vote, comment) for an outcome review.
+
+        Overrides the platform default so ``not_ready`` is recognized as
+        a first-class VR review vote: the comment (or ``reasoning``
+        fallback) is treated as the STATED BLOCKER and rides on the
+        review row so operators + the proposing branch can read why
+        this branch declined to approve or reject yet. Empty blocker
+        is preserved verbatim (not downgraded) because the
+        not_ready-recorded directive stamped by the runner already
+        surfaces the missing blocker on the next prompt.
+
+        Every other vote (approve / reject / request_edit / abstain)
+        delegates to the platform base, which handles the empty-
+        rationale reject -> abstain downgrade uniformly across modules.
+        """
+        raw_vote = decision.review_vote or "abstain"
+        if raw_vote == "not_ready":
+            return (
+                "not_ready",
+                (decision.review_comment or decision.reasoning or "").strip(),
+            )
+        return super()._review_vote_and_comment(decision)
+
+    async def _dispatch_approved_outcome(self, outcome_id: str) -> None:
+        # Deferred import: workflow.task imports the researcher module.
+        from aila.modules.vr.workflow.task import run_vr_outcome_dispatch
+        await default_task_queue().submit(
+            track="vr",
+            fn=run_vr_outcome_dispatch,
+            kwargs={"outcome_id": outcome_id},
+            user_id="system",
+            group_id="vr_dispatcher",
+        )
+
 
     async def _load(
         self,
@@ -850,7 +471,7 @@ class HonestVulnResearcher:
                     .order_by(VRInvestigationOutcomeRecord.created_at.desc())
                     .limit(1),
                 )).first()
-                cs = _decode_case_state(s.case_state_json)
+                cs = decode_case_state(s.case_state_json)
                 t_payload: dict[str, Any] | None = None
                 if terminal is not None:
                     try:
@@ -935,17 +556,12 @@ class HonestVulnResearcher:
             apk_path = descriptor.get("apk_path")
             if isinstance(apk_path, str) and apk_path:
                 handles["android_mcp_apk_path"] = apk_path
-        # Hard rule: MobSF output NEVER enters LLM prompts.
-        # Even the digest form is forbidden -- agents should query
-        # android_mcp.mobsf_scan as a tool when they need it, not have
-        # it preloaded into context. Strip the key entirely.
         if kind_str == "android_apk":
-            handles.pop("android_mcp_mobsf_scan", None)
             static_full = handles.get("android_mcp_static_summary")
             if isinstance(static_full, dict) and static_full:
                 # fix §268 -- ``android_mcp_static_summary`` now stores a
                 # pointer + pre-computed digest under ``mcp_handles_json``
-                # rather than the full 1-2MB androguard payload. The
+                # rather than the full 1-2MB static-summary payload. The
                 # pre-computed digest already carries every field this
                 # block produces (scalar keys + ``*_count`` integers),
                 # so when the pointer fields are present we just strip
@@ -970,6 +586,7 @@ class HonestVulnResearcher:
                 handles["android_mcp_static_summary"] = digest
         return {
             "id": target.id,
+            "workspace_id": target.workspace_id,
             "kind": target.kind,
             "display_name": target.display_name,
             "primary_language": target.primary_language or "",
@@ -1000,17 +617,46 @@ class HonestVulnResearcher:
         prior_outcomes: list[dict[str, Any]] | None = None,
         sibling_context: list[dict[str, Any]] | None = None,
         applicable_patterns: list[dict[str, Any]] | None = None,
+        retrieved_knowledge: list[dict[str, Any]] | None = None,
     ) -> str:
-        """Render the per-turn user prompt.
+        """Render the per-turn user prompt through the RFC-24 tiered
+        assembler.
 
-        Compact + structured. Includes the investigation question,
-        a target-snapshot block (kind, language, descriptor,
-        applicable MCP servers, ranked candidates), the current case
-        state model, turn counter, any pending operator messages
-        (M3.R-6), an External-CVE-intel block, and a target-kind-
-        filtered tool catalog. Render order is deliberate -- target
-        first so the agent grounds on what's actually being audited
-        before it picks tools.
+        Assembles the same content the previous hand-rolled f-string
+        emitted -- operator messages, active directives, investigation
+        header, target snapshot, CVE intel, applicable patterns, case
+        model, prior submissions, sibling context, available tools,
+        instruction -- but tags each block with a
+        :class:`ContextTier` so the platform assembler can fit the
+        prompt to the platform-configured token budget when the case
+        state grows past a comfortable size.
+
+        Tier assignment:
+
+        * ``PINNED`` -- operator messages, active directives, the
+          investigation header (title + kind + question + target),
+          the target snapshot, the available-tools catalog, and the
+          trailing instruction line. These are operator-authoritative
+          or hard preconditions for the agent to produce a valid
+          decision; the assembler NEVER drops them, and a genuinely
+          oversized PINNED tier surfaces as
+          :class:`PinnedOverflowError` at the engine boundary.
+        * ``LIVE`` -- the rendered case model (contract + live
+          hypotheses + tool-reading INDEX + full-body tool readings +
+          agent scratchpad + ledger board). ``render_case_model`` no
+          longer applies display caps; the whole block either fits
+          or drops as one, and trimmed tool bodies remain reachable
+          through the recall action's durable-history backing.
+        * ``RECENT`` -- CVE intel, applicable patterns, prior
+          submissions, sibling context. All carry a short summary
+          fallback so a tight budget keeps a breadcrumb for the
+          agent rather than dropping the block outright.
+
+        Section INSERTION ORDER matches the historical concatenation
+        (operator -> directives -> header -> target -> CVE -> patterns
+        -> case_model -> priors -> siblings -> tools -> instruction)
+        so operators reading raw prompts see the same top-to-bottom
+        layout they always have.
         """
         case_model = self._engine.render_case_model(case_state)
         secondary_refs = json.loads(inv.secondary_target_refs_json or "[]")
@@ -1018,26 +664,18 @@ class HonestVulnResearcher:
             ", ".join(str(r) for r in secondary_refs) if secondary_refs else "(none)"
         )
 
-        operator_section = _render_operator_messages_section(
-            pending_operator_messages or [],
-        )
-        directive_section = _render_active_directives_section(case_state)
-        cve_intel_section = _render_cve_intel_section(cve_intel or [])
-        target_section = _render_target_snapshot_section(target_snapshot or {})
-        prior_submissions_section = _render_prior_submissions_section(
-            prior_outcomes or [], inv.kind,
-        )
-        sibling_section = _render_sibling_context_section(
-            sibling_context or [],
-            this_persona=branch.persona_voice,
-        )
-        pattern_section = _render_pattern_section(applicable_patterns or [])
+        pending_ops = pending_operator_messages or []
+        cve_entries = cve_intel or []
+        priors = prior_outcomes or []
+        siblings = sibling_context or []
+        patterns = applicable_patterns or []
+        retrieved = retrieved_knowledge or []
         target_kind = (target_snapshot or {}).get("kind")
         primary_language = (target_snapshot or {}).get("primary_language")
-        return (
-            f"{operator_section}"
-            f"{directive_section}"
-            f"# Investigation\n\n"
+
+        header_body = (
+            "# Investigation\n"
+            "\n"
             f"Title: {inv.title}\n"
             f"Kind: {inv.kind}\n"
             f"Question: {inv.initial_question}\n"
@@ -1045,21 +683,169 @@ class HonestVulnResearcher:
             f"Secondary targets: {secondary_str}\n"
             f"Strategy: {inv.strategy_family}\n"
             f"Turn: {turn}\n"
-            f"Branch: {branch.id} (persona: {branch.persona_voice or 'none'})\n"
-            f"\n"
-            f"{target_section}"
-            f"{cve_intel_section}"
-            f"{pattern_section}"
-            f"# Current case state\n\n"
-            f"{case_model}\n"
-            f"\n"
-            f"{prior_submissions_section}"
-            f"{sibling_section}"
-            f"{_render_available_tools_section(target_kind, tool_specs, primary_language)}"
-            f"# Instruction\n\n"
-            f"Produce the next reasoning turn as a JSON object per the "
-            f"system prompt schema."
+            f"Branch: {branch.id} (persona: {branch.persona_voice or 'none'})"
         )
+
+        sections: list[ContextSection] = []
+
+        operator_section = _render_operator_messages_section(pending_ops)
+        if operator_section:
+            sections.append(ContextSection(
+                tier=ContextTier.PINNED,
+                label="operator_messages",
+                body=operator_section.rstrip("\n"),
+                droppable=False,
+            ))
+
+        directive_section = _render_active_directives_section(case_state)
+        if directive_section:
+            sections.append(ContextSection(
+                tier=ContextTier.PINNED,
+                label="active_directives",
+                body=directive_section.rstrip("\n"),
+                droppable=False,
+            ))
+
+        sections.append(ContextSection(
+            tier=ContextTier.PINNED,
+            label="investigation_header",
+            body=header_body,
+            droppable=False,
+        ))
+
+        target_section = _render_target_snapshot_section(target_snapshot or {})
+        if target_section:
+            sections.append(ContextSection(
+                tier=ContextTier.PINNED,
+                label="target_snapshot",
+                body=target_section.rstrip("\n"),
+                droppable=False,
+            ))
+
+        cve_intel_section = _render_cve_intel_section(cve_entries)
+        if cve_intel_section:
+            sections.append(ContextSection(
+                tier=ContextTier.RECENT,
+                label="cve_intel",
+                body=cve_intel_section.rstrip("\n"),
+                summary=(
+                    f"# External CVE intel: {len(cve_entries)} entries "
+                    "elided for budget (recall via prior context if needed)"
+                ),
+            ))
+
+        pattern_section = _render_pattern_section(patterns)
+        if pattern_section:
+            sections.append(ContextSection(
+                tier=ContextTier.RECENT,
+                label="applicable_patterns",
+                body=pattern_section.rstrip("\n"),
+                summary=(
+                    f"# Applicable patterns: {len(patterns)} entries "
+                    "elided for budget"
+                ),
+            ))
+
+        sections.append(ContextSection(
+            tier=ContextTier.LIVE,
+            label="case_model",
+            body="# Current case state\n\n" + case_model,
+            # No summary: paraphrasing observables would violate the
+            # RFC-24 file:line-anchor guardrail. Trimmed tool bodies
+            # remain reachable through the recall action's durable
+            # message-history backing (see reasoning.py absorb path),
+            # so a dropped case_model is not lossy across turns.
+        ))
+
+        prior_submissions_section = _render_prior_submissions_section(
+            priors, inv.kind,
+        )
+        if prior_submissions_section:
+            sections.append(ContextSection(
+                tier=ContextTier.RECENT,
+                label="prior_submissions",
+                body=prior_submissions_section.rstrip("\n"),
+                summary=(
+                    f"# Prior submissions: {len(priors)} on file "
+                    "(elided for budget)"
+                ),
+            ))
+
+        sibling_section = _render_sibling_context_section(
+            siblings, this_persona=branch.persona_voice,
+        )
+        if sibling_section:
+            sections.append(ContextSection(
+                tier=ContextTier.RECENT,
+                label="sibling_context",
+                body=sibling_section.rstrip("\n"),
+                summary=(
+                    f"# Sibling deliberations: {len(siblings)} sibling "
+                    "branches (elided for budget)"
+                ),
+            ))
+
+        # RFC-12 read loop: prior knowledge retrieved from the platform
+        # knowledge base (audit memos, findings, strategy notes from earlier
+        # investigations on similar targets). RETRIEVED tier -- the assembler
+        # drops it first under budget pressure since it is augmentation, not
+        # a hard precondition.
+        retrieved_section = _render_retrieved_knowledge_section(retrieved)
+        if retrieved_section:
+            sections.append(ContextSection(
+                tier=ContextTier.RETRIEVED,
+                label="retrieved_knowledge",
+                body=retrieved_section.rstrip("\n"),
+                summary=(
+                    f"# Retrieved prior knowledge: {len(retrieved)} entries "
+                    "elided for budget"
+                ),
+            ))
+
+        # RFC-11 criterion 4: derive the applicable-server set from the
+        # live tool_specs the async runner already resolved via
+        # `_fetch_tool_specs` (which prefers the capability catalog over
+        # the static name map). Empty tool_specs -> pass None so the
+        # render function falls back to the deterministic static kind
+        # map, preserving byte-identical output for the empty-catalog
+        # case.
+        applicable_servers = (
+            set(tool_specs.keys()) if tool_specs else None
+        )
+        tools_body = _render_available_tools_section(
+            target_kind,
+            tool_specs,
+            primary_language,
+            applicable_servers=applicable_servers,
+        )
+        if tools_body:
+            sections.append(ContextSection(
+                tier=ContextTier.PINNED,
+                label="available_tools",
+                body=tools_body.rstrip("\n"),
+                droppable=False,
+            ))
+
+        sections.append(ContextSection(
+            tier=ContextTier.PINNED,
+            label="instruction",
+            body=(
+                "# Instruction\n"
+                "\n"
+                "Produce the next reasoning turn as a JSON object per the "
+                "system prompt schema."
+            ),
+            droppable=False,
+        ))
+
+        context = ReasoningPromptContext(
+            turn=turn,
+            max_turns=turn,
+            question=inv.initial_question,
+            prebuilt_sections=sections,
+            context_budget_tokens=self._engine.resolve_context_budget_tokens(),
+        )
+        return self._engine.build_user_prompt(context)
 
     # Wall-clock TTL for operator messages. Previously computed as
     # _OPERATOR_MESSAGE_TTL_TURNS * 240s assuming each turn ≈ 4min --
@@ -1215,7 +1001,7 @@ class HonestVulnResearcher:
 
         Returns either:
           - the ORIGINAL decision (passed the gate, or forced-through
-            after _VARIANT_HUNT_REJECT_CAP rejections)
+            after self._variant_hunt_reject_cap rejections)
           - a REPLACEMENT decision with ``action='tool_run'``,
             ``command=''``, and a synthetic answer body explaining the
             rejection. The replacement is non-terminal so the loop
@@ -1254,7 +1040,7 @@ class HonestVulnResearcher:
         )
         new_reject_count = prior_rejects + 1
 
-        if new_reject_count > _VARIANT_HUNT_REJECT_CAP:
+        if new_reject_count > self._variant_hunt_reject_cap:
             # Force through after N rejections so the agent doesn't loop
             # forever. Stamp the payload with an audit flag so the
             # operator can find these in the outcomes table.
@@ -1281,13 +1067,13 @@ class HonestVulnResearcher:
             "variant_hunt submit REJECTED inv=%s branch=%s turn=%d "
             "rejects=%d/%d -- orders=0, no exhaustion phrase",
             self.investigation_id, self.branch_id, turn_number,
-            new_reject_count, _VARIANT_HUNT_REJECT_CAP,
+            new_reject_count, self._variant_hunt_reject_cap,
         )
 
         case_state.observables["_variant_hunt_submit_rejected_count"] = new_reject_count
         case_state.observables["_directive.variant_hunt_submit_rejected"] = (
             "*** VARIANT_HUNT SUBMIT REJECTED ***\n"
-            f"Rejection {new_reject_count}/{_VARIANT_HUNT_REJECT_CAP} on this branch.\n"
+            f"Rejection {new_reject_count}/{self._variant_hunt_reject_cap} on this branch.\n"
             "\n"
             "You attempted to terminal_submit a kind=variant_hunt investigation\n"
             "with EMPTY variant_hunt_orders AND no exhaustion declaration. The\n"
@@ -1319,9 +1105,9 @@ class HonestVulnResearcher:
             "      site of the shared machinery and found no new candidates.\n"
             "      Cite which call sites you reviewed in the answer body.\n"
             "\n"
-            f"After {_VARIANT_HUNT_REJECT_CAP} rejections on this branch the\n"
+            f"After {self._variant_hunt_reject_cap} rejections on this branch the\n"
             "submit is FORCED THROUGH with variant_hunt_advisory:\n"
-            f"forced_through_after_{_VARIANT_HUNT_REJECT_CAP}_rejects stamped on\n"
+            f"forced_through_after_{self._variant_hunt_reject_cap}_rejects stamped on\n"
             "the payload. Don't burn through your safety budget -- pick (a)\n"
             "or (b) cleanly."
         )
@@ -1407,7 +1193,7 @@ class HonestVulnResearcher:
             unresolved_lines.append(f"  ... and {len(unresolved) - 10} more")
         unresolved_block = "\n".join(unresolved_lines)
 
-        if new_reject_count > _UNRESOLVED_HYP_REJECT_CAP:
+        if new_reject_count > self._unresolved_hyp_reject_cap:
             _log.warning(
                 "unresolved_hyp submit FORCED THROUGH after %d rejections "
                 "inv=%s branch=%s turn=%d -- payload retained %d unresolved "
@@ -1434,13 +1220,13 @@ class HonestVulnResearcher:
             "unresolved_hyp submit REJECTED inv=%s branch=%s turn=%d "
             "rejects=%d/%d -- %d live hypotheses unresolved",
             self.investigation_id, self.branch_id, turn_number,
-            new_reject_count, _UNRESOLVED_HYP_REJECT_CAP, len(unresolved),
+            new_reject_count, self._unresolved_hyp_reject_cap, len(unresolved),
         )
 
         case_state.observables["_unresolved_hyp_submit_rejected_count"] = new_reject_count
         case_state.observables["_directive.unresolved_hyp_submit_rejected"] = (
             "*** SUBMIT REJECTED - UNRESOLVED LIVE HYPOTHESES ***\n"
-            f"Rejection {new_reject_count}/{_UNRESOLVED_HYP_REJECT_CAP} on this branch.\n"
+            f"Rejection {new_reject_count}/{self._unresolved_hyp_reject_cap} on this branch.\n"
             "\n"
             f"You attempted action: submit while {len(unresolved)} live "
             "hypotheses are unresolved. Submitting now leaves the operator "
@@ -1464,7 +1250,7 @@ class HonestVulnResearcher:
             "hypotheses must be reachable from (a) OR (b) on the same turn as\n"
             "the submit.\n"
             "\n"
-            f"After {_UNRESOLVED_HYP_REJECT_CAP} rejections on this branch the\n"
+            f"After {self._unresolved_hyp_reject_cap} rejections on this branch the\n"
             "submit is FORCED THROUGH with unresolved_hypotheses_at_submit_\n"
             "advisory stamped on the payload listing the surviving ids. The\n"
             "operator will audit those entries. Don't burn through your\n"
@@ -1489,6 +1275,228 @@ class HonestVulnResearcher:
             },
         })
 
+    def _maybe_reject_no_finding_while_sibling_open_hyp(
+        self,
+        *,
+        decision: ReasoningTurnDecision,
+        case_state: ReasoningCaseState,
+        sibling_context: list[dict[str, Any]] | None,
+        turn_number: int,
+    ) -> ReasoningTurnDecision:
+        """Intercept a terminal ``no_finding`` / ``inconclusive`` submit
+        while a sibling still holds a live hypothesis no branch has
+        rejected.
+
+        Shipping a no-finding while a sibling is actively hunting a
+        vector this branch hasn't disproved is exactly the divergence
+        the panel exists to catch: one persona says "nothing here" and
+        closes out, another persona is one turn from confirming a
+        finding. The premature no-finding then wins by first-mover and
+        the whole investigation collapses to that verdict.
+
+        Fires only when:
+          - ``decision.action == "submit"`` (terminal), AND
+          - ``derive_outcome_polarity(outcome_kind, payload)`` is
+            ``'no_finding'`` or ``'inconclusive'``. Findings pass
+            through unconditionally -- the sibling can still veto via
+            the review flow, but the panel does not block a positive
+            finding on a sibling's un-refuted hunt.
+
+        Rejected-id set = this branch's rejected[] ids + every
+        sibling's rejected[] ids + ids the CURRENT decision rejects
+        (so the agent can close out its own leftovers in the same
+        turn it submits). A sibling live id that appears in that set
+        is considered "disproved by SOMEONE" and doesn't block the
+        submit; sibling ids that no branch has rejected DO block it.
+
+        Force-through after ``self._sibling_open_hyp_reject_cap``
+        consecutive rejections (schema default 3): stamp
+        ``payload.sibling_open_hyp_advisory`` with the sibling ids +
+        hypothesis ids so the operator can audit the closure gap,
+        then let the submit through so a slow sibling that never
+        resolves its own hypothesis doesn't hold this branch forever.
+
+        Same shape as the unresolved-hyp / variant-hunt / draft-pending
+        gates: pass clears counter + directive, reject swaps to
+        non-terminal placeholder, force-through stamps the payload.
+        """
+        outcome_kind = self._terminal_outcome_kind(decision)
+        payload = self._outcome_payload(decision)
+        polarity = derive_outcome_polarity(outcome_kind.value, payload)
+        if polarity not in ("no_finding", "inconclusive"):
+            # Finding-polarity submit -- the panel review flow, not this
+            # gate, handles sibling disagreement on a positive finding.
+            self._clear_sibling_open_hyp_gate_state(case_state)
+            return decision
+
+        siblings = sibling_context or []
+        # Union of every rejected id anyone knows about: this branch's
+        # rejected[], each sibling's rejected[], and the ids the
+        # current decision is rejecting.
+        rejected_ids: set[str] = {
+            r.id for r in case_state.rejected if r.id
+        }
+        for r in decision.rejected:
+            if r.id:
+                rejected_ids.add(r.id)
+        for sib in siblings:
+            for rej in sib.get("rejected") or []:
+                rid = rej.get("id") if isinstance(rej, dict) else None
+                if isinstance(rid, str) and rid:
+                    rejected_ids.add(rid)
+
+        # Every sibling live id not in that union blocks the submit.
+        open_by_sibling: list[tuple[str, str, str, str]] = []
+        for sib in siblings:
+            branch_id = str(sib.get("branch_id") or "?")
+            persona = str(sib.get("persona_voice") or "?")
+            for hyp in sib.get("hypotheses") or []:
+                hid = hyp.get("id") if isinstance(hyp, dict) else None
+                claim = hyp.get("claim") if isinstance(hyp, dict) else None
+                if not (isinstance(hid, str) and hid):
+                    continue
+                if hid in rejected_ids:
+                    continue
+                open_by_sibling.append((
+                    branch_id, persona, hid,
+                    (claim or "")[:180] if isinstance(claim, str) else "",
+                ))
+
+        if not open_by_sibling:
+            self._clear_sibling_open_hyp_gate_state(case_state)
+            return decision
+
+        prior_rejects = int(
+            case_state.observables.get("_sibling_open_hyp_reject_count", 0) or 0,
+        )
+        new_reject_count = prior_rejects + 1
+
+        if new_reject_count > self._sibling_open_hyp_reject_cap:
+            _log.warning(
+                "sibling_open_hyp submit FORCED THROUGH after %d rejections "
+                "inv=%s branch=%s turn=%d -- %d open sibling hypotheses: %s",
+                prior_rejects, self.investigation_id, self.branch_id,
+                turn_number, len(open_by_sibling),
+                [(bid[:8], hid) for bid, _, hid, _ in open_by_sibling[:10]],
+            )
+            new_payload = dict(payload)
+            new_payload["sibling_open_hyp_advisory"] = {
+                "open_count": len(open_by_sibling),
+                "open": [
+                    {
+                        "sibling_branch_id": bid,
+                        "sibling_persona": persona,
+                        "hypothesis_id": hid,
+                        "claim": claim,
+                    }
+                    for bid, persona, hid, claim in open_by_sibling[:50]
+                ],
+                "forced_through_after_rejects": prior_rejects,
+            }
+            self._clear_sibling_open_hyp_gate_state(case_state)
+            return decision.model_copy(update={"payload": new_payload})
+
+        _log.info(
+            "sibling_open_hyp submit REJECTED inv=%s branch=%s turn=%d "
+            "rejects=%d/%d -- %d open sibling hypotheses across %d branch(es)",
+            self.investigation_id, self.branch_id, turn_number,
+            new_reject_count, self._sibling_open_hyp_reject_cap,
+            len(open_by_sibling),
+            len({bid for bid, _, _, _ in open_by_sibling}),
+        )
+
+        # Compact per-sibling directive listing (cap at 10 entries to
+        # keep the prompt section bounded; the sibling deliberations
+        # section renders the rest).
+        directive_lines = [
+            "*** SUBMIT REJECTED - SIBLING STILL HUNTING ***",
+            (
+                f"Rejection {new_reject_count}/{self._sibling_open_hyp_reject_cap} "
+                "on this branch."
+            ),
+            "",
+            (
+                f"You attempted a {polarity} submit while "
+                f"{len(open_by_sibling)} live hypothesis(es) held by "
+                "other branch(es) have NOT been rejected by any branch. "
+                "Shipping a no-finding now overrides those sibling threads "
+                "by first-mover; the panel exists so that never happens."
+            ),
+            "",
+            "OPEN SIBLING HYPOTHESES:",
+        ]
+        for bid, persona, hid, claim in open_by_sibling[:10]:
+            directive_lines.append(
+                f"  - sibling={persona} branch={bid[:8]} id={hid}: {claim}",
+            )
+        if len(open_by_sibling) > 10:
+            directive_lines.append(
+                f"  ... and {len(open_by_sibling) - 10} more",
+            )
+        directive_lines.extend([
+            "",
+            "REQUIRED for your next decision: for EACH open id above,",
+            "EITHER",
+            "  (a) confirm the vector on your own audit and revise your",
+            "      submit to a finding (or an assessment_report that",
+            "      cites the sibling's evidence),",
+            "  (b) refute it with source-citing evidence and add the id",
+            "      to your `decision.rejected[]` this turn (a rejection",
+            "      any branch can post is enough -- rejected_ids is a",
+            "      union across branches),",
+            "  (c) coordinate: post a shared-ledger note (or IRC-style",
+            "      observable) asking the sibling to resolve on its own",
+            "      turn, then keep working. Do NOT submit no-finding",
+            "      until (a) or (b) lands.",
+            "",
+            (
+                f"After {self._sibling_open_hyp_reject_cap} rejections on this branch "
+                "the submit is FORCED THROUGH with sibling_open_hyp_advisory"
+            ),
+            "stamped on the payload listing the still-open sibling ids so",
+            "the operator can audit the closure gap. Don't burn through",
+            "your safety budget when a one-line rejection settles it.",
+        ])
+
+        case_state.observables["_sibling_open_hyp_reject_count"] = new_reject_count
+        case_state.observables["_directive.sibling_open_hyp_block"] = "\n".join(
+            directive_lines,
+        )
+
+        rejected_command_text = (
+            "[SIBLING OPEN HYP GATE: submit rejected -- see "
+            "_directive.sibling_open_hyp_block]\n"
+            "Original submit attempt:\n"
+            + (payload.get("answer") or "(no answer)")[:1000]
+        )
+        return decision.model_copy(update={
+            "action": "tool_run",
+            "command": "",
+            "answer": rejected_command_text,
+            "payload": {
+                **payload,
+                "_sibling_open_hyp_gate_rejected": True,
+                "_sibling_open_hyp_gate_reject_count": new_reject_count,
+                "_sibling_open_hyp_open_count": len(open_by_sibling),
+            },
+        })
+
+    @staticmethod
+    def _clear_sibling_open_hyp_gate_state(
+        case_state: ReasoningCaseState,
+    ) -> None:
+        """Drop the sibling-open-hyp gate's counter + directive from
+        ``case_state.observables``.
+
+        Called on every gate-pass branch (finding-polarity submit / no
+        open sibling hypothesis) and after a force-through, matching
+        the pass-branch cleanup pattern used by the other submit gates.
+        """
+        case_state.observables.pop("_sibling_open_hyp_reject_count", None)
+        case_state.observables.pop(
+            "_directive.sibling_open_hyp_block", None,
+        )
+
     async def _maybe_reject_submit_when_draft_pending(
         self,
         *,
@@ -1500,10 +1508,21 @@ class HonestVulnResearcher:
         a draft outcome up for review on this investigation, and this
         branch has not yet voted on that draft.
 
-        Returns a non-terminal observe with a directive injected at
-        operator-priority. Original submit payload is preserved on the
-        observables under ``_pending_draft_blocked_submit`` so the agent
-        can re-submit once it has voted on every open draft.
+        Same shape as ``_maybe_reject_variant_hunt_submit`` and
+        ``_maybe_reject_submit_with_unresolved_hypotheses``:
+          - Pass: clear directive + counter + preserved submit,
+            return original decision.
+          - Reject (under cap): convert to non-terminal placeholder,
+            inject directive into case_state.observables, increment
+            ``_draft_pending_reject_count``.
+          - Force-through (over cap): stamp payload with
+            ``draft_pending_advisory`` and return the submit so the
+            branch does not loop forever on a quorum that never
+            assembles.
+
+        Original submit payload is preserved on the observables under
+        ``_pending_draft_blocked_submit`` on reject so the agent can
+        re-submit once it has voted on every open draft.
 
         Without this gate, multiple siblings race each other to
         terminal_submit, each one closes itself out, and the first
@@ -1524,6 +1543,7 @@ class HonestVulnResearcher:
                 ),
             )).all()
             if not drafts:
+                self._clear_draft_pending_gate_state(case_state)
                 return decision
 
             # Exclude drafts proposed by this branch -- the proposer
@@ -1532,6 +1552,7 @@ class HonestVulnResearcher:
                 d for d in drafts if d.branch_id != self.branch_id
             ]
             if not other_drafts:
+                self._clear_draft_pending_gate_state(case_state)
                 return decision
 
             voted_on: set[str] = set()
@@ -1553,17 +1574,49 @@ class HonestVulnResearcher:
 
             pending = [d for d in other_drafts if d.id not in voted_on]
             if not pending:
+                self._clear_draft_pending_gate_state(case_state)
                 return decision
 
+        prior_rejects = int(
+            case_state.observables.get("_draft_pending_reject_count", 0) or 0,
+        )
+        new_reject_count = prior_rejects + 1
+
+        if new_reject_count > self._draft_pending_reject_cap:
+            # Force through after N rejections so the agent doesn't loop
+            # forever waiting on a sibling quorum that never assembles.
+            # Stamp the payload with an audit flag so the operator can
+            # find these in the outcomes table.
+            _log.warning(
+                "draft_pending submit FORCED THROUGH after %d rejections "
+                "inv=%s branch=%s turn=%d -- %d unvoted draft outcomes: %s",
+                prior_rejects, self.investigation_id, self.branch_id,
+                turn_number, len(pending),
+                [d.id[:8] for d in pending],
+            )
+            payload = decision.payload or {}
+            new_payload = dict(payload)
+            new_payload["draft_pending_advisory"] = {
+                "unvoted_count": len(pending),
+                "unvoted_draft_ids": [d.id for d in pending[:50]],
+                "forced_through_after_rejects": prior_rejects,
+            }
+            self._clear_draft_pending_gate_state(case_state)
+            return decision.model_copy(update={"payload": new_payload})
+
         _log.info(
-            "draft_pending submit REJECTED inv=%s branch=%s turn=%d -- "
-            "%d unvoted draft outcomes: %s",
+            "draft_pending submit REJECTED inv=%s branch=%s turn=%d "
+            "rejects=%d/%d -- %d unvoted draft outcomes: %s",
             self.investigation_id, self.branch_id, turn_number,
+            new_reject_count, self._draft_pending_reject_cap,
             len(pending), [d.id[:8] for d in pending],
         )
 
+        case_state.observables["_draft_pending_reject_count"] = new_reject_count
+
         directive_lines = [
             "*** SUBMIT BLOCKED - UNVOTED DRAFT OUTCOMES IN THIS INVESTIGATION ***",
+            f"Rejection {new_reject_count}/{self._draft_pending_reject_cap} on this branch.",
             "",
             "Another sibling branch submitted a terminal outcome that is now in",
             "DRAFT state and waiting for quorum. You MUST vote on it before",
@@ -1577,6 +1630,9 @@ class HonestVulnResearcher:
                 f"  - outcome_id={d.id} kind={d.outcome_kind} "
                 f"confidence={d.confidence}",
             )
+            for line in summarize_outcome_for_review(d.payload_json).splitlines():
+                directive_lines.append(f"      {line}")
+            directive_lines.append("")
         directive_lines.extend([
             "",
             "Your next turn MUST be a submit_outcome_review action with one",
@@ -1585,6 +1641,12 @@ class HonestVulnResearcher:
             "",
             "Once all drafts on this investigation have your vote, you may",
             "submit your own outcome.",
+            "",
+            f"After {self._draft_pending_reject_cap} rejections on this branch",
+            "the submit is FORCED THROUGH with draft_pending_advisory stamped",
+            "on the payload listing the unvoted draft ids. The operator will",
+            "audit those entries. Vote on the drafts to avoid burning your",
+            "safety budget.",
         ])
         directive = "\n".join(directive_lines)
 
@@ -1610,9 +1672,29 @@ class HonestVulnResearcher:
             "payload": {
                 **(decision.payload or {}),
                 "_draft_pending_gate_rejected": True,
+                "_draft_pending_gate_reject_count": new_reject_count,
                 "_draft_pending_unvoted_count": len(pending),
             },
         })
+
+    @staticmethod
+    def _clear_draft_pending_gate_state(
+        case_state: ReasoningCaseState,
+    ) -> None:
+        """Drop the draft_pending gate's counter + directive + preserved
+        submit from ``case_state.observables``.
+
+        Called on every gate-pass branch (no drafts / no other-branch
+        drafts / all voted) and after a force-through, so a later
+        regression on the same branch starts with a fresh counter --
+        matching the pass-branch cleanup pattern used by the two sibling
+        submit gates.
+        """
+        case_state.observables.pop("_draft_pending_reject_count", None)
+        case_state.observables.pop(
+            "_directive.draft_pending_submit_blocked", None,
+        )
+        case_state.observables.pop("_pending_draft_blocked_submit", None)
 
     async def _maybe_reject_revote_when_already_voted(
         self,
@@ -1869,14 +1951,14 @@ def _mcp_family_rule_for_kind(
             parts.append(
                 "For APK-specific facts -- manifest, permissions, "
                 "signing certificates, behaviour classification, "
-                "MobSF / drozer / LIEF / YARA -- "
+                "drozer / LIEF / YARA -- "
                 f"use **android_mcp** with `apk_path=\"{apk_path}\"`."
             )
         else:
             parts.append(
                 "For APK-specific facts -- manifest, permissions, "
                 "signing certificates, behaviour classification, "
-                "MobSF / drozer / LIEF / YARA -- "
+                "drozer / LIEF / YARA -- "
                 "use **android_mcp**. The bridge resolves the APK "
                 "path from the target descriptor automatically."
             )
@@ -2143,6 +2225,53 @@ def _render_pattern_section(patterns: list[dict[str, Any]]) -> str:
     return header + "".join(lines)
 
 
+_RETRIEVED_SECTION_BUDGET: int = 4000
+
+
+def _render_retrieved_knowledge_section(hits: list[dict[str, Any]]) -> str:
+    """Render prior knowledge retrieved from the platform knowledge base for
+    the RFC-12 read loop.
+
+    Each hit is a compact dict ({namespace, content, score}) resolved at setup
+    from earlier investigations' audit memos, findings, and strategy notes on
+    similar targets. The content already passed the retrieval sanitize/classify
+    gate; it is still untrusted prior corpus, so the header tells the agent to
+    corroborate before relying on it. Bounded to ``_RETRIEVED_SECTION_BUDGET``
+    chars; hits are pre-ranked by relevance so truncation drops the weakest
+    first.
+    """
+    if not hits:
+        return ""
+    header = (
+        "# Retrieved prior knowledge\n\n"
+        "Audit memos, findings, and strategy notes retrieved from earlier\n"
+        "investigations on similar targets. This is untrusted prior context --\n"
+        "corroborate against the live target before relying on any claim.\n\n"
+    )
+    lines: list[str] = []
+    used = len(header)
+    for h in hits:
+        namespace = str(h.get("namespace") or "")
+        parts = namespace.split(".")
+        kind = parts[1] if len(parts) > 1 else (namespace or "knowledge")
+        score = h.get("score")
+        content = str(h.get("content") or "").strip()
+        if not content:
+            continue
+        score_str = f" (relevance {float(score):.2f})" if isinstance(score, (int, float)) else ""
+        block = f"## {kind}{score_str}\n{content}\n\n"
+        if used + len(block) > _RETRIEVED_SECTION_BUDGET:
+            remaining = _RETRIEVED_SECTION_BUDGET - used
+            if remaining > 80:
+                lines.append(block[: remaining - 4] + "...\n")
+            break
+        lines.append(block)
+        used += len(block)
+    if not lines:
+        return ""
+    return header + "".join(lines)
+
+
 def _render_cve_intel_section(entries: list[dict[str, Any]]) -> str:
     """Render every CVE id mentioned in the operator's question with
     its resolved intel status (08_FRONTEND_UX.md §2.4).
@@ -2302,7 +2431,7 @@ _BINARY_KINDS = frozenset({
 })
 # F-2: android_apk targets need BOTH bridges -- android_mcp for the
 # APK-specific surface (manifest, permissions, signing, behaviour
-# classification, MobSF, drozer, etc.) AND audit_mcp for source-graph
+# classification, drozer, etc.) AND audit_mcp for source-graph
 # queries against the jadx-decompiled Java tree (the index_id lands in
 # mcp_handles_json.audit_mcp_decompiled_index_id from F-3).
 _ANDROID_KINDS = frozenset({"android_apk"})
@@ -2315,6 +2444,13 @@ def _applicable_servers_for_kind(target_kind: str | None) -> set[str]:
     PLUS audit_mcp (source-graph over the decompiled Java tree).
     Unknown / mixed kinds default to every known bridge so the agent
     isn't locked out of any path.
+
+    RFC-11 replaces this hardcoded name map with capability-based
+    binding: see :func:`_applicable_servers_by_capability` for the
+    catalog-first path that consults ``capability_tags``. This name
+    map remains the deterministic fallback the researcher uses when
+    the catalog is empty for the VR scope so the empty-catalog
+    behaviour stays byte-identical.
     """
     k = (target_kind or "").lower()
     if k in _SOURCE_REPO_KINDS:
@@ -2322,7 +2458,7 @@ def _applicable_servers_for_kind(target_kind: str | None) -> set[str]:
     if k in _ANDROID_KINDS:
         # APKs ship Java/Kotlin source (audit_mcp via jadx index) AND
         # APK-specific facets (android_mcp: manifest / permissions /
-        # signing / MobSF / etc.) AND native libraries in lib/<abi>/
+        # signing / etc.) AND native libraries in lib/<abi>/
         # (ida_headless: the Huawei UCS credential .so, anti-tamper
         # .so, Frida-resistant crypto .so etc.). Excluding ida_
         # headless previously forced agents to either skip native
@@ -2335,6 +2471,42 @@ def _applicable_servers_for_kind(target_kind: str | None) -> set[str]:
     if k in _BINARY_KINDS:
         return {"ida_headless"}
     return set(KNOWN_TOOLS.keys())
+
+
+async def _applicable_servers_by_capability(
+    target_kind: str | None,
+) -> set[str] | None:
+    """Return applicable server names via capability tags, or ``None``.
+
+    RFC-11 step 3 -- the researcher declares the capability tags it
+    needs for the target's kind (see
+    :data:`aila.modules.vr.services.mcp_registry.MODULE_CAPABILITIES`)
+    and asks the platform registry for every catalog row whose
+    ``capability_tags`` column contains any of them. Returns the union
+    of the resolved instances' names.
+
+    Falls through with ``None`` when the catalog is empty for the VR
+    scope or the target kind has no declared capability list, so the
+    caller keeps using :func:`_applicable_servers_for_kind` as the
+    static default. That preserves byte-identical behaviour for
+    operators who have not populated the catalog.
+    """
+    from aila.modules.vr.services.mcp_registry import (
+        MODULE_CAPABILITIES,
+        McpRegistryService,
+    )
+
+    k = (target_kind or "").lower()
+    tags = MODULE_CAPABILITIES.get(k)
+    if not tags:
+        return None
+    svc = McpRegistryService()
+    resolved: set[str] = set()
+    for tag in tags:
+        for inst in await svc.resolve_by_capability(tag):
+            if inst.name:
+                resolved.add(inst.name)
+    return resolved or None
 
 
 async def _fetch_tool_specs(
@@ -2359,18 +2531,52 @@ async def _fetch_tool_specs(
     the trailmark graph even though the runtime calls them via
     vtable / monomorphization / dynamic dispatch.
     """
-    applicable = _applicable_servers_for_kind(target_kind)
+    # RFC-11 -- capability-first resolution when the catalog is
+    # populated for the VR scope, else the static name map.
+    catalog_applicable = await _applicable_servers_by_capability(target_kind)
+    applicable = set(catalog_applicable or _applicable_servers_for_kind(target_kind))
+    # RFC-12: the read-only knowledge bridge is available on every kind so
+    # the agent can pull prior workspace knowledge on demand regardless of
+    # the code-analysis backend chosen above.
+    applicable.add("knowledge")
     out: dict[str, list[dict[str, Any]]] = {}
+    if "knowledge" in applicable:
+        specs = await KnowledgeBridgeTool().list_tool_specs()
+        register_bridge_tools(
+            "knowledge", [s.get("name") for s in specs if s.get("name")],
+        )
+        out["knowledge"] = specs
     if "audit_mcp" in applicable:
-        specs = await AuditMcpBridgeTool(recorder=record_call).list_tool_specs()
+        specs = await make_bridge(
+            "audit_mcp", module_id="vr", recorder=record_call,
+        ).list_tool_specs()
+        # RFC-11 criterion 5: union the live catalog into the adapter
+        # registry so a tool present on the bridge but absent from the
+        # static KNOWN_TOOLS becomes dispatchable via the generic
+        # adapter this turn.
+        register_bridge_tools(
+            "audit_mcp", [s.get("name") for s in specs if s.get("name")],
+        )
         allowed = tools_for_language("audit_mcp", primary_language)
         out["audit_mcp"] = [s for s in specs if s.get("name", "") in allowed]
     if "ida_headless" in applicable:
-        specs = await IDABridgeTool(recorder=record_call).list_tool_specs()
+        specs = await make_bridge(
+            "ida_headless", module_id="vr", recorder=record_call,
+        ).list_tool_specs()
+        register_bridge_tools(
+            "ida_headless",
+            [s.get("name") for s in specs if s.get("name")],
+        )
         allowed = tools_for_language("ida_headless", primary_language)
         out["ida_headless"] = [s for s in specs if s.get("name", "") in allowed]
     if "android_mcp" in applicable:
-        specs = await AndroidMcpBridgeTool(recorder=record_call).list_tool_specs()
+        specs = await make_bridge(
+            "android_mcp", module_id="vr", recorder=record_call,
+        ).list_tool_specs()
+        register_bridge_tools(
+            "android_mcp",
+            [s.get("name") for s in specs if s.get("name")],
+        )
         allowed = tools_for_language("android_mcp", primary_language)
         out["android_mcp"] = [s for s in specs if s.get("name", "") in allowed]
     return out
@@ -2400,6 +2606,7 @@ def _render_available_tools_section(
     target_kind: str | None = None,
     tool_specs: dict[str, list[dict[str, Any]]] | None = None,
     primary_language: str | None = None,
+    applicable_servers: set[str] | None = None,
 ) -> str:
     """Render the catalog of MCP tools the engine may invoke this turn.
 
@@ -2416,9 +2623,22 @@ def _render_available_tools_section(
     catalog showed every server unconditionally. Filtering at render
     time prevents the wrong tool family from ever being the obvious
     pick.
+
+    RFC-11 criterion 4: when ``applicable_servers`` is supplied by
+    the caller (the async prompt builder threads through the set
+    resolved by :func:`_fetch_tool_specs` -- which itself prefers
+    :func:`_applicable_servers_by_capability` over the static name
+    map), it wins over the fallback. Standalone callers (tests,
+    stock renders) that don't pass the kwarg keep the byte-identical
+    static-fallback rendering.
     """
     specialized = set(specialized_tools())
-    applicable = _applicable_servers_for_kind(target_kind)
+    if applicable_servers is not None:
+        applicable = set(applicable_servers)
+    else:
+        applicable = set(_applicable_servers_for_kind(target_kind))
+    # RFC-12: the read-only knowledge bridge is listed on every kind.
+    applicable.add("knowledge")
     specs_by_server = tool_specs or {}
     parts: list[str] = ["# Available tools\n"]
     if target_kind:
@@ -2470,75 +2690,10 @@ def _render_available_tools_section(
 
 
 
-def _decode_case_state(raw_json: str | None) -> ReasoningCaseState:
-    if not raw_json:
-        return ReasoningCaseState()
-    try:
-        data = json.loads(raw_json)
-    except json.JSONDecodeError:
-        return ReasoningCaseState()
-    try:
-        return ReasoningCaseState.model_validate(data)
-    except (ValueError, TypeError):
-        return ReasoningCaseState()
 
 
-def _encode_case_state(state: ReasoningCaseState) -> str:
-    return json.dumps(state.model_dump(mode="json"))
 
 
-def _auto_resolve_live_on_terminal(
-    state: ReasoningCaseState,
-    *,
-    turn: int,
-    outcome_kind: str,
-) -> None:
-    """Move every still-live hypothesis to ``state.resolved`` in place.
-
-    Called from ``run_turn`` immediately before the case_state is
-    serialised for a terminal submission. A hypothesis sitting in
-    ``state.hypotheses`` at submit time can be in three states the
-    agent never explicitly labels:
-      - CONFIRMED: agent relied on it as the basis of the finding
-      - REJECTED: agent ran out of turns / refuted but forgot to move
-      - SUPERSEDED: subsumed by a finer hypothesis but never killed
-
-    Without auto-bucketing, these hypotheses stay "live" in the rail
-    forever even though the investigation has concluded. The previous
-    implementation moved them to ``state.rejected`` -- but that's
-    actively misleading for confirmed claims (e.g. the agent's
-    'predicate symmetry holds' claim that grounds a 'VARIANT DEAD'
-    finding shouldn't be labeled 'rejected' in red).
-
-    New behavior: move to ``state.resolved`` with a neutral note that
-    points the reader at the terminal outcome for the actual
-    classification. The frontend renders ``resolved`` with a yellow
-    badge -- neither red (rejected) nor green (confirmed) -- so readers
-    know to consult the canonical outcome.
-    """
-    if not state.hypotheses:
-        return
-    note = (
-        f"auto-resolved at turn {turn}: branch submitted terminal "
-        f"{outcome_kind} -- see canonical outcome for whether this "
-        f"claim was confirmed (basis of finding) or refuted "
-        f"(unaddressed alternative)"
-    )
-    seen_resolved = {r.id for r in state.resolved}
-    seen_rejected = {r.id for r in state.rejected}
-    for h in state.hypotheses:
-        if h.id in seen_resolved or h.id in seen_rejected:
-            continue
-        state.resolved.append(
-            ResolvedHypothesis(
-                id=h.id,
-                claim=h.claim,
-                resolved_at_turn=turn,
-                terminal_outcome_kind=outcome_kind,
-                note=note,
-            ),
-        )
-    state.hypotheses = []
 
 
 def _decision_to_message_payload(
@@ -2590,19 +2745,26 @@ def _decision_to_message_payload(
 def _terminal_outcome_kind(decision: ReasoningTurnDecision) -> OutcomeKind:
     """Pick a terminal outcome kind from a submit decision.
 
-    v0.3 v1 has a tiny dispatch: confidence >= strong + contract suggests
-    DirectFinding -> DirectFinding; otherwise AssessmentReport. Real
-    routing logic lands in M3.R-4 outcome_router.
+    Polarity is checked BEFORE confidence: an answer that reads as a
+    negative conclusion ("no vulnerability found", "not exploitable") is an
+    AUDIT_MEMO -- the cleared-region record -- regardless of how confident
+    the agent is that nothing is there. Without this guard a
+    strong-confidence "no bug" mapped to DIRECT_FINDING and was burned into
+    ``vr_findings`` + the knowledge base as a false positive, since the
+    confidence-only dispatch cannot tell a confident finding from a
+    confident non-finding. Otherwise: confidence >= strong -> DirectFinding,
+    else AssessmentReport.
     """
+    answer = str(
+        (decision.payload or {}).get("answer") or decision.answer or "",
+    )
+    if is_negative_finding_claim(answer):
+        return OutcomeKind.AUDIT_MEMO
     if decision.confidence in {"strong", "exact"}:
         return OutcomeKind.DIRECT_FINDING
     return OutcomeKind.ASSESSMENT_REPORT
 
 
-def _to_outcome_confidence(decision: ReasoningTurnDecision) -> OutcomeConfidence:
-    if decision.confidence:
-        return OutcomeConfidence(decision.confidence)
-    return OutcomeConfidence.UNKNOWN
 
 
 def _outcome_payload(decision: ReasoningTurnDecision) -> dict[str, Any]:
@@ -2941,46 +3103,232 @@ async def _upsert_canonical_outcome(
     return existing.id
 
 
-@functools.lru_cache(maxsize=16)
-def _cached_read_prompt(path_str: str) -> str:
-    """Read a prompt file from disk with content cached by path.
-
-    Prompts are static files baked into the repo; reading the same
-    48KB system_audit.md hundreds of times per investigation is pure
-    overhead. ``maxsize=16`` comfortably covers base prompts +
-    per-persona variants.
-    """
-    return Path(path_str).read_text(encoding="utf-8")
+_PROMPT_REGISTRY = PromptRegistry(_PROMPT_DIR, fallback_base="system_audit.md")
+_PROMPT_VERSION_STORE = PromptVersionStore()
 
 
-def _load_prompt(strategy_family: str, persona_voice: str | None = None) -> str:
+def _prompt_key(strategy_family: str, persona_voice: str | None = None) -> str:
+    """Version-store key for a strategy + persona -- keeps the store, the
+    file registry, and the operator deploy alias on one identity."""
+    return f"vr/{strategy_family}/{persona_voice or 'base'}"
+
+
+async def _load_prompt(
+    strategy_family: str,
+    persona_voice: str | None = None,
+    *,
+    investigation_id: str | None = None,
+    model_family: str | None = None,
+) -> LoadedPrompt:
     """Load the system prompt for a strategy family + optional persona.
 
-    When ``persona_voice`` is supplied AND a per-persona prompt file
-    exists at ``prompts/persona_<voice>.md``, that file's content is
-    prepended to the base audit prompt as a role-specific opening
-    section. The persona file should focus on ROLE BEHAVIOUR (what
-    this voice's job is in the deliberation), not repeat the common
-    audit rules -- those come from the base prompt below.
+    Resolves through the RFC-09 pin-per-investigation rule: the first
+    turn pins the current production-alias version onto the row and
+    every later turn on the same investigation resolves that exact
+    version, so a live production-alias flip does not rewrite the
+    prompt of an already-running investigation. Falls back to the file
+    registry when no version is deployed, when the pin points at a
+    missing version, or when the store fails. The file is the baseline;
+    the store is an override, so a store fault must not block a turn --
+    it degrades to the file.
 
-    Falls through to base ``system_<strategy>.md`` (or
-    ``system_audit.md``) when no persona is set or no persona file
-    exists.
+    Returns ``LoadedPrompt(body, version)`` so the turn runner can
+    stamp the resolved version onto the correlation scope (R1 attribution).
+    ``version`` is None when the fallback path resolved from disk.
     """
-    base_candidate = _PROMPT_DIR / f"system_{strategy_family.rsplit('.', 1)[-1]}.md"
-    if not base_candidate.exists():
-        base_candidate = _PROMPT_DIR / "system_audit.md"
-    if not base_candidate.exists():
-        raise VulnResearcherError(f"prompt file missing: {base_candidate}")
-    base = _cached_read_prompt(str(base_candidate))
+    key = _prompt_key(strategy_family, persona_voice)
+    canary_key = await resolve_canary_key_for_investigation(
+        key=key, investigation_id=investigation_id,
+    )
+    body, version = await resolve_pinned_prompt(
+        investigation_id=investigation_id,
+        key=key,
+        investigation_model=VRInvestigationRecord,
+        store=_PROMPT_VERSION_STORE,
+        model_family=model_family,
+    )
+    if body is not None:
+        return LoadedPrompt(body=body, version=version, canary_key=canary_key)
+    try:
+        file_body = _PROMPT_REGISTRY.load(
+            strategy_family, persona_voice, model_family=model_family,
+        )
+    except PromptNotFoundError as exc:
+        raise VulnResearcherError(str(exc)) from exc
+    return LoadedPrompt(body=file_body, version=None, canary_key=canary_key)
 
-    if persona_voice:
-        persona_candidate = _PROMPT_DIR / f"persona_{persona_voice.lower()}.md"
-        if persona_candidate.exists():
-            persona_prefix = _cached_read_prompt(str(persona_candidate))
-            return f"{persona_prefix}\n\n---\n\n{base}"
-    return base
+
+_SEED_STRATEGY_FAMILIES: tuple[str, ...] = (
+    "vulnerability_research.discovery_research",
+    "vulnerability_research.variant_hunt",
+    "vulnerability_research.triage",
+    "vulnerability_research.nday",
+    "vulnerability_research.audit",
+    "vulnerability_research.masvs_audit",
+    "vulnerability_research.apk_static_audit",
+)
+
+
+async def seed_prompt_versions() -> int:
+    """Register the file-backed VR prompts into the version store (RFC-09).
+
+    For every (strategy_family, persona) key that resolves to a base file,
+    register the file body and point the ``production`` alias at it ONLY
+    when the key has no production alias yet. Idempotent: ``register``
+    deduplicates by content hash so an unchanged file writes no new row,
+    and an existing production alias is left untouched so an operator
+    promoted or canary-routed version is never overwritten on restart. A
+    later file edit registers a new version but does not flip production;
+    promotion stays an explicit RFC-10 lifecycle action.
+
+    Also seeds the RFC-09 rule-58 migration keys: the VR-owned narrative,
+    n-day, synthesis, and per-check/per-control seed templates lifted out
+    of module-level ``_*_PROMPT*`` literals, plus the platform-owned
+    claim-verifier extractor + verdict prompts (dedup-safe: the malware
+    module seeds the same platform keys, ``register`` deduplicates by
+    content hash so the second module to reach the seed is a no-op).
+
+    Returns the count of keys whose production alias was newly set.
+    """
+    personas: tuple[str | None, ...] = (None, *(v.value for v in PersonaVoice))
+    seeded = 0
+    for strategy_family in _SEED_STRATEGY_FAMILIES:
+        for persona in personas:
+            try:
+                body = _PROMPT_REGISTRY.load(strategy_family, persona)
+            except PromptNotFoundError:
+                continue
+            key = _prompt_key(strategy_family, persona)
+            version = await _PROMPT_VERSION_STORE.register(
+                key, body, author="bootstrap",
+                notes="file baseline (RFC-09 activation seed)",
+            )
+            if await _PROMPT_VERSION_STORE.resolve(key, alias="production") is not None:
+                continue
+            await _PROMPT_VERSION_STORE.set_alias(
+                key, "production", version,
+                actor="bootstrap", reason="initial file baseline",
+            )
+            seeded += 1
+
+    # RFC-09 rule-58 migration keys: bodies were lifted out of module-level
+    # ``_*_PROMPT*`` literals into versioned ``.md`` files (narrative,
+    # n-day, synthesis, apk-static seed template, masvs seed template).
+    # Lazy imports avoid an aila-agents<->aila-vr circular pull.
+    from aila.modules.vr.agents.narrative_agent import (
+        _load_system_prompt as _load_vr_narrative_prompt,
+    )
+    from aila.modules.vr.agents.nday_researcher import (
+        _load_system_prompt as _load_vr_nday_prompt,
+    )
+    from aila.modules.vr.agents.synthesis_agent import (
+        _load_system_prompt as _load_vr_synthesis_prompt,
+    )
+    from aila.modules.vr.apk_static.seed import (
+        _load_prompt_template as _load_apk_static,
+    )
+    from aila.modules.vr.masvs.seed import (
+        _load_prompt_template as _load_masvs,
+    )
+
+    migration_entries: tuple[tuple[str, str], ...] = (
+        ("vr/narrative/base", _load_vr_narrative_prompt()),
+        ("vr/nday/base", _load_vr_nday_prompt()),
+        ("vr/synthesis/base", _load_vr_synthesis_prompt()),
+        ("vr/apk_static_seed/base", _load_apk_static()),
+        ("vr/masvs_seed/base", _load_masvs()),
+    )
+    for key, body in migration_entries:
+        version = await _PROMPT_VERSION_STORE.register(
+            key, body, author="bootstrap",
+            notes="RFC-09 rule-58 inline-prompt migration seed",
+        )
+        if await _PROMPT_VERSION_STORE.resolve(key, alias="production") is not None:
+            continue
+        await _PROMPT_VERSION_STORE.set_alias(
+            key, "production", version,
+            actor="bootstrap", reason="initial file baseline",
+        )
+        seeded += 1
+
+    # Platform-owned claim-verifier prompts: registered here (dedup-safe
+    # because the malware module also does this -- content-hash dedup on
+    # ``register`` makes the second module a no-op). Same alias-if-absent
+    # shape as the VR-local entries above; covered by the RFC-09
+    # activation bootstrap whitelist entry on this function.
+    from aila.platform.agents.claim_verifier import (
+        platform_claim_verifier_seed_entries,
+    )
+    for key, body in platform_claim_verifier_seed_entries():
+        version = await _PROMPT_VERSION_STORE.register(
+            key, body, author="bootstrap",
+            notes="platform claim-verifier file baseline (RFC-09 activation seed)",
+        )
+        if await _PROMPT_VERSION_STORE.resolve(key, alias="production") is not None:
+            continue
+        await _PROMPT_VERSION_STORE.set_alias(
+            key, "production", version,
+            actor="bootstrap", reason="initial file baseline",
+        )
+        seeded += 1
+    return seeded
 
 
 # Resolves Pydantic forward refs when this module is imported standalone.
 ReasoningContract.model_rebuild()
+
+
+# Bind the per-module module-level helpers as staticmethods so the shared
+# AgentTurnRunnerBase.run_turn resolves them via ``self`` (they are defined
+# below the class, hence bound here at module import time).
+HonestVulnResearcher._fetch_tool_specs = staticmethod(_fetch_tool_specs)
+HonestVulnResearcher._load_prompt = staticmethod(_load_prompt)
+HonestVulnResearcher._decision_to_message_payload = staticmethod(_decision_to_message_payload)
+HonestVulnResearcher._terminal_outcome_kind = staticmethod(_terminal_outcome_kind)
+HonestVulnResearcher._outcome_payload = staticmethod(_outcome_payload)
+HonestVulnResearcher._upsert_canonical_outcome = staticmethod(_upsert_canonical_outcome)
+HonestVulnResearcher._resolve_task_type = staticmethod(resolve_task_type)
+HonestVulnResearcher._evaluate_quorum = staticmethod(evaluate_quorum)
+HonestVulnResearcher._upsert_review = staticmethod(upsert_review)
+
+
+async def _record_experience_on_verdict(
+    *, verdict: Any, investigation_id: str, outcome_id: str,
+) -> None:
+    """RFC-08: a sibling review vote that flips quorum to a terminal verdict
+    on the turn_runner inline-dispatch path writes a signed experience
+    pattern too (the emit-state path only covers proposer-side verdicts).
+    Loads the outcome, builds summary/body the same way the emit path does,
+    delegates to the module's _record_experience. Lazy imports dodge the
+    workflow<->agents import cycle (this file is PLC0415-exempt)."""
+    from aila.modules.vr.workflow.states.investigation_emit import (
+        _record_experience,
+    )
+    from aila.platform.services.outcome_review import summarize_outcome_for_review
+
+    async with UnitOfWork() as uow:
+        outcome = (await uow.session.exec(
+            _select(VRInvestigationOutcomeRecord).where(
+                VRInvestigationOutcomeRecord.id == outcome_id,
+            ),
+        )).first()
+    if outcome is None:
+        _log.warning(
+            "vr _record_experience_on_verdict: outcome %s missing", outcome_id,
+        )
+        return
+    excerpt = summarize_outcome_for_review(outcome.payload_json)
+    first_line = excerpt.splitlines()[0] if excerpt else ""
+    summary = (first_line or excerpt)[:400]
+    await _record_experience(
+        verdict=verdict,
+        investigation_id=investigation_id,
+        outcome_id=outcome_id,
+        summary=summary,
+        body=excerpt,
+    )
+
+
+HonestVulnResearcher._record_experience_on_verdict = staticmethod(
+    _record_experience_on_verdict
+)

@@ -7,7 +7,11 @@ on the cache are guarded by _ENGINE_LOCK (RLock for re-entrant callers such
 as test teardown).
 
 Connection pool defaults: pool_size=10, max_overflow=10, pool_timeout=30,
-pool_recycle=1800, pool_pre_ping=True.
+pool_recycle=1800, pool_pre_ping=True. Each sizing value is overridable via an
+env var (AILA_DB_POOL_SIZE / _MAX_OVERFLOW / _POOL_TIMEOUT / _POOL_RECYCLE) so a
+deployment can scale the pool without a code change (#45). Env-only, not
+ConfigRegistry, because the engine is built before the registry exists on some
+paths (test fixtures, early bootstrap).
 
 Platform tables (storage/db_models.py) are always created via SQLModel.metadata.
 Module-owned tables are registered with SchemaRegistry and created only when
@@ -16,6 +20,8 @@ a SchemaRegistry is passed to init_db().
 
 from __future__ import annotations
 
+import asyncio
+import os
 import subprocess
 import threading
 from contextlib import asynccontextmanager, contextmanager
@@ -45,6 +51,31 @@ _ENGINE_LOCK = threading.RLock()
 _INITIALIZED_URLS: set[str] = set()
 _SESSION_FACTORIES: dict[str, async_sessionmaker] = {}
 _SYNC_SESSION_FACTORIES: dict[str, _sync_sessionmaker] = {}  # type: ignore[type-arg]
+
+
+def _resolve_pool_config() -> dict[str, int]:
+    """Resolve asyncpg pool sizing from env vars, falling back to defaults.
+
+    Env-only (not ConfigRegistry) because get_async_engine runs before the
+    registry exists on some paths (test fixtures, early bootstrap). A missing
+    or non-integer value keeps the previous hardcoded default, so behaviour is
+    identical to before unless an operator sets the var (#45).
+    """
+    def _read(env_name: str, default: int) -> int:
+        raw = os.environ.get(env_name)
+        if raw is None:
+            return default
+        try:
+            return int(raw)
+        except ValueError:
+            return default
+
+    return {
+        "pool_size": _read("AILA_DB_POOL_SIZE", 10),
+        "max_overflow": _read("AILA_DB_MAX_OVERFLOW", 10),
+        "pool_timeout": _read("AILA_DB_POOL_TIMEOUT", 30),
+        "pool_recycle": _read("AILA_DB_POOL_RECYCLE", 1800),
+    }
 
 
 class DatabaseSettings(Protocol):
@@ -84,13 +115,14 @@ def get_async_engine(settings: DatabaseSettings | None = None):
             _connect_args: dict[str, object] = {}
             if "localhost" in url or "127.0.0.1" in url:
                 _connect_args["ssl"] = False
+            _pool = _resolve_pool_config()
             engine = create_async_engine(
                 url,
                 echo=False,
-                pool_size=10,
-                max_overflow=10,
-                pool_timeout=30,
-                pool_recycle=1800,
+                pool_size=_pool["pool_size"],
+                max_overflow=_pool["max_overflow"],
+                pool_timeout=_pool["pool_timeout"],
+                pool_recycle=_pool["pool_recycle"],
                 pool_pre_ping=True,
                 connect_args=_connect_args,
             )
@@ -117,13 +149,15 @@ async def async_session_scope(
         team_context: Optional TeamContext (typed as object to avoid circular
             imports).  When provided, set on session.info["team_context"] so
             the do_orm_execute listener and StorageService._stamp_team_id
-            can read it.
+            can read it. When ``None`` (#53), falls back to the ambient
+            :func:`current_team_context` so bare call sites inherit the
+            active request/task scope without threading it explicitly.
 
     Yields:
         An open AsyncSession.
     """
     # Lazy import to avoid circular: database -> platform.services -> storage -> database
-    from ..platform.services.team_scope import register_team_scope_listener
+    from ..platform.services.team_scope import current_team_context, register_team_scope_listener
 
     register_team_scope_listener()
     engine = get_async_engine(settings)
@@ -137,9 +171,13 @@ async def async_session_scope(
                 expire_on_commit=False,
             )
             _SESSION_FACTORIES[url] = factory
+    # #53: ambient fallback -- if the caller did not pass team_context
+    # explicitly, inherit the ambient set by the API middleware or the
+    # worker task wrapper. An unset ambient stays None (admin/global).
+    effective_ctx = team_context if team_context is not None else current_team_context()
     async with factory() as session:
-        if team_context is not None:
-            session.info["team_context"] = team_context
+        if effective_ctx is not None:
+            session.info["team_context"] = effective_ctx
         yield session
 
 
@@ -227,7 +265,8 @@ async def backup_database(
     dest.parent.mkdir(parents=True, exist_ok=True)
     # pg_dump requires a libpq-compatible URL (no +asyncpg driver prefix).
     pg_url = url.replace("+asyncpg", "")
-    result = subprocess.run(
+    result = await asyncio.to_thread(
+        subprocess.run,
         ["pg_dump", "--format=custom", f"--file={dest}", pg_url],
         capture_output=True,
         text=True,
@@ -236,6 +275,56 @@ async def backup_database(
     if result.returncode != 0:
         raise UpstreamError(f"pg_dump failed: {result.stderr}")
     return dest
+
+
+async def restore_database(
+    source: str | Path,
+    settings: DatabaseSettings | None = None,
+) -> Path:
+    """Restore the PostgreSQL database from a pg_dump custom-format archive.
+
+    Runs ``pg_restore --clean --if-exists --no-owner`` against the configured
+    database URL, dropping any pre-existing objects the dump would recreate
+    (``--clean``) while tolerating a fresh database where those objects do not
+    exist yet (``--if-exists``).  ``--no-owner`` skips ALTER OWNER statements
+    so the restore succeeds when the connecting role differs from the role
+    that produced the dump.
+
+    Args:
+        source: Path to the pg_dump custom-format archive to restore.
+        settings: Optional settings object.  Falls back to get_settings().
+
+    Returns:
+        The source Path that was restored.
+
+    Raises:
+        FileNotFoundError: If ``source`` does not exist.
+        UpstreamError: If pg_restore exits with a non-zero return code.
+    """
+    source_path = Path(source)
+    if not source_path.exists():
+        raise FileNotFoundError(f"pg_restore source does not exist: {source_path}")
+    active_settings = settings or get_settings()
+    url = active_settings.database_url
+    # pg_restore requires a libpq-compatible URL (no +asyncpg driver prefix).
+    pg_url = url.replace("+asyncpg", "")
+    result = await asyncio.to_thread(
+        subprocess.run,
+        [
+            "pg_restore",
+            "--clean",
+            "--if-exists",
+            "--no-owner",
+            f"--dbname={pg_url}",
+            str(source_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if result.returncode != 0:
+        raise UpstreamError(f"pg_restore failed: {result.stderr}")
+    return source_path
 
 
 @contextmanager

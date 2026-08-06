@@ -60,10 +60,13 @@ export async function loginWithPassword(
 }
 
 export async function refreshUserToken(refreshToken: string): Promise<TokenResponse> {
-  // CRITICAL: Query parameter, NOT request body (backend uses Query(...) not Pydantic body)
-  const envelope = await requestJson<DataEnvelope<TokenResponse>>(
-    `/auth/refresh/user?refresh_token=${encodeURIComponent(refreshToken)}`,
-  );
+  // #36: the refresh token goes in the JSON body, never the query string --
+  // a query parameter leaks the long-lived credential into access logs and
+  // browser history. The backend rejects the query-parameter shape with 422.
+  const envelope = await requestJson<DataEnvelope<TokenResponse>>("/auth/refresh/user", {
+    method: "POST",
+    body: { refresh_token: refreshToken },
+  });
   return envelope.data;
 }
 

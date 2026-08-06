@@ -36,7 +36,9 @@ from typing import Any, cast
 
 import sqlalchemy as sa
 import structlog
+from arq.worker import Function as _ArqFunction
 from arq.worker import Retry
+from arq.worker import func as _arq_func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlmodel import select
 
@@ -128,10 +130,23 @@ class _Registry:
     def get_task(self, name: str) -> PlatformTask | None:
         return self._tasks.get(name)
 
-    def all_functions(self) -> list[_ArqJob]:
-        # Return wrapped coroutines in a stable insertion order so ARQ's
-        # function-name -> function map is deterministic across restarts.
-        return [t.fn for t in self._tasks.values()]
+    def all_functions(self) -> list[_ArqFunction]:
+        # Return ``arq.worker.Function`` objects keyed on the fully-qualified
+        # ``{fn.__module__}.{fn.__qualname__}`` registry name so ARQ's
+        # internal function map cannot collide across modules that happen to
+        # share a bare callable name (CLAUDE.md #19, #40-5). Without the
+        # explicit ``name=`` override ARQ would fall back to
+        # ``coroutine.__qualname__`` (bare), and a second module defining
+        # e.g. ``run_target_analysis`` would silently overwrite the first --
+        # the queue dispatches the right job id but the wrong module's body
+        # would execute.
+        #
+        # Order is preserved from ``dict.values()`` so ARQ's ``functions``
+        # map is deterministic across restarts.
+        return [
+            _arq_func(t.fn, name=t.name, timeout=t.timeout_s, max_tries=t.max_tries)
+            for t in self._tasks.values()
+        ]
 
     @property
     def tasks(self) -> list[PlatformTask]:
@@ -157,14 +172,18 @@ async def _ensure_run_record(run_id: str, query_text: str) -> None:
     record is absent. This helper ensures the record exists before the engine
     starts. Concurrent retries are safe -- INSERT ON CONFLICT DO NOTHING.
     """
+    from aila.platform.tasks.queue import _current_task_team_id
     from aila.storage.database import async_session_scope
     from aila.storage.db_models import WorkflowRunRecord
 
+    # Stamp the running task's team so team-scoped readers surface this run;
+    # outside a task the context var default (None) leaves it unscoped (#36).
+    team_id = _current_task_team_id.get()
     tbl = WorkflowRunRecord.__table__  # type: ignore[attr-defined]
     async with async_session_scope() as session:
         await session.execute(
             pg_insert(tbl)
-            .values(id=run_id, query_text=query_text, status="running")
+            .values(id=run_id, query_text=query_text, status="running", team_id=team_id)
             .on_conflict_do_nothing(index_elements=["id"])
         )
         await session.commit()
@@ -429,7 +448,13 @@ def platform_task(
             # Deferred import: hooks.py imports template.py indirectly via
             # worker.py at boot, so a top-level import would form a cycle
             # during `aila.platform.tasks` package init.
+            from aila.api.auth import TeamContext
+            from aila.platform.services.team_scope import team_context_scope
             from aila.platform.tasks.hooks import _JobOutcome, _stash_outcome
+            from aila.platform.tasks.queue import (
+                _current_task_team_id,
+                _current_task_user_id,
+            )
 
             job_id = str(ctx.get("job_id", ""))
             job_try = int(ctx.get("job_try", 1))
@@ -441,6 +466,25 @@ def platform_task(
                 user_id=user_id,
                 team_id=team_id,
             )
+
+            # #53: expose this task's team_id so a follow-up submitted from the
+            # body (or a nested agent) inherits it without threading team_id
+            # through every worker submit site. Reset in finally so a worker
+            # that runs many jobs never leaks one job's team into the next.
+            _team_token = _current_task_team_id.set(team_id)
+            # #53: also expose the authenticated user_id so tools that write
+            # audit rows can bind identity to the caller instead of trusting
+            # agent-supplied strings (AuditLogTool).
+            _user_token = _current_task_user_id.set(user_id)
+            # #53: bind the ambient TeamContext for this task so bare
+            # ``UnitOfWork()`` / ``async_session_scope()`` opened inside the
+            # body auto-inherit tenant scope. team_id=None means an
+            # admin/system task (platform sweeps, cross-team reapers) and
+            # yields the god-tier bypass -- exactly today's behavior.
+            _team_ctx_cm = team_context_scope(
+                TeamContext(team_id=team_id, is_admin=team_id is None),
+            )
+            _team_ctx_cm.__enter__()
 
             try:
                 if definition is not None:
@@ -501,7 +545,11 @@ def platform_task(
                         exception_class=type(conflict).__name__,
                     ),
                 )
-                raise Retry(defer=default_backoff(job_try)) from conflict
+                # job_try is ARQ's 1-based attempt counter, so during the first
+                # attempt (job_try=1) zero retries have completed and the defer
+                # must be default_backoff(0) in [1.0, 2.0). Passing job_try
+                # directly made every retry one exponent too high (#40).
+                raise Retry(defer=default_backoff(job_try - 1)) from conflict
 
             except Retry as retry_exc:
                 # The handler (or a nested wrapper) already chose to retry.
@@ -551,6 +599,10 @@ def platform_task(
                     ),
                 )
                 raise
+            finally:
+                _team_ctx_cm.__exit__(None, None, None)
+                _current_task_user_id.reset(_user_token)
+                _current_task_team_id.reset(_team_token)
 
         # Ensure ARQ's function-name resolution (ARQ builds a name->func map
         # keyed by ``func.__qualname__``/``func.__name__``) points at the

@@ -47,13 +47,19 @@ def _utc_now() -> datetime:
 
 @pytest_asyncio.fixture(scope="session")
 async def _hc_session_engine():
-    """Session-scoped async engine for human_cost tests."""
+    """Session-scoped async engine for human_cost tests.
+
+    Bootstrap goes through ``tests/_db_bootstrap.py`` (create_all +
+    ``alembic stamp head``) so this fixture aligns with #62's requirement
+    that the test schema be authoritative to the migrations.
+    """
     import aila.storage.database as _db_module
-    import aila.storage.db_models  # noqa: F401
+
+    from tests._db_bootstrap import bootstrap_test_database
+
+    bootstrap_test_database(TEST_DB_URL)
 
     engine = create_async_engine(TEST_DB_URL, echo=False, pool_pre_ping=True)
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
 
     with _db_module._ENGINE_LOCK:
         _db_module._ASYNC_ENGINES[TEST_DB_URL] = engine

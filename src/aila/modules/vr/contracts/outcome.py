@@ -27,6 +27,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from aila.platform.contracts.enums import OutcomeConfidence, OutcomeDispatchStatus
+
 __all__ = [
     "OutcomeConfidence",
     "OutcomeDispatchStatus",
@@ -50,25 +52,6 @@ class OutcomeKind(StrEnum):
     CRASH_TRIAGE_REPORT = "crash_triage_report"
     CAMPAIGN_LAUNCH = "campaign_launch"
     SUB_INVESTIGATION = "sub_investigation"
-
-
-class OutcomeConfidence(StrEnum):
-    """Engine's confidence in the outcome (matches ReasoningConfidence)."""
-
-    EXACT = "exact"
-    STRONG = "strong"
-    MEDIUM = "medium"
-    CAVEATED = "caveated"
-    UNKNOWN = "unknown"
-
-
-class OutcomeDispatchStatus(StrEnum):
-    """State of downstream dispatch after the outcome is accepted."""
-
-    PENDING = "pending"
-    DISPATCHED = "dispatched"
-    FAILED = "failed"
-    SKIPPED = "skipped"
 
 
 class VROutcomeCreate(BaseModel):
@@ -137,8 +120,14 @@ class VROutcomeReviewCreate(BaseModel):
 
     reviewer_branch_id: str = Field(min_length=1, max_length=64)
     vote: str = Field(
-        pattern=r"^(approve|reject|request_edit|abstain)$",
-        description="approve | reject | request_edit | abstain",
+        pattern=r"^(approve|reject|request_edit|abstain|not_ready)$",
+        description=(
+            "approve | reject | request_edit | abstain | not_ready. "
+            "``not_ready`` records a stated blocker in ``comment`` "
+            "without moving approve or reject quorum, so a branch can "
+            "decline to ship a sibling's draft without a stalling "
+            "abstain or a premature approve/reject."
+        ),
     )
     comment: str = Field(default="", max_length=4096)
     suggested_edits: dict[str, Any] = Field(default_factory=dict)

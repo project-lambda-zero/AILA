@@ -10,6 +10,7 @@ from .tools import ToolRegistry
 if TYPE_CHECKING:
     from ...storage.registry import ConfigRegistry
     from ..llm import AilaLLMClient
+    from ..services.intel_service import IntelServiceProtocol
 
 
 @dataclass(slots=True)
@@ -27,6 +28,11 @@ class PlatformRuntime:
     tool_registry: ToolRegistry
     runtime_model: AilaLLMClient
     config_registry: ConfigRegistry | None = field(default=None)
+    # Cross-module CVE intel service, published by whichever module provides
+    # one (via ModuleRuntime.provides_intel_service) and collected by the
+    # platform builder. None when no module publishes intel. Consumers
+    # resolve through this slot instead of naming the providing module.
+    intel_service: IntelServiceProtocol | None = field(default=None)
 
     def require_module(self, module_id: str) -> ModuleRuntime:
         """Return the active runtime for the given module ID.

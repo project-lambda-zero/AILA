@@ -10,6 +10,8 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from aila.platform.agents.idempotent_llm import idempotent_llm_call
+
 if TYPE_CHECKING:
     from aila.modules.forensics.workflow.services import ForensicsWorkflowServices
     from aila.platform.llm import AilaLLMClient
@@ -168,12 +170,21 @@ class ResolverAgent:
             # ``services`` instead of building a fresh one (and a
             # fresh ConfigRegistry / SecretStore) per resolution.
             client = _llm_client_from_services(self._services)
-            resp = await client.chat(
+            messages = [
+                {"role": "system", "content": "You are a forensic evidence resolver. Answer questions using only the provided evidence."},
+                {"role": "user", "content": prompt},
+            ]
+            # Route through the idempotency cache: resolve() runs in the
+            # ARQ-backed forensics resolution workflow state, so a worker
+            # crash + redelivery would otherwise re-pay the model for the
+            # same question (RFC-03 Phase 2). Keyed on project_id + the full
+            # messages so a changed question yields a different key.
+            resp, _cached = await idempotent_llm_call(
+                client,
+                method="chat",
                 task_type="forensics_resolver",
-                messages=[
-                    {"role": "system", "content": "You are a forensic evidence resolver. Answer questions using only the provided evidence."},
-                    {"role": "user", "content": prompt},
-                ],
+                messages=messages,
+                investigation_id=self.project_id,
             )
             if resp.disabled:
                 _log.warning("LLM disabled -- cannot resolve")

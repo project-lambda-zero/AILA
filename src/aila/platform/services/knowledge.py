@@ -1,7 +1,8 @@
 """KnowledgeService -- agent knowledge store, RAG retrieval, memory operations per D-02.
 
 Per D-08: embed() delegates to a swappable EmbeddingProvider. Default is
-BGE-M3 (1024-dim). Config key: knowledge.embedding_model.
+BGE-M3 (1024-dim), selected by the platform config key
+``knowledge_embedding_model`` (read once per process at construction).
 
 Per D-09: supports three namespace categories:
   - agent:{name} -- auto-populated by agents (existing)
@@ -16,28 +17,338 @@ When session is None, creates a short-lived session via async_session_scope (SDA
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
+import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any
+from datetime import datetime
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select, update
 
 from ...platform.contracts._common import utc_now
 from ...storage.database import async_session_scope
 from ...storage.db_models import KnowledgeEntryRecord
+from ...storage.registry import ConfigRegistry
 from .embedding import EmbeddingProvider, resolve_provider
+from .ingestor import DEFAULT_MAX_CHARS, Kind, KnowledgeIngestor
+from .knowledge_entities import extract_entities as extract_security_entities
+
+if TYPE_CHECKING:
+    from aila.api.auth import TeamContext
+
+# ``enrich_chunk`` is imported at call time inside ``store`` to break a
+# repo-wide import cycle: knowledge -> knowledge_enrichment ->
+# platform.agents -> claim_verifier -> platform.mcp.bridges ->
+# platform.tools -> storage.memory, which is still initialising via
+# storage.__init__ -> memory -> platform.contracts._common the first
+# time any test loads ``import aila``. Keeping the enrichment code
+# lazy fires the cycle only when a caller actually opts into RFC-12
+# enrichment (``store(..., enrich=True)``), by which point the modules
+# above are fully initialised.
+
+__all__ = [
+    "KnowledgeService",
+    "NAMESPACE_AGENT_PREFIX",
+    "NAMESPACE_PLATFORM_PREFIX",
+    "NAMESPACE_USER_PREFIX",
+    "TRUST_TIER_TARGET_DERIVED",
+    "TRUST_TIER_VERIFIED",
+    "make_agent_namespace",
+    "make_platform_namespace",
+    "make_user_namespace",
+    "trust_tier_from_namespace",
+]
+
+# RFC-12 Phase 5 trust tiering. Verified-tier knowledge (findings, audit
+# memos, promoted patterns) is written behind a quorum or an operator
+# promotion; target-derived knowledge (evicted observations burned straight
+# off a tool result) is untrusted input and carries the lower tier. The tier
+# is derived from the namespace ``kind`` segment, so no column or data
+# migration is needed: the ``*.observation.*`` namespaces are target-derived,
+# everything else the modules write is verified. Retrieval journals the tier
+# per hit so an operator can audit what trust level informed a finding.
+TRUST_TIER_VERIFIED = "verified"
+TRUST_TIER_TARGET_DERIVED = "target_derived"
+
+
+def trust_tier_from_namespace(namespace: str | None) -> str:
+    """Map a knowledge namespace to its RFC-12 trust tier.
+
+    ``<module>.observation.*`` namespaces hold observations burned directly
+    from tool output (untrusted input) and return ``target_derived``; every
+    other namespace a module writes (findings, audit memos, patterns) is
+    quorum- or promotion-gated and returns ``verified``. An empty or unknown
+    namespace defaults to ``target_derived`` -- the conservative tier.
+    """
+    if not namespace:
+        return TRUST_TIER_TARGET_DERIVED
+    if ".observation." in namespace:
+        return TRUST_TIER_TARGET_DERIVED
+    return TRUST_TIER_VERIFIED
+
+
+def _age_hours(ts: Any, now: datetime) -> float | None:
+    """Return the age of a provenance timestamp in hours, or ``None``.
+
+    Accepts a ``datetime`` (from an ORM row) or an ISO-8601 string (from a
+    serialized provenance dict). A tz-naive value is read as UTC to match
+    :func:`utc_now`. A future timestamp (clock skew) clamps to 0 so decay
+    never boosts a score above its base. Anything unparseable returns
+    ``None`` so the caller leaves that hit's score untouched.
+    """
+    if ts is None:
+        return None
+    if isinstance(ts, str):
+        try:
+            ts = datetime.fromisoformat(ts)
+        except ValueError:
+            _log.debug("unparseable provenance timestamp %r; skipping decay", ts)
+            return None
+    if not isinstance(ts, datetime):
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=now.tzinfo)
+    delta = (now - ts).total_seconds()
+    if delta <= 0:
+        return 0.0
+    return delta / 3600.0
+
+
+def _apply_trust_decay(
+    gated: list[dict[str, Any]],
+    *,
+    target_derived_weight: float,
+    decay_half_life_hours: float,
+    floor: float,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    """Re-rank gated hits by a config-gated trust weight + temporal decay.
+
+    RFC-12 Phase 5. Applied AFTER the relevance gate so it never touches the
+    hot ``_merge_and_rank`` scoring contract. For each hit: a target-derived
+    (untrusted, ``*.observation.*``) namespace has its score scaled by
+    ``target_derived_weight`` (ASI06 poisoning defense), then any hit with a
+    provenance timestamp is scaled by ``0.5 ** (age_hours / half_life)`` when
+    ``decay_half_life_hours > 0``. A hit whose adjusted score falls below
+    ``floor`` is dropped; the survivors are re-sorted by adjusted score. The
+    pre-adjustment value is preserved under ``base_score`` for audit. Callers
+    only invoke this when at least one knob is active, so the default config
+    (weight 1.0, half-life 0) leaves ranking byte-identical.
+    """
+    adjusted: list[dict[str, Any]] = []
+    for hit in gated:
+        base = float(hit.get("score") or 0.0)
+        score = base
+        prov = hit.get("provenance") or {}
+        namespace = hit.get("namespace") or prov.get("namespace")
+        if (
+            target_derived_weight != 1.0
+            and trust_tier_from_namespace(namespace) == TRUST_TIER_TARGET_DERIVED
+        ):
+            score *= target_derived_weight
+        if decay_half_life_hours > 0:
+            age = _age_hours(prov.get("updated_at") or prov.get("created_at"), now)
+            if age is not None:
+                score *= 0.5 ** (age / decay_half_life_hours)
+        if score < floor:
+            continue
+        new_hit = dict(hit)
+        new_hit["base_score"] = round(base, 6)
+        new_hit["score"] = score
+        adjusted.append(new_hit)
+    adjusted.sort(key=lambda h: float(h.get("score") or 0.0), reverse=True)
+    return adjusted
+
+
+def _ingest_gate_metadata(content: str) -> dict[str, Any]:
+    """RFC-12 Phase 5: classify + sanitize-check content at ingest time.
+
+    Records the classification tier and whether the content carries
+    injection or secret patterns WITHOUT rewriting the stored content: the
+    raw text is preserved in full (the operator's no-trim rule) and the
+    retrieval gate still sanitizes on read. Tagging at write lets trust
+    tiering and the retrieval floor act on a poisoned or restricted entry,
+    and logs a RESTRICTED write for audit (ASI06). Never raises: a gate
+    failure returns no tag rather than blocking the store, which is an
+    augmentation, not a precondition.
+    """
+    # Deferred import: PLC0415 is ignored for knowledge.py per-file; keeps
+    # the module import graph flat, mirroring the knowledge_gate and
+    # knowledge_enrichment lazy imports elsewhere in this file.
+    from ..llm.classify import ClassificationLevel, classify_messages
+    from ..llm.sanitize import sanitize_input
+    try:
+        result = classify_messages([{"content": content}])
+    except (ValueError, TypeError, RuntimeError) as exc:
+        _log.debug("ingest classify failed; storing without gate tag: %s", exc)
+        return {}
+    meta: dict[str, Any] = {"ingest_classification": result.level.name.lower()}
+    if result.level >= ClassificationLevel.RESTRICTED:
+        meta["ingest_classification_matches"] = list(result.pattern_types)
+        _log.info(
+            "ingest gate: RESTRICTED content stored (patterns=%s)",
+            result.pattern_types,
+        )
+    try:
+        meta["ingest_content_flagged"] = sanitize_input(content) != content
+    except (ValueError, TypeError, RuntimeError) as exc:
+        _log.debug("ingest sanitize check failed: %s", exc)
+    return meta
+
+
+async def _journal_retrieval(
+    *,
+    route: str,
+    query: str,
+    min_score: float,
+    namespaces: list[str] | None,
+    gated: list[dict[str, Any]],
+    journal_context: dict[str, Any],
+    session: AsyncSession | None = None,
+) -> None:
+    """Append a best-effort ``knowledge_retrieval`` journal entry (RFC-12 ASI06).
+
+    Records the query, route, and per-hit provenance (entry id, namespace,
+    score, trust tier, classification) under the investigation's journal chain
+    so an operator can audit which prior knowledge -- and at what trust tier --
+    informed a turn. Never raises: a journal failure must not break retrieval,
+    which is an augmentation, not a precondition.
+    """
+    try:
+        from .journal import JournalEntry, append_or_deadletter
+
+        results = []
+        for hit in gated:
+            prov = hit.get("provenance") or {}
+            ns = hit.get("namespace") or prov.get("namespace")
+            results.append({
+                "entry_id": hit.get("id"),
+                "namespace": ns,
+                "score": round(float(hit.get("score") or 0.0), 4),
+                "trust_tier": trust_tier_from_namespace(ns),
+                "classification": hit.get("classification"),
+            })
+        entry = JournalEntry(
+            kind="knowledge_retrieval",
+            source="knowledge_service",
+            action="retrieve_routed",
+            investigation_id=journal_context.get("investigation_id"),
+            branch_id=journal_context.get("branch_id"),
+            turn_number=journal_context.get("turn_number"),
+            payload={
+                "query": query,
+                "route": route,
+                "namespaces": list(namespaces or []),
+                "min_score": min_score,
+                "result_count": len(results),
+                "results": results,
+            },
+        )
+        team_id = journal_context.get("team_id")
+        if session is not None:
+            # Caller owns the transaction: append flushes into it and the
+            # caller commits. Do not commit here.
+            await append_or_deadletter(session, entry=entry, team_id=team_id)
+        else:
+            # Own the transaction: append flushes but never commits (its
+            # contract), and async_session_scope does not auto-commit, so the
+            # journal row must be committed explicitly or it rolls back on
+            # scope exit.
+            async with async_session_scope() as scope_session:
+                await append_or_deadletter(
+                    scope_session, entry=entry, team_id=team_id,
+                )
+                await scope_session.commit()
+    except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
+        _log.warning(
+            "knowledge_retrieval journal failed: %s", exc, exc_info=True,
+        )
+
+# HNSW ``ef_search`` at query time (issue #37): the pgvector default (40)
+# under-recalls on a growing corpus. 100 trades a little latency for
+# materially better recall on the cosine-distance retrieval paths.
+_HNSW_EF_SEARCH = 100
+
+_log = logging.getLogger(__name__)
+
+
+def _advisory_lock_key(namespace: str, dedup_key: str) -> int:
+    """Stable signed 64-bit key for ``pg_advisory_xact_lock`` derived from the
+    dedup identity, so concurrent upserts of the same ``(namespace,
+    dedup_key)`` serialize instead of racing check-then-insert into duplicate
+    rows (issue #37).
+    """
+    digest = hashlib.sha256(f"{namespace}\x00{dedup_key}".encode()).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
+
+# RFC-12 default source_type stamped on the non-chunked store path when the
+# caller does not pass a ``kind`` hint. Prose is the dominant knowledge shape
+# in the platform today (rubrics, prior findings, patterns rendered as text)
+# so it is the safest default; callers ingesting code MUST pass kind="code".
+_DEFAULT_SOURCE_TYPE: str = "document"
+
+# RFC-12 criterion 5 semantic-neighbor edge populator defaults. At ingest a
+# new entry is joined to its top-K nearest same-namespace entries whose
+# cosine similarity clears the floor, so the graph retrieval route can hop
+# across documents by meaning, not just within one document by adjacency.
+_NEIGHBOR_TOP_K: int = 5
+_NEIGHBOR_SIMILARITY_FLOOR: float = 0.75
+
+
+def _content_hash(text: str) -> str:
+    """sha256 hexdigest of the UTF-8 bytes of ``text``.
+
+    Stamped on every knowledge write so drift between the stored content and
+    its embedding is detectable without re-embedding. Pure -- unit-testable
+    without a DB or a model.
+    """
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+_UNSET = object()
+_configured_model_cache: object = _UNSET
+
+
+def _configured_embedding_model() -> str | None:
+    """Return the operator-configured embedding model name (platform config key
+    ``knowledge_embedding_model``), or None to use the provider default.
+
+    Memoized process-wide: the config is read once, so per-access service
+    construction pays no repeated DB cost and a change takes effect on the next
+    worker/service restart (an embedding-model change requires a re-embed
+    anyway).
+    """
+    global _configured_model_cache
+    if _configured_model_cache is _UNSET:
+        try:
+            _configured_model_cache = ConfigRegistry().get_sync(
+                "platform", "knowledge_embedding_model"
+            )
+        except (OSError, RuntimeError, ValueError):
+            _configured_model_cache = None
+    return _configured_model_cache  # type: ignore[return-value]
 
 
 @asynccontextmanager
-async def _session_or_new(session: AsyncSession | None) -> AsyncGenerator[tuple[AsyncSession, bool], None]:
-    """Yield (session, owns_session). If session is None, create a short-lived one."""
+async def _session_or_new(
+    session: AsyncSession | None,
+    team_context: TeamContext | None = None,
+) -> AsyncGenerator[tuple[AsyncSession, bool], None]:
+    """Yield (session, owns_session). If session is None, create a short-lived one.
+
+    ``team_context`` is threaded into ``async_session_scope`` on new-session
+    creation (#53) so factory-supplied tenant scope reaches every bare query.
+    When ``None`` the session scope falls back to the ambient TeamContext.
+    """
     if session is not None:
         yield session, False
     else:
-        async with async_session_scope() as new_session:
+        async with async_session_scope(team_context=team_context) as new_session:
             yield new_session, True
 
 
@@ -63,11 +374,198 @@ def make_platform_namespace(category: str) -> str:
     return f"{NAMESPACE_PLATFORM_PREFIX}{category}"
 
 
+# Module-level CAG cache instance so every KnowledgeService in the process
+# shares one preload of the stable core. Test-scope isolation uses
+# :meth:`StableCoreCache.invalidate` (via ``mod._STABLE_CORE_CACHE.invalidate()``)
+# to drop the cached rows between tests.
+def _build_stable_core_cache() -> Any:
+    """Import and instantiate the process-shared CAG cache.
+
+    Deferred to a helper so the module-level assignment does not trip
+    a circular import: :mod:`knowledge_stable_core` imports
+    :func:`_session_or_new` from THIS module, so we can only reach
+    into it once THIS module has finished defining its top-level
+    names.
+    """
+    from .knowledge_stable_core import StableCoreCache
+    return StableCoreCache()
+
+
+_STABLE_CORE_CACHE: Any = _build_stable_core_cache()
+
+
+def _stable_core_match(
+    query: str,
+    entries: list[dict[str, Any]],
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Rank stable-core entries against ``query`` by cheap token overlap.
+
+    Deterministic, no vector or FTS work: tokenise the query, count how
+    many query tokens appear as substrings inside each entry's content
+    or namespace (case-insensitive), and return the top-``limit``
+    matches. Entries that share zero tokens with the query still appear
+    at the tail of the list; the CAG contract is that the whole stable
+    core is available to the caller, and a token-agnostic query (for
+    example ``\"stable-core:\"`` alone) is deliberately handled as
+    \"return the entire core, capped at ``limit``\".
+    """
+    if not entries:
+        return []
+    lowered = (query or "").lower()
+    tokens = [t for t in re.findall(r"[a-z0-9][a-z0-9_-]*", lowered) if len(t) > 1]
+    if not tokens:
+        return list(entries[:limit])
+    scored: list[tuple[int, int, dict[str, Any]]] = []
+    for index, entry in enumerate(entries):
+        haystack_parts = [str(entry.get("content") or ""), str(entry.get("namespace") or "")]
+        haystack = " ".join(haystack_parts).lower()
+        overlap = sum(1 for tok in tokens if tok in haystack)
+        scored.append((overlap, -index, entry))
+    scored.sort(reverse=True)
+    return [entry for overlap, _neg_index, entry in scored[:limit] if overlap > 0] or list(entries[:limit])
+
+
+def _stable_core_hit(entry: dict[str, Any], index: int) -> dict[str, Any]:
+    """Adapt a cached stable-core row into the hit shape callers expect.
+
+    Score is a synthetic monotonic decreasing sentinel (1.0, 0.99, ...)
+    so the tool caller can rank stable-core hits alongside regular hits
+    without a special case, and ``source == \"stable_core\"`` names the
+    route the row came from. ``entry_metadata`` is the raw JSON string
+    on the row; the caller decodes it exactly as it does for the hybrid
+    path.
+    """
+    score = round(max(0.0, 1.0 - 0.01 * index), 6)
+    return {
+        "id": int(entry["id"]),
+        "content": entry.get("content") or "",
+        "metadata": json.loads(entry.get("entry_metadata") or "{}"),
+        "score": score,
+        "vec_score": 0.0,
+        "fts_score": 0.0,
+        "source": "stable_core",
+        "namespace": entry.get("namespace") or "",
+    }
+
+
+def _graph_hit(node: dict[str, Any]) -> dict[str, Any]:
+    """Adapt a :class:`TraversalHit` mapping into the hit shape callers expect.
+
+    Score decays with hop distance (1.0 at the seed, 0.5 at hop 1, and
+    so on) so the caller can still sort by relevance. The hop, path,
+    and incoming edge label are preserved so a UI can render the
+    traversal chain that reached the row.
+    """
+    hop = int(node.get("hop") or 0)
+    score = round(1.0 / float(1 + hop), 6)
+    return {
+        "id": int(node["id"]),
+        "content": node.get("content") or "",
+        "metadata": json.loads(node.get("entry_metadata") or "{}"),
+        "score": score,
+        "vec_score": 0.0,
+        "fts_score": 0.0,
+        "source": "graph",
+        "namespace": node.get("namespace") or "",
+        "hop": hop,
+        "path": list(node.get("path") or []),
+        "incoming_relation": node.get("incoming_relation"),
+        "incoming_weight": node.get("incoming_weight"),
+    }
+
+
+def _metadata_matches(meta_json: str | None, flt: dict[str, str]) -> bool:
+    """True when every (key, value) in *flt* is satisfied by the entry metadata.
+
+    A scalar metadata value matches on equality; a list value (e.g. the
+    ``entities`` tag list) matches when the filter value is a member. A
+    missing key, non-dict metadata, or unparseable JSON fails the match.
+    All filter pairs must hold (logical AND).
+    """
+    try:
+        meta = json.loads(meta_json or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return False
+    if not isinstance(meta, dict):
+        return False
+    for key, value in flt.items():
+        actual = meta.get(key)
+        if isinstance(actual, list):
+            if value not in actual:
+                return False
+        elif actual != value:
+            return False
+    return True
+
+
+def _merge_and_rank(
+    vec_map: dict[int, dict],
+    fts_map: dict[int, float],
+    fts_content_map: dict[int, dict],
+    limit: int,
+    min_score: float,
+) -> list[dict]:
+    """Merge the vector and FTS legs into one ranked, floored result list.
+
+    combined = 0.6*vec_score + 0.4*fts_score, where vec_score = 1 - distance/2
+    and fts_score = min(rank, 1). Candidates scoring below min_score are dropped
+    (the relevance floor, #37). Pure function -- no DB or embedding work -- so
+    the ranking and floor are unit-testable without a live model.
+    """
+    all_ids = set(vec_map) | set(fts_map)
+    merged: list[dict] = []
+    for entry_id in all_ids:
+        vec_info = vec_map.get(entry_id)
+        fts_rank = fts_map.get(entry_id)
+
+        vec_score = 1.0 - (vec_info["distance"] / 2.0) if vec_info is not None else 0.0
+        fts_score = min(float(fts_rank), 1.0) if fts_rank is not None else 0.0
+        combined = 0.6 * vec_score + 0.4 * fts_score
+        if combined < min_score:
+            continue
+
+        if vec_info is not None and fts_rank is not None:
+            source = "hybrid"
+        elif vec_info is not None:
+            source = "vec_only"
+        else:
+            source = "fts_only"
+
+        if vec_info is not None:
+            content = vec_info["content"]
+            entry_metadata = vec_info["entry_metadata"]
+            ns = vec_info["namespace"]
+        elif entry_id in fts_content_map:
+            content = fts_content_map[entry_id]["content"]
+            entry_metadata = fts_content_map[entry_id]["entry_metadata"]
+            ns = fts_content_map[entry_id]["namespace"]
+        else:
+            content = ""
+            entry_metadata = "{}"
+            ns = ""
+
+        merged.append({
+            "id": entry_id,
+            "content": content,
+            "metadata": json.loads(entry_metadata or "{}"),
+            "score": round(combined, 6),
+            "vec_score": round(vec_score, 6),
+            "fts_score": round(fts_score, 6),
+            "source": source,
+            "namespace": ns,
+        })
+
+    merged.sort(key=lambda r: r["score"], reverse=True)
+    return merged[:limit]
+
+
 class KnowledgeService:
     """Agent knowledge store, RAG retrieval, memory operations per D-02.
 
     Per D-08: embed() delegates to a swappable EmbeddingProvider. Default is
-    BGE-M3 (1024-dim). Config key: knowledge.embedding_model.
+    BGE-M3 (1024-dim), selected by the platform config key
+    ``knowledge_embedding_model``.
 
     Per D-09: supports three namespace categories:
       - agent:{name} -- auto-populated by agents (existing)
@@ -80,25 +578,40 @@ class KnowledgeService:
     def __init__(
         self,
         provider: EmbeddingProvider | None = None,
+        *,
+        llm_client: Any | None = None,
+        team_context: TeamContext | None = None,
     ) -> None:
-        self._provider = provider or resolve_provider()
+        self._provider = provider or resolve_provider(_configured_embedding_model())
+        # Optional platform LLM client used only when a caller opts into
+        # RFC-12 contextual enrichment on ingest (``store(..., enrich=True)``).
+        # The default None keeps the pre-enrichment constructor signature
+        # backward-compatible for the many callers that only ever store
+        # non-chunked or non-enriched entries.
+        self._llm_client = llm_client
+        # #53: factory-supplied tenant scope threaded through to every
+        # short-lived session opened by this service. When None, the
+        # ambient TeamContext still applies via async_session_scope.
+        self._team_context = team_context
 
     @property
     def provider(self) -> EmbeddingProvider:
         """Current embedding provider."""
         return self._provider
 
-    # DB column dimension (KnowledgeEntryRecord.embedding is Vector(384)).
-    # Set explicitly so embed() truncates from BGE-M3's 1024 down to fit
-    # without requiring a DB introspection round-trip per service init.
-    _db_dim: int | None = 384
+    # DB column dimension (KnowledgeEntryRecord.embedding is Vector(1024)).
+    # BGE-M3 (the default provider) emits 1024-dim vectors that pass through
+    # unchanged; the 384-dim MiniLM fallback is zero-padded up to 1024 so both
+    # providers write the same column width.
+    _db_dim: int | None = 1024
 
     def embed(self, text: str) -> list[float]:
         """Generate embedding vector using the configured provider.
 
-        Adapts to whatever dimension the provider returns. If the DB column
-        has a different dimension, pads or truncates to match. Reads the
-        target dimension from the DB on first call.
+        Returns the provider's native vector. When it is shorter than the DB
+        column width (:data:`_db_dim`) the vector is zero-padded; a longer
+        vector is truncated. BGE-M3 at 1024 dims matches the column exactly, so
+        no adjustment happens on the default path.
         """
         vec = self._provider.encode(text)
         if KnowledgeService._db_dim is not None and len(vec) != KnowledgeService._db_dim:
@@ -115,6 +628,15 @@ class KnowledgeService:
         metadata: dict | None = None,
         dedup_key: str | None = None,
         session: AsyncSession | None = None,
+        *,
+        chunked: bool = False,
+        kind: Kind | None = None,
+        chunk_max_chars: int = DEFAULT_MAX_CHARS,
+        enrich: bool = False,
+        link_chunks: bool = False,
+        link_neighbors: bool = False,
+        extract_entities: bool = False,
+        team_id: str | None = None,
     ) -> dict:
         """Store a knowledge entry with embedding per D-02/D-08.
 
@@ -127,16 +649,101 @@ class KnowledgeService:
             metadata: Optional JSON-serializable metadata dict.
             dedup_key: Optional dedup sentinel for idempotent upsert.
             session: Optional external session (from UoW).
+            chunked: RFC-12 opt-in. When True, ``content`` is split by
+                :class:`KnowledgeIngestor` into boundary-aligned chunks and
+                each chunk is written as its own row (one embedding per
+                chunk). The default False path is byte-identical to the
+                pre-RFC-12 behaviour so existing callers are unaffected.
+            kind: Chunking hint used only when ``chunked=True``. ``"code"``
+                splits on function/class boundaries; ``"document"`` (the
+                default when unset) splits on markdown heading rows.
+            chunk_max_chars: Per-chunk character ceiling used only when
+                ``chunked=True``. Oversize units are hard-split so no
+                emitted chunk violates the ceiling.
+            enrich: RFC-12 criterion 2 contextual enrichment opt-in. Only
+                effective when ``chunked=True`` and the service was built
+                with an ``llm_client``. When enabled, each chunk gets a
+                50 to 100 token LLM-written blurb prepended before
+                embedding so the vector carries document-level context.
+                Default False; enabling costs one LLM completion per chunk.
+            link_chunks: RFC-12 criterion 5 graph populator opt-in. Only
+                effective when ``chunked=True``. When enabled, each pair of
+                adjacent chunks from the same document is joined by a
+                bidirectional ``adjacent_chunk`` edge, so the graph
+                retrieval route reaches a hit's surrounding context instead
+                of degrading to seed-only. Deterministic, zero-cost, and
+                idempotent on re-ingest. Default False.
+            link_neighbors: RFC-12 criterion 5 graph populator opt-in. When
+                enabled, the stored entry is joined by bidirectional
+                ``related`` edges (weight = cosine similarity) to its top-K
+                nearest same-namespace entries above the similarity floor,
+                so the graph route hops across documents by meaning.
+                Idempotent on re-ingest; costs one nearest-neighbour query
+                per stored entry. Default False.
+            extract_entities: RFC-12 metadata opt-in. When enabled, security
+                identifiers found in the content (CVE / CWE / CAPEC / ATT&CK
+                technique / MASVS ids) are stamped under
+                ``entry_metadata["entities"]`` so retrieval can scope by
+                identifier through ``metadata_filter``. Deterministic regex,
+                no model cost. Default False.
+            team_id: Optional team scoping for the enrichment LLM call's
+                cost attribution. Ignored on the non-enriched path.
 
         Returns:
-            Dict with status, operation (inserted/updated), entry_id, namespace, embedding_dim.
+            Non-chunked path: dict with status, operation (inserted/updated),
+            entry_id, namespace, embedding_dim, content_length.
+            Chunked path: dict with status, operation='chunked', chunks (list
+            of per-chunk result dicts), chunk_count, namespace, embedding_dim,
+            content_length.
         """
-        meta_json = json.dumps(metadata or {})
-        embedding_list = self.embed(content)
+        if chunked:
+            return await self._store_chunked(
+                namespace=namespace,
+                content=content,
+                metadata=metadata,
+                dedup_key=dedup_key,
+                session=session,
+                kind=kind or "document",
+                chunk_max_chars=chunk_max_chars,
+                enrich=enrich,
+                link_chunks=link_chunks,
+                link_neighbors=link_neighbors,
+                extract_entities=extract_entities,
+                team_id=team_id,
+            )
 
-        async with _session_or_new(session) as (sess, owns):
+        entry_meta = dict(metadata or {})
+        if extract_entities:
+            entities = extract_security_entities(content)
+            if entities:
+                entry_meta["entities"] = entities
+        # RFC-12 Phase 5: classify/sanitize gate on ingest (raw content is
+        # preserved; only the classification tier + injection flag are
+        # recorded so trust tiering and the retrieval floor can act on an
+        # untrusted or poisoned write). Chunked writes route each chunk
+        # through this same path, so they are gated too.
+        entry_meta.update(_ingest_gate_metadata(content))
+        meta_json = json.dumps(entry_meta)
+        embedding_list = self.embed(content)
+        # RFC-12 provenance: model_id + content_hash + source_type + updated_at
+        # are stamped on every store path (insert AND upsert-update). Read
+        # once here so both branches share the same values without diverging.
+        model_id = self._provider.model_name
+        content_hash = _content_hash(content)
+        source_type = str(kind) if kind is not None else _DEFAULT_SOURCE_TYPE
+        stamped_at = utc_now()
+
+        async with _session_or_new(session, self._team_context) as (sess, owns):
             existing_id: int | None = None
             if dedup_key is not None:
+                # Serialize concurrent upserts of the same dedup identity so
+                # the check-then-insert below cannot race into duplicate rows
+                # (issue #37). Transaction-scoped; released at commit.
+                await sess.exec(
+                    text("SELECT pg_advisory_xact_lock(:k)").bindparams(
+                        k=_advisory_lock_key(namespace, dedup_key),
+                    ),
+                )
                 stmt = select(KnowledgeEntryRecord.id).where(
                     KnowledgeEntryRecord.namespace == namespace,
                     KnowledgeEntryRecord.dedup_key == dedup_key,
@@ -154,6 +761,10 @@ class KnowledgeService:
                         embedding=embedding_list,
                         entry_metadata=meta_json,
                         dedup_key=dedup_key,
+                        model_id=model_id,
+                        content_hash=content_hash,
+                        source_type=source_type,
+                        updated_at=stamped_at,
                     )
                 )
                 await sess.exec(update_stmt)
@@ -168,7 +779,11 @@ class KnowledgeService:
                     embedding=embedding_list,
                     entry_metadata=meta_json,
                     dedup_key=dedup_key,
-                    created_at=utc_now(),
+                    model_id=model_id,
+                    content_hash=content_hash,
+                    source_type=source_type,
+                    created_at=stamped_at,
+                    updated_at=stamped_at,
                 )
                 sess.add(record)
                 # fix §204 -- flush unconditionally so `record.id` is
@@ -185,14 +800,217 @@ class KnowledgeService:
                 entry_id = record.id
                 operation = "inserted"
 
+        neighbor_edge_count = 0
+        if link_neighbors and entry_id is not None:
+            neighbor_edge_count = await self.link_semantic_neighbors(
+                entry_id, embedding_list, namespace, session,
+            )
+
         return {
             "status": "stored",
             "operation": operation,
             "entry_id": entry_id,
+            "neighbor_edge_count": neighbor_edge_count,
             "namespace": namespace,
             "embedding_dim": self._provider.dimension,
             "content_length": len(content),
         }
+
+    async def _store_chunked(
+        self,
+        *,
+        namespace: str,
+        content: str,
+        metadata: dict | None,
+        dedup_key: str | None,
+        session: AsyncSession | None,
+        kind: Kind,
+        chunk_max_chars: int,
+        enrich: bool = False,
+        link_chunks: bool = False,
+        link_neighbors: bool = False,
+        extract_entities: bool = False,
+        team_id: str | None = None,
+    ) -> dict:
+        """Boundary-aligned multi-row ingestion path (RFC-12).
+
+        Delegates splitting to :class:`KnowledgeIngestor` and writes one
+        row per chunk through the standard :meth:`store` path so dedup
+        upsert, session ownership, and metadata merging all reuse the
+        same code as the single-row path. Each chunk carries its
+        ``chunk_index`` / ``chunk_count`` / ``chunk_kind`` in metadata;
+        when the caller supplies a ``dedup_key``, per-chunk keys derive
+        as ``"{dedup_key}#chunk={index}"`` so a later re-ingest updates
+        each chunk in place instead of proliferating rows.
+
+        RFC-12 criterion 2 contextual enrichment: when ``enrich`` is True
+        and the service was built with an ``llm_client``, each chunk gets
+        a short LLM-written situating blurb prepended before embedding.
+        The blurb is captured in ``entry_metadata['context_blurb']`` and
+        the original unenriched chunk stays recoverable via
+        ``entry_metadata['chunk_original']``; ``entry_metadata['enriched']``
+        is set to True on every enriched row. On an empty blurb (LLM
+        disabled / empty response) the chunk is stored verbatim and
+        ``enriched`` is False -- the enrichment failure never blocks the
+        write.
+        """
+        chunks = KnowledgeIngestor().chunk(
+            content, kind=kind, max_chars=chunk_max_chars,
+        )
+        if not chunks:
+            return {
+                "status": "empty",
+                "operation": "noop",
+                "chunks": [],
+                "chunk_count": 0,
+                "namespace": namespace,
+                "embedding_dim": self._provider.dimension,
+                "content_length": 0,
+            }
+        enrichment_active = enrich and self._llm_client is not None
+        base_meta: dict = dict(metadata or {})
+        chunk_records: list[dict] = []
+        total_length = 0
+        for index, chunk_text in enumerate(chunks):
+            chunk_dedup: str | None = None
+            if dedup_key is not None:
+                chunk_dedup = f"{dedup_key}#chunk={index}"
+            chunk_meta = dict(base_meta)
+            chunk_meta["chunk_index"] = index
+            chunk_meta["chunk_count"] = len(chunks)
+            chunk_meta["chunk_kind"] = kind
+            stored_content = chunk_text
+            if enrichment_active:
+                # Deferred: keeps the import cycle broken (see top of
+                # file). PLC0415 is already ignored for knowledge.py in
+                # pyproject.toml per-file-ignores.
+                from .knowledge_enrichment import enrich_chunk
+                blurb = await enrich_chunk(
+                    self._llm_client,
+                    document=content,
+                    chunk=chunk_text,
+                    namespace=namespace,
+                    team_id=team_id,
+                )
+                if blurb:
+                    stored_content = f"{blurb}\n\n{chunk_text}"
+                    chunk_meta["enriched"] = True
+                    chunk_meta["context_blurb"] = blurb
+                    chunk_meta["chunk_original"] = chunk_text
+                else:
+                    chunk_meta["enriched"] = False
+            single = await self.store(
+                namespace=namespace,
+                content=stored_content,
+                metadata=chunk_meta,
+                dedup_key=chunk_dedup,
+                session=session,
+                kind=kind,
+                link_neighbors=link_neighbors,
+                extract_entities=extract_entities,
+            )
+            chunk_records.append(single)
+            total_length += len(chunk_text)
+        edge_count = 0
+        if link_chunks:
+            edge_count = await self._link_adjacent_chunks(chunk_records, session)
+        return {
+            "status": "stored",
+            "operation": "chunked",
+            "chunks": chunk_records,
+            "chunk_count": len(chunk_records),
+            "edge_count": edge_count,
+            "namespace": namespace,
+            "embedding_dim": self._provider.dimension,
+            "content_length": total_length,
+        }
+
+    async def link_semantic_neighbors(
+        self,
+        entry_id: int,
+        embedding: list[float],
+        namespace: str,
+        session: AsyncSession | None,
+    ) -> int:
+        """Join an entry to its nearest same-namespace neighbours by meaning.
+
+        RFC-12 criterion 5 cross-document graph populator. Runs one HNSW
+        top-K cosine query in ``namespace`` (excluding the entry itself),
+        and for every candidate whose cosine similarity clears
+        ``_NEIGHBOR_SIMILARITY_FLOOR`` writes a bidirectional ``related``
+        edge weighted by that similarity. Deterministic given the corpus
+        and idempotent: :meth:`KnowledgeGraph.add_edge` upserts the weight
+        on ``(src, dst, relation)`` so a re-ingest refreshes rather than
+        proliferates. Imported lazily to keep the knowledge to
+        knowledge_graph dependency one-directional.
+        """
+        async with _session_or_new(session, self._team_context) as (sess, _owns):
+            await sess.exec(text(f"SET LOCAL hnsw.ef_search = {_HNSW_EF_SEARCH}"))
+            stmt = (
+                select(
+                    KnowledgeEntryRecord.id,
+                    KnowledgeEntryRecord.embedding.cosine_distance(
+                        embedding,
+                    ).label("distance"),
+                )
+                .where(
+                    KnowledgeEntryRecord.namespace == namespace,
+                    KnowledgeEntryRecord.id != entry_id,
+                    KnowledgeEntryRecord.embedding.is_not(None),
+                )
+                .order_by(
+                    KnowledgeEntryRecord.embedding.cosine_distance(embedding),
+                )
+                .limit(_NEIGHBOR_TOP_K)
+            )
+            rows = (await sess.exec(stmt)).all()
+        from .knowledge_graph import KnowledgeGraph
+        graph = KnowledgeGraph()
+        written = 0
+        for row in rows:
+            similarity = 1.0 - float(row.distance)
+            if similarity < _NEIGHBOR_SIMILARITY_FLOOR:
+                continue
+            await graph.add_edge(
+                entry_id, row.id, "related", weight=similarity, session=session,
+            )
+            await graph.add_edge(
+                row.id, entry_id, "related", weight=similarity, session=session,
+            )
+            written += 2
+        return written
+
+    async def _link_adjacent_chunks(
+        self,
+        chunk_records: list[dict],
+        session: AsyncSession | None,
+    ) -> int:
+        """Join adjacent same-document chunks with bidirectional edges.
+
+        RFC-12 criterion 5 graph populator. Each consecutive pair of chunk
+        rows gets an ``adjacent_chunk`` edge in both directions so a graph
+        traversal from any hit reaches its neighbours (and, at the default
+        two-hop bound, their neighbours). Deterministic and idempotent:
+        :meth:`KnowledgeGraph.add_edge` upserts on ``(src, dst, relation)``,
+        so a re-ingest returning the same entry ids rewrites the same edges
+        instead of proliferating rows. Imported lazily to keep the
+        knowledge to knowledge_graph dependency one-directional.
+        """
+        entry_ids = [
+            r.get("entry_id") for r in chunk_records if r.get("entry_id")
+        ]
+        if len(entry_ids) < 2:
+            return 0
+        from .knowledge_graph import KnowledgeGraph
+        graph = KnowledgeGraph()
+        written = 0
+        for left, right in zip(entry_ids, entry_ids[1:], strict=False):
+            if left == right:
+                continue
+            await graph.add_edge(left, right, "adjacent_chunk", session=session)
+            await graph.add_edge(right, left, "adjacent_chunk", session=session)
+            written += 2
+        return written
 
     async def retrieve(
         self,
@@ -200,6 +1018,9 @@ class KnowledgeService:
         namespaces: list[str] | None = None,
         namespace_patterns: list[str] | None = None,
         limit: int = 10,
+        min_score: float = 0.0,
+        source_types: list[str] | None = None,
+        metadata_filter: dict[str, str] | None = None,
         session: AsyncSession | None = None,
     ) -> list[dict]:
         """Retrieve knowledge entries by hybrid pgvector + tsvector search per D-09.
@@ -213,6 +1034,23 @@ class KnowledgeService:
             namespace_patterns: Namespace prefix patterns (e.g. "agent:*").
                 Patterns ending in "*" match via LIKE 'prefix%'.
             limit: Maximum results to return (default 10).
+            min_score: Relevance floor (#37). Results whose combined
+                0.6*vec + 0.4*fts score is below this value are dropped. The
+                default 0.0 keeps every candidate (backward-compatible); raise
+                it to filter weakly-related hits, since the hybrid search would
+                otherwise return the top-k by score even when every candidate
+                is only loosely related.
+            source_types: Optional shape filter on the indexed ``source_type``
+                column (e.g. ["code"] or ["document", "pattern"]). When set,
+                both retrieval legs return only entries of these shapes, so a
+                caller can scope retrieval to the right kind of knowledge
+                without post-filtering. None searches every shape.
+            metadata_filter: Optional entry_metadata predicate. Each (key,
+                value) pair must hold on a candidate: a scalar metadata
+                value matches on equality, a list value (e.g. ``entities``)
+                matches when the value is a member. Applied to the hybrid
+                candidate set before ranking, so a caller can scope to, say,
+                {"entities": "CVE-2024-1234"}. None applies no predicate.
             session: Optional external session.
 
         Returns:
@@ -221,7 +1059,8 @@ class KnowledgeService:
         query_embedding = self.embed(query)
         candidate_limit = limit * 10
 
-        async with _session_or_new(session) as (sess, owns):
+        async with _session_or_new(session, self._team_context) as (sess, owns):
+            await sess.exec(text(f"SET LOCAL hnsw.ef_search = {_HNSW_EF_SEARCH}"))
             # Build namespace filter
             ns_filters = self._build_namespace_filters(namespaces, namespace_patterns)
 
@@ -234,11 +1073,16 @@ class KnowledgeService:
                     KnowledgeEntryRecord.namespace,
                     KnowledgeEntryRecord.embedding.cosine_distance(query_embedding).label("distance"),
                 )
+                .where(KnowledgeEntryRecord.embedding.is_not(None))
                 .order_by(KnowledgeEntryRecord.embedding.cosine_distance(query_embedding))
                 .limit(candidate_limit)
             )
             if ns_filters is not None:
                 vec_stmt = vec_stmt.where(ns_filters)
+            if source_types:
+                vec_stmt = vec_stmt.where(
+                    KnowledgeEntryRecord.source_type.in_(source_types),
+                )
             vec_rows = (await sess.exec(vec_stmt)).all()
 
             # --- FTS leg: PostgreSQL tsvector + plainto_tsquery ---
@@ -254,6 +1098,10 @@ class KnowledgeService:
             )
             if ns_filters is not None:
                 fts_stmt = fts_stmt.where(ns_filters)
+            if source_types:
+                fts_stmt = fts_stmt.where(
+                    KnowledgeEntryRecord.source_type.in_(source_types),
+                )
             fts_rows = (await sess.exec(fts_stmt)).all()
 
             # Build lookup maps
@@ -284,50 +1132,238 @@ class KnowledgeService:
                     for r in content_rows
                 }
 
-        # Merge by record ID (outside transaction)
-        all_ids = set(vec_map) | set(fts_map)
-        merged: list[dict] = []
-        for entry_id in all_ids:
-            vec_info = vec_map.get(entry_id)
-            fts_rank = fts_map.get(entry_id)
+        if metadata_filter:
+            vec_map = {
+                i: v for i, v in vec_map.items()
+                if _metadata_matches(v.get("entry_metadata"), metadata_filter)
+            }
+            fts_content_map = {
+                i: v for i, v in fts_content_map.items()
+                if _metadata_matches(v.get("entry_metadata"), metadata_filter)
+            }
+            allowed = set(vec_map) | set(fts_content_map)
+            fts_map = {i: r for i, r in fts_map.items() if i in allowed}
 
-            vec_score = 1.0 - (vec_info["distance"] / 2.0) if vec_info is not None else 0.0
-            fts_score = min(float(fts_rank), 1.0) if fts_rank is not None else 0.0
-            combined = 0.6 * vec_score + 0.4 * fts_score
+        # Merge, floor, and rank outside the transaction (pure, unit-testable).
+        return _merge_and_rank(vec_map, fts_map, fts_content_map, limit, min_score)
 
-            if vec_info is not None and fts_rank is not None:
-                source = "hybrid"
-            elif vec_info is not None:
-                source = "vec_only"
-            else:
-                source = "fts_only"
+    async def _resolve_trust_decay_config(self) -> tuple[float, float]:
+        """Resolve the Phase 5 ranking knobs via ConfigRegistry.
 
-            if vec_info is not None:
-                content = vec_info["content"]
-                entry_metadata = vec_info["entry_metadata"]
-                ns = vec_info["namespace"]
-            elif entry_id in fts_content_map:
-                content = fts_content_map[entry_id]["content"]
-                entry_metadata = fts_content_map[entry_id]["entry_metadata"]
-                ns = fts_content_map[entry_id]["namespace"]
-            else:
-                content = ""
-                entry_metadata = "{}"
-                ns = ""
+        Returns ``(target_derived_weight, decay_half_life_hours)``. Both
+        default to a no-op (1.0, 0.0) so a fresh install, a bad DB row, or a
+        registry read failure leaves retrieval ranking unchanged rather than
+        silently degrading it.
+        """
+        try:
+            registry = ConfigRegistry()
+            raw_weight = await registry.get(
+                "platform", "knowledge_target_derived_weight"
+            )
+            raw_half_life = await registry.get(
+                "platform", "knowledge_decay_half_life_hours"
+            )
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
+            _log.debug(
+                "trust/decay config read failed; using no-op defaults: %s", exc,
+            )
+            return (1.0, 0.0)
+        weight = 1.0
+        half_life = 0.0
+        if raw_weight is not None:
+            try:
+                weight = float(raw_weight)
+            except (TypeError, ValueError):
+                weight = 1.0
+        if raw_half_life is not None:
+            try:
+                half_life = float(raw_half_life)
+            except (TypeError, ValueError):
+                half_life = 0.0
+        return (weight, half_life)
 
-            merged.append({
-                "id": entry_id,
-                "content": content,
-                "metadata": json.loads(entry_metadata or "{}"),
-                "score": round(combined, 6),
-                "vec_score": round(vec_score, 6),
-                "fts_score": round(fts_score, 6),
-                "source": source,
-                "namespace": ns,
-            })
+    async def retrieve_routed(
+        self,
+        query: str,
+        *,
+        route: Any | None = None,
+        limit: int = 10,
+        min_score: float = 0.0,
+        namespaces: list[str] | None = None,
+        namespace_patterns: list[str] | None = None,
+        max_hops: int | None = None,
+        graph_seed_limit: int = 1,
+        session: AsyncSession | None = None,
+        journal_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Adaptive RFC-12 retrieval entrypoint.
 
-        merged.sort(key=lambda r: r["score"], reverse=True)
-        return merged[:limit]
+        Classifies the query (or accepts an explicit ``route`` override)
+        and dispatches to one of three paths -- stable-core CAG, the
+        existing hybrid ``retrieve``, or the graph traversal. Every hit
+        the caller sees passes through :func:`apply_gate` so the
+        ``sanitized_content`` / ``classification`` / ``provenance``
+        fields are guaranteed on the result regardless of which path
+        served the request. The wrapping dict names the chosen ``route``
+        and (for the graph path) the ``hop_bound`` that shaped the
+        traversal so the tool caller can surface both in its own return
+        payload.
+
+        The ``simple`` path calls :meth:`retrieve` unchanged and only
+        overlays the gate + provenance fields; a caller that goes
+        through the raw :meth:`retrieve` API keeps its byte-identical
+        result shape.
+        """
+        from .knowledge_gate import apply_gate, apply_gate_many
+        from .knowledge_graph import DEFAULT_MAX_HOPS, KnowledgeGraph
+        from .knowledge_router import KnowledgeRouter, Route
+        from .knowledge_stable_core import STABLE_CORE_TOKEN_PREFIX
+
+        chosen: Route
+        if route is None:
+            chosen = KnowledgeRouter().classify(query)
+        elif isinstance(route, Route):
+            chosen = route
+        else:
+            chosen = Route(str(route))
+
+        hop_bound: int | None = None
+
+        if chosen is Route.STABLE_CORE:
+            entries = await _STABLE_CORE_CACHE.entries(session=session)
+            matched = _stable_core_match(query, entries, limit)
+            hits = [
+                _stable_core_hit(entry, index)
+                for index, entry in enumerate(matched)
+            ]
+            gated = [
+                apply_gate(hit, entry_row=entry)
+                for hit, entry in zip(hits, matched, strict=False)
+            ]
+        elif chosen is Route.GRAPH:
+            hop_bound = int(max_hops) if max_hops is not None else DEFAULT_MAX_HOPS
+            # Seed the traversal with a focused hybrid lookup so the
+            # BFS entrypoints stay small; the RFC's graph path is
+            # \"given a seed match, follow edges N hops\", singular,
+            # not a wide fan-out. A caller wanting a broader entry
+            # set passes an explicit ``graph_seed_limit`` value.
+            seed_limit = max(1, min(int(graph_seed_limit), limit))
+            seed_hits = await self.retrieve(
+                query=query,
+                namespaces=namespaces,
+                namespace_patterns=namespace_patterns,
+                limit=seed_limit,
+                min_score=min_score,
+                session=session,
+            )
+            seed_ids = [int(h["id"]) for h in seed_hits if h.get("id") is not None]
+            traversal: list[dict[str, Any]] = []
+            if seed_ids:
+                traversal = list(
+                    await KnowledgeGraph().traverse(
+                        seeds=seed_ids,
+                        max_hops=hop_bound,
+                        session=session,
+                    ),
+                )
+            gated = [
+                apply_gate(_graph_hit(node), entry_row=node)
+                for node in traversal[:limit]
+            ]
+        else:
+            hits = await self.retrieve(
+                query=query,
+                namespaces=namespaces,
+                namespace_patterns=namespace_patterns,
+                limit=limit,
+                min_score=min_score,
+                session=session,
+            )
+            rows_by_id = await self._hydrate_provenance_rows(
+                [int(h["id"]) for h in hits],
+                session=session,
+            )
+            gated = apply_gate_many(hits, entry_rows=rows_by_id)
+
+        # RFC-12 Phase 5: config-gated trust weight + temporal decay, applied
+        # after the gate so it never touches the _merge_and_rank contract. The
+        # default config (weight 1.0, half-life 0) skips this entirely, so the
+        # shipped ranking is unchanged until an operator opts in and validates
+        # the change against the retrieval eval.
+        weight, half_life = await self._resolve_trust_decay_config()
+        if weight != 1.0 or half_life > 0:
+            gated = _apply_trust_decay(
+                gated,
+                target_derived_weight=weight,
+                decay_half_life_hours=half_life,
+                floor=min_score,
+                now=utc_now(),
+            )
+
+        result = {
+            "status": "retrieved",
+            "route": chosen.value,
+            "query": query.replace(STABLE_CORE_TOKEN_PREFIX, "", 1).strip()
+                if query.lower().startswith(STABLE_CORE_TOKEN_PREFIX)
+                else query,
+            "count": len(gated),
+            "results": gated,
+            "hop_bound": hop_bound,
+        }
+        # RFC-12 Phase 5 (ASI06): journal what an investigation retrieved so a
+        # finding can cite the prior knowledge that informed it. Only fires
+        # when the caller supplies investigation context; best-effort, never
+        # breaks retrieval.
+        if journal_context:
+            await _journal_retrieval(
+                route=chosen.value,
+                query=query,
+                min_score=min_score,
+                namespaces=namespaces,
+                gated=gated,
+                journal_context=journal_context,
+                session=session,
+            )
+        return result
+
+    async def _hydrate_provenance_rows(
+        self,
+        ids: list[int],
+        session: AsyncSession | None = None,
+    ) -> dict[int, dict[str, Any]]:
+        """Return an ``id -> row-fields`` map for the hits fed to the gate.
+
+        The plain :meth:`retrieve` result carries content + namespace
+        + score, not the provenance columns; the gate needs
+        ``model_id`` / ``content_hash`` / ``source_type`` / timestamps
+        to stamp its ``provenance`` sub-dict. Loading them in a single
+        WHERE-IN keeps the overlay cost bounded regardless of the
+        result limit.
+        """
+        if not ids:
+            return {}
+        async with _session_or_new(session, self._team_context) as (sess, _owns):
+            stmt = select(
+                KnowledgeEntryRecord.id,
+                KnowledgeEntryRecord.namespace,
+                KnowledgeEntryRecord.model_id,
+                KnowledgeEntryRecord.content_hash,
+                KnowledgeEntryRecord.source_type,
+                KnowledgeEntryRecord.created_at,
+                KnowledgeEntryRecord.updated_at,
+            ).where(KnowledgeEntryRecord.id.in_(ids))
+            rows = (await sess.exec(stmt)).all()
+        return {
+            int(r.id): {
+                "namespace": r.namespace,
+                "model_id": r.model_id,
+                "content_hash": r.content_hash,
+                "source_type": r.source_type,
+                "created_at": r.created_at,
+                "updated_at": r.updated_at,
+            }
+            for r in rows
+        }
 
     async def delete(
         self,
@@ -342,7 +1378,7 @@ class KnowledgeService:
         """
         from sqlalchemy import delete as sa_delete
 
-        async with _session_or_new(session) as (sess, owns):
+        async with _session_or_new(session, self._team_context) as (sess, owns):
             conditions = [KnowledgeEntryRecord.namespace == namespace]
             if entry_id is not None:
                 conditions.append(KnowledgeEntryRecord.id == entry_id)

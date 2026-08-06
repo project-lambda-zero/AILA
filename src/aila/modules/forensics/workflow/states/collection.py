@@ -5,14 +5,26 @@ Thin orchestrator: validates input, dispatches to per-lane collectors in
 every meaningful boundary (collection start, per-lane start/done, per-file
 start/done, per-file error). The heavy lifting (OS detection, query
 execution, Volatility plugin runs) lives in the lane-specific modules.
+
+Collection timeout wiring: the outer ``StateSpec.timeout_s`` is baked at
+import time from ``ForensicsConfigSchema.collection_timeout_seconds``'s
+default (a frozen dataclass field the engine reads to wrap the handler in
+``asyncio.wait_for``). To honour an operator override via ConfigRegistry
+without rebuilding WorkflowDefinition per run, this handler applies its
+own inner ``asyncio.wait_for`` around the collection body with the
+registry-resolved value. When no override is set the schema default (also
+3600.0) makes the inner and outer caps equal, so behaviour is preserved.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
 
+from aila.modules.forensics.config_schema import ForensicsConfigSchema
 from aila.platform.exceptions import AILAError
+from aila.storage.registry import ConfigRegistry
 
 from .collectors import (
     collect_binary_analysis_artifacts,
@@ -90,6 +102,28 @@ def _file_matches_lane(f: dict[str, Any], lane: str) -> bool:
     return etype in _LANE_EVIDENCE_TYPES.get(lane, set())
 
 
+async def _read_collection_timeout_seconds() -> float:
+    """Resolve forensics.collection_timeout_seconds via ConfigRegistry.
+
+    Falls back to the ForensicsConfigSchema field default on registry
+    read failure or non-numeric value so a transient DB blip never
+    replaces a bounded timeout with 0 (which would fire instantly).
+    """
+    default = float(ForensicsConfigSchema.model_fields["collection_timeout_seconds"].default)
+    try:
+        raw = await ConfigRegistry().get("forensics", "collection_timeout_seconds")
+    except (OSError, RuntimeError, AILAError) as exc:
+        _log.warning("forensics.collection_timeout_seconds registry read failed (%s); using default %.2f", exc, default)
+        return default
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        _log.warning("forensics.collection_timeout_seconds config value %r not coercible to float; using default %.2f", raw, default)
+        return default
+
+
 async def state_collection(
     input: dict[str, Any],
     services: Any,
@@ -99,6 +133,18 @@ async def state_collection(
     Emits: collection_start, lane_start, file_start, file_done, file_error,
     lane_done, collection_done -- so the xray log reflects the full graph.
     """
+    timeout_seconds = await _read_collection_timeout_seconds()
+    return await asyncio.wait_for(
+        _state_collection_body(input, services),
+        timeout=timeout_seconds,
+    )
+
+
+async def _state_collection_body(
+    input: dict[str, Any],
+    services: Any,
+) -> dict[str, Any]:
+    """Actual collection loop, invoked under the ConfigRegistry-resolved timeout."""
     project_id = input.get("project_id", "")
     active_lanes = input.get("active_lanes", [])
     evidence_files = input.get("evidence_files", [])

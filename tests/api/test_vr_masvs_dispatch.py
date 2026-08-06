@@ -295,6 +295,13 @@ async def test_dispatch_submits_each_child_to_vr_queue(
         return stub_queue
 
     monkeypatch.setattr(deps_module, "get_task_queue", _stub_get_task_queue)
+    # Commit 0025b93 ("batch APK MASVS audits") caps per-tick fan-out at
+    # MASVS_AUDIT_BATCH_SIZE (default 5) for android_apk targets. Raise
+    # the cap for this test so the D-2 invariant ("every child id lands
+    # in the vr queue on the initial dispatch") is exercised end-to-end
+    # rather than partially. Steady-state batching is exercised by the
+    # parent reconciler suite.
+    monkeypatch.setenv("MASVS_AUDIT_BATCH_SIZE", "999")
 
     target_id = await _insert_android_apk_target(
         slug="d2-submits", with_static_summary=True,

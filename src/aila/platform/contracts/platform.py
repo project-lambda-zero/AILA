@@ -12,6 +12,26 @@ if TYPE_CHECKING:
     from aila.platform.modules.protocol import ModuleCapabilityProfile
     from aila.platform.tasks.models import TaskHandle
 
+__all__ = [
+    "PLATFORM_CONFIG_KEY_REDIS_URL",
+    "PLATFORM_CONFIG_NS",
+    "AddIntegrationPayload",
+    "AsyncTaskQueue",
+    "DeleteIntegrationsPayload",
+    "ExecuteRemoteCommandPayload",
+    "ProgressUpdate",
+    "RegisteredSystem",
+    "RegistryResponse",
+    "RemoteCommandSelection",
+    "RouteCandidate",
+    "RouteDecision",
+    "RoutedCandidate",
+    "RoutingCandidateProfile",
+    "RoutingSelection",
+    "SSHIntegrationInput",
+    "WorkflowEvent",
+]
+
 
 # ---------------------------------------------------------------------------
 # Platform config constants -- public re-exports for modules
@@ -112,7 +132,16 @@ class RegisteredSystem(SSHIntegrationInput):
 
     Extends SSHIntegrationInput with the database-assigned id and timestamps.
     Used as the read shape from SystemRegistryTool list/get actions.
+
+    Unlike the write payload, this read shape sets ``extra="ignore"``: it is
+    constructed from ORM rows that carry columns the contract does not declare
+    (team_id, private_key_secret_id, and any future column). Inheriting the
+    parent's ``extra="forbid"`` would raise at response-serialization time on
+    the next migration that adds a column (issue #54/#61). The write payload
+    keeps ``forbid`` so agents cannot smuggle undeclared fields.
     """
+
+    model_config = ConfigDict(extra="ignore")
 
     id: int | None = None
     created_at: datetime | None = None

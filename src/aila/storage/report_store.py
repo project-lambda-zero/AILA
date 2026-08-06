@@ -11,13 +11,21 @@ environments cannot expand home-directory paths, so a clear ValueError is
 preferable to a silent OSError downstream.
 
 Pruning: artifact records for a run are deleted and recreated on each
-persist_run_bundle() call.  Old filesystem files are not deleted -- that is left
-to a separate pruning policy (not yet implemented).
+persist_run_bundle() call.  Old filesystem files under ``settings.report_dir``
+are swept by :func:`purge_expired_report_files`, wired into the platform
+reaper cron next to the idempotency-cache / confidence-drift purges. Files
+older than ``retention_days`` (default 90; override via the
+``AILA_REPORT_FILE_RETENTION_DAYS`` env var) are unlinked; DB records
+referencing them are left alone since ``ReportArtifactStore.load_run_bundle``
+already tolerates missing files by returning ``None`` for the content fields.
 """
 
 from __future__ import annotations
 
 import json
+import logging
+import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,6 +35,21 @@ from aila.platform.contracts.reporting import normalize_report_summary_payload
 
 from ..platform.contracts.reporting import TargetReportReference
 from .db_models import ReportArtifactRecord
+
+_log = logging.getLogger(__name__)
+
+# Retention window default for on-disk report artifacts. Mirrors the
+# module-constant style used by ``aila.platform.llm.drift`` /
+# ``aila.platform.llm.idempotency_cache``: a plain module scalar that the
+# reaper cron resolves once at import. The env override matches the
+# platform-worker convention (worker.py reads env vars at module scope and
+# falls back to the numeric default on parse failure).
+try:
+    _DEFAULT_REPORT_RETENTION_DAYS: int = int(
+        os.environ.get("AILA_REPORT_FILE_RETENTION_DAYS", "90"),
+    )
+except ValueError:
+    _DEFAULT_REPORT_RETENTION_DAYS = 90
 
 
 @dataclass(slots=True)
@@ -363,3 +386,86 @@ class ReportArtifactStore:
             path=path_str,
             content=path_str,
         )
+
+
+async def purge_expired_report_files(
+    retention_days: int = _DEFAULT_REPORT_RETENTION_DAYS,
+) -> int:
+    """Unlink on-disk report files older than ``retention_days`` (by mtime).
+
+    Report artifacts are written flat under ``settings.report_dir`` by
+    :class:`aila.platform.tools.reporting.ReportWriteTool`: one CSV, one
+    ``.summary.json``, one ``.rows.json`` per run plus per-target variants.
+    DB rows in ``ReportArtifactRecord`` are recreated on each
+    :meth:`ReportArtifactStore.persist_run_bundle` call, but the disk
+    files accumulate forever without a sweep. This function walks the
+    top-level of ``report_dir`` and unlinks every regular file whose
+    mtime is older than the cutoff.
+
+    The sweep is deliberately shallow (``iterdir`` -- no recursion): the
+    report tool writes only into the root of ``report_dir`` and any
+    subdirectories are treated as operator-owned and left alone. Symlinks
+    that resolve to a directory are also skipped for the same reason.
+
+    Best-effort in the drift / idempotency-cache style: any ``OSError``
+    encountered while stat-ing or unlinking a single file is logged at
+    WARNING and the walk continues so one unreadable entry cannot block
+    the whole tick. Returns the count of files actually deleted (never
+    negative).
+
+    Wired into ``aila.platform.tasks.worker.reaper`` alongside
+    :func:`aila.platform.llm.idempotency_cache.run_purge_expired_cron`
+    and :func:`aila.platform.llm.drift.run_purge_old_records_cron`.
+
+    Args:
+        retention_days: Maximum file age in days. Files with mtime older
+            than ``now - retention_days`` are removed. Callers may
+            override the module default (env-driven,
+            ``AILA_REPORT_FILE_RETENTION_DAYS``) per-call.
+
+    Returns:
+        Count of files unlinked. ``0`` when the directory is missing,
+        when nothing is past the cutoff, or when the top-level iteration
+        itself fails (logged at WARNING).
+    """
+    # Local import: ``aila.config`` pulls the platform settings singleton;
+    # importing at module scope would force every consumer of the report
+    # store to eagerly resolve settings (and mkdir the report dir) at
+    # import time. Keep the surface narrow -- the purge is the only
+    # settings consumer in this module.
+    from aila.config import get_settings
+
+    report_dir: Path = get_settings().report_dir
+    if not report_dir.exists() or not report_dir.is_dir():
+        return 0
+
+    cutoff = time.time() - (retention_days * 86400)
+    deleted = 0
+    try:
+        entries = list(report_dir.iterdir())
+    except OSError as exc:
+        _log.warning(
+            "report-file purge: failed to iterate %s: %s", report_dir, exc,
+        )
+        return 0
+
+    for entry in entries:
+        try:
+            # ``is_file`` follows symlinks; a symlink to a directory
+            # returns False so directories are skipped by the same
+            # check. A broken symlink also returns False -- fine, leave
+            # it for the operator.
+            if not entry.is_file():
+                continue
+            if entry.stat().st_mtime >= cutoff:
+                continue
+            entry.unlink()
+            deleted += 1
+        except OSError as exc:
+            # Per-file best-effort: one unreadable / locked file must
+            # not abort the sweep. Log and move on.
+            _log.warning(
+                "report-file purge: failed to unlink %s: %s", entry, exc,
+            )
+            continue
+    return deleted

@@ -18,13 +18,21 @@ output even if persistence flapped.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+from pathlib import Path
 from typing import Any
 
 from aila.modules.vr.contracts.finding import CrashType
 from aila.modules.vr.db_models import VRFindingRecord
 from aila.platform.exceptions import AILAError
+from aila.platform.llm.correlation import (
+    correlation_scope,
+    current_join_keys,
+    current_prompt_version,
+)
+from aila.platform.prompts import PromptRegistry
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import StateResult
 
@@ -32,16 +40,20 @@ __all__ = ["state_advisory"]
 
 _log = logging.getLogger(__name__)
 
-_NARRATIVE_SYSTEM = """You are writing a coordinated-disclosure advisory \
-for a confirmed N-day vulnerability. Return ONE JSON object exactly:
-{
-  "summary": "2-3 sentence non-technical description",
-  "technical_details": "deep technical explanation of root cause and trigger",
-  "impact": "what an attacker gains; bounded by the crash primitive",
-  "remediation": "concrete upgrade / mitigation guidance"
-}
-Do not invent CVE numbers. Do not include CVSS strings; the harness \
-computes those separately."""
+_PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
+_PROMPT_REGISTRY = PromptRegistry(
+    _PROMPT_DIR, fallback_base="system_advisory_narrative.md",
+)
+
+
+def _load_narrative_prompt() -> str:
+    """Return the advisory-narrative system prompt from the registry.
+
+    RFC-09 criterion 1: prompt lives in a versionable ``.md`` file, not
+    inline. Reads ``system_advisory_narrative.md`` under the VR workflow
+    prompts directory.
+    """
+    return _PROMPT_REGISTRY.load("advisory_narrative")
 
 
 def _resolve_crash_type(
@@ -74,15 +86,27 @@ async def _llm_narrative(
         "poc_status": (poc or {}).get("status"),
         "poc_reliability": (poc or {}).get("reliability"),
     })
+    system_prompt = _load_narrative_prompt()
+    # RFC-09 criterion 2: stamp the resolved system prompt's content hash
+    # so this LLM call's LLMCostRecord / AuditSealRecord attribute back to
+    # the exact prompt template that produced the narrative. Preserve any
+    # outer investigation/branch/turn attribution.
+    prompt_hash = hashlib.sha256(system_prompt.encode("utf-8")).hexdigest()
+    _inv, _br, _turn = current_join_keys()
     try:
-        response = await services.llm_client.chat(
-            task_type="vulnerability_research",
-            messages=[
-                {"role": "system", "content": _NARRATIVE_SYSTEM},
-                {"role": "user", "content": user},
-            ],
-            run_id=services.run_id,
-        )
+        with correlation_scope(
+            investigation_id=_inv, branch_id=_br, turn_number=_turn,
+            prompt_content_hash=prompt_hash,
+            prompt_version=current_prompt_version(),
+        ):
+            response = await services.llm_client.chat(
+                task_type="vulnerability_research",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user},
+                ],
+                run_id=services.run_id,
+            )
         if response.disabled:
             raise RuntimeError("LLM disabled")
         raw = response.content or "{}"

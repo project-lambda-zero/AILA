@@ -63,14 +63,14 @@ class FakeRegistry:
         if overrides:
             self._data.update(overrides)
 
-    def get(self, namespace: str, key: str) -> object:
+    async def get(self, namespace: str, key: str) -> object:
         return self._data.get(f"{namespace}.{key}")
 
 
 class FakeSecretStore:
     """Uses OPENAI_API_KEY from environment."""
 
-    def resolve_provider_secret(self, secret_key: str) -> str | None:
+    async def resolve_provider_secret(self, secret_key: str) -> str | None:
         if secret_key == "openai_api_key":
             return os.environ.get("OPENAI_API_KEY")
         return None

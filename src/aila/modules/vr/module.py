@@ -19,7 +19,12 @@ if TYPE_CHECKING:
 
 from aila.config import Settings
 from aila.modules.vr.services.mcp_call_logger import record_call
-from aila.platform.contracts._common import JsonObject
+from aila.platform.contracts import JsonObject
+from aila.platform.contracts.reasoning import (
+    ReasoningDomainProfile,
+    ReasoningStrategyDeclaration,
+)
+from aila.platform.mcp import default_capability_registry
 from aila.platform.modules import (
     ModuleCapabilityProfile,
     ModuleContext,
@@ -37,6 +42,7 @@ from .runtime import VRRuntime
 from .services.branch_reaper import sweep_orphan_active_branches
 from .services.stage_tracker import reap_stuck_stages
 from .services.stall_recovery import sweep_stalled_investigations
+from .services.stuck_healer import sweep_stuck_investigations
 from .tool_keys import (
     ALL_TOOL_KEYS,
     TOOL_ADVISORY_BUILDER,
@@ -66,6 +72,86 @@ class VRModule(ModuleProtocol):
 
     module_id = MODULE_ID
     nday_action_id = NDAY_ACTION_ID
+
+    def reasoning_strategies(self) -> list[ReasoningStrategyDeclaration]:
+        """Reasoning strategy families this module owns (RFC-05 d)."""
+        return [
+            ReasoningStrategyDeclaration(
+                family="vulnerability_research",
+                task_type="vulnerability_research",
+                description="Exploitability, advisory, and remediation reasoning.",
+                match_priority=20,
+                match_keywords=[
+                    "cve",
+                    "cvss",
+                    "advisory",
+                    "package version",
+                    "exploitability",
+                    "kev",
+                    "epss",
+                ],
+            ),
+            ReasoningStrategyDeclaration(
+                family="web_pentest",
+                task_type="web_pentest",
+                description="Web application attack-path reasoning.",
+                match_priority=60,
+                match_keywords=[
+                    "xss",
+                    "sqli",
+                    "idor",
+                    "csrf",
+                    "jwt",
+                    "token",
+                    "auth bypass",
+                    "request",
+                    "response",
+                    "endpoint",
+                    "burp",
+                ],
+            ),
+            ReasoningStrategyDeclaration(
+                family="mobile_reverse",
+                task_type="mobile_reverse",
+                description="Mobile app reverse-engineering and threat analysis.",
+                match_priority=10,
+                match_keywords=[
+                    "apk",
+                    "ipa",
+                    "android",
+                    "ios",
+                    "mobile",
+                    "dexclassloader",
+                    "manifest",
+                ],
+            ),
+        ]
+
+    def reasoning_domain_profiles(self) -> list[ReasoningDomainProfile]:
+        """Reasoning domain profiles this module owns (RFC-05 d)."""
+        return [
+            ReasoningDomainProfile(
+                domain_id="vulnerability_research",
+                task_type="vulnerability_research",
+                description="Exploitability, advisories, versions, and remediation reasoning.",
+                allowed_strategies=["vulnerability_research", "generic"],
+                default_strategy="vulnerability_research",
+            ),
+            ReasoningDomainProfile(
+                domain_id="web_pentest",
+                task_type="web_pentest",
+                description="Attack-path and web application security reasoning.",
+                allowed_strategies=["web_pentest", "network_forensics", "generic"],
+                default_strategy="web_pentest",
+            ),
+            ReasoningDomainProfile(
+                domain_id="mobile_reverse",
+                task_type="mobile_reverse",
+                description="APK/IPA reverse engineering and mobile app threat analysis.",
+                allowed_strategies=["mobile_reverse", "malware_static", "generic"],
+                default_strategy="mobile_reverse",
+            ),
+        ]
 
     def capability_profiles(self) -> list[ModuleCapabilityProfile]:
         """Return capability profiles advertising this module to the routing agent."""
@@ -103,7 +189,7 @@ class VRModule(ModuleProtocol):
         """Register VR tables, config schema, and tool instances.
 
         Tool construction is dependency-ordered: PatchDifferTool composes the
-        already-built IDABridgeTool so we instantiate the bridge first and
+        already-built IDA bridge so we instantiate the bridge first and
         thread the same instance into the differ.
         """
         if schema_registry is not None:
@@ -118,9 +204,9 @@ class VRModule(ModuleProtocol):
         from aila.modules.vr.tools.crash_triage import CrashTriageTool
         from aila.modules.vr.tools.patch_differ import PatchDifferTool
         from aila.modules.vr.tools.poc_runner import PoCRunnerTool
-        from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
+        from aila.platform.mcp.factory import make_bridge
 
-        ida_bridge = IDABridgeTool(recorder=record_call)
+        ida_bridge = make_bridge("ida_headless", module_id="vr", recorder=record_call)
         tool_registry.register(TOOL_IDA_BRIDGE, ida_bridge)
         tool_registry.register(TOOL_POC_RUNNER, PoCRunnerTool(settings))
         tool_registry.register(TOOL_PATCH_DIFFER, PatchDifferTool(ida_bridge))
@@ -173,7 +259,7 @@ class VRModule(ModuleProtocol):
         """
         from sqlmodel import select
 
-        from aila.platform.contracts._common import utc_now
+        from aila.platform.contracts import utc_now
         from aila.storage.db_models import SeedVersionRecord
 
         existing = (await session.exec(
@@ -189,6 +275,13 @@ class VRModule(ModuleProtocol):
             existing.seeded_at = utc_now()
             session.add(existing)
         await session.commit()
+
+    async def seed_prompts(self) -> int:
+        """RFC-09 activation: seed the VR file-backed prompts into the
+        version store and set production aliases where none exist."""
+        from .agents.vuln_researcher import seed_prompt_versions
+
+        return await seed_prompt_versions()
 
     async def system_summary(self, system_id: int, session: Any) -> dict[str, Any]:
         """VR is not system-scoped today."""
@@ -307,6 +400,17 @@ def _register_vr_periodic_sweeps() -> None:
         "vr.stall_recovery", sweep_stalled_investigations,
     )
 
+    # vr.stuck_healer -- RFC-07 #31 criterion 6. Sibling of
+    # ``vr.stall_recovery``: stall_recovery re-enqueues rows whose tasks
+    # are cursor-agnostic-eligible via the operator-tuned rate model,
+    # while stuck_healer targets the narrower "RUNNING with no live task
+    # AND no resumable cursor" zombie the task-level state reconciler
+    # cannot heal (a crashed / absent cursor gives it nothing to resume
+    # from). Emits a durable ``kind='recovery'`` ledger event per heal
+    # via :func:`ResilienceLayer.emit_recovery_event` so the RFC-07
+    # audit trail carries every automated re-enqueue.
+    register_periodic_sweep("vr.stuck_healer", sweep_stuck_investigations)
+
 
 # Module-load-time registration. _register_vr_periodic_sweeps() is only
 # invoked from create_module(); a `from aila.modules.vr.module import VRModule`
@@ -315,7 +419,26 @@ def _register_vr_periodic_sweeps() -> None:
 # `vr.finalize` sentinel for idempotency).
 
 
+def _declare_vr_mcp_descriptors() -> None:
+    """Publish VR's MCP descriptors to the platform capability registry.
+
+    RFC-11 step 3 -- the module DECLARES its servers by capability so
+    every platform caller can resolve a server BY CAPABILITY, never by
+    module name. Delegated to :func:`services.mcp_registry.descriptors`
+    which adapts the existing ``MCP_SERVERS`` + ``SERVER_CAPABILITY_
+    DEFAULTS`` declaration into the frozen descriptor shape. Idempotent:
+    :meth:`aila.platform.mcp.capability_registry.McpCapabilityRegistry.declare_all`
+    supersedes the previous record per ``(module_scope, name)``.
+    """
+    from .services.mcp_registry import get_descriptors as _vr_mcp_get_descriptors
+
+    default_capability_registry().declare_all(
+        MODULE_ID, _vr_mcp_get_descriptors(),
+    )
+
+
 def create_module() -> ModuleProtocol:
     """Return a new VRModule instance for the platform module loader."""
     _register_vr_periodic_sweeps()
+    _declare_vr_mcp_descriptors()
     return VRModule()

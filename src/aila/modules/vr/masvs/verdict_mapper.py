@@ -34,6 +34,7 @@ assessment) has explicitly contradicted the finding hypothesis.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from aila.modules.vr.contracts.masvs import (
@@ -127,6 +128,7 @@ def child_outcome_to_verdict(
         else _ENUM_CONFIDENCE.get(outcome.confidence, _FINDING_CONFIDENCE_FLOOR)
     )
     agent_summary = _extract_agent_summary(payload)
+    scope, headline, key_points = _extract_synthesis_fields(payload)
 
     # Branch 1 -- explicit not_applicable tag wins over every other
     # signal. The agent has told us the control does not apply to this
@@ -146,6 +148,9 @@ def child_outcome_to_verdict(
             evidence_locations=evidence_locations,
             evidence_locations_total=evidence_locations_total,
             agent_summary=agent_summary,
+            scope=scope,
+            headline=headline,
+            key_points=key_points,
         )
 
     # Branch 2 -- refuted. Either the claim verifier emitted it on a
@@ -162,6 +167,9 @@ def child_outcome_to_verdict(
             evidence_locations=evidence_locations,
             evidence_locations_total=evidence_locations_total,
             agent_summary=agent_summary,
+            scope=scope,
+            headline=headline,
+            key_points=key_points,
         )
 
     # Branch 3 -- direct_finding. Verifier-confirmed dominates the numeric
@@ -182,6 +190,9 @@ def child_outcome_to_verdict(
                 evidence_locations=evidence_locations,
                 evidence_locations_total=evidence_locations_total,
                 agent_summary=agent_summary,
+                scope=scope,
+                headline=headline,
+                key_points=key_points,
             )
         if verifier_verdict == "inconclusive":
             return MasvsControlVerdict(
@@ -194,6 +205,9 @@ def child_outcome_to_verdict(
                 evidence_locations=evidence_locations,
                 evidence_locations_total=evidence_locations_total,
                 agent_summary=agent_summary,
+                scope=scope,
+                headline=headline,
+                key_points=key_points,
             )
         if numeric_conf >= _FINDING_CONFIDENCE_FLOOR:
             return MasvsControlVerdict(
@@ -206,6 +220,9 @@ def child_outcome_to_verdict(
                 evidence_locations=evidence_locations,
                 evidence_locations_total=evidence_locations_total,
                 agent_summary=agent_summary,
+                scope=scope,
+                headline=headline,
+                key_points=key_points,
             )
         return MasvsControlVerdict(
             control_id=control.id,
@@ -217,6 +234,9 @@ def child_outcome_to_verdict(
             evidence_locations=evidence_locations,
             evidence_locations_total=evidence_locations_total,
             agent_summary=agent_summary,
+            scope=scope,
+            headline=headline,
+            key_points=key_points,
         )
 
     # Branch 4 -- fallthrough. Carry the underlying outcome_kind so the
@@ -233,6 +253,9 @@ def child_outcome_to_verdict(
         evidence_locations=evidence_locations,
         evidence_locations_total=evidence_locations_total,
         agent_summary=agent_summary,
+        scope=scope,
+        headline=headline,
+        key_points=key_points,
     )
 
 
@@ -265,6 +288,78 @@ def _extract_agent_summary(payload: dict[str, Any], cap_chars: int = 3500) -> st
         if idx >= cap_chars * 0.6:  # only accept a boundary in the last 40% of the window
             return text[: idx + len(sep)].rstrip() + " …"
     return window.rstrip() + " …"
+
+
+# Hard cap on bullets copied from ``panel_summary.points_of_agreement`` +
+# ``points_of_disagreement`` onto the verdict's ``key_points``. Mirrors
+# the ``MasvsControlVerdict.key_points`` ``max_length=12`` contract
+# bound so a malformed / oversized synthesis payload cannot bloat the
+# aggregate row or overflow the PDF per-control subsection.
+_KEY_POINTS_CAP: int = 12
+
+
+def _extract_synthesis_fields(
+    payload: Mapping[str, Any],
+) -> tuple[str | None, str | None, list[str]]:
+    """Read the child outcome's ``panel_summary`` into the three fields
+    the aggregate row surfaces: ``scope``, ``headline``, and the
+    ``key_points`` bullet list.
+
+    The synthesis agent (:mod:`aila.modules.vr.agents.synthesis_agent`)
+    writes ``panel_summary`` on the canonical outcome payload with the
+    keys ``scope`` / ``headline_verdict`` / ``points_of_agreement`` /
+    ``points_of_disagreement`` / ``unresolved_questions`` /
+    ``recommended_next_actions``. This helper reads the first three so
+    the mapper can surface them on every :class:`MasvsControlVerdict`
+    without the aggregate re-synthesising anything.
+
+    Returns ``(None, None, [])`` when ``payload['panel_summary']`` is
+    absent or not a mapping (historical outcomes committed before the
+    synthesis surface existed). Points-of-disagreement bullets are
+    prefixed with ``'Disagreement: '`` so the reader can tell consensus
+    points from panel dissent at a glance; the combined list is
+    truncated to :data:`_KEY_POINTS_CAP` entries (matching the contract
+    field bound).
+    """
+    panel_summary = payload.get("panel_summary")
+    if not isinstance(panel_summary, Mapping):
+        return None, None, []
+
+    scope_raw = panel_summary.get("scope")
+    scope: str | None = None
+    if isinstance(scope_raw, str):
+        stripped = scope_raw.strip()
+        if stripped:
+            scope = stripped
+
+    headline_raw = panel_summary.get("headline_verdict")
+    headline: str | None = None
+    if isinstance(headline_raw, str):
+        stripped = headline_raw.strip()
+        if stripped:
+            headline = stripped
+
+    key_points: list[str] = []
+    agreements = panel_summary.get("points_of_agreement")
+    if isinstance(agreements, (list, tuple)):
+        for item in agreements:
+            if len(key_points) >= _KEY_POINTS_CAP:
+                break
+            if isinstance(item, str):
+                text = item.strip()
+                if text:
+                    key_points.append(text)
+    disagreements = panel_summary.get("points_of_disagreement")
+    if isinstance(disagreements, (list, tuple)):
+        for item in disagreements:
+            if len(key_points) >= _KEY_POINTS_CAP:
+                break
+            if isinstance(item, str):
+                text = item.strip()
+                if text:
+                    key_points.append(f"Disagreement: {text}")
+
+    return scope, headline, key_points
 
 
 def _extract_verifier_signal(

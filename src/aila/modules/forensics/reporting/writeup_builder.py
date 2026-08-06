@@ -9,17 +9,40 @@ bounded by the evidence, not by the model's default verbosity style.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from collections import defaultdict
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
+from aila.platform.llm.correlation import (
+    correlation_scope,
+    current_join_keys,
+    current_prompt_version,
+)
+from aila.platform.prompts import PromptRegistry
 from aila.platform.services.factory import ServiceFactory
 
 __all__ = ["build_writeup"]
 
 _log = logging.getLogger(__name__)
+
+_PROMPT_DIR = Path(__file__).parent / "prompts"
+_PROMPT_REGISTRY = PromptRegistry(
+    _PROMPT_DIR, fallback_base="system_writeup.md",
+)
+
+
+def _load_writeup_prompt() -> str:
+    """Return the forensic writeup system prompt from the registry.
+
+    RFC-09 criterion 1: prompt lives in a versionable ``.md`` file next
+    to this reporting module, not inline. Reads ``system_writeup.md``
+    under the forensics reporting prompts directory.
+    """
+    return _PROMPT_REGISTRY.load("writeup")
 
 # Cap the user-message bundle so we do not blow the context window on
 # disk-image cases that produced thousands of artefacts. 32 KB is enough
@@ -30,125 +53,27 @@ _PER_SECTION_CAP = 6_000
 _STEP_STDOUT_CAP = 400
 _STEP_REASONING_CAP = 400
 
+# Hard refusal threshold on the assembled user bundle. If the raw sum of
+# every section exceeds this many chars we refuse rather than silently
+# truncating: Decision 8 -- structurally unanswerable work must be raised
+# to the operator so they can narrow the question. Sits at 4x the soft
+# cap so ordinary large investigations still pass; only a runaway pile
+# of artefacts trips it.
+_BUNDLE_HARD_LIMIT = _USER_BUNDLE_CHAR_CAP * 4
 
-_WRITEUP_SYSTEM_PROMPT = """You are a senior DFIR / malware-analysis engineer writing an incident-response report for a client SOC. The report is graded by a staff-level reviewer AND a CTF organiser; it MUST NOT read like generic LLM output. Every factual claim MUST be traceable to evidence you cite inline by one of: artifact_id, absolute file path, function address (`<function_name>@<0xADDR>`), or a tool-stdout excerpt tagged with the step number that produced it.
+# Post-truncate the LLM response to this many chars. A runaway model can
+# emit multi-MB text that ends up in a Postgres TEXT column and a
+# WeasyPrint PDF render; the marker below lets downstream consumers
+# detect truncation instead of silently rendering half a report.
+_OUTPUT_CHAR_CAP = 64_000
+_OUTPUT_TRUNCATION_MARKER = (
+    "\n\n[...output truncated at 64000 chars; contact operator...]"
+)
 
-# OUTPUT CONTRACT
-
-Write a single Markdown document using EXACTLY the section numbering and headings below. Every section is mandatory. If a section has no findings, write `*No findings in this layer -- see <evidence reference> for why.*` instead of omitting it. Do not add sections the contract does not list. Do not collapse sections into each other.
-
-## 1. Executive Summary
-Three sentences maximum. Who, what, when, where, impact. Cite the primary artefact.
-
-## 2. Investigation Question and Answer
-- **Question** (verbatim from the input).
-- **Answer** (verbatim, matching the answer_format from the contract).
-- **Confidence**: one of `exact`, `strong`, `medium`, `caveated`.
-- **Primary artefact**: artifact_id or absolute path.
-
-## 3. Evidence Inventory
-Markdown table with columns: `name | libmagic type | sha256 | size | path | notes`. One row per evidence file listed in the case bundle.
-
-## 4. File Identification
-Sub-section per binary-like artefact, each with:
-- libmagic description + MIME
-- architecture / bits / endianness
-- MD5 / SHA1 / SHA256 (and imphash when PE)
-- compile timestamp (only when trustworthy)
-- signature state (signed y/n, signer CN if known)
-
-## 5. Strings Analysis
-Filtered, never dumped. Use Markdown tables titled:
-- URLs / domains / IPs / bare hostnames
-- Absolute file paths
-- Registry paths
-- Mutex / event / named-pipe names
-- Crypto references (`AES`, `RC4`, `XOR`, `SHA256`, key literals)
-- Shell / LOLBIN fragments
-
-Each row MUST cite the tool (`strings`, `FLOSS`, `Ghidra`) and either the offset or the function address (`<name>@<0xADDR>`). Cap at 60 rows per table -- include only the most evidence-bearing ones.
-
-## 6. Binary Structure
-- **PE**: machine, sections with entropy flags, top imports grouped by intent, exports, TLS callbacks, overlay presence.
-- **ELF**: class, machine, dynamic symbols, notable sections.
-- **Go binaries**: build-id, module path, stripped y/n.
-
-## 7. Obfuscation & Anti-Analysis
-- Packer (`UPX`, `MPRESS`, `Themida`, `Enigma`, `VMProtect`, `garble`, or `none`).
-- String obfuscation (`XOR`, `base64`, `RC4`, `custom`).
-- Control-flow flattening evidence.
-- Anti-debug / anti-VM primitives -- reference Ghidra's `intent_map.anti_debug` function addresses when the bundle has them.
-
-## 8. Disassembly & Decompilation Highlights
-Work from the pre-collected `ghidra_functions` and `ghidra_decompilation` artefacts in the bundle. List every call-graph root that touches network / crypto / filesystem / process-creation as `<name>@<0xADDR>` with a one-sentence intent. Include 3–8 short pseudocode snippets that directly implement the malicious behaviour; NEVER paste more than 40 lines per snippet.
-
-## 9. Cryptography
-Algorithms identified, keys / IVs / salts extracted, ciphertext path + entropy, plaintext when decoded. Cite the Ghidra function + address for every primitive.
-
-## 10. C2 / Network
-Markdown table: `URL | IP | port | proto | user-agent | JA3 | beacon interval | source_step_or_artifact`. Include encoded C2 keys, XOR campaign obfuscation, and protocol format (HTTP / gRPC / protobuf / custom). Source rows from pcap artefacts AND/OR extracted strings -- cite which.
-
-## 11. MITRE ATT&CK Mapping
-Markdown table: `Tactic | Technique | ID | Evidence`. Include ONLY entries you can cite. Do not pad with speculative techniques.
-
-## 12. Indicators of Compromise
-Fenced code block formatted so an analyst can drop it straight into `iocs.txt`:
-```
-hashes:
-  <artifact>: md5=... sha1=... sha256=...
-network:
-  ip: ...
-  domain: ...
-  url: ...
-filesystem:
-  /path/...
-registry:
-  HKLM\\...\\Value = ...
-names:
-  mutex: ...
-  pipe: ...
-  service: ...
-  task: ...
-```
-
-## 13. CTF Hypothesis Q&A
-6–12 Q/A pairs predicting likely CTF questions. For each pair:
-- **Q**: short natural-language question.
-- **A**: exact expected answer string (matching typical CTF flag / value formats).
-- **Source**: artifact_id / path / `<function>@<0xADDR>`.
-
-Aim for breadth across the 9 phases, not depth on one finding.
-
-## 14. Timeline of Investigator Actions
-Markdown table: `# | action | tool | intent | outcome`. Chronological. One row per investigation step.
-
-## 15. Conclusions & Confidence
-Final verdict, residual unknowns, recommended follow-ups (static-only, offline).
-
-# HARD RULES
-
-- Every claim MUST cite a piece of evidence from the bundle below -- artifact_id, absolute file path, `<function>@<0xADDR>`, or `step #N`. No citation, no claim.
-- Do NOT reference any tool, capability, or workflow that is not listed under TOOL STACK. If something is absent from the bundle, say so plainly under Gaps; do NOT fill the gap with speculation.
-- Do NOT write hedging filler: "typical malware might...", "this is commonly observed", "it is worth noting", "interestingly", "notably". Either cite or omit.
-- Do NOT paste more than 40 lines of code, 60 table rows, or 80 raw strings per section.
-- Use fenced code blocks for commands, pseudocode, hex, and IOC blocks. Use Markdown tables for every list-of-rows section.
-- Pick American OR British English and stay consistent. No emojis. No marketing language.
-- Normalise timestamps to ISO-8601 UTC with second resolution.
-- When you reference a step from the investigator's timeline, cite it as `step #N`.
-
-# TOOL STACK AVAILABLE TO THE INVESTIGATOR
-
-You may reference these in the methodology section; do NOT claim the investigator used a tool whose output is not present in the step log or the artefact bundle:
-
-- dissect.target, dissect.executable, dissect.ntfs, dissect.regf
-- Volatility 3 (`windows.*`, `linux.*`, `mac.*`) with memory-enrichment derivers
-- tshark / Zeek (pcap)
-- Sysinternals strings, FLOSS, capa
-- pefile, python-magic, yara-python, pylnk3
-- Ghidra headless (pre-run by the `binary_analysis` collection lane) emitting `ghidra_functions` and `ghidra_decompilation` artefacts
-- 7-Zip, dnSpyEx, PyInstaller Extractor, signtool
-
-Return ONLY the Markdown report. No prose before or after. No meta-commentary about your own process."""
+# Per-call LLM output ceiling passed to chat(); narrows the routing cap so a
+# runaway writeup response is bounded at the model layer in addition to the
+# post-truncation below.
+_LLM_MAX_OUTPUT_TOKENS = 6_000
 
 
 async def build_writeup(
@@ -274,46 +199,71 @@ async def _generate_writeup_content(
     # Assemble the case bundle the model will reason over. Everything
     # downstream of here is deterministic summarisation of what the
     # investigator actually produced -- no prose, no guesswork.
-    bundle_parts: list[str] = []
-
-    bundle_parts.append(_section_case_header(
-        project_id=project_id,
-        investigation_id=investigation_id,
-        question=question,
-        answer=answer,
-        confidence=confidence,
-        contract=contract,
-        tools_used=tools_used,
-        step_count=len(steps),
-    ))
+    #
+    # Sections are collected as (name, text) so we can hand a per-section
+    # byte breakdown to _check_bundle_size on refusal.
 
     # Pull artefacts snapshot from the project database so the model
     # sees the evidence universe, not just the last 10 steps.
     artefacts_by_family = await _load_artefacts_by_family(project_id)
-    bundle_parts.append(_section_evidence_inventory(artefacts_by_family))
-    bundle_parts.append(_section_artefact_families(artefacts_by_family))
 
-    bundle_parts.append(_section_ghidra_summary(artefacts_by_family))
-    bundle_parts.append(_section_memory_enrich_summary(artefacts_by_family))
-    bundle_parts.append(_section_network_summary(artefacts_by_family))
+    sections: list[tuple[str, str]] = [
+        ("case_header", _section_case_header(
+            project_id=project_id,
+            investigation_id=investigation_id,
+            question=question,
+            answer=answer,
+            confidence=confidence,
+            contract=contract,
+            tools_used=tools_used,
+            step_count=len(steps),
+        )),
+        ("evidence_inventory", _section_evidence_inventory(artefacts_by_family)),
+        ("artefact_families", _section_artefact_families(artefacts_by_family)),
+        ("ghidra_summary", _section_ghidra_summary(artefacts_by_family)),
+        ("memory_enrich", _section_memory_enrich_summary(artefacts_by_family)),
+        ("network_summary", _section_network_summary(artefacts_by_family)),
+        ("observables", _section_observables(observables)),
+        ("hypotheses", _section_hypotheses(hypotheses, rejected)),
+        ("step_log", _section_step_log(steps)),
+    ]
 
-    bundle_parts.append(_section_observables(observables))
-    bundle_parts.append(_section_hypotheses(hypotheses, rejected))
-    bundle_parts.append(_section_step_log(steps))
+    raw_bundle = "\n\n".join(text for _, text in sections)
+    section_sizes = {name: len(text) for name, text in sections}
 
-    user_bundle = _cap_bundle("\n\n".join(bundle_parts), _USER_BUNDLE_CHAR_CAP)
+    # Refuse structurally unanswerable work before we spend LLM tokens
+    # on it (Decision 8). This raises ValueError to the caller with the
+    # per-section byte breakdown so the operator can narrow the question.
+    _check_bundle_size(raw_bundle, section_sizes)
+
+    # Below the hard limit, keep the pre-existing soft cap as a safety
+    # net so the prompt still fits the routed model's context window.
+    user_bundle = _cap_bundle(raw_bundle, _USER_BUNDLE_CHAR_CAP)
 
     client = ServiceFactory().llm_client
-    resp = await client.chat(
-        task_type="forensics_writeup",
-        messages=[
-            {"role": "system", "content": _WRITEUP_SYSTEM_PROMPT},
-            {"role": "user", "content": user_bundle},
-        ],
-    )
+    system_prompt = _load_writeup_prompt()
+    # RFC-09 criterion 2: stamp the resolved system prompt's content hash
+    # so this LLM call's LLMCostRecord + AuditSealRecord attribute back to
+    # the exact writeup prompt template that produced this report. Preserve
+    # any outer investigation attribution so the record still joins back.
+    prompt_hash = hashlib.sha256(system_prompt.encode("utf-8")).hexdigest()
+    _inv, _br, _turn = current_join_keys()
+    with correlation_scope(
+        investigation_id=_inv, branch_id=_br, turn_number=_turn,
+        prompt_content_hash=prompt_hash,
+        prompt_version=current_prompt_version(),
+    ):
+        resp = await client.chat(
+            task_type="forensics_writeup",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_bundle},
+            ],
+            max_output_tokens=_LLM_MAX_OUTPUT_TOKENS,
+        )
     if resp.disabled:
         raise RuntimeError("LLM kill-switch active")
-    return resp.content
+    return _truncate_output(resp.content)
 
 
 # ---------------------------------------------------------------------------
@@ -356,33 +306,37 @@ async def _load_artefacts_by_family(project_id: str) -> dict[str, list[dict[str,
         from aila.modules.forensics.db_models import ArtifactRecord
         from aila.platform.uow import UnitOfWork
 
-        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
         async with UnitOfWork() as uow:
             rows = (await uow.session.exec(
                 select(ArtifactRecord).where(ArtifactRecord.project_id == project_id)
             )).all()
-        for r in rows:
-            family = getattr(r, "family", "unknown") or "unknown"
-            payload = getattr(r, "data", None)
-            if isinstance(payload, str):
-                try:
-                    payload_obj = json.loads(payload)
-                except json.JSONDecodeError:
-                    payload_obj = {}
-            elif isinstance(payload, dict):
-                payload_obj = payload
-            else:
-                payload_obj = {}
-            grouped[family].append({
-                "id": getattr(r, "id", ""),
-                "type": getattr(r, "type", ""),
-                "source_tool": getattr(r, "source_tool", ""),
-                "data": payload_obj,
-            })
-        return dict(grouped)
+        return _group_artefacts(rows)
     except (OSError, RuntimeError, ValueError):
         _log.warning("Failed to load artefacts_by_family for %s", project_id, exc_info=True)
         return {}
+
+
+def _group_artefacts(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
+    """Group ArtifactRecord rows by family, reading the real column names.
+
+    ArtifactRecord stores artifact_family / artifact_type / data_json; the
+    previous loop read phantom attributes (family / type / data), so every
+    row landed under 'unknown' with empty data and writeups rendered blank.
+    """
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for r in rows:
+        family = r.artifact_family or "unknown"
+        try:
+            payload_obj = json.loads(r.data_json) if r.data_json else {}
+        except (json.JSONDecodeError, TypeError):
+            payload_obj = {}
+        grouped[family].append({
+            "id": r.id,
+            "type": r.artifact_type or "",
+            "source_tool": r.source_tool or "",
+            "data": payload_obj,
+        })
+    return dict(grouped)
 
 
 def _section_evidence_inventory(artefacts_by_family: dict[str, list[dict[str, Any]]]) -> str:
@@ -592,7 +546,60 @@ def _cap_section(text: str) -> str:
 def _cap_bundle(text: str, cap: int) -> str:
     if len(text) <= cap:
         return text
-    return text[:cap] + "\n…[bundle truncated to protect context window]…"
+    return text[:cap] + "\n\u2026[bundle truncated to protect context window]\u2026"
+
+
+def _check_bundle_size(
+    bundle: str,
+    section_sizes: dict[str, int] | None = None,
+    *,
+    hard_limit: int = _BUNDLE_HARD_LIMIT,
+) -> None:
+    """Refuse when the assembled user bundle exceeds the hard threshold.
+
+    Decision 8: refuse structurally unanswerable work rather than
+    silently truncating whatever fits into the context window. The
+    error message names the byte overage and, when supplied, the
+    per-section byte breakdown so the operator can narrow the question
+    at the offending sub-report.
+
+    Args:
+        bundle: The joined user-message bundle in bytes-as-chars.
+        section_sizes: Optional {section_name: char_count} rendered into
+            the error message on refusal.
+        hard_limit: The refusal ceiling; injectable for tests.
+
+    Raises:
+        ValueError: When ``len(bundle) > hard_limit``.
+    """
+    size = len(bundle)
+    if size <= hard_limit:
+        return
+    overage = size - hard_limit
+    detail = ""
+    if section_sizes:
+        breakdown = ", ".join(
+            f"{name}={count}"
+            for name, count in sorted(section_sizes.items(), key=lambda kv: -kv[1])
+        )
+        detail = f" per-section chars: {breakdown}."
+    raise ValueError(
+        f"forensics writeup bundle {size} chars exceeds hard limit "
+        f"{hard_limit} chars by {overage}; ask a narrower question.{detail}"
+    )
+
+
+def _truncate_output(content: str, cap: int = _OUTPUT_CHAR_CAP) -> str:
+    """Post-truncate the LLM writeup to ``cap`` chars.
+
+    A shorter string passes through unchanged. When truncation applies,
+    the fixed marker ``_OUTPUT_TRUNCATION_MARKER`` is appended so
+    downstream consumers (PDF rendering, TEXT-column readers) can
+    detect the cut instead of silently rendering half a report.
+    """
+    if len(content) <= cap:
+        return content
+    return content[:cap] + _OUTPUT_TRUNCATION_MARKER
 
 
 def _build_template_writeup(

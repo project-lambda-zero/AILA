@@ -28,9 +28,15 @@ import tempfile
 from pathlib import Path
 
 from aila.config import Settings
+from aila.modules.forensics.services.hash_ledger import (
+    HashMismatchError,
+    verify_file_or_raise,
+)
 from aila.modules.forensics.tools._ssh_helper import get_ssh_service
 from aila.modules.forensics.tools.script_tool import ScriptExecutorTool
+from aila.platform.config_base import ModuleConfigReader
 from aila.platform.exceptions import AILAError
+from aila.platform.services.runtime import run_blocking_io
 
 __all__ = [
     "FileRetrievalError",
@@ -40,23 +46,23 @@ __all__ = [
 
 _log = logging.getLogger(__name__)
 
-# Hard upper bound. Override via ``AILA_FORENSICS_RETRIEVE_MAX_BYTES``.
-_DEFAULT_MAX_BYTES = 500 * 1024 * 1024  # 500 MB
+_cfg = ModuleConfigReader("forensics")
 
 
 class FileRetrievalError(AILAError):
     """Raised when retrieval fails (path missing, too large, permission)."""
 
 
-def _max_retrieve_bytes() -> int:
-    raw = os.environ.get("AILA_FORENSICS_RETRIEVE_MAX_BYTES")
-    if not raw:
-        return _DEFAULT_MAX_BYTES
-    try:
-        value = int(raw)
-    except ValueError:
-        return _DEFAULT_MAX_BYTES
-    return max(1024, value)
+async def _max_retrieve_bytes() -> int:
+    """Resolve the per-retrieval byte cap via ConfigRegistry.
+
+    Default (500 MiB) and per-worker overrides both live on
+    :class:`ForensicsConfigSchema.retrieve_max_bytes`; PUT /config or
+    the ``AILA_FORENSICS_RETRIEVE_MAX_BYTES`` env var lands without a
+    worker restart. The schema pins ``ge=1024`` so a misconfigured
+    value cannot fall below the historical floor.
+    """
+    return await _cfg.get_int("retrieve_max_bytes")
 
 
 def _build_extraction_script(
@@ -564,7 +570,39 @@ async def _run_script_and_pull(
     except (OSError, TimeoutError, RuntimeError, AILAError) as exc:
         _log.warning("analyzer temp cleanup failed: %s", exc)
 
-    return Path(local_path), size, sha256_hex, kind
+    # Finding 58-2: local re-hash of the pulled bytes. The analyzer host
+    # is untrusted per this module's docstring; ``sha256_hex`` is what the
+    # analyzer-side script REPORTED, not proof. Recompute over the bytes
+    # actually delivered and quarantine the local copy on mismatch.
+    # Streamed 1 MB chunk read in a worker thread so a 500 MB acquisition
+    # neither loads into memory nor blocks the event loop.
+    try:
+        verified_sha256 = await run_blocking_io(
+            verify_file_or_raise,
+            Path(local_path),
+            sha256_hex,
+            source=tmp_path_on_analyzer,
+        )
+    except HashMismatchError as exc:
+        _log.warning(
+            "forensic hash mismatch source=%s claimed=%s computed=%s size=%s -- quarantining local copy",
+            tmp_path_on_analyzer,
+            exc.claimed_sha256[:16],
+            exc.computed_sha256[:16],
+            exc.size_bytes,
+        )
+        try:
+            os.unlink(local_path)
+        except OSError:
+            pass
+        raise FileRetrievalError(
+            f"forensic hash mismatch: analyzer reported {exc.claimed_sha256[:16]}..., "
+            f"local recompute {exc.computed_sha256[:16]}...; file quarantined"
+        ) from exc
+
+    # From here on the LOCAL recomputation is the authoritative hash; the
+    # untrusted header value is intentionally discarded.
+    return Path(local_path), size, verified_sha256, kind
 
 
 def _final_basename(source_path: str, kind: str) -> str:
@@ -601,7 +639,7 @@ async def retrieve_file_from_image(
     if not disk_image_path:
         raise FileRetrievalError("disk_image_path must be non-empty.")
 
-    max_bytes = _max_retrieve_bytes()
+    max_bytes = await _max_retrieve_bytes()
     script = _build_extraction_script(
         disk_image_path=disk_image_path,
         virtual_path=virtual_path,
@@ -636,7 +674,7 @@ async def retrieve_from_raw_directory(
     if not target_path.strip():
         raise FileRetrievalError("target_path must be non-empty.")
 
-    max_bytes = _max_retrieve_bytes()
+    max_bytes = await _max_retrieve_bytes()
     script = _build_raw_extraction_script(
         target_path=target_path,
         max_bytes=max_bytes,

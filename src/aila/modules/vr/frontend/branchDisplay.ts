@@ -35,6 +35,12 @@ const PERSONA_LABEL: Record<string, string> = {
   yuki: "Yuki",
   renzo: "Renzo",
   wei: "Wei",
+  // On-demand specialist agents (specialist_registry _BUILTINS "vr").
+  // Named panelists, not capability slugs -- see the backend registry.
+  snake: "Snake",
+  jak: "Jak",
+  kratos: "Kratos",
+  lara: "Lara",
 };
 
 /**

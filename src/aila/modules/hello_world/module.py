@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from aila.config import Settings
-from aila.platform.contracts._common import JsonObject
+from aila.platform.contracts import JsonObject
 from aila.platform.modules import (
     ModuleCapabilityProfile,
     ModuleContext,
@@ -160,7 +160,7 @@ class HelloWorldModule(ModuleProtocol):
             session.add(SeedVersionRecord(module_id=self.module_id, seed_version=SEED_VERSION))
         else:
             existing.seed_version = SEED_VERSION
-            from aila.platform.contracts._common import utc_now
+            from aila.platform.contracts import utc_now
             existing.seeded_at = utc_now()
             session.add(existing)
         await session.commit()

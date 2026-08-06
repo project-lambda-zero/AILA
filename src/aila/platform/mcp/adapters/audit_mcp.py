@@ -621,12 +621,23 @@ def adapt_callees_of(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
 def _audit_taint_summary_lines(paths: list[Any]) -> list[str]:
     lines: list[str] = []
     for p in paths[:MAX_LIST_PREVIEW]:
-        if not isinstance(p, dict):
-            continue
-        src = p.get("source") or p.get("from") or "<src>"
-        sink = p.get("sink") or p.get("to") or "<sink>"
-        hops = p.get("hops") or p.get("length") or len(p.get("path", []) or [])
-        lines.append(f"  - {src} → {sink} ({hops} hop(s))")
+        if isinstance(p, (list, tuple)):
+            # audit-mcp entrypoint_paths / paths_between: a call chain of
+            # qualified function names from the entrypoint to the sink.
+            chain = [str(x) for x in p if x is not None]
+            if not chain:
+                continue
+            rendered = (
+                " → ".join(chain)
+                if len(chain) <= 3
+                else f"{chain[0]} → ... → {chain[-1]}"
+            )
+            lines.append(f"  - {rendered} ({max(len(chain) - 1, 0)} hop(s))")
+        elif isinstance(p, dict):
+            src = p.get("source") or p.get("from") or "<src>"
+            sink = p.get("sink") or p.get("to") or "<sink>"
+            hops = p.get("hops") or p.get("length") or len(p.get("path", []) or [])
+            lines.append(f"  - {src} → {sink} ({hops} hop(s))")
     if len(paths) > MAX_LIST_PREVIEW:
         lines.append(f"  ... and {len(paths) - MAX_LIST_PREVIEW} more")
     return lines
@@ -638,27 +649,48 @@ def adapt_taint_paths_to(
 ) -> AdapterResult:
     """Map ``taint_paths_to`` to TAINT_FLOW payload (source-level taint)."""
     sink = str(
-        ctx.args.get("sink")
+        ctx.args.get("name")
+        or ctx.args.get("sink")
         or ctx.args.get("sink_function")
         or raw.get("sink")
         or "<sink>",
     )
-    paths = _list_or_empty(raw, "paths", "results", "taint_paths")
+    # audit-mcp returns entrypoint-to-sink call chains under
+    # ``entrypoint_paths`` with an authoritative ``path_count`` plus the
+    # reachability fields ``is_tainted`` / ``caller_count`` /
+    # ``direct_callers`` / ``exploitable``. The older ``paths`` /
+    # ``results`` / ``taint_paths`` keys are kept as a fallback so a
+    # future rename does not silently zero the count again.
+    paths = _list_or_empty(
+        raw, "entrypoint_paths", "paths", "results", "taint_paths",
+    )
+    raw_count = raw.get("path_count")
+    total = raw_count if isinstance(raw_count, int) else len(paths)
+    is_tainted = bool(raw.get("is_tainted", False))
+    caller_count = raw.get("caller_count")
+    exploitable = bool(raw.get("exploitable", False))
     payload: dict[str, Any] = {
         "sink": sink,
         "paths": paths,
-        "total": len(paths),
+        "total": total,
+        "is_tainted": is_tainted,
+        "caller_count": caller_count,
+        "direct_callers": raw.get("direct_callers", []),
+        "exploitable": exploitable,
         "raw": raw,
         "source_provenance": provenance_stamp(ctx),
     }
     lines = _audit_taint_summary_lines(paths)
     body = "\n".join(lines) if lines else "  (no taint paths)"
-    obs_value = f"taint_paths_to {sink}: {len(paths)} path(s)\n{body}"
+    flags = f"tainted={is_tainted}, exploitable={exploitable}"
+    if caller_count is not None:
+        flags += f", callers={caller_count}"
+    obs_value = f"taint_paths_to {sink}: {total} path(s) [{flags}]\n{body}"
     return AdapterResult(
         payload_kind=PayloadKind.TAINT_FLOW,
         payload=payload,
         observables_delta={obs_key_for(ctx, f"taint.{sink}"): obs_value},
-        summary=f"taint_paths_to {sink}: {len(paths)} path(s)",
+        summary=f"taint_paths_to {sink}: {total} path(s) [{flags}]",
     )
 
 

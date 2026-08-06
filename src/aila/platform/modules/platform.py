@@ -92,7 +92,7 @@ class PlatformModuleRuntime:
             action_id=request.action_id,
             message=f"{registry_response.count} SSH integrations are configured.",
             route=request.run_state.route,
-            module_payload={"registry": registry_response.model_dump(mode="json")},
+            module_payload={"query_mode": "ssh_registry", "registry": registry_response.model_dump(mode="json")},
             state_history=request.run_state.events,
         )
 
@@ -127,7 +127,7 @@ class PlatformModuleRuntime:
             action_id=request.action_id,
             message=registry_response.message,
             route=request.run_state.route,
-            module_payload={"registry": registry_response.model_dump(mode="json")},
+            module_payload={"query_mode": "ssh_registry", "registry": registry_response.model_dump(mode="json")},
             state_history=request.run_state.events,
         )
 
@@ -164,7 +164,7 @@ class PlatformModuleRuntime:
             action_id=request.action_id,
             message=registry_response.message,
             route=request.run_state.route,
-            module_payload={"registry": registry_response.model_dump(mode="json")},
+            module_payload={"query_mode": "ssh_registry", "registry": registry_response.model_dump(mode="json")},
             state_history=request.run_state.events,
         )
 
@@ -240,6 +240,7 @@ class PlatformModuleRuntime:
             message=message,
             route=request.run_state.route,
             module_payload={
+                "query_mode": "remote_command",
                 "command": selection.command,
                 "requested_targets": list(selection.target_names),
                 "run_all_targets": selection.run_all_targets,

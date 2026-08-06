@@ -163,6 +163,7 @@ async def invoke_tool(
                 status=AUDIT_STATUS_COMPLETED,
                 target=tool_key,
                 user_id=operator.user_id,
+                team_id=operator.team_id,
                 details={"error": error} if error else {},
             )
             await session.commit()

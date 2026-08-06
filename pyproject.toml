@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aila"
-version = "0.2.1"
+version = "0.3.0"
 description = "Modular AI security platform with pluggable analysis modules."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -96,6 +96,9 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"aila.modules.forensics.workflow.states.collectors" = ["*.tpl"]
+
 [tool.vulture]
 min_confidence = 80
 paths = ["src/"]
@@ -173,6 +176,37 @@ ignore = [
 
 # All other suppressions are documented in src/aila/tools/honesty_whitelist.py.
 "src/aila/api/app.py" = ["PLC0415", "BLE001", "F401", "ARG001", "E402", "N814"]
+"src/aila/api/routers/admin_lifecycle.py" = ["PLC0415", "BLE001"]
+"src/aila/api/sse_gate.py" = ["PLC0415"]
+"src/aila/platform/eval/routing_history.py" = ["PLC0415"]
+# replay.py: PLC0415 for the deferred ServiceFactory import inside the
+# default PlatformReplayLLMClient bridge. A test/caller that injects
+# its own ReplayLLMClient must not eager-load the ServiceFactory
+# storage graph just to import the replay module.
+"src/aila/platform/eval/replay.py" = ["PLC0415"]
+# runner.py: PLC0415 for the deferred replay-module import inside
+# EvalRunner.replay. The replay module transitively pulls db_models
+# via PlatformJournalRecord, and db_models pulls the eval package
+# through calibration model registration -- deferring keeps runner
+# safely importable from anywhere in the storage graph.
+"src/aila/platform/eval/runner.py" = ["PLC0415"]
+# transcript.py: PLC0415 for the deferred PlatformJournalRecord
+# import inside _collect_journal_payloads. Same cycle as runner.py --
+# transcript.py is loaded through the eval-package init chain, so
+# db_models cannot be imported at transcript-module import time.
+"src/aila/platform/eval/transcript.py" = ["PLC0415"]
+# calibration_sweep.py: PLC0415 for the deferred CalibrationTrainer
+# import inside run_calibrator_trainer_sweep. calibrator.py imports
+# DEFAULT_CALIBRATION_TABLES + _read_samples_from_table_pair from
+# this module, so a module-scope import of CalibrationTrainer would
+# close a circular reference at load time.
+"src/aila/platform/eval/calibration_sweep.py" = ["PLC0415"]
+"src/aila/platform/events/bus.py" = ["PLC0415"]
+"src/aila/platform/events/persistence.py" = ["PLC0415"]
+"src/aila/platform/services/factory.py" = ["PLC0415"]
+"src/aila/platform/services/replay.py" = ["PLC0415"]
+"src/aila/platform/workflows/investigation_setup_base.py" = ["PLC0415"]
+"src/aila/storage/report_store.py" = ["PLC0415"]
 "src/aila/api/auth.py" = ["PLC0415"]
 "src/aila/api/auth_cache.py" = ["PLW0603"]
 "src/aila/api/deps.py" = ["PLC0415"]
@@ -205,6 +239,25 @@ ignore = [
 "src/aila/_dotenv.py" = ["PLC0415"]
 "src/aila/cli.py" = ["PLC0415", "E402"]
 "src/aila/modules/_template/module.py" = ["PLC0415", "PIE790"]
+# _template lifecycle scaffold: PLC0415 for the deferred workflow.task /
+# task-queue imports the copy-me handlers document as the canonical
+# pattern. Mirrors the vr/malware wiring (see "vr/api_router.py",
+# "malware/workflow/states/investigation_setup.py").
+"src/aila/modules/_template/api_router.py" = ["PLC0415"]
+"src/aila/modules/_template/workflow/states/investigation_setup.py" = ["PLC0415"]
+"src/aila/modules/_template/workflow/states/investigation_emit.py" = ["PLC0415"]
+# _template agent scaffold: PLC0415 for the deferred workflow.task /
+# outcome_dispatcher imports the copy-me handlers use to break the
+# researcher-> workflow.task -> researcher import cycle the platform
+# task registration wraps into. Mirrors the vr/malware agent wiring.
+"src/aila/modules/_template/agents/researcher.py" = ["PLC0415"]
+"src/aila/modules/_template/workflow/task.py" = ["PLC0415"]
+"src/aila/modules/_template/workflow/definitions.py" = ["PLC0415"]
+"src/aila/modules/_template/workflow/states/investigation_loop.py" = ["PLW0603"]
+# _template services stall_recovery: PLC0415 for the deferred
+# _task_queue / workflow.task imports the sweep uses to break the
+# worker boot-path -> task-registration import cycle. Mirrors the
+# vr / malware stall_recovery entries.
 "src/aila/modules/forensics/agents/investigator.py" = ["PLC0415"]
 "src/aila/modules/forensics/agents/resolver_agent.py" = ["PLC0415"]
 "src/aila/modules/forensics/api_router.py" = ["PLC0415", "BLE001", "N806"]
@@ -261,26 +314,24 @@ ignore = [
 "src/aila/modules/malware/api_router.py" = ["PLC0415", "N814", "SLF001"]
 "src/aila/modules/malware/module.py" = ["PLC0415"]
 "src/aila/modules/malware/runtime.py" = ["PLC0415"]
-# malware/services/arq_purge.py: S301 because ARQ stores job payloads
+# platform/tasks/arq_purge.py: S301 because ARQ stores job payloads
 # as raw pickle blobs; the helper reads them back from a trusted ARQ
 # queue, NOT from untrusted input. Replacing pickle would mean
 # re-encoding every queued job during a long deploy.
-"src/aila/modules/malware/services/arq_purge.py" = ["PLC0415", "S301"]
-# malware/services/branch_reaper.py: N806 for SQLAlchemy ORM uppercase
+"src/aila/platform/tasks/arq_purge.py" = ["PLC0415", "S301"]
+# platform/services/branch_reaper.py: N806 for SQLAlchemy ORM uppercase
 # aliases (BR, INV) following the standard convention used across
 # every sweep helper.
-"src/aila/modules/malware/services/branch_reaper.py" = ["N806"]
-# malware/services/config_helpers.py: PLW0603 for the lazy registry
-# singleton (one instance per worker; constructed once on first read).
-"src/aila/modules/malware/services/config_helpers.py" = ["PLW0603"]
-# malware/services/investigation_reaper.py: same N806 rationale as
-# branch_reaper above; multiple ORM aliases inside the sweep helpers.
-"src/aila/modules/malware/services/investigation_reaper.py" = ["N806"]
-# malware/services/mcp_call_logger.py: BLE001 because the call logger
-# catches BaseException only to re-raise it after enriching the log
-# record; the broad catch is an explicit observation point.
-"src/aila/modules/malware/services/mcp_call_logger.py" = ["BLE001"]
+"src/aila/platform/services/branch_reaper.py" = ["N806"]
+# platform/services/investigation_reaper.py: N806 for SQLAlchemy ORM
+# uppercase aliases (BR, INV, MSG) in the shared cap-sweep helpers.
+"src/aila/platform/services/investigation_reaper.py" = ["N806"]
+# platform/mcp/call_logger.py: BLE001 because record_call catches
+# BaseException only to enrich the log record then re-raise it; the broad
+# catch is an explicit observation point.
+"src/aila/platform/mcp/call_logger.py" = ["BLE001"]
 "src/aila/modules/malware/services/stall_recovery.py" = ["PLC0415"]
+"src/aila/modules/malware/services/target_analysis.py" = ["PLC0415"]
 "src/aila/modules/malware/workflow/definitions.py" = ["PLC0415"]
 # finalize + investigation_emit / _setup keep targeted deferred imports of
 # `workflow.task` symbols (run_malware_investigate / run_malware_synthesis /
@@ -291,6 +342,7 @@ ignore = [
 "src/aila/modules/malware/workflow/states/investigation_loop.py" = ["PLC0415", "PLW0603"]
 "src/aila/modules/malware/workflow/states/investigation_setup.py" = ["PLC0415", "PLW0603"]
 "src/aila/modules/vr/_task_queue.py" = ["PLC0415"]
+"src/aila/platform/apk/native_analysis.py" = ["PLC0415"]
 "src/aila/modules/vr/agents/auto_steering.py" = ["BLE001", "PLW0603"]
 "src/aila/modules/vr/agents/outcome_dispatcher.py" = ["PLC0415"]
 "src/aila/modules/vr/agents/synthesis_agent.py" = ["PLC0415"]
@@ -300,14 +352,26 @@ ignore = [
 "src/aila/modules/vr/reporting/pdf_report.py" = ["N802", "S603", "S607"]
 "src/aila/modules/vr/reporting/writer_agent.py" = ["PLC0415"]
 "src/aila/modules/vr/runtime.py" = ["PLC0415"]
-"src/aila/modules/vr/services/arq_purge.py" = ["PLC0415", "S301"]
-"src/aila/modules/vr/services/branch_reaper.py" = ["N806"]
 "src/aila/modules/vr/services/cve_intel_resolver.py" = ["PLC0415"]
-"src/aila/modules/vr/services/investigation_finalizers.py" = ["PLC0415"]
-"src/aila/modules/vr/services/investigation_reaper.py" = ["N806", "PLC0415"]
-"src/aila/modules/vr/services/mcp_call_logger.py" = ["BLE001"]
-"src/aila/modules/vr/services/outcome_review.py" = ["PLC0415"]
+# outcome_review bindings: F401 because the thin module re-exports the
+# platform QuorumOutcome / EditOutcomeResult / EDIT_OUTCOME_PROTECTED_KEYS
+# for legacy callers + tests; the imports are intentional re-exports.
+"src/aila/modules/vr/services/outcome_review.py" = ["F401"]
+"src/aila/modules/malware/services/outcome_review.py" = ["F401"]
+"src/aila/modules/forensics/services/outcome_review.py" = ["F401"]
+# Panel setup deferred-imports the panel task (breaks the setup <-> task
+# circular import cycle -- same pattern VR + malware use).
+"src/aila/modules/forensics/workflow/panel/setup.py" = ["PLC0415"]
+"src/aila/modules/vr/services/followup_discovery.py" = ["PLC0415"]
+"src/aila/modules/_template/services/stall_recovery.py" = ["PLC0415"]
 "src/aila/modules/vr/services/stall_recovery.py" = ["PLC0415"]
+# stuck_healer bindings: PLC0415 for the deferred ``_task_queue`` /
+# ``workflow.task`` imports the module submitter uses. Same worker
+# boot-path -> task-registration import cycle the stall_recovery
+# bindings break, mirroring their entries.
+"src/aila/modules/vr/services/stuck_healer.py" = ["PLC0415"]
+"src/aila/modules/malware/services/stuck_healer.py" = ["PLC0415"]
+"src/aila/modules/forensics/services/stuck_healer.py" = ["PLC0415"]
 "src/aila/modules/vr/services/target_analysis.py" = ["PLC0415"]
 "src/aila/modules/vr/workflow/definitions.py" = ["PLC0415"]
 "src/aila/modules/vr/workflow/finalize.py" = ["PLC0415"]
@@ -356,6 +420,12 @@ ignore = [
 "src/aila/modules/vulnerability/workflow/states/reporting.py" = ["ARG001"]
 "src/aila/modules/vulnerability/workflow/utils/row_helpers.py" = ["PLC0415"]
 "src/aila/platform/automation/runner.py" = ["E712"]
+"src/aila/platform/automation/supervisor.py" = ["PLC0415"]
+# config_base.py: PLC0415 for the lazy import of PlatformConfigSchema inside
+# platform_default_llm_model(). config_base is imported by every module
+# config_schema; a module-scope import of platform.config would pull the
+# storage.registry family definitions during a half-built platform import.
+"src/aila/platform/config_base.py" = ["PLC0415"]
 "src/aila/platform/contracts/persist.py" = ["PLC0415"]
 "src/aila/platform/contracts/reasoning.py" = ["PLC0415"]
 "src/aila/platform/events/emitter.py" = ["PLC0415"]
@@ -367,6 +437,18 @@ ignore = [
 "src/aila/platform/llm/gate.py" = ["PLC0415"]
 "src/aila/platform/llm/human_cost.py" = ["PLC0415"]
 "src/aila/platform/llm/idempotency_cache.py" = ["PLC0415"]
+# lifecycle/controller.py: PLC0415 for the deferred shadow-runner + resilience
+# imports inside AgentLifecycleController.run_shadow and
+# _surface_canary_hold_alert. shadow.py imports controller symbols back for
+# StageTransitionError so a module-scope import would close a cycle; the
+# resilience import pulls the metrics + ledger graph on demand for the same
+# reason the resilience.py entry above documents.
+"src/aila/platform/lifecycle/controller.py" = ["PLC0415"]
+# lifecycle/shadow.py: PLC0415 for the deferred controller + models imports
+# inside run_shadow. The runner imports AgentLifecycleController.run_shadow
+# lazily from the same file, so a module-scope reverse import would close a
+# cycle at load time.
+"src/aila/platform/lifecycle/shadow.py" = ["PLC0415"]
 "src/aila/platform/llm/pipeline.py" = ["BLE001"]
 "src/aila/platform/llm/seal.py" = ["PLC0415"]
 "src/aila/platform/llm/validate.py" = ["PLC0415"]
@@ -379,12 +461,26 @@ ignore = [
 "src/aila/platform/modules/registry.py" = ["PLC0415"]
 "src/aila/platform/routing/router.py" = ["PLC0415", "BLE001"]
 "src/aila/platform/runtime/builder.py" = ["PLC0415"]
+# branch_cleanup.py: S608 because the branch table name is interpolated into
+# the UPDATE. It is a trusted module constant (a table identifier cannot be a
+# bind parameter), never user input.
+"src/aila/platform/services/branch_cleanup.py" = ["S608"]
 "src/aila/platform/services/embedding.py" = ["PLC0415"]
 "src/aila/platform/services/health_probes.py" = ["PLC0415", "BLE001"]
 "src/aila/platform/services/knowledge.py" = ["PLC0415"]
+# oracle.py: PLC0415 for the deferred idempotent_llm_call / ServiceFactory
+# imports inside adjudicate_specialist_requests -- the factory pulls in the
+# reasoning engine which imports back into platform.services, so a module
+# scope import would re-enter a half-built services package.
+"src/aila/platform/services/oracle.py" = ["PLC0415"]
 "src/aila/platform/services/reasoning.py" = ["E402"]
 "src/aila/platform/services/redis_pool.py" = ["PLW0603"]
 "src/aila/platform/services/report.py" = ["PLC0415"]
+# resilience.py: PLC0415 for the deferred metric imports inside record_signal.
+# The counter modules pull prometheus_client + api.metrics; the ResilienceLayer
+# module is imported from tools/tests/CLI where those are optional. Mirrors
+# the platform/events/emitter.py and platform/llm/config.py pattern.
+"src/aila/platform/services/resilience.py" = ["PLC0415"]
 "src/aila/platform/services/ssh.py" = ["PLC0415"]
 "src/aila/platform/services/system.py" = ["PLC0415"]
 "src/aila/platform/services/team_scope.py" = ["PLW0603", "ANN001"]
@@ -394,19 +490,39 @@ ignore = [
 "src/aila/platform/tasks/progress.py" = ["PLC0415"]
 "src/aila/platform/tasks/queue.py" = ["PLC0415", "BLE001"]
 "src/aila/platform/tasks/report_tasks.py" = ["PLC0415", "BLE001"]
+# state_reconciler.py: PLC0415 for the deferred get_default_resilience_layer
+# import inside ``reconcile``. state_reconciler is imported by
+# aila.platform.tasks.__init__, which db_models depends on; a top-level
+# services.resilience import re-enters aila.platform.services -> audit ->
+# journal -> db_models mid initialisation and fails.
+"src/aila/platform/tasks/state_reconciler.py" = ["PLC0415"]
 "src/aila/platform/tasks/sweeps.py" = ["BLE001"]
 "src/aila/platform/tasks/template.py" = ["PLC0415", "BLE001"]
 "src/aila/platform/tasks/worker.py" = ["PLC0415", "BLE001", "F401", "ARG001"]
 "src/aila/platform/tools/_common.py" = ["PLC0414"]
 "src/aila/platform/tools/knowledge.py" = ["PLC0415"]
+# investigation_lifecycle.py: PLC0415 for the deferred
+# get_default_resilience_layer import inside ``reenqueue_investigation``.
+# services/__init__ pulls in the audit + journal chain which imports
+# db_models; a top-level services.resilience import from inside a service
+# module re-enters services.__init__ mid init and fails.
+"src/aila/platform/services/investigation_lifecycle.py" = ["PLC0415"]
 "src/aila/platform/workflows/engine.py" = ["BLE001", "PLC0415"]
 "src/aila/platform/workflows/errors.py" = ["N818"]
 "src/aila/platform/workflows/log.py" = ["PLC0415", "BLE001"]
+# phase_graph.py: PLC0415 for the deferred LedgerService / UnitOfWork imports
+# inside the dispatch hub's stall handler. phase_graph is imported while
+# db_models is still loading (tasks -> workflows -> phase_graph), so a
+# module-scope services import would re-enter a half-built db_models.
+"src/aila/platform/workflows/phase_graph.py" = ["PLC0415"]
 "src/aila/storage/database.py" = ["PLC0415"]
 "src/aila/storage/db_models.py" = ["E402", "F401"]
 "src/aila/storage/operations.py" = ["PLC0415"]
 "src/aila/storage/registry.py" = ["PLC0415"]
-"src/aila/storage/secrets.py" = ["PLC0415", "E402"]
+# storage/secrets.py: PLC0415/E402 for the historical late get_settings/utc_now
+# imports; S603/S607 for the fixed-argv ``icacls`` invocation used to lock the
+# keyring file to the current owner on Windows (see _apply_owner_only_acl_windows).
+"src/aila/storage/secrets.py" = ["PLC0415", "E402", "S603", "S607"]
 "src/aila/tools/honesty_audit.py" = ["N802"]
 
 [tool.ruff.lint.isort]

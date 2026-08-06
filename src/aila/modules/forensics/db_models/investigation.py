@@ -7,7 +7,7 @@ from uuid import uuid4
 from sqlalchemy import Column, DateTime, Text
 from sqlmodel import Field, SQLModel
 
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 
 __all__ = ["AgentStepRecord", "InvestigationRunRecord", "WriteUpRecord"]
 
@@ -23,6 +23,13 @@ class InvestigationRunRecord(SQLModel, table=True):
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     project_id: str = Field(index=True)
+    # Denormalised copy of ``forensics_projects.team_id`` at insert time
+    # (#59). Populated on every write path from the parent project so the
+    # do_orm_execute team-scope listener can auto-filter reads without
+    # a preceding parent-row join. The project ownership guard still
+    # runs on the parent row for defense-in-depth. Nullable to match the
+    # parent's ``NULL == admin-owned`` convention.
+    team_id: str | None = Field(default=None, index=True)
     question: str = Field(sa_column=Column(Text))
     status: str = Field(default="pending", index=True)
     task_id: str | None = Field(default=None, index=True)
@@ -34,7 +41,26 @@ class InvestigationRunRecord(SQLModel, table=True):
     # path, this points at the prior attempt whose findings are
     # carried forward. NULL for the original (root) investigation.
     parent_investigation_id: str | None = Field(default=None, index=True, max_length=64)
+    # RFC-09 criterion 4: pin-per-investigation. First resolve of a prompt
+    # key on this row records the current production-alias version here;
+    # subsequent resolves for the SAME investigation return the pinned
+    # version so a live production-alias flip never rewrites a running
+    # investigation. JSON object mapping prompt-key -> resolved version
+    # string. Empty object = nothing pinned yet. Mirrors the base column
+    # on ``InvestigationRecordBase`` (this table does not extend the base
+    # so the field is declared directly). Migration 115 adds the column.
+    prompt_pins_json: str = Field(
+        default="{}", sa_type=Text, sa_column_kwargs={"nullable": True},
+    )
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+    # RFC-09 criterion 4 requires ``resolve_pinned_prompt`` to stamp the
+    # row's modification time when it persists a fresh pin. Added here
+    # for that hot path (SQLModel would otherwise raise on setattr for
+    # an unmapped attribute under Pydantic v2). Nullable so migration 115
+    # can backfill existing rows without a data migration.
+    updated_at: datetime | None = Field(
+        default_factory=utc_now, sa_type=DateTime(timezone=True),
+    )
 
 
 class AgentStepRecord(SQLModel, table=True):
@@ -48,6 +74,10 @@ class AgentStepRecord(SQLModel, table=True):
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     investigation_id: str = Field(index=True)
+    # Denormalised copy of the parent investigation's team_id (#59) --
+    # stamped at insert time so the team-scope listener can auto-filter
+    # step reads without a two-hop join back to ``forensics_projects``.
+    team_id: str | None = Field(default=None, index=True)
     step_number: int = Field(default=0)
     action: str = Field(default="reasoning")
     script_content: str | None = Field(default=None, sa_column=Column(Text))
@@ -70,6 +100,9 @@ class WriteUpRecord(SQLModel, table=True):
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     project_id: str = Field(index=True)
+    # Denormalised copy of ``forensics_projects.team_id`` (#59) so the
+    # team-scope listener can auto-filter write-up reads.
+    team_id: str | None = Field(default=None, index=True)
     investigation_id: str | None = Field(default=None, index=True)
     title: str = Field(default="", max_length=512)
     content_markdown: str = Field(default="", sa_column=Column(Text))

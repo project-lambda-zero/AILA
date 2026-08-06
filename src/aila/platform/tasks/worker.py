@@ -14,9 +14,11 @@ from redis import asyncio as aioredis
 from sqlmodel import select
 
 from aila.api.metrics import TASK_ZOMBIES_REAPED_TOTAL
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
+from aila.platform.llm.drift import run_purge_old_records_cron as _drift_purge_cron
 from aila.platform.llm.idempotency_cache import run_purge_expired_cron
 from aila.platform.modules import load_builtin_modules
+from aila.platform.tasks import get_task_tuning
 from aila.platform.tasks.constants import (
     ARQ_DEAD_LETTER_KEY_TEMPLATE,
     ARQ_IN_PROGRESS_PREFIX,
@@ -27,12 +29,18 @@ from aila.platform.tasks.constants import (
     REAPER_HEARTBEAT_THRESHOLD_S,
     REAPER_ZOMBIE_THRESHOLD_S,
 )
-from aila.platform.tasks.cursor_reaper import sweep_orphan_crashed_cursors
+from aila.platform.tasks.cursor_reaper import (
+    reap_zombie_tasks_and_cursors,
+    sweep_orphan_crashed_cursors,
+)
 from aila.platform.tasks.hooks import _on_job_end, _on_job_start
 from aila.platform.tasks.models import TaskRecord, TaskStatus
+from aila.platform.tasks.state_reconciler import _extract_investigation_id
 from aila.platform.tasks.sweeps import all_periodic_sweeps
 from aila.platform.tasks.template import _REGISTRY
+from aila.platform.workflows.log import purge_old_transitions
 from aila.storage.database import async_session_scope
+from aila.storage.report_store import purge_expired_report_files
 
 __all__ = ["WorkerSettings", "reaper"]
 
@@ -55,6 +63,23 @@ try:
     )
 except ValueError:
     _REAPER_CRON_GRACE_S = 600
+
+# fix RFC-05 -- zombie-task + cursor reaping is platform-owned and sweeps
+# every track in the platform reaper cron (no module owns a private
+# reaper). Thresholds are env-driven with the historical vr defaults
+# (10 min stale-heartbeat, 5000 cursor rows per tick).
+try:
+    _REAPER_ZOMBIE_HEARTBEAT_MIN: int = int(
+        os.environ.get("PLATFORM_REAPER_ZOMBIE_HEARTBEAT_MIN", "10"),
+    )
+except ValueError:
+    _REAPER_ZOMBIE_HEARTBEAT_MIN = 10
+try:
+    _REAPER_CURSOR_BATCH_CAP: int = int(
+        os.environ.get("PLATFORM_REAPER_CURSOR_BATCH_CAP", "5000"),
+    )
+except ValueError:
+    _REAPER_CURSOR_BATCH_CAP = 5000
 
 # ``_persist_dead_letter`` is sibling-internal: imported by
 # ``aila.platform.tasks.hooks._on_job_end`` to record terminal failures.
@@ -153,19 +178,21 @@ async def _sweep_orphan_queued_tasks() -> None:
         # PRIMARY decision is the per-track membership above.
         present_in_arq: set[str] = set().union(*present_by_track.values()) if present_by_track else set()
 
-        # Find candidate DB rows: QUEUED rows that are past the boot-time
-        # grace window. fix §45 -- at boot the api_router may have INSERTed
-        # the row but not yet pushed to ARQ Redis (ZADD races the INSERT
-        # commit). Skipping rows younger than 10s prevents the boot sweep
-        # against reaping legitimate in-flight submissions.
+        # Find candidate DB rows: QUEUED rows that are past the recency
+        # window. fix §45 -- at boot the api_router may have INSERTed the
+        # row but not yet pushed to ARQ Redis (ZADD races the INSERT
+        # commit). The 60s ``recency_cutoff`` is the boot-time grace: any
+        # row satisfying ``created_at < recency_cutoff`` is at least 60s
+        # old, so the earlier 10s ``boot_grace_cutoff`` guard (#40-7) was
+        # redundant with -- and strictly dominated by -- this one. The 60s
+        # window is still tighter than the ARQ ZADD race, so no legitimate
+        # in-flight submission can be false-reaped.
         recency_cutoff = utc_now() - timedelta(seconds=60)
-        boot_grace_cutoff = utc_now() - timedelta(seconds=10)
         async with async_session_scope() as session:
             rows = (await session.exec(
                 select(TaskRecord).where(
                     TaskRecord.status == TaskStatus.QUEUED,
                     TaskRecord.created_at < recency_cutoff,
-                    TaskRecord.created_at < boot_grace_cutoff,
                 )
             )).all()
             reaped = 0
@@ -274,6 +301,7 @@ async def reaper(ctx: dict[str, object]) -> None:
         await _sweep_orphan_running_tasks(
             grace_seconds=_REAPER_CRON_GRACE_S,
             reap_null_heartbeat=False,
+            trust_present_lock=True,
         )
     except Exception as exc:
         _log.warning("reaper: orphan running-task sweep failed: %s", exc, exc_info=True)
@@ -313,6 +341,24 @@ async def reaper(ctx: dict[str, object]) -> None:
             _log.info("reaper: cleared %d orphan terminal cursors", cleared)
     except Exception as exc:
         _log.warning("reaper: cursor cleanup failed: %s", exc, exc_info=True)
+    try:
+        # RFC-05 -- platform-owned zombie-task + cursor reaping across every
+        # track. Replaces the vr module's private reaper step; a
+        # stale-running task is a zombie regardless of which track owns it.
+        reaped = await reap_zombie_tasks_and_cursors(
+            heartbeat_min=_REAPER_ZOMBIE_HEARTBEAT_MIN,
+            batch_cap=_REAPER_CURSOR_BATCH_CAP,
+        )
+        if reaped["zombies_cancelled"] or reaped["cursors_purged"]:
+            _log.info(
+                "reaper: cancelled %d zombie tasks, purged %d cursors "
+                "(orphan=%d terminal=%d succeeded=%d)",
+                reaped["zombies_cancelled"], reaped["cursors_purged"],
+                reaped["orphan_purged"], reaped["terminal_purged"],
+                reaped["succeeded_purged"],
+            )
+    except Exception as exc:
+        _log.warning("reaper: zombie/cursor reap failed: %s", exc, exc_info=True)
     # fix §123 -- idempotency-cache expired-row purge wired into the same
     # cron loop so the table doesn't accumulate stale rows forever. The
     # purge is best-effort and never crashes the cron tick.
@@ -325,6 +371,49 @@ async def reaper(ctx: dict[str, object]) -> None:
     except Exception as exc:
         _log.warning(
             "reaper: idempotency cache purge failed: %s", exc, exc_info=True,
+        )
+    # fix #45-5 -- confidence-drift retention sweep. record_and_check inserts
+    # one row per drift check with no upsert, so the table grew unbounded.
+    # Same shape as the idempotency_cache purge above: best-effort, logged,
+    # never crashes the cron tick.
+    try:
+        purged = await _drift_purge_cron()
+        if purged:
+            _log.info(
+                "reaper.confidence_drift: purged %d old rows", purged,
+            )
+    except Exception as exc:
+        _log.warning(
+            "reaper: confidence drift purge failed: %s", exc, exc_info=True,
+        )
+    # Report-file retention sweep -- ReportArtifactStore recreates DB rows on
+    # every persist_run_bundle() call but the on-disk artifacts accumulated
+    # forever. Same best-effort shape as the DB purges above; the sweep is
+    # shallow (top-level of settings.report_dir) and per-file OSError does
+    # not abort the walk.
+    try:
+        purged = await purge_expired_report_files()
+        if purged:
+            _log.info(
+                "reaper.report_files: purged %d expired report files", purged,
+            )
+    except Exception as exc:
+        _log.warning(
+            "reaper: report-file purge failed: %s", exc, exc_info=True,
+        )
+    # Transition-log retention sweep -- WorkflowStateTransition is append-only
+    # (~2 rows per state per run) with no upsert, so the audit table grew
+    # unbounded. Bounded single DELETE inside its own async_session_scope;
+    # transport errors are logged and swallowed like every other purge.
+    try:
+        purged = await purge_old_transitions()
+        if purged:
+            _log.info(
+                "reaper.transition_log: purged %d old transition rows", purged,
+            )
+    except Exception as exc:
+        _log.warning(
+            "reaper: transition-log purge failed: %s", exc, exc_info=True,
         )
 
 
@@ -351,8 +440,23 @@ async def _reconcile_orphan_arq_locks() -> None:
         if not lock_keys:
             return
         now = utc_now()
-        fresh_cutoff = now - timedelta(seconds=REAPER_ZOMBIE_THRESHOLD_S)
-        heartbeat_cutoff = now - timedelta(seconds=REAPER_HEARTBEAT_THRESHOLD_S)
+        # Read live via get_task_tuning (see aila.platform.tasks.__init__:
+        # get_sync -> sync engine, fresh registry per call so an operator PUT
+        # /config/platform/{key} takes effect on the next cron tick). The
+        # compiled constants remain the fallback when the DB is unreachable
+        # or the value is unset. Schema defaults match the constants
+        # (reaper_zombie_threshold_s=3300, reaper_heartbeat_threshold_s=86400)
+        # so behavior is unchanged unless an operator wrote an override.
+        fresh_cutoff = now - timedelta(
+            seconds=get_task_tuning(
+                "reaper_zombie_threshold_s", REAPER_ZOMBIE_THRESHOLD_S,
+            ),
+        )
+        heartbeat_cutoff = now - timedelta(
+            seconds=get_task_tuning(
+                "reaper_heartbeat_threshold_s", REAPER_HEARTBEAT_THRESHOLD_S,
+            ),
+        )
         lock_jobs = {k: k[len(ARQ_IN_PROGRESS_PREFIX):] for k in lock_keys}
         job_ids = list(lock_jobs.values())
 
@@ -398,6 +502,7 @@ async def _reconcile_orphan_arq_locks() -> None:
         # (e.g. forensics_investigations pending → failed when task is failed)
         # can observe the change on the next GET.
         if tasks_to_fail:
+            healed_events: list[tuple[str, str | None, str]] = []
             async with async_session_scope() as session:
                 ids_to_update = [tid for tid, _ in tasks_to_fail]
                 to_update = (await session.exec(
@@ -418,7 +523,31 @@ async def _reconcile_orphan_arq_locks() -> None:
                         "reaper.task_marked_failed task_id=%s reason=%s",
                         rec.id, reason_by_id.get(rec.id, "unknown"),
                     )
+                    healed_events.append((
+                        rec.id,
+                        _extract_investigation_id(rec.kwargs_json),
+                        reason_by_id.get(rec.id, "unknown"),
+                    ))
                 await session.commit()
+            # RFC-07 #31 -- each reaped row is a durable recovery event
+            # so an operator can reconstruct why a task moved to FAILED
+            # without grepping the worker log. Emitted after commit so
+            # the ledger row and the taskrecord flip land in order.
+            if healed_events:
+                from aila.platform.services.resilience import (
+                    get_default_resilience_layer,
+                )
+                resilience = get_default_resilience_layer()
+                for reaped_id, inv_id, reason in healed_events:
+                    await resilience.emit_recovery_event(
+                        investigation_id=inv_id,
+                        action="orphan_lock_reconcile",
+                        detail={
+                            "task_id": reaped_id,
+                            "reason": reason,
+                        },
+                        source="worker.reconcile_orphan_arq_locks",
+                    )
     finally:
         try:
             await client.aclose()
@@ -491,20 +620,23 @@ def _bootstrap_platform_tasks() -> None:
         except Exception:
             _log.warning("platform-task bootstrap: %s import failed", task_module, exc_info=True)
 
-
-def _legacy_arq_functions() -> list[Any]:
-    """Non-@platform_task ARQ callables (reports, discovery). Phase 182 migrates."""
-    fns: list[Any] = []
-    for mod_name, fn_name in (
-        ("aila.platform.tasks.report_tasks", "generate_scheduled_report_job"),
-        ("aila.platform.tasks.discovery", "network_discovery_job"),
-        ("aila.platform.tasks.entrypoints", "run_platform_handle"),
+    # Platform-owned @platform_task entrypoints live outside the feature-module
+    # tree (the queued scan handler run_platform_handle). Import them here too so
+    # their decorators register under the fully-qualified name in _REGISTRY
+    # before WorkerSettings reads all_functions(). Otherwise the only
+    # registration is the bare-name copy, and the fully-qualified enqueue name
+    # ({fn.__module__}.{fn.__qualname__}) cannot resolve it -- the scan job is
+    # rejected with "function not found" and reaped as orphan-queued.
+    for platform_module in (
+        "aila.platform.tasks.entrypoints",
+        "aila.platform.tasks.report_tasks",
+        "aila.platform.tasks.discovery",
     ):
         try:
-            fns.append(getattr(__import__(mod_name, fromlist=[fn_name]), fn_name))
+            __import__(platform_module)
         except Exception:
-            _log.warning("legacy import %s failed", mod_name, exc_info=True)
-    return fns
+            _log.warning(
+                "platform-task bootstrap: %s import failed", platform_module, exc_info=True)
 
 
 _bootstrap_platform_tasks()
@@ -602,6 +734,8 @@ async def _workflow_cursor_is_resumable(session: Any, task_id: str) -> bool:
 async def _sweep_orphan_running_tasks(
     grace_seconds: int = 30,
     reap_null_heartbeat: bool = True,
+    *,
+    trust_present_lock: bool = False,
 ) -> None:
     """Reap orphan tasks at startup using the same rules as the cron reaper,
     PLUS a reverse sweep that catches tasks whose ARQ lock was already
@@ -631,6 +765,12 @@ async def _sweep_orphan_running_tasks(
 
     client = aioredis.Redis.from_url(redis_url, socket_connect_timeout=2.0)
     now = utc_now()
+    # RFC-07 #31 -- every heal below (D-86 SKIP cancel-and-reenqueue,
+    # reap-to-FAILED) records a durable recovery event so an operator
+    # can reconstruct which orphan-running rows were healed and why.
+    # Buffered until after the session commits so the ledger row lands
+    # in order with the mutation it describes.
+    healed_events: list[tuple[str, str, str | None, dict[str, Any]]] = []
     try:
         async with async_session_scope() as session:
             running = (await session.exec(
@@ -661,6 +801,21 @@ async def _sweep_orphan_running_tasks(
                 #   (2) heartbeat older than startup cutoff → prior worker died
                 #   (3) no heartbeat AND started_at older than the same cutoff
                 lock_exists = await client.exists(f"{ARQ_IN_PROGRESS_PREFIX}{rec.id}")
+                if lock_exists and trust_present_lock:
+                    # Cron mode: a present ARQ in-progress lock means arq
+                    # still owns this job. Because heartbeat_at updates only
+                    # per workflow state transition (engine._commit_transition),
+                    # a job parked in one long state -- a multi-minute
+                    # reasoning turn or a slow decode -- looks stale even
+                    # though it keeps running. Reaping such a job drops its
+                    # lock and re-enqueues it, letting arq run the same job
+                    # id twice (a KeyError on arq's own cleanup). The
+                    # reverse sweep handles lock-absent orphans only; a
+                    # leaked lock expires at the arq job timeout and a later
+                    # sweep reaps it once the lock has gone. Lock-present
+                    # staleness stays with _reconcile_orphan_arq_locks (24h
+                    # threshold).
+                    continue
                 if lock_exists and hb is not None and hb > stale_cutoff:
                     # Lock present AND heartbeat is fresh -- legit, peer owns it.
                     continue
@@ -753,6 +908,20 @@ async def _sweep_orphan_running_tasks(
                                     "(fn=%s queue=%s)",
                                     rec.id, new_job_id, fn_short, queue_key,
                                 )
+                                healed_events.append((
+                                    "orphan_task_reenqueue",
+                                    rec.id,
+                                    _extract_investigation_id(
+                                        rec.kwargs_json,
+                                    ),
+                                    {
+                                        "task_id": rec.id,
+                                        "new_job_id": new_job_id,
+                                        "fn": fn_short,
+                                        "queue": queue_key,
+                                        "track": rec.track,
+                                    },
+                                ))
                             finally:
                                 try:
                                     await arq_pool.close()
@@ -841,6 +1010,16 @@ async def _sweep_orphan_running_tasks(
                     "worker.reverse_sweep: task_id=%s reason=%s -- marking failed",
                     rec.id, reason,
                 )
+                healed_events.append((
+                    "orphan_task_fail",
+                    rec.id,
+                    _extract_investigation_id(rec.kwargs_json),
+                    {
+                        "task_id": rec.id,
+                        "reason": reason,
+                        "grace_seconds": grace_seconds,
+                    },
+                ))
             # Always commit -- the D-86 resumable-workflow path also
             # mutates rec.status (-> CANCELLED) and re-enqueues, but
             # never increments `reaped`. Without an unconditional
@@ -855,6 +1034,21 @@ async def _sweep_orphan_running_tasks(
                     "worker.reverse_sweep: reaped %d orphan running task(s)",
                     reaped,
                 )
+        # After the mutation commit, journal each heal. Best-effort: a
+        # ledger write failure never propagates, matching the contract
+        # ResilienceLayer.emit_recovery_event owns internally.
+        if healed_events:
+            from aila.platform.services.resilience import (
+                get_default_resilience_layer,
+            )
+            resilience = get_default_resilience_layer()
+            for action, _task_id, inv_id, detail in healed_events:
+                await resilience.emit_recovery_event(
+                    investigation_id=inv_id,
+                    action=action,
+                    detail=detail,
+                    source="worker.sweep_orphan_running_tasks",
+                )
     except Exception:
         _log.warning("worker.reverse_sweep failed", exc_info=True)
     finally:
@@ -862,6 +1056,35 @@ async def _sweep_orphan_running_tasks(
             await client.aclose()
         except Exception as exc:
             _log.debug("worker.reverse_sweep: client.aclose() failed: %s", exc)
+
+
+async def _on_shutdown(ctx: dict[str, Any]) -> None:
+    """Close the worker platform's LLM client connection pool (#44).
+
+    Every LLM call routes through the platform runtime's shared
+    ``AilaLLMClient``, which pools ``AsyncOpenAI`` (and therefore
+    ``httpx.AsyncClient``) instances keyed by (api_key, base_url,
+    timeout). Without an explicit close, the underlying TLS pool leaks
+    on worker teardown. Best-effort: unavailable-runtime and close
+    failures are logged so a partially-initialized worker still
+    shuts down cleanly.
+    """
+    del ctx
+    try:
+        from aila.platform.runtime.orchestrator import get_worker_platform
+
+        platform = await get_worker_platform()
+        runtime = getattr(platform, "_runtime", None)
+        client = getattr(runtime, "runtime_model", None) if runtime is not None else None
+        if client is None:
+            return
+        aclose = getattr(client, "aclose", None)
+        if aclose is None:
+            return
+        await aclose()
+        _log.info("ARQ on_shutdown: closed AilaLLMClient AsyncOpenAI pool")
+    except (OSError, RuntimeError, ImportError, AttributeError) as exc:
+        _log.warning("ARQ on_shutdown: LLM client aclose skipped: %s", exc)
 
 
 class WorkerSettings:
@@ -876,7 +1099,7 @@ class WorkerSettings:
     queue_name = "arq:queue:vulnerability"
     # Legacy ARQ functions preserved for non-@platform_task callers
     # (scheduled reports + network discovery). Phase 182 re-homes them.
-    functions: list[Any] = _REGISTRY.all_functions() + _legacy_arq_functions()
+    functions: list[Any] = _REGISTRY.all_functions()
     cron_jobs = [cron(reaper, second=0)]
     max_tries = 3
     job_timeout = 3600
@@ -885,5 +1108,6 @@ class WorkerSettings:
     allow_abort_jobs = True
     health_check_interval = 60
     on_startup = staticmethod(_on_startup)
+    on_shutdown = staticmethod(_on_shutdown)
     on_job_start = staticmethod(_on_job_start)
     on_job_end = staticmethod(_on_job_end)

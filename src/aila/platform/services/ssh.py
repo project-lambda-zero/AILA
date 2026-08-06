@@ -13,7 +13,70 @@ from ...storage.database import async_session_scope
 from ...storage.secrets import SecretStore
 from ..config import PlatformSettings
 from ..contracts.platform import RegisteredSystem, SSHIntegrationInput
-from ..exceptions import AuthenticationError, TimeoutError, UpstreamError, ValidationError
+from ..exceptions import AILATimeoutError, AuthenticationError, UpstreamError, ValidationError
+from .log_redact import redact_command_line
+
+
+def _apply_host_key_policy(
+    client: paramiko.SSHClient, payload: SSHIntegrationInput
+) -> None:
+    """Install a reject-unknown-host-key policy on ``client`` (#42).
+
+    Every SSH surface (pool + direct connect + upload + download)
+    routes host-key trust through this helper so the reject-by-default
+    rule cannot be reintroduced by drift on any single path.
+
+    An explicitly configured ``known_hosts_path`` is layered on top of
+    the system-default known_hosts via ``load_host_keys`` (called by
+    the surrounding caller) so an operator-declared trust file still
+    admits its hosts. When no ``known_hosts_path`` is configured the
+    client no longer silently AutoAdds the server's key on first
+    connect -- that is a MITM window on the first handshake against a
+    freshly registered host. Hosts the operator has previously
+    accepted into ``~/.ssh/known_hosts`` continue to connect because
+    every caller runs ``load_system_host_keys()`` before invoking
+    this helper; unknown hosts fail closed with a
+    ``paramiko.SSHException`` that surfaces as an ``UpstreamError``.
+
+    The ``payload`` parameter is intentionally accepted (even though it
+    is not read today) so any future policy variation -- e.g. a
+    strict-mode setting that also refuses TOFU on operator-supplied
+    known_hosts -- has a single seam to change without touching five
+    call sites again.
+    """
+    del payload  # currently uniform; kept for future policy variation.
+    client.set_missing_host_key_policy(paramiko.RejectPolicy())
+
+
+def _reject_unsafe_path(path: object, *, kind: str) -> None:
+    """Reject empty or ``..``-traversal SFTP paths before any network call.
+
+    Guards both remote and local endpoints on the SFTP surface. A ``..``
+    segment can escape the intended target directory on either end -- the
+    server side on upload, the local file system on download -- so the SFTP
+    entry points refuse to open a connection for paths that contain one.
+    Splits on POSIX and Windows separators so the check cannot be sidestepped
+    by choosing the other style.
+
+    Args:
+        path: The user-supplied path string to validate.
+        kind: A short label (``"remote"`` or ``"local"``) used in the error
+            message so the caller can tell which side of the transfer was
+            rejected.
+
+    Raises:
+        ValueError: If ``path`` is not a non-empty string, or contains a
+            ``..`` path segment.
+    """
+    if not isinstance(path, str) or not path.strip():
+        raise ValueError(f"SFTP {kind} path must be a non-empty string.")
+    # Normalize Windows separators so ``..\\foo`` collapses into the same
+    # segment view as ``../foo`` before the traversal check runs.
+    segments = path.replace("\\", "/").split("/")
+    if any(segment == ".." for segment in segments):
+        raise ValueError(
+            f"SFTP {kind} path {path!r} contains a '..' traversal segment."
+        )
 
 
 class SSHConnectionPool:
@@ -38,9 +101,7 @@ class SSHConnectionPool:
                 known_hosts_path = Path(payload.known_hosts_path).resolve()
                 if known_hosts_path.exists():
                     new_client.load_host_keys(str(known_hosts_path))
-                new_client.set_missing_host_key_policy(paramiko.RejectPolicy())
-            else:
-                new_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            _apply_host_key_policy(new_client, payload)
             new_client.connect(**connect_kwargs)
             self._pool[key] = new_client
             return new_client
@@ -133,12 +194,10 @@ class SSHService:
             if not known_hosts_path.exists():
                 raise ValidationError(f"Known hosts file {known_hosts_path} does not exist.")
             client.load_host_keys(str(known_hosts_path))
-        # Use AutoAddPolicy when no known_hosts_path is configured (lab/CTF default).
-        # When a known_hosts_path IS provided, enforce RejectPolicy so rogue hosts fail.
-        if payload.known_hosts_path:
-            client.set_missing_host_key_policy(paramiko.RejectPolicy())
-        else:
-            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        # #42: reject unknown host keys on every SSH surface. The helper
+        # centralizes the policy so a fifth site can't silently drift
+        # back to AutoAddPolicy.
+        _apply_host_key_policy(client, payload)
         try:
             client.connect(**connect_kwargs)
             transport = client.get_transport()
@@ -166,6 +225,192 @@ class SSHService:
             raise UpstreamError(f"SSH transport error for {payload.name} ({payload.host}): {message}") from exc
         finally:
             client.close()
+
+    async def run_command_full(
+        self,
+        integration: dict | SSHIntegrationInput | RegisteredSystem,
+        command: str,
+        timeout_seconds: float | None = None,
+        pool: SSHConnectionPool | None = None,
+        connect_timeout: float = 15.0,
+    ) -> tuple[str, str, int]:
+        """Execute command over SSH and return (stdout, stderr, exit_code).
+
+        Unlike :meth:`run_command`, a non-zero exit code is NOT converted to
+        an ``UpstreamError``. Callers receive the full triple and inspect the
+        exit code themselves -- this is the surfacing hook that lets
+        script-executor tools honour a remote ``sys.exit(3)`` instead of
+        reporting a silent ``exit_code=0``.
+
+        What still raises: connection-level failures that mean the command
+        never ran -- authentication rejection (:class:`AuthenticationError`),
+        host-key verification failures, transport errors
+        (:class:`UpstreamError`), and idle timeouts
+        (:class:`aila.platform.exceptions.AILATimeoutError`). Those propagate
+        because they are not "the script exited nonzero", they are "the
+        script never ran".
+
+        The returned ``stderr`` is passed through
+        :func:`redact_command_line` before being handed back so inline
+        credentials that a remote tool may print never surface in the
+        caller's payload -- this preserves the C6 secret-redaction
+        boundary that :meth:`_exec_command` applies inline in its
+        error message.
+        """
+        if isinstance(integration, dict):
+            payload = self._to_ssh_integration(RegisteredSystem.model_validate(integration))
+        elif isinstance(integration, RegisteredSystem):
+            payload = self._to_ssh_integration(integration)
+        else:
+            payload = integration
+
+        password = await self._resolve_password(payload)
+
+        connect_kwargs: dict = {
+            "hostname": payload.host,
+            "port": payload.port,
+            "username": payload.username,
+            "timeout": connect_timeout,
+        }
+        if payload.private_key_path:
+            connect_kwargs["key_filename"] = payload.private_key_path
+        if password:
+            connect_kwargs["password"] = password
+
+        # `timeout_seconds` remains an IDLE timeout enforced inside
+        # _run_command_full_blocking via channel.settimeout + exit-status
+        # polling, mirroring run_command exactly. No wall-clock wrapper.
+        return await asyncio.to_thread(
+            self._run_command_full_blocking, payload, command, timeout_seconds, pool, connect_kwargs,
+        )
+
+    def _run_command_full_blocking(
+        self,
+        payload: SSHIntegrationInput,
+        command: str,
+        timeout_seconds: float | None,
+        pool: SSHConnectionPool | None,
+        connect_kwargs: dict,
+    ) -> tuple[str, str, int]:
+        """Blocking SSH execution returning the full triple.
+
+        Mirrors :meth:`_run_command_blocking` but calls
+        :meth:`_exec_command_full`, which does not raise on non-zero
+        exit. Runs inside :func:`asyncio.to_thread`.
+        """
+        if pool is not None:
+            client = pool.get_or_connect(payload, connect_kwargs)
+            SSHService._verify_fingerprint(client, payload)
+            return SSHService._exec_command_full(client, command, timeout_seconds, payload)
+
+        client = paramiko.SSHClient()
+        client.load_system_host_keys()
+        if payload.known_hosts_path:
+            known_hosts_path = Path(payload.known_hosts_path).resolve()
+            if not known_hosts_path.exists():
+                raise ValidationError(f"Known hosts file {known_hosts_path} does not exist.")
+            client.load_host_keys(str(known_hosts_path))
+        # #42: identical reject-by-default plumbing to
+        # _run_command_blocking so the full-triple variant cannot
+        # silently accept a first-connect key.
+        _apply_host_key_policy(client, payload)
+        try:
+            client.connect(**connect_kwargs)
+            transport = client.get_transport()
+            if transport is not None:
+                transport.set_keepalive(60)
+            SSHService._verify_fingerprint(client, payload)
+            return SSHService._exec_command_full(client, command, timeout_seconds, payload)
+        except paramiko.AuthenticationException as exc:
+            raise AuthenticationError(
+                f"SSH authentication failed for {payload.name} ({payload.username}@{payload.host}:{payload.port}). "
+                "Verify the username and the configured stored password or private key."
+            ) from exc
+        except paramiko.BadHostKeyException as exc:
+            raise UpstreamError(
+                f"SSH host key verification failed for {payload.name} ({payload.host}). "
+                "The server host key did not match the trusted known_hosts entry."
+            ) from exc
+        except paramiko.SSHException as exc:
+            message = str(exc)
+            if "not found in known_hosts" in message.lower():
+                raise UpstreamError(
+                    f"SSH host key verification failed for {payload.name} ({payload.host}). "
+                    "Add the host key to a trusted known_hosts file or configure known_hosts_path."
+                ) from exc
+            raise UpstreamError(f"SSH transport error for {payload.name} ({payload.host}): {message}") from exc
+        finally:
+            client.close()
+
+    @staticmethod
+    def _exec_command_full(
+        client: paramiko.SSHClient,
+        command: str,
+        timeout_seconds: float | None,
+        payload: SSHIntegrationInput,
+    ) -> tuple[str, str, int]:
+        """Variant of :meth:`_exec_command` that returns (stdout, stderr, exit_code).
+
+        Non-zero remote exit codes are surfaced through the tuple instead
+        of being converted to :class:`UpstreamError`. Authentication,
+        host-key, and transport-level failures still raise. Stderr is
+        passed through :func:`redact_command_line` before being returned
+        so inline secrets remain masked at the C6 boundary.
+        """
+        try:
+            _, stdout, stderr = client.exec_command(command)
+            # IDLE timeout: paramiko resets the timer on every recv() so a
+            # slow-but-steady stream (dissect on a huge disk) never trips it.
+            # A genuine hang (zero bytes for N seconds) raises
+            # builtins.TimeoutError which we translate into the platform
+            # AILATimeoutError. Identical semantics to _exec_command.
+            if timeout_seconds is not None:
+                stdout.channel.settimeout(timeout_seconds)
+            try:
+                # Read first, exit-status second -- reversing this order
+                # can deadlock: a remote that fills its stdout buffer will
+                # block waiting for a reader to drain the pipe before it
+                # can exit and emit an exit status.
+                output = stdout.read().decode("utf-8", errors="ignore")
+                error_output = stderr.read().decode("utf-8", errors="ignore")
+                # Streams have closed. Poll for exit status with a tight
+                # 30s grace so a detached child that closed stdout without
+                # exiting cannot hang the caller indefinitely.
+                import time as _time
+                grace_deadline = _time.monotonic() + 30.0
+                while not stdout.channel.exit_status_ready():
+                    if _time.monotonic() > grace_deadline:
+                        raise AILATimeoutError(
+                            f"SSH command for {payload.name} ({payload.host}) closed "
+                            f"its streams but did not emit an exit status within 30s "
+                            f"(command likely detached a child). Command: {redact_command_line(command)[:200]}"
+                        )
+                    _time.sleep(0.1)
+                exit_code = stdout.channel.recv_exit_status()
+            except builtins.TimeoutError as exc:
+                raise AILATimeoutError(
+                    f"SSH command for {payload.name} ({payload.host}) idle "
+                    f">{timeout_seconds}s with no output. Command: {redact_command_line(command)[:200]}"
+                ) from exc
+            return output, redact_command_line(error_output), exit_code
+        except paramiko.AuthenticationException as exc:
+            raise AuthenticationError(
+                f"SSH authentication failed for {payload.name} ({payload.username}@{payload.host}:{payload.port}). "
+                "Verify the username and the configured stored password or private key."
+            ) from exc
+        except paramiko.BadHostKeyException as exc:
+            raise UpstreamError(
+                f"SSH host key verification failed for {payload.name} ({payload.host}). "
+                "The server host key did not match the trusted known_hosts entry."
+            ) from exc
+        except paramiko.SSHException as exc:
+            message = str(exc)
+            if "not found in known_hosts" in message.lower():
+                raise UpstreamError(
+                    f"SSH host key verification failed for {payload.name} ({payload.host}). "
+                    "Add the host key to a trusted known_hosts file or configure known_hosts_path."
+                ) from exc
+            raise UpstreamError(f"SSH transport error for {payload.name} ({payload.host}): {message}") from exc
 
     @staticmethod
     def _exec_command(
@@ -196,21 +441,22 @@ class SSHService:
                 grace_deadline = _time.monotonic() + 30.0
                 while not stdout.channel.exit_status_ready():
                     if _time.monotonic() > grace_deadline:
-                        raise TimeoutError(
+                        raise AILATimeoutError(
                             f"SSH command for {payload.name} ({payload.host}) closed "
                             f"its streams but did not emit an exit status within 30s "
-                            f"(command likely detached a child). Command: {command[:200]}"
+                            f"(command likely detached a child). Command: {redact_command_line(command)[:200]}"
                         )
                     _time.sleep(0.1)
                 exit_code = stdout.channel.recv_exit_status()
             except builtins.TimeoutError as exc:
-                raise TimeoutError(
+                raise AILATimeoutError(
                     f"SSH command for {payload.name} ({payload.host}) idle "
-                    f">{timeout_seconds}s with no output. Command: {command[:200]}"
+                    f">{timeout_seconds}s with no output. Command: {redact_command_line(command)[:200]}"
                 ) from exc
             if exit_code != 0:
+                redacted_stderr = redact_command_line(error_output)
                 raise UpstreamError(
-                    f"SSH command failed for {payload.name} ({payload.host}) with exit code {exit_code}: {error_output}"
+                    f"SSH command failed for {payload.name} ({payload.host}) with exit code {exit_code}: {redacted_stderr}"
                 )
             return output
         except paramiko.AuthenticationException as exc:
@@ -245,6 +491,7 @@ class SSHService:
         Uses the same credential resolution and host-key verification as
         ``run_command``.  Blocking paramiko I/O runs in a thread.
         """
+        _reject_unsafe_path(remote_path, kind="remote")
         local_path = Path(local_path)
         if not local_path.is_file():
             raise ValidationError(f"Local file does not exist: {local_path}")
@@ -290,12 +537,10 @@ class SSHService:
             if not known_hosts_path.exists():
                 raise ValidationError(f"Known hosts file {known_hosts_path} does not exist.")
             client.load_host_keys(str(known_hosts_path))
-        # Use AutoAddPolicy when no known_hosts_path is configured (lab/CTF default).
-        # When a known_hosts_path IS provided, enforce RejectPolicy so rogue hosts fail.
-        if payload.known_hosts_path:
-            client.set_missing_host_key_policy(paramiko.RejectPolicy())
-        else:
-            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        # #42: reject unknown host keys on the upload surface too --
+        # AutoAddPolicy on a fresh registration would let SFTP land on
+        # a MITM host before the caller could ever compare fingerprints.
+        _apply_host_key_policy(client, payload)
         try:
             client.connect(**connect_kwargs)
             SSHService._verify_fingerprint(client, payload)
@@ -335,6 +580,8 @@ class SSHService:
         redirect to a remote temp file and download it here instead of
         streaming stdout through the deadlock-prone channel path.
         """
+        _reject_unsafe_path(remote_path, kind="remote")
+        _reject_unsafe_path(str(local_path), kind="local")
         if isinstance(integration, dict):
             payload = self._to_ssh_integration(RegisteredSystem.model_validate(integration))
         elif isinstance(integration, RegisteredSystem):
@@ -367,15 +614,21 @@ class SSHService:
         connect_kwargs: dict,
     ) -> None:
         client = paramiko.SSHClient()
+        # Load the OS-default known_hosts alongside any operator-declared
+        # file so hosts an operator has previously trusted still connect
+        # once reject-by-default is in effect (#42). The upload path and
+        # both exec paths already do this; the download path used to
+        # silently AutoAdd on first connect and skip the system file.
+        client.load_system_host_keys()
         if payload.known_hosts_path:
             known_hosts_path = Path(payload.known_hosts_path)
             if not known_hosts_path.exists():
                 raise ValidationError(f"Known hosts file {known_hosts_path} does not exist.")
             client.load_host_keys(str(known_hosts_path))
-        if payload.known_hosts_path:
-            client.set_missing_host_key_policy(paramiko.RejectPolicy())
-        else:
-            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        # #42: reject unknown host keys on the download surface too --
+        # a first-connect AutoAdd here would exfiltrate the remote
+        # payload from a MITM host with the operator none the wiser.
+        _apply_host_key_policy(client, payload)
         try:
             client.connect(**connect_kwargs)
             SSHService._verify_fingerprint(client, payload)

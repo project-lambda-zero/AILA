@@ -24,8 +24,10 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from aila.api.auth import AuthContext, require_user_or_api_key
-from aila.api.events import get_user_queue, release_user_queue
+from aila.api.events import subscribe_user, unsubscribe_user
 from aila.api.limiter import limiter
+from aila.api.metrics import ACTIVE_SSE
+from aila.api.sse_gate import enforce_sse_cap
 
 router = APIRouter(prefix="/events", tags=["events"], dependencies=[Depends(require_user_or_api_key)])
 _log = logging.getLogger(__name__)
@@ -85,46 +87,59 @@ async def stream_events(
 
     Per D-04, D-13, D-17, D-19.
     """
+    # #60 global SSE ceiling: refuse a new stream when ACTIVE_SSE is at
+    # or above the configured cap so a runaway reconnect loop cannot
+    # grow live connections without bound. Already-open streams keep
+    # streaming; the caller receives 503 + Retry-After.
+    enforce_sse_cap()
 
     async def _generator() -> AsyncGenerator[str, None]:
-        queue = await get_user_queue(auth.user_id)
+        # 60-6: ACTIVE_SSE gauge tracks live SSE connections. The outer
+        # try/finally guarantees .dec() runs on every exit path (normal
+        # completion, client disconnect, or an exception raised by
+        # subscribe_user before the inner try is entered).
+        ACTIVE_SSE.inc()
         elapsed = 0.0
-        next_ping = float(PING_INTERVAL_S)
-
         try:
-            while elapsed < MAX_CONNECTION_S:
-                # Check if client disconnected
-                if await request.is_disconnected():
-                    break
+            queue = await subscribe_user(auth.user_id)
+            next_ping = float(PING_INTERVAL_S)
 
-                # Drain all available events without blocking
-                while True:
-                    try:
-                        raw_payload = queue.get_nowait()
-                    except asyncio.QueueEmpty:
+            try:
+                while elapsed < MAX_CONNECTION_S:
+                    # Check if client disconnected
+                    if await request.is_disconnected():
                         break
-                    try:
-                        parsed = json.loads(raw_payload)
-                        event_type = parsed.get("type", "message")
-                        yield f"event: {event_type}\ndata: {raw_payload}\n\n"
-                    except (json.JSONDecodeError, TypeError) as exc:
-                        _log.warning("Malformed event payload dropped: %s", exc)
 
-                # Wait 1 second before checking again
-                await asyncio.sleep(1.0)
-                elapsed += 1.0
+                    # Drain all available events without blocking
+                    while True:
+                        try:
+                            raw_payload = queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+                        try:
+                            parsed = json.loads(raw_payload)
+                            event_type = parsed.get("type", "message")
+                            yield f"event: {event_type}\ndata: {raw_payload}\n\n"
+                        except (json.JSONDecodeError, TypeError) as exc:
+                            _log.warning("Malformed event payload dropped: %s", exc)
 
-                # Send ping keepalive
-                if elapsed >= next_ping:
-                    yield ": ping\n\n"
-                    next_ping += PING_INTERVAL_S
+                    # Wait 1 second before checking again
+                    await asyncio.sleep(1.0)
+                    elapsed += 1.0
 
-        except asyncio.CancelledError:
-            # Client disconnected mid-stream -- clean exit
-            pass
+                    # Send ping keepalive
+                    if elapsed >= next_ping:
+                        yield ": ping\n\n"
+                        next_ping += PING_INTERVAL_S
+
+            except asyncio.CancelledError:
+                # Client disconnected mid-stream -- clean exit
+                pass
+            finally:
+                await unsubscribe_user(auth.user_id, queue)
+                _log.debug("SSE stream closed for user %s (elapsed=%.0fs)", auth.user_id, elapsed)
         finally:
-            await release_user_queue(auth.user_id)
-            _log.debug("SSE stream closed for user %s (elapsed=%.0fs)", auth.user_id, elapsed)
+            ACTIVE_SSE.dec()
 
     return StreamingResponse(
         _generator(),

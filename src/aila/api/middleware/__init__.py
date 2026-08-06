@@ -15,9 +15,16 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-__all__ = ["CorrelationIdMiddleware", "IdempotencyMiddleware"]
+__all__ = [
+    "CorrelationIdMiddleware",
+    "IdempotencyMiddleware",
+    "SecurityHeadersMiddleware",
+    "TeamContextMiddleware",
+]
 
 from aila.api.middleware.idempotency import IdempotencyMiddleware
+from aila.api.middleware.security_headers import SecurityHeadersMiddleware
+from aila.api.middleware.team_context import TeamContextMiddleware
 
 
 class CorrelationIdMiddleware(BaseHTTPMiddleware):

@@ -65,7 +65,7 @@ from .platform.modules import load_builtin_modules
 from .platform.routing import get_agent_stats, get_registered_schemas
 from .platform.runtime import AILAPlatform
 from .platform.runtime.tools import ToolRegistry
-from .platform.services.audit import record_audit_event
+from .platform.services.audit import record_audit_event_sync
 from .platform.services.ssh import SSHService
 from .platform.tools import (
     ArtifactSearchTool,
@@ -81,7 +81,7 @@ from .platform.tools import (
     SSHCommandTool,
     SystemRegistryTool,
 )
-from .storage.database import async_session_scope, backup_database, init_db
+from .storage.database import async_session_scope, backup_database, init_db, restore_database
 from .storage.provider_config import ProviderConfigStore
 from .storage.secrets import SecretStore
 
@@ -784,7 +784,7 @@ def tool_invoke(
     with session_scope() as session:
         try:
             result = tool.forward(**kwargs)
-            record_audit_event(
+            record_audit_event_sync(
                 session,
                 run_id=run_id,
                 stage="direct_tool",
@@ -795,7 +795,7 @@ def tool_invoke(
             )
             session.commit()
         except AILAError as exc:
-            record_audit_event(
+            record_audit_event_sync(
                 session,
                 run_id=run_id,
                 stage="direct_tool",
@@ -1283,8 +1283,94 @@ def backup_db(destination: Path | None = None) -> None:
 
 @app.command("restore-db")
 def restore_db(source: Path) -> None:
-    typer.echo("Database restore from pg_dump is not yet implemented for PostgreSQL.", err=True)
-    raise typer.Exit(1)
+    try:
+        restored_path = _run_async(restore_database(source=source))
+    except (AILAError, sqlalchemy.exc.SQLAlchemyError, OSError) as exc:  # pragma: no cover - typer surface
+        fail(exc)
+    typer.echo(json.dumps({"message": f"Database restored from {restored_path}.", "source_path": str(restored_path)}, indent=2))
+
+
+@app.command("backfill-knowledge")
+def backfill_knowledge(
+    dry_run: bool = typer.Option(
+        False, "--dry-run",
+        help="Report what would be embedded without writing to the store.",
+    ),
+) -> None:
+    """Re-embed historical findings into the knowledge base (RFC-12 Phase 6).
+
+    The store started empty because writes were failing (#37); this repopulates
+    it from findings already recorded so cross-investigation retrieval reflects
+    prior work. Idempotent -- safe to re-run.
+    """
+    from .modules.vr.services.knowledge_backfill import backfill_vr_knowledge
+    try:
+        result = _run_async(backfill_vr_knowledge(dry_run=dry_run))
+    except (AILAError, sqlalchemy.exc.SQLAlchemyError, OSError) as exc:  # pragma: no cover - typer surface
+        fail(exc)
+    typer.echo(json.dumps({"vr": result}, indent=2))
+
+
+@app.command("eval-retrieval")
+def eval_retrieval(
+    k: int = typer.Option(10, "--k", help="Cutoff for recall/precision@k."),
+    name: str = typer.Option(
+        "vr-findings", "--name", help="Benchmark display label.",
+    ),
+) -> None:
+    """Score retrieval recall over stored findings (RFC-12 Phase 6).
+
+    Builds a benchmark from stored VR findings (query = originating question,
+    relevant = the finding's knowledge entry), then replays it through the live
+    retrieve_routed path and reports recall/precision/MRR at k.
+    """
+    from .modules.vr.services.retrieval_benchmark import (
+        VR_FINDING_NAMESPACE_GLOB,
+        build_vr_finding_benchmark_cases,
+    )
+    from .platform.eval.retrieval_live import make_retrieve_fn
+    from .platform.eval.retrieval_runner import RetrievalEvalRunner
+
+    async def _run() -> dict[str, object]:
+        cases = await build_vr_finding_benchmark_cases()
+        if not cases:
+            return {
+                "status": "no_cases",
+                "detail": (
+                    "no finding knowledge entries with a resolvable originating "
+                    "question; run 'aila backfill-knowledge' first"
+                ),
+            }
+        runner = RetrievalEvalRunner()
+        bench = await runner.register_benchmark(
+            key="vr_finding_recall", name=name, cases=cases, k=k,
+            created_by="cli",
+        )
+        run = await runner.run(
+            key="vr_finding_recall",
+            benchmark_id=bench.id,
+            candidate_label="live_retrieve_routed",
+            candidate_retrieve_fn=make_retrieve_fn(
+                namespace_patterns=[VR_FINDING_NAMESPACE_GLOB],
+            ),
+        )
+        report = json.loads(run.report_json).get("candidate", {})
+        return {
+            "benchmark_id": bench.id,
+            "run_id": run.id,
+            "cases": len(cases),
+            "k": k,
+            "verdict": run.verdict,
+            "recall_at_k": report.get("recall_at_k"),
+            "precision_at_k": report.get("precision_at_k"),
+            "mrr": report.get("mrr"),
+        }
+
+    try:
+        result = _run_async(_run())
+    except (AILAError, sqlalchemy.exc.SQLAlchemyError, OSError, ValueError) as exc:  # pragma: no cover - typer surface
+        fail(exc)
+    typer.echo(json.dumps(result, indent=2))
 
 
 @schedule_app.command("create")
@@ -1339,7 +1425,7 @@ def intel_arrivals(
 ) -> None:
     """Show CVE arrivals and departures since a reference timestamp."""
     try:
-        result = _arrivals_departures(since=since)
+        result = _run_async(_arrivals_departures(since=since))
     except (AILAError, sqlalchemy.exc.SQLAlchemyError) as exc:  # pragma: no cover - typer surface
         fail(exc)
     typer.echo(json.dumps(result, indent=2))
@@ -1351,7 +1437,7 @@ def intel_blast_radius(
 ) -> None:
     """Show all hosts affected by a given CVE from materialized findings."""
     try:
-        result = _blast_radius(cve_id=cve)
+        result = _run_async(_blast_radius(cve_id=cve))
     except (AILAError, sqlalchemy.exc.SQLAlchemyError) as exc:  # pragma: no cover - typer surface
         fail(exc)
     typer.echo(json.dumps(result, indent=2))
@@ -1361,7 +1447,7 @@ def intel_blast_radius(
 def intel_heat_map() -> None:
     """Show package risk heat map across the fleet, sorted by max score."""
     try:
-        result = _package_heat_map()
+        result = _run_async(_package_heat_map())
     except (AILAError, sqlalchemy.exc.SQLAlchemyError) as exc:  # pragma: no cover - typer surface
         fail(exc)
     typer.echo(json.dumps(result, indent=2))
@@ -1373,7 +1459,7 @@ def intel_drift(
 ) -> None:
     """Show package additions, removals, and version changes between the two most recent scans."""
     try:
-        result = _inventory_drift(target=target)
+        result = _run_async(_inventory_drift(target=target))
     except (AILAError, sqlalchemy.exc.SQLAlchemyError) as exc:  # pragma: no cover - typer surface
         fail(exc)
     typer.echo(json.dumps(result, indent=2))
@@ -1386,7 +1472,7 @@ def intel_compare(
 ) -> None:
     """Diff packages and findings between two hosts."""
     try:
-        result = _peer_compare(host_a=host_a, host_b=host_b)
+        result = _run_async(_peer_compare(host_a=host_a, host_b=host_b))
     except (AILAError, sqlalchemy.exc.SQLAlchemyError) as exc:  # pragma: no cover - typer surface
         fail(exc)
     typer.echo(json.dumps(result, indent=2))
@@ -1399,7 +1485,7 @@ def intel_service_check(
 ) -> None:
     """Check whether a service is active on a target host via SSH systemctl is-active."""
     try:
-        result = _service_active_check(target=target, service=service)
+        result = _run_async(_service_active_check(target=target, service=service))
     except (AILAError, sqlalchemy.exc.SQLAlchemyError) as exc:  # pragma: no cover - typer surface
         fail(exc)
     typer.echo(json.dumps(result, indent=2))
@@ -1409,7 +1495,7 @@ def intel_service_check(
 def ops_mttr() -> None:
     """Show mean time to remediate grouped by criticality (p50/p90/p99)."""
     try:
-        result = _mttr()
+        result = _run_async(_mttr())
     except (AILAError, sqlalchemy.exc.SQLAlchemyError) as exc:  # pragma: no cover - typer surface
         fail(exc)
     typer.echo(json.dumps(result, indent=2))
@@ -1419,7 +1505,7 @@ def ops_mttr() -> None:
 def ops_sla_breach() -> None:
     """List open findings that have exceeded or are approaching their SLA threshold."""
     try:
-        result = _sla_breach()
+        result = _run_async(_sla_breach())
     except (AILAError, sqlalchemy.exc.SQLAlchemyError) as exc:  # pragma: no cover - typer surface
         fail(exc)
     typer.echo(json.dumps(result, indent=2))
@@ -1429,7 +1515,7 @@ def ops_sla_breach() -> None:
 def ops_tag_risk() -> None:
     """Show risk posture score per asset tag segment (e.g. per environment)."""
     try:
-        result = _tag_risk()
+        result = _run_async(_tag_risk())
     except (AILAError, sqlalchemy.exc.SQLAlchemyError) as exc:  # pragma: no cover - typer surface
         fail(exc)
     typer.echo(json.dumps(result, indent=2))
@@ -1439,7 +1525,7 @@ def ops_tag_risk() -> None:
 def ops_scoring_audit() -> None:
     """Flag CVEs scored with different criticality across hosts."""
     try:
-        result = _scoring_audit()
+        result = _run_async(_scoring_audit())
     except (AILAError, sqlalchemy.exc.SQLAlchemyError) as exc:  # pragma: no cover - typer surface
         fail(exc)
     typer.echo(json.dumps(result, indent=2))
@@ -1473,7 +1559,7 @@ def auto_playbook(
 ) -> None:
     """Generate per-host ordered patch playbook from materialized findings."""
     try:
-        result = _patch_playbook(target=target)
+        result = _run_async(_patch_playbook(target=target))
     except (AILAError, sqlalchemy.exc.SQLAlchemyError) as exc:  # pragma: no cover - typer surface
         fail(exc)
     typer.echo(json.dumps(result, indent=2))
@@ -1486,7 +1572,7 @@ def auto_what_if(
 ) -> None:
     """Simulate fleet risk posture change if a package is patched to a given version."""
     try:
-        result = _what_if_patch(package_name=package, version=version)
+        result = _run_async(_what_if_patch(package_name=package, version=version))
     except (AILAError, sqlalchemy.exc.SQLAlchemyError) as exc:  # pragma: no cover - typer surface
         fail(exc)
     typer.echo(json.dumps(result, indent=2))
@@ -1499,7 +1585,7 @@ def auto_verify(
 ) -> None:
     """Verify a CVE remediation on a target host via SSH version check."""
     try:
-        result = _verify_remediation(target=target, cve_id=cve)
+        result = _run_async(_verify_remediation(target=target, cve_id=cve))
     except (AILAError, sqlalchemy.exc.SQLAlchemyError) as exc:  # pragma: no cover - typer surface
         fail(exc)
     typer.echo(json.dumps(result, indent=2))
@@ -1513,9 +1599,9 @@ def auto_baseline(
     """Create or compare a named fleet baseline snapshot."""
     try:
         if action == "create":
-            result = _baseline_create(name=name)
+            result = _run_async(_baseline_create(name=name))
         elif action == "compare":
-            result = _baseline_compare(name=name)
+            result = _run_async(_baseline_compare(name=name))
         else:
             typer.echo(f"Unknown baseline action '{action}'. Use: create, compare.", err=True)
             raise typer.Exit(code=1)
@@ -1531,7 +1617,7 @@ def digest_weekly(
 ) -> None:
     """Generate a CISO-facing weekly digest combining all fleet intelligence."""
     try:
-        result = _weekly_digest(period_days=period_days)
+        result = _run_async(_weekly_digest(period_days=period_days))
     except (AILAError, sqlalchemy.exc.SQLAlchemyError) as exc:  # pragma: no cover - typer surface
         fail(exc)
     typer.echo(json.dumps(result, indent=2))
@@ -1585,7 +1671,7 @@ def create_api_key(
         aila create-api-key --label production-admin
     """
     from aila.api.auth import generate_api_key, hash_api_key
-    from aila.platform.contracts._common import utc_now
+    from aila.platform.contracts import utc_now
     from aila.storage.db_models import ApiKeyRecord
 
     raw_key = generate_api_key()
@@ -1607,7 +1693,7 @@ def create_api_key(
         session.commit()
         session.refresh(record)
         key_id = record.id  # snapshot before session closes
-        record_audit_event(
+        record_audit_event_sync(
             session,
             run_id=key_id,
             stage="auth",

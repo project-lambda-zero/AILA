@@ -1,0 +1,427 @@
+"""Characterization (golden-master) tests for the VR ToolExecutor.
+
+Captures the CURRENT observable behavior of the pre-dispatch gating in
+`vr.agents.tool_executor.ToolExecutor.execute()` so the RFC-03 Phase 4b
+extraction into a platform ToolExecutorBase can be proven
+behavior-preserving. These paths short-circuit before the bridge call, so
+the fake bridge's `forward` must never be awaited. There were no unit tests
+exercising execute() before this file.
+"""
+from __future__ import annotations
+
+import json
+from datetime import timedelta
+from uuid import uuid4
+
+import pytest
+from sqlmodel import select
+
+from aila.modules.vr.agents.tool_executor import ToolExecutor
+from aila.modules.vr.contracts import PayloadKind, SenderKind
+from aila.modules.vr.db_models import (
+    VRInvestigationBranchRecord,
+    VRInvestigationMessageRecord,
+    VRInvestigationRecord,
+    VRTargetRecord,
+    VRWorkspaceRecord,
+)
+from aila.platform.contracts import utc_now
+from aila.storage.database import session_scope
+
+
+class _FakeBridge:
+    """Records forward() calls so tests can assert the bridge was or was not hit."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    async def forward(self, *, action: str, **kwargs) -> dict:
+        self.calls.append((action, kwargs))
+        return {"status": "ok"}
+
+
+def _seed() -> tuple[str, str]:
+    """Seed the FK chain; return (investigation_id, branch_id)."""
+    suffix = uuid4().hex[:8]
+    ws_id = f"ws-{suffix}"
+    tgt_id = f"tgt-{suffix}"
+    inv_id = f"inv-{suffix}"
+    branch_id = f"br-{suffix}"
+    with session_scope() as sess:
+        sess.add(VRWorkspaceRecord(id=ws_id, name="ws", slug=ws_id))
+        sess.flush()
+        sess.add(VRTargetRecord(
+            id=tgt_id, workspace_id=ws_id, display_name="tgt", kind="native_binary",
+        ))
+        sess.flush()
+        sess.add(VRInvestigationRecord(
+            id=inv_id, target_id=tgt_id, title="seed", kind="discovery",
+            strategy_family="vulnerability_research.discovery_research",
+        ))
+        sess.flush()
+        sess.add(VRInvestigationBranchRecord(id=branch_id, investigation_id=inv_id))
+        sess.commit()
+    return inv_id, branch_id
+
+
+def _seed_with_handles(kind: str, handles: dict) -> str:
+    """Seed the FK chain with a target of ``kind`` carrying ``handles``.
+
+    Returns the investigation id so ``_resolve_index_id`` can walk
+    investigation -> target -> mcp_handles_json.
+    """
+    suffix = uuid4().hex[:8]
+    ws_id = f"ws-{suffix}"
+    tgt_id = f"tgt-{suffix}"
+    inv_id = f"inv-{suffix}"
+    with session_scope() as sess:
+        sess.add(VRWorkspaceRecord(id=ws_id, name="ws", slug=ws_id))
+        sess.flush()
+        sess.add(VRTargetRecord(
+            id=tgt_id, workspace_id=ws_id, display_name="tgt", kind=kind,
+            mcp_handles_json=json.dumps(handles),
+        ))
+        sess.flush()
+        sess.add(VRInvestigationRecord(
+            id=inv_id, target_id=tgt_id, title="seed", kind="discovery",
+            strategy_family="vulnerability_research.discovery_research",
+        ))
+        sess.commit()
+    return inv_id
+
+
+def _make_executor() -> tuple[ToolExecutor, _FakeBridge, _FakeBridge, _FakeBridge]:
+    ida, audit, android = _FakeBridge(), _FakeBridge(), _FakeBridge()
+    return ToolExecutor(ida=ida, audit_mcp=audit, android_mcp=android), ida, audit, android
+
+
+def _count_messages(branch_id: str) -> int:
+    with session_scope() as sess:
+        rows = sess.exec(
+            select(VRInvestigationMessageRecord).where(
+                VRInvestigationMessageRecord.branch_id == branch_id,
+            )
+        ).all()
+        return len(rows)
+
+
+@pytest.mark.asyncio
+async def test_malformed_command_errors_and_skips_bridge(test_db) -> None:
+    del test_db
+    inv_id, branch_id = _seed()
+    executor, ida, audit, android = _make_executor()
+
+    result = await executor.execute(
+        investigation_id=inv_id, branch_id=branch_id,
+        command_raw="this is not valid json", at_turn=1,
+    )
+
+    assert result.success is False
+    assert result.server_id == ""
+    assert result.tool_name == ""
+    assert result.message_id is not None
+    assert ida.calls == [] and audit.calls == [] and android.calls == []
+    assert _count_messages(branch_id) == 1
+
+
+@pytest.mark.asyncio
+async def test_tool_without_server_prefix_errors_and_skips_bridge(test_db) -> None:
+    del test_db
+    inv_id, branch_id = _seed()
+    executor, ida, audit, android = _make_executor()
+
+    result = await executor.execute(
+        investigation_id=inv_id, branch_id=branch_id,
+        command_raw='{"tool": "noserver", "args": {}}', at_turn=1,
+    )
+
+    assert result.success is False
+    assert result.tool_name == ""
+    assert ida.calls == [] and audit.calls == [] and android.calls == []
+
+
+@pytest.mark.asyncio
+async def test_unknown_tool_no_adapter_errors_and_skips_bridge(test_db) -> None:
+    del test_db
+    inv_id, branch_id = _seed()
+    executor, ida, audit, android = _make_executor()
+
+    result = await executor.execute(
+        investigation_id=inv_id, branch_id=branch_id,
+        command_raw='{"tool": "ida_headless.__definitely_not_a_real_tool__", "args": {}}',
+        at_turn=1,
+    )
+
+    assert result.success is False
+    assert result.server_id == "ida_headless"
+    assert result.tool_name == "__definitely_not_a_real_tool__"
+    assert result.message_id is not None
+    assert ida.calls == [] and audit.calls == [] and android.calls == []
+
+
+# --------------------------------------------------------------------------
+# Nearest-name suggestion (ToolExecutorHelpersBase.execute adapter-None
+# branch). Reads the '<server>.<tool>' catalog from
+# aila.platform.mcp.adapters.registered_tools() and difflibs the requested
+# identifier against it with n=3, cutoff=0.5, filtered by whatever server
+# allowlist is in effect (module-level _AGENT_ALLOWED_SERVERS + any
+# phase-graph narrowing). The VR executor sets no allowlist, so the full
+# catalog is used here.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_unknown_tool_close_to_real_appends_did_you_mean(test_db) -> None:
+    """A hallucinated tool close to a real one gets a 'Did you mean' hint
+    naming at least one real catalog entry from the same server."""
+    del test_db
+    inv_id, branch_id = _seed()
+    executor, ida, audit, android = _make_executor()
+
+    # 'audit_mcp.entrypoints' is one of the observed hallucinations; the
+    # real catalog entry is 'audit_mcp.entrypoint_paths_to'.
+    result = await executor.execute(
+        investigation_id=inv_id, branch_id=branch_id,
+        command_raw='{"tool": "audit_mcp.entrypoints", "args": {}}',
+        at_turn=1,
+    )
+
+    assert result.success is False
+    assert result.server_id == "audit_mcp"
+    assert result.tool_name == "entrypoints"
+    assert result.error is not None
+    assert "Did you mean" in result.error
+    assert "audit_mcp.entrypoint_paths_to" in result.error
+    # Still short-circuits BEFORE any bridge is invoked.
+    assert ida.calls == [] and audit.calls == [] and android.calls == []
+
+
+@pytest.mark.asyncio
+async def test_unknown_server_produces_no_bogus_suggestion(test_db) -> None:
+    """A wildly-unknown server name has no near neighbours in the catalog,
+    so no 'Did you mean' hint is appended (empty difflib match set)."""
+    del test_db
+    inv_id, branch_id = _seed()
+    executor, ida, audit, android = _make_executor()
+
+    result = await executor.execute(
+        investigation_id=inv_id, branch_id=branch_id,
+        command_raw=(
+            '{"tool": "zzzzz_bogus_server.zzzzz_bogus_tool", "args": {}}'
+        ),
+        at_turn=1,
+    )
+
+    assert result.success is False
+    assert result.error is not None
+    assert "Did you mean" not in result.error
+    assert ida.calls == [] and audit.calls == [] and android.calls == []
+
+
+@pytest.mark.asyncio
+async def test_valid_tool_dispatches_and_skips_did_you_mean(test_db) -> None:
+    """A real tool goes past the adapter-None branch: the bridge is
+    invoked and the 'Did you mean' hint is never applied."""
+    del test_db
+    inv_id, branch_id = _seed()
+    executor, ida, _audit, _android = _make_executor()
+    # The hard-block limit lookup reads ConfigRegistry; the test DB has
+    # no seeded config, so short-circuit it so the dispatch can proceed
+    # to the bridge call (which is what this test cares about).
+
+    async def _no_hard_block() -> None:
+        return None
+
+    executor._hard_block_repeat_limit = _no_hard_block  # type: ignore[method-assign]
+
+    # 'ida_headless.binary_metadata' is a real generic-adapter tool; a
+    # valid dispatch must reach ida.forward().
+    result = await executor.execute(
+        investigation_id=inv_id, branch_id=branch_id,
+        command_raw='{"tool": "ida_headless.binary_metadata", "args": {}}',
+        at_turn=1,
+    )
+
+    # Bridge was called -> the adapter-None short-circuit did NOT fire.
+    assert ida.calls != []
+    assert ida.calls[0][0] == "binary_metadata"
+    # And whatever result text landed, it MUST NOT carry the hint that
+    # only the unknown-tool branch adds.
+    assert not (result.error and "Did you mean" in result.error)
+    assert result.server_id == "ida_headless"
+    assert result.tool_name == "binary_metadata"
+
+
+# --------------------------------------------------------------------------
+# Direct coverage of the helpers extracted to ToolExecutorHelpersBase
+# (RFC-03 Phase 4b). These pin the lifted circuit-breaker counters and the
+# combined result+observables write against the injected VR record types.
+# --------------------------------------------------------------------------
+
+
+def _add_msg(sess, inv_id: str, branch_id: str, kind: str, payload: dict, order: int) -> None:
+    sess.add(VRInvestigationMessageRecord(
+        investigation_id=inv_id,
+        branch_id=branch_id,
+        sender_kind=SenderKind.ENGINE.value,
+        sender_id="tool_executor",
+        payload_kind=kind,
+        payload_json=json.dumps(payload),
+        at_turn=order,
+        evidence_refs_json="[]",
+        created_at=utc_now() + timedelta(seconds=order),
+    ))
+
+
+@pytest.mark.asyncio
+async def test_count_prior_failures_pairs_toolcall_and_error(test_db) -> None:
+    """Two matching (tool_call -> same-args error) pairs count as two; a
+    pair with different args does not count."""
+    del test_db
+    _inv, branch_id = _seed()
+    executor, *_ = _make_executor()
+    cmd = json.dumps({"tool": "audit_mcp.read_function", "args": {"name": "foo"}})
+    other = json.dumps({"tool": "audit_mcp.read_function", "args": {"name": "bar"}})
+    err = {"is_error": True, "text": "audit_mcp.read_function returned error: boom"}
+    with session_scope() as sess:
+        _add_msg(sess, _inv, branch_id, PayloadKind.TOOL_CALL.value, {"command": cmd}, 1)
+        _add_msg(sess, _inv, branch_id, PayloadKind.TEXT.value, err, 2)
+        _add_msg(sess, _inv, branch_id, PayloadKind.TOOL_CALL.value, {"command": cmd}, 3)
+        _add_msg(sess, _inv, branch_id, PayloadKind.TEXT.value, err, 4)
+        _add_msg(sess, _inv, branch_id, PayloadKind.TOOL_CALL.value, {"command": other}, 5)
+        _add_msg(sess, _inv, branch_id, PayloadKind.TEXT.value, err, 6)
+        sess.commit()
+    count = await executor._count_prior_failures(
+        branch_id, "audit_mcp", "read_function", {"name": "foo"},
+    )
+    assert count == 2
+
+
+@pytest.mark.asyncio
+async def test_count_total_malformed_counts_marker_errors(test_db) -> None:
+    """Malformed-marker error messages are counted across the window; a
+    non-malformed error is not."""
+    del test_db
+    _inv, branch_id = _seed()
+    executor, *_ = _make_executor()
+    with session_scope() as sess:
+        _add_msg(sess, _inv, branch_id, PayloadKind.TEXT.value,
+                 {"is_error": True, "text": "Malformed tool_run command -- expected"}, 1)
+        _add_msg(sess, _inv, branch_id, PayloadKind.TEXT.value,
+                 {"is_error": True, "text": "Malformed tool_run command -- expected"}, 2)
+        _add_msg(sess, _inv, branch_id, PayloadKind.TEXT.value,
+                 {"is_error": True, "text": "audit_mcp.read_function returned error"}, 3)
+        sess.commit()
+    assert await executor._count_total_malformed(branch_id) == 2
+
+
+@pytest.mark.asyncio
+async def test_persist_result_and_observables_writes_and_merges(test_db) -> None:
+    """The combined write persists a result message AND merges the
+    observables delta into the branch case_state in one call."""
+    del test_db
+    inv_id, branch_id = _seed()
+    executor, *_ = _make_executor()
+    msg_id = await executor._persist_result_and_observables(
+        inv_id, branch_id,
+        payload_kind=PayloadKind.TEXT,
+        payload={"text": "result body"},
+        observables_delta={"finding.candidate": "strcpy"},
+        at_turn=7,
+    )
+    assert msg_id
+    with session_scope() as sess:
+        msg = sess.get(VRInvestigationMessageRecord, msg_id)
+        assert msg is not None and msg.branch_id == branch_id
+        branch = sess.get(VRInvestigationBranchRecord, branch_id)
+        state = json.loads(branch.case_state_json or "{}")
+        assert state["observables"]["finding.candidate"] == "strcpy"
+
+
+@pytest.mark.asyncio
+async def test_resolve_index_id_reads_android_decompiled_handle(test_db) -> None:
+    """An android_apk target stores its audit-mcp index under
+    ``audit_mcp_decompiled_index_id`` (target_analysis._android_index_decompiled).
+
+    Regression: the resolver only read ``audit_mcp_index_id`` so it returned
+    empty for APK audits, the auto-inject safety net never fired, and every
+    audit_mcp call from an APK investigation was blocked as ``missing
+    required ['index_id']``.
+    """
+    del test_db
+    inv_id = _seed_with_handles(
+        "android_apk", {"audit_mcp_decompiled_index_id": "idx-apk-1"},
+    )
+    executor, *_ = _make_executor()
+    assert await executor._resolve_index_id(inv_id) == "idx-apk-1"
+
+
+@pytest.mark.asyncio
+async def test_maybe_correct_index_id_injects_android_index(test_db) -> None:
+    """Pre-dispatch correction forces the resolved android index onto an
+    audit_mcp call whose index_id the model omitted."""
+    del test_db
+    inv_id = _seed_with_handles(
+        "android_apk", {"audit_mcp_decompiled_index_id": "idx-apk-2"},
+    )
+    executor, *_ = _make_executor()
+    corrected = await executor._maybe_correct_index_id(inv_id, {"query": "crypto"})
+    assert corrected["index_id"] == "idx-apk-2"
+
+
+@pytest.mark.asyncio
+async def test_resolve_index_id_prefers_source_repo_handle(test_db) -> None:
+    """When both handle keys are present the source_repo key wins; the
+    android key is only a fallback."""
+    del test_db
+    inv_id = _seed_with_handles(
+        "source_repo",
+        {
+            "audit_mcp_index_id": "idx-src",
+            "audit_mcp_decompiled_index_id": "idx-apk",
+        },
+    )
+    executor, *_ = _make_executor()
+    assert await executor._resolve_index_id(inv_id) == "idx-src"
+
+
+def test_apply_observables_delta_merges_and_caps() -> None:
+    """Pure helper: merges a delta, and caps at _MAX_OBSERVABLES while
+    always retaining _directive.* keys."""
+    merged = ToolExecutor._apply_observables_delta(None, {"a": 1, "b": 2})
+    assert json.loads(merged)["observables"] == {"a": 1, "b": 2}
+    # Overflow: seed one directive + many plain keys past the cap.
+    cap = ToolExecutor._MAX_OBSERVABLES
+    big = {"_directive.keep": "x"}
+    big.update({f"k{i}": i for i in range(cap + 50)})
+    capped = json.loads(
+        ToolExecutor._apply_observables_delta(
+            json.dumps({"observables": {}}), big,
+        )
+    )["observables"]
+    assert len(capped) <= cap
+    assert "_directive.keep" in capped
+
+
+def test_merge_and_report_eviction_surfaces_dropped_keys() -> None:
+    """The eviction-reporting merge drops the OLDEST non-reserved keys past
+    the cap, keeps reserved keys, and returns exactly what fell out so the
+    caller can burn it before it leaves the live case state."""
+    seed = {"observables": {"_directive.keep": "steer", "old": "AAA", "mid": "BBB"}}
+    new_json, evicted = ToolExecutor._merge_and_report_eviction(
+        json.dumps(seed), {"new": "CCC"}, cap=2,
+    )
+    kept = json.loads(new_json)["observables"]
+    # cap=2 with one reserved key keeps the reserved key + the single
+    # newest non-reserved key; the two older non-reserved keys evict.
+    assert set(kept) == {"_directive.keep", "new"}
+    assert evicted == {"old": "AAA", "mid": "BBB"}
+
+
+def test_merge_and_report_eviction_no_overflow_evicts_nothing() -> None:
+    """Under the cap, nothing evicts and the reported mapping is empty."""
+    new_json, evicted = ToolExecutor._merge_and_report_eviction(
+        None, {"a": "1", "b": "2"}, cap=10,
+    )
+    assert json.loads(new_json)["observables"] == {"a": "1", "b": "2"}
+    assert evicted == {}

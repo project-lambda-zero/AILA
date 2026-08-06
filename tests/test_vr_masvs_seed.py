@@ -46,7 +46,6 @@ _APK_OVERVIEW = {
         "permissions": [],
         "native_libs": [],
     },
-    "mobsf_scan": {"skipped": True, "reason": "no_api_key"},
 }
 
 
@@ -101,12 +100,15 @@ def test_build_includes_apk_context() -> None:
     prompt = MasvsSeedBuilder.build(control, _APK_OVERVIEW)
     assert "com.examplecorp.selfservis" in prompt
     assert "19.4.0" in prompt
-    assert "19040000" in prompt
+    # versionCode (19040000) is no longer rendered -- the trimmed template shows
+    # only versionName plus the sha256 prefix.
     assert "android_apk__9228be90bf0bc3c4" in prompt
-    assert "/cache/9228be90/jadx" in prompt
     assert "18432" in prompt
-    # The sha-256 hex is rendered in full; assert on the prefix
-    # operators reference in logs to confirm the full value lands.
+    # Aggressively trimmed template: SHA-256 is rendered as the first
+    # 16 hex chars (operators reference this prefix in logs); the raw
+    # ``decompiled_dir`` / ``decoded_dir`` paths are no longer part of
+    # the prompt because ``index_id`` supersedes them for audit_mcp
+    # queries.
     assert "9228be90bf0bc3c4" in prompt
 
 

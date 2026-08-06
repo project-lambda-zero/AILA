@@ -392,6 +392,25 @@ importers:
         specifier: catalog:vite
         version: 8.0.16(@types/node@24.7.2)(esbuild@0.28.1)(jiti@2.7.0)
 
+  src/aila/modules/_template/frontend:
+    dependencies:
+      '@tanstack/react-query':
+        specifier: catalog:query
+        version: 5.101.0(react@19.2.7)
+      react:
+        specifier: catalog:react19
+        version: 19.2.7
+    devDependencies:
+      '@aila/typescript-config':
+        specifier: workspace:*
+        version: link:../../../../../packages/typescript-config
+      '@types/react':
+        specifier: catalog:react19
+        version: 19.2.17
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.2
+
   src/aila/modules/forensics/frontend:
     dependencies:
       '@phosphor-icons/react':

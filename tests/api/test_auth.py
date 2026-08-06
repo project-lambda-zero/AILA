@@ -27,19 +27,28 @@ async def test_openapi_json_accessible(async_client):
 
 async def test_protected_routes_return_401_without_token(async_client):
     """Every route except /health and /status returns 401 without Bearer token (AUTH-06)."""
-    PUBLIC_PATHS = {
+    public_paths = {
         "/health", "/status",
         "/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect",
         "/auth/token", "/auth/refresh",
         # Phase 138-01: new public user auth endpoints (no Bearer required)
         "/auth/login", "/auth/refresh/user", "/auth/logout",
+        # Phase 177: OIDC login-page endpoints -- authorize/callback are public,
+        # and /providers/public is intentionally unauthenticated (login page
+        # selector). See src/aila/api/routers/oidc.py:376 (no auth dependency,
+        # summary="List enabled OIDC providers (PUBLIC)").
         "/auth/oidc/authorize", "/auth/oidc/callback",
+        "/auth/oidc/providers/public",
+        # OBS-01: Prometheus scrape endpoint mounted at /metrics -- public by
+        # convention (exposes counters/latencies, no secrets) and bare /metrics
+        # 307-redirects to /metrics/ before any auth dependency runs.
+        "/metrics",
     }
     for route in async_client._transport.app.routes:
         path = getattr(route, "path", "")
         if not path or "{" in path:
             continue  # skip parameterized routes in this sweep
-        if path in PUBLIC_PATHS:
+        if path in public_paths:
             continue
         response = await async_client.get(path)
         if response.status_code == 405:

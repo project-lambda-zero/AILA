@@ -8,7 +8,10 @@ automatic rollback.
 Optionally carries TeamContext for team-scoped query filtering (D-03)
 and auto-stamping (D-07).  When team_context is provided, it is set on
 session.info["team_context"] so the do_orm_execute listener and
-StorageService._stamp_team_id can read it.
+StorageService._stamp_team_id can read it. When ``team_context`` is
+``None`` (#53), ``__aenter__`` falls back to the ambient
+:func:`current_team_context` so bare ``UnitOfWork()`` inherits the
+active request/task scope without every call site threading it.
 """
 
 from __future__ import annotations
@@ -18,9 +21,21 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..storage.database import async_session_scope
+from .services.team_scope import current_team_context
 
 if TYPE_CHECKING:
     from ..api.auth import TeamContext
+
+
+class UnitOfWorkNotCommittedError(RuntimeError):
+    """A UoW body performed writes but exited without calling commit().
+
+    Raised by :meth:`UnitOfWork.__aexit__` on a non-exception exit when the
+    session still holds pending inserts, updates, or deletes. The underlying
+    ``async_session_scope`` rolls those writes back on close, so a forgotten
+    ``await uow.commit()`` silently loses data. This backstop converts that
+    silent loss into a named, test-visible failure (C4).
+    """
 
 
 class UnitOfWork:
@@ -50,10 +65,16 @@ class UnitOfWork:
         return self._session
 
     async def __aenter__(self) -> UnitOfWork:
-        self._cm = async_session_scope()
+        # #53: resolve the ambient at __aenter__ (not __init__) so a
+        # UoW constructed once and entered many times inside distinct
+        # team_context_scope blocks sees each scope's current binding.
+        effective_ctx = (
+            self._team_context
+            if self._team_context is not None
+            else current_team_context()
+        )
+        self._cm = async_session_scope(team_context=effective_ctx)
         self._session = await self._cm.__aenter__()
-        if self._team_context is not None:
-            self._session.info["team_context"] = self._team_context
         return self
 
     async def __aexit__(
@@ -62,9 +83,23 @@ class UnitOfWork:
         exc_val: BaseException | None,
         tb: object,
     ) -> None:
-        await self._cm.__aexit__(exc_type, exc_val, tb)
-        self._session = None
-        self._cm = None
+        # Capture pending-write state before the inner scope rolls back and
+        # expires the session on close.
+        uncommitted = (
+            exc_type is None
+            and self._session is not None
+            and bool(self._session.new or self._session.dirty or self._session.deleted)
+        )
+        try:
+            await self._cm.__aexit__(exc_type, exc_val, tb)
+        finally:
+            self._session = None
+            self._cm = None
+        if uncommitted:
+            raise UnitOfWorkNotCommittedError(
+                "UnitOfWork exited with uncommitted writes; call "
+                "'await uow.commit()' before the block exits (C4)"
+            )
 
     async def commit(self) -> None:
         """Explicitly commit the current transaction."""

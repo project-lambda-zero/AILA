@@ -21,6 +21,7 @@ from aila.api.schemas.reports import ReportCountResponse, ReportSummaryResponse
 from aila.api.schemas.systems import (
     SystemCreateRequest,
     SystemDetailResponse,
+    SystemEnrichedResponse,
     SystemListResponse,
     SystemResponse,
     SystemUpdateRequest,
@@ -526,17 +527,28 @@ class TestSystemDetailResponseExtension:
 
 
 class TestSystemListResponseAlias:
-    """SystemListResponse is PaginatedResponse[SystemResponse]."""
+    """SystemListResponse is PaginatedResponse[SystemEnrichedResponse].
 
-    def test_wraps_system_response(self) -> None:
-        """SystemListResponse paginates SystemResponse items."""
-        item = SystemResponse(id=1, name="web-1", host="10.0.0.1", username="root")
+    The list endpoint (GET /systems) returns SystemEnrichedResponse items so the
+    UI gets connectivity_status, tags, last_scan_at, last_scan_status, and
+    top_severity without N+1 per-system requests.
+    """
+
+    def test_wraps_enriched_system_response(self) -> None:
+        """SystemListResponse paginates SystemEnrichedResponse items."""
+        item = SystemEnrichedResponse(
+            id=1, name="web-1", host="10.0.0.1", username="root",
+        )
         r = SystemListResponse(
             total=1, page=1, page_size=50, pages=1, items=[item],
         )
         assert len(r.items) == 1
         assert r.items[0].name == "web-1"
         assert r.total == 1
+        # Enrichment fields default to None / [] when the row has no data.
+        assert r.items[0].connectivity_status is None
+        assert r.items[0].tags == []
+        assert r.items[0].last_scan_at is None
 
     def test_empty_response(self) -> None:
         """Empty system list is valid."""
@@ -551,7 +563,7 @@ class TestSystemListResponseAlias:
         """Pages auto-computed when pages=0 and total>0."""
         r = SystemListResponse(
             total=51, page=1, page_size=50, pages=0,
-            items=[SystemResponse(id=1, name="s", host="h", username="u")],
+            items=[SystemEnrichedResponse(id=1, name="s", host="h", username="u")],
         )
         assert r.pages == 2
 
@@ -565,8 +577,23 @@ class TestReportsExports:
     """reports module __all__ exports match defined classes."""
 
     def test_all_exports(self) -> None:
-        """reports.__all__ contains exactly the defined schema classes."""
-        expected = {"ReportCountResponse", "ReportSummaryResponse"}
+        """reports.__all__ contains exactly the defined schema classes.
+
+        Covers the summary/count endpoints (ReportSummaryResponse,
+        ReportCountResponse), the /reports/{run_id}/explain endpoints
+        (ExplainCachedResponse for 200, ExplainQueuedResponse for 202),
+        and the vulnerability /reports/list + /reports/detail shapes
+        (ReportSummary, ReportDetail, FindingSummary -- D-16 / D-17).
+        """
+        expected = {
+            "ExplainCachedResponse",
+            "ExplainQueuedResponse",
+            "FindingSummary",
+            "ReportCountResponse",
+            "ReportDetail",
+            "ReportSummary",
+            "ReportSummaryResponse",
+        }
         assert set(reports_module.__all__) == expected
 
     def test_no_extra_exports(self) -> None:
@@ -585,10 +612,23 @@ class TestSystemsExports:
     """systems module __all__ exports match defined classes."""
 
     def test_all_exports(self) -> None:
-        """systems.__all__ contains exactly the expected names."""
+        """systems.__all__ contains exactly the expected names.
+
+        Covers the CRUD request/response schemas (SystemCreateRequest,
+        SystemUpdateRequest, SystemResponse, SystemDetailResponse), the
+        enriched list-endpoint shape (SystemEnrichedResponse,
+        SystemListResponse), CSV batch import (SystemCSVImportRequest,
+        SystemCSVImportResponse), and the per-system connectivity + scan
+        history endpoints (ConnectivityStatusResponse, ScanHistoryResponse).
+        """
         expected = {
+            "ConnectivityStatusResponse",
+            "ScanHistoryResponse",
+            "SystemCSVImportRequest",
+            "SystemCSVImportResponse",
             "SystemCreateRequest",
             "SystemDetailResponse",
+            "SystemEnrichedResponse",
             "SystemListResponse",
             "SystemResponse",
             "SystemUpdateRequest",

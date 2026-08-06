@@ -15,7 +15,7 @@ import ast
 import time
 from collections.abc import AsyncGenerator
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
@@ -37,22 +37,27 @@ async def async_client_with_modules(test_db) -> AsyncGenerator[AsyncClient, None
 
     stub_module = MagicMock()
     stub_module.module_id = "stub"
-    stub_module.system_summary.return_value = {"total_findings": 5, "critical": 2}
-    stub_module.system_findings.return_value = {
-        "items": [
-            {
-                "run_id": "run-stub-001",
-                "cve_id": "CVE-2024-0001",
-                "package": "openssl",
-                "host": "web01",
-                "severity": "CRITICAL",
-                "kev": True,
-                "score": 9.8,
-                "status": "open",
-            }
-        ],
-        "total": 1,
-    }
+    # systems.py awaits ``module.system_summary(...)`` and
+    # ``module.system_findings(...)`` -- both must be AsyncMock so the returned
+    # coroutine resolves to the payload, not a raw MagicMock (unawaitable).
+    stub_module.system_summary = AsyncMock(return_value={"total_findings": 5, "critical": 2})
+    stub_module.system_findings = AsyncMock(
+        return_value={
+            "items": [
+                {
+                    "run_id": "run-stub-001",
+                    "cve_id": "CVE-2024-0001",
+                    "package": "openssl",
+                    "host": "web01",
+                    "severity": "CRITICAL",
+                    "kev": True,
+                    "score": 9.8,
+                    "status": "open",
+                }
+            ],
+            "total": 1,
+        }
+    )
 
     stub_registry = MagicMock()
     stub_registry.modules = [stub_module]

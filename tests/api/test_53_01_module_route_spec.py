@@ -132,8 +132,12 @@ class TestModuleProtocolNewMethods:
 
         assert hasattr(ModuleProtocol, "report_count")
 
-    def test_system_summary_default_returns_empty_dict(self) -> None:
-        """ModuleProtocol.system_summary default implementation returns {}."""
+    async def test_system_summary_default_returns_empty_dict(self) -> None:
+        """ModuleProtocol.system_summary default implementation returns {}.
+
+        The Protocol default is ``async def`` (protocol.py declares it with a
+        coroutine signature), so callers must await the return value.
+        """
         from unittest.mock import MagicMock
 
         from aila.platform.modules.protocol import ModuleProtocol
@@ -170,12 +174,16 @@ class TestModuleProtocolNewMethods:
                 return []
 
         mod = MinimalModule()
-        # system_summary is an optional method defined on the Protocol class
-        result = ModuleProtocol.system_summary(mod, system_id=1, session=mock_session)
+        # system_summary is an optional async method defined on the Protocol class
+        result = await ModuleProtocol.system_summary(mod, system_id=1, session=mock_session)
         assert result == {}
 
-    def test_report_count_default_returns_empty_dict(self) -> None:
-        """ModuleProtocol.report_count default implementation returns {}."""
+    async def test_report_count_default_returns_empty_dict(self) -> None:
+        """ModuleProtocol.report_count default implementation returns {}.
+
+        The Protocol default is ``async def`` (protocol.py declares it with a
+        coroutine signature), so callers must await the return value.
+        """
         from unittest.mock import MagicMock
 
         from aila.platform.modules.protocol import ModuleProtocol
@@ -210,7 +218,7 @@ class TestModuleProtocolNewMethods:
                 return []
 
         mod = MinimalModule()
-        result = ModuleProtocol.report_count(mod, run_id="some-run-id", session=mock_session)
+        result = await ModuleProtocol.report_count(mod, run_id="some-run-id", session=mock_session)
         assert result == {}
 
     def test_route_specs_still_returns_empty_list(self) -> None:

@@ -4,13 +4,16 @@ All SQLModel tables used by AILA, organized by ownership (platform vs module).
 
 PostgreSQL 16 with the `pgvector` extension is the only supported backend. Tables
 use SQLModel (SQLAlchemy Core) DDL; `sa_column=Column(Text)` carries large-text
-columns; `pgvector` carries 384-dim embedding columns. asyncpg is the runtime
+columns; `pgvector` carries the 1024-dim knowledge embedding column produced by
+BGE-M3 (`BAAI/bge-m3`). The `all-MiniLM-L6-v2` fallback (384-dim) is zero-padded
+to 1024 by `KnowledgeService.embed` when it is selected via the
+`knowledge_embedding_model` config key. asyncpg is the runtime
 driver; Alembic swaps to psycopg automatically via `src/aila/alembic/env.py`.
 
 Two creation paths coexist:
 - Platform + module tables that predate the Alembic baseline (`001_baseline_stamp`)
   are created on first boot by `make db-init`, which runs `SQLModel.metadata.create_all()`
-  then stamps `alembic_version` at the current head (`067_workflow_state_cursor_archived_state`).
+  then stamps `alembic_version` at the current head (`081_vr_schema_reconcile`).
 - Every schema change since then ships as an Alembic revision under
   `src/aila/alembic/versions/`. See [`DATABASE_MIGRATIONS.md`](DATABASE_MIGRATIONS.md).
 
@@ -197,7 +200,7 @@ Vector-indexed knowledge entry for agent retrieval.
 | id | int | PK, auto | Row identity |
 | namespace | str | indexed | Agent class name |
 | content | Text | | Knowledge text |
-| embedding | LargeBinary | | 384-dim float32 BLOB |
+| embedding | Vector(1024) | pgvector, HNSW cosine index | BGE-M3 1024-dim vector; MiniLM 384-dim output zero-padded to fit when the fallback provider is selected |
 | entry_metadata | Text | default="{}" | JSON metadata |
 | dedup_key | Text/null | indexed, UQ(namespace,dedup_key) | Deduplication key |
 | created_at | datetime | default=utc_now | Creation timestamp |
@@ -570,7 +573,7 @@ Owned by `aila.modules.vr.db_models`. Created and evolved by migrations 040 + 04
 
 ## Table Summary
 
-Counts reflect the Alembic head `067_workflow_state_cursor_archived_state` (2026-06-21).
+Counts reflect the Alembic head `081_vr_schema_reconcile` (2026-07-22).
 
 | Group | Owner | Tables |
 |---|---|---|
@@ -590,4 +593,4 @@ The `hello_world` module ships as a reference and does not own any DB tables.
 ---
 
 *Generated from source models in `src/aila/storage/db_models.py`, `src/aila/platform/tasks/models.py`, `src/aila/platform/llm/cost_record.py`, `src/aila/platform/llm/idempotency_cache.py`, `src/aila/platform/automation/models.py`, and the per-module `db_models/` packages under `src/aila/modules/<module>/`.*
-*Last updated: 2026-06-21 (Alembic head `067_workflow_state_cursor_archived_state`).*
+*Last updated: 2026-07-22 (Alembic head `081_vr_schema_reconcile`).*

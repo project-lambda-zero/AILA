@@ -40,7 +40,21 @@ src/aila/
       064_vr_branch_persona_voice_not_null.py
       065_task_records_input_hash_unique.py
       066_task_records_status_check.py
-      067_workflow_state_cursor_archived_state.py    # current head
+      067_workflow_state_cursor_archived_state.py
+      068_malware_module_tables.py
+      069_malware_audit_fixes.py
+      070_malware_project_slim_and_ack.py
+      071_platform_journal.py
+      072_malware_observation_dedup.py
+      073_scheduled_report_team_scope.py
+      074_automation_tz_disable.py
+      075_hot_column_indexes.py
+      076_oidc_default_team.py
+      077_knowledge_embedding_1024.py
+      078_notification_created_index.py
+      079_refresh_token_client_meta.py
+      080_platform_schema_reconcile.py
+      081_vr_schema_reconcile.py                     # current head
 ```
 
 `alembic.ini` and the `alembic/` directory live under `src/aila/`, not at the repo root. All Alembic commands must run from `src/aila/`:
@@ -86,7 +100,7 @@ Where `{NNN}` is the next sequential number (zero-padded to 3 digits). Check the
 
 ```bash
 ls src/aila/alembic/versions/*.py | tail -1
-# 067_workflow_state_cursor_archived_state.py -> next is 068
+# 081_vr_schema_reconcile.py -> next is 082
 ```
 
 ### Step 3: Write the migration
@@ -94,21 +108,21 @@ ls src/aila/alembic/versions/*.py | tail -1
 Use this template:
 
 ```python
-"""063 -- add priority column to task records.
+"""082 -- add priority column to task records.
 
 Adds a nullable priority field so operators can influence queue ordering.
 
-Revision ID: 063_taskrecord_priority
-Revises: 067_workflow_state_cursor_archived_state
-Create Date: 2026-06-10
+Revision ID: 082_taskrecord_priority
+Revises: 081_vr_schema_reconcile
+Create Date: 2026-07-22
 """
 from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
 
-revision = "063_taskrecord_priority"
-down_revision = "067_workflow_state_cursor_archived_state"
+revision = "082_taskrecord_priority"
+down_revision = "081_vr_schema_reconcile"
 branch_labels = None
 depends_on = None
 
@@ -168,6 +182,20 @@ Examples from the codebase:
 | `065_task_records_input_hash_unique.py` | Platform column + partial UNIQUE |
 | `066_task_records_status_check.py` | Platform CHECK constraint |
 | `067_workflow_state_cursor_archived_state.py` | Platform column addition |
+| `068_malware_module_tables.py` | Malware module initial tables (17 tables) |
+| `069_malware_audit_fixes.py` | Module column additions + findings table rebuild |
+| `070_malware_project_slim_and_ack.py` | Module column drops + acked_at column |
+| `071_platform_journal.py` | Platform append-only hash-chained journal + dead-letter |
+| `072_malware_observation_dedup.py` | Module column + partial UNIQUE index |
+| `073_scheduled_report_team_scope.py` | Platform team_id column + backfill |
+| `074_automation_tz_disable.py` | Platform cron timezone + disable reason columns |
+| `075_hot_column_indexes.py` | Platform indexes on hot query columns |
+| `076_oidc_default_team.py` | Platform column addition (OIDC default team) |
+| `077_knowledge_embedding_1024.py` | Platform column type widening to vector(1024) |
+| `078_notification_created_index.py` | Platform composite index on notifications |
+| `079_refresh_token_client_meta.py` | Platform column additions (auth client metadata) |
+| `080_platform_schema_reconcile.py` | Platform schema drift reconciliation (types + constraint promotion) |
+| `081_vr_schema_reconcile.py` | Module UNIQUE constraint renames on VR tables |
 
 The `revision` string inside the file must match the filename (without `.py`).
 

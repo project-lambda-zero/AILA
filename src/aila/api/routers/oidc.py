@@ -26,6 +26,7 @@ Endpoints (all envelope-wrapped):
 """
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 from datetime import UTC, datetime, timedelta
@@ -43,13 +44,13 @@ from aila.api.auth import (
     issue_user_refresh_token,
     require_role,
 )
-from aila.api.constants import JWT_ALGORITHM, ROLE_ADMIN
+from aila.api.constants import JWT_ALGORITHM, ROLE_ADMIN, ROLE_OPERATOR, VALID_ROLES
 from aila.api.limiter import limiter
 from aila.api.schemas.endpoints import OIDCAuthorizeResponse
 from aila.api.schemas.envelope import DataEnvelope
 from aila.api.schemas.users import TokenResponse
 from aila.config import get_settings
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import OIDCProviderRecord, SecretRecord, UserRecord
 from aila.storage.secrets import SecretStore
@@ -104,6 +105,7 @@ class OIDCProviderCreateRequest(BaseModel):
     client_secret: str = Field(..., min_length=1)
     scopes: list[str] | None = Field(default=None)
     is_enabled: bool = True
+    default_team_id: str | None = Field(default=None, max_length=64)
 
 
 class OIDCProviderUpdateRequest(BaseModel):
@@ -118,6 +120,7 @@ class OIDCProviderUpdateRequest(BaseModel):
     client_secret: str | None = None
     scopes: list[str] | None = None
     is_enabled: bool | None = None
+    default_team_id: str | None = Field(default=None, max_length=64)
 
 
 class OIDCProviderResponse(BaseModel):
@@ -135,6 +138,7 @@ class OIDCProviderResponse(BaseModel):
     client_id: str
     scopes: list[str]
     is_enabled: bool
+    default_team_id: str | None
     created_at: datetime
 
 
@@ -302,6 +306,7 @@ def _provider_to_response(p: OIDCProviderRecord) -> OIDCProviderResponse:
         client_id=p.client_id,
         scopes=_parse_scopes(getattr(p, "scopes_json", None)),
         is_enabled=p.is_enabled,
+        default_team_id=getattr(p, "default_team_id", None),
         created_at=p.created_at,
     )
 
@@ -469,11 +474,12 @@ async def oidc_authorize(
         }
         auth_url = f"{auth_endpoint}?{urlencode(params)}"
 
+    settings = get_settings()
     response.set_cookie(
         key="oidc_state",
         value=state_token,
         httponly=True,
-        secure=False,  # Flip to True behind HTTPS in production
+        secure=settings.oidc_cookie_secure,
         samesite="lax",
         max_age=_STATE_JWT_EXPIRY,
     )
@@ -602,6 +608,31 @@ async def _verify_id_token(
     return claims
 
 
+def _resolve_oidc_role(claims: dict[str, Any]) -> str:
+    """Return the role for an auto-provisioned OIDC user from id_token claims.
+
+    #36: the previous implementation hardcoded ``role="operator"`` for every
+    OIDC auto-provisioned account, so an identity provider whose users are
+    intended to be admins or read-only saw every sign-in downgraded/upgraded
+    to the same fixed role. The RFC7643-style scalar ``role`` claim and the
+    ``roles`` array claim are the two shapes real IdPs (Azure AD, Google
+    Workspace via mapped attributes, generic Keycloak) emit; we accept both.
+    A claim whose value is not in :data:`VALID_ROLES` is rejected -- a
+    misconfigured or hostile IdP cannot invent a role by dropping an
+    arbitrary string into the token. ``ROLE_OPERATOR`` remains the safe
+    fallback when no claim is present.
+    """
+    claimed = claims.get("role")
+    if isinstance(claimed, str) and claimed in VALID_ROLES:
+        return claimed
+    roles = claims.get("roles")
+    if isinstance(roles, list):
+        for entry in roles:
+            if isinstance(entry, str) and entry in VALID_ROLES:
+                return entry
+    return ROLE_OPERATOR
+
+
 @router.get(
     "/callback",
     response_model=DataEnvelope[TokenResponse],
@@ -622,7 +653,10 @@ async def oidc_callback(
     if oidc_state is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing OIDC state cookie")
     state_payload = _validate_state_jwt(oidc_state)
-    if state_payload.get("nonce") != state:
+    # Double-submit CSRF: the state echoed back by the IdP in the query string
+    # must be byte-identical to the signed JWT stored in the httponly cookie.
+    # (_make_state_jwt puts the same token in both the auth URL and the cookie.)
+    if not hmac.compare_digest(oidc_state, state):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="OIDC state mismatch")
 
     provider_id = state_payload.get("provider_id")
@@ -681,11 +715,23 @@ async def oidc_callback(
         if user is None:
             username = (name or email or oidc_sub).replace(" ", "_").lower()[:64]
             now = utc_now()
+            # #36: resolve the IdP-issued role from the id_token claims
+            # instead of hardcoding "operator" -- previously every OIDC
+            # sign-in was granted operator regardless of the identity
+            # provider's intent. Accept a scalar ``role`` claim or the
+            # first entry of a ``roles`` list; validate against VALID_ROLES
+            # so a hostile IdP cannot inject an unknown value; fall back to
+            # ``ROLE_OPERATOR`` when the claim is missing or invalid.
+            provisioned_role = _resolve_oidc_role(claims)
             user = UserRecord(
                 username=username,
                 email=email,
                 oidc_sub=oidc_sub,
-                role="operator",
+                role=provisioned_role,
+                # #36: bind the auto-provisioned user to the provider's
+                # configured team so it is scoped on first login. None keeps
+                # the prior behavior (god-tier, TEAM-06) but now explicitly.
+                team_id=provider.default_team_id,
                 is_active=True,
                 created_at=now,
                 updated_at=now,
@@ -701,9 +747,22 @@ async def oidc_callback(
 
         user_id = user.id
         role = user.role
+        user_team_id = getattr(user, "team_id", None)
 
-    access_token, expires_in = issue_user_jwt(user_id, role)
-    refresh_token = await issue_user_refresh_token(user_id, role)
+    # #36: the issued JWT must carry the user's team. Previously the team
+    # claim was omitted, so a team-assigned OIDC login received a god-tier
+    # (TEAM-06) token for its whole lifetime. With no team the token stays
+    # god-tier; log it so the grant does not pass silently.
+    if user_team_id is None:
+        _log.warning(
+            "OIDC user %s has no team -- token grants god-tier access "
+            "(TEAM-06). Set the provider default_team_id or assign a team "
+            "via user management to scope this account.",
+            user_id,
+        )
+
+    access_token, expires_in = issue_user_jwt(user_id, role, team_id=user_team_id)
+    refresh_token = await issue_user_refresh_token(user_id, role, team_id=user_team_id)
 
     return DataEnvelope(
         data=TokenResponse(
@@ -780,6 +839,7 @@ async def create_provider(
         client_secret_encrypted="",  # Filled after secret persisted
         scopes_json=scopes_json,
         is_enabled=body.is_enabled,
+        default_team_id=body.default_team_id,
         created_at=utc_now(),
     )
 
@@ -837,6 +897,8 @@ async def update_provider(
             provider.scopes_json = json.dumps(body.scopes)
         if body.is_enabled is not None:
             provider.is_enabled = body.is_enabled
+        if body.default_team_id is not None:
+            provider.default_team_id = body.default_team_id
 
         session.add(provider)
         await session.commit()

@@ -1,6 +1,6 @@
 """Fixed-order middleware pipeline for LLM calls.
 
-Step order is hardcoded: classify -> call -> validate -> gate -> seal.
+Step order is hardcoded: classify -> call -> validate -> gate -> verify -> seal.
 "call" is the existing _single_call logic -- not a registered step.
 Pre-call steps run before the API call; post-call steps run after.
 
@@ -46,7 +46,7 @@ class PipelineRunner:
         """Register a step function for a named pipeline slot.
 
         Args:
-            name: One of the known step names (classify, validate, gate, seal).
+            name: One of the known step names (classify, validate, gate, verify, seal).
             step_fn: Async callable that receives (ctx, messages, routing).
 
         Raises:
@@ -101,6 +101,7 @@ class PipelineRunner:
         call_fn: Callable[..., Awaitable[Any]],
         call_kwargs: dict[str, Any],
         run_id: str = "",
+        team_id: str = "",
     ) -> tuple[Any, dict[str, Any]]:
         """Execute the pipeline: pre-call steps, call, post-call steps.
 
@@ -111,11 +112,18 @@ class PipelineRunner:
             call_fn: The actual API call function (_single_call or similar).
             call_kwargs: Keyword arguments to pass to call_fn.
             run_id: Optional run identifier for cost tracking and audit sealing.
+            team_id: Optional team identifier for cost record scoping, threaded
+                into ctx so consensus/verify inner calls attribute their spend
+                to the same team as the primary call.
 
         Returns:
             Tuple of (response, ctx) where ctx is the pipeline context dict.
         """
-        ctx: dict[str, Any] = {"task_type": task_type, "run_id": run_id}
+        ctx: dict[str, Any] = {
+            "task_type": task_type,
+            "run_id": run_id,
+            "team_id": team_id,
+        }
 
         if not self._steps:
             response = await call_fn(**call_kwargs)

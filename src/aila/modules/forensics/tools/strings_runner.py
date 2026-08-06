@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from aila.config import Settings
-from aila.platform.tools._common import Tool
+from aila.platform.tools import Tool
 
 TOOL_ALIAS = "strings_runner"
 CAPABILITY = "Run strings, FLOSS (obfuscated string extraction), and capa (capability detection) via SSH."

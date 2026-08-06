@@ -4,25 +4,13 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy.dialects.sqlite import insert as sa_insert
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_settings(tmp_path):
-    from aila.config import Settings
-    return Settings(database_url=f"sqlite:///{(tmp_path / 'test.db').as_posix()}")
-
-
-def _setup_db(settings):
-    from aila.storage.database import init_db
-    init_db(settings)
-
-
 def _insert_finding(
-    settings,
     *,
     host: str,
     package_name: str,
@@ -36,34 +24,30 @@ def _insert_finding(
     from aila.storage.database import session_scope
 
     now = created_at or datetime.now(UTC)
-    stmt = (
-        sa_insert(LatestFindingRecord)
-        .values(
-            host=host,
-            package_name=package_name,
-            cve_id=cve_id,
-            system_id=system_id,
-            system_name=host,
-            distribution="ubuntu-22.04",
-            criticality=criticality,
-            score=score,
-            rationale="test",
-            fixed_version="1.0.0",
-            nvd_url=f"https://nvd.nist.gov/vuln/detail/{cve_id}",
-            compliance_tags_json="[]",
-            details_json="{}",
-            last_scanned_at=now,
-            created_at=now,
+    with session_scope() as session:
+        session.add(
+            LatestFindingRecord(
+                host=host,
+                package_name=package_name,
+                cve_id=cve_id,
+                system_id=system_id,
+                system_name=host,
+                distribution="ubuntu-22.04",
+                criticality=criticality,
+                score=score,
+                rationale="test",
+                fixed_version="1.0.0",
+                nvd_url=f"https://nvd.nist.gov/vuln/detail/{cve_id}",
+                compliance_tags_json="[]",
+                details_json="{}",
+                last_scanned_at=now,
+                created_at=now,
+            )
         )
-        .prefix_with("OR REPLACE")
-    )
-    with session_scope(settings) as session:
-        session.exec(stmt)  # type: ignore[arg-type]
         session.commit()
 
 
 def _insert_remediation(
-    settings,
     *,
     host: str,
     package_name: str,
@@ -75,20 +59,17 @@ def _insert_remediation(
     from aila.storage.database import session_scope
 
     now = updated_at or datetime.now(UTC)
-    stmt = (
-        sa_insert(RemediationRecord)
-        .values(
-            host=host,
-            package_name=package_name,
-            cve_id=cve_id,
-            status=status,
-            notes="",
-            updated_at=now,
+    with session_scope() as session:
+        session.add(
+            RemediationRecord(
+                host=host,
+                package_name=package_name,
+                cve_id=cve_id,
+                status=status,
+                notes="",
+                updated_at=now,
+            )
         )
-        .prefix_with("OR REPLACE")
-    )
-    with session_scope(settings) as session:
-        session.exec(stmt)  # type: ignore[arg-type]
         session.commit()
 
 
@@ -97,32 +78,25 @@ def _insert_remediation(
 # ---------------------------------------------------------------------------
 
 
-def test_empty_returns_empty_by_criticality(tmp_path):
+async def test_empty_returns_empty_by_criticality(test_db):
     """No RemediationRecord rows -> result['by_criticality'] == {} and result['finding_count'] == 0."""
     from aila.modules.vulnerability.tools.mttr import mttr
 
-    settings = _make_settings(tmp_path)
-    _setup_db(settings)
-
-    result = mttr(settings=settings)
+    result = await mttr()
 
     assert result["by_criticality"] == {}
     assert result["finding_count"] == 0
 
 
-def test_single_remediated_finding_p50_p90_p99_equal(tmp_path):
+async def test_single_remediated_finding_p50_p90_p99_equal(test_db):
     """One remediated record with duration 5 days -> p50=p90=p99=5 for its criticality."""
     from aila.modules.vulnerability.tools.mttr import mttr
-
-    settings = _make_settings(tmp_path)
-    _setup_db(settings)
 
     now = datetime.now(UTC)
     created = now - timedelta(days=5)
     remediated_at = now
 
     _insert_finding(
-        settings,
         host="host-a",
         package_name="openssl",
         cve_id="CVE-2024-0001",
@@ -130,7 +104,6 @@ def test_single_remediated_finding_p50_p90_p99_equal(tmp_path):
         created_at=created,
     )
     _insert_remediation(
-        settings,
         host="host-a",
         package_name="openssl",
         cve_id="CVE-2024-0001",
@@ -138,7 +111,7 @@ def test_single_remediated_finding_p50_p90_p99_equal(tmp_path):
         updated_at=remediated_at,
     )
 
-    result = mttr(settings=settings)
+    result = await mttr()
 
     assert result["finding_count"] == 1
     assert "High" in result["by_criticality"]
@@ -149,19 +122,15 @@ def test_single_remediated_finding_p50_p90_p99_equal(tmp_path):
     assert stats["p99_days"] == pytest.approx(5.0, abs=0.1)
 
 
-def test_percentile_ordering(tmp_path):
+async def test_percentile_ordering(test_db):
     """10 remediated High findings with durations [1..10] days -> p50=5, p90=9, p99=10."""
     from aila.modules.vulnerability.tools.mttr import mttr
-
-    settings = _make_settings(tmp_path)
-    _setup_db(settings)
 
     now = datetime.now(UTC)
     for i in range(1, 11):
         cve = f"CVE-2024-{i:04d}"
         created = now - timedelta(days=i)
         _insert_finding(
-            settings,
             host=f"host-{i}",
             package_name="openssl",
             cve_id=cve,
@@ -169,7 +138,6 @@ def test_percentile_ordering(tmp_path):
             created_at=created,
         )
         _insert_remediation(
-            settings,
             host=f"host-{i}",
             package_name="openssl",
             cve_id=cve,
@@ -177,7 +145,7 @@ def test_percentile_ordering(tmp_path):
             updated_at=now,
         )
 
-    result = mttr(settings=settings)
+    result = await mttr()
 
     assert result["finding_count"] == 10
     stats = result["by_criticality"]["High"]
@@ -190,18 +158,14 @@ def test_percentile_ordering(tmp_path):
     assert stats["p99_days"] == pytest.approx(10.0, abs=0.1)
 
 
-def test_multiple_criticalities_grouped(tmp_path):
+async def test_multiple_criticalities_grouped(test_db):
     """Immediate findings and High findings reported separately under different keys."""
     from aila.modules.vulnerability.tools.mttr import mttr
-
-    settings = _make_settings(tmp_path)
-    _setup_db(settings)
 
     now = datetime.now(UTC)
 
     # Immediate finding: 1 day
     _insert_finding(
-        settings,
         host="host-imm",
         package_name="pkg-a",
         cve_id="CVE-2024-I001",
@@ -209,7 +173,6 @@ def test_multiple_criticalities_grouped(tmp_path):
         created_at=now - timedelta(days=1),
     )
     _insert_remediation(
-        settings,
         host="host-imm",
         package_name="pkg-a",
         cve_id="CVE-2024-I001",
@@ -219,7 +182,6 @@ def test_multiple_criticalities_grouped(tmp_path):
 
     # High finding: 7 days
     _insert_finding(
-        settings,
         host="host-hi",
         package_name="pkg-b",
         cve_id="CVE-2024-H001",
@@ -227,7 +189,6 @@ def test_multiple_criticalities_grouped(tmp_path):
         created_at=now - timedelta(days=7),
     )
     _insert_remediation(
-        settings,
         host="host-hi",
         package_name="pkg-b",
         cve_id="CVE-2024-H001",
@@ -235,7 +196,7 @@ def test_multiple_criticalities_grouped(tmp_path):
         updated_at=now,
     )
 
-    result = mttr(settings=settings)
+    result = await mttr()
 
     assert result["finding_count"] == 2
     assert "Immediate" in result["by_criticality"]
@@ -244,17 +205,13 @@ def test_multiple_criticalities_grouped(tmp_path):
     assert result["by_criticality"]["High"]["count"] == 1
 
 
-def test_unresolved_findings_excluded(tmp_path):
+async def test_unresolved_findings_excluded(test_db):
     """RemediationRecord with status='open' not counted in MTTR."""
     from aila.modules.vulnerability.tools.mttr import mttr
-
-    settings = _make_settings(tmp_path)
-    _setup_db(settings)
 
     now = datetime.now(UTC)
 
     _insert_finding(
-        settings,
         host="host-open",
         package_name="pkg-x",
         cve_id="CVE-2024-X001",
@@ -263,7 +220,6 @@ def test_unresolved_findings_excluded(tmp_path):
     )
     # status="open" -- should be excluded
     _insert_remediation(
-        settings,
         host="host-open",
         package_name="pkg-x",
         cve_id="CVE-2024-X001",
@@ -271,33 +227,27 @@ def test_unresolved_findings_excluded(tmp_path):
         updated_at=now,
     )
 
-    result = mttr(settings=settings)
+    result = await mttr()
 
     assert result["finding_count"] == 0
     assert result["by_criticality"] == {}
 
 
-def test_tool_action_query(tmp_path):
+async def test_tool_action_query(test_db):
     """MttrTool().forward(action='query') returns dict with 'by_criticality' key."""
     from aila.modules.vulnerability.tools.mttr import MttrTool
 
-    settings = _make_settings(tmp_path)
-    _setup_db(settings)
-
-    tool = MttrTool(settings=settings)
-    result = tool.forward(action="query")
+    tool = MttrTool()
+    result = await tool.forward(action="query")
 
     assert isinstance(result, dict)
     assert "by_criticality" in result
 
 
-def test_tool_rejects_bad_action(tmp_path):
+async def test_tool_rejects_bad_action(test_db):
     """MttrTool().forward(action='bad') raises ValueError."""
     from aila.modules.vulnerability.tools.mttr import MttrTool
 
-    settings = _make_settings(tmp_path)
-    _setup_db(settings)
-
-    tool = MttrTool(settings=settings)
+    tool = MttrTool()
     with pytest.raises(ValueError):
-        tool.forward(action="bad")
+        await tool.forward(action="bad")

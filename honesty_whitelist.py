@@ -26,7 +26,7 @@
 
 HONESTY_WHITELIST = [
     # Category (b): state_response_emit is a required workflow stage handler.
-    ("_template/workflow.py", "state_response_emit", "context"),
+    ("_template/workflow/__init__.py", "state_response_emit", "context"),
 
     # Category (b): register_tools() accepts optional registry= param for backward compat.
     ("platform.py", "register_tools", "registry"),
@@ -58,6 +58,22 @@ HONESTY_WHITELIST = [
     # the adapter interface method IS the indirection point.
     ("adapters/base.py", "collect_inventory", "inlining"),
 
+    # Category (g): stream_key is the single public accessor for the private
+    # _KEY_FMT stream-key format. Inlining it at call sites reinstates the
+    # module->platform private-attr coupling the accessor closes (RFC-05).
+    ("tasks/progress.py", "stream_key", "inlining"),
+
+    # Category (b): _extra_user_prompt_kwargs is an optional template-method
+    # hook on AgentTurnRunnerBase. The base default contributes no extra
+    # user-prompt kwargs; VR overrides it to add cve_intel. Empty is real.
+    ("agents/turn_runner.py", "_extra_user_prompt_kwargs", "empty dict"),
+
+    # Category (g): encode_case_state is the serialization half of the
+    # case-state codec (paired with decode_case_state). Inlining the
+    # json.dumps at call sites re-scatters the serialization format the
+    # module exists to own as a single source of truth (RFC-03).
+    ("agents/turn_helpers.py", "encode_case_state", "inlining"),
+
     # Category (b): Pydantic field validator -- name is the public API contract.
     ("contracts/profile.py", "validate_display_name", "inlining"),
 
@@ -87,14 +103,6 @@ HONESTY_WHITELIST = [
     ("vr/workflow/task.py", "run_target_analysis", "noqa"),
     ("vr/workflow/task.py", "run_fuzz_campaign_launch", "noqa"),
     ("vr/services/target_analysis.py", "_run_git", "noqa"),
-    # Bridges hoisted to platform/mcp/bridges/ -- these noqa entries follow the move.
-    ("platform/mcp/bridges/audit_mcp.py", "_resolve_base_url", "noqa"),
-    ("platform/mcp/bridges/ida_headless.py", "_resolve_base_url", "noqa"),
-    ("platform/mcp/bridges/audit_mcp.py", "forward", "noqa"),
-    ("platform/mcp/bridges/ida_headless.py", "forward", "noqa"),
-    ("platform/mcp/bridges/android_mcp.py", "_resolve_base_url", "noqa"),
-    ("platform/mcp/bridges/android_mcp.py", "forward", "noqa"),
-
     # Category (b): _enqueue_next_investigation_run lives in
     # workflow/states/investigation_emit.py -- a state file. Workflow
     # registration loads every state file, then loads workflow.task
@@ -397,6 +405,7 @@ HONESTY_WHITELIST = [
     ("malware/workflow/task.py", "http_client_in_module", "import httpx"),
     ("vr/agents/auto_steering.py", "http_client_in_module", "import httpx"),
     ("vr/agents/claim_verifier.py", "http_client_in_module", "import httpx"),
+    ("vr/agents/narrative_agent.py", "http_client_in_module", "import httpx"),
     ("vr/agents/pattern_extractor.py", "http_client_in_module", "import httpx"),
     ("vr/agents/synthesis_agent.py", "http_client_in_module", "import httpx"),
     ("vr/agents/tool_executor.py", "http_client_in_module", "import httpx"),
@@ -412,20 +421,50 @@ HONESTY_WHITELIST = [
     # module_id binding across 40+ callsites.
     ("malware/_task_queue.py", "default_task_queue", "consider inlining"),
     ("vr/_task_queue.py", "default_task_queue", "consider inlining"),
-    # contracts.target_stages.get: typed getattr facade exposed so
+    # forensics/_task_queue.default_task_queue: introduced in #18
+    # alongside the panel spine so persona_spawn (which enqueues sibling
+    # branch worker tasks) has a factory to bind ConfigRegistry +
+    # module_id at. Same public facade shape as vr / malware; inlining
+    # would scatter the module_id binding across every panel spawn site.
+    ("forensics/_task_queue.py", "default_task_queue", "consider inlining"),
+    # _template/_task_queue.default_task_queue: same public factory shape
+    # as vr / malware / forensics; the scaffold ships it so a copier's
+    # ``from aila.modules.<mod>._task_queue import default_task_queue``
+    # site keeps working after the rename, without scattering the
+    # ConfigRegistry + module_id binding across every callsite.
+    ("_template/_task_queue.py", "default_task_queue", "consider inlining"),
+    # _template/workflow/finalize.finalize_investigation: template ships a
+    # NO-OP finalize chokepoint (a copier wires the four-trigger detector).
+    # The single ``return FinalizeResult(no_trigger)`` is deliberate --
+    # inlining at the emit call site would force every copier to
+    # rediscover the FinalizeResult shape instead of extending the seed.
+    ("_template/workflow/finalize.py", "finalize_investigation", "consider inlining"),
+    # _template/workflow/services.TemplateWorkflowServices.build: the
+    # per-run services factory shape mandated by the WorkflowServices
+    # protocol (D-15 freshness contract). Same shape as vr / malware
+    # BuildableServices.build; inlining at the definition site would
+    # violate the factory-per-run contract.
+    ("_template/workflow/services.py", "build", "consider inlining"),
+    # platform/contracts/target_stages.get: typed getattr facade exposed so
     # consumers don't reach into the StageDescriptor internals; the
     # ``return getattr(...)`` is the simplest signature that satisfies
     # the typing contract.
-    ("malware/contracts/target_stages.py", "get", "consider inlining"),
-    ("vr/contracts/target_stages.py", "get", "consider inlining"),
+    ("platform/contracts/target_stages.py", "get", "consider inlining"),
     # personas.role_notes_for: registry-style lookup facade, two-call
     # path lets the role_notes_for caller stay agnostic of the backing
     # registry shape.
     ("malware/personas/role_notes.py", "role_notes_for", "consider inlining"),
     # mcp_registry.probe_all: tuple wrapper around the iterator return
-    # so callers get a stable list[ServerSummary] return type.
-    ("malware/services/mcp_registry.py", "probe_all", "consider inlining"),
-    ("vr/services/mcp_registry.py", "probe_all", "consider inlining"),
+    # so callers get a stable list[ServerSummary] return type. Lifted to
+    # the platform base in RFC-04 Phase 1; the module subclasses inherit it.
+    ("platform/mcp/registry.py", "probe_all", "consider inlining"),
+    # reasoning.StrategyRegistry.sorted_declarations: public accessor that
+    # hides the private _by_family dict and owns the (match_priority,
+    # family) classification order consumed by select_strategy_family.
+    # Inlining would leak the registry's internal representation into the
+    # reasoning engine (RFC-05 crit 6). Same stable-return-type shape as
+    # probe_all above.
+    ("platform/services/reasoning.py", "sorted_declarations", "consider inlining"),
     # disclosure.info: dataclass-like accessor returning the bound
     # DisclosureTrackInfo singleton.
     ("vr/disclosure/base.py", "info", "consider inlining"),
@@ -438,6 +477,12 @@ HONESTY_WHITELIST = [
     # tasks.all_periodic_sweeps: dict-copy accessor so callers can't
     # mutate the registry by accident.
     ("platform/tasks/sweeps.py", "all_periodic_sweeps", "consider inlining"),
+    # RFC-02 Phase 2: module bindings of the shared platform investigation
+    # summary builder. Each supplies only its own *InvestigationSummary
+    # contract class; keeping the facade leaves the ~10 call sites per
+    # module unchanged (list, detail, and every lifecycle handler return).
+    ("vr/api_router.py", "_investigation_summary", "consider inlining"),
+    ("malware/api_router.py", "_investigation_summary", "consider inlining"),
 
     # Category (f): malware module.py protocol stubs. The ModuleProtocol
     # requires these methods but the malware module legitimately has
@@ -475,10 +520,83 @@ HONESTY_WHITELIST = [
     # acceptable here (the path is hot-debugger-only).
     ("vr/disclosure/service.py", "'assert'", "in production code"),
 
-    # Category (b): platform audit_mcp bridge dispatch. The 7-action
-    # dispatch is the bridge's defining contract -- splitting it into
-    # 7 single-action tools would require 7 separate registrations and
-    # break the existing operator-side tool registry expectations.
-    ("platform/mcp/bridges/audit_mcp.py", "'forward'", "action-dispatch branches"),
+    # Category (b): RFC-11 Tier C -- the audit-mcp MIDDLEWARE forward is a
+    # verbatim port of the old bridge's multi-action dispatch (its defining
+    # contract; splitting into single-action tools would break the operator
+    # tool registry). The read_function not-indexed auto-fallback chain
+    # nests a readability-flagged ``if`` that stays as a faithful port.
+    ("platform/mcp/middleware/audit.py", "'forward'", "action-dispatch branches"),
+    ("platform/mcp/middleware/audit.py", "nested if with no else", "combine with 'and'"),
+
+    # Category (b): current_team_context() is the typed public accessor for
+    # the ambient TeamContext ContextVar (#53). Inlining ``_CURRENT_TEAM_CONTEXT.get()``
+    # at every call site would leak the private module-level ContextVar into
+    # the public API surface (async_session_scope, UnitOfWork, tests) and
+    # break the type contract -- the ContextVar stores ``object | None`` to
+    # avoid a circular import; the wrapper re-attaches the ``TeamContext``
+    # type. It is the single import boundary tests can monkeypatch.
+    ("platform/services/team_scope.py", "current_team_context", "inlining"),
+
+    # ------------------------------------------------------------------
+    # Category (h): except_return_default residual after rule 25 tightening.
+    # Each site is a documented fail-closed / coerce path where the
+    # empty return is the public contract, not a swallow.
+    # ------------------------------------------------------------------
+    # api/sse_gate._current_active_sse: Prometheus internal-attr fallback.
+    # Returns 0 when both the fast ``Gauge._value.get()`` path AND the
+    # slower ``collect()`` fallback fail; 0 means "no live SSE streams"
+    # which is the fail-closed answer for the cap check (never denies
+    # a new connection on a bad reading).
+    ("api/sse_gate.py", "except_return_default",
+     "silently hides failures"),
+    # vr/tools/poc_runner.run_dir_of: PurePosixPath.relative_to raises
+    # ValueError when the path is outside _REMOTE_DIR; the None return
+    # signals "no per-run parent to clean up", which callers handle.
+    ("vr/tools/poc_runner.py", "except_return_default",
+     "silently hides failures"),
+
+    # Category (b): PromptRegistry.load is the sync file-backed entry
+    # point paired with async ``resolve()`` (DB-then-file). Inlining
+    # ``_resolve_from_file(...)`` at call sites would scatter the
+    # sync/async split contract that PromptRegistry exists to enforce.
+    ("platform/prompts/registry.py", "load",
+     "consider inlining"),
+
+    # Category (b): RFC-09 activation bootstrap. seed_prompt_versions sets the
+    # production alias ONLY when the key has none yet (alias-if-absent). It
+    # establishes the initial file baseline, never promotes a candidate over
+    # an existing baseline, so there is nothing to eval against. The RFC-10
+    # gate (AgentLifecycleController.promote) governs candidate promotions and
+    # requires eval evidence that does not exist at first-boot bootstrap.
+    ("vr/agents/vuln_researcher.py", "seed_prompt_versions",
+     "promotion_without_gate"),
+    ("malware/agents/malware_researcher.py", "seed_prompt_versions",
+     "promotion_without_gate"),
+    ("forensics/agents/investigator.py", "seed_prompt_versions",
+     "promotion_without_gate"),
+
+    # Category (b): rule 68 content_slice_truncation. These cap the query
+    # string written to an AUDIT-LOG detail field (record_audit_event
+    # details), not knowledge-base content. The audit row is a bounded
+    # metadata record, so a 200-char query snippet is the intended shape --
+    # no stored or retrieved knowledge data is trimmed here.
+    ("api/routers/scans.py", "_audit", "[:200]"),
+    ("api/routers/tasks.py", "_audit_submit", "[:200]"),
+
+    # Category (g): rule 54 heal_without_journal. The three module
+    # re-enqueue HTTP endpoints below are thin dispatchers that call the
+    # platform lifecycle service ``reenqueue_investigation``. The
+    # underlying service now emits the durable RFC-07 recovery event on
+    # every successful re-enqueue, so a second journal call from the
+    # router would just duplicate the same ledger row. Narrow per-
+    # function exemption (RFC-07 #31 pattern) rather than a blanket file
+    # exemption in _JOURNAL_SELF_EXEMPT_SUFFIXES; a router that grows a
+    # NEW mutation path must journal that path directly.
+    ("_template/api_router.py", "reenqueue_template_investigation",
+     "heal_without_journal"),
+    ("malware/api_router.py", "reenqueue_investigation",
+     "heal_without_journal"),
+    ("vr/api_router.py", "reenqueue_investigation",
+     "heal_without_journal"),
 ]
 

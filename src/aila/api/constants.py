@@ -47,7 +47,6 @@ __all__ = [
     "AUDIT_ACTION_FINDING_BULK_UPDATE",
     "AUDIT_STATUS_COMPLETED",
     # Track names
-    "TRACK_VULNERABILITY",
     "TRACK_PLATFORM",
     # Module IDs
     "MODULE_ID_PLATFORM",
@@ -98,7 +97,6 @@ AUDIT_ACTION_FINDING_BULK_UPDATE: str = "finding_bulk_update"
 AUDIT_STATUS_COMPLETED: str = "completed"
 
 # --- Track names -----------------------------------------------------------
-TRACK_VULNERABILITY: str = "vulnerability"
 TRACK_PLATFORM: str = "platform"
 
 # --- Module IDs ------------------------------------------------------------

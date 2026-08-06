@@ -19,8 +19,19 @@ import os
 import subprocess
 
 import pytest
+from sqlalchemy.exc import DBAPIError
+from sqlmodel import SQLModel
 
-__all__ = ["pg_url", "pg_engine", "pg_session"]
+import aila.modules.vr.db_models  # noqa: F401  -- populate SQLModel.metadata
+import aila.modules.vulnerability.db_models  # noqa: F401
+import aila.storage.db_models  # noqa: F401
+from aila.storage.database import (
+    async_session_scope,
+    dispose_engine,
+    get_async_engine,
+)
+
+__all__ = ["pg_url", "pg_engine", "pg_session", "storage_db"]
 
 
 # Connection defaults for local PostgreSQL
@@ -100,26 +111,52 @@ def _dispose_engines_sync() -> None:
     Must be called from a sync context (fixture teardown).
     """
     try:
-        from aila.storage.database import dispose_engine
         loop = asyncio.new_event_loop()
         loop.run_until_complete(dispose_engine())
         loop.close()
-    except Exception:
-        pass  # Best-effort cleanup -- don't fail teardown
+    except Exception:  # noqa: BLE001 -- best-effort teardown cleanup
+        pass
 
 
 @pytest.fixture
 def pg_engine(pg_url):
     """Return an async engine pointed at the test PostgreSQL."""
-    from aila.storage.database import get_async_engine
-
     return get_async_engine()
 
 
 @pytest.fixture
 async def pg_session(pg_url):
     """Yield an AsyncSession from async_session_scope."""
-    from aila.storage.database import async_session_scope
-
     async with async_session_scope() as session:
         yield session
+
+
+@pytest.fixture
+async def storage_db(pg_url):
+    """Postgres test DB with the full schema created, truncated per test.
+
+    The storage layer (ConfigRegistry.register/set/get, etc.) is async and runs
+    against ``async_session_scope`` bound to ``AILA_DATABASE_URL`` (set to the
+    test DB by ``pg_url``). Schema bootstrap goes through
+    ``tests/_db_bootstrap.py`` (create_all + ``alembic stamp head``) so this
+    fixture aligns with #62's requirement that the test schema be authoritative
+    to the migrations. Each test is isolated by truncating every table on
+    teardown -- the Postgres analogue of the api-suite ``test_db`` fixture
+    (D-48/D-49: no SQLite).
+    """
+    from tests._db_bootstrap import bootstrap_test_database
+
+    bootstrap_test_database(pg_url)
+
+    engine = get_async_engine()
+
+    yield
+
+    async with engine.begin() as conn:
+        for table in reversed(SQLModel.metadata.sorted_tables):
+            try:
+                await conn.execute(table.delete())
+            except (OSError, RuntimeError, DBAPIError):
+                # Best-effort per-test cleanup: a missing table is fine
+                # (leftover from a mid-session bootstrap change).
+                pass

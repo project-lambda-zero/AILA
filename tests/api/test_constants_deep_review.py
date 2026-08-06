@@ -61,8 +61,9 @@ class TestConstantsNamingConsistency:
         assert len([n for n in constants.__all__ if n.startswith("ROLE_")]) == 3
         # VALID_ROLES is the only name without a standard prefix (it IS the group)
         assert "VALID_ROLES" in constants.__all__
-        # JWT_ group: 3
-        assert len([n for n in constants.__all__ if n.startswith("JWT_")]) == 3
+        # JWT_ group: 5 (JWT_ALGORITHM + JWT_TYP_ACCESS/REFRESH/USER_ACCESS/USER_REFRESH)
+        # src/aila/api/constants.py:14-18 -- __all__ lists five JWT_ entries.
+        assert len([n for n in constants.__all__ if n.startswith("JWT_")]) == 5
         # TOKEN_TYPE_ group: 1
         assert len([n for n in constants.__all__ if n.startswith("TOKEN_")]) == 1
         # MEDIA_TYPE_ group: 1

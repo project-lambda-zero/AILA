@@ -12,10 +12,48 @@ Two sub-packages:
   raw MCP response into a typed ``PayloadKind`` payload plus an
   ``observables_delta`` for the reasoning case state.
 
+The RFC-11 instance catalog is exported here so admin routers and the
+registry base can pick it up without a submodule import path.
+
 Modules instantiate these per-investigation (or per-worker) and inject
 their own ``recorder`` callable for per-call audit logging into a
 module-specific table.
 """
 from __future__ import annotations
 
-__all__: list[str] = []
+from aila.platform.mcp.capability_registry import (
+    McpCapabilityRegistry,
+    ModuleDescriptorDeclaration,
+    default_capability_registry,
+    reset_default_capability_registry,
+)
+from aila.platform.mcp.client import (
+    EmptyPoolError,
+    InstancePool,
+    McpClient,
+    ResolvedInstance,
+    compact_tool_spec,
+    resolve_instance,
+)
+from aila.platform.mcp.descriptor import (
+    McpServerDescriptor,
+    descriptors_from_static_specs,
+)
+from aila.platform.mcp.instance_catalog import McpInstanceCatalog, McpServerInstance
+
+__all__: list[str] = [
+    "EmptyPoolError",
+    "InstancePool",
+    "McpCapabilityRegistry",
+    "McpClient",
+    "McpInstanceCatalog",
+    "McpServerDescriptor",
+    "McpServerInstance",
+    "ModuleDescriptorDeclaration",
+    "ResolvedInstance",
+    "compact_tool_spec",
+    "default_capability_registry",
+    "descriptors_from_static_specs",
+    "reset_default_capability_registry",
+    "resolve_instance",
+]

@@ -14,6 +14,7 @@ Connection management: Uses the shared async Redis pool from
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 
@@ -29,6 +30,16 @@ __all__ = ["IdempotencyMiddleware"]
 _log = logging.getLogger(__name__)
 _IDEMPOTENCY_TTL = 86_400  # 24 hours
 _IDEMPOTENCY_PREFIX = "IDEM:"
+
+
+def _derive_cache_key(idem_key: str, cred: str | None) -> str:
+    """Namespace the idempotency cache by the caller's credential so a key
+    replayed by a different principal cannot read another tenant's cached
+    response (issue #57). The credential is hashed so the secret never lands
+    in a Redis key; absent any credential, callers share an "anon" bucket.
+    """
+    principal = hashlib.sha256((cred or "anon").encode("utf-8")).hexdigest()[:16]
+    return f"{_IDEMPOTENCY_PREFIX}{principal}:{idem_key}"
 
 
 class IdempotencyMiddleware(BaseHTTPMiddleware):
@@ -49,7 +60,9 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         if not pool_available():
             return await call_next(request)
 
-        cache_key = f"{_IDEMPOTENCY_PREFIX}{idem_key}"
+        # Scope the cache to the caller's credential (issue #57).
+        cred = request.headers.get("Authorization") or request.headers.get("Cookie")
+        cache_key = _derive_cache_key(idem_key, cred)
 
         # Check cache
         try:

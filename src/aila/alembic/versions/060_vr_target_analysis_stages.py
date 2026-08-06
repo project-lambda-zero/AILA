@@ -21,7 +21,7 @@ struct, services that haven't been upgraded yet keep working (they read
 the rolled-up `analysis_state`), and upgraded services start using the
 per-stage tracker.
 
-See `aila.modules.vr.contracts.target_stages` for the canonical schema.
+See `aila.platform.contracts.target_stages` for the canonical schema.
 """
 from __future__ import annotations
 
@@ -48,36 +48,63 @@ def upgrade() -> None:
         ),
     )
 
-    # Backfill existing rows. We deliberately go row-by-row in Python
-    # rather than a single UPDATE so the schema-mapping logic lives in
-    # one place (here) and matches the runtime contract bit-for-bit.
+    # Backfill existing rows in bounded ID-ordered chunks. The stage-mapping
+    # logic stays in one place (``_stages_from_legacy``) so the on-disk
+    # payload matches the runtime contract bit-for-bit, but we never hold
+    # more than ``_BACKFILL_CHUNK_ROWS`` in memory and every chunk's writes
+    # travel as a single ``executemany`` round-trip instead of a per-row
+    # UPDATE. Cursor-paginated by primary key so a table with millions of
+    # rows completes without touching migration-time RAM or blowing the
+    # statement round-trip budget. Rows created after the migration starts
+    # already have the ``server_default`` of ``'{}'`` so they need no
+    # backfill; the ``WHERE id > :last_id`` cursor naturally excludes them.
     conn = op.get_bind()
-    rows = conn.execute(
-        sa.text(
-            "SELECT id, analysis_state, analysis_state_message, "
-            "       analysis_started_at, analysis_completed_at "
-            "FROM vr_targets",
-        ),
-    ).all()
-    for row in rows:
-        target_id = row[0]
-        state = row[1] or "pending"
-        message = row[2]
-        started_at = row[3]
-        completed_at = row[4]
-        stages = _stages_from_legacy(
-            state=state,
-            message=message,
-            started_at=started_at,
-            completed_at=completed_at,
-        )
-        conn.execute(
-            sa.text(
-                "UPDATE vr_targets SET analysis_stages_json = :payload "
-                "WHERE id = :id",
-            ),
-            {"payload": json.dumps(stages), "id": target_id},
-        )
+    select_stmt = sa.text(
+        "SELECT id, analysis_state, analysis_state_message, "
+        "       analysis_started_at, analysis_completed_at "
+        "FROM vr_targets "
+        "WHERE id > :last_id "
+        "ORDER BY id "
+        "LIMIT :chunk_rows",
+    )
+    update_stmt = sa.text(
+        "UPDATE vr_targets SET analysis_stages_json = :payload "
+        "WHERE id = :id",
+    )
+    last_id = 0
+    while True:
+        rows = conn.execute(
+            select_stmt,
+            {"last_id": last_id, "chunk_rows": _BACKFILL_CHUNK_ROWS},
+        ).all()
+        if not rows:
+            break
+        payloads = [
+            {
+                "id": row[0],
+                "payload": json.dumps(
+                    _stages_from_legacy(
+                        state=row[1] or "pending",
+                        message=row[2],
+                        started_at=row[3],
+                        completed_at=row[4],
+                    ),
+                ),
+            }
+            for row in rows
+        ]
+        # SQLAlchemy 2.x issues a single executemany round-trip when the
+        # bind is a list of parameter dicts.
+        conn.execute(update_stmt, payloads)
+        last_id = rows[-1][0]
+        if len(rows) < _BACKFILL_CHUNK_ROWS:
+            break
+
+
+# Chunk size for the ID-cursored backfill loop above. Sized to keep the
+# in-memory row buffer well below 10 MB even for pathological state-message
+# payloads while still amortising the SELECT round-trip cost.
+_BACKFILL_CHUNK_ROWS = 500
 
 
 def downgrade() -> None:

@@ -181,10 +181,16 @@ class TestSystemSchemas:
         assert s.distro == "ubuntu-22.04"
 
     def test_system_list_response_is_paginated(self):
-        """SystemListResponse is PaginatedResponse[SystemResponse]."""
-        from aila.api.schemas.systems import SystemListResponse, SystemResponse
+        """SystemListResponse is PaginatedResponse[SystemEnrichedResponse].
 
-        items = [SystemResponse(id=1, name="s1", host="h1", username="u1")]
+        Source of truth: src/aila/api/schemas/systems.py:75 aliases
+        SystemListResponse to PaginatedResponse[SystemEnrichedResponse] so the
+        fleet-list endpoint can surface connectivity/tag/scan enrichment fields
+        without a second request per system.
+        """
+        from aila.api.schemas.systems import SystemEnrichedResponse, SystemListResponse
+
+        items = [SystemEnrichedResponse(id=1, name="s1", host="h1", username="u1")]
         paged = SystemListResponse(total=1, page=1, page_size=50, pages=0, items=items)
         assert paged.total == 1
         assert paged.pages == 1

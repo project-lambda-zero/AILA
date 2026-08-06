@@ -443,3 +443,1773 @@ class TestNoqaInline:
         )
         findings = _audit(src, whitelist_path=wl_path)
         assert not any(f.rule == "noqa_inline" for f in findings)
+
+
+# ---------------------------------------------------------------------------
+# Rule 34 -- hoisted_enum_redeclared (RFC-01)
+# ---------------------------------------------------------------------------
+
+
+class TestHoistedEnumRedeclared:
+    """Rule 34: a unified vr/malware module redeclares a hoisted platform enum."""
+
+    def test_vr_redeclaring_hoisted_enum_flagged(self, tmp_path: Path) -> None:
+        """A vr contracts file declaring class InvestigationStatus(StrEnum) fires."""
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/contracts/status.py",
+            'from enum import StrEnum\n\n\nclass InvestigationStatus(StrEnum):\n    CREATED = "created"\n',
+        )
+        findings = _audit(src)
+        assert "hoisted_enum_redeclared" in _rules(findings)
+
+    def test_forensics_same_name_enum_not_flagged(self, tmp_path: Path) -> None:
+        """forensics is not a unified module -- its own InvestigationStatus is silent."""
+        src = _write(
+            tmp_path,
+            "aila/modules/forensics/contracts/status.py",
+            'from enum import StrEnum\n\n\nclass InvestigationStatus(StrEnum):\n    PENDING = "pending"\n',
+        )
+        findings = _audit(src)
+        assert "hoisted_enum_redeclared" not in _rules(findings)
+
+    def test_module_owned_enum_not_flagged(self, tmp_path: Path) -> None:
+        """A vr enum whose name is not hoisted (WorkspaceTheme) is silent."""
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/contracts/theme.py",
+            'from enum import StrEnum\n\n\nclass WorkspaceTheme(StrEnum):\n    CUSTOM = "custom"\n',
+        )
+        findings = _audit(src)
+        assert "hoisted_enum_redeclared" not in _rules(findings)
+
+    def test_reexport_import_not_flagged(self, tmp_path: Path) -> None:
+        """Importing the hoisted enum (the correct pattern) is silent."""
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/contracts/status.py",
+            "from aila.platform.contracts.enums import InvestigationStatus\n\n__all__ = [\"InvestigationStatus\"]\n",
+        )
+        findings = _audit(src)
+        assert "hoisted_enum_redeclared" not in _rules(findings)
+
+
+# ---------------------------------------------------------------------------
+# Rule 35 -- unnamed_derived_constraint (RFC-01)
+# ---------------------------------------------------------------------------
+
+
+class TestUnnamedDerivedConstraint:
+    """Rule 35: a unified table hard-codes a UQ name that is not the derived form."""
+
+    def test_nonconforming_uq_flagged(self, tmp_path: Path) -> None:
+        """A vr unified table with uq_vr_workspace_team_slug (pre-derived) fires."""
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/db_models/workspace.py",
+            "from sqlalchemy import UniqueConstraint\n"
+            "from sqlmodel import Field, SQLModel\n\n\n"
+            "class VRWorkspaceRecord(SQLModel, table=True):\n"
+            '    __tablename__ = "vr_workspaces"\n'
+            "    __table_args__ = (\n"
+            '        UniqueConstraint("team_id", "slug", name="uq_vr_workspace_team_slug"),\n'
+            "    )\n"
+            "    id: str = Field(primary_key=True)\n",
+        )
+        findings = _audit(src)
+        assert "unnamed_derived_constraint" in _rules(findings)
+
+    def test_derived_uq_name_not_flagged(self, tmp_path: Path) -> None:
+        """The derived name uq_vr_workspaces_team_slug is silent."""
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/db_models/workspace.py",
+            "from sqlalchemy import UniqueConstraint\n"
+            "from sqlmodel import Field, SQLModel\n\n\n"
+            "class VRWorkspaceRecord(SQLModel, table=True):\n"
+            '    __tablename__ = "vr_workspaces"\n'
+            "    __table_args__ = (\n"
+            '        UniqueConstraint("team_id", "slug", name="uq_vr_workspaces_team_slug"),\n'
+            "    )\n"
+            "    id: str = Field(primary_key=True)\n",
+        )
+        findings = _audit(src)
+        assert "unnamed_derived_constraint" not in _rules(findings)
+
+    def test_nonunified_module_uq_not_flagged(self, tmp_path: Path) -> None:
+        """A vulnerability table with a short hand-name is out of scope, silent."""
+        src = _write(
+            tmp_path,
+            "aila/modules/vulnerability/db_models/findings.py",
+            "from sqlalchemy import UniqueConstraint\n"
+            "from sqlmodel import Field, SQLModel\n\n\n"
+            "class LatestFindingRecord(SQLModel, table=True):\n"
+            '    __tablename__ = "latest_finding_records"\n'
+            "    __table_args__ = (\n"
+            '        UniqueConstraint("host", name="uq_latestfinding_target"),\n'
+            "    )\n"
+            "    id: str = Field(primary_key=True)\n",
+        )
+        findings = _audit(src)
+        assert "unnamed_derived_constraint" not in _rules(findings)
+
+
+# ---------------------------------------------------------------------------
+# Rule 36 -- shadowed_platform_base (RFC-01)
+# ---------------------------------------------------------------------------
+
+
+_WORKSPACE_BASE_SRC = (
+    "from sqlmodel import Field, SQLModel\n\n\n"
+    "class WorkspaceRecordBase(SQLModel):\n"
+    "    id: str = Field(primary_key=True)\n"
+    "    name: str = Field()\n"
+    "    slug: str = Field()\n"
+    "    status: str = Field()\n"
+)
+
+
+class TestShadowedPlatformBase:
+    """Rule 36: a unified table recreates a platform base's columns."""
+
+    def test_shadowing_table_flagged(self, tmp_path: Path) -> None:
+        """A vr_workspaces table that redeclares base columns without subclassing fires."""
+        _write(tmp_path, "aila/platform/contracts/workspace_base.py", _WORKSPACE_BASE_SRC)
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/db_models/workspace.py",
+            "from sqlmodel import Field, SQLModel\n\n\n"
+            "class VRWorkspaceRecord(SQLModel, table=True):\n"
+            '    __tablename__ = "vr_workspaces"\n'
+            "    id: str = Field(primary_key=True)\n"
+            "    name: str = Field()\n"
+            "    slug: str = Field()\n"
+            "    status: str = Field()\n",
+        )
+        findings = _audit(src)
+        assert "shadowed_platform_base" in _rules(findings)
+
+    def test_correct_subclass_not_flagged(self, tmp_path: Path) -> None:
+        """A vr_workspaces table that subclasses the base is silent."""
+        _write(tmp_path, "aila/platform/contracts/workspace_base.py", _WORKSPACE_BASE_SRC)
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/db_models/workspace.py",
+            "from aila.platform.contracts.workspace_base import WorkspaceRecordBase\n\n\n"
+            "class VRWorkspaceRecord(WorkspaceRecordBase, table=True):\n"
+            '    __tablename__ = "vr_workspaces"\n',
+        )
+        findings = _audit(src)
+        assert "shadowed_platform_base" not in _rules(findings)
+
+    def test_nonunified_module_not_flagged(self, tmp_path: Path) -> None:
+        """forensics is out of scope even if a table name matches a role."""
+        _write(tmp_path, "aila/platform/contracts/workspace_base.py", _WORKSPACE_BASE_SRC)
+        src = _write(
+            tmp_path,
+            "aila/modules/forensics/db_models/workspace.py",
+            "from sqlmodel import Field, SQLModel\n\n\n"
+            "class ForensicsWorkspaceRecord(SQLModel, table=True):\n"
+            '    __tablename__ = "forensics_workspaces"\n'
+            "    id: str = Field(primary_key=True)\n"
+            "    name: str = Field()\n"
+            "    slug: str = Field()\n"
+            "    status: str = Field()\n",
+        )
+        findings = _audit(src)
+        assert "shadowed_platform_base" not in _rules(findings)
+
+
+# ---------------------------------------------------------------------------
+# Rule 37 -- module_config_schema_base
+# ---------------------------------------------------------------------------
+
+
+class TestModuleConfigSchemaBase:
+    """Rule 37: a module config schema must subclass ModuleConfigBase."""
+
+    def test_bare_basemodel_config_schema_flagged(self, tmp_path: Path) -> None:
+        """A *ConfigSchema subclassing bare BaseModel fires the rule."""
+        src = _write(
+            tmp_path,
+            "aila/modules/mymod/config_schema.py",
+            "from pydantic import BaseModel\n\n\n"
+            "class MymodConfigSchema(BaseModel):\n"
+            '    llm_model: str = "x"\n',
+        )
+        findings = _audit(src)
+        assert "module_config_schema_base" in _rules(findings)
+
+    def test_module_config_base_subclass_not_flagged(self, tmp_path: Path) -> None:
+        """A *ConfigSchema subclassing ModuleConfigBase is silent."""
+        src = _write(
+            tmp_path,
+            "aila/modules/mymod/config_schema.py",
+            "from aila.platform.config_base import ModuleConfigBase\n\n\n"
+            "class MymodConfigSchema(ModuleConfigBase):\n"
+            '    llm_model: str = "x"\n',
+        )
+        findings = _audit(src)
+        assert "module_config_schema_base" not in _rules(findings)
+
+    def test_config_schema_class_outside_config_schema_file_not_flagged(
+        self, tmp_path: Path
+    ) -> None:
+        """A *ConfigSchema class outside config_schema.py is out of scope."""
+        src = _write(
+            tmp_path,
+            "aila/modules/mymod/other.py",
+            "from pydantic import BaseModel\n\n\n"
+            "class MymodConfigSchema(BaseModel):\n"
+            '    llm_model: str = "x"\n',
+        )
+        findings = _audit(src)
+        assert "module_config_schema_base" not in _rules(findings)
+
+
+# ---------------------------------------------------------------------------
+# Rule 38 -- service_copy_of_platform
+# ---------------------------------------------------------------------------
+
+
+_PLATFORM_SERVICE_SRC = '''\
+"""A platform service that does real work."""
+from __future__ import annotations
+
+import logging
+
+_log = logging.getLogger(__name__)
+
+
+class PlatformThingService:
+    """Does the thing for the platform module."""
+
+    def __init__(self, table_name: str) -> None:
+        self._table_name = table_name
+        self._counter = 0
+
+    def process(self, rows: list[dict]) -> int:
+        total = 0
+        for row in rows:
+            if row.get("active"):
+                total += 1
+                self._counter += 1
+        _log.info("processed %d rows from %s", total, self._table_name)
+        return total
+
+    def reset(self) -> None:
+        self._counter = 0
+        _log.info("counter reset for %s", self._table_name)
+
+    def summary(self) -> dict:
+        return {"table": self._table_name, "count": self._counter}
+'''
+
+
+class TestServiceCopyOfPlatform:
+    """Rule 38: a vr/malware service must not be a full copy of a platform service."""
+
+    def test_vr_service_copy_flagged(self, tmp_path: Path) -> None:
+        """A near-copy of a platform service under vr/services fires the rule."""
+        _write(tmp_path, "aila/platform/services/thing.py", _PLATFORM_SERVICE_SRC)
+        copy = _PLATFORM_SERVICE_SRC.replace("Platform", "VR").replace("platform", "vr")
+        src = _write(tmp_path, "aila/modules/vr/services/thing.py", copy)
+        findings = _audit(src)
+        assert "service_copy_of_platform" in _rules(findings)
+
+    def test_thin_binding_not_flagged(self, tmp_path: Path) -> None:
+        """A short thin binding stays under the length ceiling and is silent."""
+        _write(tmp_path, "aila/platform/services/thing.py", _PLATFORM_SERVICE_SRC)
+        binding = (
+            '"""VR thing -- thin binding of the platform service."""\n'
+            "from __future__ import annotations\n\n"
+            "from aila.platform.services.thing import PlatformThingService\n\n"
+            'vr_thing = PlatformThingService("vr_things")\n'
+        )
+        src = _write(tmp_path, "aila/modules/vr/services/thing.py", binding)
+        findings = _audit(src)
+        assert "service_copy_of_platform" not in _rules(findings)
+
+    def test_forensics_copy_not_flagged(self, tmp_path: Path) -> None:
+        """forensics is out of the copy-set scope even for a full copy."""
+        _write(tmp_path, "aila/platform/services/thing.py", _PLATFORM_SERVICE_SRC)
+        copy = _PLATFORM_SERVICE_SRC.replace("Platform", "Forensics").replace(
+            "platform", "forensics"
+        )
+        src = _write(tmp_path, "aila/modules/forensics/services/thing.py", copy)
+        findings = _audit(src)
+        assert "service_copy_of_platform" not in _rules(findings)
+
+
+# ---------------------------------------------------------------------------
+# Rule 39 -- cost_read_stored_actual
+# ---------------------------------------------------------------------------
+
+
+class TestCostReadStoredActual:
+    """Rule 39: a vr/malware api_router must not read the dead
+    cost_actual_usd column in a response without aggregating live cost."""
+
+    def test_stored_read_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path, "aila/modules/vr/api_router.py",
+            '"""vr router."""\n'
+            "from __future__ import annotations\n\n\n"
+            "async def get_cost(record):\n"
+            '    return {"actual_usd": record.cost_actual_usd}\n',
+        )
+        findings = _audit(src)
+        assert "cost_read_stored_actual" in _rules(findings)
+
+    def test_read_with_aggregator_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path, "aila/modules/malware/api_router.py",
+            '"""malware router."""\n'
+            "from __future__ import annotations\n\n\n"
+            "async def get_cost(record, uow):\n"
+            "    live = await compute_live_investigation_cost(uow, record.id)\n"
+            "    stored = record.cost_actual_usd\n"
+            '    return {"actual_usd": live or stored}\n',
+        )
+        findings = _audit(src)
+        assert "cost_read_stored_actual" not in _rules(findings)
+
+    def test_create_kwarg_not_flagged(self, tmp_path: Path) -> None:
+        """cost_actual_usd=0.0 at row creation is an insert, not a read."""
+        src = _write(
+            tmp_path, "aila/modules/vr/api_router.py",
+            '"""vr router."""\n'
+            "from __future__ import annotations\n\n\n"
+            "def make(record_cls):\n"
+            "    return record_cls(cost_actual_usd=0.0)\n",
+        )
+        findings = _audit(src)
+        assert "cost_read_stored_actual" not in _rules(findings)
+
+    def test_forensics_out_of_scope(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path, "aila/modules/forensics/api_router.py",
+            '"""forensics router."""\n'
+            "from __future__ import annotations\n\n\n"
+            "async def get_cost(record):\n"
+            '    return {"actual_usd": record.cost_actual_usd}\n',
+        )
+        findings = _audit(src)
+        assert "cost_read_stored_actual" not in _rules(findings)
+
+
+# ---------------------------------------------------------------------------
+# Rule 40 -- lifecycle_handler_bypass_service
+# ---------------------------------------------------------------------------
+
+
+class TestLifecycleHandlerBypass:
+    """Rule 40: a pause/resume/re-enqueue route handler must not write
+    .status directly instead of routing through the lifecycle service."""
+
+    def test_pause_status_write_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path, "aila/modules/malware/api_router.py",
+            '"""malware router."""\n'
+            "from __future__ import annotations\n\n\n"
+            '@router.post("/investigations/{investigation_id}/pause")\n'
+            "async def pause_investigation(record):\n"
+            '    record.status = "paused"\n'
+            "    return record\n",
+        )
+        findings = _audit(src)
+        assert "lifecycle_handler_bypass_service" in _rules(findings)
+
+    def test_delegating_handler_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path, "aila/modules/malware/api_router.py",
+            '"""malware router."""\n'
+            "from __future__ import annotations\n\n\n"
+            '@router.post("/investigations/{investigation_id}/pause")\n'
+            "async def pause_investigation(record):\n"
+            "    result = await pause_investigation_atomic(record.id)\n"
+            "    return result\n",
+        )
+        findings = _audit(src)
+        assert "lifecycle_handler_bypass_service" not in _rules(findings)
+
+    def test_reset_handler_excluded(self, tmp_path: Path) -> None:
+        """reset is a full-wipe that legitimately resets status."""
+        src = _write(
+            tmp_path, "aila/modules/malware/api_router.py",
+            '"""malware router."""\n'
+            "from __future__ import annotations\n\n\n"
+            '@router.post("/investigations/{investigation_id}/reset")\n'
+            "async def reset_investigation(record):\n"
+            '    record.status = "created"\n'
+            "    return record\n",
+        )
+        findings = _audit(src)
+        assert "lifecycle_handler_bypass_service" not in _rules(findings)
+
+
+# ---------------------------------------------------------------------------
+# Rule 41 -- workflow_state_copy_of_platform
+# ---------------------------------------------------------------------------
+
+
+_WORKFLOW_BASE_SRC = '''\
+"""A platform workflow-state base that does real work."""
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+_log = logging.getLogger(__name__)
+
+
+def state_investigation_setup(bindings: Any, hooks: Any) -> Any:
+    """Build the setup handler."""
+
+    async def _handler(input: dict, services: Any) -> Any:
+        investigation_id = str(input.get("investigation_id") or "")
+        if not investigation_id:
+            raise ValueError("missing investigation_id")
+        total = 0
+        for key in sorted(input):
+            if key.startswith("x"):
+                total += 1
+                _log.info("counted %s for %s", key, investigation_id)
+        branch_id = str(input.get("branch_id") or "")
+        result = {"investigation_id": investigation_id, "branch_id": branch_id}
+        _log.info("setup ready %s total=%d", investigation_id, total)
+        return result
+
+    return _handler
+'''
+
+
+class TestWorkflowStateCopyOfPlatform:
+    """Rule 41: a vr/malware state file must not be a full copy of a
+    platform workflow-state base."""
+
+    def test_state_copy_flagged(self, tmp_path: Path) -> None:
+        _write(
+            tmp_path,
+            "aila/platform/workflows/investigation_setup_base.py",
+            _WORKFLOW_BASE_SRC,
+        )
+        copy = _WORKFLOW_BASE_SRC.replace("platform", "vr")
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/workflow/states/investigation_setup.py",
+            copy,
+        )
+        findings = _audit(src)
+        assert "workflow_state_copy_of_platform" in _rules(findings)
+
+    def test_thin_binding_not_flagged(self, tmp_path: Path) -> None:
+        _write(
+            tmp_path,
+            "aila/platform/workflows/investigation_setup_base.py",
+            _WORKFLOW_BASE_SRC,
+        )
+        binding = (
+            '"""VR setup -- thin binding of the platform factory."""\n'
+            "from __future__ import annotations\n\n"
+            "from aila.platform.workflows.investigation_setup_base import (\n"
+            "    state_investigation_setup as _build,\n"
+            ")\n\n"
+            "state_investigation_setup = _build(object(), object())\n"
+        )
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/workflow/states/investigation_setup.py",
+            binding,
+        )
+        findings = _audit(src)
+        assert "workflow_state_copy_of_platform" not in _rules(findings)
+
+    def test_forensics_out_of_scope(self, tmp_path: Path) -> None:
+        _write(
+            tmp_path,
+            "aila/platform/workflows/investigation_setup_base.py",
+            _WORKFLOW_BASE_SRC,
+        )
+        copy = _WORKFLOW_BASE_SRC.replace("platform", "forensics")
+        src = _write(
+            tmp_path,
+            "aila/modules/forensics/workflow/states/investigation_setup.py",
+            copy,
+        )
+        findings = _audit(src)
+        assert "workflow_state_copy_of_platform" not in _rules(findings)
+
+
+# ---------------------------------------------------------------------------
+# Rule 42 -- agent_primitive_reimplementation
+# ---------------------------------------------------------------------------
+
+
+class TestAgentPrimitiveReimplementation:
+    """Rule 42: modules must import the platform agent primitives, not
+    redefine them (RFC-03 Phase 1)."""
+
+    def test_classify_intent_def_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/agents/intent_classifier.py",
+            "def classify_intent(text):\n    return 'x'\n",
+        )
+        assert "agent_primitive_reimplementation" in _rules(_audit(src))
+
+    def test_maybe_post_auto_steering_def_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/malware/agents/auto_steering.py",
+            "async def maybe_post_auto_steering(**kw):\n    return None\n",
+        )
+        assert "agent_primitive_reimplementation" in _rules(_audit(src))
+
+    def test_reexport_import_not_flagged(self, tmp_path: Path) -> None:
+        """An import re-export is a statement, not a def -- never fires."""
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/agents/wiring.py",
+            "from aila.platform.agents import classify_intent\n"
+            "__all__ = ['classify_intent']\n",
+        )
+        assert "agent_primitive_reimplementation" not in _rules(_audit(src))
+
+    def test_platform_definition_not_flagged(self, tmp_path: Path) -> None:
+        """The platform's own definition is out of scope."""
+        src = _write(
+            tmp_path,
+            "aila/platform/agents/intent_classifier.py",
+            "def classify_intent(text):\n    return 'x'\n",
+        )
+        assert "agent_primitive_reimplementation" not in _rules(_audit(src))
+
+
+# ---------------------------------------------------------------------------
+# Rule 43 -- agent_llm_chat_bypass
+# ---------------------------------------------------------------------------
+
+
+class TestAgentLlmChatBypass:
+    """Rule 43: module agents/ must route llm_client.chat() through the
+    platform idempotent wrapper (RFC-03 Phase 2)."""
+
+    def test_direct_chat_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/agents/claim_verifier.py",
+            "async def f(services):\n"
+            "    return await services.llm_client.chat(task_type='x', messages=[])\n",
+        )
+        assert "agent_llm_chat_bypass" in _rules(_audit(src))
+
+    def test_idempotent_wrapper_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/agents/claim_verifier.py",
+            "async def f(services):\n"
+            "    return await idempotent_llm_call(services.llm_client, method='chat')\n",
+        )
+        assert "agent_llm_chat_bypass" not in _rules(_audit(src))
+
+    def test_chat_json_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/agents/pattern_extractor.py",
+            "async def f(c):\n    return await c.llm_client.chat_json('x', [], {})\n",
+        )
+        assert "agent_llm_chat_bypass" in _rules(_audit(src))
+
+    def test_self_llm_chat_json_flagged(self, tmp_path: Path) -> None:
+        """pattern_extractor uses self._llm, not services.llm_client."""
+        src = _write(
+            tmp_path,
+            "aila/modules/malware/agents/pattern_extractor.py",
+            "class E:\n    async def f(self):\n"
+            "        return await self._llm.chat_json('x', [], {})\n",
+        )
+        assert "agent_llm_chat_bypass" in _rules(_audit(src))
+
+    def test_chat_structured_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/agents/synthesis_agent.py",
+            "async def f(services):\n"
+            "    return await services.llm_client.chat_structured('x', [], M)\n",
+        )
+        assert "agent_llm_chat_bypass" in _rules(_audit(src))
+
+    def test_platform_chat_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/agents/idempotent_llm.py",
+            "async def f(services):\n"
+            "    return await services.llm_client.chat(task_type='x', messages=[])\n",
+        )
+        assert "agent_llm_chat_bypass" not in _rules(_audit(src))
+
+    def test_local_alias_receiver_flagged(self, tmp_path: Path) -> None:
+        """client = ServiceFactory().llm_client; client.chat(...) is a bypass."""
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/agents/nday_researcher.py",
+            "async def f():\n"
+            "    client = ServiceFactory().llm_client\n"
+            "    return await client.chat(task_type='x', messages=[])\n",
+        )
+        assert "agent_llm_chat_bypass" in _rules(_audit(src))
+
+
+class TestPrivatePlatformImport:
+    """Rule 44: a module must import a platform symbol from the public
+    package, never from a private submodule when a public re-export exists
+    (RFC-05 concern f)."""
+
+    def test_reexport_binding_flagged(self, tmp_path: Path) -> None:
+        """Importing Tool from tools._common fires when tools re-exports it."""
+        _write(
+            tmp_path,
+            "aila/platform/tools/__init__.py",
+            'from ._common import Tool\n\n__all__ = ["Tool"]\n',
+        )
+        src = _write(
+            tmp_path,
+            "aila/modules/mymod/tools.py",
+            "from aila.platform.tools._common import Tool\n",
+        )
+        assert "private_platform_import" in _rules(_audit(src))
+
+    def test_all_member_flagged(self, tmp_path: Path) -> None:
+        """Importing utc_now from contracts._common fires when it is in __all__."""
+        _write(
+            tmp_path,
+            "aila/platform/contracts/__init__.py",
+            '__all__ = ["utc_now", "JsonObject"]\n',
+        )
+        src = _write(
+            tmp_path,
+            "aila/modules/mymod/svc.py",
+            "from aila.platform.contracts._common import utc_now\n",
+        )
+        assert "private_platform_import" in _rules(_audit(src))
+
+    def test_public_path_import_not_flagged(self, tmp_path: Path) -> None:
+        """Importing from the public package (no private segment) is silent."""
+        _write(
+            tmp_path,
+            "aila/platform/tools/__init__.py",
+            'from ._common import Tool\n\n__all__ = ["Tool"]\n',
+        )
+        src = _write(
+            tmp_path,
+            "aila/modules/mymod/tools.py",
+            "from aila.platform.tools import Tool\n",
+        )
+        assert "private_platform_import" not in _rules(_audit(src))
+
+    def test_private_symbol_without_public_counterpart_not_flagged(
+        self, tmp_path: Path
+    ) -> None:
+        """A private symbol the public package never re-exports has no gate."""
+        _write(
+            tmp_path,
+            "aila/platform/mcp/adapters/__init__.py",
+            '__all__ = ["other_fn"]\n',
+        )
+        src = _write(
+            tmp_path,
+            "aila/modules/mymod/exec.py",
+            "from aila.platform.mcp.adapters._shared import enrich_x\n",
+        )
+        assert "private_platform_import" not in _rules(_audit(src))
+
+    def test_platform_own_private_import_not_flagged(self, tmp_path: Path) -> None:
+        """A platform file importing its own private submodule is out of scope."""
+        _write(
+            tmp_path,
+            "aila/platform/tools/__init__.py",
+            'from ._common import Tool\n\n__all__ = ["Tool"]\n',
+        )
+        src = _write(
+            tmp_path,
+            "aila/platform/tools/registry.py",
+            "from aila.platform.tools._common import Tool\n",
+        )
+        assert "private_platform_import" not in _rules(_audit(src))
+
+    def test_missing_platform_init_not_flagged(self, tmp_path: Path) -> None:
+        """No resolvable public package means no counterpart, so no finding."""
+        src = _write(
+            tmp_path,
+            "aila/modules/mymod/svc.py",
+            "from aila.platform.absent._priv import Thing\n",
+        )
+        assert "private_platform_import" not in _rules(_audit(src))
+
+    def test_whitelist_suppresses_private_platform_import(
+        self, tmp_path: Path
+    ) -> None:
+        """A matching whitelist entry suppresses the finding."""
+        _write(
+            tmp_path,
+            "aila/platform/tools/__init__.py",
+            'from ._common import Tool\n\n__all__ = ["Tool"]\n',
+        )
+        src = _write(
+            tmp_path,
+            "aila/modules/mymod/tools.py",
+            "from aila.platform.tools._common import Tool\n",
+        )
+        wl_path = tmp_path / "honesty_whitelist.py"
+        wl_path.write_text(
+            "HONESTY_WHITELIST = [\n"
+            "    (\n"
+            '        "tools.py",\n'
+            '        "Tool",\n'
+            '        "private_platform_import",\n'
+            "    ),\n"
+            "]\n",
+            encoding="utf-8",
+        )
+        assert "private_platform_import" not in _rules(_audit(src, wl_path))
+
+
+class TestModulePrefixInPlatformToolName:
+    """Rule 45: a platform MCP bridge derives its tool name from a
+    constructor module_id, never a hard-coded module-prefixed literal."""
+
+    def test_class_level_literal_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/mcp/bridges/audit_mcp.py",
+            'class B:\n    name = "vr.audit_mcp_bridge"\n',
+        )
+        assert "module_prefix_in_platform_tool_name" in _rules(_audit(src))
+
+    def test_annotated_class_literal_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/mcp/bridges/x.py",
+            'class B:\n    name: str = "malware.foo_bridge"\n',
+        )
+        assert "module_prefix_in_platform_tool_name" in _rules(_audit(src))
+
+    def test_self_name_literal_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/mcp/bridges/x.py",
+            "class B:\n    def __init__(self) -> None:\n"
+            '        self.name = "vr.ida_bridge"\n',
+        )
+        assert "module_prefix_in_platform_tool_name" in _rules(_audit(src))
+
+    def test_fstring_name_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/mcp/bridges/x.py",
+            'class B:\n    def __init__(self, module_id: str = "vr") -> None:\n'
+            '        self.name = f"{module_id}.audit_mcp_bridge"\n',
+        )
+        assert "module_prefix_in_platform_tool_name" not in _rules(_audit(src))
+
+    def test_non_bridge_file_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/services/x.py",
+            'class B:\n    name = "vr.audit_mcp_bridge"\n',
+        )
+        assert "module_prefix_in_platform_tool_name" not in _rules(_audit(src))
+
+    def test_non_module_prefix_literal_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/mcp/bridges/x.py",
+            'class B:\n    name = "generic_tool"\n',
+        )
+        assert "module_prefix_in_platform_tool_name" not in _rules(_audit(src))
+
+
+class TestPlatformOwnsEventVocabulary:
+    """Rule 46: platform event classes carry only generic infrastructure
+    vocabulary, never a module domain (scan/finding/investigation/module id)."""
+
+    def test_scan_class_name_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/events/domain_events.py",
+            'class ScanStarted:\n    event_type = "x"\n',
+        )
+        assert "platform_owns_event_vocabulary" in _rules(_audit(src))
+
+    def test_finding_event_type_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/events/domain_events.py",
+            'class Foo:\n    event_type = "finding.upserted"\n',
+        )
+        assert "platform_owns_event_vocabulary" in _rules(_audit(src))
+
+    def test_module_id_in_class_name_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/events/domain_events.py",
+            "class MalwareTargetDone:\n    pass\n",
+        )
+        assert "platform_owns_event_vocabulary" in _rules(_audit(src))
+
+    def test_infra_event_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/events/domain_events.py",
+            'class SystemRegistered:\n    event_type = "system.registered"\n',
+        )
+        assert "platform_owns_event_vocabulary" not in _rules(_audit(src))
+
+    def test_assessment_event_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/events/domain_events.py",
+            'class AssessmentCreated:\n    event_type = "assessment.created"\n',
+        )
+        assert "platform_owns_event_vocabulary" not in _rules(_audit(src))
+
+    def test_non_events_file_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/services/x.py",
+            "class ScanStarted:\n    pass\n",
+        )
+        assert "platform_owns_event_vocabulary" not in _rules(_audit(src))
+
+
+class TestRawSqlPlatformTables:
+    """Rule 47: modules must not issue raw SQL against platform-owned task
+    tables (taskrecord, workflow_state_cursor)."""
+
+    def test_delete_cursor_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/malware/api_router.py",
+            "def f(session):\n"
+            '    return session.execute("DELETE FROM workflow_state_cursor WHERE run_id = 1")\n',
+        )
+        assert "raw_sql_platform_tables" in _rules(_audit(src))
+
+    def test_select_taskrecord_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/svc.py",
+            "def f():\n"
+            '    return sa_text("SELECT id FROM taskrecord WHERE kwargs_json LIKE :p")\n',
+        )
+        assert "raw_sql_platform_tables" in _rules(_audit(src))
+
+    def test_concatenated_sql_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/malware/api_router.py",
+            "def f():\n"
+            '    return text(\n'
+            '        "DELETE FROM workflow_state_cursor "\n'
+            '        "WHERE run_id IN (SELECT id FROM taskrecord)"\n'
+            "    )\n",
+        )
+        assert "raw_sql_platform_tables" in _rules(_audit(src))
+
+    def test_module_owned_table_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/malware/api_router.py",
+            "def f(session):\n"
+            '    return session.execute("DELETE FROM malware_observations WHERE investigation_id = :i")\n',
+        )
+        assert "raw_sql_platform_tables" not in _rules(_audit(src))
+
+    def test_prose_mentioning_table_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/svc.py",
+            'def f():\n    """This helper will delete the taskrecord row later."""\n    return 1\n',
+        )
+        assert "raw_sql_platform_tables" not in _rules(_audit(src))
+
+    def test_platform_file_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/services/investigation_lifecycle.py",
+            "def f(session):\n"
+            '    return session.exec("DELETE FROM workflow_state_cursor WHERE run_id = 1")\n',
+        )
+        assert "raw_sql_platform_tables" not in _rules(_audit(src))
+
+
+class TestPlatformNamesModule:
+    """Rule 48: a boundary-guarded file (api/, platform/, storage/) must not
+    resolve a specific feature module by naming its id in a registry
+    require(...) call (RFC-05 concerns a/g)."""
+
+    def test_api_require_literal_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/api/routers/dashboard.py",
+            "def f(registry):\n"
+            '    return registry.require("vulnerability")\n',
+        )
+        assert "platform_names_module" in _rules(_audit(src))
+
+    def test_platform_require_module_literal_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/tasks/report_tasks.py",
+            "def f(runtime):\n"
+            '    return runtime.require_module("forensics")\n',
+        )
+        assert "platform_names_module" in _rules(_audit(src))
+
+    def test_storage_require_literal_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/storage/thing.py",
+            "def f(registry):\n"
+            '    return registry.require("malware")\n',
+        )
+        assert "platform_names_module" in _rules(_audit(src))
+
+    def test_first_with_not_flagged(self, tmp_path: Path) -> None:
+        """Capability resolution (the correct pattern) never fires."""
+        src = _write(
+            tmp_path,
+            "aila/api/routers/dashboard.py",
+            "def f(registry):\n"
+            '    return registry.first_with("report_count")\n',
+        )
+        assert "platform_names_module" not in _rules(_audit(src))
+
+    def test_dynamic_arg_not_flagged(self, tmp_path: Path) -> None:
+        """A variable module id (dynamic require) is not flagged."""
+        src = _write(
+            tmp_path,
+            "aila/api/routers/dashboard.py",
+            "def f(registry, module_id):\n"
+            "    return registry.require(module_id)\n",
+        )
+        assert "platform_names_module" not in _rules(_audit(src))
+
+    def test_non_module_string_not_flagged(self, tmp_path: Path) -> None:
+        """A string that is not a domain module id is not flagged."""
+        src = _write(
+            tmp_path,
+            "aila/api/routers/dashboard.py",
+            "def f(registry):\n"
+            '    return registry.require("platform")\n',
+        )
+        assert "platform_names_module" not in _rules(_audit(src))
+
+    def test_module_file_not_flagged(self, tmp_path: Path) -> None:
+        """A module file is out of scope -- rule 48 runs on boundary layers only."""
+        src = _write(
+            tmp_path,
+            "aila/modules/vulnerability/module.py",
+            "def f(registry):\n"
+            '    return registry.require("vulnerability")\n',
+        )
+        assert "platform_names_module" not in _rules(_audit(src))
+
+    # ------------------------------------------------------------------
+    # Sub-check (b): ConfigRegistry-style .get("<module-id>", ...) call
+    # welds a boundary-guarded layer to a specific module's config.
+    # ------------------------------------------------------------------
+
+    def test_config_registry_get_module_ns_in_api_flagged(self, tmp_path: Path) -> None:
+        """ConfigRegistry().get("vr", ...) in api/ names a module namespace."""
+        src = _write(
+            tmp_path,
+            "aila/api/routers/dashboard.py",
+            "from aila.storage.registry import ConfigRegistry\n"
+            "async def f():\n"
+            '    return await ConfigRegistry().get("vr", "audit_mcp_url")\n',
+        )
+        findings = [f for f in _audit(src) if f.rule == "platform_names_module"]
+        assert findings, "expected a platform_names_module finding for ConfigRegistry().get('vr', ...)"
+        assert any(".get('vr', ...)" in f.message for f in findings)
+
+    def test_registry_get_module_ns_in_platform_flagged(self, tmp_path: Path) -> None:
+        """registry.get("vulnerability", key) in platform/ names a module namespace."""
+        src = _write(
+            tmp_path,
+            "aila/platform/tasks/report_tasks.py",
+            "async def f(registry):\n"
+            '    return await registry.get("vulnerability", "threshold")\n',
+        )
+        assert "platform_names_module" in _rules(_audit(src))
+
+    def test_registry_get_module_ns_in_storage_flagged(self, tmp_path: Path) -> None:
+        """registry.get("malware", key) in storage/ names a module namespace."""
+        src = _write(
+            tmp_path,
+            "aila/storage/thing.py",
+            "async def f(registry):\n"
+            '    return await registry.get("malware", "track")\n',
+        )
+        assert "platform_names_module" in _rules(_audit(src))
+
+    def test_registry_get_platform_ns_not_flagged(self, tmp_path: Path) -> None:
+        """registry.get("platform", ...) is the correct pattern for boundary layers."""
+        src = _write(
+            tmp_path,
+            "aila/platform/llm/config.py",
+            "async def f(registry):\n"
+            '    return await registry.get("platform", "llm_default_model")\n',
+        )
+        assert "platform_names_module" not in _rules(_audit(src))
+
+    def test_registry_get_dynamic_module_id_not_flagged(self, tmp_path: Path) -> None:
+        """registry.get(self._module_id, key) is the RFC-05 pattern; not a literal."""
+        src = _write(
+            tmp_path,
+            "aila/platform/mcp/registry.py",
+            "class T:\n"
+            "    async def f(self, registry, spec):\n"
+            '        return await registry.get(self._module_id, spec["config_key"])\n',
+        )
+        assert "platform_names_module" not in _rules(_audit(src))
+
+    def test_dict_get_non_module_string_not_flagged(self, tmp_path: Path) -> None:
+        """A .get("platform", ...) or .get("anything-else", ...) is silent."""
+        src = _write(
+            tmp_path,
+            "aila/api/routers/dashboard.py",
+            "def f(mapping):\n"
+            '    return mapping.get("nonmodule", None)\n',
+        )
+        assert "platform_names_module" not in _rules(_audit(src))
+
+    def test_get_module_ns_in_module_file_not_flagged(self, tmp_path: Path) -> None:
+        """A module reading its OWN namespace is the sanctioned pattern."""
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/workflow/services.py",
+            "async def f(registry):\n"
+            '    return await registry.get("vr", "cap_max_findings")\n',
+        )
+        assert "platform_names_module" not in _rules(_audit(src))
+
+    # ------------------------------------------------------------------
+    # Sub-check (c): a runtime "aila.modules.<id>" string constant in a
+    # boundary-guarded file hard-codes a module path.
+    # ------------------------------------------------------------------
+
+    def test_runtime_aila_modules_literal_in_platform_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/tasks/foo.py",
+            '_PATH = "aila.modules.vulnerability.tasks.scan"\n',
+        )
+        assert "platform_names_module" in _rules(_audit(src))
+
+    def test_runtime_aila_modules_literal_whole_string_flagged(self, tmp_path: Path) -> None:
+        """A bare 'aila.modules.vr' literal (no dotted suffix) also fires."""
+        src = _write(
+            tmp_path,
+            "aila/platform/thing.py",
+            '_ID = "aila.modules.vr"\n',
+        )
+        assert "platform_names_module" in _rules(_audit(src))
+
+    def test_runtime_aila_modules_literal_in_api_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/api/routers/dashboard.py",
+            'ROUTE = "aila.modules.forensics.api"\n',
+        )
+        assert "platform_names_module" in _rules(_audit(src))
+
+    def test_docstring_mentioning_aila_modules_not_flagged(self, tmp_path: Path) -> None:
+        """A docstring that describes an aila.modules.* path is prose, not a constant."""
+        src = _write(
+            tmp_path,
+            "aila/platform/tasks/queue.py",
+            '"""Task queue.\n\n'
+            'Example: aila.modules.vulnerability.tasks.scan\n'
+            '"""\n'
+            'def foo():\n'
+            '    """Extract module_id: aila.modules.X -> X."""\n'
+            '    return None\n',
+        )
+        assert "platform_names_module" not in _rules(_audit(src))
+
+    def test_bare_aila_modules_literal_not_flagged(self, tmp_path: Path) -> None:
+        """'aila.modules' (no submodule) is the discovery-bootstrap identifier."""
+        src = _write(
+            tmp_path,
+            "aila/platform/tasks/worker.py",
+            'import aila.modules\n'
+            '_PKG_NAME = "aila.modules"\n',
+        )
+        assert "platform_names_module" not in _rules(_audit(src))
+
+    def test_aila_modules_literal_in_module_file_not_flagged(self, tmp_path: Path) -> None:
+        """Runtime aila.modules.<id> literal in a module file is out of rule 48's scope."""
+        src = _write(
+            tmp_path,
+            "aila/modules/vr/services/paths.py",
+            '_SELF = "aila.modules.vr.tasks.run"\n',
+        )
+        assert "platform_names_module" not in _rules(_audit(src))
+
+    def test_non_module_aila_dotted_literal_not_flagged(self, tmp_path: Path) -> None:
+        """A string that starts with aila.modules.<not-a-module-id> is silent."""
+        src = _write(
+            tmp_path,
+            "aila/platform/tasks/foo.py",
+            '_PATH = "aila.modules.not_a_real_module.thing"\n',
+        )
+        assert "platform_names_module" not in _rules(_audit(src))
+
+    def test_whitelist_suppresses_platform_names_module(self, tmp_path: Path) -> None:
+        """A whitelist entry suppresses the extended sub-checks the same as (a)."""
+        src = _write(
+            tmp_path,
+            "aila/platform/tasks/foo.py",
+            'PATH = "aila.modules.vulnerability.tasks.scan"\n',
+        )
+        wl = _write(
+            tmp_path,
+            "honesty_whitelist.py",
+            'HONESTY_WHITELIST = [\n'
+            '    ("platform/tasks/foo.py", "<module>", "platform_names_module"),\n'
+            ']\n',
+        )
+        assert "platform_names_module" not in _rules(_audit(src, wl))
+
+
+# ---------------------------------------------------------------------------
+# Rule 50 -- static_node_mutation (RFC-13 #68)
+# ---------------------------------------------------------------------------
+
+
+class TestStaticNodeMutation:
+    """Rule 50: a WorkflowDefinition.states map is frozen after construction."""
+
+    def test_states_subscript_assignment_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/workflows/x.py",
+            "def build(wf, h):\n    wf.states['x'] = h\n    return wf\n",
+        )
+        assert "static_node_mutation" in _rules(_audit(src))
+
+    def test_states_update_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/workflows/x.py",
+            "def build(wf, e):\n    wf.states.update(e)\n    return wf\n",
+        )
+        assert "static_node_mutation" in _rules(_audit(src))
+
+    def test_states_delete_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/workflows/x.py",
+            "def build(wf):\n    del wf.states['x']\n    return wf\n",
+        )
+        assert "static_node_mutation" in _rules(_audit(src))
+
+    def test_local_states_dict_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/workflows/x.py",
+            "def build():\n    states = {}\n    states['x'] = 1\n    return states\n",
+        )
+        assert "static_node_mutation" not in _rules(_audit(src))
+
+
+# ---------------------------------------------------------------------------
+# Rule 51 -- ledger_write_bypass (RFC-13 #68)
+# ---------------------------------------------------------------------------
+
+
+class TestLedgerWriteBypass:
+    """Rule 51: investigation_ledger is written only through LedgerService."""
+
+    def test_pg_insert_record_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/services/other.py",
+            "def w(s):\n"
+            "    return s.execute(pg_insert(InvestigationLedgerRecord).values())\n",
+        )
+        assert "ledger_write_bypass" in _rules(_audit(src))
+
+    def test_session_add_record_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/services/other.py",
+            "def w(s):\n    s.add(InvestigationLedgerRecord(kind='x'))\n",
+        )
+        assert "ledger_write_bypass" in _rules(_audit(src))
+
+    def test_raw_insert_sql_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/services/other.py",
+            "def w(s):\n"
+            "    return s.execute("
+            "\"INSERT INTO investigation_ledger (kind) VALUES (1)\")\n",
+        )
+        assert "ledger_write_bypass" in _rules(_audit(src))
+
+    def test_ledger_service_call_not_flagged(self, tmp_path: Path) -> None:
+        src = _write(
+            tmp_path,
+            "aila/platform/services/other.py",
+            "async def w(svc, inv):\n"
+            "    return await svc.append_general(inv, 'b', 'discovery', {})\n",
+        )
+        assert "ledger_write_bypass" not in _rules(_audit(src))
+
+    def test_ledger_service_file_exempt(self, tmp_path: Path) -> None:
+        # The service file itself is the sanctioned writer -- exempt.
+        src = _write(
+            tmp_path,
+            "aila/platform/services/ledger.py",
+            "def w(s):\n"
+            "    return s.execute(pg_insert(InvestigationLedgerRecord).values())\n",
+        )
+        assert "ledger_write_bypass" not in _rules(_audit(src))
+
+
+# ---------------------------------------------------------------------------
+# Rule 52 -- fail_open_recovery_path (RFC-07)
+# ---------------------------------------------------------------------------
+
+
+class TestFailOpenRecoveryPath:
+    """Rule 52: a safety/rate-limit/verify/recovery/finalize function must
+    not return a permissive default from an except handler."""
+
+    def test_verify_returning_true_flagged(self, tmp_path: Path) -> None:
+        """``def verify_x(): try: ... except: return True`` fires -- True on
+        error is the fail-open answer for a verifier."""
+        src = _write(
+            tmp_path,
+            "aila/platform/llm/verify_gate.py",
+            "def verify_response(x):\n"
+            "    try:\n"
+            "        return check(x)\n"
+            "    except Exception:\n"
+            "        return True\n",
+        )
+        assert "fail_open_recovery_path" in _rules(_audit(src))
+
+    def test_rate_limit_returning_zero_flagged(self, tmp_path: Path) -> None:
+        """``def compute_defer(): try: ... except: return 0.0`` fires -- a
+        rate limiter defaulting to zero defer under DB pressure floods the
+        queue."""
+        src = _write(
+            tmp_path,
+            "aila/platform/tasks/rate_limit.py",
+            "def compute_defer(t):\n"
+            "    try:\n"
+            "        return t.reserved()\n"
+            "    except Exception:\n"
+            "        return 0.0\n",
+        )
+        assert "fail_open_recovery_path" in _rules(_audit(src))
+
+    def test_bare_return_flagged(self, tmp_path: Path) -> None:
+        """A bare ``return`` (implicit None) from a safety handler fires."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/safety.py",
+            "def safety_check(x):\n"
+            "    try:\n"
+            "        return _probe(x)\n"
+            "    except Exception:\n"
+            "        return\n",
+        )
+        assert "fail_open_recovery_path" in _rules(_audit(src))
+
+    def test_empty_list_flagged(self, tmp_path: Path) -> None:
+        """A recovery function returning [] on error hides a real failure."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/recovery.py",
+            "def recover(x):\n"
+            "    try:\n"
+            "        return _load(x)\n"
+            "    except Exception:\n"
+            "        return []\n",
+        )
+        assert "fail_open_recovery_path" in _rules(_audit(src))
+
+    def test_verify_returning_false_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """``return False`` from a verify handler is the CORRECT fail-
+        closed answer -- must NOT fire."""
+        src = _write(
+            tmp_path,
+            "aila/platform/llm/verify_gate.py",
+            "def verify_response(x):\n"
+            "    try:\n"
+            "        return check(x)\n"
+            "    except Exception:\n"
+            "        return False\n",
+        )
+        assert "fail_open_recovery_path" not in _rules(_audit(src))
+
+    def test_handler_that_logs_not_flagged(self, tmp_path: Path) -> None:
+        """A handler that logs the exception is surfacing a signal -- the
+        subsequent return-zero is legitimate sweep bookkeeping, not a
+        silent fail-open."""
+        src = _write(
+            tmp_path,
+            "aila/platform/tasks/sweep.py",
+            "import logging\n"
+            "_log = logging.getLogger(__name__)\n\n"
+            "def sweep_rows():\n"
+            "    try:\n"
+            "        return _run_sweep()\n"
+            "    except Exception as exc:\n"
+            "        _log.warning('sweep failed: %s', exc)\n"
+            "        return 0\n",
+        )
+        assert "fail_open_recovery_path" not in _rules(_audit(src))
+
+    def test_handler_that_reraises_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A handler that re-raises after cleanup is fail-closed by
+        design -- the rule must not fire."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/recovery.py",
+            "def recover(x):\n"
+            "    try:\n"
+            "        return _run(x)\n"
+            "    except Exception:\n"
+            "        _cleanup()\n"
+            "        raise\n",
+        )
+        assert "fail_open_recovery_path" not in _rules(_audit(src))
+
+    def test_non_recovery_function_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A function whose name does not signal recovery is out of scope
+        -- an ordinary ``compute_score`` may legitimately return 0 on a
+        parse failure without being fail-open."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/score.py",
+            "def compute_score(raw):\n"
+            "    try:\n"
+            "        return int(raw)\n"
+            "    except ValueError:\n"
+            "        return 0\n",
+        )
+        assert "fail_open_recovery_path" not in _rules(_audit(src))
+
+    def test_whitelist_suppresses(self, tmp_path: Path) -> None:
+        """A matching whitelist entry suppresses the finding."""
+        src = _write(
+            tmp_path,
+            "aila/platform/llm/verify_x.py",
+            "def verify_x(x):\n"
+            "    try:\n"
+            "        return check(x)\n"
+            "    except Exception:\n"
+            "        return True\n",
+        )
+        wl_path = tmp_path / "honesty_whitelist.py"
+        wl_path.write_text(
+            "HONESTY_WHITELIST = [\n"
+            "    (\n"
+            '        "aila/platform/llm/verify_x.py",\n'
+            '        "verify_x",\n'
+            '        "fail_open_recovery_path",\n'
+            "    ),\n"
+            "]\n",
+            encoding="utf-8",
+        )
+        findings = _audit(src, whitelist_path=wl_path)
+        assert not any(f.rule == "fail_open_recovery_path" for f in findings)
+
+
+# ---------------------------------------------------------------------------
+# Rule 53 -- close_without_infra_classification (RFC-07)
+# ---------------------------------------------------------------------------
+
+
+class TestCloseWithoutInfraClassification:
+    """Rule 53: a finalizer that closes an investigation as negative must
+    consult InfraDeathClassifier in the same function body."""
+
+    def test_finalize_calling_close_without_classifier_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A finalize-marked function calling close_investigation without
+        InfraDeathClassifier reference fires."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/finalizer.py",
+            "def finalize_run(inv):\n"
+            "    close_investigation(inv, reason='no_finding')\n"
+            "    return inv\n",
+        )
+        assert "close_without_infra_classification" in _rules(_audit(src))
+
+    def test_synthesize_no_finding_without_classifier_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """``synthesize_no_finding_outcomes`` without classifier reference
+        is the exact RFC-07 anti-pattern in malware finalizer."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/finalizer.py",
+            "def synthesize_no_finding_outcomes(inv):\n"
+            "    for branch in inv.branches:\n"
+            "        mark_no_finding(branch)\n"
+            "    return inv\n",
+        )
+        assert (
+            "close_without_infra_classification" in _rules(_audit(src))
+        )
+
+    def test_finalize_with_classifier_call_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A finalizer that calls InfraDeathClassifier.classify() is fine."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/finalizer.py",
+            "def finalize_run(inv):\n"
+            "    kind = InfraDeathClassifier().classify(inv)\n"
+            "    if kind == 'terminal':\n"
+            "        close_investigation(inv, reason='no_finding')\n"
+            "    return inv\n",
+        )
+        assert (
+            "close_without_infra_classification"
+            not in _rules(_audit(src))
+        )
+
+    def test_finalize_with_classifier_attribute_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A finalizer that references self.classifier (bound classifier
+        instance) is fine -- the classifier symbol appears in body ids."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/finalizer.py",
+            "class Finalizer:\n"
+            "    def __init__(self):\n"
+            "        self.InfraDeathClassifier = None\n"
+            "    def finalize_run(self, inv):\n"
+            "        _ = self.InfraDeathClassifier\n"
+            "        close_investigation(inv, reason='no_finding')\n"
+            "        return inv\n",
+        )
+        assert (
+            "close_without_infra_classification"
+            not in _rules(_audit(src))
+        )
+
+    def test_non_finalizer_calling_close_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A route handler / ordinary function calling close_investigation
+        is out of scope -- the rule targets finalize-marked names only."""
+        src = _write(
+            tmp_path,
+            "aila/api/routers/investigations.py",
+            "async def cancel(inv_id):\n"
+            "    close_investigation(inv_id, reason='operator_cancel')\n"
+            "    return {'ok': True}\n",
+        )
+        assert (
+            "close_without_infra_classification"
+            not in _rules(_audit(src))
+        )
+
+    def test_finalize_without_close_marker_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A finalize function that does not actually close anything (e.g.
+        it only emits a summary) is out of scope."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/finalizer.py",
+            "def finalize_run(inv):\n"
+            "    emit_summary(inv)\n"
+            "    return inv\n",
+        )
+        assert (
+            "close_without_infra_classification"
+            not in _rules(_audit(src))
+        )
+
+    def test_whitelist_suppresses(self, tmp_path: Path) -> None:
+        """A matching whitelist entry suppresses the finding."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/finalizer.py",
+            "def finalize_run(inv):\n"
+            "    close_investigation(inv, reason='no_finding')\n"
+            "    return inv\n",
+        )
+        wl_path = tmp_path / "honesty_whitelist.py"
+        wl_path.write_text(
+            "HONESTY_WHITELIST = [\n"
+            "    (\n"
+            '        "aila/platform/services/finalizer.py",\n'
+            '        "finalize_run",\n'
+            '        "close_without_infra_classification",\n'
+            "    ),\n"
+            "]\n",
+            encoding="utf-8",
+        )
+        findings = _audit(src, whitelist_path=wl_path)
+        assert not any(
+            f.rule == "close_without_infra_classification" for f in findings
+        )
+
+
+# ---------------------------------------------------------------------------
+# Rule 54 -- heal_without_journal (RFC-07)
+# ---------------------------------------------------------------------------
+
+
+class TestHealWithoutJournal:
+    """Rule 54: a heal-marked function that mutates run state must also
+    write a checkpointed recovery event."""
+
+    def test_reconcile_calling_flip_status_without_journal_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A reconcile function that flips status but writes no journal
+        entry fires the rule."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/reconciler.py",
+            "def reconcile_task(t):\n"
+            "    flip_status(t, 'failed')\n"
+            "    return t\n",
+        )
+        assert "heal_without_journal" in _rules(_audit(src))
+
+    def test_heal_calling_set_enabled_without_journal_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A heal-marked function that calls set_enabled without a
+        journal write fires."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/mcp_heal.py",
+            "async def heal_mcp(inst):\n"
+            "    await set_enabled(inst.id, False)\n"
+            "    return None\n",
+        )
+        assert "heal_without_journal" in _rules(_audit(src))
+
+    def test_reconcile_with_journal_write_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A reconcile that mutates state and then writes a journal event
+        via append_general is fine."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/reconciler.py",
+            "async def reconcile_task(svc, t):\n"
+            "    flip_status(t, 'failed')\n"
+            "    await svc.append_general(t.id, 'heal', 'reconciled', {})\n"
+            "    return t\n",
+        )
+        assert "heal_without_journal" not in _rules(_audit(src))
+
+    def test_heal_with_record_signal_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """``record_signal`` is a documented journal marker -- a heal
+        function that mutates state and calls record_signal is fine."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/heal.py",
+            "async def heal_downgrade(url):\n"
+            "    drop_lock(url)\n"
+            "    record_signal('heal', {'url': url})\n",
+        )
+        assert "heal_without_journal" not in _rules(_audit(src))
+
+    def test_heal_without_state_mutation_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A heal-marked function that does not actually mutate run state
+        (e.g. only reads and returns a report) is out of scope."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/heal.py",
+            "def heal_report(t):\n"
+            "    return {'ok': True, 'state': t.status}\n",
+        )
+        assert "heal_without_journal" not in _rules(_audit(src))
+
+    def test_non_heal_calling_flip_status_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A route handler that flips status is out of scope -- the rule
+        targets heal-marked names only."""
+        src = _write(
+            tmp_path,
+            "aila/api/routers/tasks.py",
+            "async def cancel(t_id):\n"
+            "    flip_status(t_id, 'cancelled')\n"
+            "    return {'ok': True}\n",
+        )
+        assert "heal_without_journal" not in _rules(_audit(src))
+
+    def test_state_reconciler_no_longer_exempt(
+        self, tmp_path: Path,
+    ) -> None:
+        """RFC-07 #31 narrowing: ``platform/tasks/state_reconciler.py`` is
+        the REAL heal orchestrator and MUST journal every mutation. The
+        blanket file exemption was removed so this file now fires the
+        rule like any other heal orchestrator when no journal call is
+        present.
+        """
+        src = _write(
+            tmp_path,
+            "aila/platform/tasks/state_reconciler.py",
+            "async def reconcile(t):\n"
+            "    flip_status(t, 'failed')\n"
+            "    return t\n",
+        )
+        assert "heal_without_journal" in _rules(_audit(src))
+
+    def test_worker_no_longer_exempt(
+        self, tmp_path: Path,
+    ) -> None:
+        """RFC-07 #31 narrowing: ``platform/tasks/worker.py`` (the reaper
+        orchestrator) is no longer blanket-exempt; a reconcile function
+        there that mutates state without journaling fires the rule.
+        """
+        src = _write(
+            tmp_path,
+            "aila/platform/tasks/worker.py",
+            "async def _reconcile_orphan_arq_locks():\n"
+            "    drop_lock('x')\n",
+        )
+        assert "heal_without_journal" in _rules(_audit(src))
+
+    def test_journal_infra_still_exempt(
+        self, tmp_path: Path,
+    ) -> None:
+        """Journal infrastructure files (ledger, resilience, events) MUST
+        stay exempt -- writing the journal from inside the journal writer
+        would be circular.
+        """
+        src = _write(
+            tmp_path,
+            "aila/platform/services/resilience.py",
+            "async def reconcile_x(t):\n"
+            "    flip_status(t, 'failed')\n",
+        )
+        assert "heal_without_journal" not in _rules(_audit(src))
+
+    def test_cursor_reaper_still_exempt(
+        self, tmp_path: Path,
+    ) -> None:
+        """``platform/tasks/cursor_reaper.py`` runs a batch SQL sweep with
+        no per-investigation resolution; the narrowed exemption keeps it
+        as a low-level primitive whose caller journals instead.
+        """
+        src = _write(
+            tmp_path,
+            "aila/platform/tasks/cursor_reaper.py",
+            "async def reconcile_cursors():\n"
+            "    purge_cursor()\n",
+        )
+        assert "heal_without_journal" not in _rules(_audit(src))
+
+    def test_private_wrapper_dispatch_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """Substring matching: a heal that dispatches through a private
+        wrapper (``self._flip_status(...)`` or
+        ``_fan_out_reenqueue_submit(...)``) still fires -- exact-match
+        would silently skip every heal that owns a module-private
+        mutation helper, which is the exact shape
+        ``state_reconciler.reconcile`` and
+        ``investigation_lifecycle.reenqueue_investigation`` take.
+        """
+        src = _write(
+            tmp_path,
+            "aila/platform/services/heal_dispatch.py",
+            "class R:\n"
+            "    async def reconcile(self, t):\n"
+            "        await self._flip_status(t)\n"
+            "        await self._delete_cursor(t)\n"
+            "        await self._drop_lock(t)\n",
+        )
+        assert "heal_without_journal" in _rules(_audit(src))
+
+    def test_private_wrapper_dispatch_with_journal_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """Substring matching still respects the journal-write escape:
+        a private-wrapper heal that ALSO calls ``emit_recovery_event``
+        clears the rule.
+        """
+        src = _write(
+            tmp_path,
+            "aila/platform/services/heal_dispatch.py",
+            "class R:\n"
+            "    async def reconcile(self, t):\n"
+            "        await self._flip_status(t)\n"
+            "        await emit_recovery_event(\n"
+            "            investigation_id=t.inv_id,\n"
+            "            action='reconcile', detail={},\n"
+            "        )\n",
+        )
+        assert "heal_without_journal" not in _rules(_audit(src))
+
+    def test_reenqueue_via_fan_out_helper_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """Substring matching catches
+        ``investigation_lifecycle.reenqueue_investigation`` shape: heal-
+        marked function dispatching to a longer-named private helper
+        whose name contains the marker (``_fan_out_reenqueue_submit``).
+        """
+        src = _write(
+            tmp_path,
+            "aila/platform/services/lifecycle.py",
+            "async def reenqueue_investigation(inv):\n"
+            "    await _fan_out_reenqueue_submit(inv)\n",
+        )
+        assert "heal_without_journal" in _rules(_audit(src))
+
+    def test_whitelist_suppresses(self, tmp_path: Path) -> None:
+        """A matching whitelist entry suppresses the finding."""
+        src = _write(
+            tmp_path,
+            "aila/platform/services/reconciler.py",
+            "def reconcile_task(t):\n"
+            "    flip_status(t, 'failed')\n"
+            "    return t\n",
+        )
+        wl_path = tmp_path / "honesty_whitelist.py"
+        wl_path.write_text(
+            "HONESTY_WHITELIST = [\n"
+            "    (\n"
+            '        "aila/platform/services/reconciler.py",\n'
+            '        "reconcile_task",\n'
+            '        "heal_without_journal",\n'
+            "    ),\n"
+            "]\n",
+            encoding="utf-8",
+        )
+        findings = _audit(src, whitelist_path=wl_path)
+        assert not any(f.rule == "heal_without_journal" for f in findings)

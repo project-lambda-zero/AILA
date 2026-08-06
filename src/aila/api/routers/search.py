@@ -14,7 +14,7 @@ import logging
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from aila.api.auth import AuthContext, require_user_or_api_key
+from aila.api.auth import AuthContext, TeamContext, require_user_or_api_key
 from aila.api.limiter import limiter
 from aila.api.schemas.endpoints import SearchResult
 from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
@@ -52,8 +52,15 @@ async def global_search(
     results: list[SearchResult] = []
     pattern = f"%{q}%"
 
-    async with async_session_scope() as session:
-        # Search systems by name or host (parameterized -- no SQL injection)
+    # #36: bind the caller's TeamContext to the session so the do_orm_execute
+    # listener filters plain selects on ManagedSystemRecord and LatestFindingRecord
+    # (via module.latest_findings). Aggregates and belt-and-suspenders filters
+    # below carry an explicit team predicate. A god-tier admin (team_id=None,
+    # TEAM-06) bypasses filtering.
+    async with async_session_scope(team_context=TeamContext.from_auth(auth)) as session:
+        # Search systems by name or host (parameterized -- no SQL injection).
+        # #36: explicit god-tier-aware team_id predicate in addition to the
+        # session listener, in case the listener is not registered.
         if requested_types is None or "system" in requested_types:
             from sqlalchemy import or_
             from sqlmodel import select
@@ -69,6 +76,8 @@ async def global_search(
                 )
                 .limit(_MAX_PER_TYPE)
             )
+            if auth.team_id is not None:
+                stmt = stmt.where(ManagedSystemRecord.team_id == auth.team_id)
             rows = (await session.exec(stmt)).all()
             for row in rows:
                 results.append(
@@ -101,36 +110,52 @@ async def global_search(
                     )
                 )
 
-        # Search findings through the vulnerability module's public search surface
+        # Search findings through every module that exposes a `latest_findings`
+        # capability -- resolved via the module registry, never by name. #36:
+        # `search_entities` opens a bare UnitOfWork that carries no TeamContext,
+        # so calling it from the router leaks other teams' findings. Invoking
+        # `latest_findings` directly against the team-scoped session opened above
+        # lets the do_orm_execute listener filter the plain LatestFindingRecord
+        # select; a god-tier admin session sees every team's rows (TEAM-06).
         if requested_types is None or "finding" in requested_types or "module" in requested_types:
             platform = getattr(request.app.state, "platform", None)
             if platform is not None:
-                try:
-                    module = platform.runtime.module_registry.require("vulnerability")
-                    if hasattr(module, "search_entities"):
-                        entities = module.search_entities(q, limit=_MAX_PER_TYPE)
-                        if asyncio_iscoroutinefunction(module.search_entities):
-                            entities = await entities
-                        for entity in entities:
-                            results.append(
-                                SearchResult(
-                                    entity_type=str(entity.get("entity_type", "module")),
-                                    entity_id=str(entity.get("entity_id", "")),
-                                    title=str(entity.get("title", "")),
-                                    snippet=str(entity.get("snippet", "")),
-                                    module_id="vulnerability",
-                                )
+                providers = platform.runtime.module_registry.all_with("latest_findings")
+                for module in providers:
+                    try:
+                        findings = await module.latest_findings(
+                            session, search_term=q, limit=_MAX_PER_TYPE
+                        )
+                    except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError):
+                        _log.debug(
+                            "latest_findings search via module %r failed",
+                            module.module_id,
+                            exc_info=True,
+                        )
+                        continue
+                    for finding in findings[:_MAX_PER_TYPE]:
+                        title = str(
+                            finding.get("cve_id")
+                            or finding.get("package_name")
+                            or ""
+                        )
+                        snippet = (
+                            f"{finding.get('package_name', '')} on "
+                            f"{finding.get('system_name', '')} -- "
+                            f"{str(finding.get('criticality') or '').lower()}"
+                        )
+                        results.append(
+                            SearchResult(
+                                entity_type="finding",
+                                entity_id=str(finding.get("id") or ""),
+                                title=title,
+                                snippet=snippet,
+                                module_id=module.module_id,
                             )
-                except Exception:
-                    _log.debug("vulnerability search_entities failed", exc_info=True)
+                        )
 
 
     total = len(results)
     page_results = results[offset : offset + limit]
     meta = PaginatedMeta(total=total, offset=offset, limit=limit).model_dump()
     return DataEnvelope(data=page_results, meta=meta)
-
-
-def asyncio_iscoroutinefunction(fn: object) -> bool:
-    import asyncio
-    return asyncio.iscoroutinefunction(fn)

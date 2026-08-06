@@ -1,6 +1,6 @@
 """honesty_audit -- AST-based structural honesty checker for Python code.
 
-Detects thirty-three categories of structural dishonesty:
+Detects seventy-four categories of structural dishonesty:
 
 1. unused_parameter    -- function parameter accepted but never referenced in body.
 2. misleading_name     -- function name implies intelligence but body only forwards.
@@ -35,6 +35,53 @@ Detects thirty-three categories of structural dishonesty:
 31. placeholder_return  -- function body is only a docstring + return {} or return []; no real logic.
 32. log_format_concat   -- logging call uses string concatenation/f-string instead of %-formatting.
 33. broad_exception_catch -- except Exception without a justifying comment (catches everything indiscriminately).
+34. hoisted_enum_redeclared -- a unified vr/malware module redeclares a StrEnum owned by platform.contracts.enums (RFC-01).
+35. unnamed_derived_constraint -- a unified vr/malware table hard-codes a UQ name instead of deriving via TabledUq.
+36. shadowed_platform_base -- a unified vr/malware table recreates a platform base's columns instead of subclassing it.
+37. module_config_schema_base -- a module config schema subclasses bare BaseModel instead of ModuleConfigBase (loses extra=forbid).
+38. service_copy_of_platform -- a vr/malware service file is a full copy of a platform service instead of a thin binding.
+39. cost_read_stored_actual -- a vr/malware lifecycle api_router reads the dead cost_actual_usd column in a response instead of aggregating live cost.
+40. lifecycle_handler_bypass_service -- a pause/resume/re-enqueue route handler writes investigation .status directly instead of calling the platform lifecycle service.
+41. workflow_state_copy_of_platform -- a vr/malware investigation state file duplicates a platform workflow-state base instead of binding the factory.
+42. agent_primitive_reimplementation -- a module agents/ file defines a platform-owned agent primitive (auto-steering injector / intent classifier) at top level instead of importing it.
+43. agent_llm_chat_bypass -- a module agents/ file calls llm_client.chat/chat_json/chat_structured directly instead of routing through platform idempotent_llm_call (double-pays the model on retry).
+44. private_platform_import -- a module imports a platform-private submodule symbol (tools._common, mcp.adapters._shared) that the public package already re-exports; import from the public path instead (RFC-05 concern f).
+45. module_prefix_in_platform_tool_name -- a platform MCP bridge hard-codes a module-prefixed tool name literal (name = "vr.audit_mcp_bridge"); derive the name from a constructor module_id instead (RFC-05 concern b).
+46. platform_owns_event_vocabulary -- an event class under platform/events/ carries module-domain vocabulary (scan/finding/investigation or a module id) in its class name or event_type; the platform owns only generic infrastructure events (RFC-05 concern c).
+47. raw_sql_platform_tables -- a module file issues raw SQL against a platform-owned task table (taskrecord, workflow_state_cursor); route through a platform lifecycle / TaskQueue service instead (RFC-05 Phase 6).
+48. platform_names_module -- a boundary-guarded file (api/, platform/, storage/) names a feature module: a .require("vulnerability") / .require_module("forensics") registry call, a ConfigRegistry-shape .get("vr", ...) read of a module namespace, or a runtime "aila.modules.<module>" string constant. Resolve domain data by capability via ModuleRegistry.first_with/all_with; the platform layer owns only the 'platform' config namespace (RFC-05 concerns a/g).
+49. agent_env_read -- a module agents/ file reads config via os.environ / os.getenv (attribute access or `from os import environ/getenv`) instead of platform ConfigRegistry; the RFC-03 lift removed every direct env read from module agent runtimes and this rule locks the closure in.
+50. static_node_mutation -- a WorkflowDefinition.states mapping is mutated (subscript / update / delete) after construction, reopening the frozen node set the dispatch hub relies on (RFC-13 #68).
+51. ledger_write_bypass -- investigation_ledger writes bypass LedgerService; the service owns idempotency + the append-only rule (RFC-13 #68).
+52. fail_open_recovery_path -- a safety / rate-limit / verify / recovery / finalizer function returns a permissive value (True / 0 / 0.0 / "" / [] / {} / bare return) from an ``except`` handler. The RFC-07 posture is fail-closed: return a conservative default and surface a signal (a bounded defer, mark-and-block, close-with-reason).
+53. close_without_infra_classification -- a finalizer that closes an investigation as a negative (a close_investigation / close_no_finding / synthesize_no_finding / finalize_negative call) does not consult InfraDeathClassifier in the same function body. An infra-death branch must be tagged as such, not silently recorded as a clean negative that vanishes from the operator's re-run queue.
+54. heal_without_journal -- a recovery function whose body mutates run state (set_enabled / flip_status / drop_lock / delete_cursor / re_enqueue) without also writing a checkpointed recovery event (LedgerService.append_general, record_signal, record_and_check, emit_recovery_event). Every heal must leave an audit trail so recovery is itself auditable.
+55. ungated_self_improvement_write -- a call to ``pattern_store.create(...)`` (or any ``.create`` / ``.add`` / ``.insert`` on a pattern-store-shaped receiver) outside :class:`ExperienceWriter` and the store's own file bypasses the RFC-08 review-gated write path. Every experience must be signed by a reviewed :class:`QuorumOutcome`; route the write through ``ExperienceWriter.record(verdict=...)``.
+56. self_labeled_reward -- an agent runtime file (``platform/agents/**`` or ``modules/*/agents/**``) passes or assigns a self-labelled promotion signal (``reward=``, ``self_score=``, ``agent_score=``, ``promotion_score=``, ``self_reward=``, or the same as an attribute assignment). An agent must not set its own promotion field; the RFC-08 gate reads only reviewer-produced, quorum-signed signals.
+57. unversioned_config_promotion -- a function calls ``.set("<...>_threshold", ...)`` / ``.set("<...>_ceiling", ...)`` / other threshold-shaped key without also referencing :class:`CalibrationProposalRecord` / :class:`CalibrationProposer` in the same body. RFC-08's propose-and-gate contract is that a live threshold only ever moves behind a versioned, reversible proposal row.
+58. inline_prompt_literal -- a module-level ``_*_PROMPT*`` constant is assigned a multi-line string literal (3+ newlines, 200+ chars). RFC-09 requires prompt text to be resolved through :class:`PromptRegistry` from a versioned ``.md`` file so cost / seal / audit rows carry the resolved ``prompt_content_hash`` + ``prompt_version``; an inline literal drops the attribution.
+59. untagged_llm_call -- a function calls ``.chat(...)`` / ``.chat_json(...)`` / ``.chat_structured(...)`` without ``correlation_scope(prompt_content_hash=, prompt_version=)`` or :func:`idempotent_llm_call` in the enclosing body. The RFC-09 stamp is mandatory: the raw call reaches the model with NULL prompt attribution and breaks the (cost, prompt) join.
+60. unaudited_alias_flip -- a function writes a :class:`PromptAliasRecord` row (constructor call, ``session.add`` of one, or raw ``UPDATE prompt_aliases``) without also emitting a matching :class:`PromptAliasChangeRecord` in the same body. Every alias flip must leave an audit trail; the canonical writer is ``PromptVersionStore.set_alias`` (pair-write in one transaction).
+61. promotion_without_gate -- a function flips a lifecycle version to production (a ``LifecycleTransitionRecord(to_stage=LifecycleStage.PRODUCTION)`` construct, or a ``set_alias(..., "production", ...)`` call) without referencing the eval + quorum gate markers (``_passing_evaluate``, ``_distinct_approver_count``, ``EvalRunner``, ``agent_promotion_quorum``, ``AgentLifecycleController``). Every promotion must pass the gate; delegate to :meth:`AgentLifecycleController.promote`.
+62. untransitioned_stage_change -- a function assigns a :class:`LifecycleStage` value (``.lifecycle_stage = ...`` attribute assignment, or ``stage=`` / ``to_stage=`` / ``lifecycle_stage=`` kwarg carrying a ``LifecycleStage.<X>`` member) without also constructing a :class:`LifecycleTransitionRecord` or calling ``._journal(...)`` in the same body. Every stage move must be journaled (RFC-10).
+63. canary_below_min_sample -- a function whose name matches ``promote_from_canary`` / ``promote_canary`` / ``flip_canary`` has no min-sample gate marker (``min_sample`` / ``min_samples`` / ``min_canary_sample`` / ``sample_count`` / ``signal_count`` / ``agent_canary_min_sample``) in its body. RFC-10 requires canary promotion to verify a minimum observed-signal count before flipping so a candidate that never saw traffic cannot be promoted on an empty history.
+64. second_embedding_path -- an embedding provider (``resolve_provider`` / ``get_embedding_provider`` / ``BGEProvider`` / ``MiniLMProvider`` / ``SentenceTransformer``) is constructed outside the canonical ``platform/services/embedding.py`` + ``platform/services/knowledge.py``. RFC-12 / #37 require ONE embedding path; a second provider writes incompatible vectors into the shared knowledge table.
+65. vector_without_provenance -- a ``KnowledgeEntryRecord`` is constructed with an ``embedding=`` kwarg but no ``model_id=`` kwarg. RFC-12 / #37 require every stored vector to carry its model provenance so a model swap triggers a re-embed sweep instead of silent corpus invalidation.
+66. retrieval_without_gate -- agent-runtime code (``platform/agents/**`` or ``modules/*/agents/**``) calls the raw ``.retrieve(`` instead of ``retrieve_routed``. RFC-12 / #43: only the routed path applies the relevance floor + sanitize/classify gate, so agent-reachable retrieval must go through it.
+67. unsanitized_retrieved_content -- a ``retrieve_routed`` definition's body no longer references the sanitize/classify gate (``apply_gate`` / ``apply_gate_many``). RFC-12 / #43: the routed entry point must gate every hit so retrieved content cannot reach a prompt unsanitised.
+68. content_slice_truncation -- a constant-bound slice (``x[:N]``) is applied to the direct value of a ``content=``-family keyword argument, or to a dict value keyed by a content field (``content`` / ``query`` / ``body`` / ``text`` / ``sanitized_content`` / ``root_cause``). Stored and returned knowledge data must be kept in full; only the render/display layer bounds size. A genuinely required cap goes in honesty_whitelist.py with a reason.
+69. lifecycle_binding_copy_of_platform -- a module ``workflow/pause_resume.py`` binding is a full copy of ``platform/services/investigation_lifecycle.py`` instead of a thin dispatcher over ``pause_investigation`` / ``resume_investigation`` / ``reenqueue_investigation``. RFC-02 Phase 4 owns the four-source-of-truth atomic pause/resume/re-enqueue on the platform; a module keeps only the per-module enum coercion + record-model bindings. Sibling of rule 41 with its own scope + corpus.
+70. mcp_catalog_placement -- a subclass of :class:`McpRegistryServiceBase` defined inside ``src/aila/platform/**`` binds ``_servers`` to a literal MCP server catalog (a tuple/list of dict specs). The MCP server catalog is module domain: each module owns ``MCP_SERVERS`` in ``modules/<id>/services/mcp_registry.py`` and binds it onto the platform base via the ``_servers`` ClassVar. The platform base takes the catalog as class state supplied by the subclass and never hardcodes one -- a platform-side placement re-imports module domain into the platform layer and reopens the RFC-04 boundary. Structural guardrail (fires zero on the current tree).
+71. service_env_read -- a module ``modules/*/services/**`` file reads config via ``os.environ`` / ``os.getenv`` (attribute access or ``from os import environ/getenv``) instead of ``ConfigRegistry(module_id, key)``. Sibling of rule 49 (``agent_env_read``) for the services layer: RFC-04's config-drift closure removed every direct env read from module services so the DB override and per-module schema default both participate on one path. AST-based -- docstring or comment mentions of ``os.environ`` are invisible and never trip this.
+72. platform_hardcodes_strategy_family -- a file under ``src/aila/platform/**`` contains a string-literal AST node equal to one of the known module reasoning-strategy family names (``mobile_reverse`` / ``vulnerability_research`` / ``web_pentest`` / ``network_forensics`` / ``memory_forensics`` / ``persistence_hunt`` / ``malware_static`` / ``filesystem_triage``). The platform reasoning surface must not name a family owned by a module; strategy families are declared by each module via ``ModuleProtocol.reasoning_strategies()`` and resolved through the registry. The family literal ``generic`` is allowed because it is the platform's fallback family; ``tests/`` paths are exempt. Sibling of rule 48 for the reasoning-strategy surface (RFC-05 crit 6).
+74. unpinned_investigation_prompt -- agent-runtime code (``platform/agents/**`` or ``modules/*/agents/**``) resolves a prompt / bundle by LIVE ALIAS instead of the per-investigation pin. The canonical path is :func:`aila.platform.prompts.pinning.resolve_pinned_prompt`, which reads or persists the investigation pin before ever looking at the alias; a raw ``.resolve(alias=...)`` on the prompt store or the prompt registry in a turn function bypasses that pin and lets an operator alias flip mid-run bleed the new prompt into an already-running investigation's transcript. RFC-09 criterion 4 / threat T6. Scope is the agent-runtime tree; the platform prompts package owns the raw resolve and is naturally out of scope. ``seed_prompt_versions`` functions are exempt because seed / registration legitimately talks to the store directly. Sibling of rules 58 / 59 / 60 on the pin surface.
+75. adlc_structural_change -- a file under ``platform/lifecycle/**`` (the RFC-10 ADLC control plane) constructs a graph-structure element (``PhaseSpec(...)`` / ``WorkflowDefinition(...)`` / ``make_dispatch_router(...)`` / ``build_dispatch_workflow(...)``), mutates a ``.states`` / ``.nodes`` / ``.edges`` mapping, writes a persona-roster binding (``PERSONA_ROLE_MAP`` / ``persona_task_type`` / ``role_task_type``), calls ``.register_tool(...)`` or ``.register(...)`` on a tool-registry-shaped receiver (``tool_registry`` / ``tool_scope``), or constructs a ``Tool`` subclass (a callee terminal ending in ``Tool``). The ADLC promotes versioned agent bundles behind the eval + quorum gate -- an alias flip + a journaled ``LifecycleTransitionRecord`` + a ``LifecycleCanaryAssignment`` state stamp. It must NOT mint a new phase, node, edge, roster entry, or tool; those go through the CODE lifecycle (PR / review / deploy), not through the ADLC bundle promotion path. RFC-10 criterion 6 / design doc ``.run/designs/DESIGN_reasoning_platform.md`` sec 3.7 -- a bundle body whose diff adds a new tool call, a new node kind, or a new graph edge is a finding. Sibling of rule 73 rescoped from the RFC-08 self-improvement layer to the RFC-10 ADLC control plane.
+73. structural_self_modification -- the RFC-08 self-improvement layer (``platform/eval/**`` and the sanctioned proposer files ``platform/agents/pattern_extractor.py`` / ``platform/agents/persona_router.py`` / ``platform/agents/calibrator.py``) proposes parameters (thresholds / persona-selection / patterns / routing weights) only. A structural graph edit from within that layer -- a ``PhaseSpec(...)`` / ``WorkflowDefinition(...)`` construction, a ``make_dispatch_router(...)`` / ``build_dispatch_workflow(...)`` call, a subscript / delete / mutator-method mutation of a ``.states`` / ``.nodes`` / ``.edges`` mapping, or a subscript / mutator write to a persona-roster binding (``PERSONA_ROLE_MAP`` / ``persona_task_type`` / ``role_task_type``) -- lets a self-improvement writer mint a new node, phase, or roster entry outside the operator-authored workflow definition. Fire is scoped to the self-improvement files only so the workflow / engine layer (which legitimately builds the graph) is not flagged; precision over recall by design.
+
+76. bespoke_mcp_bridge -- a ``Tool`` subclass under ``platform/mcp/**`` constructs its own ``httpx.AsyncClient``. RFC-11 Tier C collapsed the three bespoke bridge Tool subclasses onto one generic ``McpBridgeTool`` + ``McpClient`` transport; server-specific behaviour lives in ``McpMiddleware`` plugins (not Tool subclasses). A new Tool subclass reimplementing the HTTP transport regresses the per-server-transport design the RFC deleted.
+77. static_server_catalog -- an agent dispatcher under ``**/agents/**`` assigns a static ``self._bridges`` dict-literal mapping server ids to bridge instances. RFC-11 Tier C builds bridges on demand via the catalog-driven ``_bridge_for()``; a frozen name->bridge map means an operator-added catalog server cannot dispatch without a code change. Test / DI injection uses ``_bridge_overrides`` instead.
+78. hardcoded_server_dispatch -- an agent dispatcher under ``**/agents/**`` reads a bridge from a static ``self._bridges`` map by server id (``self._bridges.get(...)`` / ``self._bridges[...]``). Sibling of rule 77 (77 flags the map definition, 78 flags the dispatch lookup). Route MCP dispatch through the catalog-aware + approval-gated ``_bridge_for()``.
+79. unsanitized_server_ingest -- a function under ``platform/mcp/**`` projects an MCP tool ``"description"`` into a truncated (``[:N]``) prompt-facing value without any ``sanitize*`` call in the same function. RFC-11 zero-trust: an MCP server controls its own tool descriptions, so the compact projection (``McpClient.compact_tool_spec``) strips prompt-injection patterns via ``sanitize_input`` before the text reaches an agent prompt (tool-poisoning defense).
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -57,6 +104,7 @@ Design constraints (D-04):
 from __future__ import annotations
 
 import ast
+import difflib
 import logging
 import re as _re
 import sys
@@ -196,6 +244,28 @@ def _owning_module_id(filepath: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _endpoint_route_path(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> str | None:
+    """Return the route path from a ``@router.<verb>("...")`` decorator.
+
+    Returns the first positional string argument of the first router verb
+    decorator on *node*, or None when the function is not a route handler.
+    """
+    for dec in node.decorator_list:
+        if not isinstance(dec, ast.Call) or not isinstance(dec.func, ast.Attribute):
+            continue
+        if dec.func.attr not in {"get", "post", "put", "delete", "patch"}:
+            continue
+        if (
+            dec.args
+            and isinstance(dec.args[0], ast.Constant)
+            and isinstance(dec.args[0].value, str)
+        ):
+            return dec.args[0].value
+    return None
+
+
 _BOUNDARY_GUARDED_PATTERN = _re.compile(r"[/\\]aila[/\\](api|platform|storage)[/\\]")
 
 
@@ -206,10 +276,117 @@ def _is_boundary_guarded_file(filepath: str) -> bool:
 
 _MODULE_FILE_PATTERN = _re.compile(r"[/\\]aila[/\\]modules[/\\]")
 
+# Rule 37 -- module config schemas must subclass ModuleConfigBase.
+_CONFIG_SCHEMA_PATH_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]modules[/\\][a-z][a-z0-9_]*[/\\]config_schema\.py$"
+)
+
 
 def _is_module_file(filepath: str) -> bool:
     """Return True if *filepath* is inside the aila/modules/ package."""
     return bool(_MODULE_FILE_PATTERN.search(filepath.replace("\\", "/")))
+
+
+# Rule 45 -- module_prefix_in_platform_tool_name. Platform MCP bridge tool
+# names must derive from a constructor module_id, not a hard-coded literal
+# that names a module.
+_BRIDGE_FILE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]platform[/\\]mcp[/\\]bridges[/\\]"
+)
+_MODULE_TOOL_PREFIX_RE = _re.compile(
+    r"^(vr|vulnerability|forensics|malware|hello_world)\."
+)
+
+
+def _module_prefixed_name_literal(value: ast.expr | None) -> str | None:
+    """Return the string when *value* is a module-prefixed name literal."""
+    if (
+        isinstance(value, ast.Constant)
+        and isinstance(value.value, str)
+        and _MODULE_TOOL_PREFIX_RE.match(value.value)
+    ):
+        return value.value
+    return None
+
+
+# Rule 46 -- platform_owns_event_vocabulary. Event classes under
+# platform/events/ must not carry module-domain vocabulary; the platform
+# owns only generic infrastructure events (system lifecycle, config
+# change, assessment lifecycle, LLM accounting).
+_EVENTS_FILE_PATTERN = _re.compile(r"[/\\]aila[/\\]platform[/\\]events[/\\]")
+_EVENT_DOMAIN_TOKENS: frozenset[str] = frozenset({
+    "scan", "finding", "investigation", "malware", "vulnerability", "forensics",
+})
+
+
+# Rule 47 -- raw_sql_platform_tables. Modules must not issue raw SQL against
+# platform-owned task tables; route through a platform lifecycle / TaskQueue
+# service. Matches a FROM|INTO|UPDATE|JOIN <table> clause shape inside any
+# string constant so the call wrapper (text / sa_text / execute) is
+# irrelevant, while SQL-ish prose without the clause shape is not flagged.
+_RAW_SQL_PLATFORM_TABLE_RE = _re.compile(
+    r"\b(from|into|update|join)\s+(taskrecord|workflow_state_cursor)\b",
+    _re.IGNORECASE,
+)
+
+# Rule 48 -- platform_names_module. Feature module ids a boundary-guarded file
+# must never name: not in a registry require(...) call, not as the namespace
+# argument of a ConfigRegistry-shape .get(...) read, and not as a runtime
+# "aila.modules.<module>" string constant. The platform resolves domain data by
+# capability (ModuleRegistry.first_with/all_with) and owns only the 'platform'
+# config namespace; every other namespace belongs to a specific module.
+_DOMAIN_MODULE_IDS = frozenset(
+    {"vulnerability", "forensics", "malware", "vr", "hello_world"}
+)
+
+# Rule 48 sub-check (c): match "aila.modules.<domain-module-id>" or
+# "aila.modules.<id>.<subpath>" appearing as a runtime string constant.
+# Bare "aila.modules" (used by the discovery bootstrap in
+# platform/tasks/worker.py) is intentionally not matched because it names
+# no specific module. Docstring constants are skipped separately.
+_AILA_MODULES_PATH_LITERAL_RE = _re.compile(
+    r"^aila\.modules\.(vulnerability|forensics|malware|vr|hello_world)(\.|$)"
+)
+
+
+def _collect_docstring_constant_ids(tree: ast.Module) -> frozenset[int]:
+    """Return the ``id()`` of every ast.Constant that lives in docstring position.
+
+    A docstring is the first statement of a Module / ClassDef / FunctionDef /
+    AsyncFunctionDef body when that statement is ``ast.Expr(value=ast.Constant(str))``.
+    Callers use the resulting id-set to skip docstring string constants during
+    a walk without re-parsing.
+    """
+    docstring_ids: set[int] = set()
+    for parent in ast.walk(tree):
+        body = getattr(parent, "body", None)
+        if not isinstance(body, list) or not body:
+            continue
+        first = body[0]
+        if not isinstance(first, ast.Expr):
+            continue
+        val = first.value
+        if isinstance(val, ast.Constant) and isinstance(val.value, str):
+            docstring_ids.add(id(val))
+    return frozenset(docstring_ids)
+
+
+def _event_type_string_literal(stmt: ast.stmt) -> str | None:
+    """Return the string assigned to an ``event_type`` field, or None."""
+    value: ast.expr | None = None
+    if (
+        isinstance(stmt, ast.AnnAssign)
+        and isinstance(stmt.target, ast.Name)
+        and stmt.target.id == "event_type"
+    ):
+        value = stmt.value
+    elif isinstance(stmt, ast.Assign) and any(
+        isinstance(t, ast.Name) and t.id == "event_type" for t in stmt.targets
+    ):
+        value = stmt.value
+    if isinstance(value, ast.Constant) and isinstance(value.value, str):
+        return value.value
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -570,8 +747,1372 @@ def _body_has_cache_impl(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# RFC-01 re-duplication guardrails (rules 34-36)
+# ---------------------------------------------------------------------------
+
+# The enums hoisted to aila.platform.contracts.enums. A module must import
+# these rather than redeclare them. Module-owned enums (WorkspaceTheme,
+# TargetKind, etc.) are deliberately absent from this set.
+_HOISTED_ENUM_NAMES: frozenset[str] = frozenset({
+    "WorkspaceStatus", "TargetStatus", "AnalysisState", "TargetTagSource",
+    "BranchStatus", "PersonaVoice", "BranchOperation", "InvestigationStatus",
+    "InvestigationPauseReason", "OutcomeConfidence", "OutcomeDispatchStatus",
+    "SenderKind", "OperatorIntent", "PatternStatus", "PatternScope",
+    "PatternConfidence", "HypothesisState", "StageState", "StageName",
+})
+
+# Modules whose investigation-engine tables RFC-01 unified onto the platform
+# record bases. Other modules (forensics, vulnerability) keep independent
+# table shapes and are outside the scope of the derived-name + subclass rules.
+_RFC01_UNIFIED_MODULES: frozenset[str] = frozenset({"vr", "malware"})
+
+# Unified table role (tablename with the module prefix removed) mapped to the
+# platform base class the concrete must subclass.
+_UNIFIED_ROLE_BASES: dict[str, str] = {
+    "workspaces": "WorkspaceRecordBase",
+    "targets": "TargetRecordBase",
+    "target_tag_index": "TargetTagIndexBase",
+    "investigations": "InvestigationRecordBase",
+    "investigation_messages": "MessageRecordBase",
+    "investigation_branches": "BranchRecordBase",
+    "investigation_outcomes": "OutcomeRecordBase",
+    "outcome_reviews": "OutcomeReviewRecordBase",
+    "mcp_call_log": "McpCallLogRecordBase",
+    "investigation_targets": "InvestigationTargetRecordBase",
+    "patterns": "PatternRecordBase",
+    "projects": "ProjectRecordBase",
+}
+
+# Platform base class mapped to the *_base.py file under platform/contracts/
+# that defines it (two share target_base.py).
+_BASE_FILE_BY_CLASS: dict[str, str] = {
+    "WorkspaceRecordBase": "workspace_base.py",
+    "TargetRecordBase": "target_base.py",
+    "TargetTagIndexBase": "target_base.py",
+    "InvestigationRecordBase": "investigation_base.py",
+    "MessageRecordBase": "message_base.py",
+    "BranchRecordBase": "branch_base.py",
+    "OutcomeRecordBase": "outcome_base.py",
+    "OutcomeReviewRecordBase": "outcome_review_base.py",
+    "McpCallLogRecordBase": "mcp_call_log_base.py",
+    "InvestigationTargetRecordBase": "investigation_target_base.py",
+    "PatternRecordBase": "pattern_base.py",
+    "ProjectRecordBase": "project_base.py",
+}
+
+# Cache of platform base field-name sets, keyed by (base_file_path, class_name).
+_BASE_FIELD_CACHE: dict[tuple[str, str], frozenset[str]] = {}
+
+_CONTRACTS_DIR_PATTERN = _re.compile(r"^(.*/aila)/modules/")
+
+# Rule 38 -- module service files must not be full copies of a platform
+# service. Scoped to the vr/malware copy set (forensics keeps an
+# independent machine_readiness variant, outside the check).
+_SERVICE_COPY_SCOPE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]modules[/\\](?:vr|malware)[/\\]services[/\\][^/\\]+\.py$"
+)
+_PLATFORM_SERVICE_SUBDIRS: tuple[str, ...] = ("services", "mcp", "tasks")
+_SERVICE_COPY_THRESHOLD: float = 0.75
+_SERVICE_CORPUS_CACHE: dict[str, dict[str, str]] = {}
+
+
+def _platform_service_corpus(filepath: str) -> dict[str, str]:
+    """Return {relpath: normalized_source} for every platform service file.
+
+    Reads platform/services, platform/mcp, and platform/tasks so a module
+    service copied from any of them is caught. Each source is normalized via
+    ast.unparse (comments and formatting removed); cached per aila root.
+    """
+    match = _CONTRACTS_DIR_PATTERN.search(filepath.replace("\\", "/"))
+    if match is None:
+        return {}
+    aila_root = match.group(1)
+    cached = _SERVICE_CORPUS_CACHE.get(aila_root)
+    if cached is not None:
+        return cached
+    corpus: dict[str, str] = {}
+    for subdir in _PLATFORM_SERVICE_SUBDIRS:
+        base = Path(aila_root) / "platform" / subdir
+        if not base.is_dir():
+            continue
+        for py in sorted(base.glob("*.py")):
+            if py.name == "__init__.py":
+                continue
+            try:
+                normalized = ast.unparse(ast.parse(py.read_text(encoding="utf-8")))
+            except (OSError, SyntaxError, ValueError, RecursionError):
+                continue
+            corpus[f"{subdir}/{py.name}"] = normalized
+    _SERVICE_CORPUS_CACHE[aila_root] = corpus
+    return corpus
+
+
+# Rule 41 -- module workflow-state files must not be full copies of a
+# platform workflow-state base. Scoped to the vr/malware investigation
+# engine states (setup/loop/emit), which RFC-02 Phase 4 extracted to
+# platform/workflows/investigation_*_base.py.
+_WORKFLOW_STATE_SCOPE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]modules[/\\](?:vr|malware)[/\\]workflow[/\\]states[/\\]"
+    r"investigation_(?:setup|loop|emit)\.py$"
+)
+_WORKFLOW_BASE_CORPUS_CACHE: dict[str, dict[str, str]] = {}
+
+# Rule 69 -- module lifecycle-binding files must not be full copies of the
+# platform investigation-lifecycle service. Scoped to any module's
+# ``workflow/pause_resume.py`` (future-proof across the vr/malware pair
+# and any new module that scaffolds a pause/resume adapter). RFC-02
+# Phase 4 owns the four-source-of-truth atomic pause / resume / re-enqueue
+# on ``platform/services/investigation_lifecycle.py``; the module keeps
+# only the per-module reason coercion + record-model bindings, or -- the
+# canonical shape after the pause_resume adapter deletion -- calls the
+# platform service directly from the api_router handler. A file matching
+# this scope that mirrors the platform service body has re-introduced the
+# copy this rule locks out.
+_LIFECYCLE_BINDING_SCOPE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]modules[/\\][^/\\]+[/\\]workflow[/\\]pause_resume\.py$"
+)
+_LIFECYCLE_BASE_CORPUS_CACHE: dict[str, dict[str, str]] = {}
+
+# Rule 42 -- module agents/ files must not re-implement a platform agent
+# primitive. RFC-03 Phase 1 lifted the operator-intent classifier and the
+# auto-steering injector to platform/agents/; Phase 7 lifted the per-turn
+# loop (AgentTurnRunnerBase.run_turn) and the case-state codec / terminal
+# resolver helpers (aila.platform.agents.turn_helpers). Modules import
+# them; a def of a lifted primitive -- whether at module top level or as a
+# method redefinition on a class body -- is a copy that drifted back in.
+# Import re-exports are Import/ImportFrom statements, not FunctionDefs, so
+# they never trip this. A thin subclass ``class VrRunner(AgentTurnRunnerBase):
+# pass`` inherits the platform method without defining one, so it stays
+# clean; only an actual ``async def run_turn`` in the class body fires.
+_AGENTS_SCOPE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]modules[/\\][^/\\]+[/\\]agents[/\\]"
+)
+_LIFTED_AGENT_PRIMITIVES: frozenset[str] = frozenset({
+    # Phase 1 lifts.
+    "maybe_post_auto_steering",
+    "classify_intent",
+    # Phase 7 turn-runner + turn-helpers lifts.
+    "run_turn",
+    "decode_case_state",
+    "encode_case_state",
+    "auto_resolve_live_on_terminal",
+    "to_outcome_confidence",
+})
+
+# Rule 49 -- agent_env_read. Attribute names on the ``os`` module that
+# reach the process environment. RFC-03's config-drift closure removed
+# every direct env read from ``modules/*/agents/**``; modules resolve
+# config through ``ConfigRegistry(module_id, key)`` so a DB override,
+# a per-module schema default, and env can all take turns without a
+# hand-coded fork per copy.
+_OS_ENV_ATTRS: frozenset[str] = frozenset({"environ", "getenv"})
+
+# Rule 70 -- mcp_catalog_placement. A hardcoded MCP server catalog embedded
+# INSIDE ``src/aila/platform/**`` is a boundary inversion: the module owns
+# ``MCP_SERVERS`` and binds it onto :class:`McpRegistryServiceBase` via the
+# ``_servers`` ClassVar. The platform base takes the catalog as class
+# state supplied by the subclass and never hardcodes one itself. A
+# platform-side subclass of ``McpRegistryServiceBase`` that assigns
+# ``_servers`` to a literal catalog (a tuple/list containing dict specs)
+# has re-imported module domain into the platform layer. The base file
+# itself is exempt (it declares the ClassVar without binding a value).
+_MCP_REGISTRY_PLATFORM_SCOPE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]platform[/\\]"
+)
+_MCP_REGISTRY_BASE_FILE_SUFFIX = "platform/mcp/registry.py"
+_MCP_REGISTRY_BASE_NAMES: frozenset[str] = frozenset({
+    "McpRegistryServiceBase", "McpRegistryService",
+})
+# A server-spec dict is a small mapping with these operator-visible keys.
+# We accept a literal catalog when at least one element is a dict with a
+# ``"id"`` key or a ``"config_key"`` key (the shape modules already use).
+_MCP_SPEC_KEYS: frozenset[str] = frozenset({"id", "config_key"})
+
+
+def _class_inherits_from(
+    node: ast.ClassDef, base_names: frozenset[str],
+) -> bool:
+    """Return True if *node* names one of *base_names* in its base list.
+
+    Matches bare names (``class X(Base):``) and attribute access
+    (``class X(pkg.Base):``); either form re-imports the base into the
+    subclass's MRO.
+    """
+    for base in node.bases:
+        if isinstance(base, ast.Name) and base.id in base_names:
+            return True
+        if isinstance(base, ast.Attribute) and base.attr in base_names:
+            return True
+    return False
+
+
+def _is_literal_server_catalog(value: ast.expr) -> bool:
+    """Return True if *value* is a literal MCP-server catalog.
+
+    A catalog is a tuple/list whose elements are ``ast.Dict`` literals
+    with at least one entry keyed by ``"id"`` or ``"config_key"`` (the
+    operator-visible shape modules already use for MCP_SERVERS).
+    """
+    if not isinstance(value, (ast.Tuple, ast.List)):
+        return False
+    if not value.elts:
+        return False
+    for elt in value.elts:
+        if not isinstance(elt, ast.Dict):
+            return False
+        has_spec_key = False
+        for key in elt.keys:
+            if (
+                isinstance(key, ast.Constant)
+                and isinstance(key.value, str)
+                and key.value in _MCP_SPEC_KEYS
+            ):
+                has_spec_key = True
+                break
+        if not has_spec_key:
+            return False
+    return True
+
+
+# Rule 71 -- service_env_read. Sibling of rule 49 (agent_env_read).
+# ``modules/*/services/**`` code must resolve config through
+# ``ConfigRegistry(module_id, key)`` for the same reason: a hand-coded
+# ``os.environ`` / ``os.getenv`` read silently bypasses the DB override
+# and the per-module schema default the operator relies on. The check
+# reuses the ``_OS_ENV_ATTRS`` corpus so a docstring or comment mention
+# (AST-invisible) never trips it.
+_SERVICES_SCOPE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]modules[/\\][^/\\]+[/\\]services[/\\]"
+)
+
+# Rule 72 -- platform_hardcodes_strategy_family. Scope pattern matches any
+# file under ``src/aila/platform/**``. Reasoning-strategy families are
+# module domain (each module declares its families via
+# ``ModuleProtocol.reasoning_strategies()``); a platform file that names
+# one of these families in a string literal has re-imported module
+# domain into the platform layer. The family ``generic`` is the
+# platform's fallback and is deliberately absent from the banned set.
+# ``tests/`` paths are exempt so fixture strings that name a family
+# (e.g. a registry unit test that constructs a
+# ``ReasoningStrategyDeclaration(family="vulnerability_research")``) do
+# not trip the rule. Structural guardrail: green only after the
+# module-owned family literals move off the platform surface.
+_PLATFORM_STRATEGY_SCOPE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]platform[/\\]"
+)
+_PLATFORM_STRATEGY_TESTS_EXEMPT_PATTERN = _re.compile(
+    r"[/\\]tests[/\\]"
+)
+_MODULE_STRATEGY_FAMILIES: frozenset[str] = frozenset({
+    "mobile_reverse",
+    "vulnerability_research",
+    "web_pentest",
+    "network_forensics",
+    "memory_forensics",
+    "persistence_hunt",
+    "malware_static",
+    "filesystem_triage",
+})
+
+# Rule 73 -- structural_self_modification. The RFC-08 self-improvement
+# layer is a PARAMETER proposer: it moves thresholds, persona-selection
+# weights, patterns, and routing tuning within the operator-authored
+# workflow graph. Emitting a STRUCTURAL edit from that layer (a new
+# phase, a new node, a new dispatch router, a mutation of the frozen
+# .states / .nodes / .edges map, or a rewrite of the persona roster)
+# lets a self-improvement writer mint a graph shape the operator did
+# not sign off on -- the exact class of change RFC-08 rules 55-57
+# gate at the row / threshold level. This rule closes the shape-level
+# equivalent.
+#
+# Scope is DELIBERATELY narrow so the workflow / engine layer
+# (``platform/workflows/**``) which legitimately builds the graph is
+# never flagged: only files under ``platform/eval/`` and the specific
+# proposer files in ``platform/agents/`` (``pattern_extractor.py``,
+# ``persona_router.py``, ``calibrator.py``) are in scope. Precision
+# over recall -- a false positive on the engine costs more than a
+# miss because the engine's every commit would trip it. A future
+# proposer added under ``platform/agents/`` MUST also be listed here.
+_SELF_IMPROVEMENT_EVAL_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]platform[/\\]eval[/\\]"
+)
+_SELF_IMPROVEMENT_AGENT_FILES: tuple[str, ...] = (
+    "platform/agents/pattern_extractor.py",
+    "platform/agents/persona_router.py",
+    "platform/agents/calibrator.py",
+)
+# Constructors / factories whose call constructs a structural graph
+# element. A Name (``PhaseSpec(...)``) or Attribute
+# (``phase_graph.PhaseSpec(...)``) call whose terminal is in this set
+# fires the rule.
+_STRUCTURAL_GRAPH_CALLABLES: frozenset[str] = frozenset({
+    "PhaseSpec",
+    "WorkflowDefinition",
+    "make_dispatch_router",
+    "build_dispatch_workflow",
+})
+# Attribute names that carry the frozen node / edge map on a
+# ``WorkflowDefinition`` / phase graph. A subscript write, del, or
+# mutator-method call targeting any of these on any receiver fires
+# the rule. Rule 50 already guards ``.states`` universally; the
+# additional coverage of ``.nodes`` / ``.edges`` scoped to the self-
+# improvement layer is the added value here (the two rules may
+# double-fire on a ``.states`` mutation inside eval / a proposer,
+# which is the intended, non-noisy overlap).
+_STRUCTURAL_MAP_ATTRS: frozenset[str] = frozenset({
+    "states", "nodes", "edges",
+})
+# Names whose subscript-assign / del / mutator-method call is a
+# persona-roster rewrite. ``PERSONA_ROLE_MAP`` is the top-level
+# module dict; ``persona_task_type`` / ``role_task_type`` are
+# ClassVar dicts on :class:`PersonaRouter` subclasses. A subclass
+# BODY that binds these to a new literal (``persona_task_type = {...}``
+# as an AnnAssign / Assign with a bare Name target) is a legitimate
+# override and NOT a runtime mutation, so only Subscript / Delete /
+# mutator-method shapes fire.
+_STRUCTURAL_ROSTER_TOKENS: frozenset[str] = frozenset({
+    "PERSONA_ROLE_MAP",
+    "persona_task_type",
+    "role_task_type",
+})
+# Mutator method calls treated as a structural edit on a
+# ``.states`` / ``.nodes`` / ``.edges`` map or a persona-roster
+# binding. Extends the rule-50 set with the sequence mutators
+# ``append`` / ``extend`` / ``insert`` so a future tuple/list roster
+# is caught too.
+_STRUCTURAL_MUTATOR_METHODS: frozenset[str] = frozenset({
+    "update", "pop", "setdefault", "clear", "popitem",
+    "__setitem__", "__delitem__",
+    "append", "extend", "insert",
+})
+
+# Rule 50 -- static_node_mutation. Mutating a WorkflowDefinition.states map
+# after construction reopens the node set the dispatch-hub / phase-graph
+# substrates freeze so every transition target stays auditable (RFC-13 #68).
+_STATES_MUTATOR_METHODS: frozenset[str] = frozenset({
+    "update", "pop", "setdefault", "clear", "popitem",
+    "__setitem__", "__delitem__",
+})
+
+# Rule 51 -- ledger_write_bypass. LedgerService is the sole writer of the
+# investigation_ledger table (it owns idempotency + the append-only rule).
+_LEDGER_RECORD_NAME = "InvestigationLedgerRecord"
+_LEDGER_TABLE_NAME = "investigation_ledger"
+_LEDGER_INSERT_CALLABLES: frozenset[str] = frozenset({"insert", "pg_insert"})
+_LEDGER_SERVICE_PATH_SUFFIX = "platform/services/ledger.py"
+
+# ---------------------------------------------------------------------------
+# RFC-07 rule constants (rules 52-54).
+#
+# Every RFC-07 rule flips the codebase's failure posture from fail-open
+# (silence + permissive default) to fail-closed (surface + conservative
+# default). The constants below let a reviewer trace WHY a specific
+# function or callsite triggers a rule -- rename any set here and both
+# the rule and its tests move at once.
+# ---------------------------------------------------------------------------
+
+# Rule 52 -- fail_open_recovery_path. A function whose name signals a
+# safety, rate-limit, verify, or recovery contract must not return a
+# permissive default from an ``except`` handler; the conservative
+# default (a bounded defer, a fail-closed block, a mark-and-block) is
+# required. The name markers are matched case-insensitively as
+# substrings of the function name so ``verify_response``,
+# ``compute_investigation_defer``, ``check_rate_limit``,
+# ``run_recovery_pass``, ``synthesize_no_finding_outcomes``, etc all
+# match. The markers deliberately capture RFC-07's five documented
+# fail-open sites (queue defer, verify gate, pipeline post-call,
+# finalizer, SSE emit) plus the class of future paths any of the
+# above would grow into.
+_RECOVERY_FUNCTION_MARKERS: frozenset[str] = frozenset({
+    "verify", "recover", "recovery", "safety",
+    "rate_limit", "rate-limit", "ratelimit",
+    "compute_defer", "compute_investigation_defer",
+    "finalize", "finaliser", "finalizer",
+    "heal", "reconcile", "reap", "sweep", "guard",
+})
+
+# Rule 52 -- permissive default sentinel set. A return of any of these
+# from an ``except`` inside a recovery-marked function is a finding.
+# Bare ``return`` (None) is included via the ``val is None`` branch of
+# the check; bare ``True`` (permissive boolean) is caught by the
+# constant check. Numeric zero (0, 0.0) is fail-open for a rate-limiter
+# but not for a heal path returning ``count = 0`` -- the rule
+# distinguishes on the function-name marker, not on the value.
+_FAIL_OPEN_PERMISSIVE_CONSTANTS: tuple[object, ...] = (
+    True, 0, 0.0, "",
+)
+
+# Rule 53 -- close_without_infra_classification. A finalizer that closes
+# an investigation as a negative outcome without calling
+# :class:`InfraDeathClassifier` is a finding. The rule fires on a call
+# to a closer name marker inside a finalize-marked function body when
+# no ``InfraDeathClassifier`` reference appears in the same function.
+_INFRA_CLASSIFIER_NAME: str = "InfraDeathClassifier"
+_INFRA_CLASSIFIER_METHODS: frozenset[str] = frozenset({
+    "classify", "is_infra_death", "classify_close",
+})
+_FINALIZER_NAME_MARKERS: frozenset[str] = frozenset({
+    "finalize", "finalise",
+    "synthesize_no_finding", "synthesise_no_finding",
+    "close_investigation", "close_no_finding",
+})
+_CLOSE_CALLABLE_MARKERS: frozenset[str] = frozenset({
+    "close_investigation", "close_no_finding", "finalize_negative",
+    "mark_no_finding", "resolve_no_finding", "synthesize_no_finding",
+})
+
+# Rule 54 -- heal_without_journal. A recovery function that mutates run
+# state (a workflow_state_cursor row, a taskrecord row, an
+# arq:in-progress lock) without also writing a recovery event is a
+# finding. The journal is the LedgerService append_general call (see
+# rule 51) or a ``record_and_check``-style checkpoint. The rule fires
+# on a heal-marked function whose body contains a state-mutation
+# marker but no journal-write marker.
+_HEAL_FUNCTION_MARKERS: frozenset[str] = frozenset({
+    "heal", "reconcile", "reroute", "reenqueue", "re_enqueue",
+    "downgrade", "failover", "recover_state",
+})
+_STATE_MUTATION_MARKERS: frozenset[str] = frozenset({
+    "set_enabled", "set_status", "flip_status",
+    "update_status", "cancel_task", "drop_lock",
+    "delete_cursor", "purge_cursor",
+    "reenqueue", "re_enqueue",
+})
+# Journal-write markers: a call to any of these in the heal function's
+# body clears the finding. Kept intentionally short because a heal
+# path that does NOT record its action is the exact anti-pattern the
+# rule locks in; a valid heal spends one line on the journal.
+_JOURNAL_WRITE_MARKERS: frozenset[str] = frozenset({
+    "append_general", "append_ledger", "record_recovery",
+    "record_healed", "record_signal", "record_and_check",
+    "emit_recovery_event", "log_recovery",
+})
+# Files exempt from rule 54. Two categories:
+#   (a) Journal INFRASTRUCTURE files: the ledger writer, the recovery-
+#       event emitter, the domain-event bus. A heal that writes the
+#       journal without calling the journal would be circular.
+#   (b) Low-level primitives / observability files that legitimately
+#       never journal on their own: pure-observability signal emitters
+#       (drift.py, emitter.py), the batch cursor reaper (SQL-only sweep
+#       operating on rows with no per-investigation resolution), and
+#       the rate-limit / storage helpers whose mutation is not a
+#       run-state heal.
+# Narrowed under RFC-07 #31: the real heal orchestrators
+# (state_reconciler.py, worker.py, investigation_lifecycle.py) are NOT
+# exempt -- they MUST call emit_recovery_event so recovery is itself
+# auditable. A file added to this list must satisfy category (a) or (b);
+# an orchestrator whose journal call genuinely does not fit belongs in
+# honesty_whitelist.py as a NARROW per-function entry, not here as a
+# blanket file exemption.
+_JOURNAL_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
+    # (a) journal infrastructure -- circular exempt.
+    "platform/services/ledger.py",
+    "platform/services/resilience.py",
+    "platform/events/domain_events.py",
+    # (b) pure-observability signal emitters (never mutate run state).
+    "platform/events/emitter.py",
+    "platform/llm/drift.py",
+    # (b) low-level SQL sweep / rate-limit / storage helpers. cursor_reaper
+    # runs a batch DELETE with no per-investigation resolution (no id to
+    # pass to emit_recovery_event); queue / storage are rate-limit + row-
+    # persistence helpers whose mutation isn't a run-state heal.
+    "platform/tasks/cursor_reaper.py",
+    "platform/tasks/queue.py",
+    "platform/tasks/storage.py",
+)
+
+# ---------------------------------------------------------------------------
+# RFC-08 / RFC-09 / RFC-10 rule constants (rules 55-63).
+#
+# Every rule below locks in a review-gated write path so agent turns +
+# operator commands cannot short-circuit a promotion / audit / journal
+# invariant by writing the underlying row directly. Renaming a marker
+# set here moves both the rule and its tests at once.
+# ---------------------------------------------------------------------------
+
+# Rule 55 -- ungated_self_improvement_write. Method names on a
+# PatternStore-shaped receiver that constitute a write; ``.create`` is
+# the canonical entry point but ``.add`` / ``.insert`` / ``.bulk_create``
+# / ``.record`` are all shapes a future subclass may expose. The
+# receiver-name markers match any dotted-attribute tail (Name.id or
+# Attribute.attr) that ends in a ``pattern_store``-family token so
+# ``self.pattern_store.create(...)`` / ``self._pattern_store.create(...)``
+# / ``store.create(...)`` (when ``store`` was bound from a
+# ``pattern_store``-typed attribute) all trigger the check while a
+# bare ``kb.create(...)`` on the KnowledgeService does not. The
+# ``_store`` token also matches because ExperienceWriter, the
+# pattern_extractor DRAFT proposer, and the pattern_proposer service
+# all bind the pattern store to ``self._store`` -- rule 55 needs to see
+# through the shortened name so a fourth writer file cannot slip in
+# under a bare ``self._store`` binding.
+_PATTERN_STORE_WRITE_METHODS: frozenset[str] = frozenset({
+    "create", "add", "insert", "bulk_create", "record",
+})
+_PATTERN_STORE_RECEIVER_TOKENS: tuple[str, ...] = (
+    "pattern_store", "_pattern_store", "_store",
+)
+# ``store`` alone is matched ONLY as a dotted attribute (``self.store``,
+# ``obj.store``) because a bare ``store = PatternStore(...); store.create(...)``
+# local is a common api_router / factory idiom and not intrinsic to the
+# pattern-store shape; treating a plain Name.id ``store`` as the receiver
+# would fire on every legitimate operator-manual write helper.
+_PATTERN_STORE_ATTR_ONLY_TOKENS: tuple[str, ...] = (
+    "store",
+)
+# Files that OWN a pattern-store write path and legitimately call
+# ``.create(...)`` directly on the store instance. Two shapes are
+# exempted here:
+#
+#   * The RFC-08 review-gated writer :class:`ExperienceWriter` and the
+#     store implementation files (the store's own ``.create`` cannot
+#     recurse through itself).
+#   * The sanctioned DRAFT proposers -- ``platform/agents/pattern_extractor.py``
+#     and ``modules/<mod>/services/pattern_proposer.py`` -- which stamp
+#     ``trust_tier=UNREVIEWED`` + provenance on every row they write.
+#     Those rows are inert (the retrieval path down-weights UNREVIEWED
+#     to zero standalone influence) until an operator / reviewer
+#     promotes them via ExperienceWriter, so they are proposals
+#     awaiting the gate, not a bypass of it. Rule 55 continues to
+#     guard against a FOURTH unsanctioned write path from a service /
+#     agent turn / workflow state.
+_PATTERN_STORE_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
+    "platform/eval/experience_writer.py",
+    "platform/services/pattern_store.py",
+    "modules/vr/services/pattern_store.py",
+    "modules/malware/services/pattern_store.py",
+    "modules/forensics/services/pattern_store.py",
+    "agents/pattern_extractor.py",
+    "services/pattern_proposer.py",
+)
+
+# Rule 56 -- self_labeled_reward. Kwarg / attribute names that carry a
+# self-labelled promotion signal. An agent turn is the model output;
+# the RFC-08 gate consumes only reviewer-produced signals, so an
+# agent that sets its own ``reward=`` / ``self_score=`` field short-
+# circuits the gate. Confidence / probability signals the LLM emits
+# for its own reasoning are not in this set; the names below are the
+# specific promotion-input shapes RFC-08 forbids.
+_SELF_LABELED_REWARD_NAMES: frozenset[str] = frozenset({
+    "reward",
+    "self_reward",
+    "self_score",
+    "agent_score",
+    "promotion_score",
+    "promotion_reward",
+    "self_labeled_reward",
+    "self_labeled_score",
+})
+# Scope: any file under ``platform/agents/`` OR ``modules/*/agents/``.
+# Test fixtures + eval-harness code that scores an agent for research
+# purposes live outside these paths and are correctly out of scope.
+_AGENT_RUNTIME_SCOPE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\](?:platform[/\\]agents|modules[/\\][^/\\]+[/\\]agents)[/\\]"
+)
+
+# Rule 57 -- unversioned_config_promotion. Substring tokens marking a
+# threshold-shaped ConfigRegistry key. A ``.set("<key>", value)`` call
+# whose key literal contains any of these tokens must run inside a
+# function body that also references CalibrationProposalRecord /
+# CalibrationProposer -- RFC-08's contract is that a threshold only
+# ever moves behind a versioned proposal row.
+_THRESHOLD_KEY_TOKENS: tuple[str, ...] = (
+    "threshold", "ceiling", "min_sample", "cutoff", "calibration",
+)
+_CALIBRATION_JOURNAL_MARKERS: frozenset[str] = frozenset({
+    "CalibrationProposalRecord",
+    "CalibrationProposer",
+    "CalibrationProposal",
+})
+_CALIBRATION_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
+    "platform/eval/calibration.py",
+    "tools/honesty_audit.py",
+)
+
+# Rule 58 -- inline_prompt_literal. A module-level assign whose target
+# name contains the ``PROMPT`` uppercase token (``_SYSTEM_PROMPT``,
+# ``_EXTRACTOR_SYSTEM_PROMPT``, ``_PROMPT_TEMPLATE``, ...) whose value
+# is a multi-line string constant fires. RFC-09 requires the prompt
+# text to live in a versioned ``.md`` file resolved through
+# :class:`PromptRegistry`; the length + newline floors below prevent
+# short single-purpose messages (a JSON schema hint, an error preamble)
+# from tripping the rule.
+_INLINE_PROMPT_NAME_TOKEN: str = "PROMPT"
+_INLINE_PROMPT_MIN_NEWLINES: int = 3
+_INLINE_PROMPT_MIN_LENGTH: int = 200
+_INLINE_PROMPT_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
+    "tools/honesty_audit.py",
+)
+
+# Rule 59 -- untagged_llm_call. Method-name markers for the three LLM
+# entry points and the identifier markers whose presence in the
+# enclosing function's body proves the call is tagged. A file that
+# defines / calls the raw entry point (the client itself, the
+# idempotent wrapper, the routing agents whose calls carry no prompt
+# version by design) is exempted.
+_LLM_CHAT_METHODS: frozenset[str] = frozenset({
+    "chat", "chat_json", "chat_structured",
+})
+_LLM_TAG_MARKERS: frozenset[str] = frozenset({
+    "correlation_scope",
+    "prompt_content_hash",
+    "prompt_version",
+    "idempotent_llm_call",
+    "current_prompt_content_hash",
+    "current_prompt_version",
+})
+_LLM_TAG_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
+    # The client owns the underlying transport, its sync-CLI wrappers
+    # forward to the async .chat() method, and it also defines schema-
+    # hint messages that are not prompts.
+    "platform/llm/client.py",
+    # The idempotent wrapper IS the tag stamp.
+    "platform/agents/idempotent_llm.py",
+    # Routing calls (task-type classifier + model router) have no
+    # investigation-scoped prompt version -- they carry only the
+    # routing prompt string built inline, not a per-investigation
+    # prompt from the version store.
+    "platform/routing/agent.py",
+    "platform/routing/router.py",
+    "platform/modules/platform.py",
+    # CyberReasoningEngine.decide_next_turn is a platform delegate
+    # wrapped by its callers (forensics/investigator.py,
+    # vr/agents/vuln_researcher.py) in ``correlation_scope(...)`` --
+    # the ContextVar carries the tag stamp through the delegate, and
+    # the reasoning file itself has no visibility into the resolved
+    # prompt version.
+    "platform/services/reasoning.py",
+    # This file self-references the markers in its own rule strings.
+    "tools/honesty_audit.py",
+)
+
+# Rule 60 -- unaudited_alias_flip. PromptAliasRecord is the mutable
+# pointer; PromptAliasChangeRecord is the append-only audit row. A
+# function that inserts / updates one without the other has drifted
+# from PromptVersionStore.set_alias() and reopens the alias table's
+# audit gap RFC-09 closed. The version_store file itself owns the
+# canonical pair-write; alembic migrations and this file's rule
+# strings are also exempt.
+_PROMPT_ALIAS_RECORD_NAME: str = "PromptAliasRecord"
+_PROMPT_ALIAS_CHANGE_RECORD_NAME: str = "PromptAliasChangeRecord"
+_PROMPT_ALIAS_TABLE_NAME: str = "prompt_aliases"
+_ALIAS_FLIP_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
+    "platform/prompts/version_store.py",
+    "tools/honesty_audit.py",
+)
+
+# Rule 74 -- unpinned_investigation_prompt. Agent-runtime code MUST
+# resolve a prompt / bundle through ``resolve_pinned_prompt`` (the
+# RFC-09 pin-per-investigation rule). A raw ``.resolve(alias=...)``
+# in a turn function bypasses the pin: a live production-alias flip
+# would then bleed the new prompt into the already-running
+# investigation's transcript. The receiver-token set captures the
+# canonical prompt-store / prompt-registry bindings so a call that
+# omits the ``alias=`` kwarg (and rides the registry's default
+# ``production`` alias) is still caught. The seed-function marker
+# lets ``seed_prompt_versions`` legitimately consult the store
+# during bootstrap without tripping the rule.
+_UNPINNED_INVESTIGATION_RESOLVE_METHOD: str = "resolve"
+_UNPINNED_INVESTIGATION_PIN_MARKER: str = "resolve_pinned_prompt"
+# Seed / bootstrap functions legitimately talk to the store directly.
+# Substring markers (case-insensitive) cover the shipped names --
+# ``seed_prompt_versions`` (vr + malware researchers),
+# ``seed_platform_claim_verifier_prompts`` (the shared claim-verifier
+# seed under ``platform/agents``), and any future ``*_seed_prompts_*``
+# / ``bootstrap_prompts`` helper -- so a new prompt-owning module
+# does not have to touch this list. Precision-over-recall: a false
+# positive on a seed is worse than a miss.
+_UNPINNED_INVESTIGATION_SEED_MARKERS: frozenset[str] = frozenset({
+    "seed_prompt",
+    "seed_platform",
+    "bootstrap_prompt",
+    "register_prompt",
+})
+_UNPINNED_INVESTIGATION_STORE_RECEIVER_TOKENS: frozenset[str] = frozenset({
+    # Module-level singletons the two active researcher modules bind.
+    "_PROMPT_VERSION_STORE",
+    "_PROMPT_REGISTRY",
+    "_prompt_version_store",
+    "_prompt_registry",
+    # Attribute-terminal bindings (``self._store``,
+    # ``self._prompt_store``, ``self._prompt_registry``).
+    "_store",
+    "_prompt_store",
+    # Direct class-name receiver (``PromptVersionStore().resolve(...)``
+    # / ``PromptRegistry().resolve(...)``): the outer call's terminal
+    # attribute is the class name.
+    "PromptVersionStore",
+    "PromptRegistry",
+})
+_UNPINNED_INVESTIGATION_PROMPT_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
+    # This file names the markers in its own rule strings.
+    "tools/honesty_audit.py",
+)
+
+# Rule 61 -- promotion_without_gate. Identifier markers whose presence
+# in a function that flips a version to production clears the rule. A
+# body that constructs ``LifecycleTransitionRecord(to_stage=...
+# .PRODUCTION)`` or calls ``set_alias(<key>, "production", ...)``
+# without any gate marker is promoting without the eval + quorum guard
+# :class:`AgentLifecycleController` enforces (RFC-10). ``EvalRunner``
+# stays in the marker set because a caller that ties the promotion
+# decision to a completed :class:`EvalRunResult` verdict + delegates
+# to ``AgentLifecycleController.promote`` legitimately references it
+# in the same body.
+_PROMOTE_GATE_MARKERS: frozenset[str] = frozenset({
+    "_passing_evaluate",
+    "_distinct_approver_count",
+    "EvalRunner",
+    "agent_promotion_quorum",
+    "AgentLifecycleController",
+})
+_PRODUCTION_STAGE_LITERAL: str = "production"
+_LIFECYCLE_STAGE_NAME: str = "LifecycleStage"
+_LIFECYCLE_TRANSITION_RECORD_NAME: str = "LifecycleTransitionRecord"
+_LIFECYCLE_JOURNAL_METHOD_NAME: str = "_journal"
+_LIFECYCLE_STAGE_KWARGS: frozenset[str] = frozenset({
+    "stage", "to_stage", "lifecycle_stage", "new_stage",
+})
+_LIFECYCLE_CONTROLLER_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
+    "platform/lifecycle/controller.py",
+    "tools/honesty_audit.py",
+)
+
+# Rule 75 -- adlc_structural_change. The RFC-10 ADLC (Agent Development
+# Lifecycle) control plane under ``platform/lifecycle/**`` promotes
+# versioned agent bundles behind an eval + quorum gate: it flips an alias,
+# writes a ``LifecycleTransitionRecord``, and stamps a
+# ``LifecycleCanaryAssignment`` state. It MUST NOT mint new graph
+# structure (a phase, node, edge, or persona-roster entry) and MUST NOT
+# register a new tool. Those go through the code lifecycle (a PR, a
+# review, a deploy), not through a bundle promotion. The scope regex
+# below is the file-path gate for rule 75; the four structural AST
+# shapes reuse the rule-73 constants (``_STRUCTURAL_GRAPH_CALLABLES`` /
+# ``_STRUCTURAL_MAP_ATTRS`` / ``_STRUCTURAL_MUTATOR_METHODS`` /
+# ``_STRUCTURAL_ROSTER_TOKENS``); the tool-registration shape uses the
+# helpers below.
+_ADLC_LIFECYCLE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]platform[/\\]lifecycle[/\\]"
+)
+# RFC-11 Tier C guardrails (rules 76-79). The MCP transport layer
+# (platform/mcp/**) and the agent dispatch layer (**/agents/**).
+_MCP_TRANSPORT_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]platform[/\\]mcp[/\\]"
+)
+_AGENT_DISPATCH_PATTERN = _re.compile(r"[/\\]agents[/\\]")
+# Receiver-token tokens that identify a tool-registry-shaped receiver on
+# a ``.register(...)`` call. The platform binds a ``ToolRegistry`` /
+# ``ToolScope`` (see ``platform/runtime/tools.py``); local names for the
+# instance follow the convention ``tool_registry`` / ``tool_scope``. A
+# ``.register_tool(...)`` call is caught by its method-name alone (no
+# receiver check needed).
+_ADLC_TOOL_REGISTRY_RECEIVER_TOKENS: tuple[str, ...] = (
+    "tool_registry",
+    "tool_scope",
+)
+
+# Rule 63 -- canary_below_min_sample. Function-name markers that
+# identify a canary promotion path and the identifier / call markers
+# whose presence in the body clears the rule. The check is looser
+# than a config-key match: any identifier or method call whose name
+# is one of the min-sample terms counts because it proves the code
+# path reasons about a sample count before flipping.
+_CANARY_PROMOTE_MARKERS: frozenset[str] = frozenset({
+    "promote_from_canary", "promote_canary", "flip_canary",
+})
+_CANARY_MIN_SAMPLE_MARKERS: frozenset[str] = frozenset({
+    "min_sample",
+    "min_samples",
+    "min_canary_sample",
+    "canary_min_sample",
+    "agent_canary_min_sample",
+    "sample_count",
+    "signal_count",
+})
+
+
+def _function_name_matches(name: str, markers: frozenset[str]) -> bool:
+    """Return True when any marker appears as a substring of ``name`` (case-insensitive).
+
+    Shared by rules 52-54 so the three name-marker checks agree on
+    matching semantics; a rename in one marker set never accidentally
+    changes matching for a sibling rule.
+    """
+    low = name.lower()
+    return any(marker in low for marker in markers)
+
+
+def _call_names_in_body(func: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    """Return the simple call-callee name set (Name.id or Attribute.attr) for the function body.
+
+    Rules 53 and 54 use this to check for the presence of a specific
+    call inside a function's body (an ``InfraDeathClassifier.classify``
+    for rule 53, a journal-write for rule 54). Walks the body only --
+    decorators and default values do not count.
+    """
+    names: set[str] = set()
+    for stmt in func.body:
+        for node in ast.walk(stmt):
+            if not isinstance(node, ast.Call):
+                continue
+            callee = node.func
+            if isinstance(callee, ast.Name):
+                names.add(callee.id)
+            elif isinstance(callee, ast.Attribute):
+                names.add(callee.attr)
+    return names
+
+
+def _identifier_names_in_body(
+    func: ast.FunctionDef | ast.AsyncFunctionDef,
+) -> set[str]:
+    """Return every Name.id and Attribute.attr appearing in the function body.
+
+    Rule 53 uses this to detect an ``InfraDeathClassifier`` reference
+    anywhere in the finalizer body -- an instance passed via ``self``
+    or bound at construction still counts as "the classifier was
+    consulted" so a legitimate finalizer that owns a classifier field
+    does not trip the rule.
+    """
+    ids: set[str] = set()
+    for stmt in func.body:
+        for node in ast.walk(stmt):
+            if isinstance(node, ast.Name):
+                ids.add(node.id)
+            elif isinstance(node, ast.Attribute):
+                ids.add(node.attr)
+    return ids
+
+
+
+def _line_parses_as_python_statement(line: str) -> bool:
+    """Return True when the un-commented text of *line* is real code.
+
+    Rule 25's second-pass filter: strip the leading whitespace + ``#``
+    from the comment, then try to :func:`ast.parse` the remainder as
+    a module. Prose that starts with a Python keyword (``# for the
+    coroutine``, ``# from its call site.``) fails to parse and is
+    NOT flagged; a real commented-out statement (``# import os``,
+    ``# for x in xs:``, ``# return None``) parses cleanly and IS.
+
+    Two extra guards remove common English shapes the parser would
+    otherwise accept: a single Name / Constant expression (a bare
+    word or number) never counts as "code" -- ``# note`` shouldn't
+    fire -- and text ending with a sentence period without a
+    trailing closing paren / colon / bracket is prose. Together the
+    two guards eliminate the false positives the first-pass regex
+    surfaces on doc comments.
+    """
+    stripped = line.lstrip()
+    if not stripped.startswith("#"):
+        return False
+    inner = stripped[1:].lstrip()
+    if not inner:
+        return False
+    # Prose sentences (end with a period, no closing structural punctuation)
+    # are the dominant false-positive shape; skip them early.
+    if (
+        inner.endswith(".")
+        and not inner.endswith(("..", ").", "]", "}"))
+    ):
+        return False
+    try:
+        parsed = ast.parse(inner)
+    except SyntaxError:
+        return False
+    if not parsed.body:
+        return False
+    if len(parsed.body) != 1:
+        return True
+    stmt = parsed.body[0]
+    # A bare Expression whose value is just a Name / Constant is a
+    # single-word comment, not code. ``# for x in xs:`` parses as a
+    # For with body -> the Constant guard does not fire.
+    if isinstance(stmt, ast.Expr) and isinstance(
+        stmt.value, (ast.Name, ast.Constant),
+    ):
+        return False
+    return True
+
+
+def _pattern_store_receiver_tail(node: ast.expr) -> str | None:
+    """Return the receiver's terminal name when it names a pattern-store.
+
+    Rule 55 uses this to detect a ``.create(...)`` call whose receiver's
+    dotted-attribute tail is a pattern-store binding. ``.pattern_store``
+    / ``._pattern_store`` / ``._store`` on an object
+    (``self.pattern_store.create``, ``services._pattern_store.create``,
+    ``self._store.create``) all match, as does a bare
+    ``pattern_store.create(...)`` / ``_store.create(...)`` where the
+    name is bound as a local. The bare token ``store`` matches ONLY as
+    a dotted attribute (``self.store``, ``obj.store``) -- a bare local
+    ``store = PatternStore(...); store.create(...)`` is a common
+    api_router / factory idiom and is not intrinsic to the pattern-
+    store shape. Returns the matched terminal name for the diagnostic
+    message, or ``None`` when the receiver is not a pattern-store shape.
+    """
+    if isinstance(node, ast.Name):
+        return node.id if node.id in _PATTERN_STORE_RECEIVER_TOKENS else None
+    if isinstance(node, ast.Attribute):
+        if node.attr in _PATTERN_STORE_RECEIVER_TOKENS:
+            return node.attr
+        if node.attr in _PATTERN_STORE_ATTR_ONLY_TOKENS:
+            return node.attr
+    return None
+
+
+def _string_constant_value(node: ast.expr | None) -> str | None:
+    """Return the string value of a Constant node, else None.
+
+    Rules 58 / 60 use this to inspect a string literal after Python's
+    parser has folded any implicit concatenation. In Python 3.11+ a
+    parenthesised ``("foo\n" "bar\n" "baz\n")`` is a single
+    ast.Constant whose value is the concatenated string, so the check
+    matches both triple-quoted and paren-concat prompt bodies without
+    a special JoinedStr traversal.
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _references_lifecycle_stage(node: ast.expr | None) -> bool:
+    """Return True when *node* names a ``LifecycleStage.<X>`` member.
+
+    Rule 62 uses this to distinguish a genuine stage assignment (``.
+    lifecycle_stage = LifecycleStage.PRODUCTION`` or ``to_stage=Lifec
+    ycleStage.PRODUCTION.value``) from an incidental attribute access
+    (``record.to_stage``, a router response that reads the field back
+    from a DB row). Matches ``LifecycleStage.PRODUCTION``,
+    ``LifecycleStage.PRODUCTION.value``, and the imported-shortname
+    ``PRODUCTION`` when the source has ``from aila.platform.lifecycle.
+    models import LifecycleStage``.
+    """
+    if node is None:
+        return False
+    if isinstance(node, ast.Attribute):
+        # ``LifecycleStage.PRODUCTION`` -- value is Name(LifecycleStage).
+        if (
+            isinstance(node.value, ast.Name)
+            and node.value.id == _LIFECYCLE_STAGE_NAME
+        ):
+            return True
+        # ``LifecycleStage.PRODUCTION.value`` -- one level deeper.
+        return _references_lifecycle_stage(node.value)
+    return False
+
+
+def _call_callee_simple_name(node: ast.Call) -> str | None:
+    """Return the callee's simple name (Name.id or Attribute.attr).
+
+    Rule 62 uses this to skip the ``LifecycleTransitionRecord(...)``
+    constructor call and the ``._journal(...)`` method call when
+    counting stage writes -- those two ARE the journal, so a kwarg
+    ``to_stage=LifecycleStage.PRODUCTION`` on them is the row being
+    written, not a bypass.
+    """
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    if isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    return None
+
+
+def _is_production_alias_flip(node: ast.Call) -> bool:
+    """Return True when a call flips the production alias.
+
+    Matches either ``<x>.set_alias(<key>, "production", ...)`` (second
+    positional arg is the literal alias name) OR the same call with
+    an ``alias="production"`` kwarg. Rule 61 treats either shape as a
+    production write that must sit behind the eval + quorum gate.
+    """
+    if not isinstance(node.func, ast.Attribute) or node.func.attr != "set_alias":
+        return False
+    # Second positional arg (alias)
+    if len(node.args) >= 2:
+        alias_arg = node.args[1]
+        if (
+            isinstance(alias_arg, ast.Constant)
+            and alias_arg.value == _PRODUCTION_STAGE_LITERAL
+        ):
+            return True
+    for kw in node.keywords:
+        if (
+            kw.arg == "alias"
+            and isinstance(kw.value, ast.Constant)
+            and kw.value.value == _PRODUCTION_STAGE_LITERAL
+        ):
+            return True
+    return False
+
+
+def _is_production_transition_construct(node: ast.Call) -> bool:
+    """Return True when a call builds a LifecycleTransitionRecord to production.
+
+    Matches ``LifecycleTransitionRecord(..., to_stage=<PRODUCTION>, ...)``
+    where the kwarg value is either ``LifecycleStage.PRODUCTION`` /
+    ``LifecycleStage.PRODUCTION.value`` or the literal string
+    ``"production"``. Rule 61 uses this alongside
+    :func:`_is_production_alias_flip` to detect every shape of
+    production write.
+    """
+    callee = _call_callee_simple_name(node)
+    if callee != _LIFECYCLE_TRANSITION_RECORD_NAME:
+        return False
+    for kw in node.keywords:
+        if kw.arg != "to_stage":
+            continue
+        if isinstance(kw.value, ast.Constant) and kw.value.value == _PRODUCTION_STAGE_LITERAL:
+            return True
+        if _references_lifecycle_stage(kw.value):
+            # Only fire when the specific member is PRODUCTION.
+            root = kw.value
+            while isinstance(root, ast.Attribute) and root.attr == "value":
+                root = root.value
+            if (
+                isinstance(root, ast.Attribute)
+                and root.attr == _PRODUCTION_STAGE_LITERAL.upper()
+            ):
+                return True
+    return False
+
+
+def _build_parent_map(tree: ast.AST) -> dict[int, ast.AST]:
+    """Return ``{id(child): parent_node}`` for the entire tree.
+
+    Rules 59 (untagged_llm_call) and 60 (unaudited_alias_flip) need
+    to answer "what function contains this node?" without carrying a
+    stack through every visitor call. The parent map is cheap on the
+    parse of one file and lets both rules use
+    :func:`_enclosing_function` uniformly.
+    """
+    parents: dict[int, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[id(child)] = parent
+    return parents
+
+
+def _enclosing_function(
+    node: ast.AST, parents: dict[int, ast.AST],
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """Return the innermost ``def`` / ``async def`` enclosing *node*.
+
+    Walks up through the parent map until a function definition is
+    found. Returns None when the node lives at module level (a
+    module-level chat call, for example, would not have a function
+    scope to check for tag markers -- treated as unscoped and
+    intentionally not flagged by rule 59).
+    """
+    cur = parents.get(id(node))
+    while cur is not None:
+        if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return cur
+        cur = parents.get(id(cur))
+    return None
+
+
+def _workflow_base_corpus(filepath: str) -> dict[str, str]:
+    """Return {relpath: normalized_source} for platform workflow-state bases.
+
+    Reads platform/workflows/investigation_*_base.py so a module state
+    file copied back from a platform base is caught. Normalized via
+    ast.unparse; cached per aila root.
+    """
+    match = _CONTRACTS_DIR_PATTERN.search(filepath.replace("\\", "/"))
+    if match is None:
+        return {}
+    aila_root = match.group(1)
+    cached = _WORKFLOW_BASE_CORPUS_CACHE.get(aila_root)
+    if cached is not None:
+        return cached
+    corpus: dict[str, str] = {}
+    base = Path(aila_root) / "platform" / "workflows"
+    if base.is_dir():
+        for py in sorted(base.glob("investigation_*_base.py")):
+            try:
+                normalized = ast.unparse(
+                    ast.parse(py.read_text(encoding="utf-8")),
+                )
+            except (OSError, SyntaxError, ValueError, RecursionError):
+                continue
+            corpus[f"workflows/{py.name}"] = normalized
+    _WORKFLOW_BASE_CORPUS_CACHE[aila_root] = corpus
+    return corpus
+
+
+def _lifecycle_base_corpus(filepath: str) -> dict[str, str]:
+    """Return {relpath: normalized_source} for the platform lifecycle service.
+
+    Reads platform/services/investigation_lifecycle.py so a module
+    ``workflow/pause_resume.py`` binding copied back from the platform
+    service is caught. Normalized via ast.unparse; cached per aila root.
+    The corpus is a single-entry dict because the lifecycle atomic
+    pause / resume / re-enqueue lives in one platform file.
+    """
+    match = _CONTRACTS_DIR_PATTERN.search(filepath.replace("\\", "/"))
+    if match is None:
+        return {}
+    aila_root = match.group(1)
+    cached = _LIFECYCLE_BASE_CORPUS_CACHE.get(aila_root)
+    if cached is not None:
+        return cached
+    corpus: dict[str, str] = {}
+    py = Path(aila_root) / "platform" / "services" / "investigation_lifecycle.py"
+    if py.is_file():
+        try:
+            normalized = ast.unparse(
+                ast.parse(py.read_text(encoding="utf-8")),
+            )
+            corpus[f"services/{py.name}"] = normalized
+        except (OSError, SyntaxError, ValueError, RecursionError):
+            pass
+    _LIFECYCLE_BASE_CORPUS_CACHE[aila_root] = corpus
+    return corpus
+
+
+def _classdef_is_table(node: ast.ClassDef) -> bool:
+    """Return True when a class is declared with the SQLModel table=True flag."""
+    for kw in node.keywords:
+        if kw.arg == "table" and isinstance(kw.value, ast.Constant) and kw.value.value is True:
+            return True
+    return False
+
+
+def _classdef_tablename(node: ast.ClassDef) -> str | None:
+    """Return the literal __tablename__ string assigned in a class body, or None."""
+    for stmt in node.body:
+        if not isinstance(stmt, ast.Assign):
+            continue
+        value = stmt.value
+        if not (isinstance(value, ast.Constant) and isinstance(value.value, str)):
+            continue
+        for target in stmt.targets:
+            if isinstance(target, ast.Name) and target.id == "__tablename__":
+                return value.value
+    return None
+
+
+def _classdef_base_names(node: ast.ClassDef) -> set[str]:
+    """Return the simple names of a class's declared bases."""
+    names: set[str] = set()
+    for base in node.bases:
+        if isinstance(base, ast.Name):
+            names.add(base.id)
+        elif isinstance(base, ast.Attribute):
+            names.add(base.attr)
+    return names
+
+
+def _sqlmodel_field_names(node: ast.ClassDef) -> set[str]:
+    """Return the annotated (non-dunder) field names declared directly on a class."""
+    names: set[str] = set()
+    for stmt in node.body:
+        if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+            field = stmt.target.id
+            if not field.startswith("__"):
+                names.add(field)
+    return names
+
+
+def _unique_constraint_literal_names(node: ast.ClassDef):
+    """Yield (literal_name, lineno) for each UniqueConstraint(name=<str>) in the class body."""
+    for stmt in node.body:
+        if not (isinstance(stmt, ast.Assign) and _assigns_table_args(stmt)):
+            continue
+        for call in ast.walk(stmt.value):
+            if not isinstance(call, ast.Call):
+                continue
+            callee = call.func
+            is_uq = (isinstance(callee, ast.Name) and callee.id == "UniqueConstraint") or (
+                isinstance(callee, ast.Attribute) and callee.attr == "UniqueConstraint"
+            )
+            if not is_uq:
+                continue
+            for kw in call.keywords:
+                if kw.arg == "name" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                    yield kw.value.value, call.lineno
+
+
+def _assigns_table_args(stmt: ast.Assign) -> bool:
+    """Return True when an assignment targets __table_args__."""
+    return any(isinstance(t, ast.Name) and t.id == "__table_args__" for t in stmt.targets)
+
+
+def _strip_module_prefix(tablename: str, module_id: str) -> str:
+    """Return the table role: the tablename with a leading '<module_id>_' removed."""
+    prefix = f"{module_id}_"
+    return tablename[len(prefix):] if tablename.startswith(prefix) else tablename
+
+
+def _platform_contracts_dir(filepath: str) -> Path | None:
+    """Resolve the platform/contracts directory from a module file path, or None."""
+    match = _CONTRACTS_DIR_PATTERN.search(filepath.replace("\\", "/"))
+    if match is None:
+        return None
+    return Path(match.group(1)) / "platform" / "contracts"
+
+
+# Rule 44 -- private_platform_import. Cache of a platform package's public
+# name set (its __init__.py __all__ members plus names bound by relative
+# re-export imports), keyed by the __init__.py path.
+_PLATFORM_PUBLIC_EXPORTS_CACHE: dict[str, frozenset[str]] = {}
+
+
+def _aila_root_from_module(filepath: str) -> Path | None:
+    """Resolve the aila package root from a module file path, or None."""
+    match = _CONTRACTS_DIR_PATTERN.search(filepath.replace("\\", "/"))
+    if match is None:
+        return None
+    return Path(match.group(1))
+
+
+def _platform_public_exports(init_path: Path) -> frozenset[str]:
+    """Return the public names published by a platform package.
+
+    A name is public when the package's ``__init__.py`` lists it in ``__all__``
+    or binds it via a relative re-export (``from ._x import Name``). Read via
+    AST and cached. Any read/parse failure yields an empty set so the caller
+    skips defensively rather than raising inside the gate.
+    """
+    key = str(init_path)
+    cached = _PLATFORM_PUBLIC_EXPORTS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    names: set[str] = set()
+    try:
+        tree = ast.parse(init_path.read_text(encoding="utf-8"), filename=key)
+    except (OSError, SyntaxError):
+        result = frozenset(names)
+        _PLATFORM_PUBLIC_EXPORTS_CACHE[key] = result
+        return result
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.level and node.names:
+            for alias in node.names:
+                if alias.name != "*":
+                    names.add(alias.asname or alias.name)
+            continue
+        targets: list[ast.expr] = []
+        if isinstance(node, ast.Assign):
+            targets = list(node.targets)
+        elif isinstance(node, ast.AugAssign):
+            targets = [node.target]
+        if not any(isinstance(t, ast.Name) and t.id == "__all__" for t in targets):
+            continue
+        value = node.value
+        if isinstance(value, (ast.List, ast.Tuple)):
+            for elt in value.elts:
+                if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                    names.add(elt.value)
+    result = frozenset(names)
+    _PLATFORM_PUBLIC_EXPORTS_CACHE[key] = result
+    return result
+
+
+def _platform_base_field_names(base_file: Path, base_class: str) -> frozenset[str]:
+    """Return the field-name set of a platform base class, read via AST and cached.
+
+    Returns an empty set when the file or class cannot be resolved so the caller
+    skips defensively rather than raising inside the gate.
+    """
+    cache_key = (str(base_file), base_class)
+    cached = _BASE_FIELD_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    result: frozenset[str] = frozenset()
+    try:
+        tree = ast.parse(base_file.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        _BASE_FIELD_CACHE[cache_key] = result
+        return result
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == base_class:
+            result = frozenset(_sqlmodel_field_names(node))
+            break
+    _BASE_FIELD_CACHE[cache_key] = result
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Main auditor class
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# RFC-12 knowledge-base guardrails (rules 64-67).
+#
+# The knowledge base must have ONE embedding path, provenance on every
+# stored vector, a relevance-floored + sanitize/classify gated retrieval on
+# the agent surface, and the gate permanently wired into the routed retrieval
+# entry point. Each rule self-exempts or scopes to the surface it locks in.
+# ---------------------------------------------------------------------------
+
+# Rule 64 -- second_embedding_path. An embedding provider constructed or
+# selected outside the canonical embedding + knowledge service files means a
+# second model can write vectors into the shared table, making cross-model
+# cosine similarity meaningless (#37).
+_EMBEDDING_PROVIDER_CALLEES: frozenset[str] = frozenset({
+    "resolve_provider", "get_embedding_provider",
+    "BGEProvider", "MiniLMProvider", "SentenceTransformer",
+})
+_EMBEDDING_PATH_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
+    "platform/services/embedding.py",
+    "platform/services/knowledge.py",
+)
+
+# Rule 65 -- vector_without_provenance. A KnowledgeEntryRecord constructed
+# with an embedding but no model_id stores a vector that a later model swap
+# silently invalidates with no detection or re-embed trigger (#37).
+_KNOWLEDGE_RECORD_NAME: str = "KnowledgeEntryRecord"
+
+# Rule 66 -- retrieval_without_gate. Agent-scope code must retrieve through
+# retrieve_routed (which applies the relevance floor + sanitize/classify
+# gate), not the raw hybrid retrieve which returns ungated, unfloored hits.
+_RAW_RETRIEVE_METHOD: str = "retrieve"
+_ROUTED_RETRIEVE_METHOD: str = "retrieve_routed"
+
+# Rule 67 -- unsanitized_retrieved_content. The routed retrieval entry point
+# must keep applying the gate; a retrieve_routed body that stops calling
+# apply_gate would return raw content into a prompt (#43).
+_KNOWLEDGE_GATE_CALLS: frozenset[str] = frozenset({"apply_gate", "apply_gate_many"})
+
+# Rule 68 -- content_slice_truncation. A constant-bound slice (``x[:N]``)
+# applied to a content-bearing value that is STORED into or RETURNED from the
+# knowledge base silently drops the tail of the data. The policy is: full
+# content is persisted and returned; only the render/display layer bounds
+# size. The rule fires when the DIRECT value of a ``content=`` keyword
+# argument, or the value of a dict entry keyed by one of the content-field
+# names below, is a ``[:N]`` slice. It is intentionally a flag-then-whitelist
+# rule: a genuinely required cap goes in honesty_whitelist.py with a reason,
+# the same way every other deliberate exception is recorded.
+_CONTENT_FIELD_NAMES: frozenset[str] = frozenset({
+    "content", "query", "body", "text", "sanitized_content", "root_cause",
+})
+_CONTENT_TRUNCATION_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
+    "tools/honesty_audit.py",
+    "tools/honesty_whitelist.py",
+)
+
+
+def _constant_slice_upper(node: ast.expr) -> int | None:
+    """Return ``N`` when *node* is a ``value[:N]`` slice with a literal int ``N``.
+
+    Matches only the trim shape the rule targets: no lower bound, no step, and
+    an integer-constant upper bound. ``x[a:b]``, ``x[:n]`` where ``n`` is a
+    name/attribute, and ``x[::2]`` all return None so ordinary indexing and
+    dynamic windows never trip the rule.
+    """
+    if not isinstance(node, ast.Subscript):
+        return None
+    sl = node.slice
+    if not isinstance(sl, ast.Slice):
+        return None
+    if sl.lower is not None or sl.step is not None or sl.upper is None:
+        return None
+    upper = sl.upper
+    if isinstance(upper, ast.Constant) and isinstance(upper.value, int) \
+            and not isinstance(upper.value, bool):
+        return upper.value
+    return None
 
 
 class _HonestyVisitor(ast.NodeVisitor):
@@ -1082,6 +2623,79 @@ class _HonestyVisitor(ast.NodeVisitor):
                         f"{layer} file imports from '{node.module}' -- use module contracts, registry lookups, or injected adapters instead",
                     )
 
+    def _check_platform_names_module(self, tree: ast.Module) -> None:
+        """Rule 48: platform_names_module -- a boundary-guarded file names a
+        specific feature module.
+
+        Three sub-checks that all fire under the same rule name so a single
+        whitelist entry handles them uniformly:
+
+        (a) ``.require("<module>")`` / ``.require_module("<module>")`` welds
+            the platform or API layer to one module by id. Resolve domain data
+            by capability (ModuleRegistry.first_with / all_with) instead.
+        (b) ``.get("<module>", ...)`` where the first arg is a domain module
+            id catches the ConfigRegistry-shape read
+            ``ConfigRegistry().get("vr", "audit_mcp_url")``. Boundary-guarded
+            layers own only the ``"platform"`` config namespace; every other
+            namespace belongs to a specific module. A dynamic ``self._module_id``
+            argument (the RFC-05 pattern) is not a literal and never fires.
+        (c) A runtime string constant matching ``aila.modules.<module>`` (or
+            a longer dotted path under it) hard-codes a module path in a layer
+            that is supposed to name no module. Docstring string constants are
+            skipped so descriptive prose in a docstring never fires.
+
+        All sub-checks skip dynamic (variable) arguments; only literal string
+        constants that name a real module id in ``_DOMAIN_MODULE_IDS`` fire.
+        """
+        docstring_ids = _collect_docstring_constant_ids(tree)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                func = node.func
+                if not isinstance(func, ast.Attribute):
+                    continue
+                if func.attr in ("require", "require_module"):
+                    if not node.args or not isinstance(node.args[0], ast.Constant):
+                        continue
+                    value = node.args[0].value
+                    if not isinstance(value, str) or value not in _DOMAIN_MODULE_IDS:
+                        continue
+                    self._emit(
+                        node.lineno,
+                        "platform_names_module",
+                        f"platform_names_module: .{func.attr}({value!r}) names a feature "
+                        f"module -- resolve by capability via "
+                        f"ModuleRegistry.first_with/all_with instead",
+                    )
+                    continue
+                if func.attr == "get":
+                    if not node.args or not isinstance(node.args[0], ast.Constant):
+                        continue
+                    value = node.args[0].value
+                    if not isinstance(value, str) or value not in _DOMAIN_MODULE_IDS:
+                        continue
+                    self._emit(
+                        node.lineno,
+                        "platform_names_module",
+                        f"platform_names_module: .get({value!r}, ...) reads a "
+                        f"feature-module config namespace from a boundary-guarded "
+                        f"layer -- platform/api/storage own only the 'platform' "
+                        f"namespace; move the read into the owning module or "
+                        f"pass the module_id through a constructor parameter",
+                    )
+                continue
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if id(node) in docstring_ids:
+                    continue
+                if _AILA_MODULES_PATH_LITERAL_RE.match(node.value):
+                    self._emit(
+                        node.lineno,
+                        "platform_names_module",
+                        f"platform_names_module: string constant {node.value!r} "
+                        f"names an 'aila.modules.<module>' path at runtime -- "
+                        f"boundary-guarded layers never hard-code a module path; "
+                        f"derive the target through the ModuleRegistry instead",
+                    )
+
     def _check_import_boundary(self, tree: ast.Module, module_id: str) -> None:
         """Rule: import_boundary.
 
@@ -1144,6 +2758,178 @@ class _HonestyVisitor(ast.NodeVisitor):
                                 f"'{alias.name}' from storage.database -- use "
                                 f"Platform Services (SDA-05)",
                             )
+
+    def _check_module_prefix_in_tool_name(self, tree: ast.Module) -> None:
+        """Rule 45: module_prefix_in_platform_tool_name -- a platform MCP
+        bridge hard-codes a module-prefixed tool name literal.
+
+        Bridge tool names surface in agent prompts; a literal like
+        ``vr.audit_mcp_bridge`` welds the platform bridge to one module.
+        The name must be built from the constructor's ``module_id``
+        (an f-string / attribute), not a string constant. Flags a
+        class-level ``name = "<prefix>.…"`` / ``name: str = "<prefix>.…"``
+        or a ``self.name = "<prefix>.…"`` assignment where the prefix is a
+        known module id.
+        """
+        if not _BRIDGE_FILE_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        for cls in ast.walk(tree):
+            if not isinstance(cls, ast.ClassDef):
+                continue
+            for stmt in cls.body:
+                if isinstance(stmt, ast.Assign) and any(
+                    isinstance(t, ast.Name) and t.id == "name" for t in stmt.targets
+                ):
+                    literal = _module_prefixed_name_literal(stmt.value)
+                    if literal is not None:
+                        self._emit_tool_name_finding(literal, stmt.lineno)
+                elif (
+                    isinstance(stmt, ast.AnnAssign)
+                    and isinstance(stmt.target, ast.Name)
+                    and stmt.target.id == "name"
+                ):
+                    literal = _module_prefixed_name_literal(stmt.value)
+                    if literal is not None:
+                        self._emit_tool_name_finding(literal, stmt.lineno)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            for tgt in node.targets:
+                if (
+                    isinstance(tgt, ast.Attribute)
+                    and tgt.attr == "name"
+                    and isinstance(tgt.value, ast.Name)
+                    and tgt.value.id == "self"
+                ):
+                    literal = _module_prefixed_name_literal(node.value)
+                    if literal is not None:
+                        self._emit_tool_name_finding(literal, node.lineno)
+
+    def _check_platform_owns_event_vocabulary(self, tree: ast.Module) -> None:
+        """Rule 46: platform_owns_event_vocabulary -- a platform event class
+        carries module-domain vocabulary.
+
+        The platform owns generic infrastructure events (system lifecycle,
+        config change, assessment lifecycle, LLM accounting). An event
+        class under platform/events/ whose name -- or whose ``event_type``
+        literal -- contains a module-domain token (scan, finding,
+        investigation, or a module id) belongs to a module, not the
+        platform.
+        """
+        if not _EVENTS_FILE_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            low_name = node.name.lower()
+            name_hit = next((t for t in _EVENT_DOMAIN_TOKENS if t in low_name), None)
+            if name_hit is not None:
+                self._emit(
+                    node.lineno,
+                    "platform_owns_event_vocabulary",
+                    f"platform_owns_event_vocabulary: event class {node.name!r} "
+                    f"carries module-domain token {name_hit!r} -- domain events "
+                    f"belong to the owning module, not the platform",
+                )
+                continue
+            for stmt in node.body:
+                literal = _event_type_string_literal(stmt)
+                if literal is None:
+                    continue
+                low_lit = literal.lower()
+                lit_hit = next((t for t in _EVENT_DOMAIN_TOKENS if t in low_lit), None)
+                if lit_hit is not None:
+                    self._emit(
+                        stmt.lineno,
+                        "platform_owns_event_vocabulary",
+                        f"platform_owns_event_vocabulary: event_type {literal!r} "
+                        f"on class {node.name!r} carries module-domain token "
+                        f"{lit_hit!r} -- domain events belong to the owning module",
+                    )
+
+    def _emit_tool_name_finding(self, literal: str, lineno: int) -> None:
+        """Emit a module_prefix_in_platform_tool_name finding."""
+        self._emit(
+            lineno,
+            "module_prefix_in_platform_tool_name",
+            f"module_prefix_in_platform_tool_name: tool name literal "
+            f"{literal!r} hard-codes a module prefix -- derive the name "
+            f"from a constructor module_id instead",
+        )
+
+    def _check_raw_sql_platform_tables(self, tree: ast.Module) -> None:
+        """Rule 47: raw_sql_platform_tables -- module file issues raw SQL
+        against a platform-owned task table.
+
+        ``taskrecord`` and ``workflow_state_cursor`` are platform-owned. A
+        module that writes raw SQL against them (a DELETE / SELECT / UPDATE
+        string literal with a ``FROM|INTO|UPDATE|JOIN <table>`` clause)
+        bypasses the platform's ownership of the task lifecycle. Route
+        through a platform service instead
+        (investigation_lifecycle.purge_investigation_cursors, TaskQueue).
+        The match is on the clause shape inside any string constant, so the
+        call wrapper (text / sa_text / session.execute) is irrelevant and
+        SQL-ish prose without the clause shape is left alone.
+        """
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            match = _RAW_SQL_PLATFORM_TABLE_RE.search(node.value)
+            if match is not None:
+                self._emit(
+                    node.lineno,
+                    "raw_sql_platform_tables",
+                    f"raw_sql_platform_tables: raw SQL against platform table "
+                    f"{match.group(2)!r} -- route through a platform lifecycle "
+                    f"/ TaskQueue service, never raw SQL from a module",
+                )
+
+    def _check_private_platform_import(self, tree: ast.Module) -> None:
+        """Rule 44: private_platform_import -- module reaches into a platform
+        private submodule for a publicly re-exported symbol.
+
+        A module file importing ``from aila.platform.<pkg>._<priv> import Name``
+        where ``Name`` is already published by ``aila.platform.<pkg>`` (its
+        ``__init__`` re-exports it or lists it in ``__all__``) is a finding: it
+        pins the module to an implementation path the platform is free to move.
+        Import from the public package instead. A private symbol with no public
+        counterpart is left alone -- the fence has no gate there.
+        """
+        aila_root = _aila_root_from_module(self.filename)
+        if aila_root is None:
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom) or node.module is None:
+                continue
+            mod = node.module
+            if not mod.startswith("aila.platform."):
+                continue
+            segs = mod.split(".")
+            priv_idx = next(
+                (i for i in range(2, len(segs)) if segs[i].startswith("_")),
+                None,
+            )
+            if priv_idx is None:
+                continue
+            public_segs = segs[:priv_idx]
+            init_path = aila_root.joinpath(
+                "platform", *public_segs[2:], "__init__.py",
+            )
+            public_names = _platform_public_exports(init_path)
+            if not public_names:
+                continue
+            public_pkg = ".".join(public_segs)
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                if alias.name in public_names:
+                    self._emit(
+                        node.lineno,
+                        "private_platform_import",
+                        f"private_platform_import: 'from {mod} import "
+                        f"{alias.name}' -- {alias.name} is publicly re-exported "
+                        f"from {public_pkg}; import from there",
+                    )
 
     def _check_asyncio_in_module(self, tree: ast.Module) -> None:
         """Rule 18: asyncio_in_module -- threading primitives banned from modules/.
@@ -1307,7 +3093,22 @@ class _HonestyVisitor(ast.NodeVisitor):
                 )
 
     def _check_commented_out_code(self, source: str, filepath: str) -> None:
-        """Rule 25: commented-out Python statements."""
+        """Rule 25: commented-out Python statements.
+
+        The first-pass regex catches any comment whose text starts with
+        a Python keyword (``for``, ``from``, ``except``, ``assert``,
+        ...). English prose comments that use the same keyword as a
+        preposition (``# for the append coroutine``, ``# from its call
+        site.``, ``# except '.' and '-' to '_'``) trip that regex
+        without being dead code, so the second pass tries to
+        :func:`ast.parse` the un-commented text: only lines that parse
+        cleanly as a real statement AND aren't a single bare name /
+        constant AND aren't obviously prose (end with ``.`` /  ``,`` /
+        no closing punctuation of a Python statement) count as dead
+        code. This keeps the rule biting on ``# import os`` /
+        ``# for x in xs:`` / ``# return None`` while letting doc
+        comments through.
+        """
         normalized = filepath.replace("\\", "/")
         if _ALEMBIC_PATH_PATTERN.search(normalized):
             return  # migrations legitimately have commented SQL/Python
@@ -1319,6 +3120,8 @@ class _HonestyVisitor(ast.NodeVisitor):
                 continue
             lower = line.lower()
             if any(ex in lower for ex in _COMMENTED_CODE_EXEMPTIONS):
+                continue
+            if not _line_parses_as_python_statement(line):
                 continue
             self._emit(
                 lineno,
@@ -1680,6 +3483,2531 @@ class _HonestyVisitor(ast.NodeVisitor):
                     f"use honesty_whitelist.py with a documented justification instead",
                 )
 
+    def _check_hoisted_enum_redeclared(self, tree: ast.Module, module_id: str) -> None:
+        """Rule 34: hoisted_enum_redeclared -- a unified module redeclares a platform enum.
+
+        The enums in _HOISTED_ENUM_NAMES are owned by
+        aila.platform.contracts.enums. A vr/malware contracts file must import
+        them, never declare its own StrEnum of the same name. Scoped to the
+        unified modules: forensics and vulnerability keep independent enums that
+        happen to share a class name (e.g. their own InvestigationStatus).
+        """
+        if module_id not in _RFC01_UNIFIED_MODULES:
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef) or node.name not in _HOISTED_ENUM_NAMES:
+                continue
+            if "StrEnum" not in _classdef_base_names(node):
+                continue
+            self._emit(
+                node.lineno,
+                "hoisted_enum_redeclared",
+                f"hoisted_enum_redeclared: enum '{node.name}' is owned by "
+                f"platform.contracts.enums -- import it instead of redeclaring",
+            )
+
+    def _check_unnamed_derived_constraint(self, tree: ast.Module, module_id: str) -> None:
+        """Rule 35: unnamed_derived_constraint -- a unified table hand-names a UQ.
+
+        A vr/malware investigation-engine table must derive its unique-constraint
+        name from the tablename via TabledUq, not hard-code a literal. Scoped to
+        the unified tables so other modules keep their own constraint names.
+        """
+        if module_id not in _RFC01_UNIFIED_MODULES:
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef) or not _classdef_is_table(node):
+                continue
+            tablename = _classdef_tablename(node)
+            if tablename is None:
+                continue
+            if _strip_module_prefix(tablename, module_id) not in _UNIFIED_ROLE_BASES:
+                continue
+            derived_prefix = f"uq_{tablename}_"
+            for literal, lineno in _unique_constraint_literal_names(node):
+                if not literal.startswith(derived_prefix):
+                    self._emit(
+                        lineno,
+                        "unnamed_derived_constraint",
+                        f"unnamed_derived_constraint: table '{tablename}' hard-codes "
+                        f"constraint name '{literal}' -- derive it via TabledUq "
+                        f"({derived_prefix}...)",
+                    )
+
+    def _check_shadowed_platform_base(self, tree: ast.Module, module_id: str) -> None:
+        """Rule 36: shadowed_platform_base -- a unified table recreates base columns.
+
+        A vr/malware investigation-engine table whose role maps to a platform
+        base must subclass that base, not redeclare its columns. Fires when the
+        class does not subclass the base yet redeclares four or more of its
+        fields. The base field set is read from platform/contracts via AST.
+        """
+        if module_id not in _RFC01_UNIFIED_MODULES:
+            return
+        contracts_dir = _platform_contracts_dir(self.filename)
+        if contracts_dir is None:
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef) or not _classdef_is_table(node):
+                continue
+            tablename = _classdef_tablename(node)
+            if tablename is None:
+                continue
+            base_class = _UNIFIED_ROLE_BASES.get(_strip_module_prefix(tablename, module_id))
+            if base_class is None or base_class in _classdef_base_names(node):
+                continue
+            base_file = contracts_dir / _BASE_FILE_BY_CLASS[base_class]
+            base_fields = _platform_base_field_names(base_file, base_class)
+            if not base_fields:
+                continue
+            overlap = _sqlmodel_field_names(node) & base_fields
+            if len(overlap) >= 4:
+                self._emit(
+                    node.lineno,
+                    "shadowed_platform_base",
+                    f"shadowed_platform_base: table '{tablename}' recreates "
+                    f"{len(overlap)} columns of {base_class} -- subclass "
+                    f"{base_class} instead",
+                )
+
+    def _check_config_schema_base(self, tree: ast.Module) -> None:
+        """Rule 37: module_config_schema_base -- a module config schema must
+        subclass ModuleConfigBase.
+
+        A ``*ConfigSchema`` class in a ``modules/<name>/config_schema.py``
+        file must subclass ``aila.platform.config_base.ModuleConfigBase``,
+        which bakes in ``extra=forbid``. Subclassing bare ``BaseModel``
+        lets an undeclared config key pass at construction instead of
+        failing closed -- the gap vulnerability carried before RFC-04
+        Phase 2.
+        """
+        if not _CONFIG_SCHEMA_PATH_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef) or not node.name.endswith("ConfigSchema"):
+                continue
+            if "ModuleConfigBase" in _classdef_base_names(node):
+                continue
+            self._emit(
+                node.lineno,
+                "module_config_schema_base",
+                f"module_config_schema_base: config schema '{node.name}' must "
+                "subclass ModuleConfigBase (bakes in extra=forbid) instead of "
+                "bare BaseModel",
+            )
+
+    def _check_service_copy_of_platform(self, tree: ast.Module) -> None:
+        """Rule 38: service_copy_of_platform -- a vr/malware service duplicates
+        a platform service.
+
+        A file under modules/vr/services or modules/malware/services whose
+        comment- and format-normalized body matches a platform service above
+        the similarity threshold is the copy-and-rename pattern RFC-04 lifted
+        out. After a service is lifted the module keeps only a thin binding, so
+        a high-similarity match means a full copy slipped back in. Length
+        asymmetry keeps thin bindings well under the threshold; only a
+        same-size copy trips it. Scoped to the vr/malware copy set; forensics
+        keeps an independent variant.
+        """
+        if not _SERVICE_COPY_SCOPE_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        try:
+            own = ast.unparse(tree)
+        except (ValueError, RecursionError):
+            return
+        if not own.strip():
+            return
+        best_name = ""
+        best_ratio = 0.0
+        own_len = len(own)
+        for name, platform_src in _platform_service_corpus(self.filename).items():
+            p_len = len(platform_src)
+            if p_len == 0:
+                continue
+            # Length ceiling: the best achievable ratio is 2*min/(sum). Below
+            # the threshold the pair cannot match, so skip the O(n*m) compare.
+            # This prunes every thin binding (short) against a full platform
+            # impl (long) in O(1).
+            if 2 * min(own_len, p_len) / (own_len + p_len) < _SERVICE_COPY_THRESHOLD:
+                continue
+            matcher = difflib.SequenceMatcher(None, own, platform_src)
+            if matcher.quick_ratio() < _SERVICE_COPY_THRESHOLD:
+                continue
+            ratio = matcher.ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_name = name
+        if best_ratio >= _SERVICE_COPY_THRESHOLD:
+            self._emit(
+                1,
+                "service_copy_of_platform",
+                f"service_copy_of_platform: normalized body is {best_ratio:.0%} "
+                f"similar to platform/{best_name}; lift the shared logic to the "
+                "platform and keep a thin binding here",
+            )
+
+    def _check_workflow_state_copy_of_platform(self, tree: ast.Module) -> None:
+        """Rule 41: workflow_state_copy_of_platform -- a vr/malware
+        investigation state file duplicates a platform state base.
+
+        RFC-02 Phase 4 extracted the setup/loop/emit turn engine to
+        platform/workflows/investigation_*_base.py; each module keeps only
+        a thin factory binding. A file whose normalized body matches a
+        platform base above the similarity threshold is a copy that
+        slipped back in. The length ceiling keeps thin bindings well under
+        the threshold; only a same-size copy trips it.
+        """
+        if not _WORKFLOW_STATE_SCOPE_PATTERN.search(
+            self.filename.replace("\\", "/"),
+        ):
+            return
+        try:
+            own = ast.unparse(tree)
+        except (ValueError, RecursionError):
+            return
+        if not own.strip():
+            return
+        best_name = ""
+        best_ratio = 0.0
+        own_len = len(own)
+        for name, base_src in _workflow_base_corpus(self.filename).items():
+            b_len = len(base_src)
+            if b_len == 0:
+                continue
+            if 2 * min(own_len, b_len) / (own_len + b_len) < _SERVICE_COPY_THRESHOLD:
+                continue
+            matcher = difflib.SequenceMatcher(None, own, base_src)
+            if matcher.quick_ratio() < _SERVICE_COPY_THRESHOLD:
+                continue
+            ratio = matcher.ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_name = name
+        if best_ratio >= _SERVICE_COPY_THRESHOLD:
+            self._emit(
+                1,
+                "workflow_state_copy_of_platform",
+                f"workflow_state_copy_of_platform: normalized body is "
+                f"{best_ratio:.0%} similar to platform/{best_name}; bind the "
+                "platform state factory instead of copying it",
+            )
+
+    def _check_lifecycle_binding_copy_of_platform(self, tree: ast.Module) -> None:
+        """Rule 69: lifecycle_binding_copy_of_platform -- a module
+        ``workflow/pause_resume.py`` binding must not duplicate the
+        platform investigation-lifecycle service.
+
+        RFC-02 Phase 4 owns the four-source-of-truth atomic pause /
+        resume / re-enqueue on
+        ``platform/services/investigation_lifecycle.py``; a module keeps
+        only the per-module reason coercion + record-model dispatch, or
+        (the canonical shape after the pause_resume adapter deletion)
+        calls the platform service directly from its api_router handler.
+        A file matching this scope whose normalized body matches the
+        lifecycle service above the similarity threshold is a copy that
+        slipped back in. The length ceiling keeps thin bindings well
+        under the threshold; only a same-size copy trips it.
+        """
+        if not _LIFECYCLE_BINDING_SCOPE_PATTERN.search(
+            self.filename.replace("\\", "/"),
+        ):
+            return
+        try:
+            own = ast.unparse(tree)
+        except (ValueError, RecursionError):
+            return
+        if not own.strip():
+            return
+        best_name = ""
+        best_ratio = 0.0
+        own_len = len(own)
+        for name, base_src in _lifecycle_base_corpus(self.filename).items():
+            b_len = len(base_src)
+            if b_len == 0:
+                continue
+            if 2 * min(own_len, b_len) / (own_len + b_len) < _SERVICE_COPY_THRESHOLD:
+                continue
+            matcher = difflib.SequenceMatcher(None, own, base_src)
+            if matcher.quick_ratio() < _SERVICE_COPY_THRESHOLD:
+                continue
+            ratio = matcher.ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_name = name
+        if best_ratio >= _SERVICE_COPY_THRESHOLD:
+            self._emit(
+                1,
+                "lifecycle_binding_copy_of_platform",
+                f"lifecycle_binding_copy_of_platform: normalized body is "
+                f"{best_ratio:.0%} similar to platform/{best_name}; dispatch "
+                "to the platform lifecycle service (pause_investigation / "
+                "resume_investigation / reenqueue_investigation) instead of "
+                "copying it",
+            )
+
+    def _check_agent_llm_chat_bypass(self, tree: ast.Module) -> None:
+        """Rule 43: agent_llm_chat_bypass -- a module agents/ file calls the
+        raw llm_client.chat() instead of the idempotent wrapper.
+
+        RFC-03 Phase 2 routes the module agent LLM calls through
+        platform.agents.idempotent_llm_call so a retried worker replays the
+        cached response instead of paying the model API a second time. A
+        direct ``<x>.llm_client.chat(...)`` / ``.chat_json(...)`` /
+        ``.chat_structured(...)`` (or the same on ``self._llm``) in a module
+        agents/ file is a bypass that reintroduces the double-pay.
+        """
+        if not _AGENTS_SCOPE_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        _methods = ("chat", "chat_json", "chat_structured")
+        _receivers = ("llm_client", "_llm")
+        # Pass 1: local names aliased to an llm client, e.g.
+        # ``client = ServiceFactory().llm_client`` or ``c = services.llm_client``.
+        # A later ``client.chat(...)`` reaches the model through a Name
+        # receiver that the attribute check alone would miss.
+        aliases: set[str] = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            val = node.value
+            if isinstance(val, ast.Attribute) and val.attr in _receivers:
+                for tgt in node.targets:
+                    if isinstance(tgt, ast.Name):
+                        aliases.add(tgt.id)
+        # Pass 2: flag chat* calls on an llm-client attribute OR an alias.
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            if not (isinstance(fn, ast.Attribute) and fn.attr in _methods):
+                continue
+            recv = fn.value
+            is_bypass = (
+                (isinstance(recv, ast.Attribute) and recv.attr in _receivers)
+                or (isinstance(recv, ast.Name) and recv.id in aliases)
+            )
+            if is_bypass:
+                self._emit(
+                    node.lineno,
+                    "agent_llm_chat_bypass",
+                    "agent_llm_chat_bypass: route this LLM call through "
+                    "platform.agents.idempotent_llm_call for retry safety",
+                )
+
+    def _check_agent_primitive_reimplementation(self, tree: ast.Module) -> None:
+        """Rule 42: agent_primitive_reimplementation -- a module agents/ file
+        defines a platform-owned agent primitive.
+
+        RFC-03 lifted the per-turn loop (``run_turn``), the case-state
+        codec (``decode_case_state`` / ``encode_case_state``), the
+        terminal live-hypothesis resolver (``auto_resolve_live_on_terminal``),
+        the outcome-confidence coercion (``to_outcome_confidence``), the
+        auto-steering injector (``maybe_post_auto_steering``), and the
+        operator-intent classifier (``classify_intent``) to
+        ``aila.platform.agents``. Modules import them; a def of any of
+        these names -- whether at module top level or as a method
+        redefinition on a class body -- is a copy that drifts from the
+        single platform implementation. Import re-exports are Import /
+        ImportFrom statements, not FunctionDefs, so they never fire.
+        A thin subclass that just inherits the platform method without
+        overriding it stays clean; only an explicit ``async def run_turn``
+        (etc.) inside the class body fires.
+        """
+        if not _AGENTS_SCOPE_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        def_types = (ast.FunctionDef, ast.AsyncFunctionDef)
+        # Top-level defs (module body).
+        for node in tree.body:
+            if (
+                isinstance(node, def_types)
+                and node.name in _LIFTED_AGENT_PRIMITIVES
+            ):
+                self._emit(
+                    node.lineno,
+                    "agent_primitive_reimplementation",
+                    f"agent_primitive_reimplementation: '{node.name}' is owned "
+                    "by platform/agents/; import it instead of redefining it",
+                )
+        # Class-body method defs. A subclass that overrides a lifted
+        # method (e.g. ``async def run_turn(self, ...)`` on a subclass of
+        # ``AgentTurnRunnerBase``) is the exact regression Phase 7 forbids.
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            for stmt in node.body:
+                if (
+                    isinstance(stmt, def_types)
+                    and stmt.name in _LIFTED_AGENT_PRIMITIVES
+                ):
+                    self._emit(
+                        stmt.lineno,
+                        "agent_primitive_reimplementation",
+                        f"agent_primitive_reimplementation: '{stmt.name}' is "
+                        f"owned by platform/agents/; do not override it in "
+                        f"'{node.name}'",
+                    )
+
+    def _check_agent_env_read(self, tree: ast.Module) -> None:
+        """Rule 49: agent_env_read -- a module agents/ file reads config
+        via ``os.environ`` / ``os.getenv`` instead of ``ConfigRegistry``.
+
+        RFC-03's config-drift closure removed every direct env read from
+        ``modules/*/agents/**``: the old vr copies (``branch_manager.py``,
+        ``claim_verifier.py``) reached ``os.environ`` for the branch cap
+        and the auto-promote floor, silently bypassing the DB override
+        and diverging from the malware copy. Modules now resolve config
+        through ``ConfigRegistry(module_id, key)``, which lets env, the DB,
+        and the per-module schema default each participate on one path.
+
+        The check fires on three shapes:
+          - ``os.environ`` / ``os.getenv`` attribute access on the ``os``
+            module (covers ``os.environ["X"]``, ``os.environ.get("X")``,
+            ``os.getenv("X")``);
+          - ``from os import environ`` / ``from os import getenv``.
+        """
+        if not _AGENTS_SCOPE_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Attribute)
+                and node.attr in _OS_ENV_ATTRS
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "os"
+            ):
+                self._emit(
+                    node.lineno,
+                    "agent_env_read",
+                    f"agent_env_read: read config via ConfigRegistry(module_id, "
+                    f"key) instead of os.{node.attr} (RFC-03 config-drift closure)",
+                )
+                continue
+            if isinstance(node, ast.ImportFrom) and node.module == "os":
+                for alias in node.names:
+                    if alias.name in _OS_ENV_ATTRS:
+                        self._emit(
+                            node.lineno,
+                            "agent_env_read",
+                            f"agent_env_read: read config via ConfigRegistry"
+                            f"(module_id, key) instead of 'from os import "
+                            f"{alias.name}' (RFC-03 config-drift closure)",
+                        )
+
+    def _check_static_node_mutation(self, tree: ast.Module) -> None:
+        """Rule 50: static_node_mutation -- a WorkflowDefinition.states map is
+        mutated after construction (RFC-13 #68).
+
+        The dispatch-hub and phase-graph substrates freeze the node set at
+        construction so every transition target is declared and the engine
+        can validate it. Assigning into, deleting from, or calling a mutator
+        on a ``.states`` attribute reopens that set at runtime -- the exact
+        mint-a-node-on-the-fly escape the static-graph invariant forbids.
+        Declare every state in the definition; never mutate ``.states`` after.
+
+        A local ``states = {...}`` dict a builder assembles is a plain Name,
+        not a ``.states`` attribute, so it never trips this.
+        """
+        for node in ast.walk(tree):
+            hit_line: int | None = None
+            if isinstance(node, ast.Assign):
+                for tgt in node.targets:
+                    if self._is_states_subscript(tgt):
+                        hit_line = node.lineno
+                        break
+            elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+                if self._is_states_subscript(node.target):
+                    hit_line = node.lineno
+            elif isinstance(node, ast.Delete):
+                for tgt in node.targets:
+                    if self._is_states_subscript(tgt):
+                        hit_line = node.lineno
+                        break
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _STATES_MUTATOR_METHODS
+                and isinstance(node.func.value, ast.Attribute)
+                and node.func.value.attr == "states"
+            ):
+                hit_line = node.lineno
+            if hit_line is not None:
+                self._emit(
+                    hit_line,
+                    "static_node_mutation",
+                    "static_node_mutation: WorkflowDefinition.states is frozen "
+                    "at construction; declare every state in the definition "
+                    "rather than mutating .states afterwards (RFC-13 "
+                    "static-graph invariant)",
+                )
+
+    @staticmethod
+    def _is_states_subscript(target: ast.expr) -> bool:
+        """Return True when *target* is a ``<expr>.states[...]`` subscript."""
+        return (
+            isinstance(target, ast.Subscript)
+            and isinstance(target.value, ast.Attribute)
+            and target.value.attr == "states"
+        )
+
+    def _check_fail_open_recovery_path(self, tree: ast.Module) -> None:
+        """Rule 52: fail_open_recovery_path -- a recovery-marked function
+        returns a permissive default from an ``except`` handler.
+
+        The RFC-07 posture is fail-closed. A safety, rate-limit, verify,
+        finalize, heal, or reconcile function whose ``except`` block
+        returns True / 0 / 0.0 / "" / [] / {} / a bare ``return`` is
+        silently deciding the call succeeded when it did not -- the
+        rate-limiter passes zero defer under DB pressure, the verifier
+        marks unverified as passing, the finalizer records a fault as a
+        clean negative. Every one of those is an outage disguised as
+        success. Return the conservative default (a bounded defer, a
+        block, a close-with-reason) and log; do not return a permissive
+        value from an ``except``.
+
+        Scope: any Python source file. The rule fires ONLY when the
+        enclosing function's name matches one of
+        :data:`_RECOVERY_FUNCTION_MARKERS`; a helper whose name does not
+        signal a recovery contract is out of scope. The rule matches
+        the shape ``except ...: return <permissive>`` at any depth
+        inside the function body -- an ``except`` inside a nested
+        helper defined in the same function counts, but an ``except``
+        inside a nested inner function (a ``def`` two levels down)
+        does not because the inner function has its own name and
+        recovery-marker check applies to IT.
+
+        The audit tool itself is self-exempt: this file defines the
+        marker strings and would otherwise flag its own docstrings.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if normalized.endswith("tools/honesty_audit.py"):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef),
+            ):
+                continue
+            if not _function_name_matches(
+                node.name, _RECOVERY_FUNCTION_MARKERS,
+            ):
+                continue
+            for handler in self._enclosed_except_handlers(node):
+                # A handler that logs is already surfacing a signal, and a
+                # handler that re-raises is not returning at all -- either
+                # one clears the rule so a legitimate log-and-return-zero
+                # sweep (see cursor_reaper.sweep_orphan_crashed_cursors)
+                # is not flagged. The offending shape is the SILENT
+                # permissive return.
+                handler_ids = self._handler_identifiers(handler)
+                if handler_ids & _LOGGING_IDENTIFIERS:
+                    continue
+                if self._handler_reraises(handler):
+                    continue
+                offending = self._find_permissive_return(handler)
+                if offending is None:
+                    continue
+                self._emit(
+                    offending.lineno,
+                    "fail_open_recovery_path",
+                    (
+                        f"fail_open_recovery_path: function '{node.name}' "
+                        f"returns a permissive default from an except handler "
+                        "without logging or re-raising -- RFC-07 requires a "
+                        "fail-closed conservative default (bounded defer, "
+                        "mark-and-block, close-with-reason) and a surfaced "
+                        "signal, not a silent success"
+                    ),
+                )
+
+    @staticmethod
+    def _handler_identifiers(handler: ast.ExceptHandler) -> set[str]:
+        """Return every Name.id / Attribute.attr appearing in the handler body."""
+        ids: set[str] = set()
+        for stmt in handler.body:
+            for node in ast.walk(stmt):
+                if isinstance(node, ast.Name):
+                    ids.add(node.id)
+                elif isinstance(node, ast.Attribute):
+                    ids.add(node.attr)
+        return ids
+
+    @staticmethod
+    def _handler_reraises(handler: ast.ExceptHandler) -> bool:
+        """Return True when the handler body contains a raise statement."""
+        for stmt in handler.body:
+            for node in ast.walk(stmt):
+                if isinstance(node, ast.Raise):
+                    return True
+        return False
+
+    @staticmethod
+    def _enclosed_except_handlers(
+        func: ast.FunctionDef | ast.AsyncFunctionDef,
+    ) -> list[ast.ExceptHandler]:
+        """Yield every ExceptHandler inside ``func`` NOT under a nested def.
+
+        A nested ``def`` / ``async def`` / ``class`` inside the body
+        introduces a fresh name; the outer rule's recovery-marker
+        match should not leak into the nested scope. This mirrors the
+        :func:`_walk_returns_shallow` boundary used by rule 20.
+        """
+        handlers: list[ast.ExceptHandler] = []
+        for stmt in func.body:
+            handlers.extend(_HonestyVisitor._walk_except_shallow(stmt))
+        return handlers
+
+    @staticmethod
+    def _walk_except_shallow(node: ast.AST) -> list[ast.ExceptHandler]:
+        """Return every ExceptHandler in *node*'s subtree, stopping at nested defs."""
+        found: list[ast.ExceptHandler] = []
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, _NESTED_DEF_TYPES):
+                continue
+            if isinstance(child, ast.ExceptHandler):
+                found.append(child)
+            found.extend(_HonestyVisitor._walk_except_shallow(child))
+        return found
+
+    @staticmethod
+    def _find_permissive_return(
+        handler: ast.ExceptHandler,
+    ) -> ast.Return | None:
+        """Return the offending ast.Return in ``handler``, or None.
+
+        A ``return`` with no value (implicit None) or a return of any
+        constant in :data:`_FAIL_OPEN_PERMISSIVE_CONSTANTS` or an
+        empty dict / list / tuple / set literal counts as permissive.
+        A logged-then-return-conservative shape (e.g. an except block
+        that first logs then returns a non-permissive value) is fine.
+        Only returns AT the shallow top of the handler body count --
+        an ``except`` whose handler contains a raise / re-raise on
+        the primary path and a return only inside a nested branch
+        needs finer analysis; today the rule fires on any handler
+        whose primary body ends in a permissive return.
+        """
+        # Walk shallow -- a nested def inside the handler has its own
+        # scope and its own name-marker check.
+        for stmt in _HonestyVisitor._iter_handler_shallow(handler):
+            if not isinstance(stmt, ast.Return):
+                continue
+            val = stmt.value
+            if val is None:
+                return stmt
+            if isinstance(val, ast.Constant):
+                v = val.value
+                # Boolean False is the fail-closed answer for a verify /
+                # authorisation path ("not verified" / "not allowed");
+                # only True is permissive. Numeric zero, empty string,
+                # and True itself count as permissive.
+                if v is True:
+                    return stmt
+                if v is False or v is None:
+                    # v is None already handled by the top-level `val is
+                    # None` check; v is False is intentionally NOT a
+                    # finding (see docstring).
+                    if v is None:
+                        return stmt
+                    continue
+                # ``type(v) is int`` distinguishes 0 from False (0 == False
+                # is True in Python; the explicit type check prevents the
+                # False branch from bleeding into the 0 branch).
+                if type(v) is int and v == 0:
+                    return stmt
+                if type(v) is float and v == 0.0:
+                    return stmt
+                if type(v) is str and v == "":
+                    return stmt
+                continue
+            if isinstance(val, ast.Dict) and not val.keys:
+                return stmt
+            if (
+                isinstance(val, (ast.List, ast.Tuple, ast.Set))
+                and not val.elts
+            ):
+                return stmt
+        return None
+
+    @staticmethod
+    def _iter_handler_shallow(handler: ast.ExceptHandler):
+        """Yield every statement in ``handler`` body, stopping at nested defs."""
+        stack: list[ast.AST] = list(handler.body)
+        while stack:
+            stmt = stack.pop(0)
+            yield stmt
+            if isinstance(stmt, _NESTED_DEF_TYPES):
+                continue
+            stack.extend(ast.iter_child_nodes(stmt))
+
+    def _check_close_without_infra_classification(
+        self, tree: ast.Module,
+    ) -> None:
+        """Rule 53: close_without_infra_classification -- a finalizer
+        closes an investigation as a negative without consulting the
+        infra-death classifier.
+
+        A finalize-marked function (name in
+        :data:`_FINALIZER_NAME_MARKERS`) whose body calls a close
+        marker (:data:`_CLOSE_CALLABLE_MARKERS`) must also reference
+        :class:`InfraDeathClassifier` -- either as an import-visible
+        name, an ``InfraDeathClassifier.classify(...)`` call, or an
+        instance attribute of the enclosing service. Without that
+        reference the finalizer records an infra-killed branch as a
+        clean negative that disappears from the operator's re-run
+        queue (RFC-07 Motivation, malware investigation_finalizers
+        row).
+
+        The audit file names the markers and would otherwise flag
+        itself; the classifier's own home file (when it lands under
+        platform/services/) is exempted by naming the classifier
+        symbol in its own module.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if normalized.endswith("tools/honesty_audit.py"):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef),
+            ):
+                continue
+            if not _function_name_matches(
+                node.name, _FINALIZER_NAME_MARKERS,
+            ):
+                continue
+            body_calls = _call_names_in_body(node)
+            close_hits = body_calls & _CLOSE_CALLABLE_MARKERS
+            if not close_hits:
+                continue
+            body_ids = _identifier_names_in_body(node)
+            has_classifier = (
+                _INFRA_CLASSIFIER_NAME in body_ids
+                or bool(body_calls & _INFRA_CLASSIFIER_METHODS)
+            )
+            if has_classifier:
+                continue
+            self._emit(
+                node.lineno,
+                "close_without_infra_classification",
+                (
+                    f"close_without_infra_classification: finalizer "
+                    f"'{node.name}' calls {sorted(close_hits)!r} without "
+                    "consulting InfraDeathClassifier -- an infra-killed "
+                    "branch closed as a clean negative disappears from "
+                    "the operator's re-run queue (RFC-07)"
+                ),
+            )
+
+    def _check_heal_without_journal(self, tree: ast.Module) -> None:
+        """Rule 54: heal_without_journal -- a recovery function mutates run
+        state without writing a checkpointed recovery event.
+
+        A heal-marked function (name in
+        :data:`_HEAL_FUNCTION_MARKERS`) whose body calls any state-
+        mutation marker (:data:`_STATE_MUTATION_MARKERS`) must also
+        call a journal-write marker
+        (:data:`_JOURNAL_WRITE_MARKERS`). Otherwise the heal is
+        silent: the operator sees the run state change but has no
+        audit trail to reconstruct what fired the change or when.
+        RFC-07's contract is that recovery is itself auditable.
+
+        Files that OWN the journal / event / state-mutation
+        primitives are exempt via :data:`_JOURNAL_SELF_EXEMPT_SUFFIXES`
+        so the rule does not fire on the LedgerService itself or on
+        the low-level mutation helpers the higher-level heal paths
+        compose (the heal itself lives ABOVE those helpers and is
+        where the journal write belongs).
+        """
+        normalized = self.filename.replace("\\", "/")
+        if normalized.endswith("tools/honesty_audit.py"):
+            return
+        for suffix in _JOURNAL_SELF_EXEMPT_SUFFIXES:
+            if normalized.endswith(suffix):
+                return
+        for node in ast.walk(tree):
+            if not isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef),
+            ):
+                continue
+            if not _function_name_matches(
+                node.name, _HEAL_FUNCTION_MARKERS,
+            ):
+                continue
+            body_calls = _call_names_in_body(node)
+            # Substring match so a heal dispatching through a private
+            # wrapper (``self._flip_status(...)``) or a composed helper
+            # (``_fan_out_reenqueue_submit(...)``, ``_should_drop_lock(...)``)
+            # still counts as "this function's body mutates run state".
+            # Exact-match would silently skip every heal that owns a
+            # module-private mutation helper, which is precisely the
+            # shape state_reconciler.reconcile and
+            # investigation_lifecycle.reenqueue_investigation take.
+            mutation_hits = {
+                call for call in body_calls
+                if any(marker in call for marker in _STATE_MUTATION_MARKERS)
+            }
+            if not mutation_hits:
+                continue
+            if body_calls & _JOURNAL_WRITE_MARKERS:
+                continue
+            self._emit(
+                node.lineno,
+                "heal_without_journal",
+                (
+                    f"heal_without_journal: recovery function '{node.name}' "
+                    f"mutates run state via {sorted(mutation_hits)!r} but "
+                    "writes no recovery event (LedgerService.append_general, "
+                    "record_signal, record_and_check, or an equivalent "
+                    "journal-write). RFC-07 requires every heal to leave "
+                    "an audit trail"
+                ),
+            )
+
+    def _check_ledger_write_encapsulation(self, tree: ast.Module) -> None:
+        """Rule 51: ledger_write_bypass -- a direct write to the
+        investigation_ledger table outside LedgerService (RFC-13 #68).
+
+        LedgerService owns the append-only invariant and the idempotency
+        key. A pg_insert / insert of the record, a session.add of one, or a
+        raw INSERT into the table anywhere else reopens the write path and
+        drifts from that single owner. Append through
+        LedgerService.append_general instead. The service file itself and
+        the alembic migration (which creates the table) are exempt.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if normalized.endswith(_LEDGER_SERVICE_PATH_SUFFIX):
+            return
+        # The audit tool itself names the table and the verb in this rule's
+        # own strings, so it is self-exempt like the noqa rule.
+        if normalized.endswith("tools/honesty_audit.py"):
+            return
+        if _ALEMBIC_PATH_PATTERN.search(normalized):
+            return
+        insert_verb = "insert " + "into "
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and self._is_ledger_write_call(node):
+                self._emit(
+                    node.lineno,
+                    "ledger_write_bypass",
+                    "ledger_write_bypass: append through "
+                    "LedgerService.append_general; a direct write to the "
+                    "ledger table outside LedgerService reopens the "
+                    "append-only path",
+                )
+            elif (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and insert_verb in node.value.lower()
+                and _LEDGER_TABLE_NAME in node.value.lower()
+            ):
+                self._emit(
+                    node.lineno,
+                    "ledger_write_bypass",
+                    "ledger_write_bypass: raw INSERT against the ledger table; "
+                    "append through LedgerService.append_general",
+                )
+
+    @staticmethod
+    def _is_ledger_write_call(node: ast.Call) -> bool:
+        """Return True for an insert(record) / pg_insert(record) / .add(record)."""
+        func = node.func
+        if (
+            isinstance(func, ast.Name)
+            and func.id in _LEDGER_INSERT_CALLABLES
+            and node.args
+            and _HonestyVisitor._names_ledger_record(node.args[0])
+        ):
+            return True
+        return bool(
+            isinstance(func, ast.Attribute)
+            and func.attr == "add"
+            and node.args
+            and isinstance(node.args[0], ast.Call)
+            and _HonestyVisitor._names_ledger_record(node.args[0].func)
+        )
+
+    @staticmethod
+    def _names_ledger_record(node: ast.expr) -> bool:
+        """Return True when *node* references the InvestigationLedgerRecord class."""
+        if isinstance(node, ast.Name):
+            return node.id == _LEDGER_RECORD_NAME
+        return isinstance(node, ast.Attribute) and node.attr == _LEDGER_RECORD_NAME
+
+    def _check_cost_read_stored_actual(
+        self, tree: ast.Module, module_id: str,
+    ) -> None:
+        """Rule 39: cost_read_stored_actual -- a lifecycle api_router reads the
+        dead ``cost_actual_usd`` column in a response instead of aggregating
+        live cost.
+
+        The ``cost_actual_usd`` column has no writers, so any read of it in a
+        response body reports a permanent $0. The live gauge comes from
+        ``compute_live_investigation_cost`` (sum LLMCostRecord by run_id). A
+        handler that reads ``record.cost_actual_usd`` without an aggregator
+        call in the same function has drifted back to the broken read. Scoped
+        to the vr/malware api_router; the create-time ``cost_actual_usd=0.0``
+        keyword is an insert, not an attribute read, so it never trips.
+        """
+        if module_id not in _RFC01_UNIFIED_MODULES:
+            return
+        if not self.filename.replace("\\", "/").endswith("/api_router.py"):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            reads = [
+                n for n in ast.walk(node)
+                if isinstance(n, ast.Attribute)
+                and n.attr == "cost_actual_usd"
+                and isinstance(n.ctx, ast.Load)
+            ]
+            if not reads:
+                continue
+            has_aggregator = any(
+                isinstance(c, ast.Call)
+                and (
+                    (isinstance(c.func, ast.Name)
+                     and c.func.id == "compute_live_investigation_cost")
+                    or (isinstance(c.func, ast.Attribute)
+                        and c.func.attr == "compute_live_investigation_cost")
+                )
+                for c in ast.walk(node)
+            )
+            if has_aggregator:
+                continue
+            self._emit(
+                reads[0].lineno,
+                "cost_read_stored_actual",
+                f"cost_read_stored_actual: '{node.name}' reads "
+                "record.cost_actual_usd in a response; that column has no "
+                "writers (always $0). Aggregate live cost via "
+                "compute_live_investigation_cost instead",
+            )
+
+    def _check_lifecycle_handler_bypass(
+        self, tree: ast.Module, module_id: str,
+    ) -> None:
+        """Rule 40: lifecycle_handler_bypass_service -- a pause / resume /
+        re-enqueue route handler writes ``.status`` directly instead of
+        routing through the platform investigation lifecycle service.
+
+        The four-source-of-truth transition (inv row, cursor, taskrecord,
+        ARQ) is a platform property; a handler that assigns ``.status``
+        itself is the drift that left the malware lifecycle broken. Scoped to
+        the vr/malware api_router pause / resume / re-enqueue routes. ``reset``
+        is intentionally excluded: it is a full-wipe that legitimately resets
+        ``status`` to CREATED and does not go through the lifecycle service.
+        """
+        if module_id not in _RFC01_UNIFIED_MODULES:
+            return
+        if not self.filename.replace("\\", "/").endswith("/api_router.py"):
+            return
+        _lifecycle_suffixes = ("/pause", "/resume", "/re-enqueue")
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            route = _endpoint_route_path(node)
+            if route is None or not route.endswith(_lifecycle_suffixes):
+                continue
+            for sub in ast.walk(node):
+                if not isinstance(sub, ast.Assign):
+                    continue
+                if any(
+                    isinstance(tgt, ast.Attribute) and tgt.attr == "status"
+                    for tgt in sub.targets
+                ):
+                    self._emit(
+                        sub.lineno,
+                        "lifecycle_handler_bypass_service",
+                        f"lifecycle_handler_bypass_service: '{node.name}' writes "
+                        ".status directly; route pause / resume / re-enqueue "
+                        "through the platform investigation lifecycle service",
+                    )
+                    break
+
+    # ------------------------------------------------------------------
+    # RFC-08 / RFC-09 / RFC-10 rules (55-63)
+    # ------------------------------------------------------------------
+
+    def _check_ungated_self_improvement_write(self, tree: ast.Module) -> None:
+        """Rule 55: ungated_self_improvement_write -- a pattern-store
+        write outside :class:`ExperienceWriter`, the store's own file,
+        and the sanctioned DRAFT proposers.
+
+        The RFC-08 write path is:
+
+            reviewed QuorumOutcome  ->  ExperienceWriter.record(...)
+                                    ->  pattern_store.create(...)
+
+        Every ``VERIFIED`` (retrievable at full weight) experience row
+        must carry a reviewer-signed polarity (positive / negative).
+        A direct ``.create(...)`` on the store from an agent turn, a
+        workflow state, or an unsanctioned service reopens that write
+        path and lets the module insert a "learned" pattern without
+        ever passing the eval + quorum gate.
+
+        Two categories of file are exempted:
+
+        * The canonical review-gated writer :class:`ExperienceWriter`
+          and the ``PatternStore`` implementation files (the store
+          itself is what ``.create`` writes to).
+        * The sanctioned DRAFT proposers
+          ``platform/agents/pattern_extractor.py`` and
+          ``modules/<mod>/services/pattern_proposer.py``. Those two
+          stamp ``trust_tier=UNREVIEWED`` (+ provenance) on every row
+          they write; the RFC-08 retrieval path down-weights
+          ``UNREVIEWED`` to zero standalone influence, so the rows are
+          inert proposals awaiting operator / reviewer promotion via
+          ExperienceWriter. Rule 55 continues to guard against a
+          FOURTH unsanctioned write path (a service, an agent turn, a
+          workflow state) that would bypass the review-gate closure.
+
+        The rule fires on any ``<recv>.<method>(...)`` call where
+        ``<method>`` is one of :data:`_PATTERN_STORE_WRITE_METHODS` and
+        the receiver's terminal name matches a pattern-store shape
+        (:func:`_pattern_store_receiver_tail`). Files that OWN the
+        write path (:data:`_PATTERN_STORE_SELF_EXEMPT_SUFFIXES`) are
+        skipped; this file self-exempts because its rule strings
+        name the methods.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if normalized.endswith("tools/honesty_audit.py"):
+            return
+        for suffix in _PATTERN_STORE_SELF_EXEMPT_SUFFIXES:
+            if normalized.endswith(suffix):
+                return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not isinstance(func, ast.Attribute):
+                continue
+            if func.attr not in _PATTERN_STORE_WRITE_METHODS:
+                continue
+            tail = _pattern_store_receiver_tail(func.value)
+            if tail is None:
+                continue
+            self._emit(
+                node.lineno,
+                "ungated_self_improvement_write",
+                (
+                    f"ungated_self_improvement_write: {tail}.{func.attr}(...) "
+                    "writes a pattern-store row outside ExperienceWriter -- "
+                    "route the write through ExperienceWriter.record(verdict=...) "
+                    "so the RFC-08 eval + quorum gate signs the pattern"
+                ),
+            )
+
+    def _check_self_labeled_reward(self, tree: ast.Module) -> None:
+        """Rule 56: self_labeled_reward -- an agent runtime file sets
+        its own reward / promotion score used for promotion.
+
+        RFC-08's gate consumes reviewer-produced signals only. An
+        agent that passes ``reward=`` / ``self_score=`` / ``agent_score=``
+        kwargs (or assigns ``.reward = <x>`` on a record) writes the
+        promotion field itself and short-circuits the gate. Confidence
+        signals the LLM emits for its own reasoning are outside this
+        set; the names in :data:`_SELF_LABELED_REWARD_NAMES` are the
+        specific promotion-input shapes RFC-08 forbids.
+
+        Scope: any file under ``platform/agents/`` or
+        ``modules/*/agents/`` per :data:`_AGENT_RUNTIME_SCOPE_PATTERN`.
+        Tests + eval-harness code that scores an agent for research
+        purposes live outside these paths and are correctly out of
+        scope.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if not _AGENT_RUNTIME_SCOPE_PATTERN.search(normalized):
+            return
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                for kw in node.keywords:
+                    if kw.arg in _SELF_LABELED_REWARD_NAMES:
+                        self._emit(
+                            kw.value.lineno,
+                            "self_labeled_reward",
+                            (
+                                f"self_labeled_reward: agent code passes "
+                                f"'{kw.arg}=' as a promotion signal -- the RFC-08 "
+                                "gate consumes reviewer-produced quorum outcomes, "
+                                "not agent-labelled reward / score fields"
+                            ),
+                        )
+            elif isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if (
+                        isinstance(target, ast.Attribute)
+                        and target.attr in _SELF_LABELED_REWARD_NAMES
+                    ):
+                        self._emit(
+                            target.lineno,
+                            "self_labeled_reward",
+                            (
+                                f"self_labeled_reward: agent code assigns to "
+                                f"'.{target.attr}' as a promotion signal -- the "
+                                "RFC-08 gate reads reviewer-produced quorum "
+                                "outcomes, not agent-set reward / score fields"
+                            ),
+                        )
+            elif isinstance(node, ast.AnnAssign):
+                target = node.target
+                if (
+                    isinstance(target, ast.Attribute)
+                    and target.attr in _SELF_LABELED_REWARD_NAMES
+                    and node.value is not None
+                ):
+                    self._emit(
+                        node.lineno,
+                        "self_labeled_reward",
+                        (
+                            f"self_labeled_reward: agent code annotates + "
+                            f"assigns '.{target.attr}' as a promotion signal -- "
+                            "the RFC-08 gate reads reviewer-produced quorum "
+                            "outcomes, not agent-set reward / score fields"
+                        ),
+                    )
+
+    def _check_unversioned_config_promotion(self, tree: ast.Module) -> None:
+        """Rule 57: unversioned_config_promotion -- a function writes a
+        threshold-shaped config value without a versioned proposal row.
+
+        RFC-08's propose-and-gate contract is that a live threshold only
+        ever moves behind a :class:`CalibrationProposalRecord`. A function
+        that calls ``.set("<x>_threshold", value)`` /
+        ``.set("<x>_ceiling", value)`` / any threshold-shape key without
+        also referencing :class:`CalibrationProposalRecord` or
+        :class:`CalibrationProposer` in the same body is bumping the
+        floor without leaving a reversible audit row -- exactly the
+        drift RFC-08 exists to prevent.
+
+        The rule fires per function so a helper that both drafts a
+        proposal AND persists it (which references CalibrationProposal /
+        CalibrationProposer) clears the check on the whole body. The
+        calibration file itself is the canonical writer and is exempt;
+        alembic migrations are skipped by the generic alembic guard.
+        """
+        normalized = self.filename.replace("\\", "/")
+        for suffix in _CALIBRATION_SELF_EXEMPT_SUFFIXES:
+            if normalized.endswith(suffix):
+                return
+        if _ALEMBIC_PATH_PATTERN.search(normalized):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            first_hit: tuple[int, str] | None = None
+            for sub in ast.walk(node):
+                if not isinstance(sub, ast.Call):
+                    continue
+                if not (
+                    isinstance(sub.func, ast.Attribute)
+                    and sub.func.attr == "set"
+                ):
+                    continue
+                key_node: ast.expr | None = None
+                if sub.args:
+                    key_node = sub.args[0]
+                else:
+                    for kw in sub.keywords:
+                        if kw.arg == "key":
+                            key_node = kw.value
+                            break
+                key_text = _string_constant_value(key_node)
+                if key_text is None:
+                    continue
+                low = key_text.lower()
+                if not any(tok in low for tok in _THRESHOLD_KEY_TOKENS):
+                    continue
+                first_hit = (sub.lineno, key_text)
+                break
+            if first_hit is None:
+                continue
+            body_ids = _identifier_names_in_body(node)
+            if body_ids & _CALIBRATION_JOURNAL_MARKERS:
+                continue
+            line, key = first_hit
+            self._emit(
+                line,
+                "unversioned_config_promotion",
+                (
+                    f"unversioned_config_promotion: '{node.name}' bumps a "
+                    f"threshold-shaped config value ({key!r}) without "
+                    "referencing CalibrationProposalRecord / CalibrationProposer "
+                    "in the same body -- RFC-08 requires the change to sit "
+                    "behind a versioned, reversible proposal row"
+                ),
+            )
+
+    def _check_structural_self_modification(self, tree: ast.Module) -> None:
+        """Rule 73: structural_self_modification -- the self-improvement
+        layer emits a structural graph edit instead of a parameter move.
+
+        RFC-08's self-improvement layer (calibrator, routing_learner,
+        pattern_extractor, experience_writer, calibration, persona_router)
+        is a PARAMETER proposer: it moves thresholds, persona-selection
+        weights, patterns, and routing tuning WITHIN the operator-
+        authored workflow graph. Rules 55-57 gate the row-level and
+        threshold-level writes; this rule is the shape-level sibling.
+
+        A structural edit from that layer -- constructing a
+        :class:`PhaseSpec` / :class:`WorkflowDefinition`, calling
+        :func:`make_dispatch_router` / :func:`build_dispatch_workflow`,
+        a subscript / del / mutator-method mutation of a ``.states`` /
+        ``.nodes`` / ``.edges`` mapping, or a subscript / mutator write
+        to a persona-roster binding (``PERSONA_ROLE_MAP`` /
+        ``persona_task_type`` / ``role_task_type``) -- lets the
+        writer mint a phase, node, or roster entry the operator did
+        not sign off on. The workflow / engine layer
+        (``platform/workflows/**``) legitimately builds the graph, so
+        scope is deliberately narrow: only ``platform/eval/`` and the
+        specific proposer files
+        (:data:`_SELF_IMPROVEMENT_AGENT_FILES`) are matched.
+
+        Precision over recall: a false positive on the engine costs
+        more than a miss, because the engine's every commit would
+        trip it. A future proposer added under ``platform/agents/``
+        MUST be listed in :data:`_SELF_IMPROVEMENT_AGENT_FILES`.
+
+        The rule fires on FOUR AST shapes (all scoped to the self-
+        improvement layer):
+
+        1. A :class:`ast.Call` whose callee's terminal name is in
+           :data:`_STRUCTURAL_GRAPH_CALLABLES` (matches
+           ``PhaseSpec(...)``, ``phase_graph.PhaseSpec(...)``,
+           ``make_dispatch_router(...)`` and the workflow
+           constructor / factory).
+        2. A :class:`ast.Assign` / :class:`ast.AugAssign` /
+           :class:`ast.AnnAssign` / :class:`ast.Delete` whose target
+           is a :class:`ast.Subscript` whose value is an
+           :class:`ast.Attribute` with ``.attr`` in
+           :data:`_STRUCTURAL_MAP_ATTRS` (matches
+           ``workflow.states[x] = ...``, ``def.nodes[x] = ...``, ...).
+           Rule 50 already covers ``.states`` universally; the added
+           coverage of ``.nodes`` / ``.edges`` and the RFC-08 framing
+           are the value here.
+        3. A :class:`ast.Call` whose callee is a :class:`ast.Attribute`
+           where ``.attr`` is in :data:`_STRUCTURAL_MUTATOR_METHODS`
+           and the receiver is an :class:`ast.Attribute` whose
+           ``.attr`` is in :data:`_STRUCTURAL_MAP_ATTRS` (matches
+           ``workflow.states.update({...})``, ``spec.nodes.pop(x)``,
+           ...).
+        4. A subscript / del / mutator-method write against one of
+           :data:`_STRUCTURAL_ROSTER_TOKENS` (matches
+           ``PERSONA_ROLE_MAP[x] = y``, ``persona_task_type.update({...})``,
+           ``roster.append(...)`` when ``roster`` is one of those
+           tokens). A subclass BODY that binds
+           ``persona_task_type = {...}`` with a bare Name target is a
+           legitimate override (not a runtime mutation) and does NOT
+           fire.
+        """
+        normalized = self.filename.replace("\\", "/")
+        in_eval = bool(_SELF_IMPROVEMENT_EVAL_PATTERN.search(normalized))
+        in_agent = any(
+            normalized.endswith(suffix)
+            for suffix in _SELF_IMPROVEMENT_AGENT_FILES
+        )
+        if not (in_eval or in_agent):
+            return
+
+        def _terminal(node: ast.expr) -> str | None:
+            if isinstance(node, ast.Name):
+                return node.id
+            if isinstance(node, ast.Attribute):
+                return node.attr
+            return None
+
+        def _is_structural_map_receiver(node: ast.expr) -> bool:
+            # ``x.states`` / ``x.nodes`` / ``x.edges`` on any receiver.
+            return (
+                isinstance(node, ast.Attribute)
+                and node.attr in _STRUCTURAL_MAP_ATTRS
+            )
+
+        def _is_roster_receiver(node: ast.expr) -> bool:
+            tail = _terminal(node)
+            return tail in _STRUCTURAL_ROSTER_TOKENS
+
+        def _emit_here(line: int, detail: str) -> None:
+            self._emit(
+                line,
+                "structural_self_modification",
+                (
+                    f"structural_self_modification: {detail} -- the RFC-08 "
+                    "self-improvement layer proposes parameters "
+                    "(thresholds / persona-selection / patterns / routing), "
+                    "not graph structure; a structural edit here mints a "
+                    "phase, node, or roster entry the operator did not "
+                    "sign off on"
+                ),
+            )
+
+        for node in ast.walk(tree):
+            # Shape 1: structural constructor / factory call.
+            if isinstance(node, ast.Call):
+                tail = _terminal(node.func)
+                if tail in _STRUCTURAL_GRAPH_CALLABLES:
+                    _emit_here(node.lineno, f"{tail}(...) call")
+                    continue
+                # Shape 3: mutator-method call on a .states / .nodes /
+                # .edges attribute, or on a persona-roster binding.
+                if (
+                    isinstance(node.func, ast.Attribute)
+                    and node.func.attr in _STRUCTURAL_MUTATOR_METHODS
+                ):
+                    recv = node.func.value
+                    if _is_structural_map_receiver(recv):
+                        _emit_here(
+                            node.lineno,
+                            f".{recv.attr}.{node.func.attr}(...) mutator",
+                        )
+                        continue
+                    if _is_roster_receiver(recv):
+                        tail = _terminal(recv) or "<roster>"
+                        _emit_here(
+                            node.lineno,
+                            f"{tail}.{node.func.attr}(...) mutator",
+                        )
+                        continue
+
+            # Shape 2 / 4: subscript-write / del against a
+            # structural map or roster binding.
+            targets: tuple[ast.expr, ...] = ()
+            if isinstance(node, ast.Assign):
+                targets = tuple(node.targets)
+            elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+                targets = (node.target,)
+            elif isinstance(node, ast.Delete):
+                targets = tuple(node.targets)
+            for tgt in targets:
+                if not isinstance(tgt, ast.Subscript):
+                    continue
+                base = tgt.value
+                if _is_structural_map_receiver(base):
+                    _emit_here(
+                        tgt.lineno,
+                        f".{base.attr}[...] subscript write",
+                    )
+                    break
+                if _is_roster_receiver(base):
+                    tail = _terminal(base) or "<roster>"
+                    _emit_here(
+                        tgt.lineno,
+                        f"{tail}[...] subscript write",
+                    )
+                    break
+
+    def _check_adlc_structural_change(self, tree: ast.Module) -> None:
+        """Rule 75: adlc_structural_change -- the RFC-10 ADLC control
+        plane emits a graph-structure edit or a tool registration
+        instead of a bundle promotion.
+
+        The Agent Development Lifecycle controller under
+        ``platform/lifecycle/**`` promotes a versioned agent bundle
+        behind the eval + quorum gate: it flips an alias, writes a
+        :class:`LifecycleTransitionRecord`, and stamps a
+        :class:`LifecycleCanaryAssignment` state. That is a BUNDLE
+        promotion. It is NOT a code deploy: new graph structure (a
+        new phase, node kind, graph edge, or persona-roster entry)
+        and new tool registration go through the code lifecycle (a
+        PR, review, deploy), not through the ADLC bundle promotion
+        path. RFC-10 criterion 6 / design doc
+        ``.run/designs/DESIGN_reasoning_platform.md`` sec 3.7 -- a
+        bundle body whose diff adds a new tool call, a new node
+        kind, or a new graph edge is a finding.
+
+        Sibling of rule 73 (:meth:`_check_structural_self_modification`)
+        on the RFC-08 self-improvement layer. Rule 73's four
+        structural AST shapes are reused verbatim (the constants
+        :data:`_STRUCTURAL_GRAPH_CALLABLES` /
+        :data:`_STRUCTURAL_MAP_ATTRS` /
+        :data:`_STRUCTURAL_MUTATOR_METHODS` /
+        :data:`_STRUCTURAL_ROSTER_TOKENS`) but the scope is the ADLC
+        control plane (:data:`_ADLC_LIFECYCLE_PATTERN`) instead of
+        ``platform/eval/**`` + the sanctioned proposers. Additionally,
+        the rule flags tool registration entering via the lifecycle
+        path:
+
+        - a :class:`ast.Call` whose callee terminal is
+          ``register_tool`` (matches ``registry.register_tool(...)``
+          on any receiver);
+        - a :class:`ast.Call` whose callee terminal is ``register``
+          on a tool-registry-shaped receiver (a receiver whose
+          terminal name contains one of
+          :data:`_ADLC_TOOL_REGISTRY_RECEIVER_TOKENS` -- matches
+          ``tool_registry.register(key, tool)`` /
+          ``tool_scope.register(...)``);
+        - a :class:`ast.Call` whose callee terminal is an identifier
+          ending in ``Tool`` (matches a ``Tool`` subclass
+          construction like ``PermanentMemoryTool(...)`` /
+          ``SystemRegistryTool(...)`` -- the naming convention the
+          platform tool set follows).
+
+        Precision over recall: the live lifecycle controller
+        legitimately flips an alias, writes assignment rows, and
+        constructs / journals :class:`LifecycleTransitionRecord`
+        rows. None of those are structural graph edits or tool
+        registrations, so the rule fires zero on the current
+        ``platform/lifecycle/**`` tree. A tightening (or a targeted
+        whitelist entry) is required if a future legitimate shape
+        in that scope hits one of these callee terminals; that
+        review IS the point of the rule.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if not _ADLC_LIFECYCLE_PATTERN.search(normalized):
+            return
+
+        def _terminal(node: ast.expr) -> str | None:
+            if isinstance(node, ast.Name):
+                return node.id
+            if isinstance(node, ast.Attribute):
+                return node.attr
+            return None
+
+        def _is_structural_map_receiver(node: ast.expr) -> bool:
+            # ``x.states`` / ``x.nodes`` / ``x.edges`` on any receiver.
+            return (
+                isinstance(node, ast.Attribute)
+                and node.attr in _STRUCTURAL_MAP_ATTRS
+            )
+
+        def _is_roster_receiver(node: ast.expr) -> bool:
+            tail = _terminal(node)
+            return tail in _STRUCTURAL_ROSTER_TOKENS
+
+        def _is_tool_registry_receiver(node: ast.expr) -> bool:
+            tail = _terminal(node)
+            if tail is None:
+                return False
+            low = tail.lower()
+            return any(
+                token in low for token in _ADLC_TOOL_REGISTRY_RECEIVER_TOKENS
+            )
+
+        def _is_tool_subclass_ctor_name(name: str | None) -> bool:
+            # ``PermanentMemoryTool(...)`` etc. -- the platform naming
+            # convention for Tool subclasses. The bare ``Tool`` name is
+            # excluded so a helper ``Tool(...)`` factory is not caught
+            # by a happy-accident identifier collision.
+            return name is not None and len(name) > 4 and name.endswith("Tool")
+
+        def _emit_here(line: int, detail: str) -> None:
+            self._emit(
+                line,
+                "adlc_structural_change",
+                (
+                    f"adlc_structural_change: {detail} -- the RFC-10 "
+                    "ADLC control plane (platform/lifecycle/**) promotes "
+                    "versioned agent bundles behind the eval + quorum "
+                    "gate; new graph structure (phase / node / edge / "
+                    "persona-roster entry) and new tool registration go "
+                    "through the CODE lifecycle (PR / review / deploy), "
+                    "not through the ADLC bundle promotion path"
+                ),
+            )
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                tail = _terminal(node.func)
+                # Shape 1: structural constructor / factory call.
+                if tail in _STRUCTURAL_GRAPH_CALLABLES:
+                    _emit_here(node.lineno, f"{tail}(...) call")
+                    continue
+                # Shape T-ctor: Tool subclass construction.
+                if _is_tool_subclass_ctor_name(tail):
+                    _emit_here(
+                        node.lineno,
+                        f"{tail}(...) Tool subclass construction",
+                    )
+                    continue
+                if isinstance(node.func, ast.Attribute):
+                    method = node.func.attr
+                    recv = node.func.value
+                    # Shape T-reg-1: ``.register_tool(...)`` on any receiver.
+                    if method == "register_tool":
+                        recv_tail = _terminal(recv) or "<receiver>"
+                        _emit_here(
+                            node.lineno,
+                            f"{recv_tail}.register_tool(...) call",
+                        )
+                        continue
+                    # Shape T-reg-2: ``.register(...)`` on a
+                    # tool-registry-shaped receiver.
+                    if method == "register" and _is_tool_registry_receiver(recv):
+                        recv_tail = _terminal(recv) or "<registry>"
+                        _emit_here(
+                            node.lineno,
+                            f"{recv_tail}.register(...) tool registration",
+                        )
+                        continue
+                    # Shape 3: mutator-method call on a .states / .nodes /
+                    # .edges attribute, or on a persona-roster binding.
+                    if method in _STRUCTURAL_MUTATOR_METHODS:
+                        if _is_structural_map_receiver(recv):
+                            _emit_here(
+                                node.lineno,
+                                f".{recv.attr}.{method}(...) mutator",
+                            )
+                            continue
+                        if _is_roster_receiver(recv):
+                            rtail = _terminal(recv) or "<roster>"
+                            _emit_here(
+                                node.lineno,
+                                f"{rtail}.{method}(...) mutator",
+                            )
+                            continue
+
+            # Shape 2 / 4: subscript-write / del against a
+            # structural map or roster binding.
+            targets: tuple[ast.expr, ...] = ()
+            if isinstance(node, ast.Assign):
+                targets = tuple(node.targets)
+            elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+                targets = (node.target,)
+            elif isinstance(node, ast.Delete):
+                targets = tuple(node.targets)
+            for tgt in targets:
+                if not isinstance(tgt, ast.Subscript):
+                    continue
+                base = tgt.value
+                if _is_structural_map_receiver(base):
+                    _emit_here(
+                        tgt.lineno,
+                        f".{base.attr}[...] subscript write",
+                    )
+                    break
+                if _is_roster_receiver(base):
+                    rtail = _terminal(base) or "<roster>"
+                    _emit_here(
+                        tgt.lineno,
+                        f"{rtail}[...] subscript write",
+                    )
+                    break
+
+    def _check_inline_prompt_literal(self, tree: ast.Module) -> None:
+        """Rule 58: inline_prompt_literal -- a module-level ``_*_PROMPT*``
+        constant binds a multi-line prompt string.
+
+        RFC-09 puts prompt text under a resolver (:class:`PromptRegistry`
+        reading a versioned ``.md`` file) so cost / seal / audit rows
+        carry the resolved ``prompt_content_hash`` + ``prompt_version``.
+        A multi-line literal bound to a module constant sidesteps that
+        resolver: every call using it stamps a NULL prompt_version and
+        the (cost, prompt) join goes empty on the row.
+
+        The rule fires on a module-body Assign whose target name
+        contains the uppercase token ``PROMPT`` and whose value is a
+        string Constant with 3+ newlines and 200+ characters. Python's
+        parser folds a parenthesised implicit-concat literal to a
+        single Constant, so ``_SYSTEM_PROMPT = ("foo " "bar")`` and
+        ``_SYSTEM_PROMPT = \"\"\"foo\\nbar\"\"\"`` both match without a
+        special JoinedStr traversal.
+        """
+        normalized = self.filename.replace("\\", "/")
+        for suffix in _INLINE_PROMPT_SELF_EXEMPT_SUFFIXES:
+            if normalized.endswith(suffix):
+                return
+        for node in tree.body:
+            if not isinstance(node, ast.Assign):
+                continue
+            target_name: str | None = None
+            for target in node.targets:
+                if (
+                    isinstance(target, ast.Name)
+                    and _INLINE_PROMPT_NAME_TOKEN in target.id
+                ):
+                    target_name = target.id
+                    break
+            if target_name is None:
+                continue
+            text = _string_constant_value(node.value)
+            if text is None:
+                continue
+            if text.count("\n") < _INLINE_PROMPT_MIN_NEWLINES:
+                continue
+            if len(text) < _INLINE_PROMPT_MIN_LENGTH:
+                continue
+            self._emit(
+                node.lineno,
+                "inline_prompt_literal",
+                (
+                    f"inline_prompt_literal: module-level '{target_name}' "
+                    f"binds a multi-line prompt string "
+                    f"({text.count(chr(10)) + 1} lines); RFC-09 requires "
+                    "prompts to be resolved through PromptRegistry from a "
+                    "versioned .md file so cost / seal rows carry the "
+                    "prompt_content_hash + prompt_version stamp"
+                ),
+            )
+
+    def _check_untagged_llm_call(self, tree: ast.Module) -> None:
+        """Rule 59: untagged_llm_call -- an LLM entry-point call reaches
+        the model without ``correlation_scope`` / ``idempotent_llm_call``.
+
+        RFC-09's join between cost and prompt runs through two
+        columns: ``prompt_content_hash`` + ``prompt_version`` on
+        :class:`LLMCostRecord` and :class:`AuditSealRecord`. Those
+        values are stamped by ``correlation_scope(prompt_content_hash=,
+        prompt_version=)`` (or its wrapper :func:`idempotent_llm_call`,
+        which reads the ContextVar and stamps itself). A raw
+        ``.chat(...)`` / ``.chat_json(...)`` / ``.chat_structured(...)``
+        outside either wrapper reaches the client with NULL
+        attribution -- the resulting row cannot be joined back to the
+        prompt that produced it.
+
+        The rule walks each function scope, collects every LLM entry-
+        point call in the body, and fires on the first when no tag
+        marker (:data:`_LLM_TAG_MARKERS`) appears anywhere in the
+        enclosing function. Files whose whole purpose is to OWN the
+        entry point (client, idempotent wrapper, routing) are exempt
+        via :data:`_LLM_TAG_SELF_EXEMPT_SUFFIXES`.
+        """
+        normalized = self.filename.replace("\\", "/")
+        for suffix in _LLM_TAG_SELF_EXEMPT_SUFFIXES:
+            if normalized.endswith(suffix):
+                return
+        parents = _build_parent_map(tree)
+        # Group hits by enclosing function so a single function that
+        # makes many raw chat calls fires only once (on the first).
+        per_function: dict[int, tuple[int, str]] = {}
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr in _LLM_CHAT_METHODS
+            ):
+                continue
+            enclosing = _enclosing_function(node, parents)
+            if enclosing is None:
+                continue
+            body_ids = _identifier_names_in_body(enclosing)
+            if body_ids & _LLM_TAG_MARKERS:
+                continue
+            key = id(enclosing)
+            if key in per_function:
+                continue
+            per_function[key] = (node.lineno, node.func.attr)
+        for func_id, (line, method) in per_function.items():
+            # func_id is retained above so a later shape can name the
+            # function; the current message identifies the file+line.
+            del func_id
+            self._emit(
+                line,
+                "untagged_llm_call",
+                (
+                    f"untagged_llm_call: .{method}(...) is called without "
+                    "correlation_scope(prompt_content_hash=, prompt_version=) "
+                    "or idempotent_llm_call(...) in the enclosing function "
+                    "body -- RFC-09 requires every LLM call to stamp the "
+                    "prompt_content_hash + prompt_version so cost / seal rows "
+                    "carry the attribution"
+                ),
+            )
+
+    def _check_unaudited_alias_flip(self, tree: ast.Module) -> None:
+        """Rule 60: unaudited_alias_flip -- a function writes a
+        :class:`PromptAliasRecord` without also writing a matching
+        :class:`PromptAliasChangeRecord`.
+
+        :class:`PromptAliasRecord` is the mutable pointer;
+        :class:`PromptAliasChangeRecord` is the append-only audit row.
+        The canonical writer is ``PromptVersionStore.set_alias()`` --
+        which does both in one transaction. Any function that
+        constructs / adds / raw-UPDATEs the alias row without also
+        emitting the change row has drifted from that pair-write and
+        reopens the audit gap RFC-09 closed.
+
+        The rule fires on any function-scope body that references
+        :class:`PromptAliasRecord` (name in identifiers or a raw SQL
+        literal touching ``prompt_aliases``) without also referencing
+        :class:`PromptAliasChangeRecord`. The version_store file
+        itself and alembic migrations are exempt.
+        """
+        normalized = self.filename.replace("\\", "/")
+        for suffix in _ALIAS_FLIP_SELF_EXEMPT_SUFFIXES:
+            if normalized.endswith(suffix):
+                return
+        if _ALEMBIC_PATH_PATTERN.search(normalized):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            body_ids = _identifier_names_in_body(node)
+            writes_alias = _PROMPT_ALIAS_RECORD_NAME in body_ids
+            raw_sql_line: int | None = None
+            if not writes_alias:
+                for sub in ast.walk(node):
+                    if not (
+                        isinstance(sub, ast.Constant)
+                        and isinstance(sub.value, str)
+                    ):
+                        continue
+                    low = sub.value.lower()
+                    if _PROMPT_ALIAS_TABLE_NAME not in low:
+                        continue
+                    if "update " in low or "insert " in low or "into " in low:
+                        raw_sql_line = sub.lineno
+                        break
+            if not writes_alias and raw_sql_line is None:
+                continue
+            if _PROMPT_ALIAS_CHANGE_RECORD_NAME in body_ids:
+                continue
+            hit_line = node.lineno if raw_sql_line is None else raw_sql_line
+            self._emit(
+                hit_line,
+                "unaudited_alias_flip",
+                (
+                    f"unaudited_alias_flip: '{node.name}' writes "
+                    f"{_PROMPT_ALIAS_RECORD_NAME} / prompt_aliases without "
+                    "also emitting PromptAliasChangeRecord in the same body; "
+                    "route alias flips through PromptVersionStore.set_alias() "
+                    "or mirror its pair-write so the audit log stays complete"
+                ),
+            )
+
+    def _check_unpinned_investigation_prompt(self, tree: ast.Module) -> None:
+        """Rule 74: unpinned_investigation_prompt -- an agent-runtime
+        turn resolves a prompt / bundle by LIVE ALIAS instead of the
+        investigation pin.
+
+        RFC-09 criterion 4 (T6): a live production-alias flip must
+        NEVER rewrite the prompt on a turn that belongs to an
+        already-running investigation. The canonical path is
+        :func:`aila.platform.prompts.pinning.resolve_pinned_prompt`,
+        which reads (or persists) the investigation's pin before ever
+        looking at the alias. A raw ``.resolve(alias=...)`` on the
+        store or the registry in a turn function bypasses that pin
+        and lets an operator alias flip mid-run bleed the new prompt
+        into the running transcript.
+
+        The rule fires on a ``.resolve(...)`` call in a scope-matching
+        file (``platform/agents/**`` or ``modules/*/agents/**``) when
+        either:
+
+        1. an explicit ``alias=`` keyword argument is present (the
+           precise dead-give-away shape), OR
+        2. the receiver terminal name matches one of
+           :data:`_UNPINNED_INVESTIGATION_STORE_RECEIVER_TOKENS`
+           (module-level ``_PROMPT_VERSION_STORE`` /
+           ``_PROMPT_REGISTRY`` singleton, an attribute-tail
+           ``_store`` / ``_prompt_store``, or the class name
+           terminal of a ``PromptVersionStore().resolve(...)`` /
+           ``PromptRegistry().resolve(...)`` chain),
+
+        AND the enclosing function does NOT reference
+        ``resolve_pinned_prompt`` in its body. Functions whose name
+        contains ``seed_prompt_versions`` are exempt because seed /
+        registration legitimately talks to the store directly. The
+        platform's own prompt package (``platform/prompts/**``) is
+        outside the agent-runtime scope and is not touched by this
+        rule; the file self-exempt is a belt on the same suspender.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if not _AGENT_RUNTIME_SCOPE_PATTERN.search(normalized):
+            return
+        for suffix in _UNPINNED_INVESTIGATION_PROMPT_SELF_EXEMPT_SUFFIXES:
+            if normalized.endswith(suffix):
+                return
+        parents = _build_parent_map(tree)
+        # Group hits by enclosing function so a single function that
+        # makes many raw resolves fires only once (on the first).
+        per_function: dict[int, tuple[int, str]] = {}
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (
+                isinstance(func, ast.Attribute)
+                and func.attr == _UNPINNED_INVESTIGATION_RESOLVE_METHOD
+            ):
+                continue
+            has_alias_kwarg = any(kw.arg == "alias" for kw in node.keywords)
+            recv = func.value
+            recv_tail: str | None = None
+            if isinstance(recv, ast.Name):
+                recv_tail = recv.id
+            elif isinstance(recv, ast.Attribute):
+                recv_tail = recv.attr
+            elif isinstance(recv, ast.Call):
+                # ``PromptVersionStore().resolve(...)`` chain: the
+                # constructor call's callee terminal is the class name.
+                inner = recv.func
+                if isinstance(inner, ast.Name):
+                    recv_tail = inner.id
+                elif isinstance(inner, ast.Attribute):
+                    recv_tail = inner.attr
+            matches_store_receiver = (
+                recv_tail is not None
+                and recv_tail in _UNPINNED_INVESTIGATION_STORE_RECEIVER_TOKENS
+            )
+            if not (has_alias_kwarg or matches_store_receiver):
+                continue
+            enclosing = _enclosing_function(node, parents)
+            if enclosing is None:
+                continue
+            enclosing_name_low = enclosing.name.lower()
+            if any(
+                marker in enclosing_name_low
+                for marker in _UNPINNED_INVESTIGATION_SEED_MARKERS
+            ):
+                continue
+            body_ids = _identifier_names_in_body(enclosing)
+            if _UNPINNED_INVESTIGATION_PIN_MARKER in body_ids:
+                continue
+            key = id(enclosing)
+            if key in per_function:
+                continue
+            shape = "alias=" if has_alias_kwarg else (recv_tail or "<recv>")
+            per_function[key] = (node.lineno, shape)
+        for func_id, (line, shape) in per_function.items():
+            del func_id
+            self._emit(
+                line,
+                "unpinned_investigation_prompt",
+                (
+                    f"unpinned_investigation_prompt: '.resolve({shape})' "
+                    "in an agent-runtime function without "
+                    "'resolve_pinned_prompt' in the same body -- RFC-09 "
+                    "requires per-investigation pinning so a live "
+                    "production-alias flip never rewrites the prompt of "
+                    "an already-running investigation (T6)"
+                ),
+            )
+
+    def _check_promotion_without_gate(self, tree: ast.Module) -> None:
+        """Rule 61: promotion_without_gate -- a function flips a version
+        to production without the eval + quorum gate.
+
+        The canonical promotion path is
+        :meth:`AgentLifecycleController.promote`, which enforces two
+        checks before ``set_alias(..., PRODUCTION_ALIAS, ...)``:
+
+            1. ``_passing_evaluate(key, version)`` returned a
+               passing eval verdict; and
+            2. ``_distinct_approver_count(key, version) >=
+               agent_promotion_quorum``.
+
+        A function that constructs
+        ``LifecycleTransitionRecord(to_stage=LifecycleStage.PRODUCTION)``
+        or calls ``set_alias(..., "production", ...)`` outside the
+        controller AND without any gate marker in its body
+        (:data:`_PROMOTE_GATE_MARKERS`) is promoting without the gate.
+        The controller file itself is the sole exemption
+        (:data:`_LIFECYCLE_CONTROLLER_SELF_EXEMPT_SUFFIXES`) because it
+        OWNS the eval + quorum gate; every other flip site must carry
+        a gate marker in the same body.
+        """
+        normalized = self.filename.replace("\\", "/")
+        for suffix in _LIFECYCLE_CONTROLLER_SELF_EXEMPT_SUFFIXES:
+            if normalized.endswith(suffix):
+                return
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            hit_line: int | None = None
+            for sub in ast.walk(node):
+                if not isinstance(sub, ast.Call):
+                    continue
+                if (
+                    _is_production_transition_construct(sub)
+                    or _is_production_alias_flip(sub)
+                ):
+                    hit_line = sub.lineno
+                    break
+            if hit_line is None:
+                continue
+            body_ids = _identifier_names_in_body(node)
+            if body_ids & _PROMOTE_GATE_MARKERS:
+                continue
+            self._emit(
+                hit_line,
+                "promotion_without_gate",
+                (
+                    f"promotion_without_gate: '{node.name}' flips a version "
+                    "to production without referencing the eval + quorum gate "
+                    "(_passing_evaluate, _distinct_approver_count, EvalRunner, "
+                    "agent_promotion_quorum, AgentLifecycleController) -- "
+                    "route through AgentLifecycleController.promote() (RFC-10)"
+                ),
+            )
+
+    def _check_untransitioned_stage_change(self, tree: ast.Module) -> None:
+        """Rule 62: untransitioned_stage_change -- a function assigns a
+        :class:`LifecycleStage` value without writing a
+        :class:`LifecycleTransitionRecord`.
+
+        The RFC-10 stage machine is journaled: every observed stage
+        change appends a row to ``lifecycle_transitions`` so the
+        history answers "who moved this version to <stage> and when?"
+        without replay. A function that writes
+        ``.lifecycle_stage = LifecycleStage.<X>`` or passes
+        ``to_stage=LifecycleStage.<X>`` / ``stage=LifecycleStage.<X>``
+        to a call that is NOT the transition constructor / journaler
+        has drifted from that history and needs a matching journal
+        write in the same body.
+
+        The controller file itself is exempt because it OWNS the
+        journaler; every other stage-writer must mirror the
+        constructor + journal pair.
+        """
+        normalized = self.filename.replace("\\", "/")
+        for suffix in _LIFECYCLE_CONTROLLER_SELF_EXEMPT_SUFFIXES:
+            if normalized.endswith(suffix):
+                return
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            stage_hits: list[int] = []
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Assign):
+                    if not _references_lifecycle_stage(sub.value):
+                        continue
+                    for tgt in sub.targets:
+                        if (
+                            isinstance(tgt, ast.Attribute)
+                            and tgt.attr in _LIFECYCLE_STAGE_KWARGS
+                        ):
+                            stage_hits.append(sub.lineno)
+                            break
+                elif isinstance(sub, ast.Call):
+                    callee = _call_callee_simple_name(sub)
+                    if callee in (
+                        _LIFECYCLE_TRANSITION_RECORD_NAME,
+                        _LIFECYCLE_JOURNAL_METHOD_NAME,
+                    ):
+                        continue
+                    for kw in sub.keywords:
+                        if (
+                            kw.arg in _LIFECYCLE_STAGE_KWARGS
+                            and _references_lifecycle_stage(kw.value)
+                        ):
+                            stage_hits.append(sub.lineno)
+                            break
+            if not stage_hits:
+                continue
+            body_ids = _identifier_names_in_body(node)
+            if _LIFECYCLE_TRANSITION_RECORD_NAME in body_ids:
+                continue
+            call_names = _call_names_in_body(node)
+            if _LIFECYCLE_JOURNAL_METHOD_NAME in call_names:
+                continue
+            self._emit(
+                stage_hits[0],
+                "untransitioned_stage_change",
+                (
+                    f"untransitioned_stage_change: '{node.name}' assigns a "
+                    "LifecycleStage value without constructing a "
+                    "LifecycleTransitionRecord or calling _journal(...) in "
+                    "the same body -- every stage move must be journaled "
+                    "(RFC-10)"
+                ),
+            )
+
+    def _check_canary_below_min_sample(self, tree: ast.Module) -> None:
+        """Rule 63: canary_below_min_sample -- a canary promotion path
+        has no min-sample gate marker.
+
+        RFC-10's canary contract is that promoting a candidate that
+        never observed enough traffic is structurally impossible. A
+        function whose name is on the canary-promotion API
+        (:data:`_CANARY_PROMOTE_MARKERS`) must reference a
+        min-sample identifier / call name (:data:`_CANARY_MIN_SAMPLE_MARKERS`)
+        in its body so a reviewer sees the check.
+
+        The check is name-based on the RFC-10 API surface. The audit
+        tool self-exempts because its own rule strings name the
+        markers.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if normalized.endswith("tools/honesty_audit.py"):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not _function_name_matches(node.name, _CANARY_PROMOTE_MARKERS):
+                continue
+            body_ids = _identifier_names_in_body(node)
+            if body_ids & _CANARY_MIN_SAMPLE_MARKERS:
+                continue
+            call_names = _call_names_in_body(node)
+            if call_names & _CANARY_MIN_SAMPLE_MARKERS:
+                continue
+            # A string-constant ConfigRegistry key literal also counts
+            # (a function reading ``platform.agent_canary_min_sample``
+            # via ``.get("platform", "agent_canary_min_sample")`` names
+            # the marker as a Constant, not an identifier).
+            has_key_literal = False
+            for sub in ast.walk(node):
+                text = _string_constant_value(sub)
+                if text is None:
+                    continue
+                if text in _CANARY_MIN_SAMPLE_MARKERS:
+                    has_key_literal = True
+                    break
+            if has_key_literal:
+                continue
+            self._emit(
+                node.lineno,
+                "canary_below_min_sample",
+                (
+                    f"canary_below_min_sample: canary promotion function "
+                    f"'{node.name}' has no min-sample gate marker "
+                    "(min_sample, min_samples, min_canary_sample, "
+                    "sample_count, signal_count, agent_canary_min_sample) "
+                    "in its body -- RFC-10 requires canary promotion to "
+                    "verify a minimum observed-signal count before flipping"
+                ),
+            )
+
+    def _check_second_embedding_path(self, tree: ast.Module) -> None:
+        """Rule 64: second_embedding_path -- an embedding provider is
+        constructed or selected outside the canonical embedding +
+        knowledge service files.
+
+        RFC-12 / #37 require ONE embedding path: a second provider
+        writing vectors into the shared knowledge table makes
+        cross-model cosine similarity meaningless. The embedding
+        factory (:mod:`platform/services/embedding.py`) and the
+        service that owns the store (:mod:`platform/services/
+        knowledge.py`) are the only files that may build a provider.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if any(normalized.endswith(s) for s in _EMBEDDING_PATH_SELF_EXEMPT_SUFFIXES):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = _call_callee_simple_name(node)
+            if name in _EMBEDDING_PROVIDER_CALLEES:
+                self._emit(
+                    node.lineno,
+                    "second_embedding_path",
+                    (
+                        f"second_embedding_path: embedding provider '{name}' "
+                        "constructed outside the canonical embedding/knowledge "
+                        "service -- a second embedding path writes incompatible "
+                        "vectors into the shared table (#37); embed through "
+                        "KnowledgeService.embed"
+                    ),
+                )
+
+    def _check_vector_without_provenance(self, tree: ast.Module) -> None:
+        """Rule 65: vector_without_provenance -- a KnowledgeEntryRecord is
+        constructed with an embedding but no model_id.
+
+        RFC-12 / #37 require every stored vector to carry its
+        provenance (``model_id``) so a model swap triggers a re-embed
+        sweep instead of silently invalidating the corpus. A record
+        built with an ``embedding=`` kwarg but no ``model_id=`` kwarg
+        stores an un-attributed vector.
+        """
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if _call_callee_simple_name(node) != _KNOWLEDGE_RECORD_NAME:
+                continue
+            kwargs = {kw.arg for kw in node.keywords if kw.arg}
+            if "embedding" in kwargs and "model_id" not in kwargs:
+                self._emit(
+                    node.lineno,
+                    "vector_without_provenance",
+                    (
+                        f"vector_without_provenance: {_KNOWLEDGE_RECORD_NAME} "
+                        "constructed with an embedding but no model_id -- a "
+                        "stored vector without provenance is silently "
+                        "invalidated by a model swap (#37)"
+                    ),
+                )
+
+    def _check_retrieval_without_gate(self, tree: ast.Module) -> None:
+        """Rule 66: retrieval_without_gate -- agent-scope code calls the
+        raw hybrid retrieve instead of the gated routed path.
+
+        RFC-12 / #43: the raw ``.retrieve(`` returns ungated,
+        unfloored hits; only ``retrieve_routed`` applies the relevance
+        floor + sanitize/classify gate. Agent-runtime code
+        (``platform/agents/**`` or ``modules/*/agents/**``) that
+        reaches the knowledge base must go through the routed path so
+        retrieved content is floored + sanitised before it can enter
+        a prompt.
+        """
+        if not _AGENT_RUNTIME_SCOPE_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if isinstance(func, ast.Attribute) and func.attr == _RAW_RETRIEVE_METHOD:
+                self._emit(
+                    node.lineno,
+                    "retrieval_without_gate",
+                    (
+                        "retrieval_without_gate: agent-scope code calls raw "
+                        "'.retrieve(' -- use 'retrieve_routed' so retrieved "
+                        "hits are relevance-floored and sanitize/classify "
+                        "gated before reaching a prompt (#43)"
+                    ),
+                )
+
+    def _check_unsanitized_retrieved_content(self, tree: ast.Module) -> None:
+        """Rule 67: unsanitized_retrieved_content -- the routed retrieval
+        entry point stops applying the sanitize/classify gate.
+
+        RFC-12 / #43: ``retrieve_routed`` is the single agent-facing
+        retrieval entry, and every hit it returns MUST pass
+        ``apply_gate`` / ``apply_gate_many`` so ``sanitized_content``
+        is guaranteed. A ``retrieve_routed`` definition whose body no
+        longer references the gate would hand raw retrieved content to
+        a caller that emits it into a prompt.
+        """
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if node.name != _ROUTED_RETRIEVE_METHOD:
+                continue
+            if _call_names_in_body(node) & _KNOWLEDGE_GATE_CALLS:
+                continue
+            self._emit(
+                node.lineno,
+                "unsanitized_retrieved_content",
+                (
+                    f"unsanitized_retrieved_content: '{_ROUTED_RETRIEVE_METHOD}' "
+                    "does not apply the sanitize/classify gate (apply_gate / "
+                    "apply_gate_many) -- retrieved content would reach a prompt "
+                    "unsanitised (#43)"
+                ),
+            )
+
+    def _check_content_slice_truncation(self, tree: ast.Module) -> None:
+        """Rule 68: content_slice_truncation -- a constant-bound slice on
+        content that is stored into or returned from the knowledge base.
+
+        Operator policy: stored and retrieved knowledge data is kept in
+        full; only the render/display layer bounds size. A ``x[:N]`` slice
+        applied to the direct value of a ``content=`` keyword argument, or
+        to a dict value keyed by a content-field name, silently drops the
+        tail. This is a flag-then-whitelist rule: a genuinely required cap
+        is recorded in honesty_whitelist.py with a reason rather than left
+        implicit in the code.
+        """
+        if self.filename.replace("\\", "/").endswith(
+            _CONTENT_TRUNCATION_SELF_EXEMPT_SUFFIXES
+        ):
+            return
+        parents = _build_parent_map(tree)
+
+        def _emit_trunc(node: ast.expr, field: str, upper: int) -> None:
+            func = _enclosing_function(node, parents)
+            where = func.name if func is not None else "<module>"
+            self._emit(
+                node.lineno,
+                "content_slice_truncation",
+                (
+                    f"content_slice_truncation: field '{field}' is pre-trimmed "
+                    f"with [:{upper}] in {where}() -- stored/returned knowledge "
+                    "data must be kept in full (the render layer bounds display); "
+                    "whitelist with a reason if the cap is truly required"
+                ),
+            )
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                # (a) a ``content=``-family keyword argument whose value is
+                #     a ``[:N]`` slice.
+                for kw in node.keywords:
+                    if kw.arg in _CONTENT_FIELD_NAMES:
+                        upper = _constant_slice_upper(kw.value)
+                        if upper is not None:
+                            _emit_trunc(kw.value, kw.arg, upper)
+            elif isinstance(node, ast.Dict):
+                # (b) a dict entry keyed by a content-field name whose value
+                #     is a ``[:N]`` slice.
+                for key, value in zip(node.keys, node.values, strict=False):
+                    if (
+                        isinstance(key, ast.Constant)
+                        and isinstance(key.value, str)
+                        and key.value in _CONTENT_FIELD_NAMES
+                    ):
+                        upper = _constant_slice_upper(value)
+                        if upper is not None:
+                            _emit_trunc(value, key.value, upper)
+
+    def _check_mcp_catalog_placement(self, tree: ast.Module) -> None:
+        """Rule 70: mcp_catalog_placement -- a platform-side subclass of
+        :class:`McpRegistryServiceBase` binds ``_servers`` to a literal
+        server catalog inside ``src/aila/platform/**``.
+
+        The MCP server catalog is module domain: each module owns its
+        ``MCP_SERVERS`` tuple and binds it onto the platform base via the
+        ``_servers`` ClassVar (see ``modules/vr/services/mcp_registry.py``
+        and ``modules/malware/services/mcp_registry.py``). The platform
+        base takes the catalog as class state supplied by the subclass and
+        never hardcodes one -- a platform file that names a concrete
+        catalog has re-imported module domain into the platform layer and
+        reopens the boundary RFC-04 closed.
+
+        Fires when a file under ``src/aila/platform/**`` (the base file
+        ``platform/mcp/registry.py`` is exempt -- it declares the ClassVar
+        without binding a value) defines a class that inherits from
+        ``McpRegistryServiceBase`` (or the module-side ``McpRegistryService``
+        binding name) and assigns ``_servers`` to a literal catalog: a
+        tuple/list whose elements are dict spec literals carrying an
+        ``"id"`` or ``"config_key"`` key. The current tree has no such
+        placement; the rule is a future-proofing structural guardrail
+        (same shape as rules 41 and 69).
+        """
+        norm = self.filename.replace("\\", "/")
+        if not _MCP_REGISTRY_PLATFORM_SCOPE_PATTERN.search(norm):
+            return
+        if norm.endswith(_MCP_REGISTRY_BASE_FILE_SUFFIX):
+            return
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            if not _class_inherits_from(node, _MCP_REGISTRY_BASE_NAMES):
+                continue
+            for stmt in node.body:
+                value: ast.expr | None = None
+                target_name: str | None = None
+                if (
+                    isinstance(stmt, ast.Assign)
+                    and len(stmt.targets) == 1
+                    and isinstance(stmt.targets[0], ast.Name)
+                ):
+                    target_name = stmt.targets[0].id
+                    value = stmt.value
+                elif (
+                    isinstance(stmt, ast.AnnAssign)
+                    and isinstance(stmt.target, ast.Name)
+                    and stmt.value is not None
+                ):
+                    target_name = stmt.target.id
+                    value = stmt.value
+                if target_name != "_servers" or value is None:
+                    continue
+                if not _is_literal_server_catalog(value):
+                    continue
+                self._emit(
+                    stmt.lineno,
+                    "mcp_catalog_placement",
+                    (
+                        f"mcp_catalog_placement: class '{node.name}' binds "
+                        f"'_servers' to a literal server catalog inside "
+                        "src/aila/platform/**; the MCP server catalog is "
+                        "module domain -- own it as MCP_SERVERS in "
+                        "modules/<id>/services/mcp_registry.py and pass it "
+                        "onto the platform base (RFC-04 boundary invariant)"
+                    ),
+                )
+
+    def _check_service_env_read(self, tree: ast.Module) -> None:
+        """Rule 71: service_env_read -- a module services/ file reads config
+        via ``os.environ`` / ``os.getenv`` instead of ``ConfigRegistry``.
+
+        Sibling of rule 49 (agent_env_read) for the services layer. RFC-04
+        closed the config-drift path across module services: a hand-coded
+        env read silently bypasses the DB override and the per-module
+        schema default the operator relies on. Modules resolve config
+        through ``ConfigRegistry(module_id, key)`` so env, the DB, and the
+        per-module schema default each participate on one path.
+
+        The check fires on the same three shapes as rule 49:
+          - ``os.environ`` / ``os.getenv`` attribute access on the ``os``
+            module (covers ``os.environ["X"]``, ``os.environ.get("X")``,
+            ``os.getenv("X")``);
+          - ``from os import environ`` / ``from os import getenv``.
+
+        Detection is AST-based; a docstring or comment mention of
+        ``os.environ`` (e.g. the header of
+        ``modules/vr/services/investigation_reaper.py`` explaining why the
+        reaper was rewritten off the env path) is invisible to the AST and
+        never trips this.
+        """
+        if not _SERVICES_SCOPE_PATTERN.search(self.filename.replace("\\", "/")):
+            return
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Attribute)
+                and node.attr in _OS_ENV_ATTRS
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "os"
+            ):
+                self._emit(
+                    node.lineno,
+                    "service_env_read",
+                    f"service_env_read: read config via ConfigRegistry(module_id, "
+                    f"key) instead of os.{node.attr} (RFC-04 config-drift closure)",
+                )
+                continue
+            if isinstance(node, ast.ImportFrom) and node.module == "os":
+                for alias in node.names:
+                    if alias.name in _OS_ENV_ATTRS:
+                        self._emit(
+                            node.lineno,
+                            "service_env_read",
+                            f"service_env_read: read config via ConfigRegistry"
+                            f"(module_id, key) instead of 'from os import "
+                            f"{alias.name}' (RFC-04 config-drift closure)",
+                        )
+
+    def _check_platform_hardcodes_strategy_family(self, tree: ast.Module) -> None:
+        """Rule 72: platform_hardcodes_strategy_family -- a file under
+        ``src/aila/platform/**`` contains a string literal equal to a
+        module-owned reasoning-strategy family name.
+
+        Sibling of rule 48 (``platform_names_module``) for the
+        reasoning-strategy surface (RFC-05 crit 6). The platform must
+        not name a family owned by a module; each module declares its
+        families via ``ModuleProtocol.reasoning_strategies()`` and the
+        platform resolves the set through the registry.
+
+        The banned set (:data:`_MODULE_STRATEGY_FAMILIES`) covers every
+        family a module currently owns. The family ``generic`` is the
+        platform's fallback and is deliberately absent so a
+        ``ReasoningStrategyDeclaration(family="generic")`` on the
+        platform side stays green.
+
+        Scope: any file under ``src/aila/platform/**`` except paths
+        under ``tests/`` (fixture code that constructs a declaration
+        with a named family stays out of scope). Detection is a plain
+        walk of every ``ast.Constant`` whose value is a string; a
+        docstring or comment mention of the same family name is not a
+        string-literal node the platform reasoning surface would
+        read, so it never trips this. The check is unconditional:
+        it runs on every file and self-scopes on the path pattern.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if not _PLATFORM_STRATEGY_SCOPE_PATTERN.search(normalized):
+            return
+        if _PLATFORM_STRATEGY_TESTS_EXEMPT_PATTERN.search(normalized):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant):
+                continue
+            if not isinstance(node.value, str):
+                continue
+            if node.value not in _MODULE_STRATEGY_FAMILIES:
+                continue
+            self._emit(
+                node.lineno,
+                "platform_hardcodes_strategy_family",
+                f"platform_hardcodes_strategy_family: string literal "
+                f"{node.value!r} names a module-owned reasoning-strategy "
+                f"family from a platform file -- families are declared "
+                f"by each module via ModuleProtocol.reasoning_strategies() "
+                f"and resolved through the registry; the platform layer "
+                f"never hard-codes a module family (RFC-05 crit 6)",
+            )
+
+
+    def _check_bespoke_mcp_bridge(self, tree: ast.Module) -> None:
+        """Rule 76: bespoke_mcp_bridge -- a Tool subclass under
+        ``platform/mcp/**`` reimplements the MCP HTTP transport instead
+        of routing through the generic McpClient / McpBridgeTool.
+
+        RFC-11 Tier C collapsed the three bespoke bridge Tool subclasses
+        (``IDABridgeTool`` / ``AuditMcpBridgeTool`` / ``AndroidMcpBridgeTool``)
+        onto one generic :class:`McpBridgeTool` that owns an
+        :class:`McpClient` transport; server-specific behaviour moved into
+        :class:`McpMiddleware` plugins (which are NOT Tool subclasses). A
+        NEW ``Tool`` subclass in this scope that constructs its own
+        ``httpx.AsyncClient`` is a regression to the per-server-transport
+        design the RFC deleted. The generic McpBridgeTool is exempt (it
+        holds an McpClient, never raw httpx); the in-process knowledge
+        bridge has no HTTP transport; the middleware plugins are Protocol
+        implementations, not Tool subclasses.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if not _MCP_TRANSPORT_PATTERN.search(normalized):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            base_is_tool = any(
+                (isinstance(b, ast.Name) and b.id == "Tool")
+                or (isinstance(b, ast.Attribute) and b.attr == "Tool")
+                for b in node.bases
+            )
+            if not base_is_tool:
+                continue
+            for inner in ast.walk(node):
+                if (
+                    isinstance(inner, ast.Attribute)
+                    and inner.attr == "AsyncClient"
+                    and isinstance(inner.value, ast.Name)
+                    and inner.value.id == "httpx"
+                ):
+                    self._emit(
+                        inner.lineno,
+                        "bespoke_mcp_bridge",
+                        (
+                            f"bespoke_mcp_bridge: Tool subclass {node.name!r} "
+                            "constructs its own httpx.AsyncClient -- RFC-11 "
+                            "Tier C routes every MCP call through the generic "
+                            "McpBridgeTool + McpClient transport. Server-"
+                            "specific behaviour belongs in an McpMiddleware "
+                            "plugin, not a new bespoke bridge Tool subclass"
+                        ),
+                    )
+                    break
+
+    def _check_static_server_catalog(self, tree: ast.Module) -> None:
+        """Rule 77: static_server_catalog -- an agent dispatcher assigns a
+        static ``self._bridges`` dict-literal mapping server ids to bridge
+        instances.
+
+        RFC-11 Tier C replaced the fixed ``self._bridges = {"ida_headless":
+        ..., "audit_mcp": ...}`` map with dynamic, catalog-driven
+        construction via the base ``_bridge_for()`` + the factory. A NEW
+        ``_bridges`` dict-literal assignment re-freezes the server set at
+        code-write time, so an operator's catalog-added server can never
+        dispatch without a code change -- the exact regression the RFC
+        removed. Test / DI injection uses ``_bridge_overrides`` (a
+        comprehension keyed off the constructor args), not a static
+        server-name literal map.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if not _AGENT_DISPATCH_PATTERN.search(normalized):
+            return
+        for node in ast.walk(tree):
+            value: ast.expr | None = None
+            targets: list[ast.expr] = []
+            if isinstance(node, ast.Assign):
+                value = node.value
+                targets = list(node.targets)
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                value = node.value
+                targets = [node.target]
+            else:
+                continue
+            if not isinstance(value, ast.Dict):
+                continue
+            for tgt in targets:
+                if isinstance(tgt, ast.Attribute) and tgt.attr == "_bridges":
+                    self._emit(
+                        node.lineno,
+                        "static_server_catalog",
+                        (
+                            "static_server_catalog: assigns a static "
+                            "self._bridges dict-literal server map -- RFC-11 "
+                            "Tier C builds bridges on demand through the "
+                            "catalog-driven _bridge_for(); a frozen name->"
+                            "bridge map means an operator-added catalog server "
+                            "cannot dispatch without a code change"
+                        ),
+                    )
+                    break
+
+    def _check_hardcoded_server_dispatch(self, tree: ast.Module) -> None:
+        """Rule 78: hardcoded_server_dispatch -- dispatch reads a bridge
+        from a static ``self._bridges`` map by server id.
+
+        Sibling of rule 77. Where 77 flags the static MAP definition, 78
+        flags the LOOKUP that dispatches through it
+        (``self._bridges.get(server_id)`` / ``self._bridges[server_id]``).
+        RFC-11 Tier C routes every dispatch through the catalog-aware
+        ``_bridge_for()`` so a capability-tagged, operator-approved server
+        dispatches without a code change; a raw ``_bridges`` lookup
+        bypasses the catalog + approval gate.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if not _AGENT_DISPATCH_PATTERN.search(normalized):
+            return
+
+        def _is_bridges_attr(node: ast.expr) -> bool:
+            return isinstance(node, ast.Attribute) and node.attr == "_bridges"
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Subscript) and _is_bridges_attr(node.value):
+                self._emit(
+                    node.lineno,
+                    "hardcoded_server_dispatch",
+                    (
+                        "hardcoded_server_dispatch: self._bridges[...] "
+                        "subscript -- route MCP dispatch through the "
+                        "catalog-aware _bridge_for() instead of a static "
+                        "server map"
+                    ),
+                )
+                continue
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "get"
+                and _is_bridges_attr(node.func.value)
+            ):
+                self._emit(
+                    node.lineno,
+                    "hardcoded_server_dispatch",
+                    (
+                        "hardcoded_server_dispatch: self._bridges.get(...) "
+                        "lookup -- route MCP dispatch through the "
+                        "catalog-aware _bridge_for() instead of a static "
+                        "server map"
+                    ),
+                )
+
+    def _check_unsanitized_server_ingest(self, tree: ast.Module) -> None:
+        """Rule 79: unsanitized_server_ingest -- a function under
+        ``platform/mcp/**`` projects an MCP tool description into a
+        prompt-facing dict without sanitizing it.
+
+        RFC-11 zero-trust: an MCP server controls its own tool
+        descriptions, so the compact projection
+        (:func:`McpClient.compact_tool_spec`) strips prompt-injection
+        patterns via ``sanitize_input`` before the text lands in an agent
+        prompt (tool-poisoning defense, CVE-2025-54136 class). A NEW
+        description projection that truncates a ``"description"`` value
+        (the ``[:N]`` cap the prompt builder expects) without any
+        ``sanitize*`` call in the same function reopens that hole.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if not _MCP_TRANSPORT_PATTERN.search(normalized):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            refs_description = False
+            refs_params = False
+            has_truncation = False
+            has_sanitize = False
+            for inner in ast.walk(node):
+                if isinstance(inner, ast.Constant):
+                    # ``"params"`` is the output key unique to the tool-
+                    # SCHEMA projection (compact_tool_spec's prompt-builder
+                    # shape ``{name, description, params, required}``); it
+                    # separates that projection from a response adapter or
+                    # an operator health-probe that merely renders a
+                    # ``description`` field.
+                    if inner.value == "description":
+                        refs_description = True
+                    elif inner.value == "params":
+                        refs_params = True
+                elif isinstance(inner, ast.Subscript) and isinstance(
+                    inner.slice, ast.Slice,
+                ):
+                    has_truncation = True
+                elif isinstance(inner, ast.Call):
+                    tail = None
+                    if isinstance(inner.func, ast.Name):
+                        tail = inner.func.id
+                    elif isinstance(inner.func, ast.Attribute):
+                        tail = inner.func.attr
+                    if tail is not None and tail.startswith("sanitize"):
+                        has_sanitize = True
+            if (
+                refs_description
+                and refs_params
+                and has_truncation
+                and not has_sanitize
+            ):
+                self._emit(
+                    node.lineno,
+                    "unsanitized_server_ingest",
+                    (
+                        f"unsanitized_server_ingest: {node.name!r} projects an "
+                        "MCP tool 'description' into a truncated prompt-facing "
+                        "value without a sanitize_input call -- an MCP server "
+                        "controls its tool descriptions, so the projection "
+                        "MUST strip prompt-injection patterns before the text "
+                        "reaches an agent prompt"
+                    ),
+                )
 
 class HonestyAuditor:
     """Audit one or more Python source files for structural dishonesty.
@@ -1726,13 +6054,27 @@ class HonestyAuditor:
         module_id = _owning_module_id(str(path))
         if module_id is not None:
             visitor._check_import_boundary(tree, module_id)
+            visitor._check_hoisted_enum_redeclared(tree, module_id)
+            visitor._check_unnamed_derived_constraint(tree, module_id)
+            visitor._check_shadowed_platform_base(tree, module_id)
+            visitor._check_service_copy_of_platform(tree)
+            visitor._check_workflow_state_copy_of_platform(tree)
+            visitor._check_lifecycle_binding_copy_of_platform(tree)
+            visitor._check_cost_read_stored_actual(tree, module_id)
+            visitor._check_lifecycle_handler_bypass(tree, module_id)
+            visitor._check_agent_primitive_reimplementation(tree)
+            visitor._check_agent_llm_chat_bypass(tree)
+            visitor._check_agent_env_read(tree)
         if _is_boundary_guarded_file(str(path)):
             visitor._check_api_imports_modules(tree)
+            visitor._check_platform_names_module(tree)
         if _is_module_file(str(path)):
             visitor._check_module_session_scope_import(tree)
             visitor._check_asyncio_in_module(tree)
             visitor._check_http_client_in_module(tree)
             visitor._check_direct_db_in_module(tree)
+            visitor._check_private_platform_import(tree)
+            visitor._check_raw_sql_platform_tables(tree)
         # Rules 19 and 20 apply to all router files (api/ and module routers alike)
         visitor._check_response_model_dict(tree)
         visitor._check_bare_dict_return_endpoint(tree)
@@ -1749,6 +6091,75 @@ class HonestyAuditor:
         visitor._check_placeholder_return(tree)
         visitor._check_log_format_concat(tree)
         visitor._check_broad_exception_catch(tree)
+        visitor._check_config_schema_base(tree)
+        visitor._check_module_prefix_in_tool_name(tree)
+        visitor._check_platform_owns_event_vocabulary(tree)
+        # Rules 50-51: RFC-13 static-graph + ledger-encapsulation invariants
+        # (apply to all Python source files; ledger rule self-exempts).
+        visitor._check_static_node_mutation(tree)
+        visitor._check_ledger_write_encapsulation(tree)
+        # Rules 52-54: RFC-07 fail-closed posture, infra-death gating,
+        # heal-writes-journal. Every file is in scope; each rule
+        # self-exempts the files that would otherwise trip themselves
+        # by owning the primitives the rule locks in.
+        visitor._check_fail_open_recovery_path(tree)
+        visitor._check_close_without_infra_classification(tree)
+        visitor._check_heal_without_journal(tree)
+        # Rules 55-63: RFC-08 self-improvement, RFC-09 prompt registry,
+        # RFC-10 lifecycle. Each rule self-exempts the files that OWN
+        # the primitive it locks in (ExperienceWriter, PromptVersionStore,
+        # AgentLifecycleController, EvalRunner).
+        visitor._check_ungated_self_improvement_write(tree)
+        visitor._check_self_labeled_reward(tree)
+        visitor._check_unversioned_config_promotion(tree)
+        # Rule 73: structural_self_modification -- the RFC-08 shape-level
+        # sibling of rules 55-57. Self-scopes to platform/eval/** plus the
+        # specific proposer files in platform/agents/**, so the dispatch
+        # site is unconditional (the workflow / engine layer is never in
+        # scope and is not flagged by an unconditional call).
+        visitor._check_structural_self_modification(tree)
+        visitor._check_inline_prompt_literal(tree)
+        visitor._check_untagged_llm_call(tree)
+        visitor._check_unaudited_alias_flip(tree)
+        # Rule 74: unpinned_investigation_prompt -- the RFC-09 4th
+        # guardrail. Self-scopes to agent-runtime files, so the dispatch
+        # site is unconditional.
+        visitor._check_unpinned_investigation_prompt(tree)
+        visitor._check_promotion_without_gate(tree)
+        visitor._check_untransitioned_stage_change(tree)
+        visitor._check_canary_below_min_sample(tree)
+        # Rule 75: adlc_structural_change -- the RFC-10 4th ADLC
+        # guardrail. Self-scopes to platform/lifecycle/**, so the
+        # dispatch site is unconditional (every other tree is out
+        # of scope and is not flagged by an unconditional call).
+        visitor._check_adlc_structural_change(tree)
+        # Rules 76-79: RFC-11 Tier C MCP-unification guardrails. Each
+        # rule self-scopes (76 + 79 to platform/mcp/**, 77 + 78 to
+        # **/agents/**), so the dispatch site is unconditional.
+        visitor._check_bespoke_mcp_bridge(tree)
+        visitor._check_static_server_catalog(tree)
+        visitor._check_hardcoded_server_dispatch(tree)
+        visitor._check_unsanitized_server_ingest(tree)
+        # Rules 64-67: RFC-12 knowledge-base integrity + retrieval gate.
+        # Every file is in scope; each rule self-exempts or scopes to the
+        # surface it locks in.
+        visitor._check_second_embedding_path(tree)
+        visitor._check_vector_without_provenance(tree)
+        visitor._check_retrieval_without_gate(tree)
+        visitor._check_unsanitized_retrieved_content(tree)
+        # Rule 68: content_slice_truncation -- no arbitrary [:N] trim on
+        # stored/returned knowledge data (flag-then-whitelist).
+        visitor._check_content_slice_truncation(tree)
+        # Rules 70-71: RFC-04 platform/module boundary closure.
+        # Each rule self-scopes (rule 70 to src/aila/platform/**, rule 71
+        # to modules/*/services/**), so the dispatch site is unconditional.
+        visitor._check_mcp_catalog_placement(tree)
+        visitor._check_service_env_read(tree)
+        # Rule 72: RFC-05 crit 6 -- the platform reasoning surface must
+        # not hard-code a module-owned strategy family. Self-scopes to
+        # src/aila/platform/** (with tests/ exempt), so the dispatch
+        # site is unconditional.
+        visitor._check_platform_hardcodes_strategy_family(tree)
         return visitor.findings
 
     def audit_directory(self, directory: Path) -> list[Finding]:

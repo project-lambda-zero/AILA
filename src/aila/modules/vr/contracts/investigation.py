@@ -17,8 +17,11 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from aila.platform.contracts.enums import InvestigationPauseReason, InvestigationStatus
 
 __all__ = [
     "InvestigationKind",
@@ -33,12 +36,14 @@ class InvestigationKind(StrEnum):
     """What kind of investigation this is.
 
     DISCOVERY/VARIANT_HUNT/TRIAGE/N_DAY/AUDIT drive default strategy +
-    budget through ``_KIND_DEFAULT_STRATEGY``. MASVS_AUDIT is a
-    batch-orchestration tag carried only by the parent investigation in
-    a MASVS audit -- its children are regular ``AUDIT`` investigations
-    that run the standard vuln_researcher dispatch unchanged. The
-    parent's ``strategy_family`` is set explicitly by the MASVS
-    dispatcher; it never resolves through the default-strategy map.
+    budget through ``_KIND_DEFAULT_STRATEGY``. MASVS_AUDIT and
+    APK_STATIC_AUDIT are batch-orchestration tags carried only by the
+    parent investigation in an audit batch -- their children are regular
+    ``AUDIT`` investigations that run the standard vuln_researcher
+    dispatch unchanged. The parent's ``strategy_family`` is set
+    explicitly by the dispatcher; it never resolves through the
+    default-strategy map. Both batch kinds are reconciled by the same
+    ``sweep_masvs_audit_parents`` cron (kind-agnostic roll-up + refill).
     """
 
     DISCOVERY = "discovery"
@@ -47,32 +52,7 @@ class InvestigationKind(StrEnum):
     N_DAY = "n_day"
     AUDIT = "audit"
     MASVS_AUDIT = "masvs_audit"
-
-
-class InvestigationStatus(StrEnum):
-    """Lifecycle states for an investigation."""
-
-    CREATED = "created"
-    RUNNING = "running"
-    PAUSED = "paused"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    ABANDONED = "abandoned"
-
-
-class InvestigationPauseReason(StrEnum):
-    """Why an investigation entered the PAUSED state.
-
-    Used by the resumer worker (M3.R-6) to decide whether to auto-resume
-    (e.g. awaiting_campaign once the campaign finishes) or wait for
-    operator action.
-    """
-
-    OPERATOR = "operator"
-    LOW_CONFIDENCE = "low_confidence"
-    COST_BUDGET = "cost_budget"
-    AWAITING_CAMPAIGN = "awaiting_campaign"
-    AWAITING_MCP = "awaiting_mcp"
+    APK_STATIC_AUDIT = "apk_static_audit"
 
 
 class VRInvestigationCreate(BaseModel):
@@ -142,6 +122,7 @@ class VRInvestigationSummary(BaseModel):
     primary_outcome_kind: str | None = None
     primary_outcome_confidence: str | None = None
     primary_outcome_verdict_head: str | None = None
+    primary_outcome_polarity: Literal["finding", "no_finding", "inconclusive"] | None = None
     verifier_verdict: str | None = None
     verifier_confidence: float | None = None
     linked_campaign_ids: list[str] = Field(default_factory=list)

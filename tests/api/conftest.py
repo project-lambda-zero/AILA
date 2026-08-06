@@ -40,23 +40,23 @@ def _utc_now() -> datetime:
 
 @pytest_asyncio.fixture(scope="session")
 async def _session_async_engine() -> AsyncGenerator[object, None]:
-    """Session-scoped async engine: create tables once, shared across all tests.
+    """Session-scoped async engine: bootstrap the aila_test schema once.
 
-    Imports ALL model modules so SQLModel.metadata is complete including
-    TSVECTOR and pgvector columns (both supported natively by PostgreSQL).
+    Bootstrap goes through ``tests/_db_bootstrap.py`` which mirrors
+    ``scripts/db_init.py``: drop the ``public`` schema, ``create_all`` the
+    current models, then ``alembic stamp head``. That closes the #62 drift
+    channel by making the test DB carry the same ``alembic_version`` row a
+    fresh production DB gets, and by loading every ``table=True`` module
+    (including the platform-owned ones outside ``aila.storage.db_models``)
+    before ``create_all`` runs.
     """
-    # Import all model modules to populate SQLModel.metadata
-    import aila.modules.vr.db_models  # noqa: F401
-    import aila.modules.vulnerability.db_models  # noqa: F401
     import aila.storage.database as _db_module
-    import aila.storage.db_models  # noqa: F401
+
+    from tests._db_bootstrap import bootstrap_test_database
+
+    bootstrap_test_database(TEST_DB_URL)
 
     engine = create_async_engine(TEST_DB_URL, echo=False, pool_pre_ping=True)
-
-    # Drop and recreate all tables to pick up schema changes (e.g., new team_id columns)
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.drop_all)
-        await conn.run_sync(SQLModel.metadata.create_all)
 
     # Register in module-level caches for the duration of the session
     with _db_module._ENGINE_LOCK:
@@ -282,7 +282,8 @@ async def seeded_run(test_db):
         action_id="vulnerability.analyze",
         module_id="vulnerability",
         status="completed",
-        route_json='{"target": "web01"}',
+        # #45: route_json is JSONB; SQLAlchemy owns dict<->jsonb serialization.
+        route_json={"target": "web01"},
         created_at=utc_now(),
         completed_at=utc_now(),
     )

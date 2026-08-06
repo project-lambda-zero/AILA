@@ -34,7 +34,7 @@ from aila.modules.vr.contracts.cve import (
     VRCVERecordCreate,
 )
 from aila.modules.vr.db_models.cve import VRCVERecord
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.platform.services.knowledge import KnowledgeService
 from aila.platform.uow import UnitOfWork
 
@@ -297,6 +297,8 @@ class CVEService:
             metadata=merged_metadata,
             dedup_key=existing_metadata.get("target_signature")
             or existing_metadata.get("dedup_key"),
+            extract_entities=True,
+            link_neighbors=True,
         )
 
     async def get(self, cve_id: str) -> CVERecordSummary | None:

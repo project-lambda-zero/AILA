@@ -34,12 +34,22 @@ schema. Hard rules enforced by the system prompt:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from aila.platform.llm.correlation import (
+    correlation_scope,
+    current_join_keys,
+    current_prompt_version,
+)
+from aila.platform.llm.sanitize import sanitize_input
+from aila.platform.llm.untrusted import sanitize_untrusted
+from aila.platform.prompts import PromptRegistry
 from aila.platform.services.factory import ServiceFactory
 
 __all__ = [
@@ -49,7 +59,34 @@ __all__ = [
     "ScopeComponent",
 ]
 
+_PROMPT_DIR = Path(__file__).parent / "prompts"
+_PROMPT_REGISTRY = PromptRegistry(
+    _PROMPT_DIR,
+    module="vr",
+    fallback_base="system_report_writer.md",
+)
+
 _log = logging.getLogger(__name__)
+
+
+# Fence source label used when wrapping the rendered facts block. Kept
+# module-level so tests can reference the exact string without pinning
+# behaviour to a substring.
+_FACTS_FENCE_SOURCE = "vr:writer:investigation-facts"
+
+
+def _s(value: object, cap: int | None = None) -> str:
+    """Strip known prompt-injection patterns from an untrusted fact value.
+
+    Mirrors ``narrative_agent._render_narrative_prompt`` -- every dynamic
+    string embedded into the writer prompt is passed through
+    :func:`sanitize_input` first so patterns such as ``ignore previous
+    instructions``, role prefixes, or delimiter injections that arrived
+    with the fact data cannot re-steer the writer LLM. Optional ``cap``
+    truncates after stripping so pre-existing byte budgets stay honoured.
+    """
+    cleaned = sanitize_input(str(value or ""))
+    return cleaned if cap is None else cleaned[:cap]
 
 
 # ── Severity matrix (5-point likelihood × impact) ────────────────────────────────
@@ -242,14 +279,28 @@ class ReportWriter:
 
     async def write(self, facts: dict[str, Any]) -> ReportContent:
         """Produce a ReportContent from a structured facts dict."""
-        response = await self._services.llm_client.chat_structured(
-            task_type=self._TASK_TYPE,
-            messages=[
-                {"role": "system", "content": self._system_prompt()},
-                {"role": "user", "content": self._render_facts(facts)},
-            ],
-            model_class=ReportContent,
-        )
+        system_prompt = self._system_prompt()
+        # RFC-09 criterion 2: stamp the resolved prompt's content hash so
+        # the LLMCostRecord + AuditSealRecord written under this
+        # chat_structured attribute back to the exact prompt template
+        # that produced this report. File-backed .md so ``prompt_version``
+        # is None unless a caller is already inside a pinned scope; the
+        # hash alone closes the (cost, prompt) join for this call.
+        prompt_hash = hashlib.sha256(system_prompt.encode("utf-8")).hexdigest()
+        _inv, _br, _turn = current_join_keys()
+        with correlation_scope(
+            investigation_id=_inv, branch_id=_br, turn_number=_turn,
+            prompt_content_hash=prompt_hash,
+            prompt_version=current_prompt_version(),
+        ):
+            response = await self._services.llm_client.chat_structured(
+                task_type=self._TASK_TYPE,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": self._render_facts(facts)},
+                ],
+                model_class=ReportContent,
+            )
         if response.disabled:
             raise RuntimeError("LLM kill-switch active -- cannot generate report")
         content = ReportContent.model_validate(json.loads(response.content))
@@ -273,78 +324,39 @@ class ReportWriter:
 
     @staticmethod
     def _system_prompt() -> str:
-        return (
-            "You are a senior security report writer producing a "
-            "industry-standard third-party audit style audit "
-            "report. Output is a strict JSON object matching the "
-            "ReportContent schema. No prose outside the JSON.\n\n"
-            "Structure discipline:\n"
-            "- Each finding is its own FindingSection with id "
-            "(VR-01, VR-02, ...), uppercase title, severity, "
-            "likelihood + impact (1-5 each), description, optional "
-            "proof_of_concept, code_location, and recommendation.\n"
-            "- Sort findings by severity descending. Do not group "
-            "or collapse findings; each variant child is a separate "
-            "FindingSection.\n"
-            "- code_location must be VERBATIM code from the "
-            "affected_components / vulnerable_code_excerpts the "
-            "agent already pulled. Do not rewrite. Include a "
-            "comment line at the top of the snippet with the file "
-            "path and line range.\n"
-            "- proof_of_concept is a small runnable snippet (test "
-            "function, curl command, Python script). When the agent "
-            "supplied a PoC in poc_drafts, USE IT. When no PoC was "
-            "supplied, leave proof_of_concept empty -- the renderer "
-            "will skip the section.\n"
-            "- recommendation includes a corrected code snippet "
-            "inline when the fix is small. End each recommendation "
-            "with one sentence stating the underlying principle. "
-            "EVERY code snippet in `description`, `proof_of_concept`, "
-            "`code_location`, and `recommendation` MUST be wrapped in "
-            "a Markdown fenced block with an explicit language tag "
-            "(```c, ```python, ```bash, ```javascript). The renderer "
-            "applies pygments syntax highlighting only to fenced "
-            "blocks; unfenced code renders as flat prose and loses "
-            "all visual structure.\n"
-            "- likelihood + impact are honest 1-5 scores. Severity "
-            "derives from the sum (10=CRITICAL, 8-9=HIGH, "
-            "6-7=MEDIUM, 4-5=LOW, 1-3=INFORMATIONAL). The server "
-            "re-derives severity from your scores; if you get the "
-            "label wrong but the scores right we'll fix it.\n\n"
-            "Content discipline:\n"
-            "- DO NOT invent functions, files, line numbers, or "
-            "behaviour not present in the facts. If a section has "
-            "no input, write 'Not established by this investigation' "
-            "rather than fabricating.\n"
-            "- Introduction + audit_summary stay non-technical "
-            "(audit-committee level). Reserve all jargon for the "
-            "per-finding sections.\n"
-            "- test_approach must cite the actual tools used "
-            "(audit-mcp, IDA, fuzzing, LLM reasoning) per the "
-            "investigation's tool_call_summary.\n"
-            "- Pull every confirmed finding into the findings "
-            "list -- primary + every variant_hunt child finding. "
-            "Empty findings list is fine when nothing was confirmed."
-        )
+        """Return the report writer system prompt from the registry.
+
+        RFC-09 criterion 1: body lives in ``prompts/system_report_writer.md``
+        resolved via :class:`PromptRegistry` so cost / seal rows carry
+        the resolved ``prompt_content_hash``.
+        """
+        return _PROMPT_REGISTRY.load("report_writer")
 
     @staticmethod
     def _render_facts(facts: dict[str, Any]) -> str:
         """Render the facts dict into the writer's user prompt.
 
         Sections are clearly labelled so the writer can map them
-        onto the output schema without guessing.
+        onto the output schema without guessing. Every dynamic value
+        is first stripped by :func:`sanitize_input` (mirrors
+        ``narrative_agent._render_narrative_prompt``) and the whole
+        rendered block is then wrapped in a ``sanitize_untrusted``
+        fence so the writer LLM knows the payload is quoted data,
+        not instructions -- see design ``.run/designs/DESIGN_injection_evidence.md``
+        #43-4.
         """
         out: list[str] = ["# Investigation facts\n"]
-        out.append(f"Title: {facts.get('investigation_title') or '(untitled)'}")
+        title = _s(facts.get("investigation_title")) or "(untitled)"
+        out.append(f"Title: {title}")
         if facts.get("cve_id"):
-            out.append(f"CVE: {facts['cve_id']}")
-        out.append(f"Target kind: {facts.get('target_kind') or 'unknown'}")
-        out.append(f"Target name: {facts.get('target_display') or '(unknown)'}")
+            out.append(f"CVE: {_s(facts['cve_id'])}")
+        out.append(f"Target kind: {_s(facts.get('target_kind')) or 'unknown'}")
+        out.append(f"Target name: {_s(facts.get('target_display')) or '(unknown)'}")
         if facts.get("target_repo"):
-            out.append(f"Target repo: {facts['target_repo']}")
+            out.append(f"Target repo: {_s(facts['target_repo'])}")
         if facts.get("target_ref"):
-            out.append(f"Target ref: {facts['target_ref']}")
-        out.append(f"Final confidence: {facts.get('confidence') or 'unknown'}")
+            out.append(f"Target ref: {_s(facts['target_ref'])}")
+        out.append(f"Final confidence: {_s(facts.get('confidence')) or 'unknown'}")
         out.append("")
 
         # Multi-persona deliberation panel verdicts. These are the
@@ -362,10 +374,10 @@ class ReportWriter:
             )
             out.append("")
             for v in panel_verdicts:
-                persona = (v.get("persona_voice") or "?").upper()
-                kind = v.get("outcome_kind") or "?"
-                conf = v.get("confidence") or "?"
-                ans = (v.get("answer") or "").strip()
+                persona = _s(v.get("persona_voice") or "?").upper()
+                kind = _s(v.get("outcome_kind") or "?")
+                conf = _s(v.get("confidence") or "?")
+                ans = _s((v.get("answer") or "").strip())
                 out.append(f"## {persona} -- {kind} (confidence: {conf})")
                 out.append(ans or "(no answer body)")
                 out.append("")
@@ -383,14 +395,15 @@ class ReportWriter:
         meta = facts.get("audit_metadata") or {}
         if meta.get("commit_hash"):
             out.append("# Audit pinning")
-            out.append(f"Audited commit: {meta['commit_hash']}")
+            out.append(f"Audited commit: {_s(meta['commit_hash'])}")
             if meta.get("git_describe"):
-                out.append(f"Version (describe): {meta['git_describe']}")
+                out.append(f"Version (describe): {_s(meta['git_describe'])}")
             if meta.get("commit_date"):
-                out.append(f"Commit date: {meta['commit_date']}")
+                out.append(f"Commit date: {_s(meta['commit_date'])}")
             tags = meta.get("tags_containing") or []
             if tags:
-                out.append(f"Tags containing this commit: {', '.join(tags[:10])}")
+                sanitized_tags = [_s(t) for t in tags[:10]]
+                out.append(f"Tags containing this commit: {', '.join(sanitized_tags)}")
             if meta.get("audit_duration_seconds") is not None:
                 out.append(f"Audit duration: {meta['audit_duration_seconds']}s")
             out.append("")
@@ -401,15 +414,18 @@ class ReportWriter:
             for entry in cve_intel:
                 if not isinstance(entry, dict):
                     continue
-                out.append(f"- CVE: {entry.get('cve_id', '?')}")
+                out.append(f"- CVE: {_s(entry.get('cve_id', '?'))}")
                 if entry.get("description"):
-                    out.append(f"  Description: {entry['description'][:600]}")
+                    out.append(f"  Description: {_s(entry['description'], 600)}")
                 if entry.get("cvss_score"):
-                    out.append(f"  CVSS: {entry.get('cvss_score')} ({entry.get('base_severity', '?')})")
+                    out.append(
+                        f"  CVSS: {_s(entry.get('cvss_score'))} "
+                        f"({_s(entry.get('base_severity', '?'))})",
+                    )
                 if entry.get("kev_listed"):
                     out.append("  KEV: listed (actively exploited per CISA)")
                 if entry.get("nvd_url"):
-                    out.append(f"  NVD: {entry['nvd_url']}")
+                    out.append(f"  NVD: {_s(entry['nvd_url'])}")
             out.append("")
 
         excerpts = facts.get("vulnerable_code_excerpts") or []
@@ -419,12 +435,12 @@ class ReportWriter:
                 if not isinstance(ex, dict):
                     continue
                 out.append(
-                    f"\n## {ex.get('function', '?')} "
-                    f"@ {ex.get('file', '?')}:{ex.get('start_line', '?')}"
-                    f"-{ex.get('end_line', '?')}",
+                    f"\n## {_s(ex.get('function', '?'))} "
+                    f"@ {_s(ex.get('file', '?'))}:{_s(ex.get('start_line', '?'))}"
+                    f"-{_s(ex.get('end_line', '?'))}",
                 )
-                out.append(f"```{ex.get('language', 'text')}")
-                out.append(ex.get("code", "")[:4000])
+                out.append(f"```{_s(ex.get('language', 'text'))}")
+                out.append(_s(ex.get("code", ""), 4000))
                 out.append("```")
             out.append("")
 
@@ -434,11 +450,11 @@ class ReportWriter:
             for h in hypotheses:
                 if not isinstance(h, dict):
                     continue
-                out.append(f"- [{h.get('id', '?')}] {h.get('claim', '')}")
+                out.append(f"- [{_s(h.get('id', '?'))}] {_s(h.get('claim', ''))}")
                 if h.get("why_plausible"):
-                    out.append(f"  Why: {h['why_plausible']}")
+                    out.append(f"  Why: {_s(h['why_plausible'])}")
                 if h.get("kill_criterion"):
-                    out.append(f"  Kill criterion: {h['kill_criterion']}")
+                    out.append(f"  Kill criterion: {_s(h['kill_criterion'])}")
             out.append("")
 
         rejected = facts.get("rejected_hypotheses") or []
@@ -447,22 +463,22 @@ class ReportWriter:
             for r in rejected:
                 if not isinstance(r, dict):
                     continue
-                out.append(f"- [{r.get('id', '?')}] {r.get('claim', '')[:120]}")
-                out.append(f"  Reason: {r.get('reason', '')[:200]}")
+                out.append(f"- [{_s(r.get('id', '?'))}] {_s(r.get('claim', ''), 120)}")
+                out.append(f"  Reason: {_s(r.get('reason', ''), 200)}")
             out.append("")
 
         insights = facts.get("key_insights") or []
         if insights:
             out.append("# Key insights captured during the investigation")
             for ins in insights:
-                out.append(f"- {ins}")
+                out.append(f"- {_s(ins)}")
             out.append("")
 
         tool_calls = facts.get("tool_call_summary") or []
         if tool_calls:
             out.append("# Tool call trail (evidence chain)")
             for line in tool_calls[:50]:
-                out.append(f"- {line}")
+                out.append(f"- {_s(line)}")
             if len(tool_calls) > 50:
                 out.append(f"  ... and {len(tool_calls) - 50} more calls")
             out.append("")
@@ -502,10 +518,10 @@ class ReportWriter:
                     continue
                 out.append(
                     f"## Submission [{i}/{len(outcome_trail)}] -- "
-                    f"{(o.get('created_at') or '')[:19]} "
-                    f"({o.get('kind', '?')}, conf={o.get('confidence', '?')})",
+                    f"{_s((o.get('created_at') or '')[:19])} "
+                    f"({_s(o.get('kind', '?'))}, conf={_s(o.get('confidence', '?'))})",
                 )
-                out.append((o.get("answer") or "")[:6000])
+                out.append(_s(o.get("answer") or "", 6000))
                 out.append("")
             out.append("")
 
@@ -515,22 +531,28 @@ class ReportWriter:
             for v in variants:
                 if not isinstance(v, dict):
                     continue
-                out.append(f"## Variant: {v.get('title', '?')} (status={v.get('status', '?')})")
+                out.append(
+                    f"## Variant: {_s(v.get('title', '?'))} "
+                    f"(status={_s(v.get('status', '?'))})",
+                )
                 if v.get("question"):
-                    out.append(f"Question: {v['question']}")
+                    out.append(f"Question: {_s(v['question'])}")
                 if v.get("terminal_answer"):
-                    out.append(f"Answer: {v['terminal_answer']}")
+                    out.append(f"Answer: {_s(v['terminal_answer'])}")
                 for f in v.get("findings") or []:
                     if not isinstance(f, dict):
                         continue
                     out.append(
-                        f"- Finding: {f.get('crash_type', '?')} in "
-                        f"`{f.get('vulnerable_function', '?')}`",
+                        f"- Finding: {_s(f.get('crash_type', '?'))} in "
+                        f"`{_s(f.get('vulnerable_function', '?'))}`",
                     )
                     if f.get("root_cause"):
-                        out.append(f"  Root cause: {f['root_cause']}")
+                        out.append(f"  Root cause: {_s(f['root_cause'])}")
                     if f.get("poc_code"):
-                        out.append(f"  PoC available: {f.get('poc_language', '?')} ({len(f['poc_code'])} chars)")
+                        out.append(
+                            f"  PoC available: {_s(f.get('poc_language', '?'))} "
+                            f"({len(f['poc_code'])} chars)",
+                        )
             out.append("")
 
         pocs = facts.get("poc_drafts") or []
@@ -540,30 +562,40 @@ class ReportWriter:
                 if not isinstance(p, dict):
                     continue
                 runnable = "RUNNABLE" if p.get("can_run") else "SKELETON"
-                out.append(f"## {p.get('title', '(untitled)')} [{runnable}] ({p.get('language', '?')})")
+                out.append(
+                    f"## {_s(p.get('title', '(untitled)'))} [{runnable}] "
+                    f"({_s(p.get('language', '?'))})",
+                )
                 if p.get("expected_outcome"):
-                    out.append(f"Expected: {p['expected_outcome']}")
+                    out.append(f"Expected: {_s(p['expected_outcome'])}")
                 if p.get("build_command"):
-                    out.append(f"Build: {p['build_command']}")
+                    out.append(f"Build: {_s(p['build_command'])}")
                 if p.get("run_command"):
-                    out.append(f"Run: {p['run_command']}")
+                    out.append(f"Run: {_s(p['run_command'])}")
                 if p.get("code"):
-                    out.append("```" + str(p.get("language") or ""))
-                    out.append(p["code"][:4000])
+                    out.append("```" + _s(p.get("language") or ""))
+                    out.append(_s(p["code"], 4000))
                     out.append("```")
             out.append("")
 
         if facts.get("final_answer"):
             out.append("# Final submitted answer (authoritative)")
-            out.append(str(facts["final_answer"]))
+            out.append(_s(facts["final_answer"]))
             out.append("")
 
         if facts.get("final_reasoning"):
             out.append("# Final reasoning chain")
-            out.append(str(facts["final_reasoning"])[:8000])
+            out.append(_s(facts["final_reasoning"], 8000))
             out.append("")
 
-        out.append(
+        rendered = "\n".join(out)
+        fenced = sanitize_untrusted(rendered, source=_FACTS_FENCE_SOURCE)
+        # Writer-directive tail sits OUTSIDE the untrusted fence so the
+        # model receives its schema instructions as trusted text. The
+        # system prompt's Trust boundary section teaches the LLM how to
+        # read the fence tag.
+        return (
+            f"{fenced}\n\n"
             "# Instruction\n\n"
             "Produce a ReportContent JSON object per the schema. "
             "Follow the standard audit-report structure exactly: one "
@@ -573,4 +605,3 @@ class ReportWriter:
             "proof_of_concept (when supplied), and recommendation. "
             "Do not fabricate findings, file paths, or behaviour."
         )
-        return "\n".join(out)

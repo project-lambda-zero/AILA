@@ -714,6 +714,8 @@ All LLM configuration lives in the `platform` namespace of ConfigRegistry. Chang
 | `llm_default_temperature` | `0.0` | Default sampling temperature (deterministic). |
 | `llm_temperature_{task_type}` | *(unset)* | Per-task-type temperature override. |
 | `llm_max_tool_steps_{task_type}` | `0` | Max tool-calling loop iterations per task type. `0` = tool calling disabled. |
+| `llm_tool_timeout_s` | `300.0` | Default wall-clock ceiling (seconds) for a single tool-calling step. |
+| `llm_tool_timeout_s_{task_type}` | *(unset)* | Per-task-type per-tool timeout override (seconds). |
 
 ### Pipeline Step Toggling
 
@@ -721,12 +723,20 @@ All LLM configuration lives in the `platform` namespace of ConfigRegistry. Chang
 |-----|---------|-------------|
 | `llm_pipeline_{step}_{task_type}` | `true` | Enable/disable a pipeline step for a task type. Steps: `classify`, `validate`, `gate`, `seal`. |
 | `llm_pipeline_{step}_fail_mode_{task_type}` | `open` | Fail mode for a pipeline step. `"open"` = log and continue. `"closed"` = raise `LLMError`. |
+| `llm_pipeline_pre_call_steps_{task_type}` | *(unset)* | Comma-separated pre-call step-order override for a task type (e.g. `classify,validate`). |
+| `llm_pipeline_post_call_steps_{task_type}` | *(unset)* | Comma-separated post-call step-order override for a task type (e.g. `gate,seal`). |
 
 ### Classification
 
 | Key | Default | Description |
 |-----|---------|-------------|
 | `llm_pipeline_classify_restricted_behavior_{task_type}` | `fail` | RESTRICTED data behavior. `"fail"` = raise `ClassificationBlockedError`. `"redact"` = replace sensitive tokens with `[REDACTED-*]` tags and continue. |
+
+### Data Direction
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `llm_data_direction_{task_type}` | *(falls back to `data_direction_default`)* | Per-task-type data-direction constraint. Values: `inbound`, `local_only`, `bidirectional`. Used by the classify stage to reject calls that would send data in a forbidden direction. |
 
 ### Confidence Gating
 
@@ -752,6 +762,7 @@ All LLM configuration lives in the `platform` namespace of ConfigRegistry. Chang
 | Key | Default | Description |
 |-----|---------|-------------|
 | `llm_budget_max_total_tokens_{task_type}` | `0` | Max total tokens per run for a task type. `0` = unlimited (no enforcement). |
+| `llm_monthly_budget_usd_{team_id}` | *(unset)* | Per-team monthly spend ceiling in USD. Evaluated against the running sum of `LLMCostRecord.cost_usd` rows for the team over the current calendar month; a call that would cross the ceiling is refused before the API request. |
 
 ### Common operations
 

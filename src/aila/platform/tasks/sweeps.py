@@ -53,25 +53,28 @@ _PERIODIC_SWEEPS: dict[str, PeriodicSweep] = {}
 def register_periodic_sweep(name: str, sweep: PeriodicSweep) -> None:
     """Register a periodic sweep under ``name``.
 
-    Raises :class:`ValueError` if ``name`` is already registered. The
-    duplicate-registration check is the canary that catches the
-    double-import case (e.g. a module's ``__init__.py`` runs twice
-    in a test fixture). Tests that genuinely need to re-register
-    should clear the entry first.
+    Re-registering the SAME callable under the SAME name is idempotent (a
+    no-op): a module's ``__init__.py`` running twice in a test fixture, or the
+    same module reached through two import paths, is benign and must not crash
+    import-time registration. Registering a DIFFERENT callable under a name
+    already in use is a genuine collision and raises :class:`ValueError`.
     """
     if not name:
         raise ValueError(
             f"register_periodic_sweep: name must be a non-empty string, got {name!r}",
         )
-    if name in _PERIODIC_SWEEPS:
-        raise ValueError(
-            f"register_periodic_sweep: name {name!r} already registered "
-            f"to {_PERIODIC_SWEEPS[name]!r}; re-registration is a bug",
-        )
     if not callable(sweep):
         raise ValueError(
             f"register_periodic_sweep: sweep for {name!r} must be callable, "
             f"got {type(sweep).__name__}",
+        )
+    existing = _PERIODIC_SWEEPS.get(name)
+    if existing is not None:
+        if existing is sweep:
+            return
+        raise ValueError(
+            f"register_periodic_sweep: name {name!r} already registered to a "
+            f"different callable {existing!r}; a name collision across sweeps is a bug",
         )
     _PERIODIC_SWEEPS[name] = sweep
 

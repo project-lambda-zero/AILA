@@ -12,6 +12,13 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from aila.platform.contracts.enums import (
+    PatternConfidence,
+    PatternScope,
+    PatternStatus,
+    PatternTrustTier,
+)
+
 __all__ = [
     "PatternConfidence",
     "PatternKind",
@@ -31,38 +38,6 @@ class PatternKind(StrEnum):
     SEARCH_HEURISTIC = "search_heuristic"
     TOOL_RECIPE = "tool_recipe"
     TRIAGE_RULE = "triage_rule"
-
-
-class PatternStatus(StrEnum):
-    """Lifecycle states for a pattern (GA-43).
-
-    - DRAFT: just extracted, not reviewed by operator yet
-    - ACTIVE: operator approved; eligible for retrieval
-    - ARCHIVED: deprecated; not retrieved by engine
-    """
-
-    DRAFT = "draft"
-    ACTIVE = "active"
-    ARCHIVED = "archived"
-
-
-class PatternScope(StrEnum):
-    """Visibility scope. Widening requires explicit operator promotion."""
-
-    LOCAL = "local"          # visible only inside the originating investigation
-    WORKSPACE = "workspace"  # visible across investigations in same workspace
-    TEAM = "team"            # visible across workspaces within team
-    GLOBAL = "global"        # cross-team; admin-gated
-
-
-class PatternConfidence(StrEnum):
-    """Engine-rated confidence at extraction time."""
-
-    EXACT = "exact"
-    STRONG = "strong"
-    MEDIUM = "medium"
-    CAVEATED = "caveated"
-    UNKNOWN = "unknown"
 
 
 class VRPatternCreate(BaseModel):
@@ -105,6 +80,9 @@ class VRPatternCreate(BaseModel):
         description="Message / outcome IDs that demonstrate the pattern.",
     )
     scope: PatternScope = PatternScope.LOCAL
+    # RFC-08 memory-poisoning fields (mirror ``PatternCreateBase``).
+    trust_tier: PatternTrustTier = PatternTrustTier.UNREVIEWED
+    provenance: dict[str, Any] = Field(default_factory=dict)
 
 
 class VRPatternPatch(BaseModel):
@@ -147,3 +125,6 @@ class VRPatternSummary(BaseModel):
     last_used_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    # RFC-08 memory-poisoning fields (mirror ``PatternSummaryBase``).
+    trust_tier: PatternTrustTier = PatternTrustTier.UNREVIEWED
+    provenance: dict[str, Any] = Field(default_factory=dict)

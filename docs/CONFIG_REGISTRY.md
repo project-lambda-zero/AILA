@@ -225,6 +225,12 @@ The `platform` namespace is registered with `PlatformConfigSchema`. All fields:
 | `arq_max_tries` | int | `3` | Maximum retry attempts for failed jobs |
 | `arq_keep_result_s` | int | `3600` | Job result retention in Redis |
 | `progress_stream_maxlen` | int | `1000` | Max events per Redis progress stream |
+| `llm_default_model` | str | `antigravity/claude-opus-4-6-thinking` | Default LLM model id (provider/model) when no per-task override is set |
+| `llm_base_url` | str | `https://openrouter.ai/api/v1` | LLM provider API base URL |
+| `llm_default_max_tokens` | int | `4096` | Default max completion tokens |
+| `llm_default_temperature` | float | `0.0` | Default sampling temperature (deterministic) |
+| `llm_tool_timeout_s` | float | `300.0` | Wall-clock ceiling for a single tool-calling step |
+| `llm_kill_switch` | bool | `False` | Operator circuit breaker; short-circuits every LLM call when true |
 | `llm_pipeline_classify_default` | bool | `True` | LLM pipeline classify stage default-on |
 | `llm_pipeline_validate_default` | bool | `True` | LLM pipeline validate stage default-on |
 | `llm_pipeline_gate_default` | bool | `True` | LLM pipeline gate stage default-on |
@@ -240,11 +246,50 @@ The `platform` namespace is registered with `PlatformConfigSchema`. All fields:
 | `llm_human_consultant_hourly_rate` | float | `150.0` | USD/hr used for human-equivalent cost projections |
 | `data_posture_mode` | str | `"standard"` | `transparent` / `standard` / `paranoid` |
 | `data_direction_default` | str | `"bidirectional"` | `inbound` / `local_only` / `bidirectional` |
+| `knowledge_embedding_model` | str | `"bge-m3"` | Selects the KnowledgeService embedding provider: `bge-m3` (1024-dim, default) or `all-MiniLM-L6-v2` (384-dim, zero-padded to the 1024 column) |
 
 Per-task-type overrides land under namespaced keys (e.g.
 `llm_pipeline_classify_<task_type>`, `llm_pipeline_classify_fail_mode_<task_type>`,
 `llm_budget_max_total_tokens_<task_type>`) and are read through the same
 `platform` namespace.
+
+---
+
+## Dynamic key families
+
+Some configuration is per-task-type or per-team, so the key space is open (for
+example `llm_model_{task_type}` or `llm_monthly_budget_usd_{team_id}`) and
+cannot be enumerated as a fixed set of schema fields. A namespace schema
+declares typed dynamic-key families in a `__dynamic_families__` class
+attribute; each family carries a prefix, a `value_type`, and a default. When a
+key does not match an exact static field, ConfigRegistry resolves it to the
+longest-matching family, so the key is settable through `PUT /config` and cast
+on read exactly as a static field is. A key that matches no static field and
+no family is rejected by `set`.
+
+The `platform` namespace declares the following families:
+
+| Prefix | Type | Purpose |
+|--------|------|---------|
+| `llm_model_` | str | Per-task-type model id |
+| `llm_max_tokens_` | int | Per-task-type max output tokens |
+| `llm_temperature_` | float | Per-task-type sampling temperature |
+| `llm_max_tool_steps_` | int | Per-task-type tool-call loop cap |
+| `llm_tool_timeout_s_` | float | Per-task-type per-tool timeout (seconds) |
+| `llm_data_direction_` | str | Per-task-type data-direction constraint |
+| `llm_budget_max_total_tokens_` | int | Per-task-type token budget ceiling |
+| `llm_monthly_budget_usd_` | float | Per-team monthly budget ceiling (USD) |
+| `llm_pipeline_gate_high_threshold_` | float | Per-task-type HIGH-confidence gate threshold |
+| `llm_pipeline_gate_medium_threshold_` | float | Per-task-type MEDIUM-confidence gate threshold |
+| `llm_pipeline_gate_reject_threshold_` | float | Per-task-type REJECT-confidence gate threshold |
+| `llm_pipeline_gate_consensus_strategy_` | str | Per-task-type consensus strategy (`same_model_high_temp` or `cross_model`) |
+| `llm_pipeline_gate_consensus_model_` | str | Per-task-type consensus model id for `cross_model` |
+| `llm_pipeline_gate_consensus_retries_` | int | Per-task-type consensus retry count |
+| `llm_pipeline_verify_threshold_` | float | Per-task-type cross-model verification threshold |
+| `llm_pipeline_verify_model_` | str | Per-task-type verifier model id |
+| `llm_pipeline_pre_call_steps_` | str | Per-task-type pre-call pipeline step order (comma-separated) |
+| `llm_pipeline_post_call_steps_` | str | Per-task-type post-call pipeline step order (comma-separated) |
+| `llm_pipeline_` | str | Generic pipeline step enable / fail-mode override (bool or `open` / `closed`; callers coerce) |
 
 ---
 
@@ -277,6 +322,47 @@ Or via env var:
 ```bash
 export AILA_VULNERABILITY_SOME_FIELD=new_value
 ```
+
+### VR namespace (`vr`)
+
+Registered by the VR module via `VRConfigSchema`. All keys are settable via
+`PUT /config/vr/{key}` and read through ConfigRegistry.
+
+| Key | Type | Purpose |
+|-----|------|---------|
+| `llm_model` | str | LLM model id used by every VR agent (empty falls back to the platform default) |
+| `nday_max_turns` | int | Turn cap for the n-day researcher agent |
+| `nday_tool_time_seconds` | float | Per-tool timeout for the n-day researcher |
+| `poc_max_attempts` | int | Max PoC generation attempts per finding |
+| `poc_reliability_target` | str | Required PoC reliability class |
+| `poc_timeout_seconds` | float | Wall-clock ceiling for a single PoC run |
+| `poc_memory_limit_mb` | int | Memory ceiling for a single PoC run (MB) |
+| `ssh_command_timeout_seconds` | float | Timeout for individual SSH commands on the analysis host |
+| `audit_mcp_url` | str | Base URL for the audit-mcp indexer bridge |
+| `ida_headless_url` | str | Base URL for the ida-headless-mcp bridge |
+| `android_mcp_url` | str | Base URL for the android-mcp bridge |
+| `max_branches_per_investigation` | int | Hard cap on active branches per investigation |
+| `claim_verifier_auto_promote_floor` | float | Minimum verifier confidence to auto-promote a claim |
+| `investigation_total_turn_cap` | int | Aggregate turn ceiling across all branches of one investigation |
+| `zombie_task_heartbeat_min` | int | Minutes without a heartbeat before a running task is treated as zombie |
+| `cursor_cleanup_batch` | int | Rows per batch when the cursor reaper deletes crashed cursors |
+| `stale_branch_frozen_min` | int | Minutes without progress before a branch is marked `frozen` |
+| `stale_branch_halted_min` | int | Minutes without progress before a branch is marked `halted` |
+| `ingestion_poll_timeout_s` | float | Wall-clock ceiling for target-ingestion poll loops |
+
+### Forensics namespace (`forensics`)
+
+Registered by the forensics module via `ForensicsConfigSchema`. All keys are
+read through ConfigRegistry.
+
+| Key | Type | Purpose |
+|-----|------|---------|
+| `llm_model` | str | LLM model id for every forensics agent (empty falls back to the platform default) |
+| `ssh_command_timeout_seconds` | float | Timeout for individual SSH commands on the analyzer machine |
+| `script_execution_timeout_seconds` | float | Timeout for agent-generated script execution |
+| `collection_timeout_seconds` | float | Timeout for the full artifact collection pipeline |
+| `freeflow_max_attempts` | int | Max script-execution attempts per free-flow investigation |
+| `freeflow_max_cost_usd` | float | Hard per-investigation LLM spend ceiling in USD; `0.0` disables the ceiling |
 
 ---
 

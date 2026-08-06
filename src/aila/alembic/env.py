@@ -33,7 +33,13 @@ target_metadata = SQLModel.metadata
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False -- the default (True) silently disables
+    # every logger created before this call, including the application's
+    # ``aila.*`` loggers. When migrations run in-process (the test_db
+    # fixture, or any host that migrates before configuring logging), that
+    # dropped all subsequent aila log records. Keep alembic/sqlalchemy
+    # logger config without clobbering the app hierarchy.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 
 def _get_sync_url() -> str:

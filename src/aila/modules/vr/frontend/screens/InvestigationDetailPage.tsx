@@ -28,11 +28,19 @@ import { KpiTile } from "@/components/aila/KpiTile";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { OutcomeKindBadge, outcomeKindSeverity, outcomeKindLabel } from "../components/OutcomeKindBadge";
+import {
+  OutcomePolarityBadge,
+  outcomePolarity,
+} from "../components/OutcomePolarityBadge";
 import { DeleteButton } from "../components/DeleteButton";
 import { ExportReportButton } from "../components/ExportReportButton";
 import { ReenqueuePicker } from "../components/ReenqueuePicker";
 import { LiveDot } from "../components/LiveDot";
 import { SteeringDrawer } from "../components/SteeringDrawer";
+import {
+  VRNarrativeControls,
+  type InvestigationNarrative,
+} from "../components/VRNarrativeControls";
 import { TurnCard } from "../components/TurnCard";
 import { WorkflowStepper } from "../components/WorkflowStepper";
 import { HypothesisDetailRail } from "../components/HypothesisDetailRail";
@@ -78,6 +86,7 @@ const dispatchColor: Record<
   "info" | "low" | "medium" | "high" | "critical"
 > = {
   pending: "info",
+  claimed: "info",
   dispatched: "low",
   failed: "critical",
   skipped: "medium",
@@ -99,6 +108,7 @@ const STATUS_META: Record<
   completed: { color: "#8ec5ff", label: "Completed", pulse: false },
   failed:    { color: "#f0a8c7", label: "Failed",    pulse: false },
   abandoned: { color: "#9aa0a6", label: "Abandoned", pulse: false },
+  stalled:   { color: "#9aa0a6", label: "Stalled",   pulse: false },
 };
 
 const _BRANCH_STATUS_FALLBACK = { color: "#9aa0a6", label: "Unknown" };
@@ -139,6 +149,12 @@ const PERSONA_META: Partial<
   yuki:    { color: "#8ec5ff", bg: "color-mix(in srgb, #8ec5ff 16%, transparent)", initial: "Y", label: "Yuki"   },
   noor:    { color: "#f0c97a", bg: "color-mix(in srgb, #f0c97a 16%, transparent)", initial: "N", label: "Noor"   },
   wei:     { color: "#7bdfd3", bg: "color-mix(in srgb, #7bdfd3 16%, transparent)", initial: "W", label: "Wei"    },
+  // On-demand specialist agents (specialist_registry _BUILTINS "vr"):
+  // named panelists spawned when a case needs an expert eye.
+  snake:   { color: "#8faf6a", bg: "color-mix(in srgb, #8faf6a 16%, transparent)", initial: "S", label: "Snake"  },
+  jak:     { color: "#e0a86a", bg: "color-mix(in srgb, #e0a86a 16%, transparent)", initial: "J", label: "Jak"    },
+  kratos:  { color: "#d97a7a", bg: "color-mix(in srgb, #d97a7a 16%, transparent)", initial: "K", label: "Kratos" },
+  lara:    { color: "#c7a25c", bg: "color-mix(in srgb, #c7a25c 16%, transparent)", initial: "L", label: "Lara"   },
   default: { color: "#9aa0a6", bg: "color-mix(in srgb, #9aa0a6 16%, transparent)", initial: "?", label: "Branch" },
 };
 
@@ -907,6 +923,12 @@ export function InvestigationDetailPage() {
                 promoteMut={promoteMut}
               />
             )}
+            {primaryOutcome && (
+              <VRNarrativeControls
+                investigationId={invId}
+                narrative={readNarrative(primaryOutcome.payload)}
+              />
+            )}
             {otherOutcomes.length > 0 && (
               <ul className="space-y-1.5">
                 {otherOutcomes.map((o) => {
@@ -1323,7 +1345,7 @@ export function InvestigationDetailPage() {
 
 type OutcomeRowProps = {
   outcome: import("../types").VROutcomeSummary;
-  persona: PersonaVoice | null;
+  persona: PersonaVoice | string | null;
   invId: string;
   reverifyMut: ReturnType<typeof useReverifyInvestigation>;
   promoteMut: ReturnType<typeof usePromoteOutcomeToFinding>;
@@ -1333,6 +1355,37 @@ function readVerifier(payload: Record<string, unknown> | undefined) {
   return (payload?.verifier_report as
     | { verdict?: string; confidence?: number; summary?: string; counter_evidence?: string }
     | undefined) ?? undefined;
+}
+
+/** Extract the long-form narrative writeup from a canonical outcome
+ *  payload. The narrative task (`run_vr_narrative`) persists under
+ *  `payload.investigation_narrative` alongside `panel_summary`; a
+ *  body-less or missing entry means the operator has not generated
+ *  one yet. Returns `null` in that case so the controls render an
+ *  empty state. */
+function readNarrative(
+  payload: Record<string, unknown> | undefined,
+): InvestigationNarrative | null {
+  const n = payload?.investigation_narrative as
+    | {
+        title?: string;
+        body?: string;
+        chapter_outline?: string[];
+        tone_used?: string;
+        generated_at?: string;
+        narrative_words?: number;
+      }
+    | undefined;
+  if (!n || typeof n.body !== "string" || !n.body.trim()) return null;
+  return {
+    title: n.title ?? "(untitled writeup)",
+    body: n.body,
+    chapter_outline: Array.isArray(n.chapter_outline) ? n.chapter_outline : [],
+    tone_used: n.tone_used ?? "blog",
+    generated_at: n.generated_at ?? "",
+    narrative_words:
+      typeof n.narrative_words === "number" ? n.narrative_words : 0,
+  };
 }
 
 function VerifierBanner({ vr }: { vr: ReturnType<typeof readVerifier> }) {
@@ -1388,13 +1441,17 @@ function PrimaryOutcomeCard({
         borderColor: vr?.verdict ? `color-mix(in srgb, ${verdictColor} 40%, var(--color-border))` : "var(--color-accent)",
       }}
     >
-      {/* Crown ribbon at the top */}
+      {/* Crown ribbon at the top -- polarity sits next to the crown so it's
+       *  the first thing the operator sees before any prose. */}
       <div className="flex items-center justify-between gap-2 mb-3">
         <div className="inline-flex items-center gap-2">
           <Crown weight="fill" size={14} className="text-accent" />
           <span className="text-3xs font-mono uppercase tracking-cyber-sm text-accent">
             Primary · Synthesis
           </span>
+          <OutcomePolarityBadge
+            polarity={outcomePolarity(o.outcome_kind, o.payload)}
+          />
         </div>
         <AilaBadge
           severity={dispatchColor[o.dispatch_status] ?? "info"}
@@ -1532,6 +1589,9 @@ function CompactOutcomeRow({
           <PersonaAvatar voice={persona} size={18} />
         )}
         <span className="ml-auto inline-flex items-center gap-1.5 flex-shrink-0">
+          <OutcomePolarityBadge
+            polarity={outcomePolarity(o.outcome_kind, o.payload)}
+          />
           <span className="text-3xs font-mono text-text-muted uppercase tracking-wide">
             {humanConfidence(o.confidence)}
           </span>

@@ -15,26 +15,27 @@ from types import SimpleNamespace
 import pytest
 
 from aila.modules.vr.agents.vuln_researcher import (
+    _PROMPT_VERSION_STORE,
     HonestVulnResearcher,
     _applicable_servers_for_kind,
     _decision_to_message_payload,
-    _decode_case_state,
-    _encode_case_state,
     _fetch_tool_specs,
     _format_param,
     _load_prompt,
     _mcp_family_rule_for_kind,
     _outcome_payload,
+    _prompt_key,
     _render_available_tools_section,
     _render_operator_messages_section,
     _render_target_snapshot_section,
     _terminal_outcome_kind,
-    _to_outcome_confidence,
 )
 from aila.modules.vr.contracts import OutcomeConfidence, OutcomeKind, PayloadKind
-from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
-from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
-from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
+from aila.platform.agents.turn_helpers import (
+    decode_case_state,
+    encode_case_state,
+    to_outcome_confidence,
+)
 from aila.platform.contracts.reasoning import (
     EvidenceProvenance,
     Hypothesis,
@@ -43,6 +44,9 @@ from aila.platform.contracts.reasoning import (
     ReasoningTurnDecision,
     RejectedHypothesis,
 )
+from aila.platform.mcp.middleware.android import AndroidMcpMiddleware
+from aila.platform.mcp.middleware.audit import AuditMcpMiddleware
+from aila.platform.mcp.middleware.ida import IdaMiddleware
 
 
 class TestCaseStateEncoding:
@@ -53,20 +57,20 @@ class TestCaseStateEncoding:
             rejected=[RejectedHypothesis(id="h0", claim="old", reason="r")],
             observables={"k": "v"},
         )
-        encoded = _encode_case_state(original)
+        encoded = encode_case_state(original)
         assert isinstance(encoded, str)
-        restored = _decode_case_state(encoded)
+        restored = decode_case_state(encoded)
         assert restored == original
 
     def test_empty_decode(self) -> None:
-        assert _decode_case_state(None) == ReasoningCaseState()
-        assert _decode_case_state("") == ReasoningCaseState()
+        assert decode_case_state(None) == ReasoningCaseState()
+        assert decode_case_state("") == ReasoningCaseState()
 
     def test_invalid_json_decode_recovers(self) -> None:
-        assert _decode_case_state("{not json") == ReasoningCaseState()
+        assert decode_case_state("{not json") == ReasoningCaseState()
 
     def test_invalid_shape_recovers(self) -> None:
-        assert _decode_case_state(json.dumps({"hypotheses": "not a list"})) == ReasoningCaseState()
+        assert decode_case_state(json.dumps({"hypotheses": "not a list"})) == ReasoningCaseState()
 
 
 class TestDecisionToMessagePayload:
@@ -151,6 +155,31 @@ class TestTerminalOutcomeKindRouting:
         )
         assert _terminal_outcome_kind(d) == OutcomeKind.ASSESSMENT_REPORT
 
+    def test_strong_confidence_negative_answer_becomes_audit_memo(self) -> None:
+        # Regression: a strong-confidence NEGATIVE conclusion must NOT become
+        # a direct_finding. Before the polarity guard, confidence>=strong
+        # mapped to DIRECT_FINDING regardless of the answer, so "no bug found"
+        # burned a false positive into vr_findings + the knowledge base.
+        d = ReasoningTurnDecision(
+            reasoning="r", action="submit", confidence="strong",
+            answer="No container escape vulnerability found via shell injection.",
+        )
+        assert _terminal_outcome_kind(d) == OutcomeKind.AUDIT_MEMO
+
+    def test_negative_answer_in_payload_becomes_audit_memo(self) -> None:
+        d = ReasoningTurnDecision(
+            reasoning="r", action="submit", confidence="strong", answer="",
+            payload={"answer": "No exploitable vulnerability found in the sandbox."},
+        )
+        assert _terminal_outcome_kind(d) == OutcomeKind.AUDIT_MEMO
+
+    def test_positive_strong_finding_still_direct_finding(self) -> None:
+        d = ReasoningTurnDecision(
+            reasoning="r", action="submit", confidence="strong",
+            answer="Authentication bypass: a forged token grants admin access.",
+        )
+        assert _terminal_outcome_kind(d) == OutcomeKind.DIRECT_FINDING
+
 
 class TestToOutcomeConfidence:
     @pytest.mark.parametrize(
@@ -165,11 +194,11 @@ class TestToOutcomeConfidence:
     )
     def test_passthrough(self, value: str, expected: OutcomeConfidence) -> None:
         d = ReasoningTurnDecision(reasoning="", action="submit", confidence=value)
-        assert _to_outcome_confidence(d) == expected
+        assert to_outcome_confidence(d) == expected
 
     def test_missing_confidence_defaults_unknown(self) -> None:
         d = ReasoningTurnDecision(reasoning="", action="submit")
-        assert _to_outcome_confidence(d) == OutcomeConfidence.UNKNOWN
+        assert to_outcome_confidence(d) == OutcomeConfidence.UNKNOWN
 
 
 class TestOutcomePayload:
@@ -193,19 +222,28 @@ class TestOutcomePayload:
 
 
 class TestPromptLoading:
-    def test_audit_prompt_loads(self) -> None:
-        text = _load_prompt("vulnerability_research.audit")
+    async def test_audit_prompt_loads(self, test_db) -> None:
+        text = (await _load_prompt("vulnerability_research.audit")).body
         assert "audit-only investigation" in text
         assert "submit" in text
 
-    def test_unknown_strategy_falls_back_to_audit(self) -> None:
-        text = _load_prompt("vulnerability_research.discovery_research")
+    async def test_unknown_strategy_falls_back_to_audit(self, test_db) -> None:
+        text = (await _load_prompt("vulnerability_research.discovery_research")).body
         # Falls back to audit prompt for v0.3 v1 (other strategies stub)
         assert "audit-only investigation" in text
 
-    def test_completely_unknown_family_also_falls_back(self) -> None:
-        text = _load_prompt("weird.unknown_family")
+    async def test_completely_unknown_family_also_falls_back(self, test_db) -> None:
+        text = (await _load_prompt("weird.unknown_family")).body
         assert "audit-only investigation" in text
+
+    async def test_registered_production_version_overrides_file(self, test_db) -> None:
+        """A version registered and aliased 'production' for the key is
+        served instead of the file baseline (the RFC-09 deploy path)."""
+        key = _prompt_key("vulnerability_research.audit")
+        version = await _PROMPT_VERSION_STORE.register(key, "DEPLOYED PROMPT BODY")
+        await _PROMPT_VERSION_STORE.set_alias(key, "production", version)
+        text = (await _load_prompt("vulnerability_research.audit")).body
+        assert text == "DEPLOYED PROMPT BODY"
 
 
 class TestRenderOperatorMessagesSection:
@@ -403,23 +441,43 @@ class TestFetchToolSpecs:
     on each applicable bridge.
     """
 
+    @pytest.fixture(autouse=True)
+    def _skip_capability_catalog(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # ``_applicable_servers_by_capability`` queries the DB-backed
+        # ``McpRegistryService`` -- unavailable offline. Force ``None``
+        # so ``_fetch_tool_specs`` falls back to the static kind map,
+        # keeping every assertion in this class independent of a live
+        # ``mcp_server_instances`` table.
+        async def _no_catalog(target_kind: str | None) -> set[str] | None:
+            return None
+
+        monkeypatch.setattr(
+            "aila.modules.vr.agents.vuln_researcher."
+            "_applicable_servers_by_capability",
+            _no_catalog,
+        )
+
     @pytest.mark.asyncio
     async def test_source_repo_only_hits_audit_mcp(self, monkeypatch: pytest.MonkeyPatch) -> None:
         audit_calls: list[str] = []
         ida_calls: list[str] = []
 
-        async def fake_audit_specs(self: object) -> list[dict]:
+        async def fake_audit_specs(self: object, client: object) -> list[dict]:
             audit_calls.append("hit")
             return [{"name": "read_function", "params": [], "required": []}]
 
-        async def fake_ida_specs(self: object) -> list[dict]:
+        async def fake_ida_specs(self: object, client: object) -> list[dict]:
             ida_calls.append("hit")
             return []
 
-        from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
-        from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
-        monkeypatch.setattr(AuditMcpBridgeTool, "list_tool_specs", fake_audit_specs)
-        monkeypatch.setattr(IDABridgeTool, "list_tool_specs", fake_ida_specs)
+        monkeypatch.setattr(
+            "aila.platform.mcp.middleware.audit.AuditMcpMiddleware.list_tool_specs",
+            fake_audit_specs,
+        )
+        monkeypatch.setattr(
+            "aila.platform.mcp.middleware.ida.IdaMiddleware.list_tool_specs",
+            fake_ida_specs,
+        )
 
         out = await _fetch_tool_specs(target_kind="source_repo")
         assert "audit_mcp" in out
@@ -432,18 +490,22 @@ class TestFetchToolSpecs:
         audit_calls: list[str] = []
         ida_calls: list[str] = []
 
-        async def fake_audit_specs(self: object) -> list[dict]:
+        async def fake_audit_specs(self: object, client: object) -> list[dict]:
             audit_calls.append("hit")
             return []
 
-        async def fake_ida_specs(self: object) -> list[dict]:
+        async def fake_ida_specs(self: object, client: object) -> list[dict]:
             ida_calls.append("hit")
             return [{"name": "decompile", "params": [], "required": []}]
 
-        from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
-        from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
-        monkeypatch.setattr(AuditMcpBridgeTool, "list_tool_specs", fake_audit_specs)
-        monkeypatch.setattr(IDABridgeTool, "list_tool_specs", fake_ida_specs)
+        monkeypatch.setattr(
+            "aila.platform.mcp.middleware.audit.AuditMcpMiddleware.list_tool_specs",
+            fake_audit_specs,
+        )
+        monkeypatch.setattr(
+            "aila.platform.mcp.middleware.ida.IdaMiddleware.list_tool_specs",
+            fake_ida_specs,
+        )
 
         out = await _fetch_tool_specs(target_kind="native_binary")
         assert "ida_headless" in out
@@ -453,58 +515,63 @@ class TestFetchToolSpecs:
 
 
     @pytest.mark.asyncio
-    async def test_android_apk_hits_both_android_and_audit_mcp(
+    async def test_android_apk_hits_all_three_bridges(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """F-2: android_apk targets need both android_mcp (APK facts:
-        manifest, perms, signing, behaviour classification) AND
-        audit_mcp (source-graph over the decompiled Java tree).
-        ida_headless must NOT be polled for this kind.
+        """android_apk targets now poll ALL three bridges: android_mcp
+        (APK-level facets), audit_mcp (source-graph over the jadx-
+        decompiled Java tree), AND ida_headless (native .so libraries
+        under lib/<abi>/). See _applicable_servers_for_kind in
+        src/aila/modules/vr/agents/vuln_researcher.py -- ida_headless
+        was intentionally added because excluding it forced agents to
+        hallucinate android_mcp calls for native analysis.
         """
         audit_calls: list[str] = []
         ida_calls: list[str] = []
         android_calls: list[str] = []
 
-        async def fake_audit_specs(self: object) -> list[dict]:
+        async def fake_audit_specs(self: object, client: object) -> list[dict]:
             audit_calls.append("hit")
             return [{"name": "semantic_search", "params": [], "required": []}]
 
-        async def fake_ida_specs(self: object) -> list[dict]:
+        async def fake_ida_specs(self: object, client: object) -> list[dict]:
             ida_calls.append("hit")
             return [{"name": "decompile", "params": [], "required": []}]
 
-        async def fake_android_specs(self: object) -> list[dict]:
+        async def fake_android_specs(self: object, client: object) -> list[dict]:
             android_calls.append("hit")
             return [
                 {"name": "apktool_decode", "params": [], "required": []},
-                {"name": "androguard_summary", "params": [], "required": []},
+                {"name": "drozer_scan_apk", "params": [], "required": []},
                 {"name": "verify_capabilities", "params": [], "required": []},
             ]
 
         monkeypatch.setattr(
-            AuditMcpBridgeTool, "list_tool_specs", fake_audit_specs,
+            AuditMcpMiddleware, "list_tool_specs", fake_audit_specs,
         )
         monkeypatch.setattr(
-            IDABridgeTool, "list_tool_specs", fake_ida_specs,
+            IdaMiddleware, "list_tool_specs", fake_ida_specs,
         )
         monkeypatch.setattr(
-            AndroidMcpBridgeTool, "list_tool_specs", fake_android_specs,
+            AndroidMcpMiddleware, "list_tool_specs", fake_android_specs,
         )
 
         out = await _fetch_tool_specs(target_kind="android_apk")
         assert "android_mcp" in out
         assert "audit_mcp" in out
-        assert "ida_headless" not in out
+        assert "ida_headless" in out
         assert android_calls == ["hit"]
         assert audit_calls == ["hit"]
-        assert ida_calls == []
-        # Both bridges contribute their full filtered catalog.
+        assert ida_calls == ["hit"]
+        # Each bridge contributes its full filtered catalog.
         android_names = {s["name"] for s in out["android_mcp"]}
         assert "apktool_decode" in android_names
-        assert "androguard_summary" in android_names
+        assert "drozer_scan_apk" in android_names
         assert "verify_capabilities" in android_names
         audit_names = {s["name"] for s in out["audit_mcp"]}
         assert "semantic_search" in audit_names
+        ida_names = {s["name"] for s in out["ida_headless"]}
+        assert "decompile" in ida_names
 
 
 class TestApplicableServersForKind:
@@ -516,15 +583,24 @@ class TestApplicableServersForKind:
     def test_native_binary_returns_ida_only(self) -> None:
         assert _applicable_servers_for_kind("native_binary") == {"ida_headless"}
 
-    def test_legacy_apk_still_routes_to_ida(self) -> None:
-        # Pre-existing "apk" kind ingests through ida_headless via the
-        # _ingest_binary path. F-2 must NOT widen this kind -- only the
-        # new "android_apk" gets the dual-bridge treatment.
-        assert _applicable_servers_for_kind("apk") == {"ida_headless"}
+    def test_legacy_apk_falls_through_to_unknown(self) -> None:
+        # "apk" is no longer a first-class kind (superseded by
+        # "android_apk"). It is not registered in _SOURCE_REPO_KINDS,
+        # _ANDROID_KINDS or _BINARY_KINDS, so the fallback branch
+        # returns every known bridge -- same as any other unrecognised
+        # kind. Live rows use "android_apk"; the legacy string is only
+        # exercised by this drift test.
+        out = _applicable_servers_for_kind("apk")
+        assert "ida_headless" in out
+        assert "audit_mcp" in out
+        assert "android_mcp" in out
 
-    def test_android_apk_returns_both_android_and_audit(self) -> None:
+    def test_android_apk_returns_all_three_bridges(self) -> None:
+        # android_apk needs android_mcp (APK-level facets), audit_mcp
+        # (source-graph over jadx-decompiled Java) AND ida_headless
+        # (native .so files under lib/<abi>/).
         assert _applicable_servers_for_kind("android_apk") == {
-            "android_mcp", "audit_mcp",
+            "android_mcp", "audit_mcp", "ida_headless",
         }
 
     def test_unknown_kind_defaults_to_every_bridge(self) -> None:
@@ -539,7 +615,7 @@ class TestMcpFamilyRuleForKind:
     right MCP family for the target kind.
     """
 
-    def test_android_apk_with_both_handles_names_both_servers(self) -> None:
+    def test_android_apk_with_both_handles_names_all_three_servers(self) -> None:
         rule = _mcp_family_rule_for_kind(
             "android_apk",
             {
@@ -551,24 +627,27 @@ class TestMcpFamilyRuleForKind:
         assert "android_mcp" in rule
         assert "idx-abc123" in rule
         assert "/tmp/sampleapp.apk" in rule
-        # The rule MUST NOT reach for ida_headless on this kind.
-        assert "ida_headless" not in rule
+        # ida_headless is now intentionally named for NATIVE LIBRARY
+        # analysis on lib/<abi>/*.so. Excluding it caused agents to
+        # skip native analysis entirely on APK targets.
+        assert "ida_headless" in rule
 
     def test_android_apk_missing_handles_still_emits_rule(self) -> None:
         rule = _mcp_family_rule_for_kind("android_apk", {})
         assert "audit_mcp" in rule
         assert "android_mcp" in rule
-        # When ingestion handles aren't ready yet, the rule should still
-        # name both bridges so the agent doesn't drift to ida_headless.
-        assert "ida_headless" not in rule
-
-    def test_legacy_apk_kind_still_routes_to_ida(self) -> None:
-        # The legacy "apk" kind (binary-style ingestion) stays on
-        # ida_headless. Only "android_apk" gets the new dual-bridge
-        # rule.
-        rule = _mcp_family_rule_for_kind("apk", {"binary_id": "b_xyz"})
+        # ida_headless is named unconditionally for android_apk (see
+        # the sibling test above); the RULE talks about NATIVE
+        # LIBRARY analysis for every android_apk target.
         assert "ida_headless" in rule
-        assert "android_mcp" not in rule
+
+    def test_legacy_apk_kind_has_no_rule(self) -> None:
+        # The legacy "apk" string is not in _mcp_family_rule_for_kind's
+        # dispatch table anymore; live rows all carry "android_apk".
+        # The function returns "" for unrecognised kinds -- callers
+        # concatenate unconditionally, so an empty rule is a no-op.
+        rule = _mcp_family_rule_for_kind("apk", {"binary_id": "b_xyz"})
+        assert rule == ""
 
 
 class TestSnapshotTargetAndroidApk:
@@ -586,6 +665,7 @@ class TestSnapshotTargetAndroidApk:
     ) -> SimpleNamespace:
         return SimpleNamespace(
             id="t-1",
+            workspace_id="ws-1",
             kind=kind,
             display_name="SampleApp",
             primary_language="java",
@@ -724,3 +804,310 @@ class TestRenderTargetSnapshotSectionAndroidApk:
 
         assert "audit_mcp_decompiled_index_id=idx-zzz" in rendered
         assert "audit_mcp_decompiled_indexed_at=2026-06-08T11:00:00+00:00" in rendered
+
+
+# ----------------------------------------------------------------------
+# #4 convergence fix -- sibling-open-hypothesis gate. A terminal
+# no_finding / inconclusive submit is blocked while any sibling still
+# holds a live hypothesis id no branch has rejected. Passes on a
+# finding-polarity submit, on "all sibling hyps rejected", and once the
+# consecutive-rejection cap is exceeded (force-through stamps the
+# advisory).
+# ----------------------------------------------------------------------
+
+
+def _no_finding_submit_decision() -> ReasoningTurnDecision:
+    """Terminal audit_memo submit with verdict=no_finding -- derives
+    to polarity='no_finding' via the outcome_polarity helper."""
+    return ReasoningTurnDecision(
+        reasoning="nothing found on my branch",
+        action="submit",
+        expected_observation="terminal",
+        answer="branch is clear",
+        confidence="medium",
+        payload={"verdict": "no_finding"},
+    )
+
+
+def _finding_submit_decision() -> ReasoningTurnDecision:
+    """Terminal submit with strong confidence -- derives to
+    outcome_kind=direct_finding + polarity='finding'."""
+    return ReasoningTurnDecision(
+        reasoning="found the bug",
+        action="submit",
+        expected_observation="terminal",
+        answer="heap OOB on strcpy at foo:42",
+        confidence="strong",
+    )
+
+
+def _make_researcher_with_cap(cap: int) -> HonestVulnResearcher:
+    """Build a researcher instance for direct gate-method invocation.
+
+    The gate is pure over its arguments (no DB, no engine) so a
+    bare-bones construction is enough; caps normally set by
+    :meth:`_load_turn_config` are stamped manually here.
+    """
+    researcher = HonestVulnResearcher(
+        reasoning_engine=SimpleNamespace(),  # type: ignore[arg-type]
+        investigation_id="inv-gate",
+        branch_id="b-under-test",
+    )
+    researcher._sibling_open_hyp_reject_cap = cap  # noqa: SLF001 -- test-only manual init
+    return researcher
+
+
+class TestSiblingOpenHypGate:
+    def test_finding_polarity_bypasses_gate(self) -> None:
+        """A finding-polarity submit is NEVER blocked by this gate --
+        panel review handles sibling disagreement on a positive finding.
+        Sibling still has a live unresolved hypothesis, but the submit
+        is a finding, so the gate passes."""
+        researcher = _make_researcher_with_cap(3)
+        case_state = ReasoningCaseState()
+        sibling_context = [{
+            "branch_id": "b-sibling",
+            "persona_voice": "maddie",
+            "hypotheses": [{"id": "h_live", "claim": "still hunting"}],
+            "rejected": [],
+        }]
+
+        result = researcher._maybe_reject_no_finding_while_sibling_open_hyp(
+            decision=_finding_submit_decision(),
+            case_state=case_state,
+            sibling_context=sibling_context,
+            turn_number=5,
+        )
+
+        assert result.action == "submit"
+        assert "_directive.sibling_open_hyp_block" not in case_state.observables
+        assert "_sibling_open_hyp_reject_count" not in case_state.observables
+
+    def test_no_finding_with_sibling_open_hyp_blocks(self) -> None:
+        """A no_finding submit while a sibling holds a live hypothesis
+        no branch has rejected: gate swaps to non-terminal and stamps
+        ``_directive.sibling_open_hyp_block`` naming the sibling +
+        hypothesis, plus increments the reject counter."""
+        researcher = _make_researcher_with_cap(3)
+        case_state = ReasoningCaseState()
+        sibling_context = [{
+            "branch_id": "b-maddie",
+            "persona_voice": "maddie",
+            "hypotheses": [
+                {"id": "h_race", "claim": "TOCTOU on rename"},
+            ],
+            "rejected": [],
+        }]
+
+        result = researcher._maybe_reject_no_finding_while_sibling_open_hyp(
+            decision=_no_finding_submit_decision(),
+            case_state=case_state,
+            sibling_context=sibling_context,
+            turn_number=3,
+        )
+
+        assert result.action == "tool_run"
+        assert result.command == ""
+        directive = case_state.observables.get("_directive.sibling_open_hyp_block")
+        assert isinstance(directive, str)
+        assert "h_race" in directive
+        assert "TOCTOU on rename" in directive
+        assert "maddie" in directive
+        assert case_state.observables["_sibling_open_hyp_reject_count"] == 1
+        # Original answer is preserved verbatim inside the rejected
+        # command text so an audit can reconstruct the intent.
+        assert "branch is clear" in (result.answer or "")
+
+    def test_no_finding_when_all_sibling_hyps_rejected_passes(self) -> None:
+        """Sibling's live hypothesis id appears in this branch's
+        rejected[] (a cross-branch rejection is enough): gate passes
+        the submit and clears any prior directive stamp."""
+        researcher = _make_researcher_with_cap(3)
+        case_state = ReasoningCaseState(
+            rejected=[
+                RejectedHypothesis(
+                    id="h_race",
+                    claim="TOCTOU on rename",
+                    reason="path guarded by O_NOFOLLOW at foo:42",
+                ),
+            ],
+            observables={
+                # Simulate a prior gate rejection that should clear.
+                "_directive.sibling_open_hyp_block": "prior banner",
+                "_sibling_open_hyp_reject_count": 2,
+            },
+        )
+        sibling_context = [{
+            "branch_id": "b-maddie",
+            "persona_voice": "maddie",
+            "hypotheses": [
+                {"id": "h_race", "claim": "TOCTOU on rename"},
+            ],
+            "rejected": [],
+        }]
+
+        result = researcher._maybe_reject_no_finding_while_sibling_open_hyp(
+            decision=_no_finding_submit_decision(),
+            case_state=case_state,
+            sibling_context=sibling_context,
+            turn_number=3,
+        )
+
+        assert result.action == "submit"
+        assert "_directive.sibling_open_hyp_block" not in case_state.observables
+        assert "_sibling_open_hyp_reject_count" not in case_state.observables
+
+    def test_force_through_after_cap_stamps_advisory(self) -> None:
+        """Above ``_sibling_open_hyp_reject_cap`` consecutive rejections,
+        the submit is FORCED THROUGH with
+        ``payload.sibling_open_hyp_advisory`` naming the open sibling
+        ids so the operator can audit the closure gap."""
+        cap = 3
+        researcher = _make_researcher_with_cap(cap)
+        # Prior rejects already at the cap -> next call goes over.
+        case_state = ReasoningCaseState(
+            observables={"_sibling_open_hyp_reject_count": cap},
+        )
+        sibling_context = [{
+            "branch_id": "b-maddie",
+            "persona_voice": "maddie",
+            "hypotheses": [
+                {"id": "h_race", "claim": "TOCTOU"},
+            ],
+            "rejected": [],
+        }]
+
+        result = researcher._maybe_reject_no_finding_while_sibling_open_hyp(
+            decision=_no_finding_submit_decision(),
+            case_state=case_state,
+            sibling_context=sibling_context,
+            turn_number=15,
+        )
+
+        assert result.action == "submit", (
+            "force-through should keep the terminal submit intact"
+        )
+        advisory = result.payload.get("sibling_open_hyp_advisory")
+        assert isinstance(advisory, dict)
+        assert advisory["open_count"] == 1
+        assert advisory["forced_through_after_rejects"] == cap
+        assert advisory["open"][0]["sibling_branch_id"] == "b-maddie"
+        assert advisory["open"][0]["hypothesis_id"] == "h_race"
+        # Force-through path clears the counter + directive so the next
+        # panel iteration starts fresh.
+        assert "_sibling_open_hyp_reject_count" not in case_state.observables
+        assert "_directive.sibling_open_hyp_block" not in case_state.observables
+
+    def test_this_turn_rejected_id_closes_gate(self) -> None:
+        """The current turn's ``decision.rejected[]`` counts as a
+        rejection for the union -- a branch can close its OWN turn's
+        leftover in the same turn it submits."""
+        researcher = _make_researcher_with_cap(3)
+        case_state = ReasoningCaseState()
+        sibling_context = [{
+            "branch_id": "b-maddie",
+            "persona_voice": "maddie",
+            "hypotheses": [{"id": "h_race", "claim": "TOCTOU"}],
+            "rejected": [],
+        }]
+        decision = _no_finding_submit_decision().model_copy(update={
+            "rejected": [
+                RejectedHypothesis(
+                    id="h_race", claim="TOCTOU",
+                    reason="guard added at foo:42",
+                ),
+            ],
+        })
+
+        result = researcher._maybe_reject_no_finding_while_sibling_open_hyp(
+            decision=decision,
+            case_state=case_state,
+            sibling_context=sibling_context,
+            turn_number=4,
+        )
+
+        assert result.action == "submit"
+        assert "_directive.sibling_open_hyp_block" not in case_state.observables
+
+
+class TestReviewVoteAndCommentNotReady:
+    """#6 convergence fix -- VR override of ``_review_vote_and_comment``
+    recognises ``not_ready`` as a first-class vote and preserves the
+    blocker verbatim as the review comment."""
+
+    def _researcher(self) -> HonestVulnResearcher:
+        return HonestVulnResearcher(
+            reasoning_engine=SimpleNamespace(),  # type: ignore[arg-type]
+            investigation_id="inv-vote",
+            branch_id="b-vote",
+        )
+
+    def test_not_ready_preserves_blocker(self) -> None:
+        decision = SimpleNamespace(
+            review_vote="not_ready",
+            review_comment="awaiting audit_mcp read_function for parse_uri",
+            reasoning="see review_comment",
+        )
+        vote, comment = self._researcher()._review_vote_and_comment(decision)
+        assert vote == "not_ready"
+        assert comment == "awaiting audit_mcp read_function for parse_uri"
+
+    def test_not_ready_falls_back_to_reasoning(self) -> None:
+        """When ``review_comment`` is empty the reasoning body carries
+        the blocker; the override still labels the vote not_ready."""
+        decision = SimpleNamespace(
+            review_vote="not_ready",
+            review_comment="",
+            reasoning="need MASVS-STORAGE-2 evidence before I can approve",
+        )
+        vote, comment = self._researcher()._review_vote_and_comment(decision)
+        assert vote == "not_ready"
+        assert comment == "need MASVS-STORAGE-2 evidence before I can approve"
+
+    def test_approve_vote_still_uses_default_flow(self) -> None:
+        """Regression guard: adding not_ready must not change the
+        approve / reject / abstain paths."""
+        decision = SimpleNamespace(
+            review_vote="approve",
+            review_comment="corroborated",
+            reasoning="see the shared ledger note",
+        )
+        vote, comment = self._researcher()._review_vote_and_comment(decision)
+        assert vote == "approve"
+        assert comment == "corroborated"
+
+    def test_empty_vote_defaults_to_abstain(self) -> None:
+        decision = SimpleNamespace(
+            review_vote=None, review_comment=None, reasoning="",
+        )
+        vote, comment = self._researcher()._review_vote_and_comment(decision)
+        assert vote == "abstain"
+        assert comment == ""
+
+    def test_empty_rationale_reject_downgraded_to_abstain(self) -> None:
+        """RFC-03 5b convergence: the reject path now delegates to the
+        platform base, which downgrades an unevidenced reject to abstain
+        so an empty-rationale veto cannot swing quorum. VR previously
+        lacked this downgrade."""
+        decision = SimpleNamespace(
+            review_vote="reject",
+            review_comment="",
+            reasoning="",
+            review_outcome_id="o-empty-reject",
+        )
+        vote, comment = self._researcher()._review_vote_and_comment(decision)
+        assert vote == "abstain"
+        assert comment.startswith("[system] reject vote downgraded")
+
+    def test_evidenced_reject_preserved(self) -> None:
+        """A reject carrying a rationale is preserved verbatim (only the
+        unevidenced veto is downgraded)."""
+        decision = SimpleNamespace(
+            review_vote="reject",
+            review_comment="the PoC does not reproduce on the shipped build",
+            reasoning="",
+            review_outcome_id="o-evidenced-reject",
+        )
+        vote, comment = self._researcher()._review_vote_and_comment(decision)
+        assert vote == "reject"
+        assert comment == "the PoC does not reproduce on the shipped build"

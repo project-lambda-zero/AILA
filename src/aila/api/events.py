@@ -1,10 +1,10 @@
 """Platform event bus for SSE delivery.
 
-In-process asyncio.Queue per user_id. When Redis is available, also publishes
-to ``aila:events:{user_id}`` for multi-worker support.
-
-Bounded queues (QUEUE_MAXSIZE = 50) prevent unbounded memory growth when a
-user has no active SSE connection.
+Per-connection ``asyncio.Queue`` via a process-wide
+:class:`aila.platform.sse.UserFanoutRegistry` keyed by user id, so multiple
+browser tabs for one user each get an independent stream and every tab
+receives every event. Bounded queues (``QUEUE_MAXSIZE``) prevent unbounded
+memory growth when a tab stalls.
 
 Usage::
 
@@ -21,8 +21,8 @@ from __future__ import annotations
 __all__ = [
     "QUEUE_MAXSIZE",
     "emit_platform_event",
-    "get_user_queue",
-    "release_user_queue",
+    "subscribe_user",
+    "unsubscribe_user",
 ]
 
 import asyncio
@@ -30,35 +30,31 @@ import json
 import logging
 from datetime import UTC, datetime
 
+from ..platform.sse import QUEUE_MAXSIZE, UserFanoutRegistry
+
 _log = logging.getLogger(__name__)
 
-# Registry: user_id → asyncio.Queue (bounded at QUEUE_MAXSIZE)
-_user_queues: dict[str, asyncio.Queue[str]] = {}
-_registry_lock = asyncio.Lock()
-
-QUEUE_MAXSIZE = 50
+# Process-wide fan-out registry: user_id -> live per-connection queues.
+_registry = UserFanoutRegistry(queue_maxsize=QUEUE_MAXSIZE)
 
 
-async def get_user_queue(user_id: str) -> asyncio.Queue[str]:
-    """Get or create the SSE event queue for a user.
+async def subscribe_user(user_id: str) -> asyncio.Queue[str]:
+    """Register a fresh per-connection SSE queue for a user and return it.
 
-    Creates a new bounded queue if one does not already exist.
-    Thread-safe via asyncio.Lock.
+    Each call returns an independent bounded queue, so a second browser tab
+    for the same user gets its own queue and receives every event. Callers
+    MUST pair this with :func:`unsubscribe_user` in a ``finally``.
     """
-    async with _registry_lock:
-        if user_id not in _user_queues:
-            _user_queues[user_id] = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
-        return _user_queues[user_id]
+    return await _registry.subscribe(user_id)
 
 
-async def release_user_queue(user_id: str) -> None:
-    """Remove the queue for a user.
+async def unsubscribe_user(user_id: str, queue: asyncio.Queue[str]) -> None:
+    """Remove a single connection's queue when its SSE stream closes.
 
-    Called when the SSE connection for that user closes. Cleans up memory
-    so long-disconnected users do not retain queue entries indefinitely.
+    Sibling tabs for the same user stay live; the user entry is dropped only
+    when its last subscriber disconnects.
     """
-    async with _registry_lock:
-        _user_queues.pop(user_id, None)
+    await _registry.unsubscribe(user_id, queue)
 
 
 async def emit_platform_event(
@@ -66,11 +62,11 @@ async def emit_platform_event(
     event_type: str,
     data: dict,
 ) -> None:
-    """Emit a platform event to the user's SSE queue.
+    """Emit a platform event to every live SSE connection for a user.
 
-    Silently drops the event if the queue is full (bounded at QUEUE_MAXSIZE)
-    to prevent backpressure from blocking callers. The notification is still
-    persisted to the database separately via NotificationRecord.
+    A tab whose bounded queue is full is skipped with a warning so one slow
+    tab does not backpressure siblings or the caller. The notification is
+    still persisted to the database separately via NotificationRecord.
 
     Args:
         user_id: The target user's ID.
@@ -86,12 +82,4 @@ async def emit_platform_event(
             "timestamp": datetime.now(UTC).isoformat(),
         }
     )
-    queue = await get_user_queue(user_id)
-    try:
-        queue.put_nowait(payload)
-    except asyncio.QueueFull:
-        _log.warning(
-            "Event queue full for user %s -- dropping event %s",
-            user_id,
-            event_type,
-        )
+    await _registry.emit(user_id, payload)

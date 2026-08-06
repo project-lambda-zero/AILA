@@ -17,6 +17,7 @@ from sqlmodel import select
 
 from aila.api.auth import AuthContext, require_user_or_api_key
 from aila.api.constants import ROLE_ADMIN
+from aila.api.deps import get_config_registry
 from aila.api.limiter import limiter
 from aila.api.schemas.endpoints import (
     ScheduledReportCreate,
@@ -25,7 +26,7 @@ from aila.api.schemas.endpoints import (
     ScheduledReportUpdate,
 )
 from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import ScheduledReportRecord
 
@@ -45,6 +46,21 @@ def _require_admin(auth: AuthContext = Depends(require_user_or_api_key)) -> Auth
             detail=f"Scheduled reports require '{ROLE_ADMIN}' role; current role: '{auth.role}'",
         )
     return auth
+
+
+def _assert_team_visible(record: ScheduledReportRecord, auth: AuthContext) -> None:
+    """Raise 404 when a team-scoped caller addresses another team's row (#48-6).
+
+    God-tier admins (``team_id`` is None, TEAM-06) skip the check and see
+    every row. A team-scoped admin may only reach rows stamped with its own
+    team; a mismatch returns 404 (not 403) so the row's existence does not
+    leak across the team boundary.
+    """
+    if auth.team_id is not None and record.team_id != auth.team_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Scheduled report not found",
+        )
 
 
 def _validate_cron(expression: str) -> None:
@@ -95,6 +111,10 @@ async def list_scheduled_reports(
     """List all scheduled reports. Admin only."""
     async with async_session_scope() as session:
         stmt = select(ScheduledReportRecord).order_by(ScheduledReportRecord.created_at.desc())  # type: ignore[attr-defined]
+        # #48-6: team-scoped admins see only their team; god-tier (team_id
+        # None) sees all.
+        if auth.team_id is not None:
+            stmt = stmt.where(ScheduledReportRecord.team_id == auth.team_id)
         all_rows = (await session.exec(stmt)).all()
 
     total = len(all_rows)
@@ -130,6 +150,7 @@ async def create_scheduled_report(
             config_json=body.config_json,
             is_active=body.is_active,
             created_by=auth.user_id,
+            team_id=auth.team_id,
         )
         session.add(record)
         await session.commit()
@@ -161,6 +182,7 @@ async def update_scheduled_report(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Scheduled report '{report_id}' not found",
             )
+        _assert_team_visible(record, auth)
 
         if body.name is not None:
             record.name = body.name
@@ -200,6 +222,7 @@ async def delete_scheduled_report(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Scheduled report '{report_id}' not found",
             )
+        _assert_team_visible(record, auth)
         await session.delete(record)
         await session.commit()
 
@@ -227,6 +250,7 @@ async def trigger_scheduled_report(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Scheduled report '{report_id}' not found",
             )
+        _assert_team_visible(record, auth)
         if not record.is_active:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -238,29 +262,27 @@ async def trigger_scheduled_report(
     # Falls back to task_id="manual" if arq/Redis is not available.
     task_id = "manual"
     try:
-        import arq
+        from aila.platform.tasks.queue import TaskQueue
+        from aila.platform.tasks.report_tasks import generate_scheduled_report_job
 
-        from aila.storage.registry import ConfigRegistry
-
-        registry = ConfigRegistry()
-        redis_url_raw = await registry.get("platform", "redis_url")
-        redis_url = str(redis_url_raw) if redis_url_raw else "redis://localhost:6379"
-
-        # Parse host/port from redis_url for arq RedisSettings
-        import urllib.parse as _urlparse
-        parsed = _urlparse.urlparse(redis_url)
-        redis_host = parsed.hostname or "localhost"
-        redis_port = parsed.port or 6379
-
-        redis_settings = arq.connections.RedisSettings(host=redis_host, port=redis_port)
-        pool = await arq.create_pool(redis_settings)
-        job = await pool.enqueue_job(
-            "generate_scheduled_report_job",
-            report_id=report_id,
-            triggered_by=auth.user_id,
+        # Route through TaskQueue so the job is enqueued on the module-track
+        # queue (arq:queue:default) under the fully-qualified registry name the
+        # worker resolves, with a TaskRecord for status tracking. A raw
+        # enqueue_job by bare name would target ARQ's default queue key, which
+        # no AILA worker consumes.
+        task_queue = TaskQueue(
+            config_registry=get_config_registry(request),
+            module_id="__platform__",
         )
-        task_id = job.job_id if job else "manual"
-        await pool.aclose()
+        handle = await task_queue.submit(
+            track="default",
+            fn=generate_scheduled_report_job,
+            kwargs={"report_id": report_id, "triggered_by": auth.user_id},
+            user_id=auth.user_id,
+            group_id=auth.role,
+            team_id=auth.team_id,
+        )
+        task_id = handle.task_id
     except Exception:
         _log.debug("Could not enqueue scheduled report via arq; will run synchronously next worker cycle", exc_info=True)
 

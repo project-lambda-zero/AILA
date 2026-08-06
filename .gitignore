@@ -124,7 +124,18 @@ swiftly-*.tar.gz
 .live_*.pdf
 .test_*.pdf
 .pre-filter-head.txt
-.agents/
+
+# .agents/ -- canonical unified agent-config directory (issue #5).
+# Track repo-authored shared content; keep bulk external skill installs
+# and per-checkout runtime out of git. Add `!.agents/skills/<name>/`
+# below to opt a specific external skill into version control.
+.agents/*
+!.agents/README.md
+!.agents/agents/
+!.agents/commands/
+!.agents/rules/
+.agents/skills/
+
 .codex/
 tmpollama-installer.exe
 
@@ -141,3 +152,6 @@ orig_findings.py
 
 # Ralph autonomous-loop scratch (redaction scripts, prompts, scan outputs)
 .ralph/
+
+# private live-testing summary (never publish)
+LIVE_TESTING_SUMMARY.md

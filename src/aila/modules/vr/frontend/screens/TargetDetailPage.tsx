@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
@@ -13,9 +13,12 @@ import {
 import { DeleteButton } from "../components/DeleteButton";
 import { UploadDropzone } from "../components/UploadDropzone";
 import {
+  APK_STATIC_CHECK_COUNT_ESTIMATE,
+  APK_STATIC_DEFAULT_CHILD_BUDGET_USD,
   MASVS_DEFAULT_CHILD_BUDGET_USD,
   MASVS_L1_CONTROL_COUNT_ESTIMATE,
   useAnalyzeTarget,
+  useApkStaticAudit,
   useDeleteTarget,
   useMasvsAudit,
   useRankTarget,
@@ -80,7 +83,7 @@ function analysisLabel(state: AnalysisState, kind: TargetKind): string {
     return "Uploading + analyzing in IDA…";
   }
   if (kind === "android_apk") {
-    return "APK_DECODE → JADX_DECOMPILE → INDEX_DECOMPILED → STATIC_SUMMARY → MOBSF_SCAN…";
+    return "APK_DECODE → JADX_DECOMPILE → INDEX_DECOMPILED → STATIC_SUMMARY…";
   }
   return "Uploading + analyzing…";
 }
@@ -461,14 +464,12 @@ function NotesTab({ targetId }: { targetId: string }) {
 }
 
 /** Per-bucket renderer for the apk_overview projection. The static
- * summary and mobsf scan are passed-through dicts from androguard +
- * MobSF; we read only the keys we recognise and defensively skip
- * anything else so an upstream tool version bump doesn't crash the
- * page.
+ * summary is the in-repo static summary; we read only the
+ * keys we recognise and defensively skip anything else so an upstream
+ * tool version bump doesn't crash the page.
  */
 function AndroidApkOverview({ overview }: { overview: ApkOverview }) {
   const summary = (overview.static_summary ?? {}) as Record<string, unknown>;
-  const mobsf = (overview.mobsf_scan ?? {}) as Record<string, unknown>;
 
   const asStringArray = (v: unknown): string[] => {
     if (!Array.isArray(v)) return [];
@@ -508,9 +509,6 @@ function AndroidApkOverview({ overview }: { overview: ApkOverview }) {
     : [];
   const signingScheme = asString(summary.signing_scheme);
 
-  const mobsfSkipped = mobsf.skipped === true;
-  const mobsfReason = asString(mobsf.reason);
-
   return (
     <AilaCard techBorder glow>
       <h2 className="text-sm font-semibold text-foreground mb-3">
@@ -518,8 +516,8 @@ function AndroidApkOverview({ overview }: { overview: ApkOverview }) {
       </h2>
 
       {/* Package metadata block. Two-column grid keeps scan-the-list ergonomic
-          for the operator. Hyphen renders when androguard didn't surface a
-          field (older APK or pipeline incomplete). */}
+          for the operator. Hyphen renders when the static summary didn't
+          surface a field (older APK or pipeline incomplete). */}
       <dl className="grid grid-cols-2 gap-3 text-sm mb-4">
         <div>
           <dt className="text-text-muted text-xs">Package</dt>
@@ -706,27 +704,6 @@ function AndroidApkOverview({ overview }: { overview: ApkOverview }) {
         </dl>
       </div>
 
-      {/* MobSF block. Two states: ran and produced issues, or skipped
-          (no API key). */}
-      <div>
-        <h3 className="text-xs font-semibold text-foreground mb-1">MobSF</h3>
-        {mobsfSkipped ? (
-          <p className="text-xs text-text-muted">
-            Skipped: {mobsfReason ?? "MOBSF_API_KEY not set on the AILA host"}.
-          </p>
-        ) : Object.keys(mobsf).length === 0 ? (
-          <p className="text-xs text-text-muted">Not run.</p>
-        ) : (
-          <details>
-            <summary className="text-xs text-text-muted cursor-pointer">
-              show raw scan
-            </summary>
-            <pre className="text-[10px] font-mono text-text-muted whitespace-pre-wrap overflow-x-auto mt-2 max-h-60 overflow-y-auto">
-              {JSON.stringify(mobsf, null, 2)}
-            </pre>
-          </details>
-        )}
-      </div>
     </AilaCard>
   );
 }
@@ -769,31 +746,110 @@ function MasvsAuditCard({
   };
 
   return (
-    <AilaCard techBorder glow>
+    <AilaCard variant="elevated">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="flex-1 min-w-0">
-          <h2 className="text-sm font-semibold text-foreground">
-            MASVS audit
-          </h2>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h2 className="text-sm font-semibold text-text-muted">
+              MASVS audit
+            </h2>
+            <AilaBadge severity="neutral" size="sm">
+              LEGACY COMPLIANCE
+            </AilaBadge>
+          </div>
           <p className="text-xs text-text-muted mt-1">
-            Run a full OWASP MASVS L1 audit against this APK. Fans
-            out ≈ {MASVS_L1_CONTROL_COUNT_ESTIMATE} parallel child
-            investigations (one per L1 control), each driving the
-            standard vuln_researcher workflow against the
-            jadx-decompiled tree. Estimated total spend ≈ $
+            Broad OWASP MASVS L1 compliance sweep, kept for regulated
+            audits that still require the L1 control list verbatim.
+            Prefer the APK static audit above for evidence-backed
+            findings on this APK. Fans out \u2248 {MASVS_L1_CONTROL_COUNT_ESTIMATE}
+            parallel child investigations (one per L1 control), each
+            driving the standard vuln_researcher workflow against the
+            jadx-decompiled tree. Estimated total spend \u2248 $
             {estimatedTotal} (~${MASVS_DEFAULT_CHILD_BUDGET_USD}
-            per child × {MASVS_L1_CONTROL_COUNT_ESTIMATE} controls).
+            per child \u00d7 {MASVS_L1_CONTROL_COUNT_ESTIMATE} controls).
           </p>
         </div>
         <button
           type="button"
           onClick={handleClick}
           disabled={masvsMut.isPending}
-          className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 shrink-0"
+          className="px-3 py-1.5 text-xs font-medium rounded-md border border-border text-text-muted hover:bg-elevated hover:text-foreground disabled:opacity-50 shrink-0"
         >
           {masvsMut.isPending
-            ? "Dispatching…"
-            : `Run MASVS audit (~$${estimatedTotal})`}
+            ? "Dispatching\u2026"
+            : `Run legacy MASVS audit (~$${estimatedTotal})`}
+        </button>
+      </div>
+    </AilaCard>
+  );
+}
+
+/** APK static-analysis dispatcher card. Sibling of MasvsAuditCard,
+ * gated identically (android_apk + STATIC_SUMMARY populated). Fans one
+ * child investigation per STATIC catalog check -- sharp, evidence-backed
+ * checks with a definite file:line source, complementary to the broader
+ * MASVS compliance audit. Idempotent on (target, catalog version). */
+function ApkStaticAuditCard({
+  targetId,
+  packageLabel,
+}: {
+  targetId: string;
+  packageLabel: string | null;
+}) {
+  const apkMut = useApkStaticAudit(targetId);
+  const estimatedTotal =
+    APK_STATIC_DEFAULT_CHILD_BUDGET_USD * APK_STATIC_CHECK_COUNT_ESTIMATE;
+  const packageDisplay = packageLabel ?? "this APK";
+
+  const handleClick = () => {
+    const ok = window.confirm(
+      `Dispatch APK static-analysis audit against ${packageDisplay}?\n\n` +
+        `\u2248 ${APK_STATIC_CHECK_COUNT_ESTIMATE} child investigations, ` +
+        `~$${APK_STATIC_DEFAULT_CHILD_BUDGET_USD} budget each ` +
+        `(~$${estimatedTotal} total expected spend).\n\n` +
+        "Each child runs the full vuln_researcher scout / critic / " +
+        "verifier chain against one concrete static check. The " +
+        "dispatcher is idempotent -- re-clicking with an active audit " +
+        "for this catalog version returns the existing parent.",
+    );
+    if (!ok) return;
+    apkMut.mutate();
+  };
+
+  return (
+    <AilaCard techBorder glow>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h2 className="text-sm font-semibold text-foreground">
+              APK static audit
+            </h2>
+            <AilaBadge severity="info" size="sm">
+              RECOMMENDED -- EVIDENCE-BACKED
+            </AilaBadge>
+          </div>
+          <p className="text-xs text-text-muted mt-1">
+            Primary APK audit. Runs the APK static-analysis check
+            catalog -- sharp, evidence-backed investigations each with
+            a definite file:line source in the decompiled tree. Fans
+            out \u2248 {APK_STATIC_CHECK_COUNT_ESTIMATE} parallel child
+            investigations (one per concrete static check -- manifest,
+            secrets, crypto, WebView, IPC, storage, exploit chains),
+            each driving the standard vuln_researcher workflow against
+            the jadx-decompiled tree. Estimated total spend \u2248 $
+            {estimatedTotal} (~${APK_STATIC_DEFAULT_CHILD_BUDGET_USD}
+            per child \u00d7 {APK_STATIC_CHECK_COUNT_ESTIMATE} checks).
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={handleClick}
+          disabled={apkMut.isPending}
+          className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 shrink-0"
+        >
+          {apkMut.isPending
+            ? "Dispatching\u2026"
+            : `Run APK static audit (~$${estimatedTotal})`}
         </button>
       </div>
     </AilaCard>
@@ -1291,58 +1347,127 @@ function MasvsControlTable({
                   const child = childById.get(v.child_investigation_id);
                   const childStatus = child?.status ?? "unknown";
                   // Group prefix lives inside the control id --
-                  // ``MSTG-STORAGE-1`` → ``STORAGE``,
-                  // ``MASVS-PRIVACY-1`` → ``PRIVACY``. The aggregate's
+                  // ``MSTG-STORAGE-1`` \u2192 ``STORAGE``,
+                  // ``MASVS-PRIVACY-1`` \u2192 ``PRIVACY``. The aggregate's
                   // ``by_group`` map carries the canonical mapping but
                   // is keyed by group, not by control; recovering the
                   // single-row group via id parsing avoids an O(N)
                   // reverse lookup per row.
                   const groupLabel = _extractGroupFromControlId(v.control_id);
+                  // Panel-summary projection carried from the child
+                  // investigation's canonical outcome. All three fields
+                  // are optional -- historical rows written before the
+                  // synthesis-scope contract landed leave them unset, as
+                  // do children that never resolved a panel_summary
+                  // (timeout, cost cap, no primary outcome). Only
+                  // render the details row when at least one field has
+                  // content, so legacy aggregates keep the compact one-
+                  // row-per-control layout.
+                  const scope = v.scope?.trim() || null;
+                  const headline = v.headline?.trim() || null;
+                  const keyPoints = (v.key_points ?? []).filter(
+                    (p) => p && p.trim().length > 0,
+                  );
+                  const hasPanelSummary =
+                    scope != null || headline != null || keyPoints.length > 0;
                   return (
-                    <tr
-                      key={v.child_investigation_id}
-                      className="border-b border-border-default last:border-b-0"
-                    >
-                      <td className="px-2 py-1 font-mono text-foreground break-all">
-                        {v.control_id}
-                      </td>
-                      <td className="px-2 py-1 font-mono text-text-muted">
-                        {groupLabel}
-                      </td>
-                      <td className="px-2 py-1">
-                        <AilaBadge severity="info" size="sm">
-                          {childStatus}
-                        </AilaBadge>
-                      </td>
-                      <td className="px-2 py-1">
-                        <AilaBadge
-                          severity={_verdictSeverity(v.verdict)}
-                          size="sm"
-                        >
-                          {_verdictLabel(v.verdict)}
-                        </AilaBadge>
-                        {v.reason && v.verdict === "inconclusive" && (
-                          <span className="text-text-muted text-[10px] ml-1 font-mono">
-                            {v.reason}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-2 py-1 font-mono text-right text-foreground">
-                        {v.verdict === "inconclusive" && v.confidence === 0
-                          ? "--"
-                          : v.confidence.toFixed(2)}
-                      </td>
-                      <td className="px-2 py-1 text-right">
-                        <Link
-                          to={`/vr/investigations/${encodeURIComponent(
-                            v.child_investigation_id,
-                          )}`}
-                          className="text-accent hover:underline font-mono"
-                        >
-                          open
-                        </Link>
-                      </td>
-                    </tr>
+                    <Fragment key={v.child_investigation_id}>
+                      <tr
+                        className={
+                          hasPanelSummary
+                            ? ""
+                            : "border-b border-border-default last:border-b-0"
+                        }
+                      >
+                        <td className="px-2 py-1 font-mono text-foreground break-all">
+                          {v.control_id}
+                        </td>
+                        <td className="px-2 py-1 font-mono text-text-muted">
+                          {groupLabel}
+                        </td>
+                        <td className="px-2 py-1">
+                          <AilaBadge severity="info" size="sm">
+                            {childStatus}
+                          </AilaBadge>
+                        </td>
+                        <td className="px-2 py-1">
+                          <AilaBadge
+                            severity={_verdictSeverity(v.verdict)}
+                            size="sm"
+                          >
+                            {_verdictLabel(v.verdict)}
+                          </AilaBadge>
+                          {v.reason && v.verdict === "inconclusive" && (
+                            <span className="text-text-muted text-[10px] ml-1 font-mono">
+                              {v.reason}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-2 py-1 font-mono text-right text-foreground">
+                          {v.verdict === "inconclusive" && v.confidence === 0
+                            ? "--"
+                            : v.confidence.toFixed(2)}
+                        </td>
+                        <td className="px-2 py-1 text-right">
+                          <Link
+                            to={`/vr/investigations/${encodeURIComponent(
+                              v.child_investigation_id,
+                            )}`}
+                            className="text-accent hover:underline font-mono"
+                          >
+                            open
+                          </Link>
+                        </td>
+                      </tr>
+                      {hasPanelSummary && (
+                        <tr className="border-b border-border-default last:border-b-0">
+                          <td
+                            colSpan={6}
+                            className="px-2 pb-2 pt-0 align-top"
+                          >
+                            <div className="space-y-1.5 text-xs">
+                              {scope && (
+                                <div>
+                                  <span className="text-text-muted font-mono uppercase tracking-wider text-[10px] mr-1">
+                                    Scope:
+                                  </span>
+                                  <span className="text-foreground whitespace-pre-wrap break-words">
+                                    {scope}
+                                  </span>
+                                </div>
+                              )}
+                              {headline && (
+                                <div>
+                                  <span className="text-text-muted font-mono uppercase tracking-wider text-[10px] mr-1">
+                                    Headline:
+                                  </span>
+                                  <span className="text-foreground whitespace-pre-wrap break-words">
+                                    {headline}
+                                  </span>
+                                </div>
+                              )}
+                              {keyPoints.length > 0 && (
+                                <div>
+                                  <div className="text-text-muted font-mono uppercase tracking-wider text-[10px]">
+                                    Key points:
+                                  </div>
+                                  <ul className="list-disc pl-4 mt-0.5 space-y-0.5">
+                                    {keyPoints.map((point, idx) => (
+                                      <li
+                                        key={idx}
+                                        className="text-foreground whitespace-pre-wrap break-words"
+                                      >
+                                        {point}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 })}
               </tbody>
@@ -1637,11 +1762,30 @@ export function TargetDetailPage() {
         <AndroidApkOverview overview={target.apk_overview} />
       )}
 
-      {/* D-4b "Run MASVS audit" dispatcher. Gated to APK targets whose
-          ingestion pipeline has reached STATIC_SUMMARY (matches the
-          backend's own precondition in dispatch_masvs_audit). The
-          card itself displays the spend estimate; clicking opens a
-          confirm with the same number for the operator to commit. */}
+      {/* Primary APK audit dispatcher. Gated to android_apk targets
+          whose ingestion pipeline has reached STATIC_SUMMARY (matches
+          the backend precondition in dispatch_apk_static_audit). Sits
+          ABOVE the legacy MASVS card so operators land on the
+          evidence-backed catalog by default; MASVS is kept below for
+          regulated audits that require the L1 compliance list
+          verbatim. */}
+      {target.kind === "android_apk"
+        && target.apk_overview?.static_summary
+        && Object.keys(target.apk_overview.static_summary).length > 0 && (
+        <ApkStaticAuditCard
+          targetId={target.id}
+          packageLabel={
+            typeof target.apk_overview.static_summary.package === "string"
+              ? (target.apk_overview.static_summary.package as string)
+              : target.android_package_name ?? null
+          }
+        />
+      )}
+
+      {/* Legacy MASVS L1 compliance dispatcher. Same STATIC_SUMMARY
+          gate as the primary card above. Kept available but rendered
+          in secondary styling -- see MasvsAuditCard for the LEGACY
+          COMPLIANCE badge and elevated (non-glow) surface. */}
       {target.kind === "android_apk"
         && target.apk_overview?.static_summary
         && Object.keys(target.apk_overview.static_summary).length > 0 && (

@@ -263,12 +263,28 @@ async def _state_routing(
     corresponding ``WorkflowDefinition.definition_id``.
     """
     mode = input.get("mode", "full_analysis")
-    mode_to_def_id = {
-        "full_analysis": FORENSICS_FULL_ANALYSIS_V1.definition_id,
-        "freeflow": FORENSICS_FREEFLOW_V1.definition_id,
-        "raw_directory": FORENSICS_RAW_DIRECTORY_V1.definition_id,
-    }
-    selected_id = mode_to_def_id.get(mode, FORENSICS_FULL_ANALYSIS_V1.definition_id)
+    if mode == "freeflow":
+        selected_id = FORENSICS_FREEFLOW_V1.definition_id
+    elif mode == "raw_directory":
+        selected_id = FORENSICS_RAW_DIRECTORY_V1.definition_id
+    else:
+        # RFC-13 (#68): full_analysis (and any unknown mode) runs the
+        # discovery-driven evidence hub, which composes the same forensic
+        # state handlers (intake, collection, deep_analysis, promotion) as the
+        # fixed pipeline, evidence-gated. ``definitions_hub`` imports this
+        # module's builders, so the hub is imported + registered lazily here --
+        # only when full-analysis is actually routed. That avoids an import
+        # cycle AND keeps a hub-import fault from gating the fixed-mode task
+        # registration or the freeflow / raw_directory paths: a broken hub
+        # would fail only a full-analysis dispatch, nothing else.
+        from aila.modules.forensics.workflow.definitions_hub import (
+            FORENSICS_INVESTIGATE_HUB,
+        )
+
+        FORENSICS_MODE_DEFINITIONS.setdefault(
+            FORENSICS_INVESTIGATE_HUB.definition_id, FORENSICS_INVESTIGATE_HUB,
+        )
+        selected_id = FORENSICS_INVESTIGATE_HUB.definition_id
     return StateResult(
         next_state="mode_selection",
         output={"selected_definition_id": selected_id, **input},

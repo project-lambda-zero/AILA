@@ -297,6 +297,10 @@ def make_seal_step(
 
         # Build AuditSealRecord
         from ...storage.db_models import AuditSealRecord
+        from .correlation import (
+            current_prompt_content_hash,
+            current_prompt_version,
+        )
 
         record = AuditSealRecord(
             run_id=ctx.get("run_id", ""),
@@ -305,6 +309,8 @@ def make_seal_step(
             output_hash=output_hash,
             model_id=routing.model_id,
             task_type=ctx["task_type"],
+            prompt_content_hash=current_prompt_content_hash(),
+            prompt_version=current_prompt_version(),
             timestamp=datetime.fromisoformat(ts),
             classification=classification,
             confidence=confidence,
@@ -367,6 +373,64 @@ def make_seal_step(
                     confidence_score=drift_score,
                 )
                 ctx["drift_status"] = drift_result.status
+                # Feed the per-model drift signal into the router so a
+                # persistently degrading / volatile model biases future
+                # pick() decisions on ``resolve_model``. Failure of the
+                # in-process record path must NOT break the seal step --
+                # the router is best-effort observational state.
+                try:
+                    from .health_router import get_default_health_router
+
+                    get_default_health_router().record_drift(
+                        routing.model_id,
+                        ctx["task_type"],
+                        drift_result.status,
+                    )
+                except (RuntimeError, ValueError, TypeError):
+                    logger.debug(
+                        "Drift router record failed, continuing",
+                        exc_info=True,
+                    )
+
+            # RFC-10: feed this turn's drift + cost into the canary hold
+            # gate for the prompt this investigation is bucketed onto. The
+            # correlation canary_key is set only for canary-cohort turns, so
+            # this is inert outside a live canary rollout (and
+            # record_canary_signal itself no-ops when no canary is active).
+            # Best effort -- a failure never breaks the seal step.
+            from .correlation import current_canary_key
+
+            canary_key = current_canary_key()
+            if canary_key:
+                try:
+                    from aila.platform.lifecycle.controller import (
+                        AgentLifecycleController,
+                    )
+
+                    from .cost import calculate_cost_usd
+
+                    usage = getattr(response, "usage", {}) or {}
+                    turn_cost, _ = await calculate_cost_usd(
+                        routing.model_id,
+                        int(usage.get("prompt_tokens", 0) or 0),
+                        int(usage.get("completion_tokens", 0) or 0),
+                        config_provider.registry,
+                    )
+                    await AgentLifecycleController().record_canary_signal(
+                        key=canary_key,
+                        drift=drift_score,
+                        cost=turn_cost,
+                    )
+                except (
+                    sqlalchemy.exc.SQLAlchemyError,
+                    OSError,
+                    RuntimeError,
+                    ValueError,
+                    TypeError,
+                ):
+                    logger.debug(
+                        "Canary signal feed failed, continuing", exc_info=True,
+                    )
         except sqlalchemy.exc.SQLAlchemyError:
             logger.debug("Drift tracking failed, continuing", exc_info=True)
 

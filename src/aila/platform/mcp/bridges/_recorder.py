@@ -23,12 +23,17 @@ __all__ = ["BridgeRecorder", "noop_recorder"]
 
 
 BridgeRecorder = Callable[..., AbstractAsyncContextManager[dict[str, Any]]]
-"""Async context manager factory: ``(server_id=..., base_url=..., action=...) -> CM``.
+"""Async context manager factory: ``(server_id=..., base_url=..., action=..., instance_id=...) -> CM``.
 
 Each invocation MUST yield a mutable ``dict[str, Any]`` that the bridge
 populates with at least ``status``, ``error_excerpt``, and
 ``http_status`` keys as the call progresses. The recorder owns the
 final write (typically inside the context manager's ``finally`` block).
+
+RFC-11 -- ``instance_id`` is the physical catalog row id that served
+the call, or ``None`` when the URL came from the ``env`` / ``config``
+/ ``default`` tiers of the resolver. The bridge passes it through to
+the recorder so the audit trail records provenance uniformly.
 """
 
 

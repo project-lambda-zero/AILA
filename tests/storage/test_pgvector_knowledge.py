@@ -1,8 +1,7 @@
 """Tests for pgvector cosine distance query on KnowledgeEntryRecord.
 
 Covers: 124-03-01, DB-04
-TDD red phase -- these tests will fail until Plan 03 implements
-pgvector Vector(384) column on KnowledgeEntryRecord.
+Exercises the pgvector Vector(1024) column on KnowledgeEntryRecord (BGE-M3).
 """
 from __future__ import annotations
 
@@ -13,13 +12,13 @@ __all__: list[str] = []
 
 @pytest.mark.asyncio
 async def test_knowledge_record_has_vector_column(pg_url):
-    """KnowledgeEntryRecord.embedding is Vector(384)."""
+    """KnowledgeEntryRecord.embedding is Vector(1024)."""
     from aila.storage.db_models import KnowledgeEntryRecord
 
     table = KnowledgeEntryRecord.__table__
     col = table.c.embedding
     col_type_str = str(col.type)
-    assert "384" in col_type_str, f"Expected Vector(384), got {col_type_str}"
+    assert "1024" in col_type_str, f"Expected Vector(1024), got {col_type_str}"
 
 
 @pytest.mark.asyncio
@@ -33,8 +32,8 @@ async def test_pgvector_insert_and_cosine_query(pg_session):
     # Create tables
     await init_db()
 
-    # Insert test record with 384-dim embedding
-    embedding = [0.1] * 384
+    # Insert test record with 1024-dim embedding
+    embedding = [0.1] * 1024
     record = KnowledgeEntryRecord(
         namespace="test",
         content="test knowledge entry",
@@ -45,7 +44,7 @@ async def test_pgvector_insert_and_cosine_query(pg_session):
     await pg_session.commit()
 
     # Query by cosine distance
-    query_embedding = [0.1] * 384
+    query_embedding = [0.1] * 1024
     stmt = (
         select(KnowledgeEntryRecord)
         .where(KnowledgeEntryRecord.namespace == "test")

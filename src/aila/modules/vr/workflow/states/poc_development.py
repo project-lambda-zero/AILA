@@ -17,22 +17,61 @@ can only be drafted, not executed.
 Compilation failure is recorded against the attempt count and surfaced in
 the per-attempt log; it is not raised, so a single bad code emission
 cannot crash the workflow.
+
+Sandbox containment (fix #51). The ``Stay within /tmp/aila_vr/`` line in
+``system_poc_development.md`` is guidance to the LLM, NOT a security
+control. The runtime enforcement lives in :mod:`aila.modules.vr.tools.poc_runner`:
+``confine_remote_poc_path`` refuses any ``poc_path`` that is not absolute
+and under ``/tmp/aila_vr``, and every remote invocation is wrapped in
+``firejail`` or ``unshare + setpriv`` (fail-closed -- when neither is
+present the tool REFUSES to execute with a clear reason instead of
+degrading to an unsandboxed shell). Each ``compile_poc`` allocates a
+fresh ``/tmp/aila_vr/run_<hex>`` subdirectory and returns paths inside
+it; this state's ``finally`` block invokes ``cleanup_workspace`` for
+every provisioned subdirectory so the analyzer workstation does not
+accumulate scratch space across runs. A hallucinated
+``requests.post(...)`` cannot reach the network and a hallucinated
+``open('/etc/shadow')`` cannot exfiltrate host files.
 """
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import random
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from aila.modules.vr.tools.poc_runner import confine_remote_poc_path
+from aila.platform.llm.correlation import (
+    correlation_scope,
+    current_join_keys,
+    current_prompt_version,
+)
+from aila.platform.prompts import PromptRegistry
 from aila.platform.workflows.types import StateResult
 
 __all__ = ["LLMDisabledByOperatorError", "state_poc_development"]
 
 _log = logging.getLogger(__name__)
+
+_PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
+_PROMPT_REGISTRY = PromptRegistry(
+    _PROMPT_DIR, fallback_base="system_poc_development.md",
+)
+
+
+def _load_system_prompt() -> str:
+    """Return the PoC-generator system prompt from the registry.
+
+    RFC-09 criterion 1: prompt lives in a versionable ``.md`` file, not
+    inline. Reads ``system_poc_development.md`` under the VR workflow
+    prompts directory.
+    """
+    return _PROMPT_REGISTRY.load("poc_development")
 
 
 # fix §303 -- dedicated exception for the LLM kill-switch state. The
@@ -80,27 +119,6 @@ class PoCResponse(BaseModel):
         description="One sentence explaining the trigger mechanism.",
         max_length=512,
     )
-
-_SYSTEM_PROMPT = """You write proof-of-concept exploits for vulnerability \
-research. Given a root-cause description, vulnerable function, and crash \
-type, emit a single PoC that triggers the bug. Default language is Python \
-(uses pwntools when helpful); use C only when stack/heap layout requires it.
-
-Return ONE JSON object exactly matching:
-{
-  "language": "python | c",
-  "filename": "poc.py | poc.c",
-  "code": "...full source...",
-  "rationale": "one sentence on the trigger mechanism"
-}
-
-Constraints:
-- The PoC will run with `python3 poc.py <target_binary>` (Python) or be \
-compiled and run with `./poc <target_binary>` (C).
-- Stay within /tmp/aila_vr/ for any side files.
-- Prefer ASAN-visible primitives (out-of-bounds writes, UAF, double free).
-- Do NOT include hash banners, license headers, or commentary outside the \
-JSON object."""
 
 _REVISION_HEADER = "Previous PoC attempt failed to crash. Revise the code."
 
@@ -188,16 +206,28 @@ async def _llm_poc(
     # truncation-induced JSON error that re-fires the correction
     # retry. 2048 gives ~1.5× headroom over the expected payload
     # and short-circuits runaway emissions.
-    response = await services.llm_client.chat_structured(
-        task_type=task_type,
-        messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        model_class=PoCResponse,
-        run_id=services.run_id,
-        max_output_tokens=2048,
-    )
+    system_prompt = _load_system_prompt()
+    # RFC-09 criterion 2: stamp the resolved system prompt's content hash
+    # so this LLM call's LLMCostRecord + AuditSealRecord attribute back to
+    # the exact PoC-generator prompt template. Preserve any outer join keys
+    # so an investigation-scoped caller keeps its attribution.
+    prompt_hash = hashlib.sha256(system_prompt.encode("utf-8")).hexdigest()
+    _inv, _br, _turn = current_join_keys()
+    with correlation_scope(
+        investigation_id=_inv, branch_id=_br, turn_number=_turn,
+        prompt_content_hash=prompt_hash,
+        prompt_version=current_prompt_version(),
+    ):
+        response = await services.llm_client.chat_structured(
+            task_type=task_type,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            model_class=PoCResponse,
+            run_id=services.run_id,
+            max_output_tokens=2048,
+        )
     if response.disabled:
         raise LLMDisabledByOperatorError("LLM disabled by operator")
     # chat_structured guarantees the content matches PoCResponse on
@@ -276,13 +306,93 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
             },
         )
 
+    # fix #51 -- per-run workspace teardown. Each successful compile
+    # allocates a fresh ``/tmp/aila_vr/run_<hex>`` subdirectory on the
+    # analyzer workstation; the ``finally`` block below reclaims every
+    # one via ``cleanup_workspace`` so the state exit path (crash,
+    # untested, LLM kill-switch) does not leak scratch space. Bounding
+    # workspace growth is the ``poc_runner`` prune's job even when this
+    # cleanup is skipped; the explicit ``finally`` is the fast path.
+    compiled_run_dirs: list[str] = []
+    try:
+        return await _run_ssh_attempts(
+            input=input,
+            services=services,
+            research=research,
+            integration=integration,
+            target_path=target_path,
+            patched_path=patched_path,
+            mitigations=mitigations,
+            compiled_run_dirs=compiled_run_dirs,
+        )
+    finally:
+        await _cleanup_compiled_workspaces(
+            services, integration, compiled_run_dirs,
+        )
+
+
+async def _cleanup_compiled_workspaces(
+    services: Any,
+    integration: dict[str, Any],
+    compiled_run_dirs: list[str],
+) -> None:
+    """Best-effort teardown of every per-run workspace this state provisioned.
+
+    fix #51 -- invoked from ``state_poc_development``'s ``finally`` block
+    so crash, untested, LLM kill-switch, and exception exit paths all
+    reclaim their scratch space. Cleanup failures are logged and
+    swallowed: an exit-path exception must NOT mask the original
+    workflow result, and the ``poc_runner`` prune pass will collect the
+    stragglers on the next compile.
+    """
+    for run_dir in compiled_run_dirs:
+        try:
+            result = await services.poc_runner.forward(
+                action="cleanup_workspace",
+                integration=integration,
+                run_dir=run_dir,
+            )
+        except (OSError, RuntimeError, TimeoutError) as exc:
+            _log.warning(
+                "poc_development: cleanup_workspace raised for %s (%s: %s)",
+                run_dir, type(exc).__name__, exc,
+            )
+            continue
+        status = result.get("status") if isinstance(result, dict) else None
+        if status not in ("cleaned", "skipped"):
+            _log.warning(
+                "poc_development: cleanup_workspace did not clean %s: %s",
+                run_dir, result,
+            )
+
+
+async def _run_ssh_attempts(
+    *,
+    input: dict[str, Any],
+    services: Any,
+    research: dict[str, Any],
+    integration: dict[str, Any],
+    target_path: str,
+    patched_path: Any,
+    mitigations: dict[str, Any],
+    compiled_run_dirs: list[str],
+) -> StateResult:
+    """SSH-driven PoC compile/run/verify attempt loop (fix #51 factor-out).
+
+    Split out from :func:`state_poc_development` so the caller can wrap
+    it in a ``try/finally`` that reclaims every ``compile_poc`` workspace
+    via ``cleanup_workspace`` regardless of which return path fires.
+    The behavior of the loop itself is unchanged from the pre-fix
+    version -- only the workspace bookkeeping is threaded through
+    ``compiled_run_dirs`` (mutated in place).
+    """
     history: list[dict[str, Any]] = []
     crash_payload: dict[str, Any] | None = None
     last_code: str = ""
     last_language: str = "python"
     last_filename: str = "poc.py"
 
-    # fix §308 -- track the "best" non-crashing attempt by a closeness
+    # fix \u00a7308 -- track the "best" non-crashing attempt by a closeness
     # heuristic. The prior code surfaced LAST attempt's language/code
     # in the untested_payload, which biased the operator's manual
     # follow-up toward whatever the LLM emitted last (often a
@@ -367,6 +477,15 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
             language=last_language,
             filename=last_filename,
         )
+        # fix #51 -- track the per-run workspace subdir for ``finally``
+        # cleanup regardless of compile success. A ``ready`` compile
+        # returns ``run_dir``; a compile that raced past ``mkdir`` and
+        # failed at gcc may still return one. Missing values (an older
+        # tool response) are skipped without erroring so the workflow
+        # stays forward-compatible.
+        compile_run_dir = compile_result.get("run_dir")
+        if isinstance(compile_run_dir, str) and compile_run_dir:
+            compiled_run_dirs.append(compile_run_dir)
         if compile_result.get("status") != "ready":
             history.append({
                 "attempt": attempt, "language": last_language,
@@ -376,6 +495,23 @@ async def state_poc_development(input: dict[str, Any], services: Any) -> StateRe
             continue
 
         poc_path = compile_result.get("script_path") or compile_result.get("binary_path")
+        # fix #51 -- belt+suspenders confinement at the state boundary. The
+        # tool re-validates on _run entry, but a compile-result mutation
+        # (bug or tampering) should never reach the shell wrapper. Fail
+        # the attempt closed with an audit-visible outcome so the
+        # operator sees the escape attempt in the per-attempt log.
+        confinement_error = confine_remote_poc_path(str(poc_path or ""))
+        if confinement_error:
+            _log.warning(
+                "poc_development: compile_result poc_path escaped sandbox root: %s",
+                confinement_error,
+            )
+            history.append({
+                "attempt": attempt, "language": last_language,
+                "outcome": "poc_path_escaped_sandbox",
+                "detail": confinement_error,
+            })
+            continue
         run_result = await services.poc_runner.forward(
             action="run_poc",
             integration=integration,

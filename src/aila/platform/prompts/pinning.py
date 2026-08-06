@@ -1,0 +1,365 @@
+"""Lazy per-investigation prompt pin resolution (RFC-09 criterion 4 +
+RFC-10 canary routing).
+
+The distinctive RFC-09 rule for a long-running audited investigation is
+that a live production-alias flip must NEVER rewrite the prompt on a
+turn that belongs to an already-running investigation. This module owns
+the read/persist half of that rule so both researcher modules resolve
+through the same code path.
+
+RFC-10 (#34) extends the first-turn resolve: instead of reading the
+``production`` alias directly, the first turn asks
+:meth:`AgentLifecycleController.resolve_version_for_investigation` to
+choose between the active canary and the production alias by
+deterministic hash of the investigation id. The chosen version is
+pinned onto the row so every later turn on the same investigation
+resolves that exact version -- keeping the transcript on a single
+prompt version across the entire run even when the alias or canary
+assignment flips mid-run.
+
+Behaviour:
+
+1. Look up the pin for ``key`` in the row's ``prompt_pins_json``.
+2. If pinned, resolve that exact version from the version store and
+   return its body + version. Nothing else changes.
+3. If not pinned, resolve the version via
+   :meth:`AgentLifecycleController.resolve_version_for_investigation`
+   (canary or production, chosen by hashed cohort). When a version
+   comes back, persist ``{key: version}`` into the row's pin map in
+   a single UPDATE and return that body + version.
+4. When the store raises (fail-open), or neither the canary nor the
+   production alias points at anything, return ``(None, None)`` so
+   the caller can fall back to its file registry. Store / controller
+   faults must never block a turn.
+"""
+from __future__ import annotations
+
+import json
+import logging
+from dataclasses import dataclass
+from typing import Any
+
+from sqlalchemy.exc import SQLAlchemyError
+from sqlmodel import select
+
+from aila.platform.contracts import utc_now
+from aila.platform.lifecycle.controller import AgentLifecycleController
+from aila.platform.prompts.bundle_ctx import (
+    PinnedBundle,
+    current_pinned_bundle,
+    set_pinned_bundle,
+)
+from aila.platform.prompts.registry import _decode_bundle_extras, _fold_exemplars
+from aila.platform.prompts.version_store import PromptVersionStore
+from aila.platform.uow import UnitOfWork
+
+__all__ = [
+    "ResolvedBundle",
+    "resolve_canary_key_for_investigation",
+    "resolve_pinned_bundle",
+    "resolve_pinned_prompt",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedBundle:
+    """Full pinned bundle for a turn (RFC-09 Amendment 2).
+
+    Sibling to the ``(body, version)`` return of :func:`resolve_pinned_prompt`
+    for callers that need the raw extras (persona-spawn, routing override).
+    Every field defaults to ``None`` / empty so the file-fallback path
+    yields a bundle the consumer can treat exactly like "no override".
+
+    ``body`` already has non-empty exemplars folded in -- consumers should
+    prefer ``body`` over reconstructing it from ``exemplars``.
+    """
+
+    body: str | None = None
+    version: str | None = None
+    roster: dict[str, Any] | None = None
+    routing: dict[str, Any] | None = None
+    exemplars: list[Any] | None = None
+
+_log = logging.getLogger(__name__)
+
+# Process-wide controller singleton. The class carries no per-request
+# state; :meth:`resolve_version_for_investigation` opens its own
+# session per call via ``async_session_scope`` so reusing one instance
+# never leaks connections. Kept module-level so pinning does not pay
+# the controller construction cost on every call.
+_CONTROLLER = AgentLifecycleController()
+
+
+def _decode_pins(pins_json: str | None) -> dict[str, str]:
+    """Parse the pin map, tolerating a corrupted row: an empty map is safe."""
+    if not pins_json:
+        return {}
+    try:
+        loaded = json.loads(pins_json)
+    except (TypeError, ValueError):
+        _log.warning("prompt_pins_json corrupted -- treating as empty")
+        return {}
+    if not isinstance(loaded, dict):
+        _log.warning("prompt_pins_json not an object -- treating as empty")
+        return {}
+    return {str(k): str(v) for k, v in loaded.items() if isinstance(v, str)}
+
+
+async def resolve_canary_key_for_investigation(
+    *, key: str, investigation_id: str | None,
+) -> str | None:
+    """Return ``key`` when this investigation is on the active canary cohort.
+
+    The cohort bucket is deterministic per (key, investigation_id) so this
+    returns the same answer on every turn of an investigation (RFC-10). The
+    caller threads the result into the correlation scope; the seal step then
+    feeds that turn's drift + cost into the canary hold gate for ``key``.
+
+    Best effort: no investigation id, no active canary, or a lifecycle-table
+    fault all return None so the caller simply skips canary signal feeding.
+    """
+    if not investigation_id:
+        return None
+    try:
+        route = await _CONTROLLER.resolve_version_for_investigation(
+            key=key, investigation_id=investigation_id,
+        )
+    except (SQLAlchemyError, OSError, RuntimeError, ValueError) as exc:
+        _log.debug(
+            "canary cohort route resolve failed key=%s inv=%s: %s "
+            "(skipping canary signal feed)",
+            key, investigation_id, exc,
+        )
+        return None
+    return key if route.on_canary else None
+
+
+async def resolve_pinned_bundle(
+    *,
+    investigation_id: str | None,
+    key: str,
+    investigation_model: type[Any],
+    store: PromptVersionStore,
+    model_family: str | None = None,
+) -> ResolvedBundle:
+    """Resolve the full pinned agent-config bundle for a turn.
+
+    RFC-09 Amendment 2 sibling to :func:`resolve_pinned_prompt`. Same
+    pin / canary / fail-open semantics; returns the bundle extras
+    (roster / routing / exemplars) alongside the body so callers that
+    need the RAW bundle (e.g. persona-spawn override) do not double-query
+    the store. Prompt-only bundles resolve to ``ResolvedBundle(body=body,
+    version=version)`` with the extras None -- byte-identical downstream.
+
+    File-fallback path returns an all-``None`` :class:`ResolvedBundle` --
+    consumers treat it as "no override".
+    """
+    body, version = await resolve_pinned_prompt(
+        investigation_id=investigation_id,
+        key=key,
+        investigation_model=investigation_model,
+        store=store,
+        model_family=model_family,
+    )
+    bundle = current_pinned_bundle()
+    return ResolvedBundle(
+        body=body,
+        version=version,
+        roster=bundle.roster or None,
+        routing=bundle.routing or None,
+        exemplars=bundle.exemplars or None,
+    )
+
+
+def _materialize(versioned: Any) -> tuple[str, str]:
+    """Return ``(body_with_exemplars, version)`` and publish the bundle.
+
+    Decodes the versioned record's bundle extras, publishes them into
+    the pinned-bundle ContextVar so downstream consumers (LLM routing,
+    persona-spawn) see the pinned routing / roster for this turn, and
+    folds any non-empty exemplars into the returned body so the LLM
+    actually sees them. A prompt-only bundle (all extras empty) yields
+    the body unchanged and publishes an empty ``PinnedBundle`` -- the
+    same effect as the file-fallback path.
+    """
+    roster, routing, exemplars = _decode_bundle_extras(versioned)
+    set_pinned_bundle(PinnedBundle(
+        roster=roster or {},
+        routing=routing or {},
+        exemplars=exemplars or [],
+    ))
+    return (_fold_exemplars(versioned.body, exemplars), versioned.version)
+
+
+async def resolve_pinned_prompt(
+    *,
+    investigation_id: str | None,
+    key: str,
+    investigation_model: type[Any],
+    store: PromptVersionStore,
+    model_family: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Resolve ``key`` for ``investigation_id`` through the pin-per-investigation rule.
+
+    Returns ``(body, version)``. Either is ``None`` when the caller must
+    fall back to the file registry (no investigation, no production
+    alias, an unpinnable path, or a store fault).
+
+    A fresh resolve of a not-yet-pinned key persists the pin in the same
+    call so the very next turn on the SAME investigation sees the pin,
+    not the live alias.
+
+    ``investigation_model`` is the SQLModel class for the row (VR or
+    malware) so this helper stays module-agnostic while still writing
+    the pin back to the concrete table.
+
+    ``model_family`` (RFC-09 model-family variants) is forwarded to every
+    store resolve so a family-specific prompt row (``{key}/{family}``)
+    wins when present, falling back to the bare key. The pin map stays
+    keyed by version, not family: the version is pinned per investigation
+    while the family variant is selected per turn.
+
+    RFC-09 Amendment 2 (bundle consumption): every call publishes the
+    resolved bundle's roster + routing + exemplars into the pinned-
+    bundle ContextVar (empty defaults when the fallback path fires) so
+    the LLM routing hot path and the persona-spawn seam can read the
+    bundle without a second store lookup. Non-empty exemplars are
+    folded into the returned body so the model actually sees them --
+    prompt-only bundles keep body byte-identical.
+    """
+    # Always start from an empty bundle so a fallback path here does not
+    # inherit the previous turn's overrides. Every return branch below
+    # is responsible for re-publishing a populated bundle before exit
+    # when it resolved a real version from the store.
+    set_pinned_bundle(PinnedBundle())
+    if not investigation_id:
+        # An out-of-investigation resolve (tests, dev scripts) has
+        # nothing to pin against AND no investigation id to bucket a
+        # canary cohort by. Preserve the pre-pin behaviour: resolve
+        # the live production alias directly.
+        try:
+            versioned = await store.resolve(
+                key, alias="production", model_family=model_family,
+            )
+        except (SQLAlchemyError, OSError, RuntimeError) as exc:
+            _log.warning(
+                "prompt version store resolve failed key=%s: %s (using file)",
+                key, exc,
+            )
+            return (None, None)
+        if versioned is None:
+            return (None, None)
+        return _materialize(versioned)
+
+    async with UnitOfWork() as uow:
+        row = (await uow.session.exec(
+            select(investigation_model).where(
+                investigation_model.id == investigation_id,
+            )
+        )).first()
+        pins = _decode_pins(getattr(row, "prompt_pins_json", None)) if row is not None else {}
+        pinned_version = pins.get(key)
+
+        if pinned_version is not None:
+            # Existing pin: resolve the exact version. Fail-open on a
+            # store fault so the caller still falls back to the file.
+            try:
+                versioned = await store.resolve(
+                    key, version=pinned_version, model_family=model_family,
+                )
+            except (SQLAlchemyError, OSError, RuntimeError) as exc:
+                _log.warning(
+                    "prompt version store resolve (pinned) failed "
+                    "key=%s version=%s: %s (using file)",
+                    key, pinned_version, exc,
+                )
+                return (None, None)
+            if versioned is None:
+                # The pin points at a version that no longer exists in
+                # the store. Fall back to the file rather than trying
+                # to re-pin: the operator can inspect the divergence.
+                _log.warning(
+                    "prompt pin key=%s version=%s missing from store "
+                    "inv=%s (using file)",
+                    key, pinned_version, investigation_id,
+                )
+                return (None, None)
+            return _materialize(versioned)
+
+        # First resolve: route through the lifecycle controller so a
+        # canary assignment (RFC-10) can hand this investigation the
+        # candidate version deterministically by its hashed cohort.
+        # The controller falls back to the production alias when no
+        # active canary is on record, so this replaces the prior
+        # direct ``store.resolve(alias='production')`` call without
+        # regressing the no-canary path. A controller fault degrades
+        # to a direct alias resolve so a broken lifecycle table never
+        # blocks a turn.
+        resolved_version: str | None = None
+        try:
+            route = await _CONTROLLER.resolve_version_for_investigation(
+                key=key, investigation_id=investigation_id,
+            )
+            resolved_version = route.version
+            if route.on_canary:
+                _log.info(
+                    "prompt pin canary route inv=%s key=%s version=%s "
+                    "bucket=%d cohort=%s",
+                    investigation_id, key, route.version,
+                    route.bucket, route.cohort_percent,
+                )
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError) as exc:
+            _log.warning(
+                "prompt lifecycle route resolve failed key=%s inv=%s: %s "
+                "(falling back to direct production alias)",
+                key, investigation_id, exc,
+            )
+            try:
+                versioned = await store.resolve(
+                key, alias="production", model_family=model_family,
+            )
+            except (SQLAlchemyError, OSError, RuntimeError) as fallback_exc:
+                _log.warning(
+                    "prompt version store resolve failed key=%s: %s (using file)",
+                    key, fallback_exc,
+                )
+                return (None, None)
+            if versioned is None:
+                return (None, None)
+            resolved_version = versioned.version
+
+        if resolved_version is None:
+            # No production alias AND no canary version -- unpinnable
+            # path. Do NOT touch the pin map: a later alias flip should
+            # then produce a pin on the next turn.
+            return (None, None)
+
+        # Resolve the chosen version's body from the store. The
+        # lifecycle controller returned only the version id; the store
+        # still owns body materialisation. A store fault on this fetch
+        # degrades to the file baseline like every other store path.
+        try:
+            versioned = await store.resolve(
+                key, version=resolved_version, model_family=model_family,
+            )
+        except (SQLAlchemyError, OSError, RuntimeError) as exc:
+            _log.warning(
+                "prompt version store resolve (routed) failed key=%s "
+                "version=%s: %s (using file)",
+                key, resolved_version, exc,
+            )
+            return (None, None)
+        if versioned is None:
+            _log.warning(
+                "prompt lifecycle route returned version=%s but store "
+                "missing key=%s inv=%s (using file)",
+                resolved_version, key, investigation_id,
+            )
+            return (None, None)
+        if row is not None:
+            pins[key] = versioned.version
+            row.prompt_pins_json = json.dumps(pins)
+            row.updated_at = utc_now()
+            uow.session.add(row)
+            await uow.session.commit()
+        return _materialize(versioned)

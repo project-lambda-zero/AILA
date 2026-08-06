@@ -25,6 +25,7 @@ from typing import Any
 
 from aila.config import Settings
 from aila.platform.exceptions import AILAError
+from aila.platform.services.runtime import run_blocking_io
 
 __all__ = ["OfflineInstallerService"]
 
@@ -194,8 +195,8 @@ class OfflineInstallerService:
 
         _log.info("Downloading pip wheels: %s", " ".join(cmd))
         try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=600,
+            result = await run_blocking_io(
+                subprocess.run, cmd, capture_output=True, text=True, timeout=600,
             )
             if result.returncode != 0:
                 _log.warning("pip download failed for %s: %s", package_name, result.stderr[:500])
@@ -205,8 +206,8 @@ class OfflineInstallerService:
                     "--no-deps" if "dissect" not in package_name else "--only-binary=:all:",
                     package_name,
                 ]
-                result = subprocess.run(
-                    cmd_fallback, capture_output=True, text=True, timeout=600,
+                result = await run_blocking_io(
+                    subprocess.run, cmd_fallback, capture_output=True, text=True, timeout=600,
                 )
                 if result.returncode != 0:
                     _log.error("pip download fallback failed: %s", result.stderr[:500])
@@ -324,7 +325,8 @@ class OfflineInstallerService:
         if not existing_debs:
             _log.info("Attempting to fetch .deb for %s on platform server...", package_name)
             try:
-                result = subprocess.run(
+                result = await run_blocking_io(
+                    subprocess.run,
                     ["apt-get", "download", package_name],
                     capture_output=True, text=True, timeout=120,
                     cwd=str(deb_dir),

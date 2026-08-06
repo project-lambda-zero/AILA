@@ -18,9 +18,9 @@ from aila.api.auth import AuthContext, require_user_or_api_key
 from aila.api.limiter import limiter
 from aila.api.schemas.endpoints import SavedFilterCreate, SavedFilterResponse, SavedFilterUpdate
 from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 from aila.storage.database import async_session_scope
-from aila.storage.db_models import SavedFilterRecord
+from aila.storage.db_models import SavedFilterRecord, UserRecord
 
 __all__ = ["router"]
 
@@ -58,15 +58,29 @@ async def list_saved_filters(
 ) -> DataEnvelope[list[SavedFilterResponse]]:
     """List user's own saved filters plus team-shared filters (T-138-17).
 
-    team-shared filters (shared_with_team=True) are visible to all users.
+    #36: ``shared_with_team=True`` filters are visible only to callers whose
+    team matches the filter owner's team; a god-tier admin (``team_id`` is
+    None, TEAM-06) sees every shared filter regardless of team. Without this
+    join, a filter that any user marked ``shared_with_team=True`` leaked to
+    every other team on the platform. ``SavedFilterRecord`` has no team_id
+    column, so ownership is resolved through the creator's ``UserRecord.team_id``.
     """
     async with async_session_scope() as session:
-        stmt = select(SavedFilterRecord).where(
-            or_(
-                SavedFilterRecord.user_id == auth.user_id,
-                SavedFilterRecord.shared_with_team == True,
+        # Own filters are always visible. The team-shared branch is scoped to
+        # the caller's team by joining through UserRecord.team_id -- admins
+        # (auth.team_id is None) skip the join and see every shared filter.
+        own = SavedFilterRecord.user_id == auth.user_id
+        if auth.team_id is None:
+            shared = SavedFilterRecord.shared_with_team == True
+            stmt = select(SavedFilterRecord).where(or_(own, shared))
+        else:
+            team_member_ids = select(UserRecord.id).where(
+                UserRecord.team_id == auth.team_id
             )
-        )
+            shared = (SavedFilterRecord.shared_with_team == True) & (
+                SavedFilterRecord.user_id.in_(team_member_ids)  # type: ignore[attr-defined]
+            )
+            stmt = select(SavedFilterRecord).where(or_(own, shared))
         if entity_type:
             stmt = stmt.where(SavedFilterRecord.entity_type == entity_type)
         stmt = stmt.order_by(SavedFilterRecord.updated_at.desc())  # type: ignore[attr-defined]

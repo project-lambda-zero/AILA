@@ -7,7 +7,7 @@ from uuid import uuid4
 from sqlalchemy import Column, DateTime, Text
 from sqlmodel import Field, SQLModel
 
-from aila.platform.contracts._common import utc_now
+from aila.platform.contracts import utc_now
 
 __all__ = ["AnswerCandidateRecord"]
 
@@ -23,6 +23,11 @@ class AnswerCandidateRecord(SQLModel, table=True):
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     project_id: str = Field(index=True)
+    # Denormalised copy of ``forensics_projects.team_id`` (#59). Stamped
+    # at insert time so the team-scope listener auto-filters answer
+    # reads without loading the parent project row first. Nullable to
+    # match the parent's ``NULL == admin-owned`` convention.
+    team_id: str | None = Field(default=None, index=True)
     investigation_id: str | None = Field(default=None, index=True)
     question_text: str = Field(sa_column=Column(Text))
     answer_text: str = Field(default="", sa_column=Column(Text))

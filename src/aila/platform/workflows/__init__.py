@@ -23,6 +23,22 @@ from .errors import (
     WorkflowSafeMessage,
     WorkflowStepLimitExceeded,
 )
+from .phase_graph import (
+    DISPATCH_STATE,
+    EMIT_STATE,
+    SETUP_STATE,
+    GateFn,
+    LoopBuilder,
+    PhaseGraphSpec,
+    PhaseSpec,
+    RouterFn,
+    SetupBuilder,
+    build_dispatch_workflow,
+    build_phase_workflow,
+    make_dispatch_router,
+    make_gate_state,
+    make_router_state,
+)
 from .types import (
     MAX_STEPS_PER_JOB,
     RESERVED_CANCELLED,
@@ -38,14 +54,23 @@ from .types import (
 )
 
 __all__ = [
+    "DISPATCH_STATE",
+    "EMIT_STATE",
     "MAX_STEPS_PER_JOB",
     "RESERVED_CANCELLED",
     "RESERVED_CRASHED",
     "RESERVED_FAILED",
     "RESERVED_SUCCEEDED",
     "RESERVED_TERMINAL_STATES",
+    "SETUP_STATE",
     "DurableStateMachine",
+    "GateFn",
+    "LoopBuilder",
+    "PhaseGraphSpec",
+    "PhaseSpec",
+    "RouterFn",
     "ServiceBuildError",
+    "SetupBuilder",
     "State",
     "StateResult",
     "StateSpec",
@@ -55,5 +80,10 @@ __all__ = [
     "WorkflowSafeMessage",
     "WorkflowServices",
     "WorkflowStepLimitExceeded",
+    "build_dispatch_workflow",
+    "build_phase_workflow",
     "default_backoff",
+    "make_dispatch_router",
+    "make_gate_state",
+    "make_router_state",
 ]
