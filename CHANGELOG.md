@@ -19,6 +19,34 @@ operator action.
 
 ### Added
 
+- One generic MCP client and bridge tool that serves every MCP server
+  (RFC-11 #35). Per-server behavior now lives in pluggable middleware over
+  a single transport rather than in a bespoke bridge class per server. The
+  operator-editable server catalog is the routing authority: adding,
+  disabling, or retargeting a server takes effect on the next dispatch
+  with no worker restart, and two instances that advertise one capability
+  share load by round-robin with automatic failover and health-driven
+  drop of an unreachable instance. Tool availability resolves by a
+  module's declared capability instead of a hardcoded server name, and the
+  live tool list is the dispatch authority, so a tool present on a server
+  but absent from the static inventory is still dispatchable. A server
+  with no bespoke middleware falls back to a pass-through client, so a
+  newly registered server advertising a bound capability dispatches
+  without a code change.
+- A zero-trust gate on the MCP server catalog (RFC-11 #35). A newly
+  registered server is unapproved and cannot serve a live call until an
+  operator approves it; approval pins a hash of the server's tool schema,
+  and a later schema change is reported as drift. Free-text tool and
+  parameter descriptions from a server are sanitized before they enter an
+  agent prompt, closing a tool-description injection path. Catalog rows
+  carry team ownership and record every approval and revocation with
+  actor and reason, and only approved rows resolve on the live dispatch
+  path. Existing operator-seeded rows are grandfathered to approved by the
+  accompanying migration so live dispatch is unchanged.
+- Four RFC-11 honesty guardrails (#35). Build-time findings now fire on
+  reintroducing a bespoke per-server HTTP transport, a static
+  server-to-bridge map, a hardcoded server-dispatch lookup, or a
+  tool-description projection into a prompt without sanitization.
 - An agent development lifecycle for prompt and agent-config change
   (RFC-10 #34). Agent behavior now has its own governed release path,
   separate from and faster than the code release: a candidate bundle is
@@ -980,6 +1008,15 @@ operator action.
 
 ### Removed
 
+- The three bespoke MCP bridge classes (RFC-11 #35). Their transport and
+  server-specific logic collapsed onto the generic client plus one
+  middleware plugin per server, preserving every behavior: kwarg
+  aliasing, address and encoding coercion, pending-poll with dead-worker
+  detection, the per-call dedup cache, prewarm fan-out, the read_function
+  not-indexed fallback chain, the virtual line-read and streaming-upload
+  actions, APK path recovery, pipeline-only blocking, and per-tool schema
+  fetch. Dispatch now builds a bridge on demand from the catalog instead
+  of a fixed per-module map.
 - The worker's legacy ARQ function shim (`_legacy_arq_functions`) is retired.
   The scheduled-report and network-discovery jobs are now registered through
   the `@platform_task` decorator like every other task, so the ARQ worker

@@ -24,15 +24,10 @@ from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
     VRInvestigationRecord,
 )
-from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.modules.vr.workflow.states.investigation_setup import (
     _spawn_ratified_specialists,
 )
 from aila.platform.config_base import ModuleConfigReader
-from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
-from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
-from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
-from aila.platform.mcp.bridges.knowledge import KnowledgeBridgeTool
 from aila.platform.workflows.investigation_loop_base import (
     state_investigation_loop as _build_loop_state,
 )
@@ -57,8 +52,7 @@ _cfg = ModuleConfigReader("vr")
 # fix §286 -- module-level executor + bridges singleton, lazily built
 # on first task wakeup of each worker process.
 #
-# Prior code constructed a fresh IDABridgeTool / AuditMcpBridgeTool /
-# AndroidMcpBridgeTool / ToolExecutor on EVERY task. The bridges hold
+# Prior code constructed a fresh ToolExecutor on EVERY task. The bridges hold
 # instance-level httpx clients with connection pools (W1 E12 fix); a
 # new instance per task means a new pool every task, defeating the
 # whole point of the pool. The executor carries an LRU
@@ -86,12 +80,7 @@ def _get_executor() -> ToolExecutor:
     """
     global _EXECUTOR_SINGLETON
     if _EXECUTOR_SINGLETON is None:
-        _EXECUTOR_SINGLETON = ToolExecutor(
-            ida=IDABridgeTool(recorder=record_call, module_id="vr"),
-            audit_mcp=AuditMcpBridgeTool(recorder=record_call, module_id="vr"),
-            android_mcp=AndroidMcpBridgeTool(recorder=record_call, module_id="vr"),
-            knowledge=KnowledgeBridgeTool(recorder=record_call),
-        )
+        _EXECUTOR_SINGLETON = ToolExecutor()
     return _EXECUTOR_SINGLETON
 
 

@@ -44,9 +44,9 @@ from aila.platform.contracts.reasoning import (
     ReasoningTurnDecision,
     RejectedHypothesis,
 )
-from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
-from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
-from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
+from aila.platform.mcp.middleware.android import AndroidMcpMiddleware
+from aila.platform.mcp.middleware.audit import AuditMcpMiddleware
+from aila.platform.mcp.middleware.ida import IdaMiddleware
 
 
 class TestCaseStateEncoding:
@@ -441,23 +441,43 @@ class TestFetchToolSpecs:
     on each applicable bridge.
     """
 
+    @pytest.fixture(autouse=True)
+    def _skip_capability_catalog(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # ``_applicable_servers_by_capability`` queries the DB-backed
+        # ``McpRegistryService`` -- unavailable offline. Force ``None``
+        # so ``_fetch_tool_specs`` falls back to the static kind map,
+        # keeping every assertion in this class independent of a live
+        # ``mcp_server_instances`` table.
+        async def _no_catalog(target_kind: str | None) -> set[str] | None:
+            return None
+
+        monkeypatch.setattr(
+            "aila.modules.vr.agents.vuln_researcher."
+            "_applicable_servers_by_capability",
+            _no_catalog,
+        )
+
     @pytest.mark.asyncio
     async def test_source_repo_only_hits_audit_mcp(self, monkeypatch: pytest.MonkeyPatch) -> None:
         audit_calls: list[str] = []
         ida_calls: list[str] = []
 
-        async def fake_audit_specs(self: object) -> list[dict]:
+        async def fake_audit_specs(self: object, client: object) -> list[dict]:
             audit_calls.append("hit")
             return [{"name": "read_function", "params": [], "required": []}]
 
-        async def fake_ida_specs(self: object) -> list[dict]:
+        async def fake_ida_specs(self: object, client: object) -> list[dict]:
             ida_calls.append("hit")
             return []
 
-        from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
-        from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
-        monkeypatch.setattr(AuditMcpBridgeTool, "list_tool_specs", fake_audit_specs)
-        monkeypatch.setattr(IDABridgeTool, "list_tool_specs", fake_ida_specs)
+        monkeypatch.setattr(
+            "aila.platform.mcp.middleware.audit.AuditMcpMiddleware.list_tool_specs",
+            fake_audit_specs,
+        )
+        monkeypatch.setattr(
+            "aila.platform.mcp.middleware.ida.IdaMiddleware.list_tool_specs",
+            fake_ida_specs,
+        )
 
         out = await _fetch_tool_specs(target_kind="source_repo")
         assert "audit_mcp" in out
@@ -470,18 +490,22 @@ class TestFetchToolSpecs:
         audit_calls: list[str] = []
         ida_calls: list[str] = []
 
-        async def fake_audit_specs(self: object) -> list[dict]:
+        async def fake_audit_specs(self: object, client: object) -> list[dict]:
             audit_calls.append("hit")
             return []
 
-        async def fake_ida_specs(self: object) -> list[dict]:
+        async def fake_ida_specs(self: object, client: object) -> list[dict]:
             ida_calls.append("hit")
             return [{"name": "decompile", "params": [], "required": []}]
 
-        from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
-        from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
-        monkeypatch.setattr(AuditMcpBridgeTool, "list_tool_specs", fake_audit_specs)
-        monkeypatch.setattr(IDABridgeTool, "list_tool_specs", fake_ida_specs)
+        monkeypatch.setattr(
+            "aila.platform.mcp.middleware.audit.AuditMcpMiddleware.list_tool_specs",
+            fake_audit_specs,
+        )
+        monkeypatch.setattr(
+            "aila.platform.mcp.middleware.ida.IdaMiddleware.list_tool_specs",
+            fake_ida_specs,
+        )
 
         out = await _fetch_tool_specs(target_kind="native_binary")
         assert "ida_headless" in out
@@ -506,15 +530,15 @@ class TestFetchToolSpecs:
         ida_calls: list[str] = []
         android_calls: list[str] = []
 
-        async def fake_audit_specs(self: object) -> list[dict]:
+        async def fake_audit_specs(self: object, client: object) -> list[dict]:
             audit_calls.append("hit")
             return [{"name": "semantic_search", "params": [], "required": []}]
 
-        async def fake_ida_specs(self: object) -> list[dict]:
+        async def fake_ida_specs(self: object, client: object) -> list[dict]:
             ida_calls.append("hit")
             return [{"name": "decompile", "params": [], "required": []}]
 
-        async def fake_android_specs(self: object) -> list[dict]:
+        async def fake_android_specs(self: object, client: object) -> list[dict]:
             android_calls.append("hit")
             return [
                 {"name": "apktool_decode", "params": [], "required": []},
@@ -523,13 +547,13 @@ class TestFetchToolSpecs:
             ]
 
         monkeypatch.setattr(
-            AuditMcpBridgeTool, "list_tool_specs", fake_audit_specs,
+            AuditMcpMiddleware, "list_tool_specs", fake_audit_specs,
         )
         monkeypatch.setattr(
-            IDABridgeTool, "list_tool_specs", fake_ida_specs,
+            IdaMiddleware, "list_tool_specs", fake_ida_specs,
         )
         monkeypatch.setattr(
-            AndroidMcpBridgeTool, "list_tool_specs", fake_android_specs,
+            AndroidMcpMiddleware, "list_tool_specs", fake_android_specs,
         )
 
         out = await _fetch_tool_specs(target_kind="android_apk")

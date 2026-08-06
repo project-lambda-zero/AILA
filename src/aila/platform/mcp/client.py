@@ -49,6 +49,7 @@ from typing import Any
 import httpx
 from sqlalchemy.exc import SQLAlchemyError
 
+from aila.platform.llm.sanitize import sanitize_input
 from aila.platform.mcp.instance_catalog import (
     McpInstanceCatalog,
     McpServerInstance,
@@ -181,11 +182,16 @@ def compact_tool_spec(raw: dict[str, Any]) -> dict[str, Any]:
             entry["default"] = pspec["default"]
         pdesc = pspec.get("description")
         if pdesc:
-            entry["description"] = str(pdesc)[:240]
+            # RFC-11 zero-trust: an MCP server controls its own tool
+            # descriptions, so strip prompt-injection patterns from the
+            # free-text before it lands in an agent prompt (tool-poisoning
+            # defense). Structural fields (name/type/required/default)
+            # stay verbatim -- they drive dispatch and the approval hash.
+            entry["description"] = sanitize_input(str(pdesc))[:240]
         params.append(entry)
     return {
         "name": name,
-        "description": description[:400],
+        "description": sanitize_input(description)[:400],
         "params": params,
         "required": required,
     }
@@ -289,7 +295,13 @@ async def _catalog_row(
     on the row acts as an operator temporary revert to the default.
     """
     try:
-        row = await catalog.get_by_scope_and_name(module_scope, server_name)
+        # RFC-11 zero-trust: live dispatch resolves only APPROVED catalog
+        # rows. A pending / revoked row is treated as absent so the
+        # resolver falls through to env / config / default -- an
+        # unapproved server can never silently serve a live call.
+        row = await catalog.get_by_scope_and_name(
+            module_scope, server_name, approved_only=True,
+        )
     except (SQLAlchemyError, OSError, RuntimeError) as exc:
         _log.info(
             "mcp resolve_instance: catalog lookup failed for %s/%s (%s) "
@@ -370,6 +382,7 @@ class McpClient:
         recorder: (
             Callable[..., AbstractAsyncContextManager[dict[str, Any]]] | None
         ) = None,
+        persistent_pool: bool = False,
     ) -> None:
         self.server_id = server_id
         self._fixed_base_url: str | None = (
@@ -380,6 +393,12 @@ class McpClient:
         self._recorder = recorder
         self._resolved: ResolvedInstance | None = None
         self._spec_cache: list[dict[str, Any]] | None = None
+        # ``persistent_pool`` reuses one httpx client across calls
+        # (android-mcp's module-level connection pool); the default
+        # opens and closes a fresh client per call, byte-identical to
+        # the pre-Tier-C ida/audit bridges.
+        self._persistent_pool = persistent_pool
+        self._http: httpx.AsyncClient | None = None
 
     def invalidate_base_url(self) -> None:
         """Drop the cached resolution so the next call re-runs ``resolver``.
@@ -389,6 +408,16 @@ class McpClient:
         picks up the new value without a worker restart.
         """
         self._resolved = None
+
+    def invalidate_spec_cache(self) -> None:
+        """Drop the cached tool catalogue so the next list re-fetches.
+
+        Mirrors :meth:`invalidate_base_url`. A middleware that governs
+        its own catalogue freshness (audit-mcp's class-level TTL) calls
+        this to force the client's per-client spec cache to refetch on
+        the next :meth:`list_tool_specs`.
+        """
+        self._spec_cache = None
 
     async def resolve(self) -> ResolvedInstance:
         """Return the cached :class:`ResolvedInstance` or resolve fresh.
@@ -469,6 +498,162 @@ class McpClient:
         self._spec_cache = [compact_tool_spec(t) for t in raw if isinstance(t, dict)]
         return self._spec_cache
 
+    @asynccontextmanager
+    async def recorder_context(self, action: str):
+        """Open the single audit-log envelope for one ``forward`` call.
+
+        Resolves the instance (for ``base_url`` + ``instance_id``) then
+        delegates to :func:`build_recorder_context`. A middleware wraps
+        its whole ``forward`` in one ``recorder_context`` and threads the
+        yielded ``ctx`` into the primary :meth:`post` so exactly one row
+        is written per call with the final outcome -- pending-poll
+        retries and fan-out calls run through :meth:`post` WITHOUT a
+        ``ctx`` and add no rows, byte-identical to the pre-Tier-C
+        bridges.
+        """
+        resolved = await self.resolve()
+        async with build_recorder_context(
+            self._recorder,
+            server_id=self.server_id,
+            base_url=resolved.url,
+            action=action,
+            instance_id=resolved.instance_id,
+        ) as ctx:
+            yield ctx
+
+    async def _pooled_client(self) -> httpx.AsyncClient:
+        """Return the reused pool client, creating it on first use.
+
+        Only reached when ``persistent_pool`` is set. The client carries
+        a connection pool sized to match android-mcp's module-level pool
+        (100 connections, 20 keep-alive); the per-call timeout is passed
+        on each request rather than baked into the client so a slow tool
+        does not inherit a fast client's deadline.
+        """
+        if self._http is None or self._http.is_closed:
+            self._http = httpx.AsyncClient(
+                limits=httpx.Limits(
+                    max_connections=100, max_keepalive_connections=20,
+                ),
+            )
+        return self._http
+
+    async def _http_post(
+        self, url: str, payload: dict[str, Any], timeout: float,
+    ) -> httpx.Response:
+        """POST ``payload`` to ``url`` via the pool or a fresh client."""
+        if self._persistent_pool:
+            client = await self._pooled_client()
+            return await client.post(url, json=payload, timeout=timeout)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            return await client.post(url, json=payload)
+
+    async def aclose(self) -> None:
+        """Close the pool client if one was opened. No-op otherwise."""
+        if self._http is not None and not self._http.is_closed:
+            await self._http.aclose()
+        self._http = None
+
+    async def post(
+        self,
+        action: str,
+        payload: dict[str, Any],
+        *,
+        timeout: float | None = None,
+        ctx: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """POST ``/tools/<action>`` and return the normalised JSON body.
+
+        The raw transport primitive: no audit-log row is written here.
+        Pass ``ctx`` (from :meth:`recorder_context`) for the one call
+        that should be recorded; omit it for secondary calls (poll
+        retries, prewarm, fallbacks). Network failures and non-JSON
+        responses collapse into the uniform ``{"status": "error",
+        "error": "..."}`` envelope so the caller never branches on the
+        transport layer. Status classification is byte-identical to the
+        pre-Tier-C bridge dispatch.
+        """
+        resolved = await self.resolve()
+        base = resolved.url
+        url = f"{base}/tools/{action}"
+        effective_timeout = timeout if timeout is not None else self._timeout
+        try:
+            resp = await self._http_post(url, payload, effective_timeout)
+        except httpx.ConnectError as exc:
+            if ctx is not None:
+                ctx["status"] = "error"
+                ctx["error_excerpt"] = str(exc)[:400]
+            return {
+                "status": "error",
+                "error": f"Cannot reach {self.server_id} at {base}: {exc}",
+            }
+        except httpx.TimeoutException as exc:
+            if ctx is not None:
+                ctx["status"] = "error"
+                ctx["error_excerpt"] = str(exc)[:400]
+            return {
+                "status": "error",
+                "error": (
+                    f"Timeout ({effective_timeout}s) calling "
+                    f"{self.server_id}.{action}: {exc}"
+                ),
+            }
+        if ctx is not None:
+            ctx["http_status"] = resp.status_code
+        try:
+            body = resp.json()
+        except ValueError as exc:
+            if ctx is not None:
+                ctx["status"] = "error"
+                ctx["error_excerpt"] = str(exc)[:400]
+            return {
+                "status": "error",
+                "error": (
+                    f"Non-JSON response from {self.server_id}.{action}: "
+                    f"{resp.text[:200]}"
+                ),
+            }
+        if not isinstance(body, dict):
+            # A bare list / scalar body wraps into the uniform
+            # envelope so the caller can index status uniformly.
+            body = {"status": "ready", "result": body}
+        status = body.get("status")
+        if status in ("ready", "completed", "ok"):
+            if ctx is not None:
+                ctx["status"] = "ready"
+        elif status in ("pending", "queued", "running"):
+            if ctx is not None:
+                ctx["status"] = "pending"
+        elif status == "error":
+            if ctx is not None:
+                ctx["status"] = "error"
+                err = body.get("error")
+                if isinstance(err, str):
+                    ctx["error_excerpt"] = err[:400]
+        elif status is None:
+            # HTTP 2xx + no status field is the documented MCP
+            # success shape for tools that return a bare result
+            # dict (list_functions, binary_metadata, etc.). Inject
+            # ready so downstream success-whitelists never see a
+            # missing key that reads as failure.
+            if resp.status_code < 400:
+                if ctx is not None:
+                    ctx["status"] = "ready"
+                body = {**body, "status": "ready"}
+            elif ctx is not None:
+                ctx["status"] = "error"
+        else:
+            # Unknown non-standard status -- log once and treat as
+            # error rather than silently masking a partial-failure.
+            _log.warning(
+                "mcp_client %s: unknown payload status %r "
+                "(HTTP %d) on action %s -- coercing to error",
+                self.server_id, status, resp.status_code, action,
+            )
+            if ctx is not None:
+                ctx["status"] = "error"
+        return body
+
     async def call_tool(
         self,
         action: str,
@@ -476,96 +661,15 @@ class McpClient:
         *,
         timeout: float | None = None,
     ) -> dict[str, Any]:
-        """POST ``/tools/<action>`` with ``payload`` and return the JSON body.
+        """POST ``/tools/<action>`` and record one audit row.
 
-        Records one row per call via the bound ``recorder`` (with
-        ``instance_id`` stamped) regardless of outcome so the operator
-        audit trail captures every dispatched action. Network failures
-        and non-JSON responses collapse into the uniform
-        ``{"status": "error", "error": "..."}`` envelope so the caller
-        never has to branch on transport layer.
+        The single-call convenience path: :meth:`recorder_context` +
+        :meth:`post`. Middleware plugins that need retry / fallback /
+        fan-out loops call :meth:`post` directly so only the primary
+        call is recorded. Byte-identical to the pre-Tier-C dispatch.
         """
-        resolved = await self.resolve()
-        base = resolved.url
-        instance_id = resolved.instance_id
-        url = f"{base}/tools/{action}"
-        effective_timeout = timeout if timeout is not None else self._timeout
-
-        async with build_recorder_context(
-            self._recorder,
-            server_id=self.server_id,
-            base_url=base,
-            action=action,
-            instance_id=instance_id,
-        ) as ctx:
-            try:
-                async with httpx.AsyncClient(timeout=effective_timeout) as client:
-                    resp = await client.post(url, json=payload)
-            except httpx.ConnectError as exc:
-                ctx["status"] = "error"
-                ctx["error_excerpt"] = str(exc)[:400]
-                return {
-                    "status": "error",
-                    "error": f"Cannot reach {self.server_id} at {base}: {exc}",
-                }
-            except httpx.TimeoutException as exc:
-                ctx["status"] = "error"
-                ctx["error_excerpt"] = str(exc)[:400]
-                return {
-                    "status": "error",
-                    "error": (
-                        f"Timeout ({effective_timeout}s) calling "
-                        f"{self.server_id}.{action}: {exc}"
-                    ),
-                }
-            ctx["http_status"] = resp.status_code
-            try:
-                body = resp.json()
-            except ValueError as exc:
-                ctx["status"] = "error"
-                ctx["error_excerpt"] = str(exc)[:400]
-                return {
-                    "status": "error",
-                    "error": (
-                        f"Non-JSON response from {self.server_id}.{action}: "
-                        f"{resp.text[:200]}"
-                    ),
-                }
-            if not isinstance(body, dict):
-                # A bare list / scalar body wraps into the uniform
-                # envelope so the caller can index status uniformly.
-                body = {"status": "ready", "result": body}
-            status = body.get("status")
-            if status in ("ready", "completed", "ok"):
-                ctx["status"] = "ready"
-            elif status in ("pending", "queued", "running"):
-                ctx["status"] = "pending"
-            elif status == "error":
-                ctx["status"] = "error"
-                err = body.get("error")
-                if isinstance(err, str):
-                    ctx["error_excerpt"] = err[:400]
-            elif status is None:
-                # HTTP 2xx + no status field is the documented MCP
-                # success shape for tools that return a bare result
-                # dict (list_functions, binary_metadata, etc.). Inject
-                # ready so downstream success-whitelists never see a
-                # missing key that reads as failure.
-                if resp.status_code < 400:
-                    ctx["status"] = "ready"
-                    body = {**body, "status": "ready"}
-                else:
-                    ctx["status"] = "error"
-            else:
-                # Unknown non-standard status -- log once and treat as
-                # error rather than silently masking a partial-failure.
-                _log.warning(
-                    "mcp_client %s: unknown payload status %r "
-                    "(HTTP %d) on action %s -- coercing to error",
-                    self.server_id, status, resp.status_code, action,
-                )
-                ctx["status"] = "error"
-            return body
+        async with self.recorder_context(action) as ctx:
+            return await self.post(action, payload, timeout=timeout, ctx=ctx)
 
     async def health(self) -> dict[str, Any]:
         """Best-effort ``GET /health`` for the operator's readiness UI."""

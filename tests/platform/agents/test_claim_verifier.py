@@ -209,11 +209,14 @@ class _CannedLLM:
 
 
 class _FakeBridge:
-    """AuditMcpBridgeTool stand-in.
+    """``McpBridgeTool`` stand-in returned by a patched ``make_bridge``.
 
     ``_resolve_base_url`` returns a canned url so the platform helper
     ``_fetch_audit_mcp_signatures`` proceeds. ``forward`` returns the
-    canned probe response for the tool name.
+    canned probe response for the tool name. ``__call__`` returns
+    ``self`` so tests that historically monkeypatched the pre-Tier-C
+    bridge CLASS with this instance still work; the current tests
+    instead patch ``make_bridge`` with ``lambda ...: fake_bridge``.
     """
 
     def __init__(
@@ -223,8 +226,8 @@ class _FakeBridge:
         self._probe_responses = dict(probe_responses or {})
         self.forward_calls: list[dict[str, Any]] = []
 
-    def __call__(self, *, recorder):
-        del recorder
+    def __call__(self, *args, **kwargs):
+        del args, kwargs
         return self
 
     async def _resolve_base_url(self) -> str:
@@ -726,12 +729,12 @@ def _install_run_seams(
 
     fake_bridge = _FakeBridge(probe_responses=probe_responses)
     monkeypatch.setattr(
-        "aila.platform.agents.claim_verifier.AuditMcpBridgeTool",
-        fake_bridge,
+        "aila.platform.agents.claim_verifier.make_bridge",
+        lambda *args, **kwargs: fake_bridge,
     )
 
-    async def fake_fetch(recorder):
-        del recorder
+    async def fake_fetch(recorder, *, module_id):
+        del recorder, module_id
         return "  - audit_mcp.search_source(q)\n", signatures_ok
 
     monkeypatch.setattr(
@@ -919,12 +922,12 @@ class TestRunHappyPath:
             }
         monkeypatch.setattr(agent, "_load_context", load_context)
         monkeypatch.setattr(
-            "aila.platform.agents.claim_verifier.AuditMcpBridgeTool",
-            fake_bridge,
+            "aila.platform.agents.claim_verifier.make_bridge",
+            lambda *args, **kwargs: fake_bridge,
         )
 
-        async def fake_fetch(recorder):
-            del recorder
+        async def fake_fetch(recorder, *, module_id):
+            del recorder, module_id
             return "", True
 
         monkeypatch.setattr(

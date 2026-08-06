@@ -71,7 +71,7 @@ from aila.modules.vr.db_models import (
 from aila.modules.vr.reporting.poc_writer import PocWriter
 from aila.modules.vr.reporting.writer_agent import ReportContent, ReportWriter
 from aila.modules.vr.services.mcp_call_logger import record_call
-from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
+from aila.platform.mcp.factory import make_bridge
 from aila.platform.services.runtime import run_blocking_io
 from aila.platform.tasks.runtime_stats import active_task_runtime_seconds
 from aila.platform.uow import UnitOfWork
@@ -644,7 +644,7 @@ async def _resolve_code_excerpts(
             if fp and fn:
                 normalized.append((fp, fn))
 
-    bridge = AuditMcpBridgeTool(recorder=record_call, module_id="vr")
+    bridge = make_bridge("audit_mcp", module_id="vr", recorder=record_call)
     excerpts: list[dict[str, Any]] = []
     for fp, fn in normalized:
         try:

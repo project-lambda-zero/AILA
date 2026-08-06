@@ -53,7 +53,7 @@ from sqlmodel import select as _select
 
 from aila.platform.agents.idempotent_llm import idempotent_llm_call
 from aila.platform.contracts import utc_now
-from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
+from aila.platform.mcp.factory import make_bridge
 from aila.platform.prompts import PromptRegistry
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.uow import UnitOfWork
@@ -203,7 +203,7 @@ async def _fetch_audit_mcp_signatures(
     verified so the bridge is namespaced under that module's config /
     tool-name namespace (RFC-05 crit 4 hardening).
     """
-    bridge = AuditMcpBridgeTool(recorder=recorder, module_id=module_id)
+    bridge = make_bridge("audit_mcp", module_id=module_id, recorder=recorder)
     try:
         base_url = await bridge._resolve_base_url()
     except (OSError, RuntimeError) as exc:
@@ -361,7 +361,7 @@ class ClaimVerifierAgentBase:
     * ``_outcome_state_approved`` -- ``OUTCOME_STATE_APPROVED`` string
       constant the new row's ``state`` column is set to.
     * ``_MODULE_ID`` -- the owning module id (``"vr"``, ``"malware"``,
-      ...). Passed to every ``AuditMcpBridgeTool`` construction so the
+      ...). Passed to every ``make_bridge`` construction so the
       platform bridge is namespaced under the module the investigation
       belongs to (RFC-05 crit 4 hardening).
     """
@@ -410,7 +410,7 @@ class ClaimVerifierAgentBase:
         raise NotImplementedError
 
     def _bridge_recorder(self) -> Callable[..., Any]:
-        """Return the module's mcp call recorder passed to ``AuditMcpBridgeTool``.
+        """Return the module's mcp call recorder passed to ``make_bridge``.
 
         Each module has its own ``mcp_call_logger.record_call`` so probe
         traffic is attributed to the correct module dashboard.
@@ -605,15 +605,12 @@ class ClaimVerifierAgentBase:
         preconditions = [p for _, p in preconditions]
 
         # Stage 2: probe executor -- substitute $INDEX_ID + run each probe.
-        # Probes run in parallel via asyncio.gather. AuditMcpBridgeTool
+        # Probes run in parallel via asyncio.gather. McpBridgeTool
         # is concurrency-safe (per-instance warm-lock + httpx client
         # created per-call), and audit-mcp deduplicates identical tool
         # calls -- concurrent probes benefit from server-side dedup as
         # well as wall-clock overlap.
-        bridge = AuditMcpBridgeTool(
-            recorder=self._bridge_recorder(),
-            module_id=self._MODULE_ID,
-        )
+        bridge = make_bridge("audit_mcp", module_id=self._MODULE_ID, recorder=self._bridge_recorder())
         top_preconditions = preconditions[: self._MAX_PROBES]
 
         async def _run_one_probe(p: dict[str, Any]) -> dict[str, Any]:

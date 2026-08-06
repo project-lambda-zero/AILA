@@ -1,16 +1,16 @@
-"""Bridge + adapter hardening: dead-worker fail-fast, per-call dedup,
+"""Middleware + adapter hardening: dead-worker fail-fast, per-call dedup,
 xref-pagination hint.
 
 Three independent fixes against observed failure modes in one observed
 investigation:
 
-(B) Bridge fail-fast on dead arbiter. ida-headless can leave the
+(B) Middleware fail-fast on dead arbiter. ida-headless can leave the
     IDA worker subprocess permanently down (crash counts hit cap;
     arbiter refuses to respawn). Every request returns
     ``status: pending`` with stale ``heartbeat_age_s`` and
     ``worker_phase: exiting_idle``. The auto-poll loop used to
     burn 240s per call before surfacing a generic timeout. The
-    bridge now matches that shape on first response (and on each
+    middleware now matches that shape on first response (and on each
     retry payload) and short-circuits with a structured error
     naming the symptom and the operator action.
 
@@ -24,10 +24,15 @@ investigation:
 
 (D) Per-call dedup. Sibling branches frequently issue identical
     ``xrefs_to`` / ``decompile`` / ``capa_scan`` calls within a
-    short window. The bridge caches ready payloads by
+    short window. The middleware caches ready payloads by
     ``sha256(action, normalized_kwargs)`` for ``IDA_HEADLESS_DEDUP_TTL_S``
     seconds (default 300) and replays cached results without
     re-dispatching to the MCP server.
+
+RFC-11 Tier C moved the fixture-friendly helpers to module-level
+functions on :mod:`aila.platform.mcp.middleware.ida`. The dedup state
+lives on :class:`IdaMiddleware` instances, so the dedup tests build
+one via ``IdaMiddleware(spec=SERVER_SPECS["ida_headless"], module_id="vr")``.
 """
 from __future__ import annotations
 
@@ -37,7 +42,17 @@ import pytest
 
 from aila.platform.mcp.adapters._shared import MAX_LIST_PREVIEW, AdapterContext
 from aila.platform.mcp.adapters.ida_headless import _xref_view_result
-from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
+from aila.platform.mcp.middleware.ida import (
+    IdaMiddleware,
+    _dead_worker_error,
+    _looks_like_dead_worker,
+)
+from aila.platform.mcp.server_specs import SERVER_SPECS
+
+
+def _mw() -> IdaMiddleware:
+    """Fresh middleware instance bound to the ida_headless spec."""
+    return IdaMiddleware(spec=SERVER_SPECS["ida_headless"], module_id="vr")
 
 
 class TestDeadWorkerDetection:
@@ -58,47 +73,41 @@ class TestDeadWorkerDetection:
     def test_matches_canonical_dead_arbiter_shape(self) -> None:
         # status=pending + worker_phase=exiting_idle + hb_age >= 600
         # matches the live failure mode observed on a test sample.
-        assert IDABridgeTool._looks_like_dead_worker(self._payload())
+        assert _looks_like_dead_worker(self._payload())
 
     def test_pending_alone_does_not_trip(self) -> None:
         # A genuinely slow but live worker (recent heartbeat, normal
-        # phase) must NOT be flagged. Otherwise the bridge would
+        # phase) must NOT be flagged. Otherwise the middleware would
         # convert every transient ``pending`` into a hard error and
         # never give the actual auto-poll loop a chance to recover.
-        assert not IDABridgeTool._looks_like_dead_worker(
+        assert not _looks_like_dead_worker(
             self._payload(phase="processing", hb_age=2),
         )
-        assert not IDABridgeTool._looks_like_dead_worker(
+        assert not _looks_like_dead_worker(
             self._payload(phase="idle", hb_age=5),
         )
 
     def test_ready_status_never_flagged(self) -> None:
-        assert not IDABridgeTool._looks_like_dead_worker(
-            self._payload(status="ready"),
-        )
+        assert not _looks_like_dead_worker(self._payload(status="ready"))
 
     def test_stale_heartbeat_alone_is_not_enough(self) -> None:
         # Heartbeat could be stale because the worker just finished a
         # long synchronous IDA call and hasn't ticked the heartbeat
-        # yet. Without the matching ``exiting_idle`` phase the bridge
-        # must keep retrying.
-        assert not IDABridgeTool._looks_like_dead_worker(
-            self._payload(phase="processing"),
-        )
+        # yet. Without the matching ``exiting_idle`` phase the
+        # middleware must keep retrying.
+        assert not _looks_like_dead_worker(self._payload(phase="processing"))
 
     def test_under_threshold_not_flagged(self) -> None:
         # Default threshold is 600s; 60s of staleness is normal.
-        assert not IDABridgeTool._looks_like_dead_worker(
-            self._payload(hb_age=60),
-        )
+        assert not _looks_like_dead_worker(self._payload(hb_age=60))
 
     def test_non_string_phase_rejected(self) -> None:
-        assert not IDABridgeTool._looks_like_dead_worker({
+        assert not _looks_like_dead_worker({
             "status": "pending", "worker_phase": None, "heartbeat_age_s": 75000,
         })
 
     def test_non_numeric_heartbeat_rejected(self) -> None:
-        assert not IDABridgeTool._looks_like_dead_worker({
+        assert not _looks_like_dead_worker({
             "status": "pending",
             "worker_phase": "exiting_idle",
             "heartbeat_age_s": "not-a-number",
@@ -106,16 +115,15 @@ class TestDeadWorkerDetection:
 
     def test_crashed_phase_alias(self) -> None:
         # ``crashed`` is the other observed dead-arbiter phase.
-        assert IDABridgeTool._looks_like_dead_worker(self._payload(phase="crashed"))
+        assert _looks_like_dead_worker(self._payload(phase="crashed"))
 
     def test_empty_string_phase_alias(self) -> None:
         # Some old responses come back with worker_phase="" when the
         # arbiter never ticked. Treated as dead.
-        assert IDABridgeTool._looks_like_dead_worker(self._payload(phase=""))
+        assert _looks_like_dead_worker(self._payload(phase=""))
 
     def test_error_message_names_symptom_and_action(self) -> None:
-        bridge = IDABridgeTool(module_id="vr")
-        err = bridge._dead_worker_error("xrefs_to", {
+        err = _dead_worker_error("xrefs_to", {
             "binary_id": "b_abc123",
             "heartbeat_age_s": 75123,
             "queue_depth": 4521,
@@ -140,55 +148,58 @@ class TestDedupCache:
     """Per-call dedup of ready payloads by sha256(action, kwargs)."""
 
     def test_fingerprint_stable_across_kwarg_order(self) -> None:
-        bridge = IDABridgeTool(module_id="vr")
-        fp1 = bridge._dedup_fingerprint("xrefs_to", {"a": 1, "b": 2})
-        fp2 = bridge._dedup_fingerprint("xrefs_to", {"b": 2, "a": 1})
+        from aila.platform.mcp.middleware.ida import _dedup_fingerprint
+        fp1 = _dedup_fingerprint("xrefs_to", {"a": 1, "b": 2})
+        fp2 = _dedup_fingerprint("xrefs_to", {"b": 2, "a": 1})
         assert fp1 == fp2
 
     def test_fingerprint_diverges_on_kwargs(self) -> None:
-        bridge = IDABridgeTool(module_id="vr")
-        fp1 = bridge._dedup_fingerprint("xrefs_to", {"binary_id": "b1"})
-        fp2 = bridge._dedup_fingerprint("xrefs_to", {"binary_id": "b2"})
+        from aila.platform.mcp.middleware.ida import _dedup_fingerprint
+        fp1 = _dedup_fingerprint("xrefs_to", {"binary_id": "b1"})
+        fp2 = _dedup_fingerprint("xrefs_to", {"binary_id": "b2"})
         assert fp1 != fp2
 
     def test_fingerprint_diverges_on_action(self) -> None:
-        bridge = IDABridgeTool(module_id="vr")
-        fp1 = bridge._dedup_fingerprint("xrefs_to", {"binary_id": "b1"})
-        fp2 = bridge._dedup_fingerprint("xrefs_from", {"binary_id": "b1"})
+        from aila.platform.mcp.middleware.ida import _dedup_fingerprint
+        fp1 = _dedup_fingerprint("xrefs_to", {"binary_id": "b1"})
+        fp2 = _dedup_fingerprint("xrefs_from", {"binary_id": "b1"})
         assert fp1 != fp2
 
     def test_store_and_lookup_round_trip(self) -> None:
-        bridge = IDABridgeTool(module_id="vr")
-        fp = bridge._dedup_fingerprint("xrefs_to", {"binary_id": "b1"})
+        from aila.platform.mcp.middleware.ida import _dedup_fingerprint
+        mw = _mw()
+        fp = _dedup_fingerprint("xrefs_to", {"binary_id": "b1"})
         payload = {"status": "ready", "xrefs": [{"addr": "0x1"}]}
-        bridge._dedup_store(fp, payload)
-        cached = bridge._dedup_lookup(fp)
+        mw._dedup_store(fp, payload)
+        cached = mw._dedup_lookup(fp)
         assert cached == payload
 
     def test_lookup_miss_returns_none(self) -> None:
-        bridge = IDABridgeTool(module_id="vr")
-        assert bridge._dedup_lookup("never-stored") is None
+        mw = _mw()
+        assert mw._dedup_lookup("never-stored") is None
 
     def test_zero_ttl_disables_cache(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from aila.platform.mcp.middleware.ida import _dedup_fingerprint
         monkeypatch.setenv("IDA_HEADLESS_DEDUP_TTL_S", "0")
-        bridge = IDABridgeTool(module_id="vr")
-        fp = bridge._dedup_fingerprint("xrefs_to", {"binary_id": "b1"})
-        bridge._dedup_store(fp, {"status": "ready"})
+        mw = _mw()
+        fp = _dedup_fingerprint("xrefs_to", {"binary_id": "b1"})
+        mw._dedup_store(fp, {"status": "ready"})
         # store() with ttl=0 short-circuits; lookup returns None.
-        assert bridge._dedup_lookup(fp) is None
+        assert mw._dedup_lookup(fp) is None
 
     def test_expired_entry_evicted_on_lookup(self) -> None:
-        bridge = IDABridgeTool(module_id="vr")
-        bridge._dedup_ttl_s = 0.01
-        fp = bridge._dedup_fingerprint("xrefs_to", {"binary_id": "b1"})
-        bridge._dedup_store(fp, {"status": "ready"})
+        from aila.platform.mcp.middleware.ida import _dedup_fingerprint
+        mw = _mw()
+        mw._dedup_ttl_s = 0.01
+        fp = _dedup_fingerprint("xrefs_to", {"binary_id": "b1"})
+        mw._dedup_store(fp, {"status": "ready"})
         time.sleep(0.05)
-        assert bridge._dedup_lookup(fp) is None
+        assert mw._dedup_lookup(fp) is None
         # Eviction on read: the entry is also gone from the cache dict.
-        assert fp not in bridge._dedup_cache
+        assert fp not in mw._dedup_cache
 
     def test_dedup_actions_includes_canonical_read_tools(self) -> None:
-        bridge = IDABridgeTool(module_id="vr")
+        mw = _mw()
         # Read-only graph queries every sibling branch issues.
         for action in (
             "xrefs_to", "xrefs_from", "decompile",
@@ -196,14 +207,14 @@ class TestDedupCache:
             "build_call_tree", "call_graph", "list_strings",
             "imports", "exports",
         ):
-            assert action in bridge._dedup_actions, action
+            assert action in mw._dedup_actions, action
 
     def test_dedup_actions_excludes_state_mutators(self) -> None:
-        bridge = IDABridgeTool(module_id="vr")
+        mw = _mw()
         for action in (
             "open_binary", "upload", "patch_assemble", "poll_analysis",
         ):
-            assert action not in bridge._dedup_actions, action
+            assert action not in mw._dedup_actions, action
 
 
 class TestXrefPaginationHint:

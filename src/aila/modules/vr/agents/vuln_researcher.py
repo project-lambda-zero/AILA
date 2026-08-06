@@ -85,10 +85,9 @@ from aila.platform.mcp.adapters import (
     specialized_tools,
 )
 from aila.platform.mcp.adapters.known_tools import tools_for_language
-from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
-from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
-from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
+from aila.platform.mcp.adapters.registry import register_bridge_tools
 from aila.platform.mcp.bridges.knowledge import KnowledgeBridgeTool
+from aila.platform.mcp.factory import make_bridge
 from aila.platform.prompts import LoadedPrompt, PromptNotFoundError, PromptRegistry
 from aila.platform.prompts.pinning import (
     resolve_canary_key_for_investigation,
@@ -803,8 +802,21 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                 ),
             ))
 
+        # RFC-11 criterion 4: derive the applicable-server set from the
+        # live tool_specs the async runner already resolved via
+        # `_fetch_tool_specs` (which prefers the capability catalog over
+        # the static name map). Empty tool_specs -> pass None so the
+        # render function falls back to the deterministic static kind
+        # map, preserving byte-identical output for the empty-catalog
+        # case.
+        applicable_servers = (
+            set(tool_specs.keys()) if tool_specs else None
+        )
         tools_body = _render_available_tools_section(
-            target_kind, tool_specs, primary_language,
+            target_kind,
+            tool_specs,
+            primary_language,
+            applicable_servers=applicable_servers,
         )
         if tools_body:
             sections.append(ContextSection(
@@ -2529,17 +2541,42 @@ async def _fetch_tool_specs(
     applicable.add("knowledge")
     out: dict[str, list[dict[str, Any]]] = {}
     if "knowledge" in applicable:
-        out["knowledge"] = await KnowledgeBridgeTool().list_tool_specs()
+        specs = await KnowledgeBridgeTool().list_tool_specs()
+        register_bridge_tools(
+            "knowledge", [s.get("name") for s in specs if s.get("name")],
+        )
+        out["knowledge"] = specs
     if "audit_mcp" in applicable:
-        specs = await AuditMcpBridgeTool(recorder=record_call, module_id="vr").list_tool_specs()
+        specs = await make_bridge(
+            "audit_mcp", module_id="vr", recorder=record_call,
+        ).list_tool_specs()
+        # RFC-11 criterion 5: union the live catalog into the adapter
+        # registry so a tool present on the bridge but absent from the
+        # static KNOWN_TOOLS becomes dispatchable via the generic
+        # adapter this turn.
+        register_bridge_tools(
+            "audit_mcp", [s.get("name") for s in specs if s.get("name")],
+        )
         allowed = tools_for_language("audit_mcp", primary_language)
         out["audit_mcp"] = [s for s in specs if s.get("name", "") in allowed]
     if "ida_headless" in applicable:
-        specs = await IDABridgeTool(recorder=record_call, module_id="vr").list_tool_specs()
+        specs = await make_bridge(
+            "ida_headless", module_id="vr", recorder=record_call,
+        ).list_tool_specs()
+        register_bridge_tools(
+            "ida_headless",
+            [s.get("name") for s in specs if s.get("name")],
+        )
         allowed = tools_for_language("ida_headless", primary_language)
         out["ida_headless"] = [s for s in specs if s.get("name", "") in allowed]
     if "android_mcp" in applicable:
-        specs = await AndroidMcpBridgeTool(recorder=record_call, module_id="vr").list_tool_specs()
+        specs = await make_bridge(
+            "android_mcp", module_id="vr", recorder=record_call,
+        ).list_tool_specs()
+        register_bridge_tools(
+            "android_mcp",
+            [s.get("name") for s in specs if s.get("name")],
+        )
         allowed = tools_for_language("android_mcp", primary_language)
         out["android_mcp"] = [s for s in specs if s.get("name", "") in allowed]
     return out
@@ -2569,6 +2606,7 @@ def _render_available_tools_section(
     target_kind: str | None = None,
     tool_specs: dict[str, list[dict[str, Any]]] | None = None,
     primary_language: str | None = None,
+    applicable_servers: set[str] | None = None,
 ) -> str:
     """Render the catalog of MCP tools the engine may invoke this turn.
 
@@ -2585,9 +2623,20 @@ def _render_available_tools_section(
     catalog showed every server unconditionally. Filtering at render
     time prevents the wrong tool family from ever being the obvious
     pick.
+
+    RFC-11 criterion 4: when ``applicable_servers`` is supplied by
+    the caller (the async prompt builder threads through the set
+    resolved by :func:`_fetch_tool_specs` -- which itself prefers
+    :func:`_applicable_servers_by_capability` over the static name
+    map), it wins over the fallback. Standalone callers (tests,
+    stock renders) that don't pass the kwarg keep the byte-identical
+    static-fallback rendering.
     """
     specialized = set(specialized_tools())
-    applicable = set(_applicable_servers_for_kind(target_kind))
+    if applicable_servers is not None:
+        applicable = set(applicable_servers)
+    else:
+        applicable = set(_applicable_servers_for_kind(target_kind))
     # RFC-12: the read-only knowledge bridge is listed on every kind.
     applicable.add("knowledge")
     specs_by_server = tool_specs or {}

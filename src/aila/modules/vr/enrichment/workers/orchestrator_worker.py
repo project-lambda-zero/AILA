@@ -38,8 +38,7 @@ from aila.modules.vr.enrichment.services import (
 from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.modules.vr.services.stage_tracker import StageTrackerError
 from aila.platform.contracts import utc_now
-from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
-from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
+from aila.platform.mcp.factory import make_bridge
 from aila.platform.tasks.context import TaskContext
 from aila.platform.tasks.template import platform_task
 
@@ -160,8 +159,8 @@ async def run_target_enrichment(
     recorder) and returns the JSON-serialised ``EnrichmentResult``.
     """
     del ctx
-    ida = IDABridgeTool(recorder=record_call, module_id="vr")
-    audit_mcp = AuditMcpBridgeTool(recorder=record_call, module_id="vr")
+    ida = make_bridge("ida_headless", module_id="vr", recorder=record_call)
+    audit_mcp = make_bridge("audit_mcp", module_id="vr", recorder=record_call)
 
     result = await orchestrate_target_enrichment(
         target_id,

@@ -18,7 +18,6 @@ from pydantic import BaseModel, Field
 from aila.config import Settings
 from aila.platform.config import build_platform_settings
 from aila.platform.exceptions import AILAError
-from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 from aila.platform.services import SSHService
 
 __all__ = ["MachineReadinessService", "ReadinessResult", "ToolCheckResult"]
@@ -47,7 +46,7 @@ class MachineReadinessService:
 
     def __init__(
         self,
-        ida_bridge: IDABridgeTool,
+        ida_bridge: Any,
         settings: Settings,
         *,
         requirements_path: Path,

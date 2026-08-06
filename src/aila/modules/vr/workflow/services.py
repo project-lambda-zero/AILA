@@ -21,7 +21,7 @@ from aila.modules.vr.tools.patch_differ import PatchDifferTool
 from aila.modules.vr.tools.poc_runner import PoCRunnerTool
 from aila.platform.config import build_platform_settings
 from aila.platform.llm.client import AilaLLMClient
-from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
+from aila.platform.mcp.factory import make_bridge
 from aila.platform.services import SSHService
 from aila.platform.services.factory import ServiceFactory
 from aila.storage.registry import ConfigRegistry
@@ -55,7 +55,7 @@ class VRWorkflowServices:
     run_id: str
     settings: Settings
     config: VRConfigSchema
-    ida_bridge: IDABridgeTool
+    ida_bridge: Any
     poc_runner: PoCRunnerTool
     crash_triage: CrashTriageTool
     advisory_builder: AdvisoryBuilderTool
@@ -80,7 +80,7 @@ class VRWorkflowServices:
         """
         settings = get_settings()
         config = await _resolve_vr_config()
-        ida = IDABridgeTool(recorder=record_call, module_id="vr")
+        ida = make_bridge("ida_headless", module_id="vr", recorder=record_call)
         ssh = SSHService(build_platform_settings(settings))
         return cls(
             run_id=run_id,

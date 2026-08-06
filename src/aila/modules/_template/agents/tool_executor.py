@@ -16,7 +16,6 @@ reference.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from aila.modules._template.db_models import (
     TemplateInvestigationBranchRecord,
@@ -63,10 +62,13 @@ class ToolExecutor(ToolExecutorHelpersBase):
     def __init__(self) -> None:
         self._message_model = TemplateInvestigationMessageRecord
         self._branch_model = TemplateInvestigationBranchRecord
-        # Empty bridge map -- the allowlist guard rejects every server
-        # id before the platform base reaches into this dict, so no
-        # real MCP client construction is required in the scaffold.
-        self._bridges: dict[str, Any] = {}
+        # RFC-11 Tier C: bridges are built on demand by the base
+        # _bridge_for() through the catalog-driven factory. This scaffold
+        # exposes no servers (_AGENT_ALLOWED_SERVERS is empty), so the
+        # base's allowlist guard rejects every dispatch before any bridge
+        # is constructed. A real module sets ``_bridge_module_id`` +
+        # ``_bridge_recorder_fn`` and lists its servers in
+        # ``_AGENT_ALLOWED_SERVERS``.
 
     async def _hard_block_repeat_limit(self) -> int | None:
         """Return the operator-tunable repeat-block cap."""

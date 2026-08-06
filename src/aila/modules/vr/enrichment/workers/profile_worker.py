@@ -1,6 +1,6 @@
 """ARQ entrypoint for capability profile build (M3.T-4).
 
-Wires IDABridgeTool + AuditMcpBridgeTool into CapabilityProfileBuilder
+Wires MCP bridges into CapabilityProfileBuilder
 via @platform_task. Enqueued by:
   * api_router on POST /vr/targets/<id>/analyze
   * future M3.R-* investigation engine when an investigation references
@@ -12,8 +12,7 @@ from typing import Any
 
 from aila.modules.vr.enrichment.services import CapabilityProfileBuilder
 from aila.modules.vr.services.mcp_call_logger import record_call
-from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
-from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
+from aila.platform.mcp.factory import make_bridge
 from aila.platform.tasks.context import TaskContext
 from aila.platform.tasks.template import platform_task
 
@@ -40,8 +39,8 @@ async def run_capability_profile_build(
     applicable_* lists.
     """
     builder = CapabilityProfileBuilder(
-        ida=IDABridgeTool(recorder=record_call, module_id="vr"),
-        audit_mcp=AuditMcpBridgeTool(recorder=record_call, module_id="vr"),
+        ida=make_bridge("ida_headless", module_id="vr", recorder=record_call),
+        audit_mcp=make_bridge("audit_mcp", module_id="vr", recorder=record_call),
     )
     profile = await builder.build(target_id)
     return profile.model_dump(mode="json")

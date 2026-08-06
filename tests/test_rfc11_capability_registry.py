@@ -1,6 +1,5 @@
-"""RFC-11 step 0/3 -- module-declared MCP descriptors + capability-first
-registry + generic-client parity proof against the bespoke android_mcp
-bridge.
+"""RFC-11 -- module-declared MCP descriptors + capability-first
+registry + generic-client wire-shape assertion.
 
 The tests here prove three claims from the RFC-11 acceptance surface:
 
@@ -17,18 +16,21 @@ The tests here prove three claims from the RFC-11 acceptance surface:
    whatever ``module_scope`` a declaration ships with and the resolver
    scopes lookups to the caller's chosen scope, no literal module names
    in the platform code path.
-3. Step-0 proof: opening an
+3. Wire-shape proof: opening an
    :class:`~aila.platform.mcp.McpClient` from the ``android_audit``
-   descriptor and calling ``verify_capabilities`` produces the EXACT
-   HTTP wire request the operator-critical
-   :class:`aila.platform.mcp.bridges.AndroidMcpBridgeTool` would emit
-   (URL, method, JSON body). No live server is contacted; both sides
-   run against a mocked :class:`httpx.AsyncClient`.
+   descriptor and calling ``analyze_native_libs`` produces the exact
+   HTTP wire request the operator-critical live dispatch path emits
+   (URL, method, JSON body). No live server is contacted; the mock
+   :class:`httpx.AsyncClient` records every call.
 
-Every existing bespoke bridge (``AndroidMcpBridgeTool``,
-``AuditMcpBridgeTool``, ``IDABridgeTool``) stays intact and registered
-in :mod:`aila.platform.mcp.bridges` -- confirmed by the
-``test_all_bridges_remain_registered`` regression at the bottom.
+RFC-11 Tier C deleted the three bespoke bridges
+(``AndroidMcpBridgeTool`` / ``AuditMcpBridgeTool`` / ``IDABridgeTool``)
+in favour of the generic :class:`aila.platform.mcp.bridge_tool.McpBridgeTool`
++ per-server :class:`aila.platform.mcp.middleware.McpMiddleware` plugins.
+The parity half of the wire-shape test (which asserted the pre-Tier-C
+``AndroidMcpBridgeTool.forward`` matched the generic client byte for
+byte) and the ``test_all_bridges_remain_registered`` regression are
+both gone with those classes.
 """
 from __future__ import annotations
 
@@ -49,17 +51,6 @@ from aila.platform.mcp import (
     McpServerDescriptor,
     ModuleDescriptorDeclaration,
     descriptors_from_static_specs,
-)
-from aila.platform.mcp import (
-    bridges as _bridges_module,
-)
-from aila.platform.mcp.bridges import (
-    AndroidMcpBridgeTool,
-    AuditMcpBridgeTool,
-    IDABridgeTool,
-)
-from aila.platform.mcp.bridges import (
-    android_mcp as _android_bridge_mod,
 )
 
 __all__: list[str] = []
@@ -90,13 +81,10 @@ class _MockResponse:
 class _MockAsyncClient:
     """Records every request; returns queued responses in FIFO order.
 
-    Both callers (:class:`AndroidMcpBridgeTool` and :class:`McpClient`)
-    open ``httpx.AsyncClient`` differently -- the bridge shares a
-    module-level pooled client, the generic client constructs a new
-    context-managed client per call. The mock supports both entry
-    points: an ``async with`` context manager AND a bare instance
-    passed through the bridge's shared-pool getter. Extra kwargs
-    (``timeout=``, ``limits=``) are captured but ignored.
+    The generic :class:`McpClient` constructs a new context-managed
+    ``httpx.AsyncClient`` per call. The mock supports the ``async with``
+    context manager entry point; extra kwargs (``timeout=``, ``limits=``)
+    are captured but ignored.
     """
 
     def __init__(
@@ -391,7 +379,14 @@ def test_capability_registry_open_pool_for_capability_empty() -> None:
     assert reg.open_pool_for_capability("") == ()
 
 
-# ── Step-0 request-shape parity: generic client vs android bridge ────
+# ── Generic-client wire-shape assertion ──────────────────────────────
+#
+# The Step-0 test also exercised the pre-Tier-C ``AndroidMcpBridgeTool``
+# to prove byte-for-byte parity. Tier C deleted that bridge (behaviour
+# now lives on :class:`AndroidMcpMiddleware`), so the parity half is
+# gone; only the McpClient-direct wire assertion is kept because it
+# still exercises the generic client's URL + JSON body shape without
+# a live server.
 
 
 @pytest.fixture
@@ -403,68 +398,26 @@ def _android_descriptor() -> McpServerDescriptor:
 
 
 @pytest.mark.asyncio
-async def test_generic_client_wire_shape_matches_android_bridge(
+async def test_generic_client_wire_shape(
     _android_descriptor: McpServerDescriptor,
 ) -> None:
-    """Route ONE server (android_mcp) through the generic client
-    (RFC-11 step 0) and prove the wire request matches the bespoke
-    :class:`AndroidMcpBridgeTool.forward` byte-for-byte.
+    """``McpClient.call_tool`` posts ``<base>/tools/<action>`` with the
+    kwargs as the JSON body.
 
-    Behaviour-preserving: both callers pin to the same fixed base URL
-    (bypasses the four-tier resolver so the assertion is deterministic
-    without a live catalog row) and dispatch the same ``verify_capabilities``
-    action with identical kwargs. The mocked transport records every
-    HTTP POST; the two POSTs are then compared for URL, JSON body, and
-    method (both use httpx POST).
-
-    Bridge-side prep: the bridge's schema validator runs before
-    dispatch, so pre-seed the class-level catalog cache with the tool
-    known and no schema (validator falls through to unchecked forward
-    when the cached schema is empty).
+    Pins the fixed base URL so the four-tier resolver is bypassed and
+    the assertion is deterministic without a catalog row. ``httpx.AsyncClient``
+    is patched with a mock that records every request; the recorded
+    POST is inspected for URL, method, and JSON body.
     """
     base_url = "http://mock-android:18823"
-    # ``analyze_native_libs`` takes ``so_path`` -- NOT one of the
-    # bridge's ``_APK_PATH_KWARGS`` (``apk_path`` / ``apk`` /
-    # ``path``) that trigger the SHA typo resolver. This keeps the
-    # kwargs untouched between the bridge and the generic client so
-    # the parity assertion stays deterministic across dev machines
-    # (including ones that happen to have a real APK cached under
-    # ``~/.android-mcp/uploads/shared/``).
     action = "analyze_native_libs"
     kwargs = {
         "so_path": "/decompiled_libs/lib_target.so",
         "deep_scan": True,
     }
 
-    # Pre-populate the bridge catalog cache with an EMPTY list so the
-    # schema validator short-circuits (per ``_validate_kwargs``: when
-    # ``list_tool_specs()`` is empty, validation is skipped and the
-    # call forwards untouched). The parity test does not exercise
-    # validation; it exercises transport.
-    AndroidMcpBridgeTool._SPEC_CACHE = []
-
-    # --- Bridge path: existing AndroidMcpBridgeTool.forward ---
-    bridge_mock = _MockAsyncClient(
-        post_response=_MockResponse(json_body={"status": "ready", "ok": True}),
-    )
-    # The bridge fetches its httpx client from the module-level shared
-    # pool via ``_get_shared_client``. Patch that to return our mock.
-    with patch.object(
-        _android_bridge_mod, "_get_shared_client",
-        new=lambda: _return(bridge_mock),
-    ):
-        bridge = AndroidMcpBridgeTool(base_url=base_url, module_id="vr")
-        bridge_result = await bridge.forward(action=action, **kwargs)
-
-    assert bridge_result.get("status") == "ready"
-    assert len(bridge_mock.posts) == 1
-    bridge_post = bridge_mock.posts[0]
-
-    # --- Generic client path: McpClient via capability registry ---
     reg = McpCapabilityRegistry()
     declaration = reg.declare("vr", _android_descriptor)
-    # Open a client with a fixed base_url (test-only DI shape) so both
-    # callers hit the same URL without a catalog row.
     client = McpClient(server_id="android_mcp", base_url=base_url)
     generic_mock = _MockAsyncClient(
         post_response=_MockResponse(json_body={"status": "ready", "ok": True}),
@@ -476,57 +429,14 @@ async def test_generic_client_wire_shape_matches_android_bridge(
     assert len(generic_mock.posts) == 1
     generic_post = generic_mock.posts[0]
 
-    # --- Parity assertions ---
-    # 1. URL: ``<base>/tools/<action>``.
-    assert bridge_post["url"] == generic_post["url"]
-    assert bridge_post["url"] == f"{base_url}/tools/{action}"
-    # 2. JSON body: the tool kwargs verbatim (both callers pass kwargs
-    #    straight into the POST body).
-    assert bridge_post["json"] == generic_post["json"]
-    assert bridge_post["json"] == kwargs
-    # 3. Method: httpx.post -> POST. Both sides go through _MockAsyncClient
-    #    .post; if either used GET or a different verb the response would
-    #    not land in .posts.
-    # 4. The descriptor knows this call resolves under the vr scope +
-    #    android_audit capability (this is what makes the generic path
-    #    module-name-agnostic).
+    # URL: ``<base>/tools/<action>``.
+    assert generic_post["url"] == f"{base_url}/tools/{action}"
+    # JSON body: the tool kwargs verbatim.
+    assert generic_post["json"] == kwargs
+    # The descriptor resolves under the vr scope + android_audit
+    # capability (module-name-agnostic dispatch surface).
     assert declaration.module_scope == "vr"
     assert declaration.descriptor.advertises("android_audit")
-
-
-def _return(value: Any) -> Any:
-    """Async wrapper for the bridge's shared-client getter patch.
-
-    ``_get_shared_client`` is an ``async def``; the patched replacement
-    must therefore await the value. Passing a bare lambda would return
-    the mock synchronously and the bridge would try to ``await`` it,
-    which fails.
-    """
-    async def _coro() -> Any:
-        return value
-
-    return _coro()
-
-
-# ── Bridge preservation regression ────────────────────────────────────
-
-
-def test_all_bridges_remain_registered() -> None:
-    """RFC-11 step 0 acceptance: every existing bridge stays intact
-    and importable.
-
-    Confirms the ``android_mcp`` / ``audit_mcp`` / ``ida_headless``
-    bridges are still exposed from :mod:`aila.platform.mcp.bridges` --
-    the operator-critical live dispatch path (audit-mcp :18822,
-    ida-headless :18821, android-mcp :18823) remains untouched by
-    the RFC-11 foundation work in this ticket.
-    """
-    assert _bridges_module.AndroidMcpBridgeTool is AndroidMcpBridgeTool
-    assert _bridges_module.AuditMcpBridgeTool is AuditMcpBridgeTool
-    assert _bridges_module.IDABridgeTool is IDABridgeTool
-    assert set(_bridges_module.__all__) == {
-        "AndroidMcpBridgeTool", "AuditMcpBridgeTool", "IDABridgeTool",
-    }
 
 
 def test_capability_registry_declaration_never_needs_module_name_literal() -> None:

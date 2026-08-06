@@ -26,7 +26,6 @@ from aila.platform.contracts.obligations import (
     adjudicate,
 )
 from aila.platform.llm.cost import reconcile_budget_state
-from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 from aila.platform.prompts import PromptRegistry
 from aila.platform.services.evidence_pack import BoundedEvidencePack, EvidenceSection
 from aila.platform.services.factory import ServiceFactory
@@ -186,7 +185,7 @@ class NdayResearcher:
         binary_id: str,
         patched_binary_id: str | None,
         mitigations: dict[str, Any],
-        ida_bridge: IDABridgeTool,
+        ida_bridge: Any,
         config: VRConfigSchema,
         budget: BudgetState | None = None,
         context_notes: str = "",

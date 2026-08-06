@@ -103,14 +103,6 @@ HONESTY_WHITELIST = [
     ("vr/workflow/task.py", "run_target_analysis", "noqa"),
     ("vr/workflow/task.py", "run_fuzz_campaign_launch", "noqa"),
     ("vr/services/target_analysis.py", "_run_git", "noqa"),
-    # Bridges hoisted to platform/mcp/bridges/ -- these noqa entries follow the move.
-    ("platform/mcp/bridges/audit_mcp.py", "_resolve_base_url", "noqa"),
-    ("platform/mcp/bridges/ida_headless.py", "_resolve_base_url", "noqa"),
-    ("platform/mcp/bridges/audit_mcp.py", "forward", "noqa"),
-    ("platform/mcp/bridges/ida_headless.py", "forward", "noqa"),
-    ("platform/mcp/bridges/android_mcp.py", "_resolve_base_url", "noqa"),
-    ("platform/mcp/bridges/android_mcp.py", "forward", "noqa"),
-
     # Category (b): _enqueue_next_investigation_run lives in
     # workflow/states/investigation_emit.py -- a state file. Workflow
     # registration loads every state file, then loads workflow.task
@@ -528,11 +520,13 @@ HONESTY_WHITELIST = [
     # acceptable here (the path is hot-debugger-only).
     ("vr/disclosure/service.py", "'assert'", "in production code"),
 
-    # Category (b): platform audit_mcp bridge dispatch. The 7-action
-    # dispatch is the bridge's defining contract -- splitting it into
-    # 7 single-action tools would require 7 separate registrations and
-    # break the existing operator-side tool registry expectations.
-    ("platform/mcp/bridges/audit_mcp.py", "'forward'", "action-dispatch branches"),
+    # Category (b): RFC-11 Tier C -- the audit-mcp MIDDLEWARE forward is a
+    # verbatim port of the old bridge's multi-action dispatch (its defining
+    # contract; splitting into single-action tools would break the operator
+    # tool registry). The read_function not-indexed auto-fallback chain
+    # nests a readability-flagged ``if`` that stays as a faithful port.
+    ("platform/mcp/middleware/audit.py", "'forward'", "action-dispatch branches"),
+    ("platform/mcp/middleware/audit.py", "nested if with no else", "combine with 'and'"),
 
     # Category (b): current_team_context() is the typed public accessor for
     # the ambient TeamContext ContextVar (#53). Inlining ``_CURRENT_TEAM_CONTEXT.get()``

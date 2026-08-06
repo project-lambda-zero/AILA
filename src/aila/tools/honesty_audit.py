@@ -78,6 +78,11 @@ Detects seventy-four categories of structural dishonesty:
 75. adlc_structural_change -- a file under ``platform/lifecycle/**`` (the RFC-10 ADLC control plane) constructs a graph-structure element (``PhaseSpec(...)`` / ``WorkflowDefinition(...)`` / ``make_dispatch_router(...)`` / ``build_dispatch_workflow(...)``), mutates a ``.states`` / ``.nodes`` / ``.edges`` mapping, writes a persona-roster binding (``PERSONA_ROLE_MAP`` / ``persona_task_type`` / ``role_task_type``), calls ``.register_tool(...)`` or ``.register(...)`` on a tool-registry-shaped receiver (``tool_registry`` / ``tool_scope``), or constructs a ``Tool`` subclass (a callee terminal ending in ``Tool``). The ADLC promotes versioned agent bundles behind the eval + quorum gate -- an alias flip + a journaled ``LifecycleTransitionRecord`` + a ``LifecycleCanaryAssignment`` state stamp. It must NOT mint a new phase, node, edge, roster entry, or tool; those go through the CODE lifecycle (PR / review / deploy), not through the ADLC bundle promotion path. RFC-10 criterion 6 / design doc ``.run/designs/DESIGN_reasoning_platform.md`` sec 3.7 -- a bundle body whose diff adds a new tool call, a new node kind, or a new graph edge is a finding. Sibling of rule 73 rescoped from the RFC-08 self-improvement layer to the RFC-10 ADLC control plane.
 73. structural_self_modification -- the RFC-08 self-improvement layer (``platform/eval/**`` and the sanctioned proposer files ``platform/agents/pattern_extractor.py`` / ``platform/agents/persona_router.py`` / ``platform/agents/calibrator.py``) proposes parameters (thresholds / persona-selection / patterns / routing weights) only. A structural graph edit from within that layer -- a ``PhaseSpec(...)`` / ``WorkflowDefinition(...)`` construction, a ``make_dispatch_router(...)`` / ``build_dispatch_workflow(...)`` call, a subscript / delete / mutator-method mutation of a ``.states`` / ``.nodes`` / ``.edges`` mapping, or a subscript / mutator write to a persona-roster binding (``PERSONA_ROLE_MAP`` / ``persona_task_type`` / ``role_task_type``) -- lets a self-improvement writer mint a new node, phase, or roster entry outside the operator-authored workflow definition. Fire is scoped to the self-improvement files only so the workflow / engine layer (which legitimately builds the graph) is not flagged; precision over recall by design.
 
+76. bespoke_mcp_bridge -- a ``Tool`` subclass under ``platform/mcp/**`` constructs its own ``httpx.AsyncClient``. RFC-11 Tier C collapsed the three bespoke bridge Tool subclasses onto one generic ``McpBridgeTool`` + ``McpClient`` transport; server-specific behaviour lives in ``McpMiddleware`` plugins (not Tool subclasses). A new Tool subclass reimplementing the HTTP transport regresses the per-server-transport design the RFC deleted.
+77. static_server_catalog -- an agent dispatcher under ``**/agents/**`` assigns a static ``self._bridges`` dict-literal mapping server ids to bridge instances. RFC-11 Tier C builds bridges on demand via the catalog-driven ``_bridge_for()``; a frozen name->bridge map means an operator-added catalog server cannot dispatch without a code change. Test / DI injection uses ``_bridge_overrides`` instead.
+78. hardcoded_server_dispatch -- an agent dispatcher under ``**/agents/**`` reads a bridge from a static ``self._bridges`` map by server id (``self._bridges.get(...)`` / ``self._bridges[...]``). Sibling of rule 77 (77 flags the map definition, 78 flags the dispatch lookup). Route MCP dispatch through the catalog-aware + approval-gated ``_bridge_for()``.
+79. unsanitized_server_ingest -- a function under ``platform/mcp/**`` projects an MCP tool ``"description"`` into a truncated (``[:N]``) prompt-facing value without any ``sanitize*`` call in the same function. RFC-11 zero-trust: an MCP server controls its own tool descriptions, so the compact projection (``McpClient.compact_tool_spec``) strips prompt-injection patterns via ``sanitize_input`` before the text reaches an agent prompt (tool-poisoning defense).
+
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
     python -m aila.tools.honesty_audit src/ --whitelist honesty_whitelist.py
@@ -1488,6 +1493,12 @@ _LIFECYCLE_CONTROLLER_SELF_EXEMPT_SUFFIXES: tuple[str, ...] = (
 _ADLC_LIFECYCLE_PATTERN = _re.compile(
     r"[/\\]aila[/\\]platform[/\\]lifecycle[/\\]"
 )
+# RFC-11 Tier C guardrails (rules 76-79). The MCP transport layer
+# (platform/mcp/**) and the agent dispatch layer (**/agents/**).
+_MCP_TRANSPORT_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]platform[/\\]mcp[/\\]"
+)
+_AGENT_DISPATCH_PATTERN = _re.compile(r"[/\\]agents[/\\]")
 # Receiver-token tokens that identify a tool-registry-shaped receiver on
 # a ``.register(...)`` call. The platform binds a ``ToolRegistry`` /
 # ``ToolScope`` (see ``platform/runtime/tools.py``); local names for the
@@ -5784,6 +5795,220 @@ class _HonestyVisitor(ast.NodeVisitor):
             )
 
 
+    def _check_bespoke_mcp_bridge(self, tree: ast.Module) -> None:
+        """Rule 76: bespoke_mcp_bridge -- a Tool subclass under
+        ``platform/mcp/**`` reimplements the MCP HTTP transport instead
+        of routing through the generic McpClient / McpBridgeTool.
+
+        RFC-11 Tier C collapsed the three bespoke bridge Tool subclasses
+        (``IDABridgeTool`` / ``AuditMcpBridgeTool`` / ``AndroidMcpBridgeTool``)
+        onto one generic :class:`McpBridgeTool` that owns an
+        :class:`McpClient` transport; server-specific behaviour moved into
+        :class:`McpMiddleware` plugins (which are NOT Tool subclasses). A
+        NEW ``Tool`` subclass in this scope that constructs its own
+        ``httpx.AsyncClient`` is a regression to the per-server-transport
+        design the RFC deleted. The generic McpBridgeTool is exempt (it
+        holds an McpClient, never raw httpx); the in-process knowledge
+        bridge has no HTTP transport; the middleware plugins are Protocol
+        implementations, not Tool subclasses.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if not _MCP_TRANSPORT_PATTERN.search(normalized):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            base_is_tool = any(
+                (isinstance(b, ast.Name) and b.id == "Tool")
+                or (isinstance(b, ast.Attribute) and b.attr == "Tool")
+                for b in node.bases
+            )
+            if not base_is_tool:
+                continue
+            for inner in ast.walk(node):
+                if (
+                    isinstance(inner, ast.Attribute)
+                    and inner.attr == "AsyncClient"
+                    and isinstance(inner.value, ast.Name)
+                    and inner.value.id == "httpx"
+                ):
+                    self._emit(
+                        inner.lineno,
+                        "bespoke_mcp_bridge",
+                        (
+                            f"bespoke_mcp_bridge: Tool subclass {node.name!r} "
+                            "constructs its own httpx.AsyncClient -- RFC-11 "
+                            "Tier C routes every MCP call through the generic "
+                            "McpBridgeTool + McpClient transport. Server-"
+                            "specific behaviour belongs in an McpMiddleware "
+                            "plugin, not a new bespoke bridge Tool subclass"
+                        ),
+                    )
+                    break
+
+    def _check_static_server_catalog(self, tree: ast.Module) -> None:
+        """Rule 77: static_server_catalog -- an agent dispatcher assigns a
+        static ``self._bridges`` dict-literal mapping server ids to bridge
+        instances.
+
+        RFC-11 Tier C replaced the fixed ``self._bridges = {"ida_headless":
+        ..., "audit_mcp": ...}`` map with dynamic, catalog-driven
+        construction via the base ``_bridge_for()`` + the factory. A NEW
+        ``_bridges`` dict-literal assignment re-freezes the server set at
+        code-write time, so an operator's catalog-added server can never
+        dispatch without a code change -- the exact regression the RFC
+        removed. Test / DI injection uses ``_bridge_overrides`` (a
+        comprehension keyed off the constructor args), not a static
+        server-name literal map.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if not _AGENT_DISPATCH_PATTERN.search(normalized):
+            return
+        for node in ast.walk(tree):
+            value: ast.expr | None = None
+            targets: list[ast.expr] = []
+            if isinstance(node, ast.Assign):
+                value = node.value
+                targets = list(node.targets)
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                value = node.value
+                targets = [node.target]
+            else:
+                continue
+            if not isinstance(value, ast.Dict):
+                continue
+            for tgt in targets:
+                if isinstance(tgt, ast.Attribute) and tgt.attr == "_bridges":
+                    self._emit(
+                        node.lineno,
+                        "static_server_catalog",
+                        (
+                            "static_server_catalog: assigns a static "
+                            "self._bridges dict-literal server map -- RFC-11 "
+                            "Tier C builds bridges on demand through the "
+                            "catalog-driven _bridge_for(); a frozen name->"
+                            "bridge map means an operator-added catalog server "
+                            "cannot dispatch without a code change"
+                        ),
+                    )
+                    break
+
+    def _check_hardcoded_server_dispatch(self, tree: ast.Module) -> None:
+        """Rule 78: hardcoded_server_dispatch -- dispatch reads a bridge
+        from a static ``self._bridges`` map by server id.
+
+        Sibling of rule 77. Where 77 flags the static MAP definition, 78
+        flags the LOOKUP that dispatches through it
+        (``self._bridges.get(server_id)`` / ``self._bridges[server_id]``).
+        RFC-11 Tier C routes every dispatch through the catalog-aware
+        ``_bridge_for()`` so a capability-tagged, operator-approved server
+        dispatches without a code change; a raw ``_bridges`` lookup
+        bypasses the catalog + approval gate.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if not _AGENT_DISPATCH_PATTERN.search(normalized):
+            return
+
+        def _is_bridges_attr(node: ast.expr) -> bool:
+            return isinstance(node, ast.Attribute) and node.attr == "_bridges"
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Subscript) and _is_bridges_attr(node.value):
+                self._emit(
+                    node.lineno,
+                    "hardcoded_server_dispatch",
+                    (
+                        "hardcoded_server_dispatch: self._bridges[...] "
+                        "subscript -- route MCP dispatch through the "
+                        "catalog-aware _bridge_for() instead of a static "
+                        "server map"
+                    ),
+                )
+                continue
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "get"
+                and _is_bridges_attr(node.func.value)
+            ):
+                self._emit(
+                    node.lineno,
+                    "hardcoded_server_dispatch",
+                    (
+                        "hardcoded_server_dispatch: self._bridges.get(...) "
+                        "lookup -- route MCP dispatch through the "
+                        "catalog-aware _bridge_for() instead of a static "
+                        "server map"
+                    ),
+                )
+
+    def _check_unsanitized_server_ingest(self, tree: ast.Module) -> None:
+        """Rule 79: unsanitized_server_ingest -- a function under
+        ``platform/mcp/**`` projects an MCP tool description into a
+        prompt-facing dict without sanitizing it.
+
+        RFC-11 zero-trust: an MCP server controls its own tool
+        descriptions, so the compact projection
+        (:func:`McpClient.compact_tool_spec`) strips prompt-injection
+        patterns via ``sanitize_input`` before the text lands in an agent
+        prompt (tool-poisoning defense, CVE-2025-54136 class). A NEW
+        description projection that truncates a ``"description"`` value
+        (the ``[:N]`` cap the prompt builder expects) without any
+        ``sanitize*`` call in the same function reopens that hole.
+        """
+        normalized = self.filename.replace("\\", "/")
+        if not _MCP_TRANSPORT_PATTERN.search(normalized):
+            return
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            refs_description = False
+            refs_params = False
+            has_truncation = False
+            has_sanitize = False
+            for inner in ast.walk(node):
+                if isinstance(inner, ast.Constant):
+                    # ``"params"`` is the output key unique to the tool-
+                    # SCHEMA projection (compact_tool_spec's prompt-builder
+                    # shape ``{name, description, params, required}``); it
+                    # separates that projection from a response adapter or
+                    # an operator health-probe that merely renders a
+                    # ``description`` field.
+                    if inner.value == "description":
+                        refs_description = True
+                    elif inner.value == "params":
+                        refs_params = True
+                elif isinstance(inner, ast.Subscript) and isinstance(
+                    inner.slice, ast.Slice,
+                ):
+                    has_truncation = True
+                elif isinstance(inner, ast.Call):
+                    tail = None
+                    if isinstance(inner.func, ast.Name):
+                        tail = inner.func.id
+                    elif isinstance(inner.func, ast.Attribute):
+                        tail = inner.func.attr
+                    if tail is not None and tail.startswith("sanitize"):
+                        has_sanitize = True
+            if (
+                refs_description
+                and refs_params
+                and has_truncation
+                and not has_sanitize
+            ):
+                self._emit(
+                    node.lineno,
+                    "unsanitized_server_ingest",
+                    (
+                        f"unsanitized_server_ingest: {node.name!r} projects an "
+                        "MCP tool 'description' into a truncated prompt-facing "
+                        "value without a sanitize_input call -- an MCP server "
+                        "controls its tool descriptions, so the projection "
+                        "MUST strip prompt-injection patterns before the text "
+                        "reaches an agent prompt"
+                    ),
+                )
+
 class HonestyAuditor:
     """Audit one or more Python source files for structural dishonesty.
 
@@ -5908,6 +6133,13 @@ class HonestyAuditor:
         # dispatch site is unconditional (every other tree is out
         # of scope and is not flagged by an unconditional call).
         visitor._check_adlc_structural_change(tree)
+        # Rules 76-79: RFC-11 Tier C MCP-unification guardrails. Each
+        # rule self-scopes (76 + 79 to platform/mcp/**, 77 + 78 to
+        # **/agents/**), so the dispatch site is unconditional.
+        visitor._check_bespoke_mcp_bridge(tree)
+        visitor._check_static_server_catalog(tree)
+        visitor._check_hardcoded_server_dispatch(tree)
+        visitor._check_unsanitized_server_ingest(tree)
         # Rules 64-67: RFC-12 knowledge-base integrity + retrieval gate.
         # Every file is in scope; each rule self-exempts or scopes to the
         # surface it locks in.

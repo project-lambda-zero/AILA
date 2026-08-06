@@ -2749,7 +2749,7 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[dict]:
         from aila.api.deps import get_task_queue
-        from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
+        from aila.platform.mcp.factory import make_bridge
 
         from .db_models import VRTargetRecord
         from .workflow.task import run_target_analysis
@@ -2801,7 +2801,7 @@ def create_vr_router() -> APIRouter:
         upload_cap = await _cfg.get_int("upload_max_bytes")
         contents = await read_upload_bounded(file, upload_cap)
 
-        bridge = IDABridgeTool(recorder=record_call, module_id="vr")
+        bridge = make_bridge("ida_headless", module_id="vr", recorder=record_call)
         base_url = await bridge._resolve_base_url()
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:

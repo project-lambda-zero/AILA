@@ -129,7 +129,9 @@ class McpRegistryServiceBase:
         stays byte-identical to the pre-RFC-11 behaviour.
         """
         rows = await self._catalog.list_instances(
-            module_scope=self._module_id, include_disabled=include_disabled,
+            module_scope=self._module_id,
+            include_disabled=include_disabled,
+            approved_only=True,
         )
         out: list[ResolvedInstance] = []
         for row in rows:

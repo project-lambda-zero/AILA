@@ -189,7 +189,7 @@ class VRModule(ModuleProtocol):
         """Register VR tables, config schema, and tool instances.
 
         Tool construction is dependency-ordered: PatchDifferTool composes the
-        already-built IDABridgeTool so we instantiate the bridge first and
+        already-built IDA bridge so we instantiate the bridge first and
         thread the same instance into the differ.
         """
         if schema_registry is not None:
@@ -204,9 +204,9 @@ class VRModule(ModuleProtocol):
         from aila.modules.vr.tools.crash_triage import CrashTriageTool
         from aila.modules.vr.tools.patch_differ import PatchDifferTool
         from aila.modules.vr.tools.poc_runner import PoCRunnerTool
-        from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
+        from aila.platform.mcp.factory import make_bridge
 
-        ida_bridge = IDABridgeTool(recorder=record_call, module_id="vr")
+        ida_bridge = make_bridge("ida_headless", module_id="vr", recorder=record_call)
         tool_registry.register(TOOL_IDA_BRIDGE, ida_bridge)
         tool_registry.register(TOOL_POC_RUNNER, PoCRunnerTool(settings))
         tool_registry.register(TOOL_PATCH_DIFFER, PatchDifferTool(ida_bridge))

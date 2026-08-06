@@ -40,6 +40,7 @@ from aila.platform.mcp.adapters import (
 )
 from aila.platform.mcp.capability_registry import default_capability_registry
 from aila.platform.mcp.client import ResolvedInstance
+from aila.platform.mcp.factory import make_bridge, middleware_family
 from aila.platform.mcp.instance_catalog import (
     McpInstanceCatalog,
     decode_capability_tags,
@@ -664,6 +665,65 @@ class ToolExecutorHelpersBase:
             self._tool_router = router
         return router
 
+    def _bridge_for(self, server_id: str) -> Any:
+        """Return the bridge tool for ``server_id``, building it on demand.
+
+        RFC-11 Tier C: the fixed ``self._bridges`` map is gone. A test /
+        DI caller may inject a bridge via ``_bridge_overrides`` (keyed by
+        server id -- used for the in-process ``knowledge`` bridge and for
+        fakes); otherwise the generic :class:`McpBridgeTool` is built once
+        per server id through :func:`make_bridge` and cached for the
+        executor lifetime. Building on demand is what lets an operator's
+        newly-added, capability-tagged catalog server dispatch without a
+        worker restart. Returns ``None`` only when the factory cannot
+        construct a bridge, so the caller's "no bridge configured" path
+        still fires for a genuinely unroutable server.
+        """
+        overrides = getattr(self, "_bridge_overrides", None) or {}
+        override = overrides.get(server_id)
+        if override is not None:
+            return override
+        cache = self.__dict__.setdefault("_bridge_cache", {})
+        if server_id in cache:
+            return cache[server_id]
+        try:
+            bridge = make_bridge(
+                server_id,
+                module_id=getattr(self, "_bridge_module_id", "platform"),
+                recorder=getattr(self, "_bridge_recorder_fn", None),
+            )
+        except (KeyError, ImportError, RuntimeError, TypeError) as exc:
+            _log.warning(
+                "tool_executor._bridge_for: cannot build bridge for %r "
+                "(%s: %s)",
+                server_id, type(exc).__name__, exc,
+            )
+            return None
+        cache[server_id] = bridge
+        return bridge
+
+    def _rotate_candidates(
+        self,
+        module_scope: str,
+        server_id: str,
+        candidates: list[ResolvedInstance],
+    ) -> list[ResolvedInstance]:
+        """Round-robin the candidate order per (scope, server) for load-share.
+
+        RFC-11 criterion 3: two enabled instances of one capability share
+        load. The :class:`ToolRouter` tries the list in order and fails
+        over down it, so rotating the START point spreads successive
+        dispatches across the pool while preserving failover across the
+        remaining members. A single-member pool is returned unchanged.
+        """
+        if len(candidates) <= 1:
+            return candidates
+        cursors = self.__dict__.setdefault("_pool_cursors", {})
+        key = (module_scope, server_id)
+        start = cursors.get(key, 0) % len(candidates)
+        cursors[key] = start + 1
+        return candidates[start:] + candidates[:start]
+
     async def _resolve_router_candidates(
         self, server_id: str, module_scope: str,
     ) -> list[ResolvedInstance]:
@@ -693,16 +753,27 @@ class ToolExecutorHelpersBase:
         if catalog is None:
             return []
         rows = await catalog.list_instances(
-            module_scope=module_scope, include_disabled=False,
+            module_scope=module_scope,
+            include_disabled=False,
+            approved_only=True,
         )
         descriptor_tags = frozenset(descriptor.capability_tags)
+        target_family = middleware_family(server_id)
         seen_ids: set[str] = set()
         out: list[ResolvedInstance] = []
         for row in rows:
-            if row.name != server_id or row.id in seen_ids:
+            if row.id in seen_ids:
                 continue
             row_tags = decode_capability_tags(row.capability_tags)
             if not descriptor_tags.intersection(row_tags):
+                continue
+            # RFC-11 criteria 2/3: pool across every enabled + approved
+            # instance sharing the requested server's MIDDLEWARE FAMILY,
+            # not just the exact name. ida_headless + ida_headless_exp
+            # both run IdaMiddleware, so a call for one fails over to /
+            # shares load with the other; a differently-contracted server
+            # that merely shares a tag is never a pool member.
+            if middleware_family(row.name) != target_family:
                 continue
             endpoint = (row.endpoint or "").strip().rstrip("/")
             if not endpoint:
@@ -718,7 +789,7 @@ class ToolExecutorHelpersBase:
                     module_scope=row.module_scope,
                 ),
             )
-        return out
+        return self._rotate_candidates(module_scope, server_id, out)
 
     @classmethod
     def _classify_bridge_infra_error(cls, raw: Any) -> str | None:
@@ -1007,7 +1078,7 @@ class ToolExecutorHelpersBase:
                 message_id=msg_id, success=False, error=err,
             )
 
-        bridge = self._bridges.get(server_id)
+        bridge = self._bridge_for(server_id)
         if bridge is None:
             err = f"No bridge configured for MCP server {server_id!r}"
             msg_id = await self._write_error_message(

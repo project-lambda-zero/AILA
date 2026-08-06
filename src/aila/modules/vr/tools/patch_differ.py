@@ -2,14 +2,13 @@
 
 Compares two binary versions to surface security patches: structural diffs
 across whole binaries and pseudocode diffs for individual functions. The
-tool is a thin dispatcher that forwards to ``IDABridgeTool``; all heavy
+tool is a thin dispatcher that forwards to the IDA MCP bridge; all heavy
 analysis state lives in the MCP server.
 """
 from __future__ import annotations
 
 from typing import Any
 
-from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 from aila.platform.tools import Tool
 
 __all__ = ["PatchDifferTool"]
@@ -36,7 +35,7 @@ class PatchDifferTool(Tool):
     output_type = "object"
     skip_forward_signature_validation = True
 
-    def __init__(self, ida_bridge: IDABridgeTool) -> None:
+    def __init__(self, ida_bridge: Any) -> None:
         self._ida = ida_bridge
 
     async def forward(self, action: str | None = None, **kwargs: Any) -> dict:

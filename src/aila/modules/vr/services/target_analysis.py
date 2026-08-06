@@ -51,9 +51,7 @@ from aila.platform.contracts.target_stages import (
     StageState,
     StageStatus,
 )
-from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
-from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
-from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
+from aila.platform.mcp.factory import make_bridge
 from aila.platform.uow import UnitOfWork
 
 __all__ = [
@@ -571,13 +569,13 @@ class TargetAnalysisService:
 
     def __init__(
         self,
-        ida: IDABridgeTool | Any | None = None,
-        audit_mcp: AuditMcpBridgeTool | Any | None = None,
-        android_mcp: AndroidMcpBridgeTool | Any | None = None,
+        ida: Any | None = None,
+        audit_mcp: Any | None = None,
+        android_mcp: Any | None = None,
     ) -> None:
-        self._ida = ida or IDABridgeTool(recorder=record_call, module_id="vr")
-        self._audit_mcp = audit_mcp or AuditMcpBridgeTool(recorder=record_call, module_id="vr")
-        self._android_mcp = android_mcp or AndroidMcpBridgeTool(recorder=record_call, module_id="vr")
+        self._ida = ida or make_bridge("ida_headless", module_id="vr", recorder=record_call)
+        self._audit_mcp = audit_mcp or make_bridge("audit_mcp", module_id="vr", recorder=record_call)
+        self._android_mcp = android_mcp or make_bridge("android_mcp", module_id="vr", recorder=record_call)
 
     async def analyze(self, target_id: str) -> None:
         """Run the ingestion stage(s) for one target.

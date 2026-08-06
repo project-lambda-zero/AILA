@@ -34,14 +34,12 @@ from aila.modules.vr.db_models import (
     VRTargetRecord,
 )
 from aila.modules.vr.services.knowledge_scope import vr_knowledge_namespaces
+from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.platform.agents.tool_execution import (
     ToolExecutionResult,
 )
 from aila.platform.agents.tool_executor import ToolExecutorHelpersBase
 from aila.platform.config_base import ModuleConfigReader
-from aila.platform.mcp.bridges.android_mcp import AndroidMcpBridgeTool
-from aila.platform.mcp.bridges.audit_mcp import AuditMcpBridgeTool
-from aila.platform.mcp.bridges.ida_headless import IDABridgeTool
 from aila.platform.mcp.bridges.knowledge import KnowledgeBridgeTool
 from aila.platform.services.knowledge import KnowledgeService
 from aila.platform.uow import UnitOfWork
@@ -98,21 +96,34 @@ class ToolExecutor(ToolExecutorHelpersBase):
 
     def __init__(
         self,
-        ida: IDABridgeTool | Any,
-        audit_mcp: AuditMcpBridgeTool | Any,
-        android_mcp: AndroidMcpBridgeTool | Any,
-        knowledge: KnowledgeBridgeTool | Any | None = None,
+        ida: Any = None,
+        audit_mcp: Any = None,
+        android_mcp: Any = None,
+        knowledge: Any | None = None,
     ) -> None:
         self._message_model = VRInvestigationMessageRecord
         self._branch_model = VRInvestigationBranchRecord
-        self._bridges: dict[str, Any] = {
-            "ida_headless": ida,
-            "audit_mcp": audit_mcp,
-            "android_mcp": android_mcp,
-            # RFC-12 agentic path: read-only knowledge retrieval, scoped
-            # server-side in _pre_dispatch_correct_args.
-            "knowledge": knowledge or KnowledgeBridgeTool(),
+        # RFC-11 Tier C: HTTP bridges are built on demand by the base
+        # _bridge_for() through the generic factory. Only explicitly
+        # injected bridges (tests / DI) and the in-process knowledge
+        # bridge are pre-seeded as overrides; production constructs
+        # ToolExecutor() with no bridges and lets the catalog + factory
+        # drive dispatch.
+        self._bridge_module_id = "vr"
+        self._bridge_recorder_fn = record_call
+        self._bridge_overrides: dict[str, Any] = {
+            server_id: bridge
+            for server_id, bridge in {
+                "ida_headless": ida,
+                "audit_mcp": audit_mcp,
+                "android_mcp": android_mcp,
+                # RFC-12 agentic path: read-only knowledge retrieval,
+                # scoped server-side in _pre_dispatch_correct_args.
+                "knowledge": knowledge or KnowledgeBridgeTool(),
+            }.items()
+            if bridge is not None
         }
+        self._bridge_cache: dict[str, Any] = {}
         # Per-process LRU: investigation_id -> (workspace_id, team_id) for
         # server-side knowledge-retrieval scoping.
         self._inv_workspace_cache: OrderedDict[str, tuple[str, str | None]] = OrderedDict()
@@ -316,7 +327,7 @@ class ToolExecutor(ToolExecutorHelpersBase):
         # bridge_base_url comes from the audit_mcp bridge instance, not a
         # hardcoded literal; falls back to the default when the bridge stub
         # lacks the accessor.
-        audit_mcp_bridge = self._bridges.get("audit_mcp")
+        audit_mcp_bridge = self._bridge_for("audit_mcp")
         if hasattr(audit_mcp_bridge, "base_url"):
             try:
                 return await audit_mcp_bridge.base_url()

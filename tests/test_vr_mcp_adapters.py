@@ -254,12 +254,12 @@ class TestAndroidMcpDispatch:
         audit = _FakeBridge()
         android = _FakeBridge()
         executor = ToolExecutor(ida=ida, audit_mcp=audit, android_mcp=android)
-        # The private dict is the dispatch surface inside execute(); a
-        # KeyError here at runtime would surface as the "No bridge
-        # configured" string the engine sees in its next turn.
-        assert executor._bridges["ida_headless"] is ida
-        assert executor._bridges["audit_mcp"] is audit
-        assert executor._bridges["android_mcp"] is android
+        # RFC-11 Tier C: _bridge_for() is the dispatch surface inside
+        # execute(); an injected bridge is returned as an override so the
+        # "No bridge configured" path never fires for a wired server.
+        assert executor._bridge_for("ida_headless") is ida
+        assert executor._bridge_for("audit_mcp") is audit
+        assert executor._bridge_for("android_mcp") is android
 
     def test_android_mcp_composite_handlers_registered(self) -> None:
         # The composite layer (verify_capabilities / classify_behavior /

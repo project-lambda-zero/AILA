@@ -1,12 +1,13 @@
 """Tests for the read_lines basename auto-resolve + JADX-hint gating
-added to :mod:`aila.platform.mcp.bridges.audit_mcp`.
+in :mod:`aila.platform.mcp.middleware.audit`.
 
 Covers the three module-level helpers (``_search_by_basename``,
 ``_looks_like_jadx``, ``_WALK_SKIP_DIRS``) and the wired path through
-``AuditMcpBridgeTool._read_lines_local``. The bridge instance is
-constructed with an explicit ``base_url`` so no live audit-mcp is
-required and ``_INDEX_ROOTS`` is populated directly so
-``_refresh_index_roots`` is never called.
+``AuditMcpMiddleware._read_lines_local``. The middleware instance is
+constructed via ``IdaMiddleware``-style plugin bootstrapping and the
+class-level ``_INDEX_ROOTS`` cache is populated directly so
+``_refresh_index_roots`` (which would POST ``list_indexes`` to
+audit-mcp) never fires.
 """
 from __future__ import annotations
 
@@ -14,14 +15,16 @@ from pathlib import Path
 
 import pytest
 
-from aila.platform.mcp.bridges import audit_mcp as bridge_mod
-from aila.platform.mcp.bridges.audit_mcp import (
+from aila.platform.mcp.client import McpClient
+from aila.platform.mcp.middleware import audit as middleware_mod
+from aila.platform.mcp.middleware.audit import (
     _JADX_PREFIX_RE,
     _WALK_SKIP_DIRS,
-    AuditMcpBridgeTool,
+    AuditMcpMiddleware,
     _looks_like_jadx,
     _search_by_basename,
 )
+from aila.platform.mcp.server_specs import SERVER_SPECS
 
 # ---------------------------------------------------------------------------
 # _search_by_basename
@@ -90,7 +93,7 @@ class TestSearchByBasename:
         def _boom(_root: str) -> object:
             raise OSError("mocked walk failure")
 
-        monkeypatch.setattr(bridge_mod.os, "walk", _boom)
+        monkeypatch.setattr(middleware_mod.os, "walk", _boom)
         # No results collected before the raise -- returns [].
         assert _search_by_basename(tmp_path, "a.py") == []
 
@@ -158,16 +161,22 @@ class TestLooksLikeJadx:
 # ---------------------------------------------------------------------------
 
 
-def _make_bridge(root: Path, index_id: str = "idx1") -> AuditMcpBridgeTool:
-    """Construct a bridge with a fixed base_url and a pre-populated
-    ``_INDEX_ROOTS`` so ``_refresh_index_roots`` never fires.
+def _make_middleware(
+    root: Path, index_id: str = "idx1",
+) -> tuple[AuditMcpMiddleware, McpClient]:
+    """Build a middleware + a client with a fixed base_url and a
+    pre-populated ``_INDEX_ROOTS`` so ``_refresh_index_roots`` never
+    fires (no live audit-mcp required).
 
     ``_INDEX_ROOTS`` is class-level; each test overrides it wholesale
     so the previous test can't leak an index_id / root pair.
     """
-    tool = AuditMcpBridgeTool(base_url="http://127.0.0.1:1", module_id="vr")
-    AuditMcpBridgeTool._INDEX_ROOTS = {index_id: str(root)}
-    return tool
+    mw = AuditMcpMiddleware(
+        spec=SERVER_SPECS["audit_mcp"], module_id="vr",
+    )
+    AuditMcpMiddleware._INDEX_ROOTS = {index_id: str(root)}
+    client = McpClient(server_id="audit_mcp", base_url="http://127.0.0.1:1")
+    return mw, client
 
 
 class TestReadLinesResolution:
@@ -176,8 +185,8 @@ class TestReadLinesResolution:
         (tmp_path / "pkg" / "a.py").write_text(
             "L1\nL2\nL3\n", encoding="utf-8",
         )
-        tool = _make_bridge(tmp_path)
-        result = await tool._read_lines_local({
+        mw, client = _make_middleware(tmp_path)
+        result = await mw._read_lines_local(client, {
             "index_id": "idx1",
             "file_path": "pkg/a.py",
             "start": 1,
@@ -195,8 +204,8 @@ class TestReadLinesResolution:
         (tmp_path / "llm_sandbox" / "interactive.py").write_text(
             "one\ntwo\nthree\n", encoding="utf-8",
         )
-        tool = _make_bridge(tmp_path)
-        result = await tool._read_lines_local({
+        mw, client = _make_middleware(tmp_path)
+        result = await mw._read_lines_local(client, {
             "index_id": "idx1",
             "file_path": "src/llm_sandbox/interactive.py",
             "start": 1,
@@ -211,8 +220,8 @@ class TestReadLinesResolution:
         (tmp_path / "deep" / "nested" / "unique.py").write_text(
             "hi\n", encoding="utf-8",
         )
-        tool = _make_bridge(tmp_path)
-        result = await tool._read_lines_local({
+        mw, client = _make_middleware(tmp_path)
+        result = await mw._read_lines_local(client, {
             "index_id": "idx1",
             "file_path": "unique.py",  # no dir prefix at all
             "start": 1,
@@ -229,8 +238,8 @@ class TestReadLinesResolution:
         (tmp_path / "b").mkdir()
         (tmp_path / "a" / "dup.py").write_text("x", encoding="utf-8")
         (tmp_path / "b" / "dup.py").write_text("x", encoding="utf-8")
-        tool = _make_bridge(tmp_path)
-        result = await tool._read_lines_local({
+        mw, client = _make_middleware(tmp_path)
+        result = await mw._read_lines_local(client, {
             "index_id": "idx1",
             "file_path": "elsewhere/dup.py",
             "start": 1,
@@ -250,8 +259,8 @@ class TestReadLinesResolution:
         (tmp_path / "y").mkdir()
         (tmp_path / "x" / "z.py").write_text("x", encoding="utf-8")
         (tmp_path / "y" / "z.py").write_text("x", encoding="utf-8")
-        tool = _make_bridge(tmp_path)
-        result = await tool._read_lines_local({
+        mw, client = _make_middleware(tmp_path)
+        result = await mw._read_lines_local(client, {
             "index_id": "idx1",
             "file_path": "nope/z.py",
             "start": 1,
@@ -271,8 +280,8 @@ class TestReadLinesResolution:
         (tmp_path / "y").mkdir()
         (tmp_path / "x" / "z.java").write_text("x", encoding="utf-8")
         (tmp_path / "y" / "z.java").write_text("x", encoding="utf-8")
-        tool = _make_bridge(tmp_path)
-        result = await tool._read_lines_local({
+        mw, client = _make_middleware(tmp_path)
+        result = await mw._read_lines_local(client, {
             "index_id": "idx1",
             "file_path": "nope/z.java",
             "start": 1,
@@ -293,8 +302,8 @@ class TestReadLinesResolution:
         (tmp_path / "y").mkdir()
         (tmp_path / "x" / "Same.java").write_text("x", encoding="utf-8")
         (tmp_path / "y" / "Same.java").write_text("x", encoding="utf-8")
-        tool = _make_bridge(tmp_path)
-        result = await tool._read_lines_local({
+        mw, client = _make_middleware(tmp_path)
+        result = await mw._read_lines_local(client, {
             "index_id": "idx1",
             "file_path": "com/example/Same.java",
             "start": 1,
@@ -307,8 +316,8 @@ class TestReadLinesResolution:
         self, tmp_path: Path,
     ) -> None:
         (tmp_path / "keepempty").mkdir()
-        tool = _make_bridge(tmp_path)
-        result = await tool._read_lines_local({
+        mw, client = _make_middleware(tmp_path)
+        result = await mw._read_lines_local(client, {
             "index_id": "idx1",
             "file_path": "nowhere/absent.py",
             "start": 1,
@@ -327,8 +336,8 @@ class TestReadLinesResolution:
         # the untouched read-side branch.
         (tmp_path / "deep").mkdir()
         (tmp_path / "deep" / "small.py").write_text("only\n", encoding="utf-8")
-        tool = _make_bridge(tmp_path)
-        result = await tool._read_lines_local({
+        mw, client = _make_middleware(tmp_path)
+        result = await mw._read_lines_local(client, {
             "index_id": "idx1",
             "file_path": "wrongdir/small.py",
             "start": 5,
@@ -349,8 +358,8 @@ class TestReadLinesSignatureErrors:
         self, tmp_path: Path,
     ) -> None:
         (tmp_path / "a.py").write_text("x\n", encoding="utf-8")
-        tool = _make_bridge(tmp_path)
-        result = await tool._read_lines_local({
+        mw, client = _make_middleware(tmp_path)
+        result = await mw._read_lines_local(client, {
             "file_path": "a.py",
             "start": 1,
             "end": 1,
@@ -365,8 +374,8 @@ class TestReadLinesSignatureErrors:
     async def test_missing_file_path_flags_missing_required_kwarg(
         self, tmp_path: Path,
     ) -> None:
-        tool = _make_bridge(tmp_path)
-        result = await tool._read_lines_local({
+        mw, client = _make_middleware(tmp_path)
+        result = await mw._read_lines_local(client, {
             "index_id": "idx1",
             "start": 1,
             "end": 1,
@@ -379,8 +388,8 @@ class TestReadLinesSignatureErrors:
     async def test_missing_both_lists_both_kwargs(
         self, tmp_path: Path,
     ) -> None:
-        tool = _make_bridge(tmp_path)
-        result = await tool._read_lines_local({
+        mw, client = _make_middleware(tmp_path)
+        result = await mw._read_lines_local(client, {
             "start": 1,
             "end": 1,
         })
@@ -394,8 +403,8 @@ class TestReadLinesSignatureErrors:
         self, tmp_path: Path,
     ) -> None:
         (tmp_path / "a.py").write_text("x\n", encoding="utf-8")
-        tool = _make_bridge(tmp_path)
-        result = await tool._read_lines_local({
+        mw, client = _make_middleware(tmp_path)
+        result = await mw._read_lines_local(client, {
             "index_id": "idx1",
             "file_path": "a.py",
             "start": "one",
@@ -411,8 +420,8 @@ class TestReadLinesSignatureErrors:
         self, tmp_path: Path,
     ) -> None:
         (tmp_path / "a.py").write_text("x\n", encoding="utf-8")
-        tool = _make_bridge(tmp_path)
-        result = await tool._read_lines_local({
+        mw, client = _make_middleware(tmp_path)
+        result = await mw._read_lines_local(client, {
             "index_id": "idx1",
             "file_path": "a.py",
             "start": 1,
@@ -425,8 +434,8 @@ class TestReadLinesSignatureErrors:
         self, tmp_path: Path,
     ) -> None:
         (tmp_path / "a.py").write_text("x\n", encoding="utf-8")
-        tool = _make_bridge(tmp_path)
-        result = await tool._read_lines_local({
+        mw, client = _make_middleware(tmp_path)
+        result = await mw._read_lines_local(client, {
             "index_id": "idx1",
             "file_path": "a.py",
             "start": 0,
@@ -443,8 +452,8 @@ class TestReadLinesSignatureErrors:
         self, tmp_path: Path,
     ) -> None:
         (tmp_path / "a.py").write_text("x\n", encoding="utf-8")
-        tool = _make_bridge(tmp_path)
-        result = await tool._read_lines_local({
+        mw, client = _make_middleware(tmp_path)
+        result = await mw._read_lines_local(client, {
             "index_id": "idx1",
             "file_path": "a.py",
             "start": 10,
@@ -459,8 +468,8 @@ class TestReadLinesSignatureErrors:
         self, tmp_path: Path,
     ) -> None:
         (tmp_path / "tiny.py").write_text("only\n", encoding="utf-8")
-        tool = _make_bridge(tmp_path)
-        result = await tool._read_lines_local({
+        mw, client = _make_middleware(tmp_path)
+        result = await mw._read_lines_local(client, {
             "index_id": "idx1",
             "file_path": "tiny.py",
             "start": 500,
