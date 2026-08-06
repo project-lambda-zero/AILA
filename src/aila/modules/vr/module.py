@@ -284,40 +284,177 @@ class VRModule(ModuleProtocol):
         return await seed_prompt_versions()
 
     async def system_summary(self, system_id: int, session: Any) -> dict[str, Any]:
-        """VR is not system-scoped today."""
-        del system_id, session
-        return {}
+        """Return investigation counts for VR projects on ``system_id``.
 
-    async def report_count(self, run_id: str, session: Any) -> dict[str, Any]:
-        """VR does not own platform workflow run reports."""
-        del run_id, session
-        return {}
+        VR investigations are not directly system-scoped -- they belong
+        to a VR project, and the project carries ``analysis_system_id``.
+        Called by GET /systems/{id}: this scopes to projects hosted on
+        the requested system and rolls up investigation status counts
+        across them. Returns ``{}`` when the system hosts no VR project,
+        so the platform's ``if result:`` guard hides the section.
+        """
+        try:
+            from sqlmodel import func, select
+
+            from aila.modules.vr.db_models import VRInvestigationRecord, VRProjectRecord
+            from aila.platform.contracts.enums import InvestigationStatus
+
+            if session is None:
+                return {}
+
+            project_count_stmt = select(func.count(VRProjectRecord.id)).where(
+                VRProjectRecord.analysis_system_id == system_id,
+            )
+            project_count = int((await session.exec(project_count_stmt)).one() or 0)
+            if project_count == 0:
+                return {}
+
+            grouped_stmt = (
+                select(VRInvestigationRecord.status, func.count(VRInvestigationRecord.id))
+                .join(VRProjectRecord, VRProjectRecord.id == VRInvestigationRecord.project_id)
+                .where(VRProjectRecord.analysis_system_id == system_id)
+                .group_by(VRInvestigationRecord.status)
+            )
+            rows = (await session.exec(grouped_stmt)).all()
+            counts: dict[str, int] = {str(status): int(count or 0) for status, count in rows}
+
+            total = sum(counts.values())
+            active = (
+                counts.get(InvestigationStatus.RUNNING.value, 0)
+                + counts.get(InvestigationStatus.PAUSED.value, 0)
+            )
+            return {
+                "vr_projects": project_count,
+                "vr_investigations": total,
+                "vr_active": active,
+                "vr_completed": counts.get(InvestigationStatus.COMPLETED.value, 0),
+            }
+        except (OSError, RuntimeError, ValueError):
+            _log.debug("vr.system_summary failed for system_id=%s", system_id, exc_info=True)
+            return {}
+
+    async def report_count(
+        self,
+        run_id: str,
+        session: Any,
+        *,
+        team_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Return module-wide VR investigation counts (dashboard aggregate).
+
+        Called with an empty ``run_id`` by the platform dashboard so it
+        can render a per-module summary. Returns investigation-domain
+        counts rather than finding-domain counts (findings are the
+        vulnerability module's responsibility) -- the dashboard sums
+        keys ``total_findings`` / ``critical`` / ``high`` / ``medium``
+        / ``low`` from every module, so absent finding keys correctly
+        contribute zero. ``team_id`` narrows the aggregate to one
+        team; ``None`` means god-tier (TEAM-06) with no team filter.
+        """
+        del run_id
+        try:
+            from datetime import UTC, datetime, timedelta
+
+            from sqlmodel import func, select
+
+            from aila.modules.vr.db_models import VRInvestigationRecord
+
+            if session is None:
+                return {}
+
+            status_stmt = select(
+                VRInvestigationRecord.status, func.count(VRInvestigationRecord.id),
+            )
+            if team_id is not None:
+                status_stmt = status_stmt.where(VRInvestigationRecord.team_id == team_id)
+            status_stmt = status_stmt.group_by(VRInvestigationRecord.status)
+            rows = (await session.exec(status_stmt)).all()
+            counts: dict[str, int] = {str(status): int(count or 0) for status, count in rows}
+            total = sum(counts.values())
+            if total == 0:
+                return {}
+
+            recent_cutoff = datetime.now(UTC) - timedelta(days=7)
+            recent_stmt = select(func.count(VRInvestigationRecord.id)).where(
+                VRInvestigationRecord.primary_outcome_id.is_not(None),
+                VRInvestigationRecord.updated_at >= recent_cutoff,
+            )
+            if team_id is not None:
+                recent_stmt = recent_stmt.where(VRInvestigationRecord.team_id == team_id)
+            recent_outcomes = int((await session.exec(recent_stmt)).one() or 0)
+
+            return {
+                "total_investigations": total,
+                "created": counts.get("created", 0),
+                "running": counts.get("running", 0),
+                "paused": counts.get("paused", 0),
+                "completed": counts.get("completed", 0),
+                "failed": counts.get("failed", 0),
+                "abandoned": counts.get("abandoned", 0),
+                "stalled": counts.get("stalled", 0),
+                "recent_outcomes": recent_outcomes,
+            }
+        except (OSError, RuntimeError, ValueError):
+            _log.debug("vr.report_count failed", exc_info=True)
+            return {}
 
     def health_checks(self) -> dict[str, object]:
-        """Probe the IDA headless MCP that every n-day workflow depends on."""
+        """Probe every MCP server the VR runtime depends on.
 
-        async def _ida_reachability() -> dict[str, object]:
-            import os
+        VR reaches ida-headless (binary analysis), audit-mcp (source-
+        graph indexing), and android-mcp (APK audit) at runtime. Each
+        probe resolves the current base URL through :func:`make_bridge`
+        (env -> ConfigRegistry -> catalog -> default) and probes
+        ``/health`` through the platform McpClient transport (bounded
+        timeout) so a wedged server never blocks the platform
+        ``GET /health`` response. A resolve or transport failure lands as
+        a ``down`` entry; the probe never raises.
+        """
+        return {
+            "ida_headless_reachability": _mcp_health_probe(self.module_id, "ida_headless"),
+            "audit_mcp_reachability": _mcp_health_probe(self.module_id, "audit_mcp"),
+            "android_mcp_reachability": _mcp_health_probe(self.module_id, "android_mcp"),
+        }
 
-            import httpx
 
-            base_url = os.environ.get("IDA_HEADLESS_URL", "http://127.0.0.1:18821").rstrip("/")
-            try:
-                async with httpx.AsyncClient(timeout=3.0) as client:
-                    response = await client.get(f"{base_url}/health")
-                if response.status_code < 500:
-                    return {"status": "up", "detail": f"IDA MCP reachable at {base_url}"}
-                return {
-                    "status": "degraded",
-                    "detail": f"IDA MCP at {base_url} returned HTTP {response.status_code}",
-                }
-            except (httpx.HTTPError, OSError) as exc:
-                return {
-                    "status": "degraded",
-                    "detail": f"IDA MCP unreachable at {base_url}: {type(exc).__name__}: {exc}",
-                }
+def _mcp_health_probe(module_id: str, server_id: str):
+    """Build a health-check callable for ``server_id`` under ``module_id``.
 
-        return {"vr.ida_reachability": _ida_reachability}
+    The returned coroutine resolves the current base URL through
+    :func:`make_bridge` (env -> ConfigRegistry -> catalog -> default) and
+    probes the server via the platform :class:`McpClient` transport's
+    bounded ``GET /health`` -- HTTP transport stays in the platform layer,
+    not the module. A resolve failure or an unreachable server lands as
+    ``down``; a reachable server is ``up`` and carries the server's own
+    reported status. The probe never raises so a wedged server cannot
+    break the platform ``GET /health`` collection loop.
+    """
+    async def _probe() -> dict[str, object]:
+        from aila.platform.mcp.factory import make_bridge
+
+        try:
+            bridge = make_bridge(server_id, module_id=module_id, recorder=None)
+            result = await bridge.health()
+        except (OSError, RuntimeError, ValueError) as exc:
+            return {
+                "status": "down",
+                "detail": f"{server_id} resolve failed: {type(exc).__name__}: {exc}",
+            }
+        if isinstance(result, dict) and result.get("status") == "error":
+            return {
+                "status": "down",
+                "detail": f"{server_id} unreachable: {result.get('error') or 'no response'}",
+            }
+        reported = result.get("status") if isinstance(result, dict) else None
+        return {
+            "status": "up",
+            "detail": (
+                f"{server_id} reachable ({reported})"
+                if reported else f"{server_id} reachable"
+            ),
+        }
+
+    return _probe
 
 
 def _register_vr_periodic_sweeps() -> None:

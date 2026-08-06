@@ -97,6 +97,23 @@ _PLATFORM_DYNAMIC_FAMILIES: tuple[DynamicKeyFamily, ...] = (
     DynamicKeyFamily("llm_budget_max_total_tokens_", int, description="Per-task-type token budget ceiling."),
     # Per-team monthly budget ceiling (USD).
     DynamicKeyFamily("llm_monthly_budget_usd_", float, description="Per-team monthly budget ceiling (USD)."),
+    # Per-model pricing (USD per 1k tokens). Suffix is the normalized model
+    # slug produced by ``aila.platform.llm.cost._normalize_model_id`` --
+    # non-word chars fold to '_' so a provider-qualified id like
+    # 'anthropic/claude-sonnet-4-6' registers as
+    # 'llm_cost_per_1k_prompt_anthropic_claude-sonnet-4-6'. Declared here so
+    # ``ConfigRegistry.set()`` accepts operator writes via PUT /config
+    # (issue #38). Missing suffix => calculate_cost_usd returns (0.0, False)
+    # and the caller warns; a non-numeric value is rejected at set-time by
+    # the family's ``float`` cast.
+    DynamicKeyFamily(
+        "llm_cost_per_1k_prompt_", float,
+        description="Per-model USD per 1k prompt/input tokens (normalized model slug).",
+    ),
+    DynamicKeyFamily(
+        "llm_cost_per_1k_completion_", float,
+        description="Per-model USD per 1k completion/output tokens (normalized model slug).",
+    ),
     # Pipeline gate thresholds and consensus (per task type).
     DynamicKeyFamily("llm_pipeline_gate_high_threshold_", float),
     DynamicKeyFamily("llm_pipeline_gate_medium_threshold_", float),

@@ -5,15 +5,16 @@ how many hours a human security consultant would need for equivalent work.
 The estimation itself uses task_type="cost_estimation" so its LLM cost
 is tracked separately and excluded from ROI calculations (D-06b).
 
-Human cost is stored by UPDATING the original run's LLMCostRecords
-(human_cost_hours and human_cost_usd columns) rather than creating
-sentinel records. This keeps ROI queries simple -- just SUM from the
-same table with no special-case filtering.
-
-Design decision: Option A -- UPDATE original records (no sentinel run_id="_human_estimate").
-  - ROI queries: SUM(human_cost_usd) WHERE human_cost_usd IS NOT NULL
-  - No asymmetry between LLM cost and human cost in the same table
-  - Clean queries in the /cost/roi endpoint
+Human cost is stored by UPDATING a SINGLE canonical LLMCostRecord row
+for the run (the earliest by ``created_at`` -- deterministic under
+re-estimation) with the full aggregate ``human_cost_hours`` and
+``human_cost_usd``. Every other row for the same run has both columns
+reset to NULL. ROI queries stay simple -- ``SUM(...) WHERE ... IS NOT
+NULL`` -- and late-arriving records for the run do not corrupt the
+total (issue #38 -- previously ``estimated_hours / len(records)`` split
+over the records existing at estimation time silently dropped human
+cost for any row that landed AFTER the estimator ran, and any
+re-estimation over a changed record set produced a stale rounded split).
 """
 from __future__ import annotations
 
@@ -176,7 +177,7 @@ async def estimate_human_cost(
         async with async_session_scope() as session:
             stmt = select(LLMCostRecord).where(
                 LLMCostRecord.run_id == run_id,
-            )
+            ).order_by(LLMCostRecord.created_at, LLMCostRecord.id)
             records = (await session.exec(stmt)).all()
 
             if not records:
@@ -187,13 +188,20 @@ async def estimate_human_cost(
                 )
                 return None
 
-            # Distribute human cost evenly across all records for the run.
-            # Even distribution is simpler for ROI queries (SUM aggregates correctly).
-            hours_per_record = estimate.estimated_hours / len(records)
-            usd_per_record = human_cost_usd / len(records)
-            for record in records:
-                record.human_cost_hours = hours_per_record
-                record.human_cost_usd = usd_per_record
+            # Store the FULL aggregate on the earliest record (deterministic
+            # under re-estimation) and clear every other row for the run so
+            # a subsequent estimator invocation cannot leave stale per-record
+            # splits behind. Late-arriving records for the same run stay
+            # NULL, so the ``SUM(human_cost_usd) WHERE ... IS NOT NULL`` ROI
+            # query in ``routers/cost.py::get_roi`` returns the aggregate
+            # unchanged (issue #38).
+            for idx, record in enumerate(records):
+                if idx == 0:
+                    record.human_cost_hours = estimate.estimated_hours
+                    record.human_cost_usd = human_cost_usd
+                else:
+                    record.human_cost_hours = None
+                    record.human_cost_usd = None
                 session.add(record)
             await session.commit()
 

@@ -213,7 +213,9 @@ async def test_sends_structured_llm_call_with_cost_estimation_task_type(hc_test_
 
 @pytest.mark.asyncio
 async def test_updates_existing_cost_records_not_new_ones(hc_test_db):
-    """estimate_human_cost UPDATES human_cost_hours/usd on original run records."""
+    """estimate_human_cost updates existing rows (no new records) and stores
+    the full aggregate on the earliest row so late-arriving records for the
+    run cannot dilute the total via a stale even split (issue #38)."""
     from sqlmodel import select
 
     run_id = "run-hc-02"
@@ -239,20 +241,29 @@ async def test_updates_existing_cost_records_not_new_ones(hc_test_db):
 
     # Verify records were UPDATED (not new records created)
     async with async_session_scope() as session:
-        stmt = select(LLMCostRecord).where(LLMCostRecord.run_id == run_id)
+        stmt = select(LLMCostRecord).where(
+            LLMCostRecord.run_id == run_id,
+        ).order_by(LLMCostRecord.created_at, LLMCostRecord.id)
         updated = (await session.exec(stmt)).all()
 
     assert len(updated) == initial_count, (
         f"Expected {initial_count} records, got {len(updated)} (should NOT create new records)"
     )
-    # All records should now have human_cost_hours and human_cost_usd populated
-    for rec in updated:
-        assert rec.human_cost_hours is not None and rec.human_cost_hours > 0
-        assert rec.human_cost_usd is not None and rec.human_cost_usd > 0
+    # Aggregate lives on the earliest record; the rest are NULL so a late-
+    # arriving row for the same run cannot dilute the ROI SUM (issue #38).
+    assert updated[0].human_cost_hours is not None
+    assert updated[0].human_cost_usd is not None
+    for rec in updated[1:]:
+        assert rec.human_cost_hours is None
+        assert rec.human_cost_usd is None
 
-    # Total should sum to estimated values
-    total_hours = sum(r.human_cost_hours for r in updated)
-    total_usd = sum(r.human_cost_usd for r in updated)
+    # SUM behaviour (the ROI query) matches the estimate exactly.
+    total_hours = sum(
+        (r.human_cost_hours or 0.0) for r in updated
+    )
+    total_usd = sum(
+        (r.human_cost_usd or 0.0) for r in updated
+    )
     assert abs(total_hours - 6.0) < 0.001
     assert abs(total_usd - 600.0) < 0.001  # 6.0 * 100.0
 

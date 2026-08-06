@@ -7,6 +7,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- The cross-module dashboard now reflects the vr and malware investigation
+  engines (#70). Both modules implement the system-summary, report-count,
+  and health-check hooks: the dashboard totals and the system detail page
+  carry investigation counts by status plus recent outcomes (kept distinct
+  from the vulnerability module's finding counts, which vr and malware do
+  not own), and `GET /health` probes each module's MCP server dependencies
+  through the platform transport.
+
+### Fixed
+
+- The vr investigation evidence graph now surfaces the investigation's
+  actual reasoning: hypothesis nodes aggregated across branches (with a
+  live / rejected / resolved / mixed state) and finding nodes wired to the
+  outcome that produced them, alongside the existing branch and outcome
+  nodes. Previously the section drew only investigation, branch, and
+  outcome nodes, so a mid-flight investigation with live branches and no
+  terminal outcomes showed almost nothing (#17).
+- The vr timeline labels a source read (audit-mcp `read_function` /
+  `read_lines`) as "Read" instead of "Decompiled"; only an ida-headless
+  decompile renders as "Decompiled". The prior label guessed from a
+  file-extension allowlist and mislabeled Kotlin, XML, smali, and
+  extensionless source reads (#20).
+- LLM pricing keys are settable through the config schema (per-model
+  prompt and completion price families), and a model that resolves to no
+  configured price logs a warning instead of silently costing zero,
+  closing the last two open findings on cost correctness (#38).
+- Human-cost estimation stores the full aggregate on the earliest cost
+  record and clears the rest, so a re-estimate over a changed record set
+  stays coherent and a late-arriving record no longer skews the per-record
+  split (#38).
+
 ## [0.3.0] - 2026-08-05 -- Investigation-engine extraction program plus security, correctness, and reliability hardening
 
 The vulnerability-research and malware investigation engines are unified

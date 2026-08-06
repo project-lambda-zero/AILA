@@ -92,6 +92,17 @@ class McpBridgeTool(Tool):
         """Public alias for :meth:`_resolve_base_url` (auto-steering path)."""
         return await self._client.base_url()
 
+    async def health(self) -> dict[str, Any]:
+        """Best-effort ``GET /health`` via the shared McpClient transport.
+
+        Returns the server's health payload, or the uniform
+        ``{"status": "error", "error": "Unreachable: ..."}`` envelope
+        when the server cannot be reached. The HTTP call lives in the
+        platform transport, so a module can probe reachability without
+        constructing its own HTTP client.
+        """
+        return await self._client.health()
+
     def invalidate_base_url(self) -> None:
         """Drop the cached resolution so the next call re-resolves."""
         self._client.invalidate_base_url()

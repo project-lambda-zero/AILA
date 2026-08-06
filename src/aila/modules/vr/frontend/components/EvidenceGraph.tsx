@@ -28,19 +28,30 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
  *  is unavailable (e.g. ephemeral cards built from local data). */
 
 export type GraphNodeKind =
+  | "investigation"
+  | "branch"
   | "hypothesis"
   | "evidence"
   | "crash"
   | "exploit"
   | "advisory"
-  | "obligation";
+  | "obligation"
+  | "outcome"
+  | "finding";
 
 export type GraphEdgeKind =
   | "supports"
   | "refutes"
   | "found_by"
   | "exploits"
-  | "derived_from";
+  | "derived_from"
+  | "spawned"
+  | "produced"
+  | "raises"
+  | "rejects"
+  | "resolves"
+  | "linked"
+  | "produced_finding";
 
 export interface GraphNodeInput {
   id: string;
@@ -61,23 +72,34 @@ const NODE_TONE: Record<
   GraphNodeKind,
   { bg: string; border: string; tone: "info" | "low" | "medium" | "high" | "critical" }
 > = {
+  investigation: { bg: "#0f172a", border: "#38bdf8", tone: "info" }, // teal-blue root
+  branch:     { bg: "#0e7490", border: "#22d3ee", tone: "info" },     // cyan persona-thread
   hypothesis: { bg: "#1e3a8a", border: "#3b82f6", tone: "info" },     // blue
   evidence:   { bg: "#14532d", border: "#22c55e", tone: "low" },      // green
   crash:      { bg: "#7f1d1d", border: "#ef4444", tone: "critical" }, // red
   exploit:    { bg: "#7c2d12", border: "#f97316", tone: "high" },     // orange
   advisory:   { bg: "#581c87", border: "#a855f7", tone: "medium" },   // purple
   obligation: { bg: "#374151", border: "#9ca3af", tone: "info" },     // gray
+  outcome:    { bg: "#78350f", border: "#f59e0b", tone: "medium" },   // amber terminal artifact
+  finding:    { bg: "#4a1d96", border: "#c084fc", tone: "medium" },   // violet dispatched finding
 };
 
 const EDGE_STYLE: Record<
   GraphEdgeKind,
   { stroke: string; dashed?: boolean; label: string }
 > = {
-  supports:     { stroke: "#22c55e", label: "supports" },
-  refutes:      { stroke: "#ef4444", label: "refutes" },
-  found_by:     { stroke: "#9ca3af", label: "found_by" },
-  exploits:     { stroke: "#f97316", label: "exploits" },
-  derived_from: { stroke: "#9ca3af", dashed: true, label: "derived_from" },
+  supports:         { stroke: "#22c55e", label: "supports" },
+  refutes:          { stroke: "#ef4444", label: "refutes" },
+  found_by:         { stroke: "#9ca3af", label: "found_by" },
+  exploits:         { stroke: "#f97316", label: "exploits" },
+  derived_from:     { stroke: "#9ca3af", dashed: true, label: "derived_from" },
+  spawned:          { stroke: "#22d3ee", label: "spawned" },
+  produced:         { stroke: "#f59e0b", label: "produced" },
+  raises:           { stroke: "#3b82f6", label: "raises" },
+  rejects:          { stroke: "#ef4444", dashed: true, label: "rejects" },
+  resolves:         { stroke: "#22c55e", dashed: true, label: "resolves" },
+  linked:           { stroke: "#c084fc", dashed: true, label: "linked" },
+  produced_finding: { stroke: "#c084fc", label: "produced_finding" },
 };
 
 /** Lay out nodes in concentric tiers by kind. Cheap dagre alternative
@@ -86,23 +108,31 @@ const EDGE_STYLE: Record<
  *  off to one side. */
 function layout(nodes: GraphNodeInput[]): Map<string, { x: number; y: number }> {
   const tiers: Record<GraphNodeKind, GraphNodeInput[]> = {
+    investigation: [],
+    branch: [],
     hypothesis: [],
     evidence: [],
     crash: [],
     exploit: [],
     advisory: [],
     obligation: [],
+    outcome: [],
+    finding: [],
   };
   for (const n of nodes) tiers[n.kind].push(n);
 
   const positions = new Map<string, { x: number; y: number }>();
 
   const rings: Array<{ kind: GraphNodeKind; radius: number }> = [
-    { kind: "hypothesis", radius: 0 },
-    { kind: "evidence", radius: 200 },
+    { kind: "investigation", radius: 0 },
+    { kind: "branch", radius: 220 },
+    { kind: "hypothesis", radius: 310 },
+    { kind: "evidence", radius: 310 },
+    { kind: "outcome", radius: 400 },
     { kind: "crash", radius: 400 },
     { kind: "exploit", radius: 400 },
     { kind: "advisory", radius: 400 },
+    { kind: "finding", radius: 520 },
     { kind: "obligation", radius: 600 },
   ];
 
@@ -133,12 +163,16 @@ type LayoutAlgo = "concentric" | "radial" | "grid";
 function layoutGrid(nodes: GraphNodeInput[]): Map<string, { x: number; y: number }> {
   // Group by kind, render each kind in a row with even spacing.
   const tiers: Record<GraphNodeKind, GraphNodeInput[]> = {
+    investigation: [],
+    branch: [],
     hypothesis: [],
     evidence: [],
     crash: [],
     exploit: [],
     advisory: [],
     obligation: [],
+    outcome: [],
+    finding: [],
   };
   for (const n of nodes) tiers[n.kind].push(n);
   const positions = new Map<string, { x: number; y: number }>();
