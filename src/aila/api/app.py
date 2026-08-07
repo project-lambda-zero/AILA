@@ -241,6 +241,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.automation_registry = None
         app.state.automation_runner = None
 
+    # RFC-08 Tier D activation: seed the platform-scoped calibration
+    # sweep schedules if the operator has not already inserted them.
+    # Idempotent -- existing schedules (including operator overrides)
+    # survive untouched. Best-effort: a seed fault is logged and must
+    # not abort startup (mirrors the seed_module_prompts posture above).
+    try:
+        from aila.platform.automation.seed_schedules import (
+            seed_default_automation_schedules,
+        )
+
+        _seeded_schedules = await seed_default_automation_schedules()
+        if _seeded_schedules:
+            _log.info(
+                "Seeded %d default automation schedules", _seeded_schedules,
+            )
+    except (OSError, TimeoutError, RuntimeError, ValueError, LookupError) as exc:
+        _log.warning("Default automation schedule seeding skipped: %s", exc)
+
     # Start the supervised background automation tick loop (60s base interval,
     # exponential backoff on repeated failure). Wires the AutomationRunner that
     # was previously instantiated but never invoked (AUDIT-01 fix). The

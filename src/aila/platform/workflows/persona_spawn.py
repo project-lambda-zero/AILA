@@ -287,6 +287,48 @@ async def spawn_persona_siblings(
             (parent.case_state_json or "{}") if parent is not None else "{}"
         )
         inherited_case_state = strip_case_state(parent_case_state)
+        # RFC-13/03 -- panel siblings inherit the primary branch's
+        # strategy_family (or the investigation's family when the primary
+        # still lacks one from a pre-2026-08 INSERT). ``BranchPool.fork``
+        # applies the same rule; keeping the two spawn paths symmetric
+        # means the strategy grouping never regresses to the empty-string
+        # bucket that hid 351 live branches in the dormancy audit.
+        inherited_family: str | None = None
+        if parent is not None:
+            inherited_family = parent.strategy_family
+        if not inherited_family or not str(inherited_family).strip():
+            inv_row = (await uow.session.execute(
+                _sql_text(
+                    f"SELECT strategy_family FROM {inv_table} WHERE id = :id"
+                ).bindparams(id=investigation_id),
+            )).first()
+            if inv_row is not None:
+                candidate = inv_row[0]
+                if candidate and str(candidate).strip():
+                    inherited_family = str(candidate)
+
+        # Backfill missing strategy_family on the primary itself + every
+        # reactivated winner so a stale row from before this landed inherits
+        # the family on the next setup pass rather than staying NULL.
+        if inherited_family:
+            if parent is not None and (
+                not parent.strategy_family
+                or not str(parent.strategy_family).strip()
+            ):
+                parent.strategy_family = inherited_family
+                uow.session.add(parent)
+            for reactivated_id in result.reactivated:
+                reactivated_row = (await uow.session.exec(
+                    _select(branch_model).where(
+                        branch_model.id == reactivated_id,
+                    ),
+                )).first()
+                if reactivated_row is not None and (
+                    not reactivated_row.strategy_family
+                    or not str(reactivated_row.strategy_family).strip()
+                ):
+                    reactivated_row.strategy_family = inherited_family
+                    uow.session.add(reactivated_row)
 
         for persona in siblings:
             existing_branch = best_by_persona.get(persona.value)
@@ -298,6 +340,7 @@ async def spawn_persona_siblings(
                 parent_branch_id=primary_branch_id,
                 status="active",
                 persona_voice=persona.value,
+                strategy_family=inherited_family,
                 fork_reason=f"auto_deliberation:{persona.value}",
                 fork_at_turn=0,
                 case_state_json=inherited_case_state,

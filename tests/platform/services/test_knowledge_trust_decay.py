@@ -74,6 +74,38 @@ def test_temporal_decay_scales_by_age_half_life() -> None:
     assert [h["id"] for h in out] == [1, 2]
 
 
+def test_identity_params_return_input_unchanged() -> None:
+    """weight 1.0 + half-life <= 0 is a byte-identical no-op (short-circuit).
+
+    The post-rank now runs unconditionally in retrieve_routed; identity
+    knobs must leave the input list object itself untouched -- no rewrap,
+    no ``base_score`` overlay, no re-sort. Guards the reset path.
+    """
+    gated = [
+        _hit(1, "vr.observation.workspace.x", 0.90, updated_at=_NOW),
+        _hit(2, "vr.finding.workspace.x", 0.80, updated_at=_NOW),
+    ]
+    out = _apply_trust_decay(
+        gated,
+        target_derived_weight=1.0,
+        decay_half_life_hours=0.0,
+        floor=0.0,
+        now=_NOW,
+    )
+    assert out is gated
+    assert "base_score" not in out[0]
+    assert "base_score" not in out[1]
+
+    # half_life < 0 (defensive) also short-circuits.
+    assert _apply_trust_decay(
+        gated,
+        target_derived_weight=1.0,
+        decay_half_life_hours=-1.0,
+        floor=0.0,
+        now=_NOW,
+    ) is gated
+
+
 def test_floor_drops_hit_pushed_below_min_score() -> None:
     gated = [
         _hit(1, "vr.observation.workspace.x", 0.50),

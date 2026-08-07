@@ -98,6 +98,15 @@ class ToolExecutorHelpersBase:
     _message_model: type
     _branch_model: type
 
+    # RFC-11 module id used by :meth:`_router_module_scope` and
+    # :meth:`_bridge_for`. Concrete module executors set this in
+    # ``__init__`` (``"vr"``, ``"malware"``, ...) so router-mediated
+    # dispatch is DEMANDED for every real subclass. The base class
+    # default of ``None`` marks an abstract / module-less helper
+    # (unit-test doubles, narrow harnesses) whose dispatch stays on
+    # the direct :meth:`bridge.forward` path.
+    _bridge_module_id: str | None = None
+
     # Fallback cap on observables dict size (directives + recall pins
     # always kept). Production paths resolve the live value via
     # ConfigRegistry under the ``platform`` namespace
@@ -638,16 +647,18 @@ class ToolExecutorHelpersBase:
     def _router_module_scope(self) -> str | None:
         """Return the module id used by the RFC-07 router, or None to disable.
 
-        Default: ``None`` -- the router is inert and every dispatch
-        takes the direct bridge.forward path (byte-identical to
-        pre-wiring). Subclasses override to return their own module id
-        (``"vr"``, ``"malware"``) so router-mediated dispatch reroutes
-        across enabled catalog rows of the same capability and disables
-        an instance after repeated INFRA failures. A ``None`` return
-        preserves the pre-router path so a module that has not
-        published RFC-11 descriptors cannot regress.
+        Default: derives from :attr:`_bridge_module_id` so any executor
+        that carries a module id (every real module subclass sets one
+        in ``__init__``) routes through the RFC-07 catalog router
+        without having to override this hook. ``None`` is returned
+        only when the module-less abstract base (or a narrow test
+        double) leaves ``_bridge_module_id`` unset; that keeps the
+        direct :meth:`bridge.forward` path live for callers that have
+        not published RFC-11 descriptors. Subclasses MAY still
+        override this method to force a different scope than the
+        bridge module id.
         """
-        return None
+        return self._bridge_module_id
 
     def _get_tool_router(self) -> ToolRouter:
         """Return the per-executor :class:`ToolRouter`, creating it lazily.

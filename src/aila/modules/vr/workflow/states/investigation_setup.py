@@ -7,7 +7,6 @@ the loop state.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -33,6 +32,7 @@ from aila.platform.agents.branch_pool import (
     _strip_rejected_from_state,
 )
 from aila.platform.config_base import ModuleConfigReader
+from aila.platform.prompts.bundle_ctx import current_pinned_bundle
 from aila.platform.services.knowledge import KnowledgeService
 from aila.platform.services.oracle import Oracle
 from aila.platform.services.specialist_registry import SpecialistAgentRegistry
@@ -48,24 +48,6 @@ from aila.platform.workflows.persona_spawn import (
     spawn_persona_siblings,
     spawn_specialist_branch,
 )
-
-
-# Auto-deliberation toggle. When 1 (default), investigation_setup
-# spawns sibling branches for critic + implementer personas and
-# enqueues a separate run_vr_investigate task per sibling so each
-# persona reasons independently against its own task_type-routed
-# LLM. Set VR_AUTO_PERSONA_DELIBERATION=0 to disable (single-branch
-# fallback -- operator forks personas manually).
-#
-# fix §295 -- lazy getter (was module-load `_AUTO_DELIBERATION`).
-# Reading env at module load makes the toggle unchangeable for the
-# worker lifetime; operator-flipped env after a worker restart never
-# took effect until full process bounce. Lazy getter is read each
-# time setup runs, so a worker that sees a fresh env on next ARQ
-# task wakeup honours it.
-def _is_auto_deliberation_enabled() -> bool:
-    return os.environ.get("VR_AUTO_PERSONA_DELIBERATION", "1") == "1"
-
 
 _BASELINE_CORE_SIBLINGS = "maddie,renzo"  # critic + implementer; halvar primary = researcher
 
@@ -96,6 +78,61 @@ async def _core_sibling_personas() -> tuple[PersonaVoice, ...]:
         except ValueError:
             continue
     return tuple(out)
+
+
+def _panel_from_roster(roster: dict[str, Any]) -> tuple[PersonaVoice, ...] | None:
+    """Derive the panel siblings from a pinned-bundle roster (RFC-09).
+
+    Bundles carry the roster as ``{persona_voice: {...persona-config...}}``
+    (see :mod:`aila.platform.prompts.bundle_ctx`). When the roster is
+    populated for the current turn the panel spawns exactly the voices
+    the pin author declared, skipping the primary researcher (spawned as
+    the primary branch) and any name that is not a registered
+    :class:`PersonaVoice` member. Returns ``None`` when the roster is
+    empty or resolves to zero valid sibling voices so the caller keeps
+    the baseline panel byte-identical to today.
+    """
+    if not roster:
+        return None
+    out: list[PersonaVoice] = []
+    seen: set[str] = set()
+    for name in roster:
+        token = str(name).strip().lower()
+        if not token or token in seen:
+            continue
+        try:
+            voice = PersonaVoice(token)
+        except ValueError:
+            continue
+        # The primary branch already carries the researcher persona; the
+        # sibling spawn iterates NON-primary voices only. Silently drop
+        # a roster entry that names the primary so a pin author does not
+        # have to omit it defensively.
+        if voice == _PRIMARY_PERSONA:
+            continue
+        seen.add(token)
+        out.append(voice)
+    if not out:
+        return None
+    return tuple(out)
+
+
+async def _resolve_panel_siblings() -> tuple[PersonaVoice, ...]:
+    """Resolve the sibling tuple honoured by ``spawn_persona_siblings``.
+
+    Consumes the pinned-bundle roster published on the RFC-09 ContextVar
+    when a bundle version has resolved with a non-empty roster. Falls
+    back to :func:`_core_sibling_personas` (the config-driven baseline)
+    when the roster is empty or the bundle publishes no valid voices --
+    every current bundle registers ``roster={}``, so the fallback is the
+    live path today. Behaviour stays byte-identical to the pre-RFC-13
+    wire-up while no roster is pinned.
+    """
+    from_roster = _panel_from_roster(current_pinned_bundle().roster)
+    if from_roster is not None:
+        return from_roster
+    return await _core_sibling_personas()
+
 
 # The personas assigned to the auto-spawned siblings. Primary branch
 # becomes the first researcher; each entry below spawns a sibling.
@@ -398,7 +435,7 @@ async def _spawn_persona_siblings_and_enqueue(
         investigation_id,
         primary_branch_id,
         team_id,
-        siblings=await _core_sibling_personas(),
+        siblings=await _resolve_panel_siblings(),
         branch_model=VRInvestigationBranchRecord,
         inv_table="vr_investigations",
         message_table="vr_investigation_messages",
@@ -448,7 +485,6 @@ _SETUP_BINDINGS = InvestigationStateBindings(
     unspecified_persona_value=PersonaVoice.UNSPECIFIED.value,
     spawn_fn=_spawn_persona_siblings_and_enqueue,
     pattern_store_factory=lambda: PatternStore(knowledge=KnowledgeService()),
-    auto_deliberation_enabled=_is_auto_deliberation_enabled,
     specialist_spawn_fn=_spawn_ratified_specialists,
     routing_history_provider=_routing_history_provider_factory(),
 )

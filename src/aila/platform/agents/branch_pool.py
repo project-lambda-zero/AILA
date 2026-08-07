@@ -113,6 +113,31 @@ class BranchPool:
             ),
         )
 
+    async def _investigation_strategy_family(self, uow: UnitOfWork) -> str | None:
+        """Return the investigation row's ``strategy_family`` (RFC-13/03).
+
+        Fallback the fork / merge / spawn paths use when the parent branch
+        row itself carries no ``strategy_family``. Every branch created by
+        this pool MUST inherit a family so
+        :meth:`list_active_by_strategy` never buckets it under the empty
+        key -- the 2026-08 dormancy audit found 351 live branches with a
+        NULL family collapsing the strategy grouping to a single empty
+        bucket. Returns ``None`` only when the investigation itself has
+        no family (edge case pre-migration): callers pass ``None`` through
+        rather than fabricating one.
+        """
+        inv = (await uow.session.exec(
+            _select(self._investigation_model).where(
+                self._investigation_model.id == self.investigation_id,
+            ),
+        )).first()
+        if inv is None:
+            return None
+        family = getattr(inv, "strategy_family", None)
+        if not family or not str(family).strip():
+            return None
+        return str(family)
+
     async def fork(
         self,
         parent_branch_id: str,
@@ -170,11 +195,23 @@ class BranchPool:
                     f"{parent.status!r} -- only ACTIVE branches are forkable",
                 )
 
+            # RFC-13/03 -- fork inherits parent's strategy_family; when the
+            # parent row itself carries none (all pre-2026-08 primary rows do,
+            # the initial API-side INSERTs never set it), fall through to the
+            # investigation-level family. Never leave the child NULL: the
+            # ``list_active_by_strategy`` grouping keys on this column and a
+            # NULL row collapses into the empty-string bucket that hides the
+            # branch from every strategy dispatch pass.
+            child_family = parent.strategy_family
+            if not child_family or not str(child_family).strip():
+                child_family = await self._investigation_strategy_family(uow)
+
             child = self._branch_model(
                 investigation_id=self.investigation_id,
                 parent_branch_id=parent_branch_id,
                 status=BranchStatus.ACTIVE.value,
                 persona_voice=persona_voice,
+                strategy_family=child_family,
                 fork_reason=fork_reason,
                 fork_at_turn=at_turn,
                 # fix §112 -- strip parent's rejected/resolved hypothesis
@@ -245,11 +282,21 @@ class BranchPool:
             # side-effect -- same code path.
             inherited_parent = a.parent_branch_id or b.parent_branch_id
 
+            # RFC-13/03 -- inherit strategy_family from the surviving branches
+            # (A first, then B for deterministic ordering) so the merged row
+            # never lands NULL. Falls back to the investigation's own family
+            # when both source branches lack one (a merge from two pre-2026-08
+            # rows). See ``_investigation_strategy_family`` for the rationale.
+            merged_family = a.strategy_family or b.strategy_family
+            if not merged_family or not str(merged_family).strip():
+                merged_family = await self._investigation_strategy_family(uow)
+
             merged = self._branch_model(
                 investigation_id=self.investigation_id,
                 parent_branch_id=inherited_parent,
                 status=BranchStatus.ACTIVE.value,
                 persona_voice="merge_result",  # fix §177 -- structural marker, never null
+                strategy_family=merged_family,
                 fork_reason=f"merge: {merge_reason}" if merge_reason else "merge",
                 case_state_json=_encode(merged_state),
                 # fix §113 -- turn_count carries the higher of the two

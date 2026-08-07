@@ -23,7 +23,6 @@ per-module hook (CVE intel resolver, knowledge retrieval, etc.) via
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from aila.modules._template.db_models import (
@@ -61,16 +60,6 @@ MODULE_ID = "template"
 # spawn fan-out. Rename in one place; every submit below picks it up.
 _TEMPLATE_TRACK = "template"
 _TEMPLATE_GROUP_ID = "template_auto_deliberation"
-
-# Auto-deliberation toggle. When ``1`` (default) the setup state spawns
-# one sibling branch per persona in ``_DELIBERATION_SIBLINGS`` and
-# enqueues one worker task per sibling so each persona reasons against
-# its own task_type-routed LLM. Read lazily (not at module load) so an
-# operator env flip takes effect on the next task wakeup without a
-# worker restart.
-def _is_auto_deliberation_enabled() -> bool:
-    return os.environ.get("TEMPLATE_AUTO_PERSONA_DELIBERATION", "1") == "1"
-
 
 # The primary persona owns the first branch of every investigation.
 # Every subsequent persona in ``_DELIBERATION_SIBLINGS`` gets its own
@@ -152,7 +141,6 @@ _SETUP_BINDINGS = InvestigationStateBindings(
     primary_persona_value=_PRIMARY_PERSONA.value,
     unspecified_persona_value=PersonaVoice.UNSPECIFIED.value,
     spawn_fn=_spawn_persona_siblings_and_enqueue,
-    auto_deliberation_enabled=_is_auto_deliberation_enabled,
     module_id=MODULE_ID,
 )
 # A real module adds its per-module hooks here (CVE intel resolver,

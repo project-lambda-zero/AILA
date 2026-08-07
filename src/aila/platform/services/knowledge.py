@@ -137,10 +137,13 @@ def _apply_trust_decay(
     provenance timestamp is scaled by ``0.5 ** (age_hours / half_life)`` when
     ``decay_half_life_hours > 0``. A hit whose adjusted score falls below
     ``floor`` is dropped; the survivors are re-sorted by adjusted score. The
-    pre-adjustment value is preserved under ``base_score`` for audit. Callers
-    only invoke this when at least one knob is active, so the default config
-    (weight 1.0, half-life 0) leaves ranking byte-identical.
+    pre-adjustment value is preserved under ``base_score`` for audit. When
+    both knobs are identity/disabled (weight 1.0, half-life <= 0) the input
+    list is returned unchanged (byte-identical to skipping the call) so an
+    unconditional post-rank remains a correct no-op after an operator reset.
     """
+    if target_derived_weight == 1.0 and decay_half_life_hours <= 0:
+        return gated
     adjusted: list[dict[str, Any]] = []
     for hit in gated:
         base = float(hit.get("score") or 0.0)
@@ -1286,19 +1289,20 @@ class KnowledgeService:
             gated = apply_gate_many(hits, entry_rows=rows_by_id)
 
         # RFC-12 Phase 5: config-gated trust weight + temporal decay, applied
-        # after the gate so it never touches the _merge_and_rank contract. The
-        # default config (weight 1.0, half-life 0) skips this entirely, so the
-        # shipped ranking is unchanged until an operator opts in and validates
-        # the change against the retrieval eval.
+        # after the gate so it never touches the _merge_and_rank contract.
+        # Called unconditionally: the ASI06 poisoning down-weight and temporal
+        # decay run on every routed retrieval so the shipped defaults take
+        # effect. _apply_trust_decay short-circuits to the input list when the
+        # operator resets both knobs to identity (weight 1.0, half-life <= 0),
+        # so ranking is byte-identical in that case.
         weight, half_life = await self._resolve_trust_decay_config()
-        if weight != 1.0 or half_life > 0:
-            gated = _apply_trust_decay(
-                gated,
-                target_derived_weight=weight,
-                decay_half_life_hours=half_life,
-                floor=min_score,
-                now=utc_now(),
-            )
+        gated = _apply_trust_decay(
+            gated,
+            target_derived_weight=weight,
+            decay_half_life_hours=half_life,
+            floor=min_score,
+            now=utc_now(),
+        )
 
         result = {
             "status": "retrieved",

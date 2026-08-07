@@ -104,11 +104,11 @@ async def _apply_calibration(
     """Recalibrate ``raw_score`` via the active post-hoc calibrator.
 
     Contract C6 seam: sits between :func:`extract_confidence` and
-    :func:`_resolve_thresholds` in the gate hot path. When no active
-    :class:`CalibratorVersionRecord` exists for ``task_type`` -- or the
-    platform ``llm_calibrator_enabled`` flag is False -- returns the raw
-    score unchanged so the gate stays safe to deploy before any fit has
-    landed.
+    :func:`_resolve_thresholds` in the gate hot path. Applied
+    unconditionally whenever an active
+    :class:`CalibratorVersionRecord` exists for ``task_type``; when no
+    active row is present the raw score is returned unchanged so the
+    gate stays safe before any fit lands.
 
     Never raises: any DB / config lookup fault degrades to raw-
     passthrough (logged inside :func:`load_active_calibrator`). The
@@ -116,21 +116,7 @@ async def _apply_calibration(
     preserved; the calibrator sits AFTER it and reshapes the number the
     extractor already produced.
     """
-    registry = config_provider._registry
-    try:
-        enabled_raw = await registry.get("platform", "llm_calibrator_enabled")
-    except (OSError, RuntimeError, ValueError, TypeError):
-        enabled_raw = None
-    enabled = True
-    if enabled_raw is not None:
-        if isinstance(enabled_raw, bool):
-            enabled = enabled_raw
-        else:
-            enabled = str(enabled_raw).strip().lower() not in {
-                "false", "0", "no", "off", "",
-            }
-    if not enabled:
-        return raw_score
+    del config_provider
     from aila.platform.eval.calibrator import load_active_calibrator
 
     calibrator = await load_active_calibrator(task_type)
@@ -356,8 +342,8 @@ def make_gate_step(
         raw_score = extract_confidence(content, finish_reason)
 
         # C6: post-hoc recalibration. Passes through when no active
-        # calibrator exists OR platform.llm_calibrator_enabled is off
-        # (safe before any fit ships).
+        # calibrator exists for the task_type (safe before any fit
+        # ships); applied unconditionally otherwise.
         score = await _apply_calibration(
             config_provider, routing.task_type, raw_score,
         )

@@ -202,33 +202,6 @@ async def test_apply_calibration_uses_active_row(test_db) -> None:
         )
 
 
-async def test_apply_calibration_flag_disables_recalibration(test_db) -> None:
-    """``llm_calibrator_enabled=False`` returns raw even with active row."""
-    del test_db
-    from aila.platform.llm.gate import _apply_calibration
-
-    _invalidate_active_cache()
-    task_type = f"task_{uuid4().hex[:6]}"
-    calibrator = Calibrator.fit(
-        _overconfident_samples(), CALIBRATOR_METHOD_ISOTONIC,
-    )
-    async with async_session_scope() as session:
-        session.add(CalibratorVersionRecord(
-            task_type=task_type,
-            method=calibrator.method,
-            params_json=json.dumps(calibrator.to_params(), sort_keys=True),
-            ece_before=0.5, ece_after=0.1, sample_count=80,
-            status=CALIBRATOR_STATUS_ACTIVE,
-            actor="tester",
-        ))
-        await session.commit()
-
-    provider = _FakeConfigProvider({"llm_calibrator_enabled": False})
-    for raw in (0.1, 0.5, 0.95):
-        result = await _apply_calibration(provider, task_type, raw)
-        assert result == pytest.approx(raw)
-
-
 # ---------------------------------------------------------------------------
 # promote_calibrator: rejects on ECE regression / quorum miss; accepts otherwise
 # ---------------------------------------------------------------------------
