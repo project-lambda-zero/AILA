@@ -7,6 +7,91 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-07 -- Activate dormant RFC features in the wiring; dashboard, evidence graph, cost, and dependency-security work
+
+### Added
+
+- The confidence-calibrator fit path now runs on its own. The trainer and
+  proposer sweeps register as automation actions and seed default daily
+  schedules at startup, so the RFC-08 Tier D calibrator fits and proposes
+  from accept/reject review history without an operator manually creating a
+  schedule. Promotion of a fitted candidate to active stays behind the
+  existing eval + quorum gate.
+- The agent-config bundle roster, when populated, drives the persona panel
+  composition; an empty roster (the shipped default) keeps the baseline
+  panel, so behavior is unchanged until a bundle carries a roster (RFC-09).
+- The cross-module dashboard now reflects the vr and malware investigation
+  engines (#70). Both modules implement the system-summary, report-count,
+  and health-check hooks: the dashboard totals and the system detail page
+  carry investigation counts by status plus recent outcomes (kept distinct
+  from the vulnerability module's finding counts, which vr and malware do
+  not own), and `GET /health` probes each module's MCP server dependencies
+  through the platform transport.
+
+### Changed
+
+- Knowledge retrieval post-rank is unconditional and active by default:
+  target-derived (untrusted, tool-burned) memory is down-weighted (0.5) and
+  every hit carrying a provenance timestamp decays on a 90-day half-life, so
+  quorum-verified entries win ties over untrusted memory (RFC-12 ASI06).
+  Identity values remain a no-op. New deployments get these defaults;
+  existing deployments keep their configured values until updated through
+  the config surface.
+- Canary promotion enforces a minimum observed-signal count (default 5)
+  unconditionally, so a candidate that never saw canary traffic cannot be
+  promoted (RFC-10). New deployments get the default; existing deployments
+  keep their configured value.
+- Multi-persona deliberation always runs. The auto-deliberation environment
+  toggle and its single-branch fallback are removed, so every investigation
+  spawns the full persona panel (RFC-03).
+- The capability-router scope derives from the executor's module id, so
+  catalog-aware routing applies to every module executor rather than only
+  those that overrode the hook (RFC-07 / RFC-11). The MCP instance health
+  probe now filters to approved catalog rows, matching the live dispatch
+  resolve path.
+- Every investigation branch carries a strategy_family, inherited from the
+  parent branch or the investigation at spawn time; existing branch rows are
+  backfilled from their investigation (migration 119), so strategy-family
+  branch grouping reflects the real strategy again instead of collapsing
+  into one bucket (RFC-13 / RFC-03).
+- cryptography pinned to 50.0.0 and the frontend workspace dependency
+  overrides raised (axios, hono, @hono/node-server, dompurify, react-router,
+  fast-uri, brace-expansion, ip-address, postcss, body-parser) for
+  dependency-security currency.
+
+### Fixed
+
+- The vr investigation evidence graph now surfaces the investigation's
+  actual reasoning: hypothesis nodes aggregated across branches (with a
+  live / rejected / resolved / mixed state) and finding nodes wired to the
+  outcome that produced them, alongside the existing branch and outcome
+  nodes. Previously the section drew only investigation, branch, and
+  outcome nodes, so a mid-flight investigation with live branches and no
+  terminal outcomes showed almost nothing (#17).
+- The vr timeline labels a source read (audit-mcp `read_function` /
+  `read_lines`) as "Read" instead of "Decompiled"; only an ida-headless
+  decompile renders as "Decompiled". The prior label guessed from a
+  file-extension allowlist and mislabeled Kotlin, XML, smali, and
+  extensionless source reads (#20).
+- LLM pricing keys are settable through the config schema (per-model
+  prompt and completion price families), and a model that resolves to no
+  configured price logs a warning instead of silently costing zero,
+  closing the last two open findings on cost correctness (#38).
+- Human-cost estimation stores the full aggregate on the earliest cost
+  record and clears the rest, so a re-estimate over a changed record set
+  stays coherent and a late-arriving record no longer skews the per-record
+  split (#38).
+
+### Removed
+
+- The `llm_calibrator_enabled` config flag. The post-hoc confidence
+  calibrator applies whenever an active calibrator exists for the task type
+  and passes the raw score through when none is fitted; the flag's
+  raw-passthrough escape is gone (RFC-08).
+- The legacy `payload_json.auto_steering_key` duplicate on auto-steering
+  messages. The indexed column is the sole source and every dedup reader
+  already uses it (RFC-09).
+
 ## [0.3.0] - 2026-08-05 -- Investigation-engine extraction program plus security, correctness, and reliability hardening
 
 The vulnerability-research and malware investigation engines are unified

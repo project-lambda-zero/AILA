@@ -67,9 +67,12 @@ _CONSECUTIVE_PATTERN_LOOKUP_FAILURES: int = 0
 class InvestigationStateBindings:
     """Concrete per-module inputs the state factories close over.
 
-    Setup uses the record models, personas, spawn function, pattern-store
-    factory, and auto-deliberation toggle. The loop/emit fields land with
-    RFC-02 Phase 4b/4c and default to unset until then.
+    Setup uses the record models, personas, spawn function, and
+    pattern-store factory. Multi-persona deliberation is now unconditional
+    (RFC-13 wire-up, 2026-08): the ``spawn_fn`` runs on every setup pass;
+    the prior ``auto_deliberation_enabled`` env toggle + single-branch
+    fallback are gone. The loop/emit fields land with RFC-02 Phase 4b/4c
+    and default to unset until then.
     """
 
     inv_model: type[Any]
@@ -91,7 +94,6 @@ class InvestigationStateBindings:
         Callable[[str], Awaitable[Sequence[RoutingSample]]] | None
     ) = None
     pattern_store_factory: Callable[[], Any] | None = None
-    auto_deliberation_enabled: Callable[[], bool] | None = None
     module_id: str | None = None
     message_model: type[Any] | None = None
     outcome_model: type[Any] | None = None
@@ -396,6 +398,11 @@ def state_investigation_setup(
                         status=BranchStatus.ACTIVE.value,
                         fork_reason="primary_reenqueue_after_terminal",
                         persona_voice=bindings.primary_persona_value,
+                        # RFC-13/03 -- fresh-primary self-heal inherits the
+                        # investigation's strategy_family so the resurrected
+                        # branch lands in the right strategy bucket instead
+                        # of the NULL/empty bucket the dormancy audit found.
+                        strategy_family=inv.strategy_family,
                     )
                     uow.session.add(branch)
                     await uow.session.flush()
@@ -454,6 +461,17 @@ def state_investigation_setup(
                     or branch.persona_voice == bindings.unspecified_persona_value
                 ):
                     branch.persona_voice = bindings.primary_persona_value
+                    uow.session.add(branch)
+                # RFC-13/03 -- backfill strategy_family on the resolved
+                # primary. Every pre-2026-08 API-side INSERT of the initial
+                # primary branch left this column NULL, which collapsed the
+                # strategy grouping. Idempotent: only fills when the row
+                # still carries no family.
+                if (
+                    not branch.strategy_family
+                    or not str(branch.strategy_family).strip()
+                ) and inv.strategy_family:
+                    branch.strategy_family = inv.strategy_family
                     uow.session.add(branch)
 
             # fix §296 -- whitelist allowable prior status before flipping
@@ -562,15 +580,20 @@ def state_investigation_setup(
                 )
                 routing_recommendation = None
 
-        if bindings.auto_deliberation_enabled():
-            spawn_kwargs: dict[str, Any] = {
-                "investigation_id": investigation_id,
-                "primary_branch_id": branch.id,
-                "team_id": inv.team_id,
-            }
-            if routing_recommendation is not None:
-                spawn_kwargs["sizing_hint"] = routing_recommendation
-            await bindings.spawn_fn(**spawn_kwargs)
+        # RFC-13 wire-up (2026-08): multi-persona deliberation is
+        # unconditional. The prior ``auto_deliberation_enabled`` env toggle
+        # + single-branch fallback are gone; every setup pass spawns the
+        # panel via the module's ``spawn_fn``. ``spawn_persona_siblings``
+        # is idempotent (dedup + reactivate + insert-missing), so calling
+        # it on every re-enqueue is safe.
+        spawn_kwargs: dict[str, Any] = {
+            "investigation_id": investigation_id,
+            "primary_branch_id": branch.id,
+            "team_id": inv.team_id,
+        }
+        if routing_recommendation is not None:
+            spawn_kwargs["sizing_hint"] = routing_recommendation
+        await bindings.spawn_fn(**spawn_kwargs)
 
         # Resolve any CVE ids in the operator's question via the module's
         # optional hook (vr resolves via NVD; malware has no CVE surface).

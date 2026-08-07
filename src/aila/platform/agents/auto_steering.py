@@ -519,11 +519,9 @@ async def _post(
     every sibling (the message loader treats primary-addressed as
     broadcast).
 
-    fix §331/§332 -- populate the new ``auto_steering_key`` column on
-    the row itself so :func:`_already_posted` can dedup via an exact
-    indexed lookup. The legacy ``payload_json.auto_steering_key`` is
-    kept for one release so older message renderers still surface
-    the metadata.
+    fix §331/§332 -- populate the ``auto_steering_key`` column on the
+    row itself so :func:`_already_posted` can dedup via an exact
+    indexed lookup.
 
     fix §338 -- the partial-UNIQUE index on
     ``(investigation_id, auto_steering_key)`` (migration 063) collapses
@@ -542,10 +540,7 @@ async def _post(
             .limit(1)
         )).first()
         addressed_branch = primary_id or branch_id
-        payload = {
-            "text": text,
-            "auto_steering_key": auto_steering_key,
-        }
+        payload = {"text": text}
         msg = message_model(
             investigation_id=investigation_id,
             branch_id=addressed_branch,

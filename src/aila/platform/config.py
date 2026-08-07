@@ -97,6 +97,23 @@ _PLATFORM_DYNAMIC_FAMILIES: tuple[DynamicKeyFamily, ...] = (
     DynamicKeyFamily("llm_budget_max_total_tokens_", int, description="Per-task-type token budget ceiling."),
     # Per-team monthly budget ceiling (USD).
     DynamicKeyFamily("llm_monthly_budget_usd_", float, description="Per-team monthly budget ceiling (USD)."),
+    # Per-model pricing (USD per 1k tokens). Suffix is the normalized model
+    # slug produced by ``aila.platform.llm.cost._normalize_model_id`` --
+    # non-word chars fold to '_' so a provider-qualified id like
+    # 'anthropic/claude-sonnet-4-6' registers as
+    # 'llm_cost_per_1k_prompt_anthropic_claude-sonnet-4-6'. Declared here so
+    # ``ConfigRegistry.set()`` accepts operator writes via PUT /config
+    # (issue #38). Missing suffix => calculate_cost_usd returns (0.0, False)
+    # and the caller warns; a non-numeric value is rejected at set-time by
+    # the family's ``float`` cast.
+    DynamicKeyFamily(
+        "llm_cost_per_1k_prompt_", float,
+        description="Per-model USD per 1k prompt/input tokens (normalized model slug).",
+    ),
+    DynamicKeyFamily(
+        "llm_cost_per_1k_completion_", float,
+        description="Per-model USD per 1k completion/output tokens (normalized model slug).",
+    ),
     # Pipeline gate thresholds and consensus (per task type).
     DynamicKeyFamily("llm_pipeline_gate_high_threshold_", float),
     DynamicKeyFamily("llm_pipeline_gate_medium_threshold_", float),
@@ -200,18 +217,6 @@ class PlatformConfigSchema(BaseModel):
     llm_pipeline_verify_threshold_default: float = 0.7
     llm_pipeline_verify_model_default: str = ""
 
-    # RFC-08 Tier D post-hoc confidence calibrator (contract C6).
-    # When True (default), the gate step reads the active
-    # :class:`CalibratorVersionRecord` for the request's ``task_type``
-    # via :func:`load_active_calibrator` and applies its ``apply(raw)``
-    # to the number :func:`extract_confidence` produced BEFORE
-    # ``_map_confidence_level`` runs. When False (or no active
-    # calibrator exists yet), the gate falls through to the raw score
-    # -- safe to deploy before any fit has landed. The kill-switch is
-    # deliberate: an operator can force raw-passthrough by flipping
-    # this in a hot moment without reverting the calibrator rows.
-    llm_calibrator_enabled: bool = True
-
     # LLM cost estimation fallback (Phase 175 / D-04)
     # Used when a team has no historical data for a task_type.
     # worst_case = target_count * fallback_max_tokens * (fallback_price_per_1k / 1000)
@@ -249,27 +254,28 @@ class PlatformConfigSchema(BaseModel):
     # NEGATIVE -- always a prior, never a gate.
     knowledge_negative_prior_penalty: float = 0.5
 
-    # RFC-12 Phase 5 ranking controls, applied by
+    # RFC-12 Phase 5 ranking controls, applied unconditionally by
     # KnowledgeService.retrieve_routed AFTER the relevance gate as a
-    # config-gated post-rank. Both default to a no-op so the shipped
-    # ranking is byte-identical until an operator opts in and validates
-    # the change against the retrieval eval (aila eval-retrieval).
+    # post-rank (the post-rank always runs; operators tune the values
+    # via env / PUT /config and validate any change against the
+    # retrieval eval, aila eval-retrieval).
     #
     # knowledge_target_derived_weight multiplies the score of every hit
     # whose namespace resolves to the target-derived trust tier (burned
-    # off untrusted tool output, e.g. *.observation.*). 1.0 = no change;
-    # below 1.0 down-weights untrusted memory so quorum/promotion-gated
-    # verified entries win ties (RFC-12 ASI06 poisoning defense). A hit
-    # pushed below knowledge_pattern_relevance_floor by the weight is
-    # dropped.
-    knowledge_target_derived_weight: float = 1.0
+    # off untrusted tool output, e.g. *.observation.*). Below 1.0
+    # down-weights untrusted memory so quorum/promotion-gated verified
+    # entries win ties (RFC-12 ASI06 poisoning defense); 1.0 leaves the
+    # score unchanged. A hit pushed below
+    # knowledge_pattern_relevance_floor by the weight is dropped.
+    knowledge_target_derived_weight: float = 0.5
 
     # knowledge_decay_half_life_hours applies exponential temporal decay
     # to every hit that carries a provenance timestamp: score is scaled
-    # by 0.5 ** (age_hours / half_life). 0 = disabled (no decay). A
-    # positive value favors fresh memory; a hit decayed below the
-    # relevance floor is dropped.
-    knowledge_decay_half_life_hours: float = 0.0
+    # by 0.5 ** (age_hours / half_life). A positive value favors fresh
+    # memory; a hit decayed below the relevance floor is dropped. A
+    # value <= 0 disables decay. Default 2160h (90 days) so a
+    # quarter-old pattern is halved.
+    knowledge_decay_half_life_hours: float = 2160.0
 
     # RFC-10 promotion quorum. The lifecycle controller counts DISTINCT
     # actor strings on ``approved`` transitions for a (key, version) pair
@@ -297,13 +303,12 @@ class PlatformConfigSchema(BaseModel):
     # blocks a candidate flip until at least this many drift + cost
     # samples have been recorded on the active canary assignment
     # (record_canary_signal bumps the counter on every call, whether
-    # the signal was within ceilings or fired a hold). Default 0
-    # disables the check so the pre-#34 behaviour is preserved for
-    # operators who have not tuned it; a positive value enforces "no
-    # promotion on empty history" so a candidate that never observed
-    # traffic cannot be promoted through an empty signal chain. The
-    # promote() eval + quorum gate still runs regardless.
-    agent_canary_min_sample: int = 0
+    # the signal was within ceilings or fired a hold). Default 5
+    # enforces "no promotion on empty history" so a candidate that
+    # never observed traffic cannot be promoted through an empty
+    # signal chain; a value <= 0 disables the check. The promote()
+    # eval + quorum gate still runs regardless.
+    agent_canary_min_sample: int = 5
 
     # SMTP delivery for scheduled reports (#45 -- ghost config keys).
     # report_tasks.py reads these through ConfigRegistry, but they were never

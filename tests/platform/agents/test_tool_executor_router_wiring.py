@@ -110,14 +110,19 @@ class TestHappyPath:
 
     @pytest.mark.asyncio
     async def test_disabled_router_scope_bypasses_router(self) -> None:
-        """A subclass that does not override _router_module_scope MUST
-        take the direct bridge.forward path (pre-wiring behaviour)."""
+        """A module-less base (``_bridge_module_id`` still ``None``)
+        MUST take the direct bridge.forward path -- the derive-from-
+        module-id default resolves to ``None`` and the scope guard in
+        :meth:`_dispatch_via_router` short-circuits to the pre-wiring
+        direct dispatch."""
 
         class _NoScope(ToolExecutorHelpersBase):
-            # Default _router_module_scope returns None.
+            # No _bridge_module_id override -- inherits base default of
+            # None so _router_module_scope() returns None.
             pass
 
         executor = _NoScope()
+        assert executor._router_module_scope() is None
         bridge = _FakeBridge(replies={"<unset>": {"status": "ready"}})
 
         raw = await executor._dispatch_via_router(
@@ -127,6 +132,48 @@ class TestHappyPath:
         assert raw == {"status": "ready"}
         # Router path never touched _resolved.
         assert bridge._resolved is None
+
+    @pytest.mark.asyncio
+    async def test_bridge_module_id_alone_drives_router_scope(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A subclass that sets ``_bridge_module_id`` but does NOT
+        override :meth:`_router_module_scope` MUST route through the
+        RFC-07 catalog router -- the derive-from-module-id default
+        activates for every real module executor without requiring an
+        explicit scope-hook override."""
+
+        class _DerivedScope(ToolExecutorHelpersBase):
+            _bridge_module_id = "derivedmod"
+
+        executor = _DerivedScope()
+        # The derived default returns the module id verbatim.
+        assert executor._router_module_scope() == "derivedmod"
+
+        bridge = _FakeBridge(
+            replies={"http://one": {"status": "ready", "via": "router"}},
+        )
+        candidates = [_candidate("http://one", "i-one")]
+
+        seen_scopes: list[str] = []
+
+        async def _resolve(
+            server_id: str, module_scope: str,  # noqa: ARG001
+        ) -> list[ResolvedInstance]:
+            seen_scopes.append(module_scope)
+            return candidates
+
+        monkeypatch.setattr(executor, "_resolve_router_candidates", _resolve)
+
+        raw = await executor._dispatch_via_router(
+            bridge, "audit_mcp", "read_function", {},
+        )
+
+        # Router-mediated path fired: candidate resolver saw the derived
+        # scope, bridge saw the router-chosen URL via _resolved.
+        assert seen_scopes == ["derivedmod"]
+        assert raw == {"status": "ready", "via": "router"}
+        assert [c[0] for c in bridge.calls] == ["http://one"]
 
     @pytest.mark.asyncio
     async def test_empty_candidates_falls_back_to_direct_forward(

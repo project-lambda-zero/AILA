@@ -660,18 +660,17 @@ class AgentLifecycleController:
         for the key so the router stops splitting cohorts.
         """
         min_sample = await self._resolve_canary_min_sample()
-        if min_sample > 0:
-            signal_count = await self._current_canary_signal_count(
-                key=key, version=version,
+        signal_count = await self._current_canary_signal_count(
+            key=key, version=version,
+        )
+        if signal_count < min_sample:
+            raise StageTransitionError(
+                f"cannot promote_from_canary key={key!r} "
+                f"version={version!r}: min-sample gate not met -- "
+                f"{signal_count} signal(s) recorded on the active "
+                f"canary, {min_sample} required ("
+                f"platform.agent_canary_min_sample)",
             )
-            if signal_count < min_sample:
-                raise StageTransitionError(
-                    f"cannot promote_from_canary key={key!r} "
-                    f"version={version!r}: min-sample gate not met -- "
-                    f"{signal_count} signal(s) recorded on the active "
-                    f"canary, {min_sample} required ("
-                    f"platform.agent_canary_min_sample)",
-                )
         record = await self.promote(
             key=key, version=version, actor=actor, reason=reason,
         )

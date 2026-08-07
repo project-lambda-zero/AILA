@@ -510,11 +510,17 @@ async def test_held_canary_stops_cohort_routing(
 
 @pytest.mark.asyncio
 async def test_promote_from_canary_still_enforces_eval_and_quorum_gate(
-    test_db,
+    test_db, monkeypatch,
 ) -> None:
     """promote_from_canary reuses the eval + quorum gate: an unapproved
-    canary can never reach production even after a shadow + canary run."""
+    canary can never reach production even after a shadow + canary run.
+
+    Isolates the eval + quorum gate from the RFC-10 min-sample gate by
+    pinning ``platform.agent_canary_min_sample`` to 0 -- the min-sample
+    branch has dedicated coverage in tests/api/test_admin_lifecycle_api.py
+    and this test asserts the surviving gates only."""
     del test_db
+    monkeypatch.setenv("AILA_PLATFORM_AGENT_CANARY_MIN_SAMPLE", "0")
     controller, store, runner = _controller()
     key = _key()
     version = await _prepare_evaluated(

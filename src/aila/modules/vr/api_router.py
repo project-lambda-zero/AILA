@@ -64,8 +64,6 @@ from .contracts import (
     DisclosureStatus,
     DisclosureSubmissionStatus,
     DisclosureTrackInfo,
-    EvidenceGraphEdge,
-    EvidenceGraphNode,
     EvidenceGraphSnapshot,
     FuzzProposalDecideAccept,
     FuzzProposalDecideReject,
@@ -6263,7 +6261,11 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[EvidenceGraphSnapshot]:
         del request
-        import math
+        from .db_models import (
+            VRInvestigationBranchRecord,
+            VRInvestigationOutcomeRecord,
+        )
+        from .services.evidence_graph import build_evidence_graph_snapshot
 
         inv = await _load_investigation(investigation_id, auth)
         if inv is None:
@@ -6271,10 +6273,6 @@ def create_vr_router() -> APIRouter:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Investigation {investigation_id} not found.",
             )
-        from .db_models import (
-            VRInvestigationBranchRecord,
-            VRInvestigationOutcomeRecord,
-        )
 
         async with UnitOfWork() as uow:
             branches = (await uow.session.exec(
@@ -6290,97 +6288,15 @@ def create_vr_router() -> APIRouter:
                 )
             )).all()
 
-        nodes: list[EvidenceGraphNode] = []
-        edges: list[EvidenceGraphEdge] = []
-
-        # Root investigation node at origin.
-        nodes.append(EvidenceGraphNode(
-            id=f"inv:{investigation_id}",
-            kind="investigation",
-            label=f"Investigation {investigation_id[:8]}",
-            state=inv.status,
-            x=0.0,
-            y=0.0,
-        ))
-
-        # Place branches on inner ring (concentric) / row 1 (grid) /
-        # primary spokes (radial).
-        radius_branch = 220.0
-        n_branches = max(len(branches), 1)
-        for i, b in enumerate(branches):
-            if layout == "grid":
-                x = (i % 4) * 200 - 300
-                y = 200.0
-            elif layout == "radial":
-                angle = (2 * math.pi * i / n_branches) - math.pi / 2
-                x = radius_branch * math.cos(angle)
-                y = radius_branch * math.sin(angle)
-            else:
-                angle = (2 * math.pi * i / n_branches) - math.pi / 2
-                x = radius_branch * math.cos(angle)
-                y = radius_branch * math.sin(angle)
-            nodes.append(EvidenceGraphNode(
-                id=f"branch:{b.id}",
-                kind="branch",
-                label=f"branch · {b.status}",
-                state=b.status,
-                x=x,
-                y=y,
-                attributes={
-                    "persona_voice": b.persona_voice or "",
-                    "strategy_family": b.strategy_family or "",
-                    "promoted": b.promoted,
-                },
-            ))
-            edges.append(EvidenceGraphEdge(
-                source=f"inv:{investigation_id}",
-                target=f"branch:{b.id}",
-                kind="spawned",
-            ))
-
-        # Outcomes on outer ring.
-        radius_outcome = 380.0
-        n_outcomes = max(len(outcomes), 1)
-        for i, o in enumerate(outcomes):
-            if layout == "grid":
-                x = (i % 4) * 200 - 300
-                y = 400.0
-            elif layout == "radial":
-                angle = (2 * math.pi * i / n_outcomes) - math.pi / 2
-                x = radius_outcome * math.cos(angle)
-                y = radius_outcome * math.sin(angle)
-            else:
-                angle = (2 * math.pi * i / n_outcomes) + math.pi / 6
-                x = radius_outcome * math.cos(angle)
-                y = radius_outcome * math.sin(angle)
-            nodes.append(EvidenceGraphNode(
-                id=f"outcome:{o.id}",
-                kind="outcome",
-                label=str(o.outcome_kind),
-                state=str(o.dispatch_status),
-                x=x,
-                y=y,
-                attributes={
-                    "confidence": o.confidence,
-                    "branch_id": o.branch_id,
-                },
-            ))
-            # Edge: branch → outcome (when known), else investigation → outcome.
-            source_id = (
-                f"branch:{o.branch_id}" if o.branch_id else f"inv:{investigation_id}"
-            )
-            edges.append(EvidenceGraphEdge(
-                source=source_id,
-                target=f"outcome:{o.id}",
-                kind="produced",
-            ))
-
-        return DataEnvelope(data=EvidenceGraphSnapshot(
+        snapshot = build_evidence_graph_snapshot(
             investigation_id=investigation_id,
+            inv_status=inv.status,
+            inv_linked_finding_ids_json=inv.linked_finding_ids_json,
+            branches=list(branches),
+            outcomes=list(outcomes),
             layout=layout,
-            nodes=nodes,
-            edges=edges,
-        ))
+        )
+        return DataEnvelope(data=snapshot)
 
 
 

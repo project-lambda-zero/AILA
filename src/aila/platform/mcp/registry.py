@@ -235,18 +235,23 @@ class McpRegistryServiceBase:
         return spec["default_url"].rstrip("/"), "default"
 
     async def _catalog_endpoint(self, server_id: str) -> str | None:
-        """Look up an enabled catalog row's endpoint for this scope.
+        """Look up an enabled + approved catalog row's endpoint for this scope.
 
-        Returns ``None`` on a miss (row absent, row disabled, or a DB
-        error) so ``_resolved_url`` falls through to the static default
-        without a hard failure. A DB error is logged at WARNING and
-        swallowed -- the resolver never breaks a live probe on a
-        catalog outage; the operator keeps the code-embedded default as
-        a safety net.
+        Returns ``None`` on a miss (row absent, row disabled, row not
+        yet approved, or a DB error) so ``_resolved_url`` falls through
+        to the static default without a hard failure. A DB error is
+        logged at WARNING and swallowed -- the resolver never breaks a
+        live probe on a catalog outage; the operator keeps the
+        code-embedded default as a safety net.
+
+        ``approved_only=True`` mirrors the RFC-11 zero-trust gate
+        already enforced on the live dispatch resolve path, so the
+        operator health-probe surface never surfaces (or dispatches
+        to) a pending / revoked instance.
         """
         try:
             row = await self._catalog.get_by_scope_and_name(
-                self._module_id, server_id,
+                self._module_id, server_id, approved_only=True,
             )
         except (RuntimeError, OSError) as exc:
             _log.warning(

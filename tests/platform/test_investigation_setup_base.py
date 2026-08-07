@@ -51,7 +51,6 @@ def _make_handler(spawn_calls: list[dict], *, cve: bool):
         unspecified_persona_value=PersonaVoice.UNSPECIFIED.value,
         spawn_fn=_spawn,
         pattern_store_factory=_Store,
-        auto_deliberation_enabled=lambda: True,
     )
     hooks = InvestigationStateHooks(resolve_cve_intel=_resolve_cve if cve else None)
     return state_investigation_setup(bindings, hooks)

@@ -19,18 +19,23 @@ import {
 } from "../queries";
 import { formatBranchDisplayName } from "../branchDisplay";
 
-/** EvidenceGraphPage -- 08_FRONTEND_UX.md §1.9.
+/** EvidenceGraphPage -- 08_FRONTEND_UX.md \u00a71.9.
  *
- *  Backend has no project-evidence-graph endpoint yet, so we synthesise
- *  a graph from existing investigation data:
+ *  Data model: the backend `/investigations/{id}/evidence-graph`
+ *  endpoint is authoritative -- it walks each branch's
+ *  `case_state_json` to surface the actual hypothesis vocabulary
+ *  (h1, h2, ...) plus branches, outcomes, and linked findings, all
+ *  with server-computed x/y positions. This page renders the
+ *  snapshot nodes+edges directly (issue #17 -- prior implementation
+ *  only rendered a persona map derived from branch/outcome rows and
+ *  never surfaced the hypothesis content that lives inside branch
+ *  state, so the graph carried no reasoning information).
  *
- *    Branches  → hypothesis nodes (state = branch.status)
- *    Outcomes  → evidence | advisory nodes (kind by outcome_kind)
- *    Branches' parent_branch_id → derived_from edges
- *    Outcomes' branch_id → supports/refutes edges
- *
- *  Once the backend ships a real graph (with proper crash + exploit
- *  + obligation nodes from §1.9), this page swaps the data source. */
+ *  A minimal client-side synthesis is retained as a fallback when the
+ *  server snapshot is unavailable (offline, error, or a still-empty
+ *  investigation): investigation root + one node per branch + one
+ *  node per outcome. It stays intentionally simple; the server is
+ *  where the real assembly logic lives. */
 export function EvidenceGraphPage() {
   const { investigationId = "" } = useParams<{ investigationId: string }>();
   const { data: inv, isLoading } = useInvestigation(investigationId);
@@ -47,28 +52,70 @@ export function EvidenceGraphPage() {
     [outcomesResult],
   );
   const { data: snapshotResult } = useEvidenceGraph(investigationId);
-  // Map server node id (`branch:xxx` / `outcome:xxx` / `inv:xxx`) onto
-  // the client node id space (`branch-xxx` / `outcome-xxx`). Keep
-  // both keys so either id format resolves.
-  const serverPositions = useMemo(() => {
-    const m = new Map<string, { x: number; y: number }>();
+
+  // Preferred data path: use the server snapshot's nodes and edges
+  // directly. Fall back to a local synthesis (branches + outcomes
+  // only, minus hypotheses) if the endpoint is unavailable so the
+  // page still shows something and the selection panel still works.
+  const { nodes, edges, serverPositions } = useMemo(() => {
     const snap = snapshotResult?.data;
-    if (!snap) return m;
-    for (const n of snap.nodes) {
-      m.set(n.id, { x: n.x, y: n.y });
-      // colon → dash translation for the client synthesis id space
-      m.set(n.id.replace(":", "-"), { x: n.x, y: n.y });
+    if (snap && snap.nodes.length > 0) {
+      const branchById = new Map(branches.map((b) => [b.id, b] as const));
+      const outcomeById = new Map(outcomes.map((o) => [o.id, o] as const));
+      const ns: GraphNodeInput[] = snap.nodes.map((n) => {
+        // Meta hydration: for branch/outcome nodes attach the full
+        // summary row so openUrlForNode + the selection panel still
+        // work. Hypotheses / findings / investigation carry their
+        // server attributes verbatim.
+        let meta: Record<string, unknown> | undefined;
+        if (n.kind === "branch") {
+          const bid = n.id.replace(/^branch:/, "");
+          const b = branchById.get(bid);
+          meta = { ...(n.attributes ?? {}), ...(b ? { branch: b } : {}) };
+        } else if (n.kind === "outcome") {
+          const oid = n.id.replace(/^outcome:/, "");
+          const o = outcomeById.get(oid);
+          if (o) {
+            meta = { ...(n.attributes ?? {}), outcome: o, humanLabel: outcomeKindLabel(o.outcome_kind) };
+          } else {
+            meta = { ...(n.attributes ?? {}) };
+          }
+        } else {
+          meta = { ...(n.attributes ?? {}) };
+        }
+        return {
+          id: n.id,
+          kind: n.kind as GraphNodeInput["kind"],
+          label:
+            n.kind === "branch"
+              ? branchById.get(n.id.replace(/^branch:/, ""))
+                ? `${formatBranchDisplayName(branchById.get(n.id.replace(/^branch:/, ""))!)}`
+                : n.label
+              : n.kind === "outcome"
+                ? outcomeById.get(n.id.replace(/^outcome:/, ""))
+                  ? outcomeKindLabel(outcomeById.get(n.id.replace(/^outcome:/, ""))!.outcome_kind)
+                  : n.label
+                : n.label,
+          state: n.state || undefined,
+          meta,
+        };
+      });
+      const es: GraphEdgeInput[] = snap.edges.map((e, i) => ({
+        id: `e${i}-${e.source}-${e.target}-${e.kind}`,
+        source: e.source,
+        target: e.target,
+        kind: e.kind as GraphEdgeInput["kind"],
+      }));
+      const positions = new Map<string, { x: number; y: number }>();
+      for (const n of snap.nodes) positions.set(n.id, { x: n.x, y: n.y });
+      return { nodes: ns, edges: es, serverPositions: positions };
     }
-    return m;
-  }, [snapshotResult]);
 
-
-  const { nodes, edges } = useMemo(() => {
+    // Fallback synthesis when snapshot is unavailable. Deliberately
+    // minimal -- just enough for the page to render something useful.
     const ns: GraphNodeInput[] = [];
     const es: GraphEdgeInput[] = [];
-
     for (const b of branches) {
-      // Map branch.status → hypothesis state per the spec vocabulary
       const stateMap: Record<string, string> = {
         active: "open",
         paused: "open",
@@ -92,7 +139,6 @@ export function EvidenceGraphPage() {
         });
       }
     }
-
     for (const o of outcomes) {
       const kind =
         o.outcome_kind === "patch_assessment_report" ||
@@ -113,12 +159,11 @@ export function EvidenceGraphPage() {
         id: `e-${o.id}-branch`,
         source: `outcome-${o.id}`,
         target: `branch-${o.branch_id}`,
-        kind: o.confidence === "exact" || o.confidence === "strong" ? "supports" : "supports",
+        kind: "supports",
       });
     }
-
-    return { nodes: ns, edges: es };
-  }, [branches, outcomes]);
+    return { nodes: ns, edges: es, serverPositions: new Map() };
+  }, [snapshotResult, branches, outcomes]);
 
   if (isLoading) return <LoadingSkeleton size="lg" width="full" />;
   if (!inv) {
@@ -214,21 +259,25 @@ export function EvidenceGraphPage() {
             Counts
           </h2>
           <dl className="text-xs grid grid-cols-2 gap-1 font-mono">
+            <dt className="text-text-muted">branches</dt>
+            <dd className="text-foreground text-right">
+              {nodes.filter((n) => n.kind === "branch").length}
+            </dd>
             <dt className="text-text-muted">hypotheses</dt>
             <dd className="text-foreground text-right">
               {nodes.filter((n) => n.kind === "hypothesis").length}
             </dd>
-            <dt className="text-text-muted">evidence</dt>
+            <dt className="text-text-muted">outcomes</dt>
             <dd className="text-foreground text-right">
-              {nodes.filter((n) => n.kind === "evidence").length}
+              {nodes.filter((n) => n.kind === "outcome").length}
+            </dd>
+            <dt className="text-text-muted">findings</dt>
+            <dd className="text-foreground text-right">
+              {nodes.filter((n) => n.kind === "finding").length}
             </dd>
             <dt className="text-text-muted">crashes</dt>
             <dd className="text-foreground text-right">
               {nodes.filter((n) => n.kind === "crash").length}
-            </dd>
-            <dt className="text-text-muted">exploits</dt>
-            <dd className="text-foreground text-right">
-              {nodes.filter((n) => n.kind === "exploit").length}
             </dd>
             <dt className="text-text-muted">advisories</dt>
             <dd className="text-foreground text-right">
@@ -245,21 +294,49 @@ export function EvidenceGraphPage() {
   );
 }
 
-/** Per-node-kind navigation target for Cmd-click (08_FRONTEND_UX.md §3.6).
- *  Synthesised graph: nodes carry meta with the source row (branch /
+/** Per-node-kind navigation target for Cmd-click (08_FRONTEND_UX.md \u00a73.6).
+ *  Server snapshot nodes carry meta with the source row (branch /
  *  outcome) so we navigate accordingly. */
 function openUrlForNode(node: GraphNodeInput): string | null {
   const meta = node.meta as Record<string, unknown> | undefined;
-  if (node.kind === "hypothesis") {
-    const branch = meta?.branch as { investigation_id?: string } | undefined;
+  if (node.kind === "branch") {
+    const branch = meta?.branch as { investigation_id?: string; id?: string } | undefined;
     if (branch?.investigation_id) {
       return `/vr/investigations/${branch.investigation_id}/tree`;
     }
   }
+  if (node.kind === "hypothesis") {
+    // Deep-link to the branch tree so operators can inspect the
+    // hypothesis in the case-state timeline. When the hypothesis is
+    // live/rejected/resolved on a specific branch, hop through it.
+    const branch = meta?.branch as { investigation_id?: string } | undefined;
+    if (branch?.investigation_id) {
+      return `/vr/investigations/${branch.investigation_id}/tree`;
+    }
+    const liveIn = meta?.live_in_branches as string[] | undefined;
+    if (liveIn && liveIn.length > 0) {
+      // Hypothesis node id format: `hypothesis:<hid>`; the branch
+      // graph is per-investigation and reachable from the surrounding
+      // route (`params.investigationId`), but we can't read params
+      // here; fall through to null and let the sidebar link stay hidden.
+      return null;
+    }
+  }
+  if (node.kind === "outcome") {
+    const o = meta?.outcome as { id?: string; outcome_kind?: string } | undefined;
+    if (o?.outcome_kind === "crash_triage_report") return `/vr/fuzz/campaigns`;
+    if (o?.outcome_kind === "direct_finding" || o?.outcome_kind === "patch_assessment_report") {
+      return `/vr/disclosures`;
+    }
+  }
+  if (node.kind === "finding") {
+    const fid = (meta?.finding_id as string | undefined) || node.id.replace(/^finding:/, "");
+    if (fid) return `/vr/findings/${encodeURIComponent(fid)}`;
+  }
   if (node.kind === "crash") {
     const o = meta?.outcome as { id?: string } | undefined;
     // Outcomes don't carry crash_id directly -- fall back to a generic
-    // fuzz crashes list; once a crash → outcome mapping ships, this
+    // fuzz crashes list; once a crash \u2192 outcome mapping ships, this
     // resolves to /vr/fuzz/crashes/:id.
     if (o?.id) return `/vr/fuzz/campaigns`;
   }
@@ -274,10 +351,10 @@ function openUrlForNode(node: GraphNodeInput): string | null {
 }
 
 /** Status card surfacing the backend evidence-graph endpoint
- *  (08_FRONTEND_UX.md §1.9). When the snapshot is present the
- *  EvidenceGraph below uses the server-computed x/y positions
- *  directly -- the client-side concentric/grid/radial layouts only
- *  apply when the snapshot is unavailable. */
+ *  (08_FRONTEND_UX.md \u00a71.9). The server is authoritative for BOTH
+ *  content (branches, hypotheses, outcomes, findings, edges) and
+ *  layout coordinates. The local synthesis fallback (branches +
+ *  outcomes only) kicks in when the endpoint is unavailable. */
 function ServerSnapshotStatus({
   investigationId,
 }: {
@@ -290,22 +367,22 @@ function ServerSnapshotStatus({
       <div>
         <AilaBadge severity={error ? "high" : ready ? "low" : "info"} size="sm">
           {error
-            ? "server snapshot unavailable -- using client layout"
+            ? "server snapshot unavailable -- using local fallback"
             : isLoading
-              ? "loading server snapshot…"
-              : "server layout in use"}
+              ? "loading server snapshot\u2026"
+              : "server snapshot in use"}
         </AilaBadge>
         {data && (
           <span className="text-3xs text-text-muted ml-2 font-mono">
-            layout={data.data.layout} · {data.data.nodes.length} nodes ·{" "}
+            layout={data.data.layout} \u00b7 {data.data.nodes.length} nodes \u00b7{" "}
             {data.data.edges.length} edges
           </span>
         )}
       </div>
       <p className="text-3xs text-text-muted">
-        Coordinates come from the backend so they stay stable across
-        operators + sessions. The picker below only matters when the
-        backend snapshot isn't available.
+        Content and coordinates both come from the backend so the
+        graph reads the same across operators + sessions. The local
+        fallback shows branches and outcomes only.
       </p>
     </div></AilaCard>
   );

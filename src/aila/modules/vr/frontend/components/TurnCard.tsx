@@ -152,9 +152,30 @@ function payloadStyle(
     case "outcome_pending":
       return { Icon: Flag, label: "Draft Finding", iconClass: "text-orange-400" };
     case "decompiled_function": {
-      const addr = (payload?.address as string) ?? "";
-      const isSource = /\.(go|py|c|cpp|h|rs|js|ts|java|rb|php)\b/i.test(addr);
-      return { Icon: FileCode, label: isSource ? "Source" : "Decompiled", iconClass: "text-violet-400" };
+      // Every DECOMPILED_FUNCTION payload carries `source_provenance.mcp_tool`
+      // stamped by the adapter (see aila.platform.mcp.adapters._shared.
+      // provenance_stamp). The tool name is the authoritative action verb:
+      //   ida_headless.decompile           -> real decompilation  -> "Decompiled"
+      //   audit_mcp.read_function / read_lines -> source read     -> "Read"
+      // The old file-extension heuristic wrongly rendered a source read as
+      // "Decompiled" whenever the path extension was outside a short allow-
+      // list (.kt / .swift / .xml / .smali / ... all fell through). Kept as
+      // a last-resort fallback for legacy rows written before the provenance
+      // stamp existed.
+      const provenance = payload?.source_provenance as
+        { mcp_tool?: string } | undefined;
+      const tool = provenance?.mcp_tool ?? "";
+      let label: string;
+      if (tool === "read_function" || tool === "read_lines") {
+        label = "Read";
+      } else if (tool === "decompile") {
+        label = "Decompiled";
+      } else {
+        const addr = (payload?.address as string) ?? "";
+        const isSource = /\.(go|py|c|cpp|h|rs|js|ts|java|rb|php)\b/i.test(addr);
+        label = isSource ? "Read" : "Decompiled";
+      }
+      return { Icon: FileCode, label, iconClass: "text-violet-400" };
     }
     case "code_pointer":
       return { Icon: FileCode, label: "Code", iconClass: "text-violet-400" };

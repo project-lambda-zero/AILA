@@ -426,7 +426,10 @@ async def get_roi(
     Human hours: SUM(human_cost_hours) WHERE human_cost_hours IS NOT NULL AND task_type != 'cost_estimation'.
 
     Human cost is read directly from LLMCostRecord.human_cost_usd/human_cost_hours
-    -- stored there by estimate_human_cost() via UPDATE (no sentinel records).
+    -- stored there by estimate_human_cost() on a SINGLE per-run row so the SUM
+    equals the estimated aggregate even when late-arriving records for the run
+    stay NULL (issue #38 -- previously an even split across records existing at
+    estimation time silently dropped human cost for any row that landed after).
 
     ROI = ((human_cost - llm_cost) / human_cost) * 100 if human_cost > 0 else 0.
     Explicit team_id filter enforces tenant isolation at the application layer.

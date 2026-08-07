@@ -26,6 +26,7 @@ __all__ = [
     "platform_health_check",
     "register_maintenance_actions",
     "run_calibration_sweep",
+    "run_calibrator_trainer_sweep",
     "tool_storage_prune",
 ]
 
@@ -39,7 +40,10 @@ from redis.exceptions import RedisError
 from sqlalchemy import text
 
 from aila.platform.automation.registry import AutomationRegistry
-from aila.platform.eval.calibration_sweep import run_calibration_sweep
+from aila.platform.eval.calibration_sweep import (
+    run_calibration_sweep,
+    run_calibrator_trainer_sweep,
+)
 from aila.platform.services.redis_pool import get_redis, pool_available
 from aila.platform.tools.pruner import ToolStoragePruneReport, prune_tool_storage
 from aila.storage.database import async_session_scope
@@ -296,6 +300,19 @@ def register_maintenance_actions(registry: AutomationRegistry) -> None:
             "the live confidence threshold is never mutated by this action; "
             "promoting a proposal into the runtime config is a separate, "
             "gated admin step per the propose-and-gate contract."
+        ),
+        module_id="platform",
+    )
+    # RFC-08 Tier D fit path: complements the proposer sweep by fitting
+    # per-task_type CalibratorVersionRecord candidates from the same
+    # accept/reject review history the proposer aggregates. Candidate
+    # only -- promotion to active is a separate quorum-gated admin step.
+    registry.register_action(
+        action_id="platform.calibrator_trainer_sweep",
+        handler_fn=run_calibrator_trainer_sweep,
+        description=(
+            "Fit per-task_type confidence calibrator candidates from "
+            "accept/reject review history"
         ),
         module_id="platform",
     )

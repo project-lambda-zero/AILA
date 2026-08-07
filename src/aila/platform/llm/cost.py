@@ -35,6 +35,13 @@ _KEY_PROMPT = "_cost_prompt_tokens"
 _KEY_COMPLETION = "_cost_completion_tokens"
 _NO_RUN = "_no_run"
 
+# Per-process dedup for the missing-pricing WARNING log. Silences per-call
+# spam once the operator has seen the signal for a given model in this
+# worker; the durable NotificationRecord in ``emit_missing_pricing_notification``
+# is the persistent audit trail across process restarts. Set is bounded by
+# the number of distinct model ids configured on the deployment (small).
+_WARNED_MISSING_PRICING: set[str] = set()
+
 # Model-id slug charset: env-var round-trip via ConfigRegistry.get uppercases
 # key parts into AILA_{NAMESPACE}_{KEY}; slashes/colons in provider-qualified
 # ids ('anthropic/claude-sonnet-4-6', 'openai:gpt-4o') produce env names that
@@ -370,7 +377,10 @@ async def emit_missing_pricing_notification(model_id: str) -> None:
 
     Deduplication: uses source_entity_id = "pricing_missing:{model_id}" so
     only one notification is created per model regardless of how many calls
-    are made (D-04a).
+    are made (D-04a). A per-process ``_log.warning`` also fires once per
+    model so the missing-pricing signal shows up in the worker log without
+    requiring the operator to open the notifications UI (issue #38 -- a
+    model with no configured price previously recorded $0.00 silently).
 
     user_id="__system__" because NotificationRecord.user_id is required and
     non-nullable; no __team__ pattern exists in the codebase (per plan research).
@@ -380,13 +390,22 @@ async def emit_missing_pricing_notification(model_id: str) -> None:
     Args:
         model_id: The model identifier that is missing pricing config.
     """
+    slug = _normalize_model_id(model_id)
+    if slug not in _WARNED_MISSING_PRICING:
+        _WARNED_MISSING_PRICING.add(slug)
+        _log.warning(
+            "llm_pricing_missing model_id=%s slug=%s -- "
+            "set 'llm_cost_per_1k_prompt_%s' and "
+            "'llm_cost_per_1k_completion_%s' in platform config; "
+            "cost recording defaults to $0.00 until pricing is configured",
+            model_id, slug, slug, slug,
+        )
     try:
         from sqlmodel import select
 
         from aila.storage.database import async_session_scope
         from aila.storage.db_models import NotificationRecord
 
-        slug = _normalize_model_id(model_id)
         source_entity_id = f"pricing_missing:{slug}"
 
         async with async_session_scope() as session:
