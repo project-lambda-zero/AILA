@@ -442,6 +442,7 @@ def make_discovery_condition(
     confirmed_only: bool = False,
     input_key: str = "investigation_id",
     payload_match: dict[str, Any] | None = None,
+    payload_exclude: dict[str, Any] | None = None,
 ) -> Callable[[dict[str, Any]], Awaitable[tuple[bool, str]]]:
     """Build a dispatch-hub condition that fires when the ledger holds a
     matching entry (RFC-13 #68).
@@ -460,6 +461,12 @@ def make_discovery_condition(
     uses this to route confirmed ``{finding: packed}`` discoveries to the
     unpack phase and confirmed ``{finding: config_present}`` discoveries to
     the config-extraction phase off the same shared ledger.
+
+    ``payload_exclude`` drops entries whose payload carries every listed key
+    with the exact listed value -- the complement of ``payload_match``. The
+    VR hub uses it to keep ``poc_development`` from firing on confirmed recon
+    hypotheses (``{source: recon_hypothesis}``) that are not exploitable
+    findings.
     """
 
     async def _condition(state_input: dict[str, Any]) -> tuple[bool, str]:
@@ -480,6 +487,14 @@ def make_discovery_condition(
                 if all(
                     (e.get("payload") or {}).get(k) == v
                     for k, v in payload_match.items()
+                )
+            ]
+        if payload_exclude:
+            entries = [
+                e for e in entries
+                if not all(
+                    (e.get("payload") or {}).get(k) == v
+                    for k, v in payload_exclude.items()
                 )
             ]
         if entries:
