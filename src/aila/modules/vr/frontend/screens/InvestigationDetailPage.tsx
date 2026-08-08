@@ -846,7 +846,9 @@ export function InvestigationDetailPage() {
                 title="Start this investigation (enqueue run_vr_investigate task)"
               />
             )}
-            {(inv.status === "completed" || inv.status === "failed") && (
+            {(inv.status === "completed" ||
+              inv.status === "failed" ||
+              inv.status === "stalled") && (
               <ReenqueuePicker
                 currentKind={inv.kind}
                 mutation={reenqueueMut}
