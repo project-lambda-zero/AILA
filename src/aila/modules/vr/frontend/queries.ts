@@ -307,6 +307,26 @@ export function useEvidenceGraph(
   });
 }
 
+/** Fetch the full, untruncated value of one case-state observable (an MCP
+ *  tool reading) by key. Backs the evidence-graph fetch-on-click: the
+ *  graph snapshot carries only the observable key on each evidence node,
+ *  never a preview, so the full output is loaded lazily on selection. */
+export function useObservable(
+  investigationId: string,
+  observableKey: string | null,
+) {
+  return useQuery({
+    queryKey: ["vr", "observable", investigationId, observableKey],
+    queryFn: async () =>
+      await authorizedRequestJson<
+        Envelope<{ key: string; branch_id: string | null; value: unknown }>
+      >(
+        `/vr/investigations/${encodeURIComponent(investigationId)}/observable?key=${encodeURIComponent(observableKey ?? "")}`,
+      ),
+    enabled: !!investigationId && !!observableKey,
+  });
+}
+
 export function useInvestigation(investigationId: string) {
   return useQuery({
     queryKey: ["vr", "investigation", investigationId],
