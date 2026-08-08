@@ -7,6 +7,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.14] - 2026-08-09 -- Claim verifier runs its probes; a no-finding no longer reads as a finding
+
+### Fixed
+
+- The claim verifier refused every source probe when the extractor named a
+  tool without the ``audit_mcp.`` namespace prefix (``search_source`` vs
+  ``audit_mcp.search_source``). A bare name collapsed to the empty string at
+  the allowlist gate and was rejected as "not on verifier allowlist", so the
+  verifier gathered no evidence and every verdict returned ``inconclusive``
+  at low confidence -- the confirm/refute gate was effectively a no-op.
+  Probe tool names are now normalized to the bare allowlist key through a
+  single shared helper, so both bare and server-qualified names resolve.
+- A strong-confidence negative conclusion ("...found no memory-safety
+  vulnerabilities", "No evidence of out-of-bounds writes...") was stamped as
+  a strong ``direct_finding`` instead of an ``audit_memo``. The
+  negative-conclusion detector matched only the ordering where the security
+  noun sits between "no" and the verb; the verb-first ordering ("found no
+  X") and the "no evidence of ..." lead slipped through, so an audited-clean
+  result surfaced as a confirmed bug. The detector now matches all three
+  orderings.
+- The canonical outcome row's ``evidence_refs_json`` column was seeded to
+  ``"[]"`` on creation and never updated on merge, so every outcome surfaced
+  zero structured evidence even when the submission cited source. The column
+  is now populated from the union of each panel contribution's evidence and
+  the provenance citations (primary_artifact + corroboration), deduped.
+
 ## [0.3.13] - 2026-08-08 -- Remove superseded malware investigation workflow versions
 
 ### Removed
