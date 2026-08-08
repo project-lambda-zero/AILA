@@ -7,6 +7,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-08-08 -- Reasoning-loop dispatch recovery + output-cap default
+
+### Fixed
+
+- The reasoning loop still burned turns when the model placed a `tool_run`
+  dispatch in a sibling field instead of the canonical `command` string.
+  The model (Claude in particular) emits the dispatch as a nested
+  `tool_run` object or as top-level `tool`+`args` next to `action`, leaving
+  `command` empty or as junk such as a lone `{`. `ReasoningTurnDecision`
+  dropped those extra fields (default `extra="ignore"`) and its validator
+  rejected the empty/junk command, failing the whole turn even though the
+  outer decision JSON was complete. The model now sets `extra="allow"` so
+  the misplaced fields survive, and `_validate_tool_run_command` recovers a
+  canonical `{"tool","args"}` command from a nested `tool_run` object or
+  top-level `tool`+`args` before failing. A turn fails only when no
+  dispatch is recoverable anywhere. The misleading "max_tokens truncation"
+  hint was removed from that validation error: this after-validator runs
+  only when the outer JSON already parsed, so truncation is never its
+  cause.
+
+### Changed
+
+- `PlatformConfigSchema.llm_default_max_tokens` schema default raised from
+  4096 to 32768 so a fresh install matches the reasonable output ceiling
+  existing deployments already carry. A reasoning decision under
+  extended-thinking needs the larger ceiling; 4096 risked truncating large
+  decisions. Per-task overrides via `llm_max_tokens_{task}` are unchanged.
+
 ## [0.3.4] - 2026-08-08 -- Reasoning-loop tool_run command coercion
 
 ### Fixed

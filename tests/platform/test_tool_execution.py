@@ -120,6 +120,47 @@ def test_validator_valid_json_command_passthrough_unchanged() -> None:
     assert d.command == good  # byte-identical: valid JSON is never rewritten
 
 
+def test_validator_recovers_top_level_tool_args() -> None:
+    # Model put the dispatch at top level next to `action`, command absent.
+    d = ReasoningTurnDecision.model_validate({
+        "reasoning": "r", "action": "tool_run",
+        "tool": "audit_mcp.read_function",
+        "args": {"file_path": "libavformat/mov.c", "name": "mov_read_senc"},
+    })
+    assert json.loads(d.command) == {
+        "tool": "audit_mcp.read_function",
+        "args": {"file_path": "libavformat/mov.c", "name": "mov_read_senc"},
+    }
+
+
+def test_validator_recovers_nested_tool_run() -> None:
+    d = ReasoningTurnDecision.model_validate({
+        "reasoning": "r", "action": "tool_run",
+        "tool_run": {"tool": "audit_mcp.callers_of", "args": {"name": "pmt_cb"}},
+    })
+    assert json.loads(d.command) == {"tool": "audit_mcp.callers_of", "args": {"name": "pmt_cb"}}
+
+
+def test_validator_recovers_junk_command_from_extra() -> None:
+    # A lone '{' in command is junk; the real dispatch is at top level.
+    d = ReasoningTurnDecision.model_validate({
+        "reasoning": "r", "action": "tool_run", "command": "{",
+        "tool": "audit_mcp.read_lines", "args": {"file_path": "x.c", "start": 1, "end": 9},
+    })
+    assert json.loads(d.command)["tool"] == "audit_mcp.read_lines"
+
+
+def test_validator_raises_when_no_dispatch_anywhere() -> None:
+    # command absent AND no tool/args/tool_run to recover from.
+    with pytest.raises(ValidationError):
+        ReasoningTurnDecision.model_validate({"reasoning": "r", "action": "tool_run"})
+    # junk command with nothing recoverable.
+    with pytest.raises(ValidationError):
+        ReasoningTurnDecision.model_validate(
+            {"reasoning": "r", "action": "tool_run", "command": "{"},
+        )
+
+
 def test_validator_genuine_truncation_still_rejected() -> None:
     # A truncated emission is NOT a recognizable function call, so the
     # truncation diagnostics must still fire.

@@ -186,7 +186,12 @@ class PlatformConfigSchema(BaseModel):
     # fallbacks in llm/config.py, so resolution behavior is unchanged.
     llm_default_model: str = "antigravity/claude-opus-4-6-thinking"
     llm_base_url: str = "https://openrouter.ai/api/v1"
-    llm_default_max_tokens: int = 4096
+    # 32768: a reasoning decision (reasoning + hypotheses + command +
+    # observables) under extended-thinking needs a generous output ceiling;
+    # 4096 risked truncating large decisions. Existing deployments already
+    # carry 32768 as the seeded value -- this aligns the schema default so a
+    # fresh install matches. Per-task overrides via llm_max_tokens_{task}.
+    llm_default_max_tokens: int = 32768
     llm_default_temperature: float = 0.0
     llm_tool_timeout_s: float = 300.0
     llm_kill_switch: bool = False
