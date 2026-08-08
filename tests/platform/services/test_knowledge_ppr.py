@@ -271,6 +271,54 @@ async def test_routed_graph_ppr_ranks_seed_above_isolated(ppr_service) -> None:
     assert by_id[ids[2]] < by_id[ids[1]]
 
 
+async def test_routed_graph_survives_nonzero_relevance_floor(ppr_service) -> None:
+    """A nonzero ``min_score`` gates only the seed cosine stage, never the
+    PPR-mass hits.
+
+    Regression for the floor being re-applied to PPR mass inside
+    ``retrieve_routed``: the post-gate ``_apply_trust_decay`` was called
+    with ``floor=min_score``, but a graph hit's score is stationary PPR
+    mass (~1/N across the reachable subgraph, so ~0.1 for a small graph),
+    not the cosine-scale hybrid figure the floor is calibrated on. Under
+    the 0.3 production pattern floor that dropped EVERY graph hit, leaving
+    the caller with the structured fallback only and the RFC-14 graph
+    route dormant. The seed stage still honours the floor at cosine scale
+    (``self.retrieve(min_score=...)``); the PPR hits must not be re-cut.
+
+    Forces the ``_apply_trust_decay`` loop to actually run (half-life > 0,
+    so it is not the identity early-return) and passes a floor far above
+    the PPR mass. Fresh entries have age ~0 so temporal decay is identity
+    and the only variable under test is the floor.
+    """
+    service, _ = ppr_service
+    ids = await _seed_graph_corpus()
+
+    async def _fake_resolve(self):  # noqa: ANN001 -- bound method stub
+        del self
+        return (0.5, 2160.0)
+
+    with patch.object(
+        KnowledgeService, "_resolve_trust_decay_config", _fake_resolve,
+    ):
+        routed = await service.retrieve_routed(
+            query="alpha marker seed",
+            namespaces=["agent:PPRChain"],
+            route=Route.GRAPH,
+            limit=10,
+            min_score=0.5,  # >> PPR mass; must NOT drop graph hits
+        )
+
+    results = routed["results"]
+    assert results, "a nonzero floor wiped the PPR-mass graph hits (RFC-14 regression)"
+    hit_ids = {int(r["id"]) for r in results}
+    assert ids[0] in hit_ids, "the seed must survive the seed-stage cosine floor"
+    # At least one surviving hit carries a score below the cosine floor,
+    # which is only possible because the floor was NOT applied to the
+    # PPR-mass hits (a re-applied 0.5 floor would have dropped it).
+    assert any(float(r["score"]) < 0.5 for r in results)
+    assert all(r["ppr"] is not None for r in results)
+
+
 # ---------------------------------------------------------------------------
 # No double trust-weight on the graph route
 # ---------------------------------------------------------------------------

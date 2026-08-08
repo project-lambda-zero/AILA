@@ -7,6 +7,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-08-07 -- Graph retrieval floor fix (RFC-14)
+
+### Fixed
+
+- The Personalized PageRank graph route in
+  `KnowledgeService.retrieve_routed` returned zero hits whenever a nonzero
+  relevance floor was supplied. The post-gate re-rank applied the caller's
+  `min_score` (a cosine-scale figure) to each hit's stationary PPR mass.
+  PPR mass sums to about 1.0 across the reachable subgraph, so a per-hit
+  value (about 0.1 for a small graph) always fell below the 0.3 pattern
+  relevance floor and every graph hit was dropped.
+  `PatternStoreBase.applicable` (inherited by every module pattern store)
+  then fell back to the structured stage-1 pool alone, so a linked
+  workspace never surfaced its graph-connected patterns and reported the
+  survivors as `matched_by="structured"` with a zero score. The floor now
+  gates only the hybrid seed stage (its calibrated layer); the PPR-ranked
+  hits are no longer re-cut by it. Curated writeups sharing a CVE / CWE
+  now surface as `matched_by="both"` carrying their PPR mass, delivering
+  the [0.3.2] RFC-14 graph-retrieval contract that the seed-floor gate had
+  suppressed. Pure retrieval-path logic change, no migration.
+
 ## [0.3.2] - 2026-08-07 -- Platform graph retrieval via Personalized PageRank (RFC-14)
 
 ### Added
