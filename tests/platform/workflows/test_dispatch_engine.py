@@ -384,18 +384,23 @@ async def test_stall_timed_out_without_escalation_models_still_flips_status(
     assert calls == []  # escalation post skipped, terminal flip preserved
 
 
-def test_hub_stalled_timeout_is_terminal_and_maps_to_stalled() -> None:
-    """Contract assertions the emit-state relies on: ``hub_stalled_timeout``
-    is in the non-continue set (so auto_continue never re-enqueues on it)
-    and ``resolve_final_status`` maps it to ``InvestigationStatus.STALLED``.
-    The plain ``hub_stalled`` reason must still fall through to COMPLETED
-    so within-window stalls preserve their historical behavior."""
+def test_hub_stall_is_never_completed_maps_to_stalled() -> None:
+    """Operator invariant: a dispatch-hub stall is NEVER interpreted as
+    completed. Both the escalated ``hub_stalled_timeout`` and the
+    within-window ``hub_stalled`` map to ``InvestigationStatus.STALLED``
+    (resumable), never COMPLETED -- a stall often cuts branches mid-audit
+    with live hypotheses, so sealing it as completed hides open leads.
+    Both are in the non-continue set so auto_continue never re-enqueues."""
     assert "hub_stalled_timeout" in _NON_CONTINUE_EXIT_REASONS
-    assert "hub_stalled" in _NON_CONTINUE_EXIT_REASONS  # unchanged
+    assert "hub_stalled" in _NON_CONTINUE_EXIT_REASONS
     assert resolve_final_status("hub_stalled_timeout") == (
         InvestigationStatus.STALLED.value
     )
     assert resolve_final_status("hub_stalled") == (
+        InvestigationStatus.STALLED.value
+    )
+    # A genuine clean hub completion still completes.
+    assert resolve_final_status("terminal_submit") == (
         InvestigationStatus.COMPLETED.value
     )
     assert InvestigationStatus.STALLED.value == "stalled"
@@ -465,12 +470,11 @@ async def test_superseded_aged_replan_does_not_time_out(
 
     assert out.get("exit_reason") == "hub_stalled"
     assert out.get("exit_reason") != "hub_stalled_timeout"
-    # hub_stalled (within-window) resolves to COMPLETED, NOT the terminal
-    # STALLED that hub_stalled_timeout would have produced.
+    # The point of the supersede fix is avoiding the TIMEOUT + escalation,
+    # not the status: both hub_stalled and hub_stalled_timeout now resolve
+    # to STALLED (a stall is never completed). What the superseded replan
+    # buys is the within-window path -- no operator escalation posted.
     assert resolve_final_status(out.get("exit_reason", "")) == (
-        InvestigationStatus.COMPLETED.value
-    )
-    assert resolve_final_status(out.get("exit_reason", "")) != (
         InvestigationStatus.STALLED.value
     )
     assert calls == []  # not timed out -> no escalation posted

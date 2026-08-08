@@ -104,17 +104,18 @@ def resolve_final_status(exit_reason: str) -> str | None:
         return InvestigationStatus.COMPLETED.value
     if exit_reason == "max_turns":
         return InvestigationStatus.COMPLETED.value
-    if exit_reason == "hub_stalled_timeout":
-        # RFC-13 #68: distinct terminal status for a dispatch hub
-        # whose replan request went unratified past the configured
-        # window (``platform.dispatch_replan_timeout_s``). Falling
-        # through to the default COMPLETED here would silently
-        # succeed the exact failure mode the escalation exists to
-        # surface -- the whole point of ``hub_stalled_timeout`` is
-        # that the operator needs to see it, so map it to STALLED.
-        # The plain ``hub_stalled`` reason (within-window) still
-        # falls through to COMPLETED below, matching the historical
-        # behavior a stalled panel gets one bounded retry window.
+    if exit_reason in ("hub_stalled", "hub_stalled_timeout"):
+        # A dispatch-hub stall is NEVER a completion. Operator invariant:
+        # a stalled investigation is never interpreted as completed -- it
+        # stays STALLED and its only forward move is resume (re-enqueue).
+        # ``hub_stalled_timeout`` is the escalated form (replan unratified
+        # past ``platform.dispatch_replan_timeout_s``); ``hub_stalled`` is
+        # the within-window form. Both mean the hub could not activate a
+        # phase -- often with live, unresolved hypotheses and branches cut
+        # mid-audit. Mapping either to COMPLETED (the old default
+        # fallthrough for ``hub_stalled``) sealed those cut-off runs as if
+        # the audit had finished, hiding open leads behind a blank
+        # "completed, no outcome" row. STALLED keeps them resumable.
         return InvestigationStatus.STALLED.value
     if exit_reason.startswith(("status_flipped:", "inv_status_flipped:", "branch_status_flipped:")):
         # Loop saw the investigation OR branch flipped underneath it
