@@ -4,7 +4,7 @@ Real :func:`@platform_task`-decorated seeds a copier extends into the
 module's live workflow. Two tasks land here:
 
 * :func:`run_template_investigate` -- the ``VR_INVESTIGATE_HUB`` /
-  ``VR_INVESTIGATE_V1`` shape: seed body is a single ``...`` because
+  ``VR_INVESTIGATE_HUB`` shape: seed body is a single ``...`` because
   ``@platform_task(definition=...)`` runs the workflow engine against
   the bound :class:`WorkflowDefinition` instead of executing the body.
 * :func:`run_template_outcome_dispatch` -- the sibling job the

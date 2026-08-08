@@ -29,20 +29,25 @@ from aila.modules.vr.db_models import (
     VRTargetRecord,
 )
 from aila.modules.vr.workflow.definitions import _build_services
-from aila.modules.vr.workflow.definitions_v2 import (
-    _BINARY_AUDIT_DIRECTIVE,
-    _MOBILE_AUDIT_DIRECTIVE,
-    _RECON_MAX_TURNS,
-    _SOURCE_AUDIT_DIRECTIVE,
-    _VARIANT_HUNT_DIRECTIVE,
-    _loop_builder,
-    _setup_builder,
-)
 from aila.modules.vr.workflow.states.investigation_emit import (
     state_investigation_emit,
 )
+from aila.modules.vr.workflow.states.investigation_loop import _LOOP_BINDINGS
+from aila.modules.vr.workflow.states.investigation_setup import (
+    _SETUP_BINDINGS,
+    _SETUP_HOOKS,
+)
 from aila.platform.services.ledger import make_discovery_condition
 from aila.platform.uow import UnitOfWork
+from aila.platform.workflows.investigation_loop_base import (
+    state_investigation_loop as _build_loop_state,
+)
+from aila.platform.workflows.investigation_setup_base import (
+    InvestigationStateHooks,
+)
+from aila.platform.workflows.investigation_setup_base import (
+    state_investigation_setup as _build_setup_state,
+)
 from aila.platform.workflows.phase_graph import (
     DispatchEscalationModels,
     PhaseSpec,
@@ -113,6 +118,34 @@ _FUZZ_TARGETING_DIRECTIVE = (
     "the ranked fuzz targets with the rationale for each."
 )
 
+# Recon only scopes the target, so it is capped tighter than the deep
+# phases (which fall back to the module turn-cap reader).
+_RECON_MAX_TURNS = 20
+
+_SOURCE_AUDIT_DIRECTIVE = (
+    "SOURCE AUDIT PHASE. Objective: systematically audit the source for "
+    "exploitable vulnerability classes -- trace untrusted input to "
+    "dangerous sinks, read the candidate function bodies, and confirm each "
+    "finding with evidence. Submit confirmed findings."
+)
+_VARIANT_HUNT_DIRECTIVE = (
+    "VARIANT HUNT PHASE. Objective: find variants of the seed bug pattern "
+    "across the codebase and its binaries -- match the vulnerable shape, "
+    "not just the exact strings. Confirm each variant with evidence before "
+    "submitting it."
+)
+_BINARY_AUDIT_DIRECTIVE = (
+    "BINARY AUDIT PHASE. Objective: analyze the binary for the vulnerable "
+    "condition -- follow the decompilation, check the guards, and confirm "
+    "reachability. Submit confirmed findings with the responsible "
+    "addresses."
+)
+_MOBILE_AUDIT_DIRECTIVE = (
+    "MOBILE AUDIT PHASE. Objective: audit the mobile application against "
+    "the MASVS controls -- storage, crypto, network, platform interaction "
+    "-- and confirm each gap with evidence. Submit the MASVS findings."
+)
+
 # Audit-phase activation keys off the target's kind (RFC-13 #68 hub
 # routing). Gating on shared-ledger discoveries alone stalled the hub
 # when recon posted no discoveries, and let a source-repo investigation
@@ -173,6 +206,34 @@ def _make_target_kind_condition(
         return False, f"target kind {tk!r} not in {sorted(kinds)}"
 
     return _cond
+
+
+def _setup_builder(next_state: str) -> HandlerFn:
+    """Bind the VR setup handler with the graph start transition."""
+    return _build_setup_state(_SETUP_BINDINGS, _SETUP_HOOKS, next_state=next_state)
+
+
+def _loop_builder(phase: PhaseSpec, next_state: str) -> HandlerFn:
+    """Bind the VR loop handler with the phase mission, cap, and tool regime."""
+    # RFC-12: the read-only knowledge bridge is a universal server, reachable
+    # in every phase (workspace-scoped server-side, no write path). Union it
+    # into the phase tool gate so agentic knowledge.retrieve is not hard-
+    # rejected by a phase whose allowed_servers lists only code-analysis
+    # backends. A None gate (no phase restriction) already permits it.
+    phase_servers = (
+        (*phase.allowed_servers, "knowledge")
+        if phase.allowed_servers
+        else phase.allowed_servers
+    )
+    return _build_loop_state(
+        _LOOP_BINDINGS,
+        InvestigationStateHooks(),
+        next_state=next_state,
+        phase_directive=phase.directive,
+        phase_max_turns=phase.max_turns,
+        phase_allowed_servers=phase_servers,
+        phase_strategy_family=phase.strategy_family,
+    )
 
 
 VR_HUB_PHASES: tuple[PhaseSpec, ...] = (

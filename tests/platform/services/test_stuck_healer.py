@@ -167,7 +167,7 @@ async def _seed_cursor(
             WorkflowStateCursor(
                 run_id=run_id,
                 current_state=current_state,
-                definition_id="VR_INVESTIGATE_V1",
+                definition_id="test.definition.v1",
                 state_input={},
                 version=0,
                 investigation_id=investigation_id,
