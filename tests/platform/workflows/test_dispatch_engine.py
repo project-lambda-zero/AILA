@@ -21,6 +21,7 @@ from aila.platform.workflows.phase_graph import (
     DISPATCH_STATE,
     DispatchEscalationModels,
     PhaseSpec,
+    _is_live_replan_request,
     build_dispatch_workflow,
 )
 from aila.platform.workflows.types import RESERVED_SUCCEEDED
@@ -254,14 +255,17 @@ async def test_full_loop_unratified_request_does_not_activate_confirmed_phase(
 # -- RFC-13 #68 stall-to-escalation ------------------------------------------
 
 
-async def _seed_old_replan(investigation_id: str, age_seconds: float) -> None:
+async def _seed_old_replan(
+    investigation_id: str, age_seconds: float, *, status: str | None = None,
+) -> None:
     """Pre-write an OLD unratified replan row so the hub's stall handler
     finds an aged idempotency-keyed duplicate on its own append attempt.
 
     Uses the exact idempotency key the hub itself computes for the
     empty-visited-set case (``replan:``), so ``append_general`` on the
     hub side is a no-op and the row this test inserted survives with
-    its backdated ``created_at``.
+    its backdated ``created_at``. ``status`` sets the ledger row's status
+    column -- pass ``"superseded"`` to model a re-enqueue reset.
     """
     backdated = datetime.now(UTC) - timedelta(seconds=age_seconds)
     async with async_session_scope() as session:
@@ -276,6 +280,7 @@ async def _seed_old_replan(investigation_id: str, age_seconds: float) -> None:
                     "blocked": ["blocked"],
                 }),
                 idempotency_key="replan:",
+                status=status,
                 created_at=backdated,
             )
         )
@@ -394,3 +399,78 @@ def test_hub_stalled_timeout_is_terminal_and_maps_to_stalled() -> None:
         InvestigationStatus.COMPLETED.value
     )
     assert InvestigationStatus.STALLED.value == "stalled"
+
+
+def test_is_live_replan_request_skips_superseded() -> None:
+    """``_is_live_replan_request`` counts an open replan request but ignores
+    one marked ``status='superseded'`` (the re-enqueue reset flag) and any
+    non-replan / non-request row. This is the guard that stops an aged
+    superseded replan from tripping ``hub_stalled_timeout``."""
+    live = {"id": 1, "kind": "request", "payload": {"intent": "replan"}}
+    superseded = {**live, "id": 2, "status": "superseded"}
+    assert _is_live_replan_request(live) is True
+    assert _is_live_replan_request(superseded) is False
+    assert _is_live_replan_request(
+        {"id": 3, "kind": "request", "payload": {"intent": "other"}},
+    ) is False
+    assert _is_live_replan_request(
+        {"id": 4, "kind": "discovery", "payload": {}},
+    ) is False
+
+
+async def test_superseded_aged_replan_does_not_time_out(
+    workflow_run_id: str, monkeypatch,
+) -> None:
+    """Regression: a re-enqueued investigation must not instantly re-stall on
+    an hours-old unratified replan. An aged replan marked
+    ``status='superseded'`` (by ``supersede_unratified_replan_requests`` on
+    the re-enqueue path) is skipped by ``_is_live_replan_request``, so the
+    hub emits the within-window ``hub_stalled`` (which resolves to COMPLETED)
+    rather than the terminal ``hub_stalled_timeout`` (STALLED), and posts no
+    operator escalation. The sibling test with an un-superseded aged replan
+    proves the same seed WOULD otherwise time out."""
+    ran: list[str] = []
+    calls: list[dict[str, Any]] = []
+
+    async def _spy(**kwargs: Any) -> str | None:
+        calls.append(kwargs)
+        return "spy-msg-id"
+
+    monkeypatch.setattr(
+        "aila.platform.agents.auto_steering.post_dispatch_stall_escalation",
+        _spy,
+    )
+
+    await _seed_old_replan(
+        workflow_run_id, age_seconds=3600.0, status="superseded",
+    )
+
+    class _FakeMessageModel:
+        pass
+
+    class _FakeBranchModel:
+        pass
+
+    phases = (PhaseSpec(name="blocked", condition=_never),)
+    wf = _make_wf(
+        phases, ran,
+        escalation_models=DispatchEscalationModels(
+            message_model=_FakeMessageModel,
+            branch_model=_FakeBranchModel,
+        ),
+    )
+    out = await DurableStateMachine.execute(
+        workflow_run_id, wf, {"investigation_id": workflow_run_id},
+    )
+
+    assert out.get("exit_reason") == "hub_stalled"
+    assert out.get("exit_reason") != "hub_stalled_timeout"
+    # hub_stalled (within-window) resolves to COMPLETED, NOT the terminal
+    # STALLED that hub_stalled_timeout would have produced.
+    assert resolve_final_status(out.get("exit_reason", "")) == (
+        InvestigationStatus.COMPLETED.value
+    )
+    assert resolve_final_status(out.get("exit_reason", "")) != (
+        InvestigationStatus.STALLED.value
+    )
+    assert calls == []  # not timed out -> no escalation posted

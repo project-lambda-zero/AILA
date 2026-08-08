@@ -7,6 +7,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.9] - 2026-08-08 -- Re-enqueue resets the dispatch replan clock
+
+### Fixed
+
+- A re-enqueued investigation re-stalled within seconds instead of
+  running. When the dispatch hub cannot activate a phase it raises one
+  idempotent ``replan`` ledger request per visited-set and waits for
+  ratification; in auto-pilot nothing ratifies it, so the request lives
+  in the ledger. ``dispatch_replan_timeout_s`` (default 1800s) ages that
+  request, so once it is older than the window every later re-enqueue
+  inherited the same hours-old request and the hub emitted
+  ``hub_stalled_timeout`` on its first tick, flipping the whole
+  investigation to stalled and abandoning every branch, including ones
+  that were actively running turns and generating hypotheses. Re-enqueue
+  now marks stale unratified replan requests ``status='superseded'`` and
+  the hub's stall/timeout helpers skip superseded rows, so a re-enqueued
+  investigation gets a fresh replan clock: the branches run, and a hub
+  that still cannot advance emits the within-window ``hub_stalled``
+  (completed) instead of the terminal ``hub_stalled_timeout``. Superseding
+  flips a status column rather than deleting the audit row.
+
 ## [0.3.8] - 2026-08-08 -- Stalled investigations get a re-enqueue action
 
 ### Fixed

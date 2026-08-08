@@ -62,6 +62,7 @@ __all__ = [
     "purge_investigation_cursors",
     "reenqueue_investigation",
     "resume_investigation",
+    "supersede_unratified_replan_requests",
 ]
 
 
@@ -100,6 +101,40 @@ async def purge_investigation_cursors(
             "   OR run_id IN (SELECT id FROM taskrecord "
             "                 WHERE kwargs_json LIKE :inv_pat)"
         ).bindparams(inv=investigation_id, inv_pat=inv_pat)
+    result = await session.exec(stmt)
+    return result.rowcount or 0
+
+
+async def supersede_unratified_replan_requests(
+    session: Any, investigation_id: str,
+) -> int:
+    """Mark stale ``replan`` ledger requests superseded for an investigation.
+
+    The dispatch hub raises one idempotent ``replan`` request per visited-set
+    when no phase can activate (``payload.intent == 'replan'``). In auto-pilot
+    no operator ratifies it, so the row lives in ``investigation_ledger``
+    forever. ``phase_graph._oldest_unratified_replan_created_at`` ages that
+    request against ``platform.dispatch_replan_timeout_s``; once it is older
+    than the window, every subsequent re-enqueue that stalls on the same
+    visited-set inherits the aged request and trips ``hub_stalled_timeout``
+    on the first hub tick, re-stalling the investigation within seconds and
+    abandoning branches that may still be making progress.
+
+    Superseding those requests on re-enqueue resets the replan clock:
+    ``phase_graph._is_live_replan_request`` skips ``status='superseded'``
+    rows, so a stall on the next run raises a fresh request with a fresh
+    timestamp and the branches get the full window before the hub escalates.
+    Append-only-friendly: flips ``status`` rather than deleting the audit row.
+    Returns the number of rows updated.
+    """
+    stmt = _sql_text(
+        "UPDATE investigation_ledger "
+        "SET status = 'superseded' "
+        "WHERE investigation_id = :inv "
+        "  AND kind = 'request' "
+        "  AND (status IS NULL OR status <> 'superseded') "
+        "  AND payload_json LIKE :replan_pat"
+    ).bindparams(inv=investigation_id, replan_pat='%"intent": "replan"%')
     result = await session.exec(stmt)
     return result.rowcount or 0
 
@@ -658,6 +693,7 @@ async def reenqueue_investigation(
         "submitted": 0,
         "cancelled_stale_tasks": 0,
         "wiped_crashed_cursors": 0,
+        "superseded_replans": 0,
         "investigation_id": investigation_id,
     }
     now = utc_now()
@@ -714,6 +750,13 @@ async def reenqueue_investigation(
             uow.session, investigation_id, only_crashed=True,
         )
 
+        # Reset the dispatch-hub replan clock: a stale unratified replan
+        # request left in the ledger would trip hub_stalled_timeout on the
+        # first hub tick and re-stall the investigation immediately.
+        summary["superseded_replans"] = await supersede_unratified_replan_requests(
+            uow.session, investigation_id,
+        )
+
         await uow.session.commit()
 
     # Commit precedes submit: the same UoW would race with the dedup
@@ -743,6 +786,7 @@ async def reenqueue_investigation(
             "submitted": summary["submitted"],
             "cancelled_stale_tasks": summary["cancelled_stale_tasks"],
             "wiped_crashed_cursors": summary["wiped_crashed_cursors"],
+            "superseded_replans": summary["superseded_replans"],
             "new_kind": new_kind,
             "new_strategy": new_strategy,
         },
