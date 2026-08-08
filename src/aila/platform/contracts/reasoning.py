@@ -434,8 +434,60 @@ def coerce_tool_command(raw: str | None) -> str | None:
     return json.dumps({"tool": tool, "args": args})
 
 
+def _is_tool_dispatch(value: Any) -> bool:
+    """True when ``value`` is a dict carrying a non-empty string ``tool``."""
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("tool"), str)
+        and bool(value.get("tool"))
+    )
+
+
+def _recover_tool_command_from_fields(extra: dict[str, Any] | None) -> str | None:
+    """Recover a canonical command from a misplaced dispatch.
+
+    The reasoning model (Claude in particular) often ignores the documented
+    ``command: "<json string>"`` shape and puts the dispatch in a sibling
+    field: a nested ``tool_run`` object, or top-level ``tool`` + ``args``
+    next to ``action``. With ``extra="allow"`` those survive in
+    ``model_extra``; recover them into canonical {"tool","args"} JSON so the
+    turn dispatches instead of dying at schema validation. Returns the JSON
+    string, or None when no dispatch is present. Never raises.
+    """
+    if not isinstance(extra, dict):
+        return None
+    nested = extra.get("tool_run")
+    if isinstance(nested, dict):
+        ncmd = nested.get("command")
+        if isinstance(ncmd, str) and ncmd.strip():
+            try:
+                json.loads(ncmd)
+                return ncmd
+            except (ValueError, TypeError):
+                coerced = coerce_tool_command(ncmd)
+                if coerced is not None:
+                    return coerced
+        ntool = nested.get("tool")
+        if isinstance(ntool, str) and ntool:
+            nargs = nested.get("args")
+            return json.dumps({"tool": ntool, "args": nargs if isinstance(nargs, dict) else {}})
+    tool = extra.get("tool")
+    if isinstance(tool, str) and tool:
+        args = extra.get("args")
+        return json.dumps({"tool": tool, "args": args if isinstance(args, dict) else {}})
+    return None
+
+
 class ReasoningTurnDecision(BaseModel):
     """Single-turn decision emitted by the reasoning engine."""
+
+    # extra="allow": the reasoning model frequently places the tool_run
+    # dispatch in a misplaced field -- a nested ``tool_run`` object, or
+    # top-level ``tool``+``args`` next to ``action`` -- instead of the
+    # canonical ``command`` string. Keeping extras in ``model_extra`` lets
+    # ``_validate_tool_run_command`` recover a dispatch from them rather than
+    # failing the whole turn at schema validation.
+    model_config = ConfigDict(extra="allow")
 
     reasoning: str
     action: ReasoningAction = "reasoning"
@@ -560,35 +612,40 @@ class ReasoningTurnDecision(BaseModel):
             return self
 
         raw = self.command
-        if raw is None or not raw.strip():
-            raise ValueError(
-                "action='tool_run' requires a non-empty `command` "
-                "containing JSON with 'tool' (str) and 'args' (dict). "
-                f"Got: {raw!r}. Common cause: max_tokens truncation "
-                "cut the emission before the command JSON was written."
-            )
+        parsed: Any = None
 
-        try:
-            parsed = _json.loads(raw)
-        except _json.JSONDecodeError as exc:
-            # The model routinely emits a complete, unambiguous natural
-            # function call (server.tool(k=v, ...) or server.tool({json}))
-            # instead of the canonical JSON. Coerce and normalize it before
-            # failing so a well-formed non-JSON emission does not burn the
-            # turn; only a genuinely unrecognizable/truncated command falls
-            # through to the truncation diagnostics below.
-            coerced = coerce_tool_command(raw)
-            if coerced is None:
-                raise ValueError(
-                    f"action='tool_run' command must be valid JSON. Parse "
-                    f"failed at line {exc.lineno} col {exc.colno}: "
-                    f"{exc.msg}. Common cause: max_tokens truncation cut "
-                    f"the emission mid-string. Command starts with: "
-                    f"{raw[:60]!r} ends with: {raw[-60:]!r} (length="
-                    f"{len(raw)})."
-                ) from exc
-            self.command = coerced
-            parsed = _json.loads(coerced)
+        # 1. command present -> parse as JSON, else coerce a natural form
+        #    (server.tool(k=v, ...) / server.tool({json}) / bare server.tool).
+        if raw is not None and raw.strip():
+            try:
+                parsed = _json.loads(raw)
+            except _json.JSONDecodeError:
+                coerced = coerce_tool_command(raw)
+                if coerced is not None:
+                    self.command = coerced
+                    parsed = _json.loads(coerced)
+
+        # 2. command missing / junk (e.g. a lone '{') -> the outer decision
+        #    JSON is complete, but the model placed the dispatch in a sibling
+        #    field (nested ``tool_run`` object, or top-level ``tool``+``args``)
+        #    instead of ``command``. Recover it from ``model_extra`` so the
+        #    turn dispatches rather than hard-failing at schema validation.
+        if not _is_tool_dispatch(parsed):
+            recovered = _recover_tool_command_from_fields(self.model_extra)
+            if recovered is not None:
+                self.command = recovered
+                parsed = _json.loads(recovered)
+
+        # 3. Nothing dispatchable anywhere -> the model produced no tool call
+        #    this turn. (Genuine max_tokens truncation fails earlier, at the
+        #    outer JSON decode, never reaching this after-validator.)
+        if parsed is None:
+            raise ValueError(
+                "action='tool_run' requires a dispatch: a `command` holding "
+                "JSON with 'tool' (str) + 'args' (dict), a nested `tool_run` "
+                "object, or top-level `tool`+`args`. "
+                f"Got command={raw!r} and no recoverable tool/args fields."
+            )
 
         if not isinstance(parsed, dict):
             raise ValueError(
