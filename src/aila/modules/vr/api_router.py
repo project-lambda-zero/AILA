@@ -6298,6 +6298,74 @@ def create_vr_router() -> APIRouter:
         )
         return DataEnvelope(data=snapshot)
 
+    @router.get(
+        "/investigations/{investigation_id}/observable",
+        response_model=DataEnvelope[dict[str, Any]],
+        summary=(
+            "Full, untruncated value of one case-state observable "
+            "(MCP tool reading) by key. Backs the evidence-graph "
+            "fetch-on-click so the snapshot never carries a preview."
+        ),
+    )
+    @limiter.limit("60/minute")
+    async def get_observable(
+        request: Request,
+        investigation_id: str,
+        key: str = Query(
+            ...,
+            description=(
+                "Observable key from an evidence node, e.g. "
+                "audit_mcp.read_function.source.<fn>."
+            ),
+        ),
+        branch_id: str | None = Query(default=None),
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[dict[str, Any]]:
+        del request
+        import json as _json
+
+        from .db_models import VRInvestigationBranchRecord
+
+        inv = await _load_investigation(investigation_id, auth)
+        if inv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Investigation {investigation_id} not found.",
+            )
+        async with UnitOfWork() as uow:
+            stmt = select(VRInvestigationBranchRecord).where(
+                VRInvestigationBranchRecord.investigation_id == investigation_id,
+            )
+            if branch_id:
+                stmt = stmt.where(VRInvestigationBranchRecord.id == branch_id)
+            branches = (await uow.session.exec(stmt)).all()
+
+        found = False
+        value: Any = None
+        source_branch: str | None = None
+        for b in branches:
+            try:
+                parsed = _json.loads(b.case_state_json or "{}")
+            except (_json.JSONDecodeError, TypeError):
+                parsed = {}
+            obs = parsed.get("observables") if isinstance(parsed, dict) else None
+            if isinstance(obs, dict) and key in obs:
+                value = obs[key]
+                source_branch = b.id
+                found = True
+                break
+        if not found:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"Observable {key!r} not found for investigation "
+                    f"{investigation_id}."
+                ),
+            )
+        return DataEnvelope(
+            data={"key": key, "branch_id": source_branch, "value": value},
+        )
+
 
 
     # ── Branch operations (M3.R-5, D-41) ──────────────────────────────

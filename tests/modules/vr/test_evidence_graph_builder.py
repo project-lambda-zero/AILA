@@ -290,3 +290,64 @@ def test_grid_layout_places_kinds_on_distinct_rows() -> None:
     assert row_by_kind["branch"] < row_by_kind["hypothesis"]
     assert row_by_kind["hypothesis"] < row_by_kind["outcome"]
     assert row_by_kind["outcome"] < row_by_kind["finding"]
+
+
+def test_observables_become_evidence_nodes_with_support_refute_links() -> None:
+    """MCP tool readings in case_state.observables become evidence nodes,
+    attributed to the observing branch via found_by, and linked to a
+    hypothesis only when the hypothesis text names the reading's target:
+    supports for a live claim, refutes for a rejected reason. Scratchpad
+    keys (leading underscore) are skipped, and the rejection reason is
+    surfaced on the hypothesis node."""
+    case = json.dumps({
+        "hypotheses": [
+            {"id": "h1",
+             "claim": "heap overflow in mov_read_senc via unchecked count",
+             "why_plausible": "mov_read_senc reads count without a bound"},
+        ],
+        "rejected": [
+            {"id": "h2",
+             "claim": "overflow in mov_read_saiz",
+             "reason": "mov_read_saiz validates the size before use; disproved"},
+        ],
+        "observables": {
+            "audit_mcp.read_function.source.mov_read_senc": "static int mov_read_senc(){}",
+            "audit_mcp.read_function.source.mov_read_saiz": "static int mov_read_saiz(){}",
+            "_directive.phase_mission": "scratchpad key -- must be skipped",
+        },
+    })
+    branches = [_FakeBranch(id="b1", persona_voice="halvar", case_state_json=case)]
+    snap = build_evidence_graph_snapshot(
+        investigation_id="inv-ev",
+        inv_status="running",
+        inv_linked_finding_ids_json="[]",
+        branches=branches,
+        outcomes=[],
+    )
+
+    ev_ids = {n.id for n in _by_kind(snap, "evidence")}
+    assert ev_ids == {
+        "evidence:audit_mcp.read_function.source.mov_read_senc",
+        "evidence:audit_mcp.read_function.source.mov_read_saiz",
+    }
+    senc = next(n for n in _by_kind(snap, "evidence") if n.id.endswith("mov_read_senc"))
+    assert senc.attributes["tool"] == "read_function"
+    assert senc.attributes["target"] == "mov_read_senc"
+    assert senc.attributes["personas"] == ["halvar"]
+
+    found = _edges_of_kind(snap, "found_by")
+    assert any(e.source == senc.id and e.target == "branch:b1" for e in found)
+
+    supports = _edges_of_kind(snap, "supports")
+    assert any(
+        e.source == senc.id and e.target == "hypothesis:h1" for e in supports
+    )
+
+    saiz = next(n for n in _by_kind(snap, "evidence") if n.id.endswith("mov_read_saiz"))
+    refutes = _edges_of_kind(snap, "refutes")
+    assert any(
+        e.source == saiz.id and e.target == "hypothesis:h2" for e in refutes
+    )
+
+    h2 = next(n for n in _by_kind(snap, "hypothesis") if n.id == "hypothesis:h2")
+    assert "validates the size" in h2.attributes["rejection_reason"]

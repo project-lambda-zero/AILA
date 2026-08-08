@@ -7,6 +7,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.10] - 2026-08-08 -- Evidence graph surfaces MCP readings and rejection rationale
+
+### Added
+
+- The investigation evidence graph now surfaces the actual evidence, not
+  just hypothesis ids. Each MCP tool reading a persona gathered (stored in
+  a branch's case-state observables) becomes an ``evidence`` node labeled
+  by tool and target, attributed to the observing branch(es) via a
+  ``found_by`` edge (so it shows who ran which call). A reading links to a
+  hypothesis only when the hypothesis text names the reading's target: a
+  ``supports`` edge when a live or resolved claim cites it, a ``refutes``
+  edge when a rejected hypothesis's reason cites it. No text match leaves
+  the reading as an unlinked evidence node; no relation the reasoning did
+  not assert is invented, and every reading is surfaced without a cap.
+- Hypothesis nodes now carry their ``claim``, ``why_plausible``, and
+  ``rejection_reason`` so the panel shows why a hypothesis was rejected.
+- ``GET /vr/investigations/{id}/observable?key=`` returns the full,
+  untruncated value of one observable. The evidence graph carries only the
+  observable key on each node (no inline preview, so the snapshot stays
+  lean); the frontend fetches the complete tool output on evidence-node
+  click and renders it in the selection panel.
+
 ## [0.3.9] - 2026-08-08 -- Re-enqueue resets the dispatch replan clock
 
 ### Fixed

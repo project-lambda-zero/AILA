@@ -16,6 +16,7 @@ import {
   useInvestigation,
   useInvestigationBranches,
   useInvestigationOutcomes,
+  useObservable,
 } from "../queries";
 import { formatBranchDisplayName } from "../branchDisplay";
 
@@ -52,6 +53,16 @@ export function EvidenceGraphPage() {
     [outcomesResult],
   );
   const { data: snapshotResult } = useEvidenceGraph(investigationId);
+
+  // When an evidence node is selected, load its full, untruncated tool
+  // output on demand (the snapshot carries only the observable key).
+  const selectedObservableKey =
+    selected?.kind === "evidence"
+      ? (((selected.meta as Record<string, unknown> | undefined)
+          ?.observable_key as string | undefined) ?? null)
+      : null;
+  const { data: observableResult, isLoading: observableLoading } =
+    useObservable(investigationId, selectedObservableKey);
 
   // Preferred data path: use the server snapshot's nodes and edges
   // directly. Fall back to a local synthesis (branches + outcomes
@@ -225,6 +236,26 @@ export function EvidenceGraphPage() {
                 <pre className="text-3xs font-mono text-text-muted whitespace-pre-wrap max-h-60 overflow-y-auto">
                   {JSON.stringify(selected.meta, null, 2)}
                 </pre>
+              )}
+              {selected.kind === "evidence" && selectedObservableKey && (
+                <div className="mt-1">
+                  <p className="text-3xs uppercase tracking-wide text-text-muted mb-1">
+                    full tool output
+                  </p>
+                  {observableLoading ? (
+                    <p className="text-3xs text-text-muted">loading...</p>
+                  ) : observableResult?.data ? (
+                    <pre className="text-3xs font-mono text-foreground whitespace-pre-wrap max-h-96 overflow-y-auto border border-border-default rounded p-2 bg-surface/40">
+                      {typeof observableResult.data.value === "string"
+                        ? observableResult.data.value
+                        : JSON.stringify(observableResult.data.value, null, 2)}
+                    </pre>
+                  ) : (
+                    <p className="text-3xs text-text-muted">
+                      no output found for this reading
+                    </p>
+                  )}
+                </div>
               )}
               {(() => {
                 const url = openUrlForNode(selected);

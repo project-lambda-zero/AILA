@@ -180,6 +180,8 @@ def build_evidence_graph_snapshot(
     rejected_branches: dict[str, list[str]] = {}
     resolved_branches: dict[str, list[str]] = {}
     claims: dict[str, str] = {}
+    why_plausible: dict[str, str] = {}
+    reasons: dict[str, str] = {}
 
     for b in branches:
         state = _parse_case_state(getattr(b, "case_state_json", "") or "")
@@ -191,6 +193,8 @@ def build_evidence_graph_snapshot(
                 continue
             live_branches.setdefault(str(hid), []).append(b.id)
             claims.setdefault(str(hid), str(h.get("claim") or ""))
+            if h.get("why_plausible"):
+                why_plausible.setdefault(str(hid), str(h.get("why_plausible")))
         for h in state.get("rejected", []) or []:
             if not isinstance(h, dict):
                 continue
@@ -199,6 +203,11 @@ def build_evidence_graph_snapshot(
                 continue
             rejected_branches.setdefault(str(hid), []).append(b.id)
             claims.setdefault(str(hid), str(h.get("claim") or ""))
+            # RejectedHypothesis carries the disproof rationale in ``reason``;
+            # it is the "rejected because of these calls" text the operator
+            # wants surfaced on the node and matched against tool readings.
+            if h.get("reason"):
+                reasons.setdefault(str(hid), str(h.get("reason")))
         for h in state.get("resolved", []) or []:
             if not isinstance(h, dict):
                 continue
@@ -242,6 +251,9 @@ def build_evidence_graph_snapshot(
                     "live_in_branches": list(live_branches.get(hid, [])),
                     "rejected_in_branches": list(rejected_branches.get(hid, [])),
                     "resolved_in_branches": list(resolved_branches.get(hid, [])),
+                    "claim": claims.get(hid, ""),
+                    "why_plausible": why_plausible.get(hid, ""),
+                    "rejection_reason": reasons.get(hid, ""),
                 },
             ),
         )
@@ -257,6 +269,113 @@ def build_evidence_graph_snapshot(
             edges.append(EvidenceGraphEdge(
                 source=f"branch:{src_bid}", target=node_id, kind="resolves",
             ))
+
+    # --- evidence (MCP tool readings) --------------------------- new ring
+    # Each branch's case_state.observables holds the MCP tool readings the
+    # personas gathered, keyed "<server>.<tool>.<selector>.<target>" (e.g.
+    # "audit_mcp.read_function.source.ff_hevc_decode_nal_vps"). Agent
+    # scratchpad / directive keys start with "_" and are skipped. Dedupe by
+    # key so one reading collapses across branches; attribute which
+    # branches (personas) observed it via a ``found_by`` edge. A reading is
+    # linked to a hypothesis ONLY when the hypothesis text names the
+    # reading's target: ``supports`` when a live/resolved claim or
+    # why_plausible cites it, ``refutes`` when a rejected hypothesis's
+    # reason cites it. No text match leaves the reading as an unlinked
+    # evidence node -- we never invent a relation the reasoning did not
+    # assert, and we never drop a reading: every tool observation the
+    # personas made is surfaced. Any thinning is the display layer's job
+    # (visible, operator-controllable), never a silent cap here.
+    ev_branches: dict[str, list[str]] = {}
+    ev_personas: dict[str, set[str]] = {}
+    for b in branches:
+        state = _parse_case_state(getattr(b, "case_state_json", "") or "")
+        obs = state.get("observables")
+        if not isinstance(obs, dict):
+            continue
+        persona = getattr(b, "persona_voice", "") or ""
+        for k in obs:
+            if not isinstance(k, str) or k.startswith("_") or "." not in k:
+                continue
+            ev_branches.setdefault(k, []).append(b.id)
+            ev_personas.setdefault(k, set()).add(persona)
+
+    def _parse_ev_key(key: str) -> tuple[str, str, str]:
+        """(server, tool, target) from a "server.tool.selector.target" key."""
+        parts = key.split(".", 3)
+        server = parts[0] if parts else ""
+        tool = parts[1] if len(parts) > 1 else ""
+        target = parts[3] if len(parts) > 3 else (parts[2] if len(parts) > 2 else "")
+        target = target.split("=", 1)[-1]  # semantic_search.query=... -> query
+        if "/" in target and ":" in target:  # path:line-range -> path
+            target = target.split(":", 1)[0]
+        return server, tool, target.strip()
+
+    ev_keys = sorted(ev_branches)
+    radius_ev = 470.0
+    n_ev = max(len(ev_keys), 1)
+    for i, key in enumerate(ev_keys):
+        server, tool, target = _parse_ev_key(key)
+        if layout == "grid":
+            x = (i % 6) * 180 - 450
+            y = 560.0
+        else:
+            angle = (2 * math.pi * i / n_ev) - math.pi / 2 + math.pi / (2 * n_ev)
+            x = radius_ev * math.cos(angle)
+            y = radius_ev * math.sin(angle)
+        node_id = f"evidence:{key}"
+        base = target.rsplit("/", 1)[-1]
+        label = (f"{tool}: {base}" if tool else base)[:80] or key[:80]
+        obs_bids = list(dict.fromkeys(ev_branches.get(key, [])))
+        nodes.append(
+            EvidenceGraphNode(
+                id=node_id,
+                kind="evidence",
+                label=label,
+                state="",
+                x=x,
+                y=y,
+                attributes={
+                    "server": server,
+                    "tool": tool,
+                    "target": target,
+                    # The full, untruncated tool output is fetched on click
+                    # via GET /investigations/{id}/observable?key=... -- the
+                    # snapshot carries only the key, never a preview, so the
+                    # graph payload stays lean and no output is pre-trimmed.
+                    "observable_key": key,
+                    "observed_by_branches": obs_bids,
+                    "personas": sorted(p for p in ev_personas.get(key, set()) if p),
+                },
+            ),
+        )
+        # Attribution: which branch(es) made this MCP call.
+        for bid in obs_bids:
+            edges.append(EvidenceGraphEdge(
+                source=node_id, target=f"branch:{bid}", kind="found_by",
+            ))
+        # Honest linkage: match the reading's target token against the
+        # hypothesis's own text. Candidate tokens = full target + basename
+        # (>=5 chars each to drop noise like "ps.c").
+        cands = {target.lower()}
+        if "/" in target:
+            cands.add(target.rsplit("/", 1)[-1].lower())
+        cands = {c for c in cands if len(c) >= 5}
+        if cands:
+            for hid in hyp_ids:
+                if live_branches.get(hid) or resolved_branches.get(hid):
+                    blob = (claims.get(hid, "") + " " + why_plausible.get(hid, "")).lower()
+                    if any(c in blob for c in cands):
+                        edges.append(EvidenceGraphEdge(
+                            source=node_id, target=f"hypothesis:{hid}",
+                            kind="supports",
+                        ))
+                if rejected_branches.get(hid):
+                    rblob = reasons.get(hid, "").lower()
+                    if any(c in rblob for c in cands):
+                        edges.append(EvidenceGraphEdge(
+                            source=node_id, target=f"hypothesis:{hid}",
+                            kind="refutes",
+                        ))
 
     # --- outcomes --------------------------------------------------- outer ring
     radius_outcome = 400.0
