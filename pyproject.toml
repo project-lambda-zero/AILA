@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aila"
-version = "0.3.12"
+version = "0.3.13"
 description = "Modular AI security platform with pluggable analysis modules."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -332,7 +332,7 @@ ignore = [
 "src/aila/platform/mcp/call_logger.py" = ["BLE001"]
 "src/aila/modules/malware/services/stall_recovery.py" = ["PLC0415"]
 "src/aila/modules/malware/services/target_analysis.py" = ["PLC0415"]
-"src/aila/modules/malware/workflow/definitions.py" = ["PLC0415"]
+"src/aila/modules/malware/workflow/definitions_hub.py" = ["PLC0415"]
 # finalize + investigation_emit / _setup keep targeted deferred imports of
 # `workflow.task` symbols (run_malware_investigate / run_malware_synthesis /
 # run_malware_claim_verifier). Promoting those would re-introduce the
