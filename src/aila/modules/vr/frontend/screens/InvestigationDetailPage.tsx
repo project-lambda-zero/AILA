@@ -809,6 +809,11 @@ export function InvestigationDetailPage() {
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="flex flex-col gap-1 min-w-0">
             <StatusIndicator status={inv.status} pauseReason={inv.pause_reason} />
+            {inv.status === "failed" && inv.failure_reason && (
+              <p className="text-xs text-red-400 font-mono">
+                {inv.failure_reason}
+              </p>
+            )}
             <p className="text-xs text-text-muted font-mono">
               {humanize(inv.strategy_family)} strategy
             </p>

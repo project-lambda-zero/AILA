@@ -7,6 +7,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.15] - 2026-08-09 -- poc_development gates on non-recon findings; failed investigations surface a reason
+
+### Fixed
+
+- The ``poc_development`` phase activated on any quorum-confirmed discovery,
+  including confirmed recon hypotheses (``source=recon_hypothesis``) that
+  carry no exploitable finding. Added ``payload_exclude`` to
+  ``make_discovery_condition`` (additive, default None, no behavior change
+  for other callers), and wired the VR hub's poc_development to exclude
+  recon-hypothesis discoveries. Only agent-emitted confirmed findings now
+  activate the phase.
+
+### Added
+
+- Investigation-level ``failure_reason`` on the VR detail summary, derived
+  from branch ``closed_reason`` values when the investigation status is
+  ``failed``. The finalizer already persisted causes like
+  ``zero_turn_no_progress`` and ``auto_closed_infra`` on each branch; this
+  surfaces them at the investigation level so operators see why a run failed
+  without digging into individual branches. Rendered as a red mono-font
+  label below the status indicator on the investigation detail page.
+
 ## [0.3.14] - 2026-08-09 -- Claim verifier runs its probes; a no-finding no longer reads as a finding
 
 ### Fixed

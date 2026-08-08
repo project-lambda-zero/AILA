@@ -125,6 +125,7 @@ class VRInvestigationSummary(BaseModel):
     primary_outcome_polarity: Literal["finding", "no_finding", "inconclusive"] | None = None
     verifier_verdict: str | None = None
     verifier_confidence: float | None = None
+    failure_reason: str | None = None
     linked_campaign_ids: list[str] = Field(default_factory=list)
     linked_finding_ids: list[str] = Field(default_factory=list)
     started_at: datetime | None = None

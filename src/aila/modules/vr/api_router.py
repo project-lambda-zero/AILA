@@ -742,6 +742,7 @@ def _investigation_summary(
     verifier_verdict: str | None = None,
     verifier_confidence: float | None = None,
     live_cost_usd: float | None = None,
+    failure_reason: str | None = None,
 ) -> VRInvestigationSummary:
     """Project a VRInvestigationRecord row to the public summary.
 
@@ -771,7 +772,10 @@ def _investigation_summary(
         live_cost_usd=live_cost_usd,
     )
     return summary.model_copy(
-        update={"primary_outcome_polarity": primary_outcome_polarity},
+        update={
+            "primary_outcome_polarity": primary_outcome_polarity,
+            "failure_reason": failure_reason,
+        },
     )
 
 
@@ -4518,6 +4522,28 @@ def create_vr_router() -> APIRouter:
                         primary.outcome_kind, payload,
                     )
 
+            # P7: derive a failure reason from branch closed_reasons so
+            # operators see WHY an investigation failed, not just that it
+            # did. The finalizer already persists the cause on each
+            # branch's closed_reason ("zero_turn_no_progress",
+            # "auto_closed_infra", etc.); this surfaces it at the
+            # investigation level without a schema migration.
+            failure_reason: str | None = None
+            if inv.status == "failed":
+                branch_reasons = (
+                    await uow.session.exec(
+                        select(VRInvestigationBranchRecord.closed_reason)
+                        .where(
+                            VRInvestigationBranchRecord.investigation_id == investigation_id,
+                            VRInvestigationBranchRecord.closed_reason != "",
+                            VRInvestigationBranchRecord.closed_reason.is_not(None),
+                        )
+                    )
+                ).all()
+                distinct = sorted({r for r in branch_reasons if r})
+                if distinct:
+                    failure_reason = "; ".join(distinct)
+
         # Live cost -- sum LLMCostRecord by run_id (which the reasoning
         # engine threads as the investigation id). The stored
         # cost_actual_usd has no writers so without this override every
@@ -4539,6 +4565,7 @@ def create_vr_router() -> APIRouter:
             verifier_verdict=verifier_verdict,
             verifier_confidence=verifier_confidence,
             live_cost_usd=live_cost,
+            failure_reason=failure_reason,
         ))
 
     @router.patch(

@@ -425,6 +425,7 @@ export interface VRInvestigationSummary {
   primary_outcome_polarity?: "finding" | "no_finding" | "inconclusive" | null;
   verifier_verdict?: string | null;
   verifier_confidence?: number | null;
+  failure_reason?: string | null;
   linked_campaign_ids: string[];
   linked_finding_ids: string[];
   started_at?: string | null;
