@@ -130,6 +130,26 @@ def _resolve_replan_timeout_s() -> float:
     except (TypeError, ValueError):
         return default_val
 
+def _is_live_replan_request(row: dict[str, Any]) -> bool:
+    """True for a replan request that still counts toward the stall timeout.
+
+    The dispatch hub raises one idempotent ``replan`` request per visited-set
+    when no phase can activate. In auto-pilot no operator ratifies it, so it
+    persists in the ledger; ``_oldest_unratified_replan_created_at`` then ages
+    it against ``dispatch_replan_timeout_s``. A re-enqueue that inherited an
+    hours-old request would trip ``hub_stalled_timeout`` on the first hub
+    tick. The re-enqueue path marks such stale requests ``status='superseded'``
+    (see ``investigation_lifecycle.supersede_unratified_replan_requests``);
+    a superseded request no longer counts, so the hub raises a fresh request
+    with a fresh clock instead of instantly re-stalling.
+    """
+    return (
+        row.get("kind") == "request"
+        and (row.get("payload") or {}).get("intent") == "replan"
+        and row.get("status") != "superseded"
+    )
+
+
 SETUP_STATE = "investigation_setup"
 EMIT_STATE = "investigation_emit"
 # The dispatch hub state of a discovery-driven graph (build_dispatch_workflow).
@@ -396,8 +416,7 @@ def make_dispatch_router(
     def _replan_ratified_from_rows(rows: list[dict[str, Any]]) -> bool:
         replan_ids = {
             int(r["id"]) for r in rows
-            if r["kind"] == "request"
-            and (r.get("payload") or {}).get("intent") == "replan"
+            if _is_live_replan_request(r)
         }
         for row in rows:
             if row["kind"] != "decision":
@@ -412,8 +431,7 @@ def make_dispatch_router(
     ) -> datetime | None:
         replan_ids = [
             int(r["id"]) for r in rows
-            if r["kind"] == "request"
-            and (r.get("payload") or {}).get("intent") == "replan"
+            if _is_live_replan_request(r)
         ]
         if not replan_ids:
             return None
@@ -425,8 +443,7 @@ def make_dispatch_router(
         }
         unratified = [
             row for row in rows
-            if row["kind"] == "request"
-            and (row.get("payload") or {}).get("intent") == "replan"
+            if _is_live_replan_request(row)
             and int(row["id"]) not in ratified_targets
         ]
         if not unratified:
