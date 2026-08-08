@@ -1455,11 +1455,22 @@ class KnowledgeService:
         # with an identity weight (1.0) here to avoid double-weighting; only
         # temporal decay still runs on graph hits.
         overlay_weight = 1.0 if chosen is Route.GRAPH else weight
+        # RFC-14: the graph route's per-hit score is stationary PPR mass,
+        # not the cosine-scale hybrid figure ``min_score`` was calibrated
+        # against. The seed hybrid stage already applied ``min_score`` at
+        # cosine scale (self.retrieve(min_score=...) above); re-applying it
+        # here to PPR mass -- which sums to ~1.0 across the reachable
+        # subgraph, so each hit is ~1/N -- would drop every graph hit under
+        # any real floor (0.3 default vs ~0.1 mass). Overlay the graph route
+        # with floor 0.0 so temporal decay still runs but the PPR ranking is
+        # not wiped by the scale mismatch; the seed floor is the graph
+        # route's cosine-relevance gate.
+        overlay_floor = 0.0 if chosen is Route.GRAPH else min_score
         gated = _apply_trust_decay(
             gated,
             target_derived_weight=overlay_weight,
             decay_half_life_hours=half_life,
-            floor=min_score,
+            floor=overlay_floor,
             now=utc_now(),
         )
 
