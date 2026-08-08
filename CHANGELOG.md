@@ -7,6 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-08-08 -- Stalled and Abandoned investigation filter pills
+
+### Added
+
+- The investigations list status-filter row now includes Stalled and
+  Abandoned pills alongside All, Running, Completed, Failed, Created, and
+  Paused. Investigations that reached a stalled or abandoned state were
+  previously reachable only by folding them into the All view with no
+  dedicated filter or count, so an investigation that stalled effectively
+  disappeared from the filter bar. Both pills show their live count and
+  filter the list to that status. The list endpoint already accepted these
+  status values; this exposes them in the UI.
+
 ## [0.3.6] - 2026-08-08 -- Retry combo-member provider failures instead of stalling
 
 ### Fixed

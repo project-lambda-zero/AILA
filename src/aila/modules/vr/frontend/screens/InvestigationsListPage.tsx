@@ -498,8 +498,10 @@ export function InvestigationsListPage() {
       running: 0,
       completed: 0,
       failed: 0,
+      stalled: 0,
       created: 0,
       paused: 0,
+      abandoned: 0,
     };
     for (const i of investigationsRaw) {
       counts[i.status] = (counts[i.status] ?? 0) + 1;
@@ -878,6 +880,28 @@ export function InvestigationsListPage() {
           accentColor={STATUS_DOT.paused}
           onClick={() => {
             setStatusFilter("paused");
+            resetToFirstPage();
+          }}
+        />
+        <StatusPill
+          id="stalled"
+          label="Stalled"
+          active={statusFilter === "stalled"}
+          count={statusCounts.stalled}
+          accentColor={STATUS_DOT.stalled}
+          onClick={() => {
+            setStatusFilter("stalled");
+            resetToFirstPage();
+          }}
+        />
+        <StatusPill
+          id="abandoned"
+          label="Abandoned"
+          active={statusFilter === "abandoned"}
+          count={statusCounts.abandoned}
+          accentColor={STATUS_DOT.abandoned}
+          onClick={() => {
+            setStatusFilter("abandoned");
             resetToFirstPage();
           }}
         />
