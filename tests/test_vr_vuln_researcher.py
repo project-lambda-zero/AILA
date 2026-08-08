@@ -27,6 +27,7 @@ from aila.modules.vr.agents.vuln_researcher import (
     _prompt_key,
     _render_available_tools_section,
     _render_operator_messages_section,
+    _canonical_evidence_refs_json,
     _render_target_snapshot_section,
     _terminal_outcome_kind,
 )
@@ -179,6 +180,82 @@ class TestTerminalOutcomeKindRouting:
             answer="Authentication bypass: a forged token grants admin access.",
         )
         assert _terminal_outcome_kind(d) == OutcomeKind.DIRECT_FINDING
+
+    def test_ffmpeg_verb_first_negative_becomes_audit_memo(self) -> None:
+        # Regression for the live ffmpeg VP9 investigation: a
+        # strong-confidence "...found no memory-safety vulnerabilities" was
+        # stamped DIRECT_FINDING because the negative noun followed the verb
+        # and the detector only matched the noun-before-verb ordering.
+        d = ReasoningTurnDecision(
+            reasoning="r", action="submit", confidence="strong",
+            answer=(
+                "Exhaustive audit of the VP9 decoder found no "
+                "memory-safety vulnerabilities or cryptographic misuse."
+            ),
+        )
+        assert _terminal_outcome_kind(d) == OutcomeKind.AUDIT_MEMO
+
+    def test_ffmpeg_no_evidence_negative_becomes_audit_memo(self) -> None:
+        # Regression for the live ffmpeg HEVC investigation: "No evidence of
+        # out-of-bounds array writes..." was stamped DIRECT_FINDING.
+        d = ReasoningTurnDecision(
+            reasoning="r", action="submit", confidence="strong",
+            answer=(
+                "No evidence of out-of-bounds array writes in HEVC "
+                "parameter-set parsing (VPS/SPS/PPS)."
+            ),
+        )
+        assert _terminal_outcome_kind(d) == OutcomeKind.AUDIT_MEMO
+
+
+class TestCanonicalEvidenceRefsJson:
+    def test_empty_payload_is_empty_list(self) -> None:
+        assert _canonical_evidence_refs_json({}) == "[]"
+
+    def test_provenance_citations_populate_refs(self) -> None:
+        # P6 regression: the canonical outcome column was hardcoded "[]"
+        # even though provenance carried the source citations.
+        payload = {
+            "provenance": {
+                "primary_artifact": "libavcodec/vp9.c:300 (update_size)",
+                "corroboration": [
+                    "libavcodec/vp9.c:200",
+                    "audit_mcp:read_function.vp9_decode_tiles",
+                ],
+                "rejected_alternatives": [],
+            },
+        }
+        refs = json.loads(_canonical_evidence_refs_json(payload))
+        assert [r["ref"] for r in refs] == [
+            "libavcodec/vp9.c:300 (update_size)",
+            "libavcodec/vp9.c:200",
+            "audit_mcp:read_function.vp9_decode_tiles",
+        ]
+        assert all(r["kind"] == "source_citation" for r in refs)
+
+    def test_contribution_refs_deduped_and_unioned(self) -> None:
+        payload = {
+            "panel_contributions": [
+                {"persona": "maddie", "evidence_refs": ["libavcodec/vp9.c:300"]},
+                {
+                    "persona": "halvar",
+                    "evidence_refs": [
+                        "libavcodec/vp9.c:300",
+                        "libavcodec/vp9.c:410",
+                    ],
+                },
+            ],
+            "provenance": {
+                "primary_artifact": "libavcodec/vp9.c:300",
+                "corroboration": [],
+            },
+        }
+        refs = json.loads(_canonical_evidence_refs_json(payload))
+        # vp9.c:300 appears once despite three source occurrences.
+        assert [r["ref"] for r in refs] == [
+            "libavcodec/vp9.c:300",
+            "libavcodec/vp9.c:410",
+        ]
 
 
 class TestToOutcomeConfidence:

@@ -82,6 +82,20 @@ _PROBE_TOOL_ALLOWLIST = frozenset({
 })
 
 
+def _normalize_probe_tool_name(tool: str) -> str:
+    """Strip an optional ``<server>.`` namespace prefix from a probe tool
+    name so a bare name (``search_source``) and a server-qualified name
+    (``audit_mcp.search_source``) both resolve to the same allowlist key.
+
+    The extractor LLM names probes either way. Without this normalization
+    a bare name collapsed to ``""`` at the allowlist gate and every probe
+    was refused as "not on verifier allowlist", blinding the verifier so
+    every verdict came back ``inconclusive``. Mirrors the server-prefix
+    split utilities that MCP clients ship for the same reason.
+    """
+    return tool.split(".", 1)[1] if "." in tool else tool
+
+
 _PROMPT_DIR = Path(__file__).parent / "prompts"
 _EXTRACTOR_REGISTRY = PromptRegistry(
     _PROMPT_DIR,
@@ -137,18 +151,36 @@ def platform_claim_verifier_seed_entries() -> tuple[tuple[str, str], ...]:
 
 
 # A general "no <thing> found / identified" negative-conclusion pattern the
-# fixed prefix/substring tables miss when the negative noun sits between
-# "no" and the verb, e.g. "No container escape vulnerability found" or
-# "No exploitable vulnerability was identified". Matched on the uppercased
-# head window. It requires BOTH a security-negative noun and a discovery
-# verb within a short span so an ordinary "no" ("no authentication is
-# required to trigger the RCE") does not trip it.
-_NEGATIVE_CONCLUSION_RE = re.compile(
-    r"\bNO\b(?:\s+[\w'-]+){0,6}\s+"
+# fixed prefix/substring tables miss. Three orderings are matched on the
+# uppercased head window; each requires BOTH a security-negative noun and a
+# discovery verb (or the explicit "no evidence of" lead) within a short span
+# so an ordinary "no" ("no authentication is required to trigger the RCE")
+# does not trip it:
+#   A. noun between "no" and the verb -- "No exploitable vulnerability found"
+#   B. verb before "no"              -- "found no memory-safety vulnerabilities"
+#   C. explicit "no evidence of ..." -- "No evidence of out-of-bounds writes"
+# B and C were added after live investigations shipped a strong-confidence
+# "no bug" answer ("...found no memory-safety vulnerabilities", "No evidence
+# of out-of-bounds array writes...") that only pattern A missed, so it burned
+# into a false DIRECT_FINDING.
+_NEG_CONCLUSION_NOUN = (
     r"(?:VULNERABILIT\w*|BUGS?|EXPLOIT\w*|FINDINGS?|WEAKNESS(?:ES)?|FLAWS?|"
-    r"ISSUES?|ESCAPES?|BYPASS(?:ES)?|OVERFLOWS?|INJECTIONS?)"
-    r"(?:\s+[\w'-]+){0,4}?\s+"
-    r"(?:FOUND|IDENTIFIED|DETECTED|PRESENT|OBSERVED|EXISTS?|EXISTED)\b",
+    r"ISSUES?|ESCAPES?|BYPASS(?:ES)?|OVERFLOWS?|INJECTIONS?|"
+    r"OUT[\s-]?OF[\s-]?BOUNDS|MEMORY[\s-]?SAFETY|MEMORY[\s-]?CORRUPTION|"
+    r"USE[\s-]?AFTER[\s-]?FREE)"
+)
+_NEG_CONCLUSION_VERB = (
+    r"(?:FOUND|IDENTIFIED|DETECTED|PRESENT|OBSERVED|EXISTS?|EXISTED|"
+    r"REVEAL\w*|SURFACED?|UNCOVERED)"
+)
+_NEGATIVE_CONCLUSION_RE = re.compile(
+    r"\bNO\b(?:\s+[\w'-]+){0,6}\s+" + _NEG_CONCLUSION_NOUN
+    + r"(?:\s+[\w'-]+){0,4}?\s+" + _NEG_CONCLUSION_VERB + r"\b"
+    + r"|"
+    + _NEG_CONCLUSION_VERB + r"\b(?:\s+[\w'-]+){0,4}\s+NO\b"
+    + r"(?:\s+[\w'-]+){0,6}\s+" + _NEG_CONCLUSION_NOUN
+    + r"|"
+    + r"\bNO\s+EVIDENCE\s+(?:OF|FOR|THAT|TO)\b",
 )
 
 
@@ -271,7 +303,7 @@ def _render_probe_payload(tool: str, raw: Any) -> str:
         except (TypeError, ValueError):
             return repr(raw)
 
-    tool_name = tool.split(".", 1)[1] if "." in tool else tool
+    tool_name = _normalize_probe_tool_name(tool)
 
     if tool_name == "read_function":
         body = raw.get("body") or raw.get("source") or raw.get("text") or ""
@@ -616,7 +648,7 @@ class ClaimVerifierAgentBase:
         async def _run_one_probe(p: dict[str, Any]) -> dict[str, Any]:
             probe_spec = p.get("probe") or {}
             tool = str(probe_spec.get("tool") or "")
-            tool_name = tool.split(".", 1)[1] if tool.startswith("audit_mcp.") else ""
+            tool_name = _normalize_probe_tool_name(tool)
             args = dict(probe_spec.get("args") or {})
             # enforce allowlist -- extractor can hallucinate tool names;
             # only run the curated set used for source-level verification

@@ -89,7 +89,9 @@ from aila.modules.vr.db_models import (
     VRTargetRecord,
 )
 from aila.platform.agents.claim_verifier import (
+    _PROBE_TOOL_ALLOWLIST,
     ClaimVerifierAgentBase,
+    _normalize_probe_tool_name,
     _render_probe_payload,
     is_negative_finding_claim,
 )
@@ -361,6 +363,35 @@ class TestClassBinding:
 
 
 # --------------------------------------------------------------------- #
+#  _normalize_probe_tool_name (verifier probe allowlist gate)            #
+# --------------------------------------------------------------------- #
+
+
+class TestProbeToolNameNormalization:
+    def test_bare_name_passes_through(self) -> None:
+        assert _normalize_probe_tool_name("search_source") == "search_source"
+
+    def test_server_qualified_name_stripped(self) -> None:
+        assert _normalize_probe_tool_name("audit_mcp.search_source") == "search_source"
+        assert _normalize_probe_tool_name("audit_mcp.read_function") == "read_function"
+
+    def test_empty(self) -> None:
+        assert _normalize_probe_tool_name("") == ""
+
+    def test_bare_and_qualified_both_resolve_to_allowlist(self) -> None:
+        # Regression: the extractor names probes bare (search_source) or
+        # server-qualified (audit_mcp.search_source). Both MUST normalize
+        # to an allowlisted key -- the old gate collapsed a bare name to
+        # "" and refused every probe, blinding the verifier to inconclusive.
+        for bare in ("search_source", "search_types", "read_function"):
+            assert _normalize_probe_tool_name(bare) in _PROBE_TOOL_ALLOWLIST
+            assert (
+                _normalize_probe_tool_name(f"audit_mcp.{bare}")
+                in _PROBE_TOOL_ALLOWLIST
+            )
+
+
+# --------------------------------------------------------------------- #
 #  is_negative_finding_claim                                             #
 # --------------------------------------------------------------------- #
 
@@ -415,6 +446,34 @@ class TestNegativeFindingClaim:
             assert is_negative_finding_claim(
                 answer, prefixes=(), substrings=(),
             ) is False, answer
+
+    def test_regex_matches_verb_first_and_no_evidence(self) -> None:
+        # Regression for live ffmpeg investigations that shipped a
+        # strong-confidence "no bug" as a false DIRECT_FINDING: the
+        # negative noun sat AFTER the verb ("found no vulnerabilities") or
+        # the answer led with "no evidence of ...", both of which the
+        # original verb-after-noun-only pattern missed.
+        for answer in (
+            "Exhaustive audit of the VP9 decoder found no memory-safety "
+            "vulnerabilities or cryptographic misuse.",
+            "No evidence of out-of-bounds array writes in HEVC "
+            "parameter-set parsing.",
+            "Identified no exploitable overflow in the demuxer.",
+        ):
+            assert is_negative_finding_claim(
+                answer, prefixes=(), substrings=(),
+            ) is True, answer
+
+    def test_regex_keeps_real_finding_positive(self) -> None:
+        # The real HLS/DASH finding must NOT be reclassified as no-finding
+        # by the widened patterns.
+        answer = (
+            "The parse_playlist function in libavformat/hls.c contains an "
+            "unsafe data: URI handling vulnerability that allows crafted URIs."
+        )
+        assert is_negative_finding_claim(
+            answer, prefixes=(), substrings=(),
+        ) is False
 
     def test_platform_helper_handles_empty(self) -> None:
         assert is_negative_finding_claim("", prefixes=(), substrings=()) is False

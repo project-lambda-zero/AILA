@@ -45,6 +45,7 @@ from aila.modules.vr.contracts import (
     PayloadKind,
     SenderKind,
 )
+from aila.modules.vr.contracts.evidence_ref import EvidenceRefList
 from aila.modules.vr.contracts.investigation import InvestigationKind
 from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
@@ -2808,6 +2809,50 @@ _CONFIDENCE_RANK = {
 }
 
 
+def _canonical_evidence_refs_json(payload: dict[str, Any]) -> str:
+    """Serialize the canonical outcome's evidence refs.
+
+    Unions, in order and deduped: every panel contribution's
+    ``evidence_refs``, any top-level ``evidence_refs`` the agent
+    supplied, and the provenance citations (``primary_artifact`` +
+    ``corroboration``). Bare-string citations are normalized to source
+    citations by ``EvidenceRefList``'s before-validator. Previously the
+    column was seeded to ``"[]"`` and never updated on merge, so every
+    canonical outcome surfaced zero evidence even when the submission
+    cited source.
+    """
+    seen: set[str] = set()
+    refs: list[Any] = []
+
+    def _add(ref: Any) -> None:
+        if isinstance(ref, str):
+            ref = ref.strip()
+            if not ref:
+                return
+            key = ref
+        elif isinstance(ref, dict):
+            key = json.dumps(ref, sort_keys=True)
+        else:
+            return
+        if key not in seen:
+            seen.add(key)
+            refs.append(ref)
+
+    for contribution in payload.get("panel_contributions") or []:
+        if isinstance(contribution, dict):
+            for ref in contribution.get("evidence_refs") or []:
+                _add(ref)
+    for ref in payload.get("evidence_refs") or []:
+        _add(ref)
+    provenance = payload.get("provenance")
+    if isinstance(provenance, dict):
+        _add(provenance.get("primary_artifact"))
+        for ref in provenance.get("corroboration") or []:
+            _add(ref)
+
+    return EvidenceRefList.model_validate(refs).model_dump_json()
+
+
 async def _upsert_canonical_outcome(
     *,
     uow: Any,
@@ -2947,7 +2992,7 @@ async def _upsert_canonical_outcome(
             outcome_kind=new_outcome_kind,
             confidence=new_confidence,
             payload_json=json.dumps(seed_payload),
-            evidence_refs_json="[]",
+            evidence_refs_json=_canonical_evidence_refs_json(seed_payload),
         )
         uow.session.add(row)
         await uow.session.flush()
@@ -3087,6 +3132,7 @@ async def _upsert_canonical_outcome(
         old_payload["panel_contributions"] = contributions
 
     existing.payload_json = json.dumps(old_payload)
+    existing.evidence_refs_json = _canonical_evidence_refs_json(old_payload)
     uow.session.add(existing)
 
     inv = (await uow.session.exec(
