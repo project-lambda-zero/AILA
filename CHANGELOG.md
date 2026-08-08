@@ -7,6 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.16] - 2026-08-09 -- Stalled investigations auto-recover
+
+### Fixed
+
+- Stalled investigations were excluded from the periodic stall-recovery
+  reaper (``sweep_stalled_investigations``). The reaper's SQL filter only
+  matched ``status IN ('created', 'running')``, so a provider outage that
+  stalled the fleet required manual re-enqueue for every investigation.
+  Added ``'stalled'`` to the eligible statuses and a ``stalled->running``
+  flip before re-enqueue so the setup handler accepts the row. The reaper
+  runs every minute; stalled investigations now auto-recover once the
+  provider stabilizes, with no operator intervention.
+
 ## [0.3.15] - 2026-08-09 -- poc_development gates on non-recon findings; failed investigations surface a reason
 
 ### Fixed
