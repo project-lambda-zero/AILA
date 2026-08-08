@@ -7,6 +7,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-08-08 -- Stalled investigations get a re-enqueue action
+
+### Fixed
+
+- The investigation detail page rendered no action button for an
+  investigation in the stalled state: the toolbar covered running
+  (Pause), paused (Resume), created (Start), and completed/failed
+  (Re-enqueue / Reopen), so a stalled investigation had no way to be
+  restarted from the UI. The Re-enqueue action now also renders for
+  stalled, matching the completed/failed path. Re-enqueue resets the
+  investigation to created and submits a fresh worker task, which forks
+  a new primary branch and resumes the loop. This is the correct restart
+  path for an investigation that stalled on a transient provider outage.
+
 ## [0.3.7] - 2026-08-08 -- Stalled and Abandoned investigation filter pills
 
 ### Added
