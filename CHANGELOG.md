@@ -7,6 +7,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.11] - 2026-08-08 -- Remove superseded VR investigation workflow versions
+
+### Removed
+
+- Deleted the two dead VR investigation workflow definitions that the
+  task layer no longer bound: ``VR_INVESTIGATE_V1`` (single-loop) in
+  ``workflow/definitions.py`` and ``VR_INVESTIGATE_V2`` (kind-router
+  phase graph) in ``workflow/definitions_v2.py``. Every VR investigation
+  runs ``VR_INVESTIGATE_HUB`` (the RFC-13 dispatch-hub graph); the two
+  older graphs were wired to nothing and only added confusion. The live
+  phase directives and the setup/loop builders that the hub imported from
+  ``definitions_v2`` are now defined directly in ``definitions_hub.py``,
+  and ``definitions_v2.py`` plus its test are deleted. ``VR_NDAY_V1`` (the
+  n-day pipeline, still bound) is untouched. Behavior is unchanged: the
+  hub graph, its phases, and their conditions are identical.
+
 ## [0.3.10] - 2026-08-08 -- Evidence graph surfaces MCP readings and rejection rationale
 
 ### Added

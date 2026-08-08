@@ -143,7 +143,7 @@ async def _seed_cursor_direct(
             WorkflowStateCursor(
                 run_id=run_id,
                 current_state=current_state,
-                definition_id="VR_INVESTIGATE_V1",
+                definition_id="test.definition.v1",
                 state_input={},
                 updated_at=utc_now(),
                 version=0,
@@ -390,7 +390,7 @@ def _stub_definition() -> Any:
 
     class _Stub:
         start_state = "investigation_setup"
-        definition_id = "VR_INVESTIGATE_V1"
+        definition_id = "test.definition.v1"
         allow_phase_handoff = False
         is_dispatcher = False
 
