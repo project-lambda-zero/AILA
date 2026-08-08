@@ -24,8 +24,9 @@ of ``CancelledError`` (inherits from ``BaseException``, escapes broad
 
 Eligibility (every clause MUST hold):
 
-* ``inv.status IN ('created', 'running')`` -- only non-terminal
-  investigations can recover.
+* ``inv.status IN ('created', 'running', 'stalled')`` -- non-terminal
+  investigations can recover. Stalled investigations are auto-re-enqueued
+  so operators never need to manually intervene on a provider outage.
 * ``inv.pause_reason IS NULL`` -- operator and self-paused investigations
   are intentional waits and MUST NOT be auto-resumed by this sweep.
 * ``inv.kind = ANY(:kinds)`` -- only sweepable kinds are handled. Callers
@@ -78,6 +79,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import text as _sql_text
+from sqlalchemy.exc import SQLAlchemyError
 
 from aila.storage.database import async_session_scope
 
@@ -166,7 +168,7 @@ async def _fetch_eligible(
                inv.team_id::text AS team_id,
                inv.updated_at AS updated_at
         FROM {investigations_table} inv
-        WHERE inv.status IN ('created', 'running')
+        WHERE inv.status IN ('created', 'running', 'stalled')
           AND inv.pause_reason IS NULL
           AND inv.kind = ANY(:kinds)
           AND inv.updated_at < :cutoff
@@ -296,7 +298,37 @@ async def sweep_stalled_investigations(
 
         inv_id = row["id"]
         inv_kind = row["kind"]
+        inv_status = row.get("status", "running")
         team_id = row["team_id"]
+
+        # Stalled investigations need their status flipped back to
+        # running before the workflow setup handler will accept them.
+        # The replan ledger entries are superseded by
+        # reenqueue_investigation (called by the API); here we do the
+        # minimal direct flip so the setup handler re-spawns branches.
+        if inv_status == "stalled":
+            try:
+                async with async_session_scope() as _s:
+                    await _s.execute(
+                        _sql_text(
+                            f"UPDATE {investigations_table} "
+                            f"SET status = 'running', "
+                            f"    updated_at = NOW() "
+                            f"WHERE id = :inv_id "
+                            f"  AND status = 'stalled'",
+                        ).bindparams(inv_id=inv_id),
+                    )
+                    await _s.commit()
+                _log.info(
+                    "stall_recovery: flipped stalled->running inv=%s",
+                    inv_id,
+                )
+            except (OSError, RuntimeError, SQLAlchemyError):
+                _log.warning(
+                    "stall_recovery: failed to flip stalled->running inv=%s",
+                    inv_id, exc_info=True,
+                )
+                continue
 
         if inv_kind in single_submit_kinds:
             # Single inv-level submit; the submitter routes this kind
