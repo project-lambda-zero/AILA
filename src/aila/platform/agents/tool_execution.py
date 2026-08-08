@@ -14,6 +14,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from aila.platform.contracts.reasoning import coerce_tool_command
+
 __all__ = [
     "ToolExecutionResult",
     "classify_contract_error",
@@ -59,11 +61,19 @@ def parse_command(raw: str) -> tuple[str, dict[str, Any]] | None:
     try:
         decoded = json.loads(raw)
     except json.JSONDecodeError as exc:
-        _log.warning(
-            "tool_execution.parse_command: JSON decode failed (raw len=%d): %s",
-            len(raw), exc,
-        )
-        return None
+        # Accept the natural function-call form the model favours
+        # (server.tool(k=v, ...) / server.tool({json})) rather than force
+        # a stop; the ReasoningTurnDecision validator normalizes this at
+        # emission time, but a decision reconstructed from a raw string
+        # (e.g. replay) reaches here without that normalization.
+        coerced = coerce_tool_command(raw)
+        if coerced is None:
+            _log.warning(
+                "tool_execution.parse_command: JSON decode failed (raw len=%d): %s",
+                len(raw), exc,
+            )
+            return None
+        decoded = json.loads(coerced)
     if not isinstance(decoded, dict):
         return None
     tool_id = decoded.get("tool")

@@ -8,10 +8,17 @@ from __future__ import annotations
 
 import json
 
+import pytest
+from pydantic import ValidationError
+
 from aila.platform.agents.tool_execution import (
     ToolExecutionResult,
     classify_contract_error,
     parse_command,
+)
+from aila.platform.contracts.reasoning import (
+    ReasoningTurnDecision,
+    coerce_tool_command,
 )
 
 
@@ -32,6 +39,92 @@ def test_parse_null_args_coerced_to_empty() -> None:
 
 def test_parse_rejects_invalid_json() -> None:
     assert parse_command("not json at all") is None
+
+
+# ---------------------------------------------------------------------------
+# Natural function-call coercion (regression for the reasoning-loop stall:
+# the model emits ``server.tool(k=v, ...)`` / ``server.tool({json})`` instead
+# of canonical {"tool","args"} JSON; that is a complete emission, not a
+# truncation, so it must be coerced, not force-stopped).
+# ---------------------------------------------------------------------------
+
+
+def test_parse_coerces_function_call_form() -> None:
+    # The exact emission that stalled a live investigation at turn 1.
+    raw = (
+        "audit_mcp.read_function(file_path=libavformat/mov.c, "
+        "index_id=747c9b9f92e5, name=mov_read_senc)"
+    )
+    assert parse_command(raw) == (
+        "audit_mcp.read_function",
+        {
+            "file_path": "libavformat/mov.c",
+            "index_id": "747c9b9f92e5",
+            "name": "mov_read_senc",
+        },
+    )
+
+
+def test_parse_coerces_json_arg_call_form() -> None:
+    raw = 'audit_mcp.read_function({"file_path": "libavformat/hls.c", "name": "parse_playlist"})'
+    assert parse_command(raw) == (
+        "audit_mcp.read_function",
+        {"file_path": "libavformat/hls.c", "name": "parse_playlist"},
+    )
+
+
+def test_coerce_scalar_types_and_quotes() -> None:
+    raw = 'audit_mcp.semantic_search(query="use after free", limit=8, approved_only=true)'
+    out = json.loads(coerce_tool_command(raw))
+    assert out == {
+        "tool": "audit_mcp.semantic_search",
+        "args": {"query": "use after free", "limit": 8, "approved_only": True},
+    }
+
+
+def test_coerce_bare_tool_name_to_empty_args() -> None:
+    # The model sometimes emits just the dotted tool id with no parens/args.
+    assert json.loads(coerce_tool_command("audit_mcp.read_function")) == {
+        "tool": "audit_mcp.read_function", "args": {},
+    }
+    assert parse_command("audit_mcp.attack_surface") == ("audit_mcp.attack_surface", {})
+    d = ReasoningTurnDecision(
+        reasoning="r", action="tool_run", command="audit_mcp.semantic_search",
+    )
+    assert json.loads(d.command) == {"tool": "audit_mcp.semantic_search", "args": {}}
+    # Garbage with no dotted-tool shape is still rejected (truncation path).
+    assert coerce_tool_command("NULL") is None
+    assert coerce_tool_command("{") is None
+
+
+def test_coerce_rejects_prose_and_bare_query_string() -> None:
+    # Prose is not a function call.
+    assert coerce_tool_command("I will read the function next.") is None
+    # A bare key=value string has no tool name -- not safely coercible.
+    assert coerce_tool_command("index_id=abc&name=mov_read_senc") is None
+
+
+def test_validator_coerces_natural_command_and_normalizes() -> None:
+    raw = "audit_mcp.callers_of(name=mov_read_trak, index_id=747c9b9f92e5)"
+    d = ReasoningTurnDecision(reasoning="r", action="tool_run", command=raw)
+    # The stored command is normalized to canonical JSON downstream can parse.
+    assert json.loads(d.command) == {
+        "tool": "audit_mcp.callers_of",
+        "args": {"name": "mov_read_trak", "index_id": "747c9b9f92e5"},
+    }
+
+
+def test_validator_valid_json_command_passthrough_unchanged() -> None:
+    good = '{"tool": "audit_mcp.callers_of", "args": {"name": "x"}}'
+    d = ReasoningTurnDecision(reasoning="r", action="tool_run", command=good)
+    assert d.command == good  # byte-identical: valid JSON is never rewritten
+
+
+def test_validator_genuine_truncation_still_rejected() -> None:
+    # A truncated emission is NOT a recognizable function call, so the
+    # truncation diagnostics must still fire.
+    with pytest.raises(ValidationError):
+        ReasoningTurnDecision(reasoning="r", action="tool_run", command="{")
 
 
 def test_parse_rejects_blank() -> None:

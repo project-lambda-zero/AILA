@@ -7,6 +7,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-08-08 -- Reasoning-loop tool_run command coercion
+
+### Fixed
+
+- The vulnerability-research and forensics reasoning loops stalled at the
+  first tool-using turn. `ReasoningTurnDecision`'s validator required the
+  `tool_run` `command` field to be strict `{"tool","args"}` JSON, but the
+  model reliably emits a natural function call
+  (`server.tool(k=v, ...)` or `server.tool({json})`) or a bare tool id
+  (`server.tool`). The validator rejected these complete emissions as if
+  truncated; the three in-call correction retries reproduced the same form
+  and the turn hard-failed with `Failed to parse LLM response into
+  ReasoningTurnDecision`, leaving an investigation unable to run a single
+  tool. The validator and the shared `parse_command` executor now coerce
+  these forms into canonical `{"tool","args"}` JSON: `server.tool(k=v)`
+  maps args by key with per-value JSON/scalar typing, `server.tool({...})`
+  parses the JSON args, and a bare `server.tool` becomes an empty-args call
+  so the tool's own contract error teaches the required arguments on the
+  next turn. Valid JSON passes through byte-identical; a genuinely
+  truncated or non-tool-shaped emission (`{`, `NULL`, prose) still fails so
+  the truncation-correction retry fires. No migration; pure
+  decision-parsing logic.
+
 ## [0.3.3] - 2026-08-07 -- Graph retrieval floor fix (RFC-14)
 
 ### Fixed

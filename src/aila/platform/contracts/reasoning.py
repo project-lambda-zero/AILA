@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Annotated, Any, Literal
 
 from pydantic import (
@@ -14,6 +15,7 @@ from pydantic import (
 
 __all__ = [
     "ReasoningAction",
+    "coerce_tool_command",
     "ReasoningCaseState",
     "ReasoningConfidence",
     "ReasoningContract",
@@ -334,6 +336,104 @@ class LedgerWrite(BaseModel):
         return _require_json_serializable(v)
 
 
+# The reasoning model frequently emits a tool_run ``command`` as a natural
+# function call -- ``server.tool(k=v, k=v, ...)`` or ``server.tool({json})``
+# -- rather than the canonical {"tool","args"} JSON. That is a complete,
+# unambiguous emission, not a truncation, so the validator coerces it instead
+# of burning the turn. The ``server.tool`` shape (a dotted identifier) is
+# required so plain prose never matches; anything else returns None and the
+# caller falls back to its truncation diagnostics.
+_TOOL_CALL_RE = re.compile(r"^([A-Za-z_]\w*\.[\w.]+)\s*\((.*)\)$", re.DOTALL)
+# A bare dotted tool id with no parens: the model sometimes emits just
+# ``server.tool`` and omits the args. Coerce to an empty-args call so the
+# turn proceeds; the tool's own contract error ("missing required kwarg")
+# then teaches the agent the arguments on the next turn -- far better than
+# hard-failing the whole turn at schema validation.
+_TOOL_BARE_RE = re.compile(r"^[A-Za-z_]\w*\.[A-Za-z_]\w*$")
+
+
+def _split_top_level_commas(s: str) -> list[str]:
+    """Split ``s`` on commas outside quotes and () [] {} nesting."""
+    parts: list[str] = []
+    buf: list[str] = []
+    depth = 0
+    quote = ""
+    for ch in s:
+        if quote:
+            buf.append(ch)
+            if ch == quote:
+                quote = ""
+            continue
+        if ch in "\"'":
+            quote = ch
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth = max(0, depth - 1)
+        if ch == "," and depth == 0:
+            parts.append("".join(buf))
+            buf = []
+            continue
+        buf.append(ch)
+    if buf:
+        parts.append("".join(buf))
+    return parts
+
+
+def _coerce_arg_scalar(v: str) -> Any:
+    """Interpret a bare function-call argument value as JSON when possible,
+    else as a literal string. Surrounding single/double quotes strip to a
+    verbatim string (single quotes are not valid JSON)."""
+    v = v.strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+        return v[1:-1]
+    try:
+        return json.loads(v)
+    except (ValueError, TypeError):
+        return v
+
+
+def coerce_tool_command(raw: str | None) -> str | None:
+    """Coerce a natural tool-call emission into canonical {"tool","args"} JSON.
+
+    Recognizes ``server.tool(k=v, ...)`` and ``server.tool({json})``. Returns
+    the canonical JSON string on success, or None when ``raw`` is not a
+    recognizable function call -- callers then treat it as a genuine parse
+    failure / truncation. Never raises.
+    """
+    if not raw:
+        return None
+    stripped = raw.strip()
+    match = _TOOL_CALL_RE.match(stripped)
+    if match is None:
+        if _TOOL_BARE_RE.match(stripped):
+            return json.dumps({"tool": stripped, "args": {}})
+        return None
+    tool = match.group(1).strip()
+    inner = match.group(2).strip()
+    args: dict[str, Any] = {}
+    if inner:
+        if inner[0] == "{":
+            try:
+                loaded = json.loads(inner)
+            except (ValueError, TypeError):
+                loaded = None
+            if not isinstance(loaded, dict):
+                return None
+            args = loaded
+        else:
+            for token in _split_top_level_commas(inner):
+                token = token.strip()
+                if not token:
+                    continue
+                key, sep, val = token.partition("=")
+                key = key.strip()
+                if not sep or not key:
+                    return None
+                args[key] = _coerce_arg_scalar(val)
+    return json.dumps({"tool": tool, "args": args})
+
+
 class ReasoningTurnDecision(BaseModel):
     """Single-turn decision emitted by the reasoning engine."""
 
@@ -471,14 +571,24 @@ class ReasoningTurnDecision(BaseModel):
         try:
             parsed = _json.loads(raw)
         except _json.JSONDecodeError as exc:
-            raise ValueError(
-                f"action='tool_run' command must be valid JSON. Parse "
-                f"failed at line {exc.lineno} col {exc.colno}: "
-                f"{exc.msg}. Common cause: max_tokens truncation cut "
-                f"the emission mid-string. Command starts with: "
-                f"{raw[:60]!r} ends with: {raw[-60:]!r} (length="
-                f"{len(raw)})."
-            ) from exc
+            # The model routinely emits a complete, unambiguous natural
+            # function call (server.tool(k=v, ...) or server.tool({json}))
+            # instead of the canonical JSON. Coerce and normalize it before
+            # failing so a well-formed non-JSON emission does not burn the
+            # turn; only a genuinely unrecognizable/truncated command falls
+            # through to the truncation diagnostics below.
+            coerced = coerce_tool_command(raw)
+            if coerced is None:
+                raise ValueError(
+                    f"action='tool_run' command must be valid JSON. Parse "
+                    f"failed at line {exc.lineno} col {exc.colno}: "
+                    f"{exc.msg}. Common cause: max_tokens truncation cut "
+                    f"the emission mid-string. Command starts with: "
+                    f"{raw[:60]!r} ends with: {raw[-60:]!r} (length="
+                    f"{len(raw)})."
+                ) from exc
+            self.command = coerced
+            parsed = _json.loads(coerced)
 
         if not isinstance(parsed, dict):
             raise ValueError(
