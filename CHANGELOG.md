@@ -7,6 +7,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.13] - 2026-08-08 -- Remove superseded malware investigation workflow versions
+
+### Removed
+
+- Deleted the two dead malware investigation workflow definitions that the
+  task layer no longer bound: ``MALWARE_INVESTIGATE_V1`` (single-loop) in
+  ``workflow/definitions.py`` and ``MALWARE_INVESTIGATE_V2`` (kind-router
+  phase graph) in ``workflow/definitions_v2.py``. Every malware
+  investigation runs ``MALWARE_INVESTIGATE_HUB`` (the RFC-13 dispatch-hub
+  graph); the two older graphs were wired to nothing. The live phase
+  directives, the setup and loop builders, the target-readiness gate, and
+  the service factory that the hub imported from those files are now
+  defined directly in ``definitions_hub.py``, and both files plus the V2
+  test are deleted. This mirrors the VR cleanup in 0.3.11. Behavior is
+  unchanged: the hub graph, its four phases, and their activation
+  conditions are identical (4 phases, 11 states, byte-identical phase
+  specs).
+- Removed the ``v0.3.0`` through ``v0.3.11`` release tags from the
+  repository; ``v0.3.12`` is retained as the immediately prior release.
+
 ## [0.3.12] - 2026-08-08 -- A dispatch-hub stall is never completed
 
 ### Fixed
