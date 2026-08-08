@@ -160,6 +160,40 @@ class TestIsRetryable:
         exc = _AnyStatusError(status_code)
         assert _is_retryable(exc) is False
 
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "Error code: 400 - {'error': {'message': '[401]: Model "
+            "trinity-large-preview-free is not supported'}}",
+            "[cerebras/zai-glm-4.7] [403]: <!doctype html>",
+            "[nvidia/z-ai/glm-5.1] [410]: Gone",
+            "No credentials for provider: mistral",
+            "Provider openrouter circuit breaker is open",
+        ],
+    )
+    def test_combo_member_unavailable_4xx_is_retryable(self, message: str) -> None:
+        # A weighted-combo 4xx that names an upstream member
+        # failure -- a bracketed status like [410] or an availability marker
+        # -- must retry so the next attempt re-rolls to a healthy member,
+        # instead of stalling the investigation.
+        exc = _AnyStatusError(400, message)
+        assert _is_retryable(exc) is True
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "Invalid value for 'temperature': must be between 0 and 2",
+            "malformed request body",
+            "synthetic status 400",
+        ],
+    )
+    def test_genuine_malformed_4xx_stays_non_retryable(self, message: str) -> None:
+        # A real request-validation 4xx has no upstream-status bracket and
+        # no availability marker, so it stays fatal (a re-roll cannot fix a
+        # malformed request).
+        exc = _AnyStatusError(400, message)
+        assert _is_retryable(exc) is False
+
     def test_unknown_exception_defaults_to_retryable(self) -> None:
         # A vanilla RuntimeError with no status_code preserves the
         # historical "retry everything" behaviour so an unfamiliar

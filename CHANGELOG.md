@@ -7,6 +7,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-08-08 -- Retry combo-member provider failures instead of stalling
+
+### Fixed
+
+- An investigation stalled the moment a routed provider returned a 4xx
+  (e.g. `400: model ... is not supported`, `403`, `410 Gone`,
+  `no credentials`). When the model is a weighted routing combo, that 4xx
+  means the rolled-to member is unavailable, not that the request is
+  malformed, so `_is_retryable` now classifies these as retryable: the
+  message carries an upstream-status bracket (`[410]:`) or an availability
+  marker (`not supported`, `no credentials`, `credits`, `circuit breaker`,
+  `quota`, `banned`, `expired`, ...). The in-call retry then re-rolls the
+  combo to a different member, and a turn that still cannot land a live
+  member surfaces `retryable=True` so the workflow re-enqueues instead of
+  marking the investigation stalled. A genuine request-validation 4xx (bad
+  parameter or schema, no bracket/marker) stays non-retryable and still
+  fails fast. Net effect: investigations keep retrying across a degraded
+  or partially-available provider pool and resume automatically as members
+  recover, rather than dying on the first bad roll.
+
 ## [0.3.5] - 2026-08-08 -- Reasoning-loop dispatch recovery + output-cap default
 
 ### Fixed

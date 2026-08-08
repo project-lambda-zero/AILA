@@ -389,6 +389,26 @@ _STRUCTURED_JSON_MAX_ATTEMPTS = max(
 _RETRYABLE_4XX_STATUSES: frozenset[int] = frozenset({408, 425, 429})
 
 
+# 4xx provider-availability markers. When a weighted routing combo rolls
+# to an underlying model whose provider is down / unauthenticated / quota-
+# exhausted / circuit-broken, the gateway surfaces a 4xx whose message names
+# the availability failure rather than a malformed request. A retry re-rolls
+# the combo to a different member, so these are retryable even though a raw
+# 4xx is normally fatal. A genuine request-validation 4xx (bad parameter or
+# schema) does not match and stays non-retryable.
+_PROVIDER_AVAILABILITY_MARKERS: tuple[str, ...] = (
+    "not supported", "not available", "no credentials", "credits",
+    "insufficient", "circuit breaker", "banned", "expired", "unavailable",
+    "gone", "no healthy", "quota", "rate limit", "overloaded", "try again",
+    "temporarily", "no provider", "all providers",
+)
+# A weighted-combo routing gateway surfaces an upstream member failure
+# with a bracketed HTTP status, e.g. "[410]: ..." / "[cerebras/x] [403]: ...".
+# That bracket is the reliable "this rolled-to member is down -- re-roll"
+# signature and also catches opaque HTML error bodies the markers miss.
+_UPSTREAM_STATUS_RE = re.compile(r"\[\d{3}\]")
+
+
 def _is_retryable(exc: BaseException) -> bool:
     """Classify a provider or client exception as retryable vs non-retryable.
 
@@ -427,6 +447,16 @@ def _is_retryable(exc: BaseException) -> bool:
         if 500 <= status_code < 600:
             return True
         if 400 <= status_code < 500:
+            # A 4xx from a weighted combo usually means the rolled-to member
+            # is unavailable, not that the request is malformed. Retry so the
+            # next attempt re-rolls to a different (possibly healthy) member;
+            # a true request-validation 4xx does not match and stays fatal.
+            msg = str(exc).lower()
+            if (
+                _UPSTREAM_STATUS_RE.search(msg)
+                or any(marker in msg for marker in _PROVIDER_AVAILABILITY_MARKERS)
+            ):
+                return True
             return False
     return True
 
