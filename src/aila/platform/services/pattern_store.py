@@ -41,6 +41,7 @@ from aila.platform.contracts.enums import (
     PatternTrustTier,
 )
 from aila.platform.services.knowledge import KnowledgeService
+from aila.platform.services.knowledge_router import Route
 from aila.platform.uow import UnitOfWork
 from aila.storage.registry import ConfigRegistry
 
@@ -566,23 +567,35 @@ class PatternStoreBase:
             namespaces.append(f"{self._namespace_prefix}.team.{team_id}")
         namespaces.append(f"{self._namespace_prefix}.global")
 
-        # RFC-12 relevance floor. Passed to retrieve() so the KnowledgeService
-        # can drop below-floor rows at rank time (no wasted downstream work),
-        # AND re-applied to the returned hits below so a caller that swaps in
-        # a test double or a proxy KnowledgeService still gets floor
-        # enforcement at the pattern layer. Two co-operating layers keep
-        # low-similarity noise out of researcher prompts.
+        # RFC-12 relevance floor. Passed to retrieve_routed() as the
+        # ``min_score`` gate for the graph route's seed hybrid stage
+        # (SEED-time cosine-relevance cut). It is NOT re-applied to the
+        # returned hits below: RFC-14 routes this call through the PPR
+        # graph path, whose per-hit ``score`` is stationary PPR mass, not
+        # the 0.6vec+0.4fts hybrid figure the floor was calibrated on.
+        # Dropping graph-reached patterns by that floor would silently
+        # suppress the connected patterns the graph route exists to
+        # surface. The stage-1 structured filter above stays the
+        # authoritative pattern-layer gate; the seed stage inside
+        # retrieve_routed still honours the floor at its own layer.
         floor = await self._resolve_relevance_floor()
 
-        hits = await self._knowledge.retrieve(
+        # RFC-14: force the graph route. PPR with no edges degenerates to
+        # the hybrid seed ranking, so a sparse workspace behaves exactly
+        # like the pre-RFC-14 flat path; a linked workspace surfaces
+        # edge-connected patterns that a flat retrieve would miss.
+        routed = await self._knowledge.retrieve_routed(
             query=query,
             namespaces=namespaces,
+            route=Route.GRAPH,
             limit=k * 4,
             min_score=floor,
+            session=None,
         )
+        hits = routed.get("results", [])
 
-        # Build the positives-only result list preserving retrieve() order.
-        # Semantic hits whose pattern_id resolves to a NEGATIVE candidate
+        # Build the positives-only result list preserving retrieve_routed()
+        # order. Hits whose pattern_id resolves to a NEGATIVE candidate
         # are dropped silently -- the KB mirror still returns them (the
         # mirror has no trust_tier column) but the pattern layer strips
         # them here so they never reach a researcher prompt.
@@ -599,13 +612,16 @@ class PatternStoreBase:
             if pid not in positive_candidates:
                 continue
             score = float(hit.get("score") or 0.0)
-            if score < floor:
-                continue
+            # A hop > 0 hit was reached via an edge traversal from a
+            # seed; label it accordingly so downstream telemetry can
+            # separate graph-reached from seed-matched patterns.
+            hop = int(hit.get("hop") or 0)
+            matched_by = "graph" if hop > 0 else "both"
             results.append(
                 PatternRetrievalResult(
                     pattern=self._to_summary(positive_candidates[pid]),
                     score=score,
-                    matched_by="both",
+                    matched_by=matched_by,
                 ),
             )
             seen.add(pid)

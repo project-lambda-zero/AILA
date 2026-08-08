@@ -1,16 +1,22 @@
-"""RFC-12 tests for the pattern-store relevance floor.
+"""RFC-12 tests for the pattern-store relevance floor (RFC-14 wiring).
 
-Covers the two observable behaviours of the floor wiring:
+Covers the observable behaviours of the floor wiring after RFC-14
+routed pattern retrieval through the PPR graph path:
 
   1. ``_resolve_relevance_floor`` returns the module constant when the
      ConfigRegistry lookup yields None, and returns the env-override
      value when set. Pure; no DB required.
 
   2. ``applicable()`` passes the resolved floor as ``min_score`` to
-     KnowledgeService.retrieve AND drops below-floor hits from its own
-     return value even when a caller-supplied KnowledgeService (here a
-     stub that ignores ``min_score``) forwards them anyway. Requires
-     ``test_db`` to seed one active VR pattern for stage 1.
+     :meth:`KnowledgeService.retrieve_routed` so the SEED-time hybrid
+     stage inside the graph route still honours the operator floor.
+     Requires ``test_db`` to seed one active VR pattern for stage 1.
+
+RFC-14 removed the second-layer floor re-check inside the pattern
+service (PPR scores are stationary mass, not the 0.6vec+0.4fts figure
+the floor was calibrated on). The floor is still enforced at the
+knowledge layer for seed selection; the pattern layer no longer drops
+returned hits by that floor. That inversion is asserted here directly.
 """
 from __future__ import annotations
 
@@ -141,7 +147,19 @@ async def _seed_workspace_and_patterns(
         await uow.commit()
 
 
-def _fake_hit(pattern_id: str, score: float) -> dict[str, Any]:
+def _fake_routed_hit(
+    pattern_id: str,
+    score: float,
+    *,
+    hop: int = 0,
+) -> dict[str, Any]:
+    """Shape a fake ``retrieve_routed`` result row.
+
+    Mirrors the fields ``PatternStoreBase.applicable`` reads: ``score``
+    for ranking, ``metadata.pattern_id`` for the join back to the
+    structured pool, and ``hop`` for the RFC-14 ``matched_by`` branch
+    (graph-reached vs. seed-matched).
+    """
     return {
         "id": 0,
         "content": "irrelevant",
@@ -149,15 +167,31 @@ def _fake_hit(pattern_id: str, score: float) -> dict[str, Any]:
         "score": score,
         "vec_score": score,
         "fts_score": 0.0,
-        "source": "hybrid",
+        "source": "graph",
         "namespace": "vr.pattern.workspace.dummy",
+        "hop": hop,
+        "path": [],
+        "incoming_relation": None,
+        "incoming_weight": None,
     }
 
 
-async def test_applicable_passes_resolved_floor_to_retrieve(
+def _routed(hits: list[dict[str, Any]]) -> dict[str, Any]:
+    """Wrap hits in the ``retrieve_routed`` return envelope."""
+    return {
+        "status": "retrieved",
+        "route": "graph",
+        "query": "anything",
+        "count": len(hits),
+        "results": hits,
+        "hop_bound": 2,
+    }
+
+
+async def test_applicable_passes_resolved_floor_to_retrieve_routed(
     test_db, monkeypatch,
 ) -> None:
-    """The min_score kwarg passed to retrieve() matches the resolved floor."""
+    """The ``min_score`` kwarg passed to retrieve_routed matches the resolved floor."""
     monkeypatch.setenv(
         "AILA_PLATFORM_KNOWLEDGE_PATTERN_RELEVANCE_FLOOR",
         "0.5",
@@ -167,8 +201,8 @@ async def test_applicable_passes_resolved_floor_to_retrieve(
     await _seed_workspace_and_patterns(workspace_id, [pattern_id])
 
     knowledge = AsyncMock()
-    knowledge.retrieve = AsyncMock(
-        return_value=[_fake_hit(pattern_id, 0.9)],
+    knowledge.retrieve_routed = AsyncMock(
+        return_value=_routed([_fake_routed_hit(pattern_id, 0.9)]),
     )
     store = PatternStore(knowledge)
 
@@ -178,32 +212,42 @@ async def test_applicable_passes_resolved_floor_to_retrieve(
         query="anything",
     )
 
-    knowledge.retrieve.assert_awaited_once()
-    call = knowledge.retrieve.await_args
+    knowledge.retrieve_routed.assert_awaited_once()
+    call = knowledge.retrieve_routed.await_args
     assert call.kwargs["min_score"] == pytest.approx(0.5)
     assert call.kwargs["namespaces"][0] == f"vr.pattern.workspace.{workspace_id}"
     assert call.kwargs["namespaces"][-1] == "vr.pattern.global"
+    # RFC-14: the graph route is the day-1 mechanism, always.
+    assert str(call.kwargs["route"]) == "graph" or getattr(
+        call.kwargs["route"], "value", None,
+    ) == "graph"
 
 
-async def test_applicable_drops_below_floor_hits(
+async def test_applicable_does_not_reapply_floor_to_graph_hits(
     test_db, monkeypatch,
 ) -> None:
-    """A stub retrieve that returns mixed scores still yields only above-floor hits."""
+    """RFC-14: PPR-scored graph hits are not dropped by the cosine floor.
+
+    The floor still gates the seed hybrid stage INSIDE retrieve_routed
+    (min_score kwarg above), but a hit that made it through the routed
+    envelope carries a stationary PPR score, not a hybrid cosine score,
+    and MUST NOT be re-dropped by the same cosine-calibrated floor.
+    """
     monkeypatch.setenv(
         "AILA_PLATFORM_KNOWLEDGE_PATTERN_RELEVANCE_FLOOR",
         "0.5",
     )
     workspace_id = str(uuid4())
-    keeper_id = str(uuid4())
-    dropper_id = str(uuid4())
-    await _seed_workspace_and_patterns(workspace_id, [keeper_id, dropper_id])
+    high_id = str(uuid4())
+    low_id = str(uuid4())
+    await _seed_workspace_and_patterns(workspace_id, [high_id, low_id])
 
     knowledge = AsyncMock()
-    knowledge.retrieve = AsyncMock(
-        return_value=[
-            _fake_hit(keeper_id, 0.85),
-            _fake_hit(dropper_id, 0.20),
-        ],
+    knowledge.retrieve_routed = AsyncMock(
+        return_value=_routed([
+            _fake_routed_hit(high_id, 0.85, hop=0),
+            _fake_routed_hit(low_id, 0.20, hop=1),
+        ]),
     )
     store = PatternStore(knowledge)
 
@@ -213,13 +257,11 @@ async def test_applicable_drops_below_floor_hits(
         query="anything",
     )
 
-    semantic_ids = {r.pattern.id for r in results if r.matched_by == "both"}
-    assert keeper_id in semantic_ids, (
-        "keeper (score 0.85, above floor 0.5) must reach the researcher prompt"
-    )
-    assert dropper_id not in semantic_ids, (
-        "dropper (score 0.20, below floor 0.5) must be stripped from the "
-        "semantic-hit path even when the retrieve stub forwards it"
+    ids = {r.pattern.id for r in results}
+    assert high_id in ids, "seed-matched pattern must reach the researcher prompt"
+    assert low_id in ids, (
+        "graph-reached pattern with a low PPR mass MUST NOT be dropped by "
+        "the cosine-calibrated relevance floor (RFC-14)"
     )
 
 
@@ -236,8 +278,8 @@ async def test_applicable_default_floor_when_env_unset(
     await _seed_workspace_and_patterns(workspace_id, [pattern_id])
 
     knowledge = AsyncMock()
-    knowledge.retrieve = AsyncMock(
-        return_value=[_fake_hit(pattern_id, 0.9)],
+    knowledge.retrieve_routed = AsyncMock(
+        return_value=_routed([_fake_routed_hit(pattern_id, 0.9)]),
     )
     store = PatternStore(knowledge)
 
@@ -247,8 +289,8 @@ async def test_applicable_default_floor_when_env_unset(
         query="anything",
     )
 
-    knowledge.retrieve.assert_awaited_once()
-    passed = knowledge.retrieve.await_args.kwargs["min_score"]
+    knowledge.retrieve_routed.assert_awaited_once()
+    passed = knowledge.retrieve_routed.await_args.kwargs["min_score"]
     # The passed floor must resolve to the module default when no override
     # is present; both come from PATTERN_RELEVANCE_FLOOR_DEFAULT so a
     # future schema-field addition keeps this invariant.
