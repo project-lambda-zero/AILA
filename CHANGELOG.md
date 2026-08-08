@@ -7,6 +7,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.12] - 2026-08-08 -- A dispatch-hub stall is never completed
+
+### Fixed
+
+- A within-window dispatch-hub stall (``hub_stalled``) was mapped to
+  COMPLETED by ``resolve_final_status``'s default fallthrough, so an
+  investigation the hub could not advance -- branches cut mid-audit with
+  live, unresolved hypotheses -- was sealed as ``completed`` with zero
+  outcomes, hiding open leads behind a blank row. Both ``hub_stalled`` and
+  the escalated ``hub_stalled_timeout`` now resolve to ``STALLED``.
+  Operator invariant: a stalled investigation is never interpreted as
+  completed; its only forward move is resume (re-enqueue). Genuine
+  completions (``terminal_submit``, ``max_turns``, clean ``hub_complete``)
+  are unaffected.
+
 ## [0.3.11] - 2026-08-08 -- Remove superseded VR investigation workflow versions
 
 ### Removed
