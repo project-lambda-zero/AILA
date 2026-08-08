@@ -442,8 +442,14 @@ async def test_routed_graph_path_returns_gated_traversal(stub_service) -> None:
         assert hit["provenance"]["model_id"] == "stub-provider"
 
 
-async def test_routed_graph_path_honours_explicit_max_hops(stub_service) -> None:
-    """max_hops on retrieve_routed passes through to traverse()."""
+async def test_routed_graph_path_reports_max_hops_in_hop_bound(stub_service) -> None:
+    """RFC-14 PPR: max_hops on retrieve_routed still reports as hop_bound.
+
+    The graph route now ranks the induced subgraph by Personalized-PageRank
+    (no strict hop cut-off), so the ``max_hops`` argument is retained only
+    as a caller-visible reporting knob. It surfaces on ``result['hop_bound']``
+    verbatim; the traversal itself is bounded by ``knowledge_graph_ppr_max_nodes``.
+    """
     service, _ = stub_service
     ids = await _build_chain()
     routed = await service.retrieve_routed(
@@ -455,10 +461,12 @@ async def test_routed_graph_path_honours_explicit_max_hops(stub_service) -> None
     )
     assert routed["hop_bound"] == 1
     hit_ids = {int(r["id"]) for r in routed["results"]}
-    # Seed alone -> chain[0]; hop 1 -> chain[1]. chain[2:] must be excluded.
+    # PPR reaches every connected chain node; the seed still ranks first.
     assert ids[0] in hit_ids
-    assert ids[1] in hit_ids
-    assert not set(ids[2:]) & hit_ids
+    # Ranking is by ppr mass, not hop distance: results carry a ppr field.
+    for hit in routed["results"]:
+        assert hit["source"] == "graph"
+        assert hit["ppr"] is not None
 
 
 # ---------------------------------------------------------------------------

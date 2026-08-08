@@ -455,13 +455,17 @@ def _stable_core_hit(entry: dict[str, Any], index: int) -> dict[str, Any]:
 def _graph_hit(node: dict[str, Any]) -> dict[str, Any]:
     """Adapt a :class:`TraversalHit` mapping into the hit shape callers expect.
 
-    Score decays with hop distance (1.0 at the seed, 0.5 at hop 1, and
-    so on) so the caller can still sort by relevance. The hop, path,
-    and incoming edge label are preserved so a UI can render the
-    traversal chain that reached the row.
+    Score is the Personalized-PageRank mass (RFC-14) when the node carries
+    a ``ppr`` key; otherwise it falls back to hop-decay (1.0 at the seed,
+    0.5 at hop 1, and so on) so the retrieval-time caller still sorts by
+    relevance. The hop, path, and incoming edge label are preserved so a
+    UI can render the traversal chain that reached the row.
     """
     hop = int(node.get("hop") or 0)
-    score = round(1.0 / float(1 + hop), 6)
+    if "ppr" in node:
+        score = round(float(node["ppr"]), 6)
+    else:
+        score = round(1.0 / float(1 + hop), 6)
     return {
         "id": int(node["id"]),
         "content": node.get("content") or "",
@@ -475,6 +479,7 @@ def _graph_hit(node: dict[str, Any]) -> dict[str, Any]:
         "path": list(node.get("path") or []),
         "incoming_relation": node.get("incoming_relation"),
         "incoming_weight": node.get("incoming_weight"),
+        "ppr": float(node["ppr"]) if "ppr" in node else None,
     }
 
 
@@ -804,16 +809,23 @@ class KnowledgeService:
                 operation = "inserted"
 
         neighbor_edge_count = 0
+        entity_edge_count = 0
         if link_neighbors and entry_id is not None:
             neighbor_edge_count = await self.link_semantic_neighbors(
                 entry_id, embedding_list, namespace, session,
             )
+            stamped_entities = entry_meta.get("entities")
+            if isinstance(stamped_entities, list) and stamped_entities:
+                entity_edge_count = await self.link_entity_neighbors(
+                    entry_id, stamped_entities, namespace, session,
+                )
 
         return {
             "status": "stored",
             "operation": operation,
             "entry_id": entry_id,
             "neighbor_edge_count": neighbor_edge_count,
+            "entity_edge_count": entity_edge_count,
             "namespace": namespace,
             "embedding_dim": self._provider.dimension,
             "content_length": len(content),
@@ -979,6 +991,87 @@ class KnowledgeService:
             )
             await graph.add_edge(
                 row.id, entry_id, "related", weight=similarity, session=session,
+            )
+            written += 2
+        return written
+
+    async def link_entity_neighbors(
+        self,
+        entry_id: int,
+        entities: list[str],
+        namespace: str,
+        session: AsyncSession | None,
+    ) -> int:
+        """Join an entry to same-namespace neighbours sharing a security id.
+
+        RFC-14 graph populator: for every same-namespace candidate whose
+        ``entry_metadata['entities']`` list intersects the caller-supplied
+        ``entities``, a bidirectional ``shares_entity`` edge is written
+        with weight resolved from ``knowledge_graph_entity_edge_weight``
+        (fallback 0.8 on any read error). Idempotent:
+        :meth:`KnowledgeGraph.add_edge` upserts on
+        ``(src, dst, relation)`` so a re-ingest refreshes the edge
+        instead of proliferating rows. Candidate scan is capped to the
+        128 most-recent same-namespace entries to keep the ingest cost
+        bounded on a growing corpus. Imported lazily to keep the
+        knowledge to knowledge_graph dependency one-directional.
+        """
+        if not entities:
+            return 0
+        wanted = {str(e) for e in entities}
+        weight = 0.8
+        try:
+            raw_weight = await ConfigRegistry().get(
+                "platform", "knowledge_graph_entity_edge_weight"
+            )
+            if raw_weight is not None:
+                weight = float(raw_weight)
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
+            _log.debug(
+                "entity edge weight config read failed; using 0.8 default: %s", exc,
+            )
+        async with _session_or_new(session, self._team_context) as (sess, _owns):
+            stmt = (
+                select(
+                    KnowledgeEntryRecord.id,
+                    KnowledgeEntryRecord.entry_metadata,
+                )
+                .where(
+                    KnowledgeEntryRecord.namespace == namespace,
+                    KnowledgeEntryRecord.id != entry_id,
+                    KnowledgeEntryRecord.entry_metadata.is_not(None),
+                )
+                .order_by(KnowledgeEntryRecord.id.desc())
+                .limit(128)
+            )
+            rows = (await sess.exec(stmt)).all()
+        from .knowledge_graph import KnowledgeGraph
+        graph = KnowledgeGraph()
+        written = 0
+        for row in rows:
+            raw_meta = row.entry_metadata
+            if not raw_meta:
+                continue
+            try:
+                meta = json.loads(raw_meta)
+            except (TypeError, ValueError) as exc:
+                _log.debug(
+                    "entity neighbor: unparseable entry_metadata on %s: %s",
+                    row.id, exc,
+                )
+                continue
+            candidate_entities = meta.get("entities") if isinstance(meta, dict) else None
+            if not isinstance(candidate_entities, list):
+                continue
+            if not wanted.intersection({str(e) for e in candidate_entities}):
+                continue
+            await graph.add_edge(
+                entry_id, int(row.id), "shares_entity",
+                weight=weight, session=session,
+            )
+            await graph.add_edge(
+                int(row.id), entry_id, "shares_entity",
+                weight=weight, session=session,
             )
             written += 2
         return written
@@ -1185,6 +1278,51 @@ class KnowledgeService:
                 half_life = 0.0
         return (weight, half_life)
 
+    async def _resolve_ppr_config(self) -> tuple[float, int, int]:
+        """Resolve RFC-14 PPR knobs from ConfigRegistry.
+
+        Returns ``(damping, max_iter, max_nodes)``. Falls back to the
+        ``PlatformConfigSchema`` defaults (0.5 / 30 / 128) on any read
+        failure or malformed value so a fresh install or a bad DB row
+        leaves the graph route usable rather than raising into the
+        retrieval hot path.
+        """
+        damping = 0.5
+        max_iter = 30
+        max_nodes = 128
+        try:
+            registry = ConfigRegistry()
+            raw_damping = await registry.get(
+                "platform", "knowledge_graph_ppr_damping"
+            )
+            raw_max_iter = await registry.get(
+                "platform", "knowledge_graph_ppr_max_iter"
+            )
+            raw_max_nodes = await registry.get(
+                "platform", "knowledge_graph_ppr_max_nodes"
+            )
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
+            _log.debug(
+                "PPR config read failed; using schema defaults: %s", exc,
+            )
+            return (damping, max_iter, max_nodes)
+        if raw_damping is not None:
+            try:
+                damping = float(raw_damping)
+            except (TypeError, ValueError):
+                damping = 0.5
+        if raw_max_iter is not None:
+            try:
+                max_iter = int(raw_max_iter)
+            except (TypeError, ValueError):
+                max_iter = 30
+        if raw_max_nodes is not None:
+            try:
+                max_nodes = int(raw_max_nodes)
+            except (TypeError, ValueError):
+                max_nodes = 128
+        return (damping, max_iter, max_nodes)
+
     async def retrieve_routed(
         self,
         query: str,
@@ -1222,6 +1360,13 @@ class KnowledgeService:
         from .knowledge_router import KnowledgeRouter, Route
         from .knowledge_stable_core import STABLE_CORE_TOKEN_PREFIX
 
+        # RFC-12 Phase 5 trust weight (also the target-derived scale fed
+        # into RFC-14 PPR propagation on the graph route). Resolved once
+        # up front so the graph branch can pass ``weight`` into the
+        # random-walk math AND the post-branch overlay can skip the
+        # second application to avoid double-weighting graph hits.
+        weight, half_life = await self._resolve_trust_decay_config()
+
         chosen: Route
         if route is None:
             chosen = KnowledgeRouter().classify(query)
@@ -1245,12 +1390,14 @@ class KnowledgeService:
             ]
         elif chosen is Route.GRAPH:
             hop_bound = int(max_hops) if max_hops is not None else DEFAULT_MAX_HOPS
-            # Seed the traversal with a focused hybrid lookup so the
-            # BFS entrypoints stay small; the RFC's graph path is
-            # \"given a seed match, follow edges N hops\", singular,
-            # not a wide fan-out. A caller wanting a broader entry
-            # set passes an explicit ``graph_seed_limit`` value.
-            seed_limit = max(1, min(int(graph_seed_limit), limit))
+            # RFC-14: seed the walk with a dense retrieval, then rank the
+            # induced subgraph by Personalized-PageRank. The seed set is
+            # sized to ``limit`` so PPR has a real seed distribution to
+            # propagate from (a single seed collapses to hop-decay). The
+            # ``graph_seed_limit`` argument is preserved as an explicit
+            # caller override for the seed set only.
+            explicit_override = int(graph_seed_limit) > 1
+            seed_limit = int(graph_seed_limit) if explicit_override else max(1, int(limit))
             seed_hits = await self.retrieve(
                 query=query,
                 namespaces=namespaces,
@@ -1259,13 +1406,22 @@ class KnowledgeService:
                 min_score=min_score,
                 session=session,
             )
-            seed_ids = [int(h["id"]) for h in seed_hits if h.get("id") is not None]
+            seeds: dict[int, float] = {
+                int(h["id"]): float(h.get("score") or 0.0)
+                for h in seed_hits
+                if h.get("id") is not None
+            }
+            damping, ppr_max_iter, ppr_max_nodes = await self._resolve_ppr_config()
             traversal: list[dict[str, Any]] = []
-            if seed_ids:
+            if seeds:
                 traversal = list(
-                    await KnowledgeGraph().traverse(
-                        seeds=seed_ids,
-                        max_hops=hop_bound,
+                    await KnowledgeGraph().personalized_pagerank(
+                        seeds=seeds,
+                        relations=["related", "shares_entity", "adjacent_chunk"],
+                        damping=damping,
+                        max_iter=ppr_max_iter,
+                        target_derived_weight=weight,
+                        max_nodes=ppr_max_nodes,
                         session=session,
                     ),
                 )
@@ -1294,11 +1450,14 @@ class KnowledgeService:
         # decay run on every routed retrieval so the shipped defaults take
         # effect. _apply_trust_decay short-circuits to the input list when the
         # operator resets both knobs to identity (weight 1.0, half-life <= 0),
-        # so ranking is byte-identical in that case.
-        weight, half_life = await self._resolve_trust_decay_config()
+        # so ranking is byte-identical in that case. The graph route already
+        # applies ``weight`` INSIDE the RFC-14 PPR propagation, so overlay it
+        # with an identity weight (1.0) here to avoid double-weighting; only
+        # temporal decay still runs on graph hits.
+        overlay_weight = 1.0 if chosen is Route.GRAPH else weight
         gated = _apply_trust_decay(
             gated,
-            target_derived_weight=weight,
+            target_derived_weight=overlay_weight,
             decay_half_life_hours=half_life,
             floor=min_score,
             now=utc_now(),

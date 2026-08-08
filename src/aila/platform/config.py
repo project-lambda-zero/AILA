@@ -277,6 +277,24 @@ class PlatformConfigSchema(BaseModel):
     # quarter-old pattern is halved.
     knowledge_decay_half_life_hours: float = 2160.0
 
+    # RFC-14 platform graph retrieval (Personalized PageRank). The graph
+    # route in KnowledgeService.retrieve_routed and the pattern retrieval
+    # in PatternStoreBase.applicable rank by PPR over the
+    # knowledge_entry_edges graph seeded from the hybrid lookup. These are
+    # tuning knobs, not an on/off switch: PPR is the graph route's ranking
+    # mechanism by construction, and PPR with no edges degenerates to the
+    # seed (hybrid) ranking, so it is always safe to run. damping is the
+    # restart probability weight (higher = spread farther from the seeds;
+    # 0.5 keeps mass near the query-relevant seeds). max_nodes bounds the
+    # induced subgraph so a pathological fan-out cannot stall a query.
+    # entity_edge_weight is the weight of the shares_entity edges
+    # KnowledgeService.link_entity_neighbors writes between entries that
+    # share an extracted security identifier (CVE / CWE / ATT&CK / MASVS).
+    knowledge_graph_ppr_damping: float = 0.5
+    knowledge_graph_ppr_max_iter: int = 30
+    knowledge_graph_ppr_max_nodes: int = 128
+    knowledge_graph_entity_edge_weight: float = 0.8
+
     # RFC-10 promotion quorum. The lifecycle controller counts DISTINCT
     # actor strings on ``approved`` transitions for a (key, version) pair
     # and refuses to flip the production alias until that count meets or

@@ -7,6 +7,44 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-07 -- Platform graph retrieval via Personalized PageRank (RFC-14)
+
+### Added
+
+- Platform knowledge retrieval gains a Personalized PageRank (PPR) graph
+  route (RFC-14, #73). The graph route in
+  `KnowledgeService.retrieve_routed` ranks by PPR over the
+  `knowledge_entry_edges` graph, seeded from the hybrid lookup, so a
+  matching entry surfaces its graph-connected neighbors (same CVE family,
+  shared component, adjacent chunks) instead of flat top-k. PPR with no
+  edges degenerates to the hybrid seed ranking, so a sparse corpus behaves
+  as before.
+- `KnowledgeService.link_entity_neighbors` writes bidirectional
+  `shares_entity` edges between knowledge entries that share an extracted
+  security identifier (CVE / CWE / CAPEC / ATT&CK / MASVS) at write time,
+  so curated writeups form a navigable per-workspace subgraph the PPR
+  route traverses. Derived structurally from the entity extractor with no
+  model calls and no relation extraction.
+
+### Changed
+
+- Pattern retrieval (`PatternStoreBase.applicable`, inherited by every
+  module pattern store) routes through the PPR graph path. The structured
+  stage-1 gate (active status, scope chain, team scope, trust-tier
+  partition) remains the authoritative filter; the cosine relevance floor
+  is forwarded to the hybrid seed stage but no longer re-applied to
+  PPR-scored graph hits.
+- Graph propagation is trust-weighted: target-derived (untrusted, burned
+  off tool output) nodes receive less PPR mass, extending the RFC-08 (#32)
+  and RFC-12 (#49) poisoning defense into the graph layer. The post-rank
+  trust overlay is not double-applied on the graph route.
+- The PPR graph route is the default with no on/off switch and no
+  breadth-first fallback; the prior hop-decay traversal is no longer used
+  by the route. Tuning knobs live in `PlatformConfigSchema`
+  (`knowledge_graph_ppr_damping`, `knowledge_graph_ppr_max_iter`,
+  `knowledge_graph_ppr_max_nodes`, `knowledge_graph_entity_edge_weight`)
+  and self-seed on startup. No migration; the edge table already exists.
+
 ## [0.3.1] - 2026-08-07 -- Activate dormant RFC features in the wiring; dashboard, evidence graph, cost, and dependency-security work
 
 ### Added

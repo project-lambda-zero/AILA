@@ -43,7 +43,11 @@ from sqlmodel import Field, SQLModel, select
 
 from ...platform.contracts._common import utc_now
 from ...storage.db_models import KnowledgeEntryRecord
-from .knowledge import _session_or_new
+from .knowledge import (
+    TRUST_TIER_TARGET_DERIVED,
+    _session_or_new,
+    trust_tier_from_namespace,
+)
 
 __all__ = [
     "DEFAULT_MAX_HOPS",
@@ -59,6 +63,77 @@ __all__ = [
 # connected corpus from stalling a single query.
 DEFAULT_MAX_HOPS: int = 2
 DEFAULT_MAX_NODES: int = 128
+
+
+def _ppr_iterate(
+    node_ids: list[int],
+    out_edges: dict[int, list[tuple[int, float]]],
+    personalization: dict[int, float],
+    damping: float,
+    max_iter: int,
+    tol: float,
+) -> dict[int, float]:
+    """Personalized PageRank power iteration -- pure math, no DB, no async.
+
+    Standard formulation over the induced subgraph. ``out_edges`` maps a
+    source node to its ``(dst, weight)`` list; weights are the transition
+    weights the caller decided (already scaled by any trust factor).
+    ``personalization`` is the restart distribution, which MUST sum to 1
+    over ``node_ids`` and MUST be non-negative -- the caller is responsible
+    for that normalization so this helper stays a pure iterator.
+
+    Each iteration: ``r' = damping * (M . r) + (1-damping) * p``. Dangling
+    nodes (no positive out-edge weight) redistribute their mass through the
+    personalization vector so probability is conserved. Stops when the L1
+    delta between successive iterations drops below ``tol`` or after
+    ``max_iter`` iterations, whichever comes first. Returns the stationary
+    mass keyed by entry id.
+    """
+    if not node_ids:
+        return {}
+    # Precompute out-weight sum per source for column normalization.
+    out_sum: dict[int, float] = {}
+    for n in node_ids:
+        total = 0.0
+        for _dst, w in out_edges.get(n, ()):
+            if w > 0.0:
+                total += w
+        out_sum[n] = total
+
+    p: dict[int, float] = {n: float(personalization.get(n, 0.0)) for n in node_ids}
+    r: dict[int, float] = dict(p)
+    teleport = 1.0 - float(damping)
+    d = float(damping)
+
+    for _ in range(int(max_iter)):
+        # Dangling mass at the start of this iteration -- redistributed
+        # through the personalization vector so total mass is conserved.
+        dangling_mass = 0.0
+        for n in node_ids:
+            if out_sum[n] <= 0.0:
+                dangling_mass += r[n]
+        dangling_share = d * dangling_mass
+
+        new_r: dict[int, float] = dict.fromkeys(node_ids, 0.0)
+        for src in node_ids:
+            s = out_sum[src]
+            if s <= 0.0:
+                continue
+            share = d * r[src] / s
+            for dst, w in out_edges.get(src, ()):
+                if w <= 0.0:
+                    continue
+                new_r[dst] += share * w
+        for n in node_ids:
+            new_r[n] += teleport * p[n] + dangling_share * p[n]
+
+        delta = 0.0
+        for n in node_ids:
+            delta += abs(new_r[n] - r[n])
+        r = new_r
+        if delta < tol:
+            break
+    return r
 
 
 class KnowledgeEntryEdge(SQLModel, table=True):
@@ -318,4 +393,210 @@ class KnowledgeGraph:
                 incoming_weight=in_weight,
             )
             results.append(hit)
+        return results
+
+    async def personalized_pagerank(
+        self,
+        *,
+        seeds: dict[int, float],
+        relations: list[str] | None = None,
+        damping: float = 0.5,
+        max_iter: int = 30,
+        tol: float = 1e-4,
+        target_derived_weight: float = 1.0,
+        max_nodes: int = DEFAULT_MAX_NODES,
+        session: AsyncSession | None = None,
+    ) -> list[TraversalHit]:
+        """Personalized PageRank over the induced subgraph from ``seeds``.
+
+        Real PPR, not a repackaged BFS: BFS-induces a bounded subgraph from
+        the seed set (capped at ``max_nodes``, optionally scoped to
+        ``relations``), collects every directed edge whose endpoints are
+        both in the induced set, then runs a pure-Python power iteration to
+        produce a stationary mass per node. The RFC-12 trust tier scales
+        the weight flowing INTO each node by ``target_derived_weight`` when
+        the destination is a target-derived observation, so trusted
+        neighbours drown out untrusted ones without a separate rerank pass;
+        seeds get the same per-node scaling applied to their restart mass.
+
+        Empty ``seeds`` returns ``[]``. Seeds with no outgoing edges fall
+        out of the math cleanly: dangling mass redistributes through the
+        personalization vector, so a lone seed ends with its normalized
+        restart weight and gets ranked accordingly. Row hydration matches
+        :meth:`traverse` so every hit carries the same shape plus a
+        ``ppr`` key. Results are sorted by ``ppr`` descending.
+        """
+        if not seeds:
+            return []
+        if damping < 0.0 or damping > 1.0:
+            raise ValueError(f"damping must be in [0, 1], got {damping}")
+        if max_iter <= 0:
+            raise ValueError(f"max_iter must be > 0, got {max_iter}")
+        if max_nodes <= 0:
+            raise ValueError(f"max_nodes must be > 0, got {max_nodes}")
+
+        # BFS induction over ``relations`` capped at ``max_nodes`` -- same
+        # frontier walk as ``traverse``, minus the hop bound, since PPR
+        # scores across the whole induced subgraph.
+        seen_ids: set[int] = set()
+        queue: deque[tuple[int, int, list[int], str | None, float | None]] = deque()
+        for seed_id in seeds:
+            sid = int(seed_id)
+            if sid in seen_ids:
+                continue
+            seen_ids.add(sid)
+            queue.append((sid, 0, [sid], None, None))
+        ordered_ids: list[tuple[int, int, list[int], str | None, float | None]] = list(queue)
+
+        async with _session_or_new(session) as (sess, _owns):
+            while queue and len(seen_ids) < max_nodes:
+                entry_id, hop, path, _in_rel, _in_weight = queue.popleft()
+                edge_stmt = select(
+                    KnowledgeEntryEdge.dst_id,
+                    KnowledgeEntryEdge.relation,
+                    KnowledgeEntryEdge.weight,
+                ).where(KnowledgeEntryEdge.src_id == entry_id)
+                if relations:
+                    edge_stmt = edge_stmt.where(
+                        KnowledgeEntryEdge.relation.in_(relations),
+                    )
+                edge_rows = (await sess.exec(edge_stmt)).all()
+                for edge in edge_rows:
+                    nxt = int(edge.dst_id)
+                    if nxt in seen_ids:
+                        continue
+                    if len(seen_ids) >= max_nodes:
+                        break
+                    seen_ids.add(nxt)
+                    triple = (
+                        nxt,
+                        hop + 1,
+                        [*path, nxt],
+                        str(edge.relation),
+                        float(edge.weight),
+                    )
+                    queue.append(triple)
+                    ordered_ids.append(triple)
+
+            if not ordered_ids:
+                return []
+
+            induced_ids = [t[0] for t in ordered_ids]
+
+            # Collect the induced edge set (both endpoints in the frontier).
+            # BFS only follows out-edges from the expanding frontier, so
+            # cross-edges from later hops back to earlier hops are missed
+            # without this second pass -- PPR needs every directed edge.
+            induced_edge_stmt = select(
+                KnowledgeEntryEdge.src_id,
+                KnowledgeEntryEdge.dst_id,
+                KnowledgeEntryEdge.relation,
+                KnowledgeEntryEdge.weight,
+            ).where(
+                KnowledgeEntryEdge.src_id.in_(induced_ids),
+                KnowledgeEntryEdge.dst_id.in_(induced_ids),
+            )
+            if relations:
+                induced_edge_stmt = induced_edge_stmt.where(
+                    KnowledgeEntryEdge.relation.in_(relations),
+                )
+            induced_edges = (await sess.exec(induced_edge_stmt)).all()
+
+            row_stmt = select(
+                KnowledgeEntryRecord.id,
+                KnowledgeEntryRecord.namespace,
+                KnowledgeEntryRecord.content,
+                KnowledgeEntryRecord.entry_metadata,
+                KnowledgeEntryRecord.model_id,
+                KnowledgeEntryRecord.content_hash,
+                KnowledgeEntryRecord.source_type,
+                KnowledgeEntryRecord.created_at,
+                KnowledgeEntryRecord.updated_at,
+            ).where(
+                KnowledgeEntryRecord.id.in_(induced_ids),
+            )
+            row_hits = (await sess.exec(row_stmt)).all()
+
+        rows_by_id: dict[int, Any] = {int(r.id): r for r in row_hits}
+
+        # Trust factor per induced node: target-derived rows get the
+        # ``target_derived_weight`` down-weight applied to their inbound
+        # transition mass AND to their seed restart share; verified rows
+        # keep factor 1.0.
+        trust_factor: dict[int, float] = {}
+        for entry_id in induced_ids:
+            row = rows_by_id.get(entry_id)
+            namespace = row.namespace if row is not None else None
+            tier = trust_tier_from_namespace(namespace)
+            trust_factor[entry_id] = (
+                float(target_derived_weight)
+                if tier == TRUST_TIER_TARGET_DERIVED
+                else 1.0
+            )
+
+        # Build out-edges with the destination trust factor folded into
+        # the transition weight. A zero factor drops the edge entirely.
+        out_edges: dict[int, list[tuple[int, float]]] = {n: [] for n in induced_ids}
+        for edge in induced_edges:
+            src = int(edge.src_id)
+            dst = int(edge.dst_id)
+            w = float(edge.weight) * trust_factor.get(dst, 1.0)
+            if w <= 0.0:
+                continue
+            out_edges[src].append((dst, w))
+
+        # Personalization: seed weight scaled by seed trust factor,
+        # normalized to sum 1 over the induced set. Seeds outside the
+        # induced set (impossible here since we seed the BFS with them,
+        # but defensive) contribute nothing.
+        personalization: dict[int, float] = dict.fromkeys(induced_ids, 0.0)
+        for seed_id, seed_w in seeds.items():
+            sid = int(seed_id)
+            if sid not in personalization:
+                continue
+            weight = max(0.0, float(seed_w)) * trust_factor.get(sid, 1.0)
+            personalization[sid] += weight
+        total_p = sum(personalization.values())
+        if total_p <= 0.0:
+            # Every seed was zero-weight (or trust-zeroed). No restart
+            # mass means PPR is undefined; return empty rather than emit
+            # meaningless uniform hits.
+            return []
+        personalization = {n: v / total_p for n, v in personalization.items()}
+
+        mass = _ppr_iterate(
+            node_ids=induced_ids,
+            out_edges=out_edges,
+            personalization=personalization,
+            damping=float(damping),
+            max_iter=int(max_iter),
+            tol=float(tol),
+        )
+
+        results: list[TraversalHit] = []
+        for entry_id, hop, path, in_rel, in_weight in ordered_ids:
+            row = rows_by_id.get(entry_id)
+            if row is None:
+                # Same race window traverse guards: the row vanished
+                # between edge lookup and hydration. Skip -- emitting a
+                # hit without content would be dishonest.
+                continue
+            hit = TraversalHit(
+                id=int(row.id),
+                namespace=row.namespace,
+                content=row.content,
+                entry_metadata=row.entry_metadata,
+                model_id=row.model_id,
+                content_hash=row.content_hash,
+                source_type=row.source_type,
+                created_at=row.created_at,
+                updated_at=row.updated_at,
+                hop=hop,
+                path=list(path),
+                incoming_relation=in_rel,
+                incoming_weight=in_weight,
+                ppr=float(mass.get(entry_id, 0.0)),
+            )
+            results.append(hit)
+        results.sort(key=lambda h: h["ppr"], reverse=True)
         return results
