@@ -32,7 +32,11 @@ from aila.platform.uow import UnitOfWork
 
 _log = logging.getLogger(__name__)
 
-__all__ = ["close_orphan_branches_on_terminal"]
+__all__ = [
+    "close_orphan_branches_on_terminal",
+    "count_live_branches",
+    "purge_abandoned_branches",
+]
 
 
 # Branch statuses we forcibly close when their investigation goes terminal.
@@ -98,3 +102,76 @@ async def close_orphan_branches_on_terminal(
             investigation_id, reason, rowcount,
         )
     return rowcount
+
+
+async def purge_abandoned_branches(
+    uow: UnitOfWork,
+    investigation_id: str,
+    *,
+    branch_table: str,
+    message_table: str,
+) -> int:
+    """Hard-delete every abandoned branch under ``investigation_id``.
+
+    Messages and parent-branch FK refs are cleaned first so the DELETE
+    does not violate constraints. Returns the number of branches removed.
+
+    Called from the platform reopen path and the persona spawner so
+    stall/reopen cycles do not accumulate dead branches. Modules never
+    call this directly -- the platform lifecycle layer owns it.
+    """
+    # Null parent refs pointing at abandoned branches.
+    await uow.session.execute(
+        _sql_text(
+            f"UPDATE {branch_table} "
+            "SET parent_branch_id = NULL "
+            "WHERE parent_branch_id IN ("
+            f"  SELECT id FROM {branch_table} "
+            "  WHERE investigation_id = :iid AND status = 'abandoned'"
+            ")"
+        ).bindparams(iid=investigation_id),
+    )
+    # Delete messages on abandoned branches.
+    await uow.session.execute(
+        _sql_text(
+            f"DELETE FROM {message_table} "
+            "WHERE branch_id IN ("
+            f"  SELECT id FROM {branch_table} "
+            "  WHERE investigation_id = :iid AND status = 'abandoned'"
+            ")"
+        ).bindparams(iid=investigation_id),
+    )
+    # Delete the abandoned branches.
+    result = await uow.session.execute(
+        _sql_text(
+            f"DELETE FROM {branch_table} "
+            "WHERE investigation_id = :iid AND status = 'abandoned'"
+        ).bindparams(iid=investigation_id),
+    )
+    rowcount = result.rowcount or 0
+    if rowcount:
+        _log.info(
+            "purge_abandoned_branches inv=%s purged=%d",
+            investigation_id, rowcount,
+        )
+    return rowcount
+
+
+async def count_live_branches(
+    uow: UnitOfWork,
+    investigation_id: str,
+    *,
+    branch_table: str,
+) -> int:
+    """Count non-abandoned branches for ``investigation_id``.
+
+    Platform-owned so modules don't each re-implement the abandoned
+    exclusion in their summary builders.
+    """
+    result = await uow.session.execute(
+        _sql_text(
+            f"SELECT COUNT(*) FROM {branch_table} "
+            "WHERE investigation_id = :iid AND status != 'abandoned'"
+        ).bindparams(iid=investigation_id),
+    )
+    return int(result.scalar() or 0)
