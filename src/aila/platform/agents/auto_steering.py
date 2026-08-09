@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -411,6 +412,254 @@ async def _derive_kwarg_rejected_correction(
 
 
 # ─────────────────────────────────────────────────────────────────
+# Lateral-pattern discovery (issue #95, Wave 1)
+# ─────────────────────────────────────────────────────────────────
+#
+# Passive scan of source text the agent surfaces via ``read_function``
+# / ``read_lines`` / ``semantic_search``. When one of the tells below
+# matches, we append a low-noise ``discovery`` entry to the
+# investigation ledger under ``source="lateral_observation"``. These
+# are hints for the hypothesis-generating branches, NOT operator
+# steerings: they go to the ledger side-channel, so they never
+# collide with the "one steering per tool call" contract of Rules
+# 1-4 and never affect the tool result the caller is waiting on.
+
+_LATERAL_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    # ``else if (av_strstart(proto, "http", NULL)) ;`` -- protocol
+    # dispatch that recognises a name and then does nothing with it.
+    # Also catches empty ``{}`` bodies. Typical FFmpeg protocol.c /
+    # muxer registration bug shape.
+    (
+        re.compile(
+            # Balanced one-level paren nesting so ``strcmp(a, b)`` /
+            # ``av_strstart(p, "x", NULL)`` inside the if-condition
+            # doesn't fool the outer ``\)`` anchor.
+            r"(?:else\s+if|elif)\s*\("
+            r"(?:[^()]|\([^()]*\))*"
+            r"(?:strstart|strcmp|strncmp|strcasecmp|strncasecmp)"
+            r"(?:[^()]|\([^()]*\))*"
+            r"\)\s*(?:;|\{\s*\})",
+        ),
+        "protocol_passthrough_no_check",
+    ),
+    # ``int size = w * h;`` / ``unsigned len = a * b;`` -- integer
+    # multiply into a narrow type with no overflow guard. Anchored
+    # to a statement boundary so we don't match ``if (a * b > c)``.
+    (
+        re.compile(
+            # Accept ``int|long|...`` as the type, OR bare
+            # ``unsigned|signed`` with an optional ``int|long|short|char``
+            # suffix (``unsigned len`` is legal C shorthand for
+            # ``unsigned int len``). Anchored to a statement boundary
+            # so ``if (a * b > c)`` never matches.
+            r"(?:^|[;{\n])\s*"
+            r"(?:(?:unsigned|signed)(?:\s+(?:int|long|short|char))?"
+            r"|int|long|short|size_t|ssize_t"
+            r"|uint(?:8|16|32|64)_t|int(?:8|16|32|64)_t)"
+            r"\s+[A-Za-z_]\w*\s*=\s*[^;\n]*\*[^;\n]*;",
+            re.MULTILINE,
+        ),
+        "unchecked_int_multiply",
+    ),
+    # ``memcpy(dst, src, len)`` where the length is a bare identifier
+    # rather than a literal constant. The identifier could be
+    # attacker-derived; worth surfacing for review.
+    (
+        re.compile(
+            r"\b(?:memcpy|memmove|memset)\s*\("
+            r"\s*[^,]+,\s*[^,]+,\s*"
+            r"[A-Za-z_]\w*\s*\)",
+        ),
+        "memop_variable_length",
+    ),
+    # ``width >>= chroma;`` / ``h >>= vsub;`` -- dimension halving
+    # by a subsampling factor. Common truncation site in codec
+    # dimension math.
+    (
+        re.compile(
+            r">>=\s*[A-Za-z_]*(?:chroma|sub|shift|vsub)[A-Za-z_0-9]*",
+        ),
+        "truncating_dimension_shift",
+    ),
+    # ``avio_r*(...); ... av_malloc(...)`` -- input-derived value
+    # flows into an allocation size within a small window. DOTALL
+    # + bounded gap so we don't cross file-scope boundaries.
+    (
+        re.compile(
+            r"(?:avio_r[a-z0-9_]+|bytestream2?_get[a-z0-9_]+|get_bits\d*)\b"
+            r"[^;]*;.{0,300}?"
+            r"\b(?:av_mallocz?|av_realloc|av_mallocz_array|av_calloc|"
+            r"malloc|calloc|realloc|av_frame_get_buffer|ff_get_buffer|"
+            r"av_new_packet|av_image_alloc)\b",
+            re.DOTALL,
+        ),
+        "input_to_allocation",
+    ),
+]
+
+# Only fire on tools that actually surface source text. Other tools
+# (search_functions, callers_of, ...) return metadata, not code
+# bodies, so a lateral scan would just be a waste of regex time.
+_LATERAL_SCAN_TOOLS: frozenset[str] = frozenset(
+    {"read_function", "read_lines", "semantic_search"},
+)
+
+# Cap findings per tool call so a single ``read_lines`` over a large
+# region can't flood the ledger with hundreds of near-identical hits.
+_LATERAL_MAX_FINDINGS: int = 20
+
+
+def _iter_lateral_scan_units(
+    tool_name: str, args: dict, raw: dict,
+) -> list[tuple[str, str, str]]:
+    """Normalise a tool result into ``(body_text, file, function)``
+    triples for the pattern loop.
+
+    ``read_function`` and ``read_lines`` return a single body; the
+    filename/function come from the request args because the bridge
+    doesn't always echo them. ``semantic_search`` returns a list of
+    chunks with per-chunk file/function metadata.
+    """
+    units: list[tuple[str, str, str]] = []
+    if tool_name == "read_function":
+        body = str(
+            raw.get("content") or raw.get("body") or raw.get("text") or "",
+        )
+        file_path = str(args.get("file_path") or raw.get("file_path") or "")
+        fn_name = str(args.get("name") or raw.get("name") or "")
+        if body:
+            units.append((body, file_path, fn_name))
+    elif tool_name == "read_lines":
+        body = str(
+            raw.get("content") or raw.get("body") or raw.get("text") or "",
+        )
+        file_path = str(args.get("file_path") or raw.get("file_path") or "")
+        if body:
+            units.append((body, file_path, ""))
+    elif tool_name == "semantic_search":
+        matches = (
+            raw.get("matches") or raw.get("results")
+            or raw.get("chunks") or raw.get("hits") or []
+        )
+        if isinstance(matches, list):
+            for m in matches:
+                if not isinstance(m, dict):
+                    continue
+                body = str(m.get("content") or m.get("body") or "")
+                if not body:
+                    continue
+                file_path = str(m.get("file_path") or m.get("file") or "")
+                fn_name = str(
+                    m.get("function") or m.get("name")
+                    or m.get("symbol") or "",
+                )
+                units.append((body, file_path, fn_name))
+    return units
+
+
+def _detect_lateral_pattern(
+    server_id: str, tool_name: str, args: dict, raw: dict,
+) -> list[dict[str, str]]:
+    """Scan tool-returned source text for lateral vulnerability tells.
+
+    Restricted to ``audit_mcp`` and the small set of tools in
+    :data:`_LATERAL_SCAN_TOOLS`. For every match, appends a
+    ``{"pattern", "snippet", "function", "file"}`` dict to the return
+    list. Empty list means no tell fired.
+    """
+    if server_id != "audit_mcp" or tool_name not in _LATERAL_SCAN_TOOLS:
+        return []
+    findings: list[dict[str, str]] = []
+    for body, file_path, fn_name in _iter_lateral_scan_units(
+        tool_name, args, raw,
+    ):
+        for pat, pattern_id in _LATERAL_PATTERNS:
+            for m in pat.finditer(body):
+                snippet = m.group(0).strip()
+                # Rule 5 uses DOTALL with a 300-char gap so the raw
+                # match can be long; cap the payload so the ledger row
+                # doesn't balloon.
+                if len(snippet) > 240:
+                    snippet = snippet[:237] + "..."
+                findings.append({
+                    "pattern": pattern_id,
+                    "snippet": snippet,
+                    "function": fn_name,
+                    "file": file_path,
+                })
+                if len(findings) >= _LATERAL_MAX_FINDINGS:
+                    return findings
+    return findings
+
+
+async def _post_lateral_discoveries(
+    investigation_id: str,
+    branch_id: str,
+    findings: list[dict[str, str]],
+) -> None:
+    """Append each unique ``(function, pattern)`` finding to the
+    investigation ledger as a ``discovery`` entry with
+    ``source="lateral_observation"``.
+
+    Idempotency key
+    ``{branch_id}:lateral:{file}:{function}:{pattern}`` keeps the
+    ledger flat across worker retries AND across sibling tool calls
+    that resurface the same tell in the same body.
+
+    Deferred :class:`LedgerService` import breaks the potential
+    ``platform.agents -> platform.services -> ...`` cycle. Best-effort:
+    every failure path logs at WARNING and returns; a ledger write
+    error here MUST NEVER derail the tool result the caller is
+    holding.
+    """
+    if not findings:
+        return
+    try:
+        from aila.platform.services.ledger import LedgerService
+    except ImportError as exc:
+        _log.warning(
+            "auto_steering: LedgerService import failed inv=%s err=%s",
+            investigation_id, exc,
+        )
+        return
+    ledger = LedgerService()
+    seen: set[tuple[str, str]] = set()
+    for f in findings:
+        pattern = f.get("pattern") or ""
+        function = f.get("function") or ""
+        file_path = f.get("file") or ""
+        dedup = (function, pattern)
+        if dedup in seen:
+            continue
+        seen.add(dedup)
+        idem = f"{branch_id}:lateral:{file_path}:{function}:{pattern}"
+        payload = {
+            "source": "lateral_observation",
+            "pattern": pattern,
+            "snippet": f.get("snippet") or "",
+            "function": function,
+            "file": file_path,
+        }
+        try:
+            await ledger.append_general(
+                investigation_id,
+                branch_id,
+                "discovery",
+                payload,
+                idempotency_key=idem,
+            )
+        except (
+            OSError, RuntimeError, ValueError, TypeError, AttributeError,
+            KeyError, SQLAlchemyError,
+        ) as exc:
+            _log.warning(
+                "auto_steering: lateral discovery ledger write failed "
+                "inv=%s branch=%s pattern=%s err=%s",
+                investigation_id, branch_id, pattern, exc,
+            )
+
+
+# ─────────────────────────────────────────────────────────────────
 # Posting
 # ─────────────────────────────────────────────────────────────────
 
@@ -669,6 +918,17 @@ async def _evaluate_rules(
         )
         return await _post(investigation_id, branch_id, correction, key,
                            message_model=message_model, branch_model=branch_model)
+
+    # Rule 5: lateral pattern discovery (issue #95). Runs AFTER Rules
+    # 1-4 so a real steering condition always wins; a broken tool
+    # result (past-EOF, indexer fault, kwarg reject, file-not-found)
+    # short-circuits before we ever try to scan its body. On a healthy
+    # read, we run the passive scan and fire discoveries into the
+    # ledger side channel -- never blocks the tool dispatch, never
+    # posts an operator-steering message.
+    lateral = _detect_lateral_pattern(server_id, tool_name, args, raw_result)
+    if lateral:
+        await _post_lateral_discoveries(investigation_id, branch_id, lateral)
 
     return None
 

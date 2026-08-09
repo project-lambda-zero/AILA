@@ -7,6 +7,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.20] - 2026-08-09 -- Defense-check submit gate + lateral pattern discovery
+
+### Added
+
+- Defense-check submit gate (#94): a code-level gate in the platform
+  submit path that rejects overflow/allocation findings when the branch's
+  tool-call history is missing allocator reads, input-range verification,
+  or ``callers_of`` reachability traces. Rejection converts the submit to
+  a reasoning turn with a directive telling the agent exactly what to
+  read. Platform-bound (``platform/agents/submit_gates.py``).
+- Lateral pattern discovery (#95 Wave 1): after every ``read_function``
+  / ``read_lines`` / ``semantic_search`` result, the auto-steering layer
+  scans the returned source code for suspicious patterns outside the
+  current hypothesis scope. Hits are auto-posted to the investigation
+  ledger as ``lateral_observation`` discoveries with idempotency.
+- System prompt updated to document the defense-check gate.
+
 ## [0.3.19] - 2026-08-09 -- Zero-turn wall-clock cap maps to STALLED, not COMPLETED
 
 ### Fixed

@@ -772,6 +772,39 @@ class AgentTurnRunnerBase:
                 turn_number=turn_number,
             )
 
+        # Gate 5 (RFC #94): defense-check gate. Reject overflow/OOB
+        # findings that skip allocator verification, input-range check,
+        # or callers_of reachability trace. Runs after sibling-open-hyp
+        # but before fanout so the rejection doesn't hit module-specific
+        # gates. Only fires on submit with finding-class outcomes.
+        if decision.action == "submit":
+            from aila.platform.agents.submit_gates import (
+                check_defense_verification,
+                classify_claim,
+            )
+            _ok_kind = self._terminal_outcome_kind(decision)
+            _ok_payload = self._outcome_payload(decision)
+            _claim_class = classify_claim(_ok_kind.value, _ok_payload)
+            async with UnitOfWork() as _gate_uow:
+                _ok, _reject = await check_defense_verification(
+                    session=_gate_uow.session,
+                    branch_id=self.branch_id,
+                    claim_class=_claim_class,
+                    message_table=self._message_model.__tablename__,
+                )
+            if not _ok:
+                _log.info(
+                    "defense_check_gate REJECTED inv=%s branch=%s "
+                    "claim_class=%s reason=%s",
+                    self.investigation_id, self.branch_id,
+                    _claim_class, (_reject or "")[:80],
+                )
+                decision = decision.model_copy(update={
+                    "action": "reasoning",
+                    "reasoning": _reject,
+                })
+                case_state["_directive.defense_check_rejected"] = _reject
+
         decision = self._maybe_reject_fanout_submit(
             decision=decision,
             inv=inv,
