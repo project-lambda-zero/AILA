@@ -530,7 +530,16 @@ def state_investigation_emit(
                             branch.closed_at = halt_now
                             branch.updated_at = halt_now
                             uow.session.add(branch)
-                        inv.status = InvestigationStatus.COMPLETED.value
+                        # Zero-turn cap-exceeded = the investigation
+                        # was enqueued but no branch ever completed a
+                        # reasoning turn (provider outage the whole
+                        # window). That is a stall, not a completion.
+                        _cap_status = (
+                            InvestigationStatus.STALLED.value
+                            if total_turns == 0
+                            else InvestigationStatus.COMPLETED.value
+                        )
+                        inv.status = _cap_status
                         inv.stopped_at = halt_now
                         inv.updated_at = halt_now
                         uow.session.add(inv)
@@ -564,7 +573,7 @@ def state_investigation_emit(
                             next_state=RESERVED_SUCCEEDED,
                             output={
                                 "investigation_id": investigation_id,
-                                "status": InvestigationStatus.COMPLETED.value,
+                                "status": _cap_status,
                                 "exit_reason": f"cap_exceeded:{breach}",
                                 "turn_count": turn_count,
                                 "outcome_id": str(outcome_id) if outcome_id else None,

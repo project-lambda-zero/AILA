@@ -7,6 +7,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.19] - 2026-08-09 -- Zero-turn wall-clock cap maps to STALLED, not COMPLETED
+
+### Fixed
+
+- An investigation that hit the wall-clock cap (6 hours) with zero
+  completed turns (provider outage the entire window) was sealed as
+  ``COMPLETED`` via the ``cap_exceeded`` path in ``investigation_emit``.
+  Zero-turn cap-exceeded now maps to ``STALLED`` so the auto-recovery
+  reaper picks it up. Investigations with real turns still complete
+  normally on cap-exceeded.
+
 ## [0.3.18] - 2026-08-09 -- Branch lifecycle is platform-owned
 
 ### Changed
