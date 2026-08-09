@@ -7,6 +7,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.18] - 2026-08-09 -- Branch lifecycle is platform-owned
+
+### Changed
+
+- Moved abandoned-branch purge and live-branch counting from VR's
+  ``api_router`` to platform utilities in ``branch_cleanup.py``:
+  ``purge_abandoned_branches`` (hard-deletes all abandoned branches for
+  an investigation, cleaning FK refs first) and ``count_live_branches``
+  (excludes abandoned from the count). Modules call the platform helpers
+  instead of reimplementing branch lifecycle logic. The reopen handler,
+  branch list endpoint, and summary builders all use the platform layer.
+
 ## [0.3.17] - 2026-08-09 -- Stall/reopen cycles no longer stack branches; stalled recovery is immediate
 
 ### Fixed

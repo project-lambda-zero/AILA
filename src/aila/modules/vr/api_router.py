@@ -5210,6 +5210,15 @@ def create_vr_router() -> APIRouter:
             # double-count. Branches in already-terminal states
             # (abandoned, completed, merged, promoted) stay untouched --
             # those are real history.
+            # Platform-owned purge: remove all abandoned branches from
+            # prior stall/reopen cycles so they don't stack.
+            from aila.platform.services.branch_cleanup import purge_abandoned_branches
+            await purge_abandoned_branches(
+                uow, inv.id,
+                branch_table="vr_investigation_branches",
+                message_table="vr_investigation_messages",
+            )
+
             from aila.modules.vr.contracts.branch import BranchStatus as _BS
             _live_halvars = (await uow.session.exec(
                 select(VRInvestigationBranchRecord).where(
@@ -5925,7 +5934,10 @@ def create_vr_router() -> APIRouter:
         async with UnitOfWork() as uow:
             rows = (await uow.session.exec(
                 select(VRInvestigationBranchRecord)
-                .where(VRInvestigationBranchRecord.investigation_id == investigation_id)
+                .where(
+                    VRInvestigationBranchRecord.investigation_id == investigation_id,
+                    VRInvestigationBranchRecord.status != "abandoned",
+                )
                 .order_by(VRInvestigationBranchRecord.created_at.asc())
             )).all()
             branch_ids = [r.id for r in rows]
