@@ -7,6 +7,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.17] - 2026-08-09 -- Stall/reopen cycles no longer stack branches; stalled recovery is immediate
+
+### Fixed
+
+- Every stall/reopen cycle spawned new branches without cleaning up
+  abandoned zero-turn branches from prior cycles, so the branch count
+  grew with each provider outage (11 branches queued on a 2-persona
+  investigation). The persona spawner now hard-deletes zero-turn
+  abandoned branches (messages + parent refs cleaned first) instead of
+  leaving them as abandoned rows. Active and branches with real turns
+  are untouched.
+- The stall-recovery reaper required a 15-minute idle threshold before
+  picking up stalled investigations. Stalled rows now bypass the idle
+  wait entirely and are re-enqueued on the very next reaper tick
+  (every 60 seconds).
+- Branch counts in both the investigation list and detail endpoints now
+  exclude abandoned branches so the UI reflects the actual active panel.
+
 ## [0.3.16] - 2026-08-09 -- Stalled investigations auto-recover
 
 ### Fixed
