@@ -4345,7 +4345,10 @@ def create_vr_router() -> APIRouter:
                         VRInvestigationBranchRecord.investigation_id,
                         sa_func.count(),
                     )
-                    .where(VRInvestigationBranchRecord.investigation_id.in_(row_ids))
+                    .where(
+                        VRInvestigationBranchRecord.investigation_id.in_(row_ids),
+                        VRInvestigationBranchRecord.status != "abandoned",
+                    )
                     .group_by(VRInvestigationBranchRecord.investigation_id),
                 )).all()
                 br_counts = {iid: int(c) for iid, c in br_pairs}
@@ -4473,7 +4476,10 @@ def create_vr_router() -> APIRouter:
                 )
             branch_count = (await uow.session.exec(
                 select(sa_func.count()).select_from(VRInvestigationBranchRecord)
-                .where(VRInvestigationBranchRecord.investigation_id == investigation_id)
+                .where(
+                    VRInvestigationBranchRecord.investigation_id == investigation_id,
+                    VRInvestigationBranchRecord.status != "abandoned",
+                )
             )).one()
             message_count = (await uow.session.exec(
                 select(sa_func.count()).select_from(VRInvestigationMessageRecord)

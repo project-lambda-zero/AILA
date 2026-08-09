@@ -25,8 +25,9 @@ of ``CancelledError`` (inherits from ``BaseException``, escapes broad
 Eligibility (every clause MUST hold):
 
 * ``inv.status IN ('created', 'running', 'stalled')`` -- non-terminal
-  investigations can recover. Stalled investigations are auto-re-enqueued
-  so operators never need to manually intervene on a provider outage.
+  investigations can recover. Stalled investigations are re-enqueued
+  immediately (bypass the idle threshold) so operators never need to
+  manually intervene on a provider outage.
 * ``inv.pause_reason IS NULL`` -- operator and self-paused investigations
   are intentional waits and MUST NOT be auto-resumed by this sweep.
 * ``inv.kind = ANY(:kinds)`` -- only sweepable kinds are handled. Callers
@@ -171,7 +172,7 @@ async def _fetch_eligible(
         WHERE inv.status IN ('created', 'running', 'stalled')
           AND inv.pause_reason IS NULL
           AND inv.kind = ANY(:kinds)
-          AND inv.updated_at < :cutoff
+          AND (inv.status = 'stalled' OR inv.updated_at < :cutoff)
           AND NOT EXISTS (
               SELECT 1
               FROM taskrecord t

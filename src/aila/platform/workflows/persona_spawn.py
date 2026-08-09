@@ -265,6 +265,32 @@ async def spawn_persona_siblings(
                         "(turn_count + case_state + breaker reset to fresh)",
                         b.persona_voice, b.id,
                     )
+            elif b.turn_count == 0 and b.status == "abandoned":
+                # Zero-turn abandoned branch from a prior stall/reopen
+                # cycle -- hard-delete so branches don't accumulate
+                # across cycles. Messages (if any from setup) are
+                # removed first to satisfy FK constraints.
+                _bt = branch_model.__tablename__
+                await uow.session.execute(
+                    _sql_text(
+                        f"UPDATE {_bt} "
+                        "SET parent_branch_id = NULL "
+                        "WHERE parent_branch_id = :bid"
+                    ).bindparams(bid=b.id),
+                )
+                await uow.session.execute(
+                    _sql_text(
+                        f"DELETE FROM {message_table} "
+                        "WHERE branch_id = :bid"
+                    ).bindparams(bid=b.id),
+                )
+                await uow.session.delete(b)
+                result.abandoned.append(b.id)
+                _log.info(
+                    "auto_deliberation: hard-deleted stale zero-turn "
+                    "abandoned %s branch %s (keeping %s)",
+                    b.persona_voice, b.id, best.id,
+                )
             elif b.status not in ("abandoned",):
                 b.status = "abandoned"
                 b.closed_reason = "duplicate_persona_cleanup"
