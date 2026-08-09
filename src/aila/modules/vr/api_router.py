@@ -4340,6 +4340,10 @@ def create_vr_router() -> APIRouter:
             primary_ids = {r.id: r.primary_outcome_id for r in rows if r.primary_outcome_id}
 
             async with UnitOfWork() as uow:
+                # Bulk cross-investigation count; mirrors
+                # aila.platform.services.branch_cleanup.count_live_branches
+                # (status != 'abandoned') but grouped so the list endpoint
+                # avoids an N+1. The platform helper is per-investigation.
                 br_pairs = (await uow.session.exec(
                     select(
                         VRInvestigationBranchRecord.investigation_id,
@@ -4474,13 +4478,11 @@ def create_vr_router() -> APIRouter:
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Investigation {investigation_id} not found.",
                 )
-            branch_count = (await uow.session.exec(
-                select(sa_func.count()).select_from(VRInvestigationBranchRecord)
-                .where(
-                    VRInvestigationBranchRecord.investigation_id == investigation_id,
-                    VRInvestigationBranchRecord.status != "abandoned",
-                )
-            )).one()
+            from aila.platform.services.branch_cleanup import count_live_branches
+            branch_count = await count_live_branches(
+                uow, investigation_id,
+                branch_table="vr_investigation_branches",
+            )
             message_count = (await uow.session.exec(
                 select(sa_func.count()).select_from(VRInvestigationMessageRecord)
                 .where(VRInvestigationMessageRecord.investigation_id == investigation_id)
@@ -5932,6 +5934,10 @@ def create_vr_router() -> APIRouter:
         from .db_models import VRInvestigationBranchRecord
 
         async with UnitOfWork() as uow:
+            # status != 'abandoned' mirrors the platform helper
+            # aila.platform.services.branch_cleanup.count_live_branches;
+            # this endpoint needs the full rows, not just a count, so it
+            # inlines the same predicate rather than calling the helper.
             rows = (await uow.session.exec(
                 select(VRInvestigationBranchRecord)
                 .where(
