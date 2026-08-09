@@ -21,6 +21,23 @@ from typing import Any, TypeVar
 
 SummaryT = TypeVar("SummaryT")
 
+
+def _flatten_evidence_refs(raw: list[Any]) -> list[str]:
+    """Normalize evidence refs to plain strings.
+
+    ``evidence_refs_json`` now stores ``EvidenceRefList`` dicts
+    (``{"kind": "source_citation", "ref": "..."}``), but summary
+    contracts still type the field as ``list[str]``. Extract the
+    ``ref`` value from dicts; pass strings through unchanged.
+    """
+    out: list[str] = []
+    for item in raw:
+        if isinstance(item, dict):
+            out.append(str(item.get("ref") or item.get("id") or ""))
+        elif isinstance(item, str):
+            out.append(item)
+    return out
+
 __all__ = [
     "build_branch_summary",
     "build_investigation_summary",
@@ -149,7 +166,7 @@ def build_message_summary(
         "payload": json.loads(record.payload_json or "{}"),
         "operator_intent": record.operator_intent or None,
         "at_turn": record.at_turn,
-        "evidence_refs": json.loads(record.evidence_refs_json or "[]"),
+        "evidence_refs": _flatten_evidence_refs(json.loads(record.evidence_refs_json or "[]")),
         "created_at": record.created_at,
     }
     if "acked_at" in summary_cls.model_fields:
@@ -180,7 +197,7 @@ def build_outcome_summary(
         outcome_kind=record.outcome_kind,
         payload=json.loads(record.payload_json or "{}"),
         confidence=record.confidence,
-        evidence_refs=json.loads(record.evidence_refs_json or "[]"),
+        evidence_refs=_flatten_evidence_refs(json.loads(record.evidence_refs_json or "[]")),
         accepted_by_operator=record.accepted_by_operator,
         accepted_at=record.accepted_at,
         dispatch_status=record.dispatch_status,
