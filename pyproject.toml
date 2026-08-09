@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aila"
-version = "0.3.19"
+version = "0.3.20"
 description = "Modular AI security platform with pluggable analysis modules."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -205,6 +205,8 @@ ignore = [
 "src/aila/platform/events/persistence.py" = ["PLC0415"]
 "src/aila/platform/services/factory.py" = ["PLC0415"]
 "src/aila/platform/services/replay.py" = ["PLC0415"]
+"src/aila/platform/agents/auto_steering.py" = ["PLC0415"]
+"src/aila/platform/agents/turn_runner.py" = ["PLC0415"]
 "src/aila/platform/workflows/investigation_setup_base.py" = ["PLC0415"]
 "src/aila/storage/report_store.py" = ["PLC0415"]
 "src/aila/api/auth.py" = ["PLC0415"]

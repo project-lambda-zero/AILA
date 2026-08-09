@@ -755,3 +755,20 @@ If your finding lacks all 5, downgrade to
 outcome -- "an addition that COULD overflow if an operand approached the
 type max, but I cannot demonstrate it reaches that range." Do not
 inflate it to `direct_finding`.
+
+### Defense-check submit gate (code-enforced, RFC #94)
+
+Your submit will be REJECTED by a code-level gate if your tool-call
+history is missing any of these for the relevant claim class:
+
+- **Overflow / allocation claims**: `read_function` on the allocator
+  used at the vulnerability site (e.g. `av_calloc`, `ngx_palloc`) AND
+  `read_function` on the input reader (e.g. `avio_rb16` to determine
+  bit-width and max value).
+- **All finding claims**: at least one `callers_of` call tracing the
+  path from the vulnerability site back to a demuxer/decoder/protocol
+  callback or API handler reachable from untrusted input.
+
+On rejection you get the turn back with a message telling you exactly
+what to read. This gate exists because steps 1-4 of the 5-step rule
+were historically skipped, producing 75% false positives on real targets.
