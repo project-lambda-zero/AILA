@@ -33,7 +33,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from sqlmodel import select as _select
 
@@ -205,6 +205,50 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
     _message_model = VRInvestigationMessageRecord
     _branch_model = VRInvestigationBranchRecord
     _OUTCOME_STATE_APPROVED = OUTCOME_STATE_APPROVED
+
+    # ---- Defense-check submit gate vocabulary (RFC #94, issue #136) ----
+    # Function names the gate expects to see in the branch's
+    # ``read_function`` history before an overflow / allocation claim
+    # submits. Migrated out of ``platform/agents/submit_gates.py`` so
+    # the platform reasoning layer never carries FFmpeg / nginx /
+    # kernel / libc / OpenSSL / GLib domain vocabulary.
+    known_allocators: ClassVar[frozenset[str]] = frozenset({
+        # FFmpeg
+        "av_malloc", "av_mallocz", "av_calloc", "av_realloc",
+        "av_fast_realloc", "av_buffer_alloc", "av_frame_get_buffer",
+        "av_realloc_f", "av_malloc_array", "av_calloc_array",
+        # libc / POSIX
+        "malloc", "calloc", "realloc", "reallocarray",
+        # nginx
+        "ngx_palloc", "ngx_pnalloc", "ngx_pcalloc", "ngx_alloc",
+        # Apache httpd
+        "apr_palloc", "apr_pcalloc",
+        # OpenSSL
+        "OPENSSL_malloc", "OPENSSL_zalloc", "CRYPTO_malloc",
+        # GLib
+        "g_malloc", "g_malloc0", "g_new", "g_new0",
+        # Linux kernel
+        "kmalloc", "kzalloc", "kcalloc", "vmalloc",
+        # Go (via cgo or audit-mcp representation)
+        "make", "append",
+    })
+    known_input_readers: ClassVar[frozenset[str]] = frozenset({
+        # FFmpeg I/O
+        "avio_r8", "avio_rb16", "avio_rb32", "avio_rb64",
+        "avio_rl16", "avio_rl32", "avio_rl64",
+        # FFmpeg bitstream
+        "get_bits", "get_bits_long", "get_bits1", "show_bits",
+        "get_bits_le", "get_sbits",
+        # FFmpeg bytestream
+        "bytestream2_get_le16", "bytestream2_get_le32",
+        "bytestream2_get_be16", "bytestream2_get_be32",
+        "bytestream2_get_byte",
+        # Generic read macros
+        "AV_RL16", "AV_RL32", "AV_RB16", "AV_RB32",
+        "AV_RL64", "AV_RB64",
+        # Network / protocol
+        "recv", "read", "fread",
+    })
 
     async def _load_turn_config(self) -> None:
         self._variant_hunt_reject_cap = await _cfg.get_int("variant_hunt_reject_cap")

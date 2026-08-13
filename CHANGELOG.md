@@ -7,6 +7,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-08-13 -- Platform/module boundary: domain knowledge to module hooks, vulnerability classified
+
+### Changed
+
+- Vulnerability-research domain vocabulary no longer lives in the platform
+  reasoning layer. The defense-check allocator/reader tables, the lateral-
+  pattern regexes, and the persona-role map are now per-module hooks
+  (agent-subclass class variables) with empty platform defaults; the VR module
+  supplies its own vocabulary. A module that supplies none gets a graceful
+  no-op, and no FFmpeg/nginx/kernel/persona names remain in platform code (#136).
+- The vulnerability module is classified as a deterministic pipeline module via
+  a machine-readable `module_kind()` on the module protocol (default
+  "reasoning"; vulnerability returns "pipeline"), so cross-module capability
+  routing distinguishes it from the reasoning modules (vr, malware, forensics)
+  that run the shared CyberReasoningEngine (#138).
+
 ## [0.4.1] - 2026-08-13 -- Engine consolidation: narrative base, event dispatch, sweep ordering
 
 ### Changed

@@ -31,10 +31,8 @@ from aila.platform.agents.pattern_extractor import (
     PatternExtractorError,
 )
 from aila.platform.agents.persona_router import (
-    PERSONA_ROLE_MAP,
     PersonaRole,
     PersonaRouter,
-    persona_to_role,
 )
 from aila.platform.agents.sibling_consensus import inject_sibling_consensus
 from aila.platform.agents.synthesis_runner import (
@@ -48,7 +46,6 @@ from aila.platform.agents.tool_execution import (
 )
 
 __all__ = [
-    "PERSONA_ROLE_MAP",
     "BranchManagerError",
     "BranchOpResult",
     "BranchPool",
@@ -70,6 +67,5 @@ __all__ = [
     "is_negative_finding_claim",
     "maybe_post_auto_steering",
     "parse_command",
-    "persona_to_role",
     "synthesis_confidence",
 ]

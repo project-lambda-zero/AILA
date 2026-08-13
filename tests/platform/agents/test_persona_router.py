@@ -1,21 +1,15 @@
 """Characterization tests for the extracted persona router (RFC-03 Phase 5).
 
-These tests pin the pre-extraction behavior of the two duplicated
-copies (``modules/vr/agents/persona_router.py`` and
-``modules/malware/agents/persona_router.py``) so the platform lift
-cannot regress either module's routing.
-
-The two shapes covered:
-
-* vr -- personas sharing a role share a task_type
-  (:attr:`PersonaRouter.role_task_type`).
-* malware -- each persona voice carries its own task_type
-  (:attr:`PersonaRouter.persona_task_type`).
-
-The shared table (persona -> role) and resolution logic live once in
-:mod:`aila.platform.agents.persona_router`.
+Issue #136 moved the persona -> role map off the platform module and
+onto :attr:`PersonaRouter.persona_role_map` as a module-supplied
+ClassVar. These tests exercise the VR and malware subclass task-type
+resolution against the historical mapping and also cover the empty
+platform-base map (a fresh module that carries no persona vocabulary
+degrades gracefully to ``default_task_type``).
 """
 from __future__ import annotations
+
+from typing import ClassVar
 
 import pytest
 
@@ -38,10 +32,8 @@ from aila.modules.vr.agents.persona_router import (
     resolve_task_type as vr_resolve,
 )
 from aila.platform.agents.persona_router import (
-    PERSONA_ROLE_MAP,
     PersonaRole,
     PersonaRouter,
-    persona_to_role,
 )
 from aila.platform.contracts.enums import PersonaVoice
 
@@ -56,8 +48,8 @@ _SYNTHETIC_VOICES: frozenset[PersonaVoice] = frozenset({
 })
 
 
-class TestSharedPersonaRoleMap:
-    """The persona -> role table is byte-identical across both modules."""
+class TestVRPersonaRoleMap:
+    """The VR module owns the six-voice persona -> role map."""
 
     @pytest.mark.parametrize("persona,expected_role", [
         (PersonaVoice.HALVAR, PersonaRole.RESEARCHER),
@@ -70,22 +62,55 @@ class TestSharedPersonaRoleMap:
     def test_known_persona_maps_to_role(
         self, persona: PersonaVoice, expected_role: PersonaRole,
     ) -> None:
-        assert persona_to_role(persona) == expected_role
-        assert PERSONA_ROLE_MAP[persona] == expected_role
+        assert VRPersonaRouter.persona_role_map[persona] == expected_role
+        assert VRPersonaRouter.persona_to_role(persona) == expected_role
 
     def test_string_persona_accepted(self) -> None:
-        assert persona_to_role("halvar") == PersonaRole.RESEARCHER
-        assert persona_to_role("maddie") == PersonaRole.CRITIC
+        assert VRPersonaRouter.persona_to_role("halvar") == PersonaRole.RESEARCHER
+        assert VRPersonaRouter.persona_to_role("maddie") == PersonaRole.CRITIC
 
     def test_unknown_string_returns_none(self) -> None:
-        assert persona_to_role("not-a-persona") is None
+        assert VRPersonaRouter.persona_to_role("not-a-persona") is None
 
     def test_none_returns_none(self) -> None:
-        assert persona_to_role(None) is None
+        assert VRPersonaRouter.persona_to_role(None) is None
 
     def test_synthetic_voices_have_no_role(self) -> None:
         for voice in _SYNTHETIC_VOICES:
-            assert persona_to_role(voice) is None
+            assert VRPersonaRouter.persona_to_role(voice) is None
+
+
+class TestPlatformBaseEmptyRoleMap:
+    """The platform base ships an empty persona_role_map so a module
+    with no persona vocabulary degrades gracefully (issue #136)."""
+
+    def test_base_map_is_empty(self) -> None:
+        assert PersonaRouter.persona_role_map == {}
+
+    def test_persona_to_role_on_empty_map_returns_none(self) -> None:
+        # Even for a real PersonaVoice, an empty map means "we don't
+        # recognise a role for this voice" -> None.
+        assert PersonaRouter.persona_to_role(PersonaVoice.HALVAR) is None
+
+    def test_empty_vocab_subclass_falls_back_to_default(self) -> None:
+        # A minimal subclass that supplies only default_task_type +
+        # role_task_type (no persona_role_map) must not crash and must
+        # fall through to default for every voice.
+        class EmptyModuleRouter(PersonaRouter):
+            default_task_type: ClassVar[str] = "empty.default"
+            role_task_type: ClassVar[dict[PersonaRole, str]] = {
+                PersonaRole.RESEARCHER: "empty.researcher",
+            }
+
+        # Every core voice returns default -- no map, no lookup.
+        for voice in (
+            PersonaVoice.HALVAR, PersonaVoice.NOOR,
+            PersonaVoice.RENZO, PersonaVoice.WEI,
+            PersonaVoice.MADDIE, PersonaVoice.YUKI,
+        ):
+            assert EmptyModuleRouter.resolve_task_type(voice) == "empty.default"
+        assert EmptyModuleRouter.resolve_task_type(None) == "empty.default"
+        assert EmptyModuleRouter.resolve_task_type("unknown") == "empty.default"
 
 
 class TestVRPersonaRouter:
@@ -134,6 +159,7 @@ class TestVRPersonaRouter:
         # over the role table).
         assert VRPersonaRouter.persona_task_type == {}
         assert VRPersonaRouter.role_task_type
+        assert VRPersonaRouter.persona_role_map
 
 
 class TestMalwarePersonaRouter:
@@ -182,6 +208,8 @@ class TestMalwarePersonaRouter:
         # exercised (see PersonaRouter.resolve_task_type precedence).
         assert MalwarePersonaRouter.persona_task_type
         assert MalwarePersonaRouter.role_task_type == {}
+        # Malware routes per-voice so it does not carry a role map.
+        assert MalwarePersonaRouter.persona_role_map == {}
 
 
 class TestModuleLevelFacade:

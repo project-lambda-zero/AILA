@@ -416,86 +416,19 @@ async def _derive_kwarg_rejected_correction(
 # ─────────────────────────────────────────────────────────────────
 #
 # Passive scan of source text the agent surfaces via ``read_function``
-# / ``read_lines`` / ``semantic_search``. When one of the tells below
-# matches, we append a low-noise ``discovery`` entry to the
-# investigation ledger under ``source="lateral_observation"``. These
-# are hints for the hypothesis-generating branches, NOT operator
+# / ``read_lines`` / ``semantic_search``. When one of the module-
+# supplied tells matches, we append a low-noise ``discovery`` entry
+# to the investigation ledger under ``source="lateral_observation"``.
+# These are hints for the hypothesis-generating branches, NOT operator
 # steerings: they go to the ledger side-channel, so they never
 # collide with the "one steering per tool call" contract of Rules
 # 1-4 and never affect the tool result the caller is waiting on.
-
-_LATERAL_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    # ``else if (av_strstart(proto, "http", NULL)) ;`` -- protocol
-    # dispatch that recognises a name and then does nothing with it.
-    # Also catches empty ``{}`` bodies. Typical FFmpeg protocol.c /
-    # muxer registration bug shape.
-    (
-        re.compile(
-            # Balanced one-level paren nesting so ``strcmp(a, b)`` /
-            # ``av_strstart(p, "x", NULL)`` inside the if-condition
-            # doesn't fool the outer ``\)`` anchor.
-            r"(?:else\s+if|elif)\s*\("
-            r"(?:[^()]|\([^()]*\))*"
-            r"(?:strstart|strcmp|strncmp|strcasecmp|strncasecmp)"
-            r"(?:[^()]|\([^()]*\))*"
-            r"\)\s*(?:;|\{\s*\})",
-        ),
-        "protocol_passthrough_no_check",
-    ),
-    # ``int size = w * h;`` / ``unsigned len = a * b;`` -- integer
-    # multiply into a narrow type with no overflow guard. Anchored
-    # to a statement boundary so we don't match ``if (a * b > c)``.
-    (
-        re.compile(
-            # Accept ``int|long|...`` as the type, OR bare
-            # ``unsigned|signed`` with an optional ``int|long|short|char``
-            # suffix (``unsigned len`` is legal C shorthand for
-            # ``unsigned int len``). Anchored to a statement boundary
-            # so ``if (a * b > c)`` never matches.
-            r"(?:^|[;{\n])\s*"
-            r"(?:(?:unsigned|signed)(?:\s+(?:int|long|short|char))?"
-            r"|int|long|short|size_t|ssize_t"
-            r"|uint(?:8|16|32|64)_t|int(?:8|16|32|64)_t)"
-            r"\s+[A-Za-z_]\w*\s*=\s*[^;\n]*\*[^;\n]*;",
-            re.MULTILINE,
-        ),
-        "unchecked_int_multiply",
-    ),
-    # ``memcpy(dst, src, len)`` where the length is a bare identifier
-    # rather than a literal constant. The identifier could be
-    # attacker-derived; worth surfacing for review.
-    (
-        re.compile(
-            r"\b(?:memcpy|memmove|memset)\s*\("
-            r"\s*[^,]+,\s*[^,]+,\s*"
-            r"[A-Za-z_]\w*\s*\)",
-        ),
-        "memop_variable_length",
-    ),
-    # ``width >>= chroma;`` / ``h >>= vsub;`` -- dimension halving
-    # by a subsampling factor. Common truncation site in codec
-    # dimension math.
-    (
-        re.compile(
-            r">>=\s*[A-Za-z_]*(?:chroma|sub|shift|vsub)[A-Za-z_0-9]*",
-        ),
-        "truncating_dimension_shift",
-    ),
-    # ``avio_r*(...); ... av_malloc(...)`` -- input-derived value
-    # flows into an allocation size within a small window. DOTALL
-    # + bounded gap so we don't cross file-scope boundaries.
-    (
-        re.compile(
-            r"(?:avio_r[a-z0-9_]+|bytestream2?_get[a-z0-9_]+|get_bits\d*)\b"
-            r"[^;]*;.{0,300}?"
-            r"\b(?:av_mallocz?|av_realloc|av_mallocz_array|av_calloc|"
-            r"malloc|calloc|realloc|av_frame_get_buffer|ff_get_buffer|"
-            r"av_new_packet|av_image_alloc)\b",
-            re.DOTALL,
-        ),
-        "input_to_allocation",
-    ),
-]
+#
+# The list of ``(pattern, pattern_id)`` tuples is module vocabulary,
+# passed through :func:`maybe_post_auto_steering` from the
+# ``ToolExecutorHelpersBase.lateral_patterns`` ClassVar. A module
+# with an empty list (malware, forensics, hello_world) skips the
+# scan entirely -- the tool result is untouched.
 
 # Only fire on tools that actually surface source text. Other tools
 # (search_functions, callers_of, ...) return metadata, not code
@@ -559,21 +492,28 @@ def _iter_lateral_scan_units(
 
 def _detect_lateral_pattern(
     server_id: str, tool_name: str, args: dict, raw: dict,
+    patterns: list[tuple[re.Pattern[str], str]],
 ) -> list[dict[str, str]]:
     """Scan tool-returned source text for lateral vulnerability tells.
 
     Restricted to ``audit_mcp`` and the small set of tools in
-    :data:`_LATERAL_SCAN_TOOLS`. For every match, appends a
+    :data:`_LATERAL_SCAN_TOOLS`. Iterates the caller-supplied
+    ``patterns`` (module vocabulary from
+    :attr:`ToolExecutorHelpersBase.lateral_patterns`); an empty list
+    short-circuits so a module that publishes no lateral vocabulary
+    never pays the scan cost. For every match, appends a
     ``{"pattern", "snippet", "function", "file"}`` dict to the return
-    list. Empty list means no tell fired.
+    list. Empty list means no tell fired (or no patterns to scan for).
     """
+    if not patterns:
+        return []
     if server_id != "audit_mcp" or tool_name not in _LATERAL_SCAN_TOOLS:
         return []
     findings: list[dict[str, str]] = []
     for body, file_path, fn_name in _iter_lateral_scan_units(
         tool_name, args, raw,
     ):
-        for pat, pattern_id in _LATERAL_PATTERNS:
+        for pat, pattern_id in patterns:
             for m in pat.finditer(body):
                 snippet = m.group(0).strip()
                 # Rule 5 uses DOTALL with a 300-char gap so the raw
@@ -833,11 +773,15 @@ async def _evaluate_rules(
     bridge_base_url: str,
     message_model: Any,
     branch_model: Any,
+    lateral_patterns: list[tuple[re.Pattern[str], str]],
 ) -> str | None:
     """Run every rule against ``raw_result`` and post the first match.
 
-    Extracted from :func:`maybe_post_auto_steering` so the outer
-    function can wrap one call in the §337 failure-counter try/except
+    ``lateral_patterns`` is the module vocabulary consulted by Rule 5
+    (:func:`_detect_lateral_pattern`); an empty list makes that rule a
+    no-op. Extracted from :func:`maybe_post_auto_steering` so the
+    outer function can wrap one call in the §337 failure-counter
+    try/except
     and reset the counter on every clean return (whether or not a
     steering was actually posted). Returns the posted message id, or
     ``None`` when no rule fired or the correction could not be derived.
@@ -926,7 +870,9 @@ async def _evaluate_rules(
     # read, we run the passive scan and fire discoveries into the
     # ledger side channel -- never blocks the tool dispatch, never
     # posts an operator-steering message.
-    lateral = _detect_lateral_pattern(server_id, tool_name, args, raw_result)
+    lateral = _detect_lateral_pattern(
+        server_id, tool_name, args, raw_result, lateral_patterns,
+    )
     if lateral:
         await _post_lateral_discoveries(investigation_id, branch_id, lateral)
 
@@ -944,10 +890,17 @@ async def maybe_post_auto_steering(
     bridge_base_url: str,
     message_model: Any,
     branch_model: Any,
+    lateral_patterns: list[tuple[re.Pattern[str], str]] | None = None,
 ) -> str | None:
     """Examine ``raw_result`` against all rules. If one fires AND
     a correction can be derived AND the same auto-steering hasn't
     already been posted for this investigation, post it.
+
+    ``lateral_patterns`` supplies the module vocabulary for Rule 5
+    (passive lateral-vulnerability scan). Callers pass their tool
+    executor's :attr:`ToolExecutorHelpersBase.lateral_patterns`
+    ClassVar; a module with no lateral vocabulary passes ``None`` /
+    ``[]`` and the scan is a no-op.
 
     Returns the posted message id on success, None otherwise.
 
@@ -976,6 +929,7 @@ async def maybe_post_auto_steering(
             bridge_base_url=bridge_base_url,
             message_model=message_model,
             branch_model=branch_model,
+            lateral_patterns=lateral_patterns or [],
         )
     except (
         OSError, RuntimeError, ValueError, TypeError, AttributeError,

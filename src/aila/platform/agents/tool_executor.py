@@ -16,7 +16,8 @@ from __future__ import annotations
 import difflib
 import json
 import logging
-from typing import Any
+import re
+from typing import Any, ClassVar
 from uuid import uuid4
 
 import httpx
@@ -106,6 +107,17 @@ class ToolExecutorHelpersBase:
     # (unit-test doubles, narrow harnesses) whose dispatch stays on
     # the direct :meth:`bridge.forward` path.
     _bridge_module_id: str | None = None
+
+    # Module-supplied vocabulary for the auto-steering lateral-pattern
+    # discovery pass (issue #95, Wave 1) that ``maybe_post_auto_steering``
+    # runs against every audit_mcp source-surfacing tool result. Each
+    # entry is ``(compiled regex, pattern_id)``. Empty on the platform
+    # base so a module that publishes no lateral vocabulary (malware,
+    # forensics, hello_world) skips the scan entirely. VR overrides
+    # this with the FFmpeg-shaped tells (protocol passthrough, unchecked
+    # int multiply, memop variable length, truncating dimension shift,
+    # input-to-allocation flow).
+    lateral_patterns: ClassVar[list[tuple[re.Pattern[str], str]]] = []
 
     # Fallback cap on observables dict size (directives + recall pins
     # always kept). Production paths resolve the live value via
@@ -1444,6 +1456,7 @@ class ToolExecutorHelpersBase:
                     bridge_base_url=bridge_base_url,
                     message_model=self._message_model,
                     branch_model=self._branch_model,
+                    lateral_patterns=self.lateral_patterns,
                 )
                 if posted_id:
                     _log.info(

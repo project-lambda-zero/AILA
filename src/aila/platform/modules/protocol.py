@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from ..config import ApplicationSettings
 from ..contracts._common import ActionId, JsonObject
@@ -87,6 +87,23 @@ class ModuleRouteSpec:
 
 
 UNROUTABLE_ACTION_ID: ActionId = action_id_for("platform", "unknown_request")
+
+
+ModuleKind = Literal["reasoning", "pipeline"]
+"""Machine-readable classifier for a module's execution mode (RFC #208 P2).
+
+A module declares which of two execution modes it implements so cross-module
+capability routing can enumerate every registered module without concluding
+that an empty ``reasoning_strategies()`` return is a configuration defect.
+
+- ``"reasoning"`` -- drives the platform ``CyberReasoningEngine`` with a
+  hypothesis-based investigation loop. Publishes non-empty
+  ``reasoning_strategies()`` and ``reasoning_domain_profiles()``. Today:
+  ``vr``, ``forensics``, ``malware``.
+- ``"pipeline"`` -- runs a deterministic scoring / aggregation pipeline over
+  live data feeds and never enters the reasoning engine; declares no
+  reasoning strategies. Today: ``vulnerability``.
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -477,13 +494,34 @@ class ModuleProtocol(Protocol):
         """
         return {}
 
+    def module_kind(self) -> ModuleKind:
+        """Return the module's execution-mode classifier (RFC #208 P2, issue #138).
+
+        Two kinds today (see :data:`ModuleKind`):
+
+        - ``"reasoning"`` -- the safe default; module drives the platform
+          ``CyberReasoningEngine`` and publishes non-empty
+          ``reasoning_strategies()`` / ``reasoning_domain_profiles()``.
+          ``vr``, ``forensics``, and ``malware`` all inherit this default.
+        - ``"pipeline"`` -- deterministic aggregation / scoring module
+          that never enters the reasoning engine; declares no reasoning
+          surface. ``vulnerability`` overrides to this value.
+
+        The classifier is machine-readable so cross-module capability routing
+        can enumerate every module without treating an empty
+        ``reasoning_strategies()`` return as a defect. OPTIONAL.
+        """
+        return "reasoning"
+
     def reasoning_strategies(self) -> list[ReasoningStrategyDeclaration]:
         """Return the reasoning strategy families this module publishes.
 
         Collected by the platform builder at load into the platform
         StrategyRegistry. The platform owns only the ``generic`` family;
         every domain-specific family is module-declared. OPTIONAL --
-        defaults to none.
+        defaults to none. Modules that return an empty list SHOULD also
+        override ``module_kind()`` to ``"pipeline"`` so the empty return
+        is machine-readable as intentional.
         """
         return []
 

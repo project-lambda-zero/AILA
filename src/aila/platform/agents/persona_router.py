@@ -6,19 +6,26 @@ byte-identical vr and malware copies of ``persona_router.py``.
 Each strategy branch can carry a :class:`PersonaVoice`. The platform's
 LLM client uses ``task_type`` per call to resolve routing (model,
 temperature, max_tokens, retry policy). Modules subclass
-:class:`PersonaRouter` and set two class attributes:
+:class:`PersonaRouter` and set attributes:
 
 * ``default_task_type`` -- fallback returned when the persona is
-  ``None`` or absent from the module's table (legacy single-persona
-  / setup flow).
+  ``None``, is absent from the module's table, or is a synthetic
+  voice.
+* ``persona_role_map`` -- persona voice -> :class:`PersonaRole`
+  mapping the module recognises. Empty on the platform base so a
+  module that never carries agent personas (forensics, hello_world)
+  falls through to ``default_task_type`` without ceremony. VR and the
+  ``_template`` scaffold supply the six-voice roster the D-39 /
+  GA-52 personas map to.
 * Either ``role_task_type`` (role -> task_type, when personas that
   share a role share a task_type -- the vr shape) or
   ``persona_task_type`` (persona -> task_type, when each voice
   carries its own model + budget tuning -- the malware shape).
 
-The persona -> role mapping is domain-agnostic and shared: it lives
-here as :data:`PERSONA_ROLE_MAP` and is exposed through
-:func:`persona_to_role`.
+The persona -> role mapping is domain vocabulary supplied by each
+module. The base class ships an empty :attr:`PersonaRouter.persona_role_map`
+so the router degrades to ``default_task_type`` when no vocabulary is
+declared.
 """
 from __future__ import annotations
 
@@ -31,10 +38,8 @@ from aila.platform.contracts.enums import PersonaVoice
 _log = logging.getLogger(__name__)
 
 __all__ = [
-    "PERSONA_ROLE_MAP",
     "PersonaRole",
     "PersonaRouter",
-    "persona_to_role",
 ]
 
 
@@ -44,23 +49,6 @@ class PersonaRole(StrEnum):
     RESEARCHER = "researcher"
     IMPLEMENTER = "implementer"
     CRITIC = "critic"
-
-
-# Static persona -> role table. Tuned by D-39 + GA-52:
-#   halvar = deliberate, considers fundamentals -> researcher
-#   noor   = unconventional angles -> researcher
-#   renzo  = builds PoCs + scripts -> implementer
-#   wei    = systems engineer mindset -> implementer
-#   maddie = adversarial, picks holes -> critic
-#   yuki   = methodical verifier -> critic
-PERSONA_ROLE_MAP: dict[PersonaVoice, PersonaRole] = {
-    PersonaVoice.HALVAR: PersonaRole.RESEARCHER,
-    PersonaVoice.NOOR: PersonaRole.RESEARCHER,
-    PersonaVoice.RENZO: PersonaRole.IMPLEMENTER,
-    PersonaVoice.WEI: PersonaRole.IMPLEMENTER,
-    PersonaVoice.MADDIE: PersonaRole.CRITIC,
-    PersonaVoice.YUKI: PersonaRole.CRITIC,
-}
 
 
 def _as_known_voice(persona: PersonaVoice | str) -> PersonaVoice | None:
@@ -82,21 +70,6 @@ def _as_known_voice(persona: PersonaVoice | str) -> PersonaVoice | None:
         return None
 
 
-def persona_to_role(persona: PersonaVoice | str | None) -> PersonaRole | None:
-    """Map a :class:`PersonaVoice` (or its string form) to a :class:`PersonaRole`.
-
-    Returns ``None`` for the synthetic voices (``unspecified``,
-    ``merge_result``, ``fork_unnamed``), open-set specialist voices,
-    unknown strings, or ``None``.
-    """
-    if persona is None:
-        return None
-    member = _as_known_voice(persona)
-    if member is None:
-        return None
-    return PERSONA_ROLE_MAP.get(member)
-
-
 class PersonaRouter:
     """Per-module persona -> LLM ``task_type`` router.
 
@@ -108,12 +81,19 @@ class PersonaRouter:
       tuning (malware shape).
     * When :attr:`persona_task_type` is empty and :attr:`role_task_type`
       is non-empty, the persona is first mapped to a role via
-      :func:`persona_to_role`, then the role is looked up (vr shape).
-    * Otherwise (unknown persona, no matching entry, ``None``) the
-      subclass's :attr:`default_task_type` is returned.
+      :attr:`persona_role_map`, then the role is looked up (vr shape).
+    * Otherwise (unknown persona, empty role map, no matching entry,
+      ``None``) the subclass's :attr:`default_task_type` is returned.
+
+    The :attr:`persona_role_map` is module-supplied vocabulary. The
+    base default is empty so a module with no persona-based routing
+    (only ``default_task_type``) works without declaring an unused
+    map, and a module that hasn't yet published a persona roster
+    (forensics, hello_world) degrades gracefully.
     """
 
     default_task_type: ClassVar[str]
+    persona_role_map: ClassVar[dict[PersonaVoice, PersonaRole]] = {}
     role_task_type: ClassVar[dict[PersonaRole, str]] = {}
     persona_task_type: ClassVar[dict[PersonaVoice, str]] = {}
 
@@ -128,7 +108,26 @@ class PersonaRouter:
             return default
         if cls.persona_task_type:
             return cls.persona_task_type.get(member, default)
-        role = PERSONA_ROLE_MAP.get(member)
+        role = cls.persona_role_map.get(member)
         if role is None:
             return default
         return cls.role_task_type.get(role, default)
+
+    @classmethod
+    def persona_to_role(
+        cls, persona: PersonaVoice | str | None,
+    ) -> PersonaRole | None:
+        """Map a :class:`PersonaVoice` to its role via the subclass's map.
+
+        Returns ``None`` for ``None``, synthetic voices, open-set
+        specialist voices, or any voice absent from the subclass's
+        :attr:`persona_role_map`. Modules that carry no persona roster
+        (empty map) always return ``None`` -- callers must fall back to
+        the router's ``default_task_type`` or module-specific defaults.
+        """
+        if persona is None:
+            return None
+        member = _as_known_voice(persona)
+        if member is None:
+            return None
+        return cls.persona_role_map.get(member)

@@ -108,6 +108,17 @@ class AgentTurnRunnerBase:
         Callable[..., Awaitable[None]] | None
     ] = None
     _result_cls: ClassVar[type[AgentTurnResult]] = AgentTurnResult
+
+    # Module-supplied vocabulary consulted by the defense-check submit
+    # gate (:func:`aila.platform.agents.submit_gates.check_defense_verification`).
+    # Empty on the platform base so a module whose findings are never
+    # overflow-shaped (malware, forensics) skips the allocator / reader
+    # checks gracefully; the reachability (``callers_of``) check still
+    # runs. VR overrides these with the FFmpeg / libc / nginx / kernel
+    # / OpenSSL / GLib names it recognises. See RFC #94 + issue #136.
+    known_allocators: ClassVar[frozenset[str]] = frozenset()
+    known_input_readers: ClassVar[frozenset[str]] = frozenset()
+
     _EMPTY_TOOLRUN_DIRECTIVE: ClassVar[str] = (
         "*** EMPTY tool_run COERCED TO reasoning ***\n\n"
         "Your prior turn emitted action='tool_run' but command "
@@ -791,6 +802,8 @@ class AgentTurnRunnerBase:
                     branch_id=self.branch_id,
                     claim_class=_claim_class,
                     message_table=self._message_model.__tablename__,
+                    known_allocators=self.known_allocators,
+                    known_input_readers=self.known_input_readers,
                 )
             if not _ok:
                 _log.info(

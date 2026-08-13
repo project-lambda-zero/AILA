@@ -438,11 +438,14 @@ class TestStructuralSelfModificationRoster:
     def test_persona_role_map_subscript_write_in_eval_flagged(
         self, tmp_path: Path,
     ) -> None:
+        # Issue #136: persona_role_map is now a ClassVar on
+        # PersonaRouter subclasses; the mutation shape stays flagged
+        # under the new identifier.
         src = _write(
             tmp_path,
             "aila/platform/eval/rogue.py",
-            "def rewire(voice, role):\n"
-            "    PERSONA_ROLE_MAP[voice] = role\n",
+            "def rewire(cls, voice, role):\n"
+            "    cls.persona_role_map[voice] = role\n",
         )
         assert "structural_self_modification" in _audit(src)
 
@@ -475,12 +478,12 @@ class TestStructuralSelfModificationRoster:
     # ---- NEGATIVE ----------------------------------------------------
 
     def test_persona_role_map_read_not_flagged(self, tmp_path: Path) -> None:
-        """A pure ``PERSONA_ROLE_MAP.get(voice)`` read is not a write."""
+        """A pure ``cls.persona_role_map.get(voice)`` read is not a write."""
         src = _write(
             tmp_path,
             "aila/platform/agents/persona_router.py",
-            "def lookup(voice):\n"
-            "    return PERSONA_ROLE_MAP.get(voice)\n",
+            "def lookup(cls, voice):\n"
+            "    return cls.persona_role_map.get(voice)\n",
         )
         assert "structural_self_modification" not in _audit(src)
 
@@ -500,16 +503,18 @@ class TestStructuralSelfModificationRoster:
         )
         assert "structural_self_modification" not in _audit(src)
 
-    def test_persona_role_map_module_binding_not_flagged(
+    def test_persona_role_map_classvar_binding_not_flagged(
         self, tmp_path: Path,
     ) -> None:
-        """The canonical ``PERSONA_ROLE_MAP: dict[...] = {...}`` module
-        binding in ``persona_router.py`` is a plain Name AnnAssign
-        (not a Subscript write) and is legitimate."""
+        """A subclass ClassVar binding ``persona_role_map = {...}`` with
+        a bare Name target is a plain Name AnnAssign / Assign (not a
+        Subscript write) and is legitimate module-side vocabulary
+        declaration (issue #136)."""
         src = _write(
             tmp_path,
             "aila/platform/agents/persona_router.py",
-            "PERSONA_ROLE_MAP: dict[str, str] = {'a': 'x'}\n",
+            "class R:\n"
+            "    persona_role_map: dict[str, str] = {'a': 'x'}\n",
         )
         assert "structural_self_modification" not in _audit(src)
 
@@ -534,7 +539,7 @@ class TestStructuralSelfModificationRoster:
         src = _write(
             tmp_path,
             "aila/modules/vr/services/rogue.py",
-            "def rewire(voice, role):\n"
-            "    PERSONA_ROLE_MAP[voice] = role\n",
+            "def rewire(cls, voice, role):\n"
+            "    cls.persona_role_map[voice] = role\n",
         )
         assert "structural_self_modification" not in _audit(src)
