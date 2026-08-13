@@ -7,6 +7,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-13 -- Liveness auditor and stable-core knowledge seeding
+
+### Added
+
+- `aila.tools.liveness_audit`: a precision-first static reachability auditor
+  that flags wired-but-dead platform capabilities. Two rules encode the dead-path
+  shapes found in the peer review: `unread_config_key` (a ConfigRegistry key
+  written but never read -- the shape of the #104 gate-threshold bug) and
+  `unwritten_column` (a table column with no application writer -- the shape of
+  the #135 cost bug). Ships with a `liveness_whitelist.py` for known dynamic
+  lookups and runs as a report (`python -m aila.tools.liveness_audit src/aila
+  --whitelist liveness_whitelist.py`), not yet a hard gate (#139, #200).
+- Stable-core knowledge seeding: a startup seeder loads verified rubric and
+  policy entries from `platform/knowledge/stable_core/` into the
+  `platform:stable_core:*` namespace and invalidates the cache (#107).
+
+### Fixed
+
+- The RFC-12 stable-core cache-augmented retrieval route had no writer, so every
+  agent query about rubrics, policies, and checklists silently returned empty.
+  It is now seeded at startup with entries derived from existing platform policy
+  artifacts, so the route returns real results (#107).
+
 ## [0.3.23] - 2026-08-13 -- Cost materialization: investigation spend writeback
 
 ### Fixed

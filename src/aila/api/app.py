@@ -259,6 +259,28 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except (OSError, TimeoutError, RuntimeError, ValueError, LookupError) as exc:
         _log.warning("Default automation schedule seeding skipped: %s", exc)
 
+    # RFC-12 criterion 5 activation: seed the platform:stable_core:*
+    # knowledge rows (rubrics, accept-bar policies, checklists) from the
+    # versioned .md files under src/aila/platform/knowledge/stable_core/.
+    # The CAG router serves stable-core queries from an in-memory cache
+    # of these rows; before this seeder shipped the namespace was empty
+    # and every stable-core retrieval returned zero hits. Idempotent per
+    # file (dedup_key = file stem), no-op when the directory is empty,
+    # and best-effort: a seed fault must not abort startup because the
+    # CAG cache is an optimisation over the hybrid retrieval path.
+    try:
+        from aila.platform.services.knowledge_stable_core_seed import (
+            seed_stable_core_knowledge,
+        )
+
+        _seeded_stable_core = await seed_stable_core_knowledge()
+        if _seeded_stable_core:
+            _log.info(
+                "Seeded %d stable-core knowledge entries", _seeded_stable_core,
+            )
+    except (OSError, TimeoutError, RuntimeError, ValueError, LookupError) as exc:
+        _log.warning("Stable-core knowledge seeding skipped: %s", exc)
+
     # Start the supervised background automation tick loop (60s base interval,
     # exponential backoff on repeated failure). Wires the AutomationRunner that
     # was previously instantiated but never invoked (AUDIT-01 fix). The
