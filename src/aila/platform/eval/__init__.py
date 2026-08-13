@@ -50,6 +50,27 @@ from .experience_writer import (
     ExperienceWriter,
     ExperienceWriteResult,
 )
+from .judge_harness import (
+    BOOTSTRAP_SEED_PATH,
+    BiasCase,
+    BiasSummary,
+    SeedClaim,
+    SeedLoadError,
+    VerifierFn,
+    VerifierVerdict,
+    brier_score,
+    load_seed,
+    score_calibration_from_recorded,
+    stress_position_bias,
+    stress_verbosity_bias,
+    wilson_interval,
+)
+from .judge_harness import (
+    CalibrationSummary as JudgeCalibrationSummary,
+)
+from .judge_harness import (
+    score_calibration as judge_score_calibration,
+)
 from .metrics import (
     CalibrationBucket,
     CaseOutcome,
@@ -167,4 +188,20 @@ __all__ = [
     "recall_at_k",
     "reciprocal_rank",
     "score_case",
+    # Judge-reliability harness (issue #152).
+    "BOOTSTRAP_SEED_PATH",
+    "BiasCase",
+    "BiasSummary",
+    "JudgeCalibrationSummary",
+    "SeedClaim",
+    "SeedLoadError",
+    "VerifierFn",
+    "VerifierVerdict",
+    "brier_score",
+    "judge_score_calibration",
+    "load_seed",
+    "score_calibration_from_recorded",
+    "stress_position_bias",
+    "stress_verbosity_bias",
+    "wilson_interval",
 ]

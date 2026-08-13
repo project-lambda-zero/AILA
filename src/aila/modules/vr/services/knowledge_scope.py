@@ -28,6 +28,13 @@ VR_KNOWLEDGE_KINDS: tuple[str, ...] = (
     # _on_observables_evicted hook, so working-memory eviction does not
     # lose the underlying tool reading -- it just moves off the hot path.
     "observation",
+    # Issue #150: semantic-tier facts written by the platform consolidator
+    # (:mod:`aila.platform.services.memory.consolidator`) after distilling
+    # a resolved investigation's ledger traces. Reading the semantic
+    # namespace on every retrieval is what makes those facts visible to
+    # the agent -- the writer relies on this list being the single
+    # source of truth on which buckets are live.
+    "semantic",
 )
 
 

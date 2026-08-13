@@ -55,6 +55,7 @@ from aila.platform.llm.idempotency_cache import (
     make_request_key,
     store_response,
 )
+from aila.platform.routing.persona_model import resolve_effective_task_type
 from aila.platform.services.ledger import LedgerPermissionError, LedgerService
 from aila.platform.services.oracle import Oracle, OracleError
 from aila.platform.uow import UnitOfWork
@@ -517,6 +518,17 @@ class AgentTurnRunnerBase:
         # Resolved BEFORE the prompt load so an RFC-09 model-family prompt
         # variant can be selected for the model this turn routes to.
         task_type = self._resolve_task_type(branch.persona_voice) if branch.persona_voice else effective_strategy_family
+        # #151 persona -> model_role override: when the operator has
+        # populated ``platform.persona_model_role_map`` with an entry
+        # for this branch's persona, the mapped model_role replaces
+        # the base task_type before it reaches the LLM client, so
+        # distinct personas run distinct base models. Empty map (the
+        # default) leaves task_type untouched -- byte-identical to
+        # pre-#151. Read on the live spawn path so no dead map can
+        # accumulate.
+        task_type = await resolve_effective_task_type(
+            task_type, branch.persona_voice,
+        )
         # RFC-09: pick the coarse model family this turn will run on so a
         # family-specific prompt variant wins when one exists (falls back to
         # the default variant then the file). Best effort -- a resolve fault

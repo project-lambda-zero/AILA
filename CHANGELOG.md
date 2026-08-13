@@ -7,6 +7,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-13 -- P3 capabilities: judge harness, per-persona models, semantic memory
+
+### Added
+
+- Judge-reliability harness (`platform/eval/judge_harness.py`, #152): calibration
+  metrics (ECE, Brier, Wilson interval) plus label-free position and verbosity
+  bias stress tests for the claim verifier, a provenance-checked seed loader, a
+  bootstrap seed, and a CLI (`python -m aila.platform.eval.judge_harness`). Makes
+  the anti-hallucination guarantee measurable instead of asserted.
+- Per-persona model routing (#151): a `persona_voice -> model_role` map
+  (ConfigRegistry key `platform.persona_model_role_map`, empty by default) read
+  live at turn dispatch so each sibling persona can run a distinct base model,
+  turning multi-persona debate into real adversarial diversity. An empty map is
+  byte-identical to prior behavior; no model or route names live in code.
+- Semantic memory consolidation (`platform/services/memory/consolidator.py`,
+  #150): a nightly automation job distills resolved-investigation ledger traces
+  into de-contextualized semantic facts, written to the existing knowledge store
+  under a per-workspace semantic namespace that the vr and malware knowledge
+  retrievers now read, so each investigation's learnings are retrievable by
+  later ones. Idempotent with a pre-call dedup probe, reuses the existing
+  pgvector table (no migration), and unconfigured it falls back to the default
+  model. The procedural/skill-library tier remains a follow-up.
+
 ## [0.4.3] - 2026-08-13 -- Docs refresh: schema, reasoning engine, lifecycle, embeddings
 
 ### Changed

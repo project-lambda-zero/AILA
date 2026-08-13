@@ -186,6 +186,21 @@ class PlatformConfigSchema(BaseModel):
     # fallbacks in llm/config.py, so resolution behavior is unchanged.
     llm_default_model: str = "antigravity/claude-opus-4-6-thinking"
     llm_base_url: str = "https://openrouter.ai/api/v1"
+    # Persona -> model_role routing map (#151). JSON object literal
+    # mapping :class:`PersonaVoice` string values (halvar / maddie /
+    # yuki / renzo / noor / wei, plus module-supplied specialist
+    # voices) to a task_type / model_role string the LLM config layer
+    # already resolves via ``llm_model_{model_role}``. Consumed by
+    # :func:`aila.platform.routing.persona_model.resolve_effective_task_type`
+    # on the turn-runner LLM path. Empty string is the
+    # behavior-preserving default: no persona carries an override, so
+    # every LLM call routes to the same task_type each sibling would
+    # have used pre-#151. Populate to give distinct personas distinct
+    # base models and unlock cross-error rejection during debate.
+    # Malformed JSON or a non-object payload logs a warning and
+    # collapses to the empty-map default rather than failing the
+    # turn.
+    persona_model_role_map: str = ""
     # 32768: a reasoning decision (reasoning + hypotheses + command +
     # observables) under extended-thinking needs a generous output ceiling;
     # 4096 risked truncating large decisions. Existing deployments already
