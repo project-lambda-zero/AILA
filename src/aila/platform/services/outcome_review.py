@@ -737,10 +737,19 @@ async def evaluate_quorum(
     rejected (chorus-kill beats chorus-ship).
     """
     async with UnitOfWork() as uow:
+        # fix #166 -- lock the outcome row for the duration of this
+        # UnitOfWork so concurrent evaluate_quorum calls (turn_runner
+        # + investigation_emit re-entry) serialize on the same row.
+        # The SELECT is followed by a read-modify-write on
+        # ``outcome.state`` via set_outcome_state; without FOR UPDATE
+        # two callers can both read state == DRAFT, both decide, and
+        # the last commit wins -- an approve and a reject then resolve
+        # to whichever committed last. Same pattern as
+        # ``claim_outcome_for_dispatch`` in outcome_dispatch.py.
         outcome = (await uow.session.exec(
             _select(outcome_model).where(
                 outcome_model.id == outcome_id,
-            ),
+            ).with_for_update(),
         )).first()
         if outcome is None:
             raise ValueError(f"outcome {outcome_id} not found")

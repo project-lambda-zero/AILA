@@ -65,6 +65,7 @@ from datetime import datetime, timedelta
 from redis import asyncio as aioredis
 from sqlalchemy import delete as _delete
 from sqlalchemy import text as _sql_text
+from sqlalchemy import update as _update
 
 from aila.platform.contracts import utc_now
 from aila.storage.database import async_session_scope
@@ -620,22 +621,35 @@ class StateReconciler:
         A missing row is a no-op (returns silently) so a race with a
         concurrent DELETE never crashes the reconciler.
         """
+        # #203: previously the row was fetched with ``session.get`` (no
+        # lock), inspected in Python, then re-written -- classic TOCTOU
+        # against a concurrent hook that stamps a terminal status. The
+        # guard is now expressed as a single idempotent UPDATE whose
+        # WHERE clause excludes the terminal set, so racing writers
+        # either both win a no-op (rowcount 0) or exactly one flips
+        # the row and the other observes it as terminal.
         async with async_session_scope() as session:
-            rec = await session.get(TaskRecord, task_id)
-            if rec is None:
-                return
-            # Never overwrite a terminal already stamped by another
-            # path -- the reconciler's earlier CASE-A branch protects
-            # against calling _flip_status on terminal rows, but the
-            # guard here is defence-in-depth for a future caller.
-            if rec.status in _TERMINAL_TASK_STATUSES:
-                return
-            now = utc_now()
-            rec.status = new_status
-            rec.completed_at = now
-            rec.updated_at = now
-            rec.error = f"{rec.error or ''} {error_suffix}".strip()
-            session.add(rec)
+            row = await session.execute(
+                _update(TaskRecord)
+                .where(TaskRecord.id == task_id)  # type: ignore[arg-type]
+                .where(
+                    TaskRecord.status.not_in(  # type: ignore[union-attr]
+                        list(_TERMINAL_TASK_STATUSES)
+                    )
+                )
+                .values(
+                    status=new_status,
+                    completed_at=utc_now(),
+                    updated_at=utc_now(),
+                    error=_sql_text(
+                        "TRIM(COALESCE(error, '') || ' ' || :suffix)"
+                    ).bindparams(suffix=error_suffix),
+                )
+                .execution_options(synchronize_session=False)
+            )
+            _ = row  # rowcount inspection intentionally skipped: 0 rows
+            # is a valid outcome (row missing OR already terminal) and
+            # the reconciler treats both as "already consistent".
             await session.commit()
 
     async def _delete_cursor(self, task_id: str) -> None:

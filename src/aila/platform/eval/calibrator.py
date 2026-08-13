@@ -855,10 +855,16 @@ async def promote_calibrator(
         raise CalibratorPromotionError("version_id must be non-empty")
 
     async with async_session_scope() as session:
+        # Issue #202: FOR UPDATE on the candidate + active rows so
+        # two concurrent promoters for the same task_type cannot
+        # both pass the eval gate and both flip ACTIVE. The second
+        # promoter blocks on the row lock, then re-reads the (now
+        # SUPERSEDED) candidate status and raises the "not
+        # candidate" gap instead of double-activating.
         candidate = (await session.exec(
-            select(CalibratorVersionRecord).where(
-                CalibratorVersionRecord.id == version_id,
-            ),
+            select(CalibratorVersionRecord)
+            .where(CalibratorVersionRecord.id == version_id)
+            .with_for_update(),
         )).first()
         if candidate is None:
             raise CalibratorPromotionError(
@@ -873,10 +879,18 @@ async def promote_calibrator(
                 f"{candidate.status!r}, not candidate",
             )
 
-        # Gate 1: eval improvement.
-        active_stmt = select(CalibratorVersionRecord).where(
-            CalibratorVersionRecord.task_type == candidate.task_type,
-            CalibratorVersionRecord.status == CALIBRATOR_STATUS_ACTIVE,
+        # Gate 1: eval improvement. FOR UPDATE on the active row
+        # (issue #202) pairs with the candidate lock above so both
+        # rows this promotion touches are held for the whole
+        # transaction; a concurrent promoter for the same task_type
+        # blocks here rather than racing the flip below.
+        active_stmt = (
+            select(CalibratorVersionRecord)
+            .where(
+                CalibratorVersionRecord.task_type == candidate.task_type,
+                CalibratorVersionRecord.status == CALIBRATOR_STATUS_ACTIVE,
+            )
+            .with_for_update()
         )
         current_active = (await session.exec(active_stmt)).first()
         if current_active is not None and not (

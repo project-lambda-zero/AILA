@@ -466,6 +466,12 @@ async def _enqueue_dependents(completed_task_id: str) -> None:
         # completed task. Index on depends_on_json (added implicitly by
         # Postgres on Text) makes the pattern scan cheap relative to a
         # full WAITING scan.
+        # #203: lock the WAITING candidates with skip_locked so two
+        # concurrent _enqueue_dependents fan-outs (same completed dep)
+        # never both promote the same row -- the loser skips it and
+        # picks up whatever siblings remain. Without the lock both
+        # transactions would race the UPDATE and either lose one of the
+        # promotions or emit a duplicate ARQ enqueue.
         waiting_tasks = (
             await session.exec(
                 select(TaskRecord)
@@ -475,6 +481,7 @@ async def _enqueue_dependents(completed_task_id: str) -> None:
                         f"%{completed_task_id}%",
                     ),
                 )
+                .with_for_update(skip_locked=True)
             )
         ).all()
         for task in waiting_tasks:

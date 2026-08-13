@@ -7,6 +7,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.22] - 2026-08-13 -- P1 concurrency hardening and wired-but-dead paths
+
+### Fixed
+
+- Investigation-terminal writers now acquire the investigation row lock
+  before branch rows, removing the AB/BA deadlock window between the
+  investigation reaper and the lifecycle/finalizer paths (#177).
+- `evaluate_quorum` locks the outcome row FOR UPDATE for the full
+  read-tally-write, so two branch workers can no longer race the
+  draft to approved/rejected transition (#166).
+- `close_rejected_outcomes` locks the investigation row and guards on
+  RUNNING state; `synthesize_no_finding_outcomes` isolates each
+  investigation in a savepoint and uses ON CONFLICT DO NOTHING so a
+  single duplicate no longer rolls back the whole batch (#202).
+- Calibrator promotion and calibration-proposal supersession lock their
+  rows FOR UPDATE, preventing duplicate ACTIVE records (#202).
+- Dependent-task promotion, task-status reconciliation, workflow cursor
+  recreation, and the fuzz crash-count increment are now lock-guarded or
+  atomic, closing lost-update and noisy-retry windows (#203).
+
+### Changed
+
+- The confidence gate honors a promoted calibration threshold:
+  `platform.calibration_threshold_{outcome_kind}` (falling back to the
+  task_type key) overrides the reject threshold when present, so an
+  operator-promoted calibration proposal reaches the live decision (#104).
+- Synthesis annotates each panel entry with its claim-verifier status
+  (confirmed / refuted / inconclusive / unverified) and surfaces a
+  verifier-annotation block in the synthesis prompt, so a refuted claim
+  no longer weighs the same as a confirmed one in the consolidated
+  verdict (#105).
+
 ## [0.3.21] - 2026-08-13 -- P0 security and reliability fixes from the platform peer review
 
 ### Security

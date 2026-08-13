@@ -136,10 +136,27 @@ async def _apply_calibration(
 async def _resolve_thresholds(
     config_provider: LLMConfigProvider,
     task_type: str,
+    outcome_kind: str | None = None,
 ) -> tuple[float, float, float]:
     """Read gate thresholds from ConfigRegistry.
 
     Returns (high, medium, reject) tuple with defaults (0.8, 0.5, 0.2).
+
+    Calibration override: when a promoted
+    :class:`aila.platform.eval.calibration.CalibrationProposalRecord`
+    has written a live value into
+    ``platform.calibration_threshold_{outcome_kind}`` (or, when the
+    caller has no outcome_kind on hand, into
+    ``platform.calibration_threshold_{task_type}``), that value
+    replaces the per-task-type ``reject_threshold``. The write side is
+    :func:`aila.api.routers.admin_eval.promote_calibration_proposal`,
+    which stores ``proposal.after_threshold`` under
+    ``platform.calibration_threshold_{proposal.outcome_kind}`` --
+    identical key shape, so an operator whose proposal ``outcome_kind``
+    matches either the current LLM ``task_type`` or a per-call
+    ``outcome_kind`` supplied by the pipeline binds the promotion to
+    the live reject/accept decision here. Absent the key the gate is
+    byte-identical to the pre-calibration path.
     """
     registry = config_provider._registry
 
@@ -152,11 +169,41 @@ async def _resolve_thresholds(
                 pass
         return default
 
-    return (
-        await _get_float("high_threshold", 0.8),
-        await _get_float("medium_threshold", 0.5),
-        await _get_float("reject_threshold", 0.2),
-    )
+    high = await _get_float("high_threshold", 0.8)
+    medium = await _get_float("medium_threshold", 0.5)
+    reject = await _get_float("reject_threshold", 0.2)
+
+    # Live calibration threshold: prefer an explicit outcome_kind (the
+    # per-call dimension the write side keys on) and fall back to
+    # task_type so a gate call without an outcome_kind still resolves
+    # against an operator-tuned override.
+    calibration_val: Any = None
+    if outcome_kind:
+        calibration_val = await registry.get(
+            "platform", f"calibration_threshold_{outcome_kind}",
+        )
+    if calibration_val is None:
+        calibration_val = await registry.get(
+            "platform", f"calibration_threshold_{task_type}",
+        )
+    if calibration_val is not None:
+        try:
+            override = float(calibration_val)
+        except (ValueError, TypeError):
+            override = None  # type: ignore[assignment]
+        else:
+            # Clamp into a sane range; keep medium >= override so the
+            # LOW-band consensus path still has room to fire when the
+            # operator has raised the reject floor above the default
+            # medium threshold.
+            if 0.0 <= override <= 1.0:
+                reject = override
+                if medium < reject:
+                    medium = reject
+                if high < medium:
+                    high = medium
+
+    return high, medium, reject
 
 
 async def _resolve_consensus_config(
@@ -348,8 +395,18 @@ def make_gate_step(
             config_provider, routing.task_type, raw_score,
         )
 
-        # Read thresholds from config
-        high, medium, reject = await _resolve_thresholds(config_provider, routing.task_type)
+        # Read thresholds from config. ``ctx["outcome_kind"]`` is the
+        # per-call dimension that :func:`_resolve_thresholds` prefers
+        # when resolving a promoted calibration threshold; callers that
+        # know the outcome kind their call feeds set it upstream, and
+        # every other caller falls back to the task-type key.
+        ctx_outcome_kind = ctx.get("outcome_kind")
+        outcome_kind_val = (
+            str(ctx_outcome_kind) if ctx_outcome_kind else None
+        )
+        high, medium, reject = await _resolve_thresholds(
+            config_provider, routing.task_type, outcome_kind_val,
+        )
 
         # Map to level
         level = _map_confidence_level(score, high, medium, reject)

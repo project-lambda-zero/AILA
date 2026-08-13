@@ -685,10 +685,18 @@ class FuzzCampaignService:
     ) -> VRFuzzCrashSummary:
         """Register a new crash; auto-dedup + auto-triage."""
         async with UnitOfWork() as uow:
+            # #203: lock the campaign row for the duration of the
+            # crash-insert + counter update. The historical code fetched
+            # the campaign lock-free and later ran a Python-side
+            # ``crashes_found = (crashes_found or 0) + 1`` -- two
+            # concurrent crash POSTs both read the same prior value and
+            # one increment was silently lost. FOR UPDATE serialises the
+            # register_crash calls per-campaign so the counter and the
+            # telemetry snapshot below observe consistent values.
             campaign = (await uow.session.exec(
                 _select(VRFuzzCampaignRecord).where(
                     VRFuzzCampaignRecord.id == body.campaign_id,
-                ),
+                ).with_for_update(),
             )).first()
             if campaign is None:
                 raise FuzzServiceError(

@@ -198,225 +198,31 @@ async def synthesize_no_finding_outcomes(
     synthesized = 0
 
     for inv_id in orphan_inv_ids:
-        existing_outcome_row = (
-            await uow.session.exec(
-                select(inv.primary_outcome_id).where(inv.id == inv_id),
-            )
-        ).first()
-        existing_outcome: str | None = None
-        if existing_outcome_row is not None:
-            if hasattr(existing_outcome_row, "__getitem__") and not isinstance(existing_outcome_row, str):
-                existing_outcome = existing_outcome_row[0]
-            else:
-                existing_outcome = existing_outcome_row
-
-        if existing_outcome:
-            try:
-                await uow.session.exec(
-                    update(inv)
-                    .where(inv.id == inv_id)
-                    .where(inv.status == InvestigationStatus.RUNNING.value)
-                    .values(
-                        status=InvestigationStatus.COMPLETED.value,
-                        stopped_at=now,
-                        updated_at=now,
-                    ),
-                )
-                await close_orphan_branches_on_terminal(
-                    uow, inv_id, branch_table=branch_table,
-                    reason="investigation_completed", now=now,
-                )
-                synthesized += 1
-            except (SQLAlchemyError, RuntimeError) as exc:
-                _log.warning(
-                    "orphan close (with existing outcome) failed inv=%s: %s",
-                    inv_id, exc, exc_info=True,
-                )
-            continue
-
-        branch_rows = (
-            await uow.session.exec(
-                select(branch.id, branch.persona_voice, branch.turn_count, branch.closed_reason, branch.status)
-                .where(branch.investigation_id == inv_id)
-                .order_by(branch.turn_count.desc(), branch.created_at.asc()),
-            )
-        ).all()
-        if not branch_rows:
-            continue
-        unwrapped: list[tuple[str, str, int, str | None, str]] = []
-        for br in branch_rows:
-            if hasattr(br, "__getitem__") and not isinstance(br, str):
-                unwrapped.append(
-                    (str(br[0]), str(br[1] or "?"), int(br[2] or 0), br[3], str(br[4] or "?")),
-                )
-        if not unwrapped:
-            continue
-
-        proposer_branch_id = unwrapped[0][0]
-        total_turns = sum(r[2] for r in unwrapped)
-        # A zero-turn investigation never actually ran -- every branch
-        # reached terminal without completing a single reasoning turn
-        # (LLM outage, dispatch crash, or immediate abandonment). This
-        # is a failure, not a "we audited and found nothing" result.
-        # Mark it FAILED (retryable via reopen / re-enqueue) instead of
-        # synthesizing a hollow no-finding outcome that reads as a
-        # clean completion. Platform default so every module gets it.
-        if total_turns == 0:
-            try:
-                await uow.session.exec(
-                    update(inv)
-                    .where(inv.id == inv_id)
-                    .where(inv.status == InvestigationStatus.RUNNING.value)
-                    .values(
-                        status=InvestigationStatus.FAILED.value,
-                        stopped_at=now,
-                        updated_at=now,
-                    ),
-                )
-                await close_orphan_branches_on_terminal(
-                    uow, inv_id, branch_table=branch_table,
-                    reason="zero_turn_no_progress", now=now,
-                )
-                synthesized += 1
-                _log.info(
-                    "synthesize_no_finding: inv=%s marked FAILED (0 turns "
-                    "across %d branches -- never ran, not synthesizing a "
-                    "no-finding outcome)", inv_id, len(unwrapped),
-                )
-            except (SQLAlchemyError, RuntimeError) as exc:
-                _log.warning(
-                    "zero-turn FAILED close failed inv=%s: %s",
-                    inv_id, exc, exc_info=True,
-                )
-            continue
-
-        # RFC-07 first increment: before writing a clean no-finding
-        # outcome for a multi-turn investigation, check whether the
-        # trailing branch closures look like infra death (LLM outage,
-        # stale-branch abandonment, provider transport failure). The
-        # outer function already skips the whole tick when the LLM is
-        # currently unhealthy; this guard catches the case where the
-        # LLM recovered between the last dead turn and this finalizer
-        # tick, so is_llm_recently_unhealthy reads healthy but the
-        # branches themselves closed on infra signals. Feeding pseudo
-        # error-class strings derived from each branch's closed_reason
-        # keeps the classifier PURE and testable without a DB.
-        recent_turn_errors: list[str] = []
-        for (_bid, _persona, _turns, closed_reason, _status) in unwrapped:
-            if closed_reason and closed_reason.startswith("stale_no_progress_"):
-                recent_turn_errors.append("stale_no_progress")
-        llm_unhealthy_at_close = is_llm_recently_unhealthy(600.0)
-        verdict = _INFRA_DEATH_CLASSIFIER.classify(
-            branch_turn_count=total_turns,
-            recent_turn_errors=recent_turn_errors,
-            llm_unhealthy_at_close=llm_unhealthy_at_close,
-        )
-        if verdict == "infra_death":
-            try:
-                await uow.session.exec(
-                    update(inv)
-                    .where(inv.id == inv_id)
-                    .where(inv.status == InvestigationStatus.RUNNING.value)
-                    .values(
-                        status=InvestigationStatus.FAILED.value,
-                        stopped_at=now,
-                        updated_at=now,
-                    ),
-                )
-                await close_orphan_branches_on_terminal(
-                    uow, inv_id, branch_table=branch_table,
-                    reason="auto_closed_infra", now=now,
-                )
-                synthesized += 1
-                _log.warning(
-                    "synthesize_no_finding: inv=%s downgraded to FAILED "
-                    "(infra_death: %d turns across %d branches; "
-                    "recent_errors=%s llm_unhealthy=%s -- retryable via "
-                    "reopen / re-enqueue)",
-                    inv_id, total_turns, len(unwrapped),
-                    ",".join(recent_turn_errors) or "none",
-                    llm_unhealthy_at_close,
-                )
-            except (SQLAlchemyError, RuntimeError) as exc:
-                _log.warning(
-                    "infra-death FAILED close failed inv=%s: %s",
-                    inv_id, exc, exc_info=True,
-                )
-            continue
-
-        summary_text = (
-            "Investigation auto-closed by reconciler: every branch "
-            "reached a terminal state without proposing a finding. "
-            f"{len(unwrapped)} branches consumed {total_turns} total "
-            "turns. Per-branch outcome:"
-        )
-        per_branch = [
-            {
-                "persona": p,
-                "turns": t,
-                "status": s,
-                "closed_reason": cr or "n/a",
-            }
-            for (_bid, p, t, cr, s) in unwrapped
-        ]
-        payload = build_no_finding_payload(
-            summary_text=summary_text,
-            per_branch=per_branch,
-            total_turns=total_turns,
-            now_iso=now_iso,
-        )
-
-        outcome_id = str(_uuid.uuid4())
+        # Issue #202: per-inv savepoint so a single row's failure
+        # (constraint violation, transient DB error, concurrent
+        # finalize race) isolates to that inv instead of rolling
+        # back the whole batch's synthesizations.
         try:
-            await uow.session.exec(
-                text(
-                    f"""
-                    INSERT INTO {outcome_table} (
-                        id, investigation_id, branch_id, outcome_kind,
-                        payload_json, confidence, evidence_refs_json,
-                        accepted_by_operator, accepted_at,
-                        dispatch_status, dispatch_target,
-                        created_at, state
-                    ) VALUES (
-                        :id, :inv_id, :branch_id, :kind,
-                        :payload, :confidence, :evidence,
-                        false, NULL,
-                        'skipped', NULL,
-                        :now, 'approved'
-                    )
-                    """,
-                ),
-                params={
-                    "id": outcome_id,
-                    "inv_id": inv_id,
-                    "branch_id": proposer_branch_id,
-                    "kind": no_finding_outcome_kind,
-                    "payload": _json.dumps(payload),
-                    "confidence": "caveated",
-                    "evidence": "[]",
-                    "now": now,
-                },
-            )
-            await uow.session.exec(
-                update(inv)
-                .where(inv.id == inv_id)
-                .where(inv.status == InvestigationStatus.RUNNING.value)
-                .values(
-                    primary_outcome_id=outcome_id,
-                    status=InvestigationStatus.COMPLETED.value,
-                    stopped_at=now,
-                    updated_at=now,
-                ),
-            )
-            await close_orphan_branches_on_terminal(
-                uow, inv_id, branch_table=branch_table,
-                reason="investigation_completed", now=now,
-            )
-            synthesized += 1
+            async with uow.session.begin_nested():
+                if await _synthesize_one_no_finding(
+                    uow,
+                    inv_id=inv_id,
+                    investigation_model=inv,
+                    branch_model=branch,
+                    branch_table=branch_table,
+                    outcome_table=outcome_table,
+                    no_finding_outcome_kind=no_finding_outcome_kind,
+                    build_no_finding_payload=build_no_finding_payload,
+                    now=now,
+                    now_iso=now_iso,
+                ):
+                    synthesized += 1
         except (SQLAlchemyError, RuntimeError) as exc:
             _log.warning(
-                "synthesize_no_finding failed inv=%s: %s", inv_id, exc, exc_info=True,
+                "synthesize_no_finding failed inv=%s: %s",
+                inv_id, exc, exc_info=True,
             )
+        continue
 
     if synthesized:
         await uow.commit()
@@ -427,6 +233,250 @@ async def synthesize_no_finding_outcomes(
             + ("..." if len(orphan_inv_ids) > 5 else ""),
         )
     return synthesized
+
+
+async def _synthesize_one_no_finding(
+    uow: UnitOfWork,
+    *,
+    inv_id: str,
+    investigation_model: type,
+    branch_model: type,
+    branch_table: str,
+    outcome_table: str,
+    no_finding_outcome_kind: str,
+    build_no_finding_payload: Callable[..., dict[str, Any]],
+    now: Any,
+    now_iso: str,
+) -> bool:
+    """Synthesize a no-finding outcome for one investigation.
+
+    Extracted out of :func:`synthesize_no_finding_outcomes` so the
+    per-inv work runs inside a savepoint. Returns ``True`` when the
+    investigation reached a terminal state via this call; ``False``
+    when a concurrent writer beat us to it or the inv had no
+    branches to close.
+
+    Investigation-first lock order (issue #177/#202): the inv row is
+    locked BEFORE any branch or outcome write. The lock is also the
+    concurrent-finalize guard -- a per-id finalize racing this
+    sweep will block on the SELECT FOR UPDATE and then find the
+    ``status == RUNNING`` guard fails, so no duplicate outcome is
+    written and no branch cascade is double-run.
+    """
+    inv = investigation_model
+    branch = branch_model
+
+    # Lock the investigation row first. If a concurrent writer has
+    # already flipped it terminal, skip -- their cascade owns the
+    # branches and (if applicable) the outcome.
+    locked_inv = (
+        await uow.session.exec(
+            select(inv)
+            .where(inv.id == inv_id)
+            .where(inv.status == InvestigationStatus.RUNNING.value)
+            .with_for_update(),
+        )
+    ).first()
+    if not locked_inv or isinstance(locked_inv, type(None)):
+        return False
+    inv_row = (
+        locked_inv[0]
+        if hasattr(locked_inv, "__getitem__") and not isinstance(locked_inv, str)
+        else locked_inv
+    )
+    existing_outcome: str | None = getattr(inv_row, "primary_outcome_id", None)
+
+    if existing_outcome:
+        await uow.session.exec(
+            update(inv)
+            .where(inv.id == inv_id)
+            .where(inv.status == InvestigationStatus.RUNNING.value)
+            .values(
+                status=InvestigationStatus.COMPLETED.value,
+                stopped_at=now,
+                updated_at=now,
+            ),
+        )
+        await close_orphan_branches_on_terminal(
+            uow, inv_id, branch_table=branch_table,
+            reason="investigation_completed", now=now,
+        )
+        return True
+
+    branch_rows = (
+        await uow.session.exec(
+            select(branch.id, branch.persona_voice, branch.turn_count, branch.closed_reason, branch.status)
+            .where(branch.investigation_id == inv_id)
+            .order_by(branch.turn_count.desc(), branch.created_at.asc()),
+        )
+    ).all()
+    if not branch_rows:
+        return False
+    unwrapped: list[tuple[str, str, int, str | None, str]] = []
+    for br in branch_rows:
+        if hasattr(br, "__getitem__") and not isinstance(br, str):
+            unwrapped.append(
+                (str(br[0]), str(br[1] or "?"), int(br[2] or 0), br[3], str(br[4] or "?")),
+            )
+    if not unwrapped:
+        return False
+
+    proposer_branch_id = unwrapped[0][0]
+    total_turns = sum(r[2] for r in unwrapped)
+    # A zero-turn investigation never actually ran -- every branch
+    # reached terminal without completing a single reasoning turn
+    # (LLM outage, dispatch crash, or immediate abandonment). This
+    # is a failure, not a "we audited and found nothing" result.
+    # Mark it FAILED (retryable via reopen / re-enqueue) instead of
+    # synthesizing a hollow no-finding outcome that reads as a
+    # clean completion. Platform default so every module gets it.
+    if total_turns == 0:
+        await uow.session.exec(
+            update(inv)
+            .where(inv.id == inv_id)
+            .where(inv.status == InvestigationStatus.RUNNING.value)
+            .values(
+                status=InvestigationStatus.FAILED.value,
+                stopped_at=now,
+                updated_at=now,
+            ),
+        )
+        await close_orphan_branches_on_terminal(
+            uow, inv_id, branch_table=branch_table,
+            reason="zero_turn_no_progress", now=now,
+        )
+        _log.info(
+            "synthesize_no_finding: inv=%s marked FAILED (0 turns "
+            "across %d branches -- never ran, not synthesizing a "
+            "no-finding outcome)", inv_id, len(unwrapped),
+        )
+        return True
+
+    # RFC-07 first increment: before writing a clean no-finding
+    # outcome for a multi-turn investigation, check whether the
+    # trailing branch closures look like infra death (LLM outage,
+    # stale-branch abandonment, provider transport failure). The
+    # outer function already skips the whole tick when the LLM is
+    # currently unhealthy; this guard catches the case where the
+    # LLM recovered between the last dead turn and this finalizer
+    # tick, so is_llm_recently_unhealthy reads healthy but the
+    # branches themselves closed on infra signals. Feeding pseudo
+    # error-class strings derived from each branch's closed_reason
+    # keeps the classifier PURE and testable without a DB.
+    recent_turn_errors: list[str] = []
+    for (_bid, _persona, _turns, closed_reason, _status) in unwrapped:
+        if closed_reason and closed_reason.startswith("stale_no_progress_"):
+            recent_turn_errors.append("stale_no_progress")
+    llm_unhealthy_at_close = is_llm_recently_unhealthy(600.0)
+    verdict = _INFRA_DEATH_CLASSIFIER.classify(
+        branch_turn_count=total_turns,
+        recent_turn_errors=recent_turn_errors,
+        llm_unhealthy_at_close=llm_unhealthy_at_close,
+    )
+    if verdict == "infra_death":
+        await uow.session.exec(
+            update(inv)
+            .where(inv.id == inv_id)
+            .where(inv.status == InvestigationStatus.RUNNING.value)
+            .values(
+                status=InvestigationStatus.FAILED.value,
+                stopped_at=now,
+                updated_at=now,
+            ),
+        )
+        await close_orphan_branches_on_terminal(
+            uow, inv_id, branch_table=branch_table,
+            reason="auto_closed_infra", now=now,
+        )
+        _log.warning(
+            "synthesize_no_finding: inv=%s downgraded to FAILED "
+            "(infra_death: %d turns across %d branches; "
+            "recent_errors=%s llm_unhealthy=%s -- retryable via "
+            "reopen / re-enqueue)",
+            inv_id, total_turns, len(unwrapped),
+            ",".join(recent_turn_errors) or "none",
+            llm_unhealthy_at_close,
+        )
+        return True
+
+    summary_text = (
+        "Investigation auto-closed by reconciler: every branch "
+        "reached a terminal state without proposing a finding. "
+        f"{len(unwrapped)} branches consumed {total_turns} total "
+        "turns. Per-branch outcome:"
+    )
+    per_branch = [
+        {
+            "persona": p,
+            "turns": t,
+            "status": s,
+            "closed_reason": cr or "n/a",
+        }
+        for (_bid, p, t, cr, s) in unwrapped
+    ]
+    payload = build_no_finding_payload(
+        summary_text=summary_text,
+        per_branch=per_branch,
+        total_turns=total_turns,
+        now_iso=now_iso,
+    )
+
+    outcome_id = str(_uuid.uuid4())
+    # Issue #202: ``ON CONFLICT (id) DO NOTHING`` so a duplicate uuid
+    # (astronomically unlikely, but the guard costs nothing) is a
+    # no-op rather than a savepoint-aborting IntegrityError. The
+    # real concurrency guard is the investigation-first
+    # SELECT ... FOR UPDATE above, plus the ``WHERE status='running'``
+    # filter on the inv UPDATE -- a concurrent per-id finalize that
+    # already flipped this inv terminal will find no matching row
+    # and this savepoint returns cleanly without touching anything
+    # else in the batch.
+    await uow.session.exec(
+        text(
+            f"""
+            INSERT INTO {outcome_table} (
+                id, investigation_id, branch_id, outcome_kind,
+                payload_json, confidence, evidence_refs_json,
+                accepted_by_operator, accepted_at,
+                dispatch_status, dispatch_target,
+                created_at, state
+            ) VALUES (
+                :id, :inv_id, :branch_id, :kind,
+                :payload, :confidence, :evidence,
+                false, NULL,
+                'skipped', NULL,
+                :now, 'approved'
+            )
+            ON CONFLICT (id) DO NOTHING
+            """,
+        ),
+        params={
+            "id": outcome_id,
+            "inv_id": inv_id,
+            "branch_id": proposer_branch_id,
+            "kind": no_finding_outcome_kind,
+            "payload": _json.dumps(payload),
+            "confidence": "caveated",
+            "evidence": "[]",
+            "now": now,
+        },
+    )
+    await uow.session.exec(
+        update(inv)
+        .where(inv.id == inv_id)
+        .where(inv.status == InvestigationStatus.RUNNING.value)
+        .values(
+            primary_outcome_id=outcome_id,
+            status=InvestigationStatus.COMPLETED.value,
+            stopped_at=now,
+            updated_at=now,
+        ),
+    )
+    await close_orphan_branches_on_terminal(
+        uow, inv_id, branch_table=branch_table,
+        reason="investigation_completed", now=now,
+    )
+    return True
 
 
 async def close_rejected_outcomes(
@@ -511,6 +561,26 @@ async def close_rejected_outcomes(
         if unvoted_active:
             continue
 
+        # Issue #202: lock the investigation row BEFORE writing the
+        # branch cascade so this path obeys the platform-wide
+        # investigation-first lock order (see investigation_reaper.
+        # _flip_branches_and_inv_to_completed and
+        # services/investigation_lifecycle). Guarding the load with
+        # ``status == RUNNING`` also lets a concurrent terminal flip
+        # win without this loop clobbering it.
+        target_inv = (
+            await uow.session.exec(
+                select(inv)
+                .where(inv.id == inv_id)
+                .where(inv.status == InvestigationStatus.RUNNING.value)
+                .with_for_update(),
+            )
+        ).first()
+        if not target_inv or isinstance(target_inv, type(None)):
+            # Another writer already flipped this investigation
+            # terminal between the candidate scan and now. Skip;
+            # the winner's cascade owns the branches.
+            continue
         await uow.session.exec(
             update(branch)
             .where(branch.investigation_id == inv_id)
@@ -522,23 +592,17 @@ async def close_rejected_outcomes(
                 updated_at=utc_now(),
             ),
         )
-        target_inv = (
-            await uow.session.exec(
-                select(inv).where(inv.id == inv_id),
-            )
-        ).first()
-        if target_inv and not isinstance(target_inv, type(None)):
-            t = target_inv[0] if hasattr(target_inv, "__getitem__") and not isinstance(target_inv, str) else target_inv
-            t.status = InvestigationStatus.COMPLETED.value
-            t.pause_reason = "operator"
-            t.stopped_at = utc_now()
-            t.updated_at = utc_now()
-            uow.session.add(t)
-            closed += 1
-            _log.info(
-                "rejected_outcome_closed inv=%s outcome=%s",
-                inv_id, outcome_id,
-            )
+        t = target_inv[0] if hasattr(target_inv, "__getitem__") and not isinstance(target_inv, str) else target_inv
+        t.status = InvestigationStatus.COMPLETED.value
+        t.pause_reason = "operator"
+        t.stopped_at = utc_now()
+        t.updated_at = utc_now()
+        uow.session.add(t)
+        closed += 1
+        _log.info(
+            "rejected_outcome_closed inv=%s outcome=%s",
+            inv_id, outcome_id,
+        )
 
     if closed:
         await uow.commit()
