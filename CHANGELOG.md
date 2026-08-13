@@ -7,6 +7,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-08-13 -- Skill-library memory tier, isolation-set dedup, CI collection fix
+
+### Added
+
+- Procedural skill-library memory tier (`platform/services/memory/skills.py`,
+  #150) -- the second half of the memory work. A nightly sweep extracts one
+  reusable skill (problem_shape to winning approach) from each resolved
+  investigation with a confirmed outcome and writes it to a team-scoped
+  `skill.*` knowledge namespace that the vr and malware setup-time retrievers
+  now read, so prior skills surface in later investigations across the team.
+  Reuses the existing knowledge store (no migration); idempotent per
+  investigation; own nightly automation action.
+
+### Changed
+
+- The automation runner's per-schedule isolation set now composes from the
+  shared `platform/events/_dispatch.py::ISOLATION_ERRORS` plus SQLAlchemyError,
+  removing the third hand-maintained copy of the isolation tuple.
+
+### Fixed
+
+- `tests/platform/workflows/test_core_panel_config.py` imported a module
+  (`aila.modules.vr.services.config_helpers`) that had been refactored into
+  `ModuleConfigReader`, so the entire test suite failed at collection (hidden
+  while CI was org-blocked). The test now targets the current reader; the suite
+  collects clean, unblocking the CI test gate.
+
 ## [0.5.1] - 2026-08-13 -- Wire dead config keys and columns from the liveness triage (#209)
 
 ### Fixed

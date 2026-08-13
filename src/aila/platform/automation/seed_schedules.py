@@ -48,6 +48,13 @@ _DEFAULT_SCHEDULES: tuple[tuple[str, str], ...] = (
     # check in :mod:`aila.platform.services.memory.consolidator`, so a
     # tick with nothing new is a bounded, LLM-free no-op.
     ("platform.semantic_consolidation_sweep", "0 5 * * *"),
+    # Issue #150 procedural (skill-library) tier. Runs one hour after
+    # the semantic sweep so any facts distilled from the same batch of
+    # resolved investigations have already landed. Idempotent per
+    # investigation via the ``skill:<inv_id>`` dedup key in
+    # :mod:`aila.platform.services.memory.skills`, so a tick with
+    # nothing new is a bounded, LLM-free no-op.
+    ("platform.skill_library_sweep", "0 6 * * *"),
 )
 
 _SEED_ACTOR: str = "platform.seed_default_automation_schedules"
