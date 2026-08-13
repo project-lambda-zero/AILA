@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aila"
-version = "0.3.20"
+version = "0.3.21"
 description = "Modular AI security platform with pluggable analysis modules."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -127,7 +127,7 @@ branch = true
 show_missing = true
 skip_covered = false
 precision = 1
-fail_under = 25
+fail_under = 50
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",

@@ -468,8 +468,8 @@ def verify_user_password(plain_password: str, hashed_password: str) -> bool:
 # User JWT issuance (user_access + user_refresh tokens)
 # ---------------------------------------------------------------------------
 
-_USER_ACCESS_EXPIRY: int = 31_536_000   # 1 year
-_USER_REFRESH_EXPIRY: int = 31_536_000  # 1 year
+_USER_ACCESS_EXPIRY: int = 3600     # 1 hour
+_USER_REFRESH_EXPIRY: int = 604800  # 7 days
 
 
 def issue_user_jwt(user_id: str, role: str, *, team_id: str | None = None) -> tuple[str, int]:

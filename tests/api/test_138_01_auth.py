@@ -161,7 +161,7 @@ async def test_login_valid_credentials(auth_client, admin_user):
     assert "access_token" in data
     assert "refresh_token" in data
     assert data["token_type"] == "bearer"
-    assert data["expires_in"] == 31_536_000  # 1 year
+    assert data["expires_in"] == 3600  # 1 hour (#171: matches documented design)
 
 
 @pytest.mark.asyncio
@@ -229,7 +229,7 @@ async def test_refresh_token_flow(auth_client, admin_user):
     assert resp2.status_code == 200, resp2.text
     data = resp2.json()["data"]
     assert "access_token" in data
-    assert data["expires_in"] == 31_536_000
+    assert data["expires_in"] == 3600  # 1 hour (#171)
 
 
 # ---------------------------------------------------------------------------

@@ -60,3 +60,84 @@ jobs:
 
       - name: Shell production build
         run: pnpm --filter @aila/shell run build
+
+  test:
+    name: Backend tests (pytest against Postgres + Redis)
+    runs-on: ubuntu-latest
+
+    # Service container images mirror infra/utilities/docker-compose.yml:
+    #   - Postgres uses pgvector/pgvector:pg16 so the `vector` extension is
+    #     already installed on disk; the workflow enables it in aila_test
+    #     after the service is healthy.
+    #   - Redis uses redis:7-alpine, matching the local dev image.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: aila_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d aila_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+          --health-start-period 10s
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    # Env vars discovered from the repo (not invented):
+    #   - AILA_TEST_DATABASE_URL: tests/conftest.py:TEST_DB_URL, tests/api/conftest.py.
+    #   - AILA_DATABASE_URL: src/aila/config.py:_resolve_database_url (required by
+    #     Settings; the test_db fixture also swaps it at runtime, so it MUST be
+    #     set at import time to satisfy the settings singleton).
+    #   - AILA_PLATFORM_REDIS_URL: docs/ENV_VARS.md; ConfigRegistry override for
+    #     platform.redis_url (see tests/platform/tasks/*, tests/api/test_race_failures.py).
+    #   - AILA_TEST_REDIS_URL: tests/platform/tasks/conftest.py -- separate DB
+    #     index (/15) so tests never touch the production queue.
+    #   - AILA_JWT_SECRET_KEY: pinned so JWTs stay stable across the run
+    #     (config.py generates a random secret per process otherwise).
+    env:
+      AILA_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/aila_test
+      AILA_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/aila_test
+      AILA_PLATFORM_REDIS_URL: redis://127.0.0.1:6379/0
+      AILA_TEST_REDIS_URL: redis://127.0.0.1:6379/15
+      AILA_JWT_SECRET_KEY: ci-test-secret-do-not-use-in-production
+      PGPASSWORD: postgres
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install AILA + dev tools
+        run: pip install -e ".[dev]"
+
+      - name: Enable pgvector extension in aila_test
+        # docker-entrypoint-initdb.d does not run for GitHub Actions service
+        # containers, so infra/postgres-init/01-extensions.sql is not applied
+        # automatically. Enable the extension explicitly against aila_test.
+        run: |
+          psql -h localhost -U postgres -d aila_test \
+            -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+      - name: Pytest
+        run: |
+          python -m pytest tests/ \
+            --ignore=tests/test_e2e.py \
+            --ignore=tests/test_e2e_live.py \
+            -x

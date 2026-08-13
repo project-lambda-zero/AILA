@@ -976,6 +976,12 @@ class FindingWorkflowRecord(SQLModel, table=True):
     State machine: new -> investigating -> mitigated -> verified -> closed.
     Written by: POST /findings/{id}/transition (operator+).
     Consumed by: GET /findings/{id}/workflow (BE-08).
+
+    Team-scoped (#99): ``team_id`` is stamped from the transitioning
+    principal. A god-tier admin (team_id=NULL, TEAM-06) owns NULL-team
+    rows and sees every row; a team-scoped caller sees and mutates only
+    rows carrying its own team_id. Cross-team reads/transitions return
+    404 so the row's existence does not leak.
     """
 
     __tablename__ = "finding_workflow_records"
@@ -987,6 +993,7 @@ class FindingWorkflowRecord(SQLModel, table=True):
     previous_state: str | None = Field(default=None)
     transitioned_by: str
     notes: str = Field(default="", sa_column=Column(Text))
+    team_id: str | None = Field(default=None, index=True, max_length=64)
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
 

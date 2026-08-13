@@ -11,11 +11,11 @@ async def test_seed_defaults_is_idempotent(test_db) -> None:
     del test_db
     reg = SpecialistAgentRegistry()
     first = await reg.seed_defaults("vr")
-    assert first == 4  # re, mobile, exploit-dev, variant
+    assert first == 4  # snake, jak, kratos, lara
     again = await reg.seed_defaults("vr")
     assert again == 0  # nothing re-inserted
     names = {s.name for s in await reg.list_by_module("vr")}
-    assert names == {"re", "mobile", "exploit-dev", "variant"}
+    assert names == {"snake", "jak", "kratos", "lara"}
 
 
 async def test_resolve_capability_specialist_vs_core(test_db) -> None:
@@ -23,7 +23,7 @@ async def test_resolve_capability_specialist_vs_core(test_db) -> None:
     reg = SpecialistAgentRegistry()
     await reg.seed_defaults("vr")
     # A registered specialist resolves to its capability.
-    assert await reg.resolve_capability("vr", "re") == "binary-audit"
+    assert await reg.resolve_capability("vr", "snake") == "binary-audit"
     # A core role (not in the registry) resolves to None -> walks all phases.
     assert await reg.resolve_capability("vr", "halvar") is None
 
@@ -64,8 +64,8 @@ async def test_module_scoping_isolates_specialists(test_db) -> None:
     await reg.seed_defaults("malware")
     vr_names = {s.name for s in await reg.list_by_module("vr")}
     mw_names = {s.name for s in await reg.list_by_module("malware")}
-    assert "crypto" in mw_names
-    assert "crypto" not in vr_names  # malware-only specialist
-    # 're' exists in both but with different capabilities per module.
-    assert await reg.resolve_capability("vr", "re") == "binary-audit"
-    assert await reg.resolve_capability("malware", "re") == "re"
+    assert "vincent" in mw_names
+    assert "vincent" not in vr_names  # malware-only specialist
+    # Each specialist name resolves to its capability within its own module.
+    assert await reg.resolve_capability("vr", "snake") == "binary-audit"
+    assert await reg.resolve_capability("malware", "alucard") == "re"

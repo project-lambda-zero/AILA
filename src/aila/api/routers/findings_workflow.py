@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlmodel import select
 
-from aila.api.auth import AuthContext, require_user_or_api_key
+from aila.api.auth import AuthContext, TeamContext, require_user_or_api_key
 from aila.api.constants import ROLE_OPERATOR
 from aila.api.limiter import limiter
 from aila.api.schemas.endpoints import (
@@ -135,17 +135,35 @@ async def get_finding_workflow(
     finding_id: str,
     auth: AuthContext = Depends(require_user_or_api_key),
 ) -> DataEnvelope[FindingWorkflowStateResponse]:
-    """Return current workflow state and full transition history for a finding."""
+    """Return current workflow state and full transition history for a finding.
+
+    Team-scoped (#99): a team-scoped caller only sees history rows
+    stamped with its own ``team_id``. If no visible history rows exist
+    the endpoint returns a 404 rather than the initial-state envelope so
+    the caller cannot use the response to probe finding_ids owned by
+    another team. God-tier admins (team_id=NULL) see every row.
+    """
     async with async_session_scope() as session:
         stmt = (
             select(FindingWorkflowRecord)
             .where(FindingWorkflowRecord.finding_id == finding_id)
             .order_by(FindingWorkflowRecord.created_at.asc())  # type: ignore[attr-defined]
         )
+        if auth.team_id is not None:
+            stmt = stmt.where(FindingWorkflowRecord.team_id == auth.team_id)
         history = (await session.exec(stmt)).all()
 
     if not history:
-        # Finding has no workflow record yet -- return initial state
+        if auth.team_id is not None:
+            # A team-scoped caller with no visible rows cannot tell
+            # "does not exist" from "exists but belongs to another team"
+            # -- always 404.
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Finding workflow for '{finding_id}' not found",
+            )
+        # Admin (team_id=None) sees the initial-state envelope for any
+        # finding_id that has never transitioned.
         return DataEnvelope(
             data=FindingWorkflowStateResponse(
                 finding_id=finding_id,
@@ -193,14 +211,37 @@ async def transition_finding(
         )
 
     async with async_session_scope() as session:
-        # Get the most recent workflow record for this finding
+        # Get the most recent workflow record for this finding, scoped
+        # to the caller's team (#99). A team-scoped caller cannot chain
+        # onto history owned by another team; admin sees every row.
         stmt = (
             select(FindingWorkflowRecord)
             .where(FindingWorkflowRecord.finding_id == finding_id)
             .order_by(FindingWorkflowRecord.created_at.desc())  # type: ignore[attr-defined]
             .limit(1)
         )
+        if auth.team_id is not None:
+            stmt = stmt.where(FindingWorkflowRecord.team_id == auth.team_id)
         latest = (await session.exec(stmt)).first()
+
+        if latest is None and auth.team_id is not None:
+            # No visible predecessor for a team-scoped caller means
+            # either the finding has never transitioned OR it belongs
+            # to another team. Probe the raw table (bypassing the team
+            # filter) to disambiguate: if a row exists but is not ours,
+            # return 404 rather than let the caller open a new chain on
+            # top of another team's history.
+            oracle = (await session.exec(
+                select(FindingWorkflowRecord)
+                .where(FindingWorkflowRecord.finding_id == finding_id)
+                .limit(1)
+            )).first()
+            if oracle is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Finding workflow for '{finding_id}' not found",
+                )
+
         current_state = latest.current_state if latest else "new"
 
         # Validate transition (T-138-22: server-side enforcement)
@@ -221,6 +262,7 @@ async def transition_finding(
             previous_state=current_state,
             transitioned_by=auth.user_id,
             notes=body.notes,
+            team_id=auth.team_id,
         )
         session.add(record)
         await session.commit()
@@ -326,7 +368,15 @@ async def get_evidence_chain(
             detail="Evidence chains unavailable -- no registered module provides them.",
         )
 
-    async with async_session_scope() as session:
+    # Team-scoped (#99): pass a session bound to the caller's
+    # TeamContext so the vulnerability module's queries (LatestFindingRecord,
+    # FindingWorkflowRecord, etc.) are filtered by the do_orm_execute
+    # listener. A team-scoped caller asking for another team's
+    # finding_id gets None from module.evidence_chain and a 404 here;
+    # god-tier admins (team_id=NULL) see any chain.
+    async with async_session_scope(
+        team_context=TeamContext.from_auth(auth),
+    ) as session:
         chain = await module.evidence_chain(finding_id, session)
     if chain is None:
         raise HTTPException(

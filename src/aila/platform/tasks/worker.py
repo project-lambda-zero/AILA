@@ -865,10 +865,17 @@ async def _sweep_orphan_running_tasks(
                     # sweep clears the in-progress lock, but no code path
                     # ever schedules the next turn.
                     try:
-                        fn_short = (
-                            rec.fn_path.rsplit(".", 1)[-1]
-                            if rec.fn_path else None
-                        )
+                        # issue #98: ARQ registers functions by their
+                        # fully-qualified registry name (see
+                        # ``_Registry.all_functions`` passing
+                        # ``name=t.name`` = ``{fn.__module__}.{fn.__qualname__}``).
+                        # Enqueuing by the bare tail (``rsplit(".", 1)[-1]``)
+                        # never resolves against ARQ's function map, so the
+                        # re-enqueue silently fails and the investigation
+                        # stalls with a resumable cursor and no worker to
+                        # pick it up. Pass ``rec.fn_path`` verbatim, matching
+                        # ``queue.py`` and ``_enqueue_dependents``.
+                        fn_path = rec.fn_path or None
                         try:
                             re_kwargs = (
                                 json.loads(rec.kwargs_json)
@@ -880,13 +887,13 @@ async def _sweep_orphan_running_tasks(
                                 "for %s (%s); re-enqueue skipped",
                                 rec.id, kw_exc,
                             )
-                            fn_short = None
+                            fn_path = None
                             re_kwargs = None
                         queue_key = (
                             ARQ_QUEUE_KEY_TEMPLATE.format(track=rec.track)
                             if rec.track else None
                         )
-                        if fn_short and queue_key and re_kwargs is not None:
+                        if fn_path and queue_key and re_kwargs is not None:
                             from uuid import uuid4 as _uuid4
 
                             from arq import create_pool as _create_pool
@@ -897,7 +904,7 @@ async def _sweep_orphan_running_tasks(
                             try:
                                 new_job_id = str(_uuid4())
                                 await arq_pool.enqueue_job(
-                                    fn_short,
+                                    fn_path,
                                     _queue_name=queue_key,
                                     _job_id=new_job_id,
                                     **re_kwargs,
@@ -906,7 +913,7 @@ async def _sweep_orphan_running_tasks(
                                     "worker.reverse_sweep: re-enqueued "
                                     "resumable workflow %s as %s "
                                     "(fn=%s queue=%s)",
-                                    rec.id, new_job_id, fn_short, queue_key,
+                                    rec.id, new_job_id, fn_path, queue_key,
                                 )
                                 healed_events.append((
                                     "orphan_task_reenqueue",
@@ -917,7 +924,7 @@ async def _sweep_orphan_running_tasks(
                                     {
                                         "task_id": rec.id,
                                         "new_job_id": new_job_id,
-                                        "fn": fn_short,
+                                        "fn": fn_path,
                                         "queue": queue_key,
                                         "track": rec.track,
                                     },

@@ -803,7 +803,7 @@ class AgentTurnRunnerBase:
                     "action": "reasoning",
                     "reasoning": _reject,
                 })
-                case_state["_directive.defense_check_rejected"] = _reject
+                case_state.observables["_directive.defense_check_rejected"] = _reject
 
         decision = self._maybe_reject_fanout_submit(
             decision=decision,

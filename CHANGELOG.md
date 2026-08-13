@@ -7,6 +7,46 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.21] - 2026-08-13 -- P0 security and reliability fixes from the platform peer review
+
+### Security
+
+- Finding-workflow endpoints (`GET /{id}/workflow`, `POST /{id}/transition`,
+  `GET /{id}/evidence-chain`) now enforce team isolation. `team_id` is
+  stamped on each transition and every read/write is gated to the caller's
+  team; cross-team access returns 404 (no existence oracle). Admins see all
+  teams (#99).
+- Specialist-agent endpoints now enforce team scoping, require operator role
+  on create/seed/delete, and carry rate limits. Built-in defaults remain
+  platform-global (team_id NULL) and visible to every team (#100).
+- User JWT access and refresh token lifetimes corrected from 1 year to
+  1 hour and 7 days respectively, matching the documented design (#171).
+- The rate-limit bucket key now verifies the JWT signature before trusting
+  the identity claim. Forged or tampered tokens fall back to per-IP
+  bucketing, closing a brute-force-limit bypass on the auth endpoints (#172).
+
+### Fixed
+
+- The defense-check submit gate no longer crashes with a TypeError on every
+  rejection. The directive is written to `case_state.observables` instead of
+  an unsupported dict subscript on the Pydantic case state (#97).
+- Orphan-task re-enqueue now passes the fully-qualified function name to ARQ
+  so the job resolves and resumable workflows resume instead of stalling
+  indefinitely (#98).
+
+### Changed
+
+- CI now runs the backend pytest suite against Postgres (pgvector) and Redis
+  service containers on every pull request, and the coverage floor is raised
+  from 25 to 50 (#164).
+- Stale specialist-registry test expectations updated to the current
+  built-in names (snake / jak / kratos / lara, alucard / vincent).
+
+### Added
+
+- Alembic migration 120 adds a nullable, indexed `team_id` column to
+  `finding_workflow_records` to back the finding-workflow team gate.
+
 ## [0.3.20] - 2026-08-09 -- Defense-check submit gate + lateral pattern discovery
 
 ### Added
