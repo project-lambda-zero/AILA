@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aila"
-version = "0.4.2"
+version = "0.4.3"
 description = "Modular AI security platform with pluggable analysis modules."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -26,7 +26,7 @@ dependencies = [
   "asyncpg==0.31.0",
   "psycopg[binary]==3.3.3",
   "alembic==1.18.4",
-  "pgvector==0.4.2",
+  "pgvector==0.4.3",
   "sqlmodel==0.0.37",
   "typer==0.24.1",
   "uvicorn==0.43.0",
@@ -40,8 +40,8 @@ dependencies = [
   "sqlalchemy==2.0.45",
   "jinja2==3.1.6",
   "reportlab==4.5.1",
-  'python-magic==0.4.27; platform_system != "Windows"',
-  'python-magic-bin==0.4.24; platform_system == "Windows"',
+  'python-magic==0.4.37; platform_system != "Windows"',
+  'python-magic-bin==0.4.34; platform_system == "Windows"',
   # ──────────────────────────────────────────────────────────────
   # Transitive-dep CVE pins (Dependabot 30-high triage, 2026-06-11).
   # These packages are pulled in by fastapi / reportlab / httpx /

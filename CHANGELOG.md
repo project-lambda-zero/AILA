@@ -7,6 +7,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-08-13 -- Docs refresh: schema, reasoning engine, lifecycle, embeddings
+
+### Changed
+
+- Regenerated `docs/DB_SCHEMA.md` from the live SQLModel metadata: 120 tables
+  across platform and all modules (the malware module's 17 tables were
+  previously absent), with the Alembic head corrected from `081` to
+  `121_backfill_investigation_cost`.
+- `docs/ARCHITECTURE.md` gains four sections matching the current
+  implementation: the reasoning engine and phase graph (a static frozen
+  `WorkflowDefinition` with a condition-checked dispatch hub and a
+  ledger-based replan/ratify oracle -- not a learning planner), the reasoning
+  vs deterministic-pipeline module distinction, prompt lifecycle management
+  (evaluate to approve to shadow to canary to promote), and the knowledge
+  embedding dimension (1024 BGE-M3; MiniLM fallback zero-padded) (#143, #138).
+
 ## [0.4.2] - 2026-08-13 -- Platform/module boundary: domain knowledge to module hooks, vulnerability classified
 
 ### Changed
