@@ -7,6 +7,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-13 -- Engine consolidation: narrative base, event dispatch, sweep ordering
+
+### Changed
+
+- NarrativeAgent is now a shared platform base (`platform/agents/narrative_agent.py`);
+  the VR and malware agents are thin subclasses that supply only their data
+  loaders and task type. Removes ~700 lines of duplicated skeleton and unifies
+  the persisted narrative payload on one shape (`tone_used`, `length_used`,
+  `narrative_words`) across both modules (#112, #137).
+- The two event systems (`EventEmitter` fan-out and `DomainEventBus`) now share
+  one dispatch primitive (`platform/events/_dispatch.py`) for per-subscriber
+  isolation and failure counting, replacing two copies of the isolation tuple
+  that were documented as needing to stay in sync (partial #134; the full
+  System-A-to-B migration remains a follow-up).
+- Periodic recovery sweeps now run in a declared deterministic order via a
+  `SweepPriority` bin on registration, so the cap-exceeded reaper reliably runs
+  before no-finding synthesis. Each sweep keeps its own transaction and
+  module-generic binding; failures stay isolated per sweep (partial #133; the
+  policy-engine merge remains a follow-up).
+
 ## [0.4.0] - 2026-08-13 -- Liveness auditor and stable-core knowledge seeding
 
 ### Added

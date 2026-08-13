@@ -34,7 +34,11 @@ from aila.platform.modules import (
     action_id_for,
 )
 from aila.platform.runtime import ToolRegistry
-from aila.platform.tasks.sweeps import all_periodic_sweeps, register_periodic_sweep
+from aila.platform.tasks.sweeps import (
+    SweepPriority,
+    all_periodic_sweeps,
+    register_periodic_sweep,
+)
 
 from .capabilities import CAPABILITY_DESCRIPTION, CAPABILITY_EXAMPLES
 from .masvs.parent_reconciler import sweep_masvs_audit_parents
@@ -480,7 +484,11 @@ def _register_vr_periodic_sweeps() -> None:
     # vr.stage_tracker -- reaps stuck target-analysis stages whose
     # workers never recorded a terminal transition. Returns an int
     # count of stages reaped.
-    register_periodic_sweep("vr.stage_tracker", reap_stuck_stages)
+    register_periodic_sweep(
+        "vr.stage_tracker",
+        reap_stuck_stages,
+        order=SweepPriority.CAP_EXCEEDED_REAPER,
+    )
 
     # vr.branch_reaper -- flips orphan ACTIVE branches whose parent
     # investigation is ALREADY terminal. Independent of finalize:
@@ -489,7 +497,11 @@ def _register_vr_periodic_sweeps() -> None:
     # terminated via some other path (operator DB action, legacy code
     # paths that completed an investigation without cascading to its
     # branches).
-    register_periodic_sweep("vr.branch_reaper", sweep_orphan_active_branches)
+    register_periodic_sweep(
+        "vr.branch_reaper",
+        sweep_orphan_active_branches,
+        order=SweepPriority.ORPHAN_BRANCH_REAPER,
+    )
 
     # vr.masvs_parent_reconciler -- drives the parent batch state
     # machine (CREATED → RUNNING → COMPLETED) for MASVS audits.
@@ -498,6 +510,7 @@ def _register_vr_periodic_sweeps() -> None:
     register_periodic_sweep(
         "vr.masvs_parent_reconciler",
         sweep_masvs_audit_parents,
+        order=SweepPriority.STALE_BRANCH_ABANDONMENT,
     )
 
     # vr.finalize -- Phase C chokepoint. Walks RUNNING investigations
@@ -516,7 +529,11 @@ def _register_vr_periodic_sweeps() -> None:
     # vr/services/branch_reaper.py remain importable so any operator
     # tooling that hits them directly still works, but they no longer
     # run on the cron.
-    register_periodic_sweep("vr.finalize", sweep_finalizable_investigations)
+    register_periodic_sweep(
+        "vr.finalize",
+        sweep_finalizable_investigations,
+        order=SweepPriority.NO_FINDING_SYNTHESIS,
+    )
 
     # vr.stall_recovery -- recovery backstop for tasks killed mid-
     # execution by CancelledError, worker restart, or host kill.
@@ -534,7 +551,9 @@ def _register_vr_periodic_sweeps() -> None:
     # AILA_VR_STALL_RECOVERY_LIMIT). Idle threshold defaults to 15
     # minutes (env: AILA_VR_STALL_RECOVERY_IDLE_MIN).
     register_periodic_sweep(
-        "vr.stall_recovery", sweep_stalled_investigations,
+        "vr.stall_recovery",
+        sweep_stalled_investigations,
+        order=SweepPriority.STALL_RECOVERY,
     )
 
     # vr.stuck_healer -- RFC-07 #31 criterion 6. Sibling of
@@ -546,7 +565,11 @@ def _register_vr_periodic_sweeps() -> None:
     # from). Emits a durable ``kind='recovery'`` ledger event per heal
     # via :func:`ResilienceLayer.emit_recovery_event` so the RFC-07
     # audit trail carries every automated re-enqueue.
-    register_periodic_sweep("vr.stuck_healer", sweep_stuck_investigations)
+    register_periodic_sweep(
+        "vr.stuck_healer",
+        sweep_stuck_investigations,
+        order=SweepPriority.STUCK_HEALER,
+    )
 
 
 # Module-load-time registration. _register_vr_periodic_sweeps() is only

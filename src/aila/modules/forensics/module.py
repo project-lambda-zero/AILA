@@ -27,7 +27,11 @@ from aila.platform.modules import (
     action_id_for,
 )
 from aila.platform.runtime import ToolRegistry
-from aila.platform.tasks.sweeps import all_periodic_sweeps, register_periodic_sweep
+from aila.platform.tasks.sweeps import (
+    SweepPriority,
+    all_periodic_sweeps,
+    register_periodic_sweep,
+)
 
 from .capabilities import CAPABILITY_DESCRIPTION, CAPABILITY_EXAMPLES
 from .services.stuck_healer import sweep_stuck_investigations
@@ -474,7 +478,9 @@ def _register_forensics_periodic_sweeps() -> None:
     # ``kind='recovery'`` ledger event per heal so the RFC-07 audit
     # trail carries every automated re-enqueue.
     register_periodic_sweep(
-        "forensics.stuck_healer", sweep_stuck_investigations,
+        "forensics.stuck_healer",
+        sweep_stuck_investigations,
+        order=SweepPriority.STUCK_HEALER,
     )
 
 

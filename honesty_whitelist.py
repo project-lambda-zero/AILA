@@ -259,6 +259,7 @@ HONESTY_WHITELIST = [
     ("platform/tasks/hooks.py", "broad_exception_catch", "catches everything"),
     ("platform/tasks/queue.py", "broad_exception_catch", "catches everything"),
     ("platform/tasks/report_tasks.py", "broad_exception_catch", "catches everything"),
+    ("platform/tasks/sweeps.py", "broad_exception_catch", "catches everything"),
     ("platform/tasks/worker.py", "broad_exception_catch", "catches everything"),
     ("platform/workflows/engine.py", "broad_exception_catch", "catches everything"),
     ("platform/workflows/log.py", "broad_exception_catch", "catches everything"),
