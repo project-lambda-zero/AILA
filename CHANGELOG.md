@@ -7,6 +7,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.23] - 2026-08-13 -- Cost materialization: investigation spend writeback
+
+### Fixed
+
+- LLM cost is written to the owning investigation's `cost_actual_usd` and
+  `llm_tokens_cost_usd` columns as each call is recorded, in the same
+  transaction as the cost record. List views and the per-investigation
+  budget cap now read real spend instead of the permanent $0.00 a
+  never-written column reported, so the budget cap can fire (#135).
+
+### Added
+
+- Migration 121 backfills `cost_actual_usd` and `llm_tokens_cost_usd` on
+  every existing investigation from its recorded LLM spend, so historical
+  investigations display real cost immediately after upgrade (#135).
+
 ## [0.3.22] - 2026-08-13 -- P1 concurrency hardening and wired-but-dead paths
 
 ### Fixed

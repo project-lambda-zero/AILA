@@ -338,6 +338,14 @@ async def persist_cost_record(
 
         async with async_session_scope() as session:
             session.add(record)
+            # #135: materialize this call's cost onto the owning investigation
+            # row in the same transaction, so list views and the per-investigation
+            # budget cap read real spend instead of the permanent zero a
+            # never-written column reports.
+            from aila.platform.services.investigation_cost import (
+                accrue_investigation_cost,
+            )
+            await accrue_investigation_cost(session, record.run_id, cost_usd)
             await session.commit()
     except sqlalchemy.exc.SQLAlchemyError:
         _log.warning(
