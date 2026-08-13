@@ -54,9 +54,52 @@ from aila.platform.llm.correlation import (
 from aila.platform.prompts import PromptRegistry
 from aila.platform.workflows.types import StateResult
 
-__all__ = ["LLMDisabledByOperatorError", "state_poc_development"]
+__all__ = [
+    "LLMDisabledByOperatorError",
+    "parse_reliability_target",
+    "state_poc_development",
+]
 
 _log = logging.getLogger(__name__)
+
+
+# fix #209 -- wire ``config.poc_reliability_target``. The config key was
+# defined + documented as "successful_runs/total_runs before the PoC is
+# considered acceptance-ready", but the state hardcoded ``runs=5`` on
+# ``verify_reliability`` and never gated the result. ``5/5`` (default)
+# therefore preserved the prior behaviour end-to-end: 5 runs, and any
+# non-``5/5`` return still surfaced as ``verified`` with no acceptance
+# signal for downstream consumers. Parsing the operator-tunable
+# ``M/N`` spec here means a PUT /config override of e.g. ``3/5`` now
+# both drives the sample size AND stamps ``acceptance_ready`` on the
+# poc payload so the advisory / operator surfaces can distinguish
+# "reproduces but flaky" from "meets the operator's reliability bar".
+def parse_reliability_target(spec: str) -> tuple[int, int]:
+    """Parse an ``M/N`` reliability spec into ``(required, total)``.
+
+    Both integers must be positive and ``required <= total``. Any
+    malformed value logs a warning and falls back to the schema
+    default ``5/5`` so a bad config row does not crash the workflow.
+    """
+    default_required, default_total = 5, 5
+    try:
+        raw = str(spec or "").strip()
+        num_str, denom_str = raw.split("/", 1)
+        required = int(num_str.strip())
+        total = int(denom_str.strip())
+    except (AttributeError, TypeError, ValueError):
+        _log.warning(
+            "poc_reliability_target %r is not a valid M/N spec; using 5/5",
+            spec,
+        )
+        return default_required, default_total
+    if required <= 0 or total <= 0 or required > total:
+        _log.warning(
+            "poc_reliability_target %r is out of range (need 0 < M <= N); "
+            "using 5/5", spec,
+        )
+        return default_required, default_total
+    return required, total
 
 _PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
 _PROMPT_REGISTRY = PromptRegistry(
@@ -581,14 +624,31 @@ async def _run_ssh_attempts(
             },
         )
 
+    # fix #209 -- drive both the sample size and the acceptance gate
+    # from the operator-tunable ``poc_reliability_target``. Default
+    # ``5/5`` matches the prior hardcoded ``runs=5`` behaviour; a
+    # ``3/5`` override now runs 5 samples AND stamps
+    # ``acceptance_ready=(crashes >= 3)`` so downstream consumers can
+    # separate "meets the operator's bar" from "reproduces but flaky".
+    reliability_required, reliability_total = parse_reliability_target(
+        services.config.poc_reliability_target,
+    )
     reliability_result = await services.poc_runner.forward(
         action="verify_reliability",
         integration=integration,
         poc_path=crash_payload["poc_path"],
         target_binary=target_path,
-        runs=5,
+        runs=reliability_total,
         timeout_seconds=services.config.poc_timeout_seconds,
         memory_limit_mb=services.config.poc_memory_limit_mb,
+    )
+    try:
+        reliability_crashes = int(reliability_result.get("crashes") or 0)
+    except (TypeError, ValueError):
+        reliability_crashes = 0
+    acceptance_ready = (
+        reliability_result.get("status") == "ready"
+        and reliability_crashes >= reliability_required
     )
 
     patched_clean: bool | None = None
@@ -633,6 +693,8 @@ async def _run_ssh_attempts(
         "asan_report": asan_text,
         "crash_signature": signature if signature.get("status") == "ready" else None,
         "reliability": reliability_result.get("reliability"),
+        "reliability_target": f"{reliability_required}/{reliability_total}",
+        "acceptance_ready": acceptance_ready,
         "patched_clean_exit": patched_clean,
         "parsed_asan": parsed_asan,
         "history": history,

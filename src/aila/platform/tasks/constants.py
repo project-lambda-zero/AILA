@@ -24,7 +24,6 @@ __all__ = [
     "ARQ_MAX_TRIES",
     "POISON_PILL_THRESHOLD",
     "WORKER_HEARTBEAT_UNHEALTHY_S",
-    "XREAD_BLOCK_MS",
     "PROGRESS_STREAM_MAXLEN",
     # Config registry keys
     "CONFIG_NS_PLATFORM",
@@ -65,7 +64,10 @@ POISON_PILL_THRESHOLD: int = 3
 # heartbeat is older than this threshold, because the frozen worker is
 # actively blocking the queue.
 WORKER_HEARTBEAT_UNHEALTHY_S: int = 60
-XREAD_BLOCK_MS: int = 30000        # 30 seconds -- derived from heartbeat_interval_s * 1000
+# The SSE XREAD block timeout is derived live from
+# ``platform.heartbeat_interval_s`` (seconds) times 1000 by
+# :meth:`ProgressStream.stream_events`; ``HEARTBEAT_INTERVAL_S``
+# above is the fallback when the registry is unavailable.
 PROGRESS_STREAM_MAXLEN: int = 1000  # Max events per stream (XADD MAXLEN)
 
 # --- Config registry keys --------------------------------------------------

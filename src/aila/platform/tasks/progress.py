@@ -24,9 +24,9 @@ from collections.abc import AsyncGenerator
 from aila.platform.contracts import utc_now
 from aila.platform.services.redis_pool import get_redis
 from aila.platform.tasks.constants import (
+    HEARTBEAT_INTERVAL_S,
     PROGRESS_STREAM_MAXLEN,
     TASK_PROGRESS_KEY_TEMPLATE,
-    XREAD_BLOCK_MS,
 )
 
 __all__ = ["MAX_STREAM_LIFETIME_S", "ProgressStream"]
@@ -136,7 +136,14 @@ class ProgressStream:
     ) -> AsyncGenerator[dict[str, str], None]:
         """Read new events from the Redis Stream.
 
-        Yields event dicts as they arrive via XREAD with block=30000ms.
+        Yields event dicts as they arrive via XREAD with a block timeout
+        derived from ``platform.heartbeat_interval_s`` (seconds) times
+        1000, so an operator PUT /config/platform/heartbeat_interval_s
+        changes both the reaper heartbeat cadence and the SSE keepalive
+        period in one place. Defaults to
+        ``HEARTBEAT_INTERVAL_S * 1000`` (30000 ms) when the registry is
+        unavailable, matching the prior hardcoded value.
+
         Yields a ping sentinel dict on timeout so SSE connections stay alive.
         Intended for use inside a FastAPI StreamingResponse async generator.
 
@@ -147,8 +154,12 @@ class ProgressStream:
 
         Yields:
             Event dicts with stage/message/percent/timestamp keys, or
-            {"type": "ping"} on 30-second timeout (SSE keepalive).
+            {"type": "ping"} on heartbeat timeout (SSE keepalive).
         """
+        # Deferred import to avoid the tasks package import cycle
+        # (progress.py is imported from aila.platform.tasks.__init__).
+        from aila.platform.tasks import get_task_tuning
+
         key = self.stream_key(task_id)
         current_id = last_id
         started = time.monotonic()
@@ -158,9 +169,12 @@ class ProgressStream:
             # The client EventSource auto-reconnects on stream end.
             if time.monotonic() - started >= MAX_STREAM_LIFETIME_S:
                 return
+            block_ms = (
+                get_task_tuning("heartbeat_interval_s", HEARTBEAT_INTERVAL_S) * 1000
+            )
             async with get_redis() as client:
                 raw_result = await client.xread(
-                    {key: current_id}, block=XREAD_BLOCK_MS, count=100,
+                    {key: current_id}, block=block_ms, count=100,
                 )
             if raw_result:
                 for _stream_key, events in raw_result:

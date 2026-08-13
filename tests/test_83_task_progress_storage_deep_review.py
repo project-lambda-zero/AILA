@@ -278,9 +278,12 @@ class TestProgressStreamStreamEvents:
         assert calls[0][0][0] == {"task:t:progress": "0"}   # initial
         assert calls[1][0][0] == {"task:t:progress": "5-0"}  # after first event
 
-    async def test_stream_events_uses_xread_block_ms(self) -> None:
-        """FILE-29: XREAD block parameter matches XREAD_BLOCK_MS constant."""
-        from aila.platform.tasks.constants import XREAD_BLOCK_MS
+    async def test_stream_events_uses_heartbeat_interval_default(self) -> None:
+        """FILE-29: XREAD block defaults to HEARTBEAT_INTERVAL_S * 1000 (30 s
+        -> 30000 ms) when ``platform.heartbeat_interval_s`` is unset, matching
+        the prior hardcoded fallback.
+        """
+        from aila.platform.tasks.constants import HEARTBEAT_INTERVAL_S
 
         mock_client = MagicMock()
         mock_client.xread = AsyncMock(side_effect=[[], KeyboardInterrupt])
@@ -293,7 +296,30 @@ class TestProgressStreamStreamEvents:
             await gen.__anext__()  # trigger first XREAD
 
         call_kwargs = mock_client.xread.call_args_list[0][1]
-        assert call_kwargs["block"] == XREAD_BLOCK_MS
+        assert call_kwargs["block"] == HEARTBEAT_INTERVAL_S * 1000
+
+    async def test_stream_events_block_follows_heartbeat_interval_override(self) -> None:
+        """FILE-29: an operator-set ``platform.heartbeat_interval_s`` value
+        flows into the XREAD block timeout (seconds -> milliseconds), proving
+        the config key is wired to the SSE keepalive cadence rather than a
+        hardcoded 30000 ms.
+        """
+        mock_client = MagicMock()
+        mock_client.xread = AsyncMock(side_effect=[[], KeyboardInterrupt])
+
+        with patch("aila.platform.tasks.progress.get_redis", _mock_redis_cm(mock_client)), \
+             patch(
+                "aila.platform.tasks.get_task_tuning",
+                lambda key, default: 7 if key == "heartbeat_interval_s" else default,
+             ):
+            from aila.platform.tasks.progress import ProgressStream
+
+            ps = ProgressStream(maxlen=1000)
+            gen = ps.stream_events("task-2")
+            await gen.__anext__()  # trigger first XREAD
+
+        call_kwargs = mock_client.xread.call_args_list[0][1]
+        assert call_kwargs["block"] == 7 * 1000
 
 
 # ===========================================================================

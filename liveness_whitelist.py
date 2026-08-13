@@ -60,4 +60,33 @@ LIVENESS_WHITELIST = [
         "read via getattr(config, f'{provider_name}_verify_tls') in "
         "modules/vulnerability/providers/_http.py::_resolve_verify_tls",
     ),
+    # Scaffold placeholders: the _template module is copy-to-start; a real
+    # module overwrites these keys, so platform code never reads them.
+    (
+        "example_timeout_seconds", "unread_config_key",
+        "_template scaffold placeholder; a real module replaces it",
+    ),
+    (
+        "example_max_retries", "unread_config_key",
+        "_template scaffold placeholder; a real module replaces it",
+    ),
+    # --- R3 unwritten_column ----------------------------------------------
+    # archived_state is written via a raw SQL UPDATE (pause: SET
+    # archived_state = current_state; resume: SET current_state =
+    # COALESCE(archived_state, ...)). The R3 rule is AST-based and cannot see
+    # column names inside a text() SQL string.
+    (
+        "archived_state", "unwritten_column",
+        "written via raw SQL UPDATE in "
+        "platform/services/investigation_lifecycle.py (pause/resume SSOT); "
+        "AST rule cannot see text() SQL column names",
+    ),
+    # search_vector is a Postgres GENERATED column (Computed tsvector over
+    # content, migration 009); PostgreSQL maintains it on every insert/update
+    # and it is read via func.ts_rank in knowledge.py. No app writer exists.
+    (
+        "search_vector", "unwritten_column",
+        "Postgres GENERATED tsvector (Computed over content, migration 009); "
+        "PG-maintained, read via ts_rank in platform/services/knowledge.py",
+    ),
 ]

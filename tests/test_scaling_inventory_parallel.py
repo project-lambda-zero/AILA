@@ -125,9 +125,10 @@ def test_session_not_passed_to_worker():
 def test_ssh_max_workers_declared_in_vulnerability_config_schema():
     """The `ssh_max_workers` config field must remain declared on the vulnerability config schema.
 
-    The current async implementation does NOT consult this value (asyncio.gather is
-    unbounded), so this is a safety net on the configuration surface only. See yield
-    report for the production divergence -- the field is declared but no longer honored.
+    Since issue #209 the async implementation honors this value via a bounded
+    asyncio.Semaphore in ``_collect_and_record_inventory``; this test guards the
+    configuration surface itself so a rename or removal is caught at the schema
+    boundary.
     """
     from aila.modules.vulnerability.config_schema import VulnerabilityConfigSchema
 

@@ -7,6 +7,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-13 -- Wire dead config keys and columns from the liveness triage (#209)
+
+### Fixed
+
+- Seven previously-ignored ConfigRegistry keys and columns now take effect.
+  Each was declared or promised but no live path read or wrote it; defaults are
+  unchanged, so behavior differs only when an operator sets a non-default value:
+  - `platform.heartbeat_interval_s` now drives the SSE/progress Redis XREAD
+    block timeout (was a hardcoded 30000ms; the dead `XREAD_BLOCK_MS` constant
+    is removed).
+  - vulnerability `osv_advisory_cache_ttl_hours` and
+    `scoring_review_cache_ttl_hours` now expire their caches (both were
+    keep-forever, so stale advisories and stale scoring verdicts were returned
+    indefinitely); `ssh_max_workers` now caps inventory SSH concurrency (was an
+    unbounded gather over the whole fleet).
+  - vr `poc_reliability_target` now drives the PoC reliability gate (was
+    hardcoded to 5 runs); `VRFindingRecord.obligations_json` is now persisted
+    (obligations were computed and a UI existed, but the advisory state dropped
+    them before the insert).
+  - malware `cross_target_similarity_threshold` now gates cross-target
+    observation propagation.
+
+### Changed
+
+- Recorded a liveness-audit whitelist (`liveness_whitelist.py`) for four
+  confirmed false positives (`WorkflowStateCursor.archived_state`, written via
+  raw SQL; `KnowledgeEntryRecord.search_vector`, a Postgres generated tsvector;
+  and the two `_template` scaffold keys). The liveness residual drops from 27 to
+  16; the remaining 16 are documented unbuilt features tracked on #209 for a
+  build-or-remove decision (malware playbook auto-trigger and function-ranking
+  knobs, the VR CVE feed-state columns, dead-letter replay, and
+  `inherit_observations`).
+
 ## [0.5.0] - 2026-08-13 -- P3 capabilities: judge harness, per-persona models, semantic memory
 
 ### Added
