@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.11] - 2026-08-13 -- Routing prompt injection hardening
+
+### Security
+
+- The platform router sanitizes the user query (NFKC normalize, zero-width
+  strip, known injection-marker removal) and fences it as untrusted data inside
+  the routing prompt, with an explicit instruction not to follow directives
+  inside the fence. An injection-laden query can no longer steer the module or
+  action selection (#189).
+
 ## [0.5.10] - 2026-08-13 -- Refresh-token cookie hardening, SSE reconnect, dead-column removal
 
 ### Security

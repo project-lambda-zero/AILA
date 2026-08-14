@@ -1,6 +1,6 @@
 {
   "name": "@aila/template-frontend",
-  "version": "0.5.10",
+  "version": "0.5.11",
   "private": true,
   "type": "module",
   "main": "./spec.ts",
