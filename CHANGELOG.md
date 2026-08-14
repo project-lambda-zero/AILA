@@ -7,6 +7,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.9] - 2026-08-13 -- Chat-first console and platform-ops UI
+
+### Changed
+
+- The home screen is now the platform chat assistant. The index route renders
+  the chat surface, which routes natural-language requests through
+  platform.handle() across every module; the dashboard moved to /dashboard and
+  /chat redirects to the home route. The sidebar leads with Chat.
+
+### Added
+
+- A "Platform Ops" admin page that wires three platform endpoints that had no
+  UI: the sandbox exec surface (POST /platform/sandbox/exec, with a clear
+  inline notice when no sandbox backend is provisioned), the trajectory-corpus
+  export and stats (POST /platform/eval/corpus/export, GET
+  /platform/eval/corpus/stats), and the journal dead-letter replay
+  (POST /admin/journal/deadletter/replay).
+- The Cost admin page now exercises the full /cost/* surface: per-run cost
+  drilldown (GET /cost/runs/{id}), a pre-scan estimate (POST /cost/estimate),
+  and a human-equivalent estimate (POST /cost/estimate-human), alongside the
+  existing history and ROI views.
+
 ## [0.5.8] - 2026-08-13 -- Recovery-race, query-performance, loader, and reasoning fixes
 
 ### Fixed

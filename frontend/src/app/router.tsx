@@ -19,6 +19,7 @@ import { ToolsConsolePage } from "@platform/features/admin/ToolsConsolePage";
 import { WorkflowInspectorPage } from "@platform/features/admin/WorkflowInspectorPage";
 import { OidcProvidersPage } from "@platform/features/admin/OidcProvidersPage";
 import { PlatformConfigPage } from "@platform/features/admin/PlatformConfigPage";
+import { PlatformOpsPage } from "@platform/features/admin/PlatformOpsPage";
 import { TagVocabularyPage } from "@platform/features/admin/TagVocabularyPage";
 import { SystemHealthPage } from "@platform/features/admin/SystemHealthPage";
 import { TeamDetailPage } from "@platform/features/admin/TeamDetailPage";
@@ -154,6 +155,7 @@ const PLATFORM_PAGE_ICONS: Record<string, ReactElement> = {
   "Workflow Inspector": <GitBranch />,
   "LLM Log": <Robot />,
   "Platform Config": <GearSix />,
+  "Platform Ops": <Wrench />,
   "Tag Vocabulary": <Tag />,
   "System Health": <Heartbeat />,
   "OIDC Providers": <Key />,
@@ -265,7 +267,15 @@ export const routeObjects: RouteObject[] = [
     ),
     children: [
       {
+        // Chat is the primary surface: the operator lands on the
+        // platform assistant, which routes natural-language requests
+        // through platform.handle() across every module.
         index: true,
+        element: protectPage("Home", ChatPage),
+        handle: { breadcrumb: "Home" },
+      },
+      {
+        path: "dashboard",
         element: protectPage("Overview", DashboardPage),
         handle: { breadcrumb: "Dashboard" },
       },
@@ -314,11 +324,11 @@ export const routeObjects: RouteObject[] = [
         element: protectPage("Tasks", TasksPage),
         handle: { breadcrumb: "Tasks" },
       },
-      // 176c: natural-language chat with the platform.
+      // Chat is now the index/home surface; keep /chat as a redirect
+      // so existing links and the prior nav entry still resolve.
       {
         path: "chat",
-        element: protectPage("Chat", ChatPage),
-        handle: { breadcrumb: "Chat" },
+        element: <Navigate to="/" replace />,
       },
       {
         path: "tasks/:taskId",
@@ -367,6 +377,11 @@ export const routeObjects: RouteObject[] = [
         path: "admin/config",
         element: protectPage("Platform Config", PlatformConfigPage, "admin"),
         handle: { breadcrumb: "Platform Config" },
+      },
+      {
+        path: "admin/platform-ops",
+        element: protectPage("Platform Ops", PlatformOpsPage, "admin"),
+        handle: { breadcrumb: "Platform Ops" },
       },
       {
         path: "admin/tags",
