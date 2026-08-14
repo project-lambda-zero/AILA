@@ -14,8 +14,27 @@ import { useDeleteProject } from "../mutations";
 import { useDebouncedValue, useRowKeyboardNav, sortRows } from "../powerTable";
 import type { ProjectSummary } from "../types";
 import { useForensicsListLive } from "../useLiveInvalidation";
+import { SavedViews } from "../components/SavedViews";
 
 const PROJECTS_LIST_KEY = ["forensics", "projects"] as const;
+
+// Serialized shape stored in SavedFilterRecord.filter_json for the
+// projects grid. Additive only -- when new controls appear, extend
+// the type and default missing keys on apply so older views still
+// round-trip.
+interface ProjectsViewState {
+  search: string;
+  sortKey: ProjectSortKey;
+  sortDir: "asc" | "desc";
+}
+
+const PROJECT_SORT_KEYS: readonly ProjectSortKey[] = [
+  "name",
+  "status",
+  "evidence_count",
+  "investigation_count",
+  "created_at",
+];
 
 // Sort keys align with ProjectSummary fields the operator can reasonably rank
 // by from the grid. Server currently exposes only page + page_size (no `query`
@@ -218,6 +237,21 @@ export function ProjectsPage() {
     );
   }, [rawProjects, debouncedSearch, sortKey, sortDir]);
 
+  const savedViewState: ProjectsViewState = { search, sortKey, sortDir };
+
+  function applySavedView(state: ProjectsViewState) {
+    // Defensive: filter_json is caller-controlled and older payloads may
+    // pre-date newer sort keys. Fall back to current values when a field
+    // is missing or drifted rather than crashing the grid.
+    if (typeof state.search === "string") setSearch(state.search);
+    if (state.sortKey && PROJECT_SORT_KEYS.includes(state.sortKey)) {
+      setSortKey(state.sortKey);
+    }
+    if (state.sortDir === "asc" || state.sortDir === "desc") {
+      setSortDir(state.sortDir);
+    }
+  }
+
   function handleDeleteClick(e: React.MouseEvent, project: ProjectSummary) {
     e.stopPropagation();
     setConfirmDelete(project);
@@ -274,6 +308,12 @@ export function ProjectsPage() {
               {sortDir === "asc" ? "↑" : "↓"}
             </button>
           </label>
+          <SavedViews<ProjectsViewState>
+            entityType="forensics_project"
+            currentState={savedViewState}
+            onApply={applySavedView}
+            testIdPrefix="forensics-projects-views"
+          />
         </div>
         <button
           type="button"

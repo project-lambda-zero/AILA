@@ -14,8 +14,10 @@ import {
   SortHeader,
   useSortableRows,
   useTableRowNav,
+  type SortDir,
   type SortValue,
 } from "../components/tableHelpers";
+import { SavedViews } from "../components/SavedViews";
 import {
   useCreateTarget,
   useDeleteTarget,
@@ -301,10 +303,39 @@ export function TargetsPage() {
     }),
     [],
   );
-  const { sortedRows, sortKey, sortDir, cycleSort } = useSortableRows(
+  const { sortedRows, sortKey, sortDir, cycleSort, setSort } = useSortableRows(
     filteredTargets,
     accessors,
   );
+
+  // Saved-view state serialization. Stable key order so a saved
+  // view produced by a keystroke earlier compares equal against
+  // aria-pressed on the same state a second later.
+  const currentViewJson = JSON.stringify({
+    v: 1,
+    q: query,
+    workspace: workspaceFilter,
+    sortKey,
+    sortDir,
+  });
+
+  function applyView(filterJson: string) {
+    try {
+      const p = JSON.parse(filterJson) as {
+        q?: unknown;
+        workspace?: unknown;
+        sortKey?: unknown;
+        sortDir?: unknown;
+      };
+      setQuery(typeof p.q === "string" ? p.q : "");
+      setWorkspaceFilter(typeof p.workspace === "string" ? p.workspace : "");
+      const nextDir: SortDir =
+        p.sortDir === "asc" || p.sortDir === "desc" ? p.sortDir : null;
+      setSort(typeof p.sortKey === "string" ? p.sortKey : "", nextDir);
+    } catch {
+      // Malformed view -- ignore rather than blank the operator's screen.
+    }
+  }
 
   const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
   const { tbodyProps, getRowProps } = useTableRowNav(
@@ -556,6 +587,13 @@ export function TargetsPage() {
           </div>
         </AilaCard>
       )}
+
+      <SavedViews
+        entityType="vr_target"
+        entityLabel="targets"
+        currentFilterJson={currentViewJson}
+        onApply={applyView}
+      />
 
       <AilaCard  techBorder glow><div className="flex items-center gap-2 flex-wrap">
         <input

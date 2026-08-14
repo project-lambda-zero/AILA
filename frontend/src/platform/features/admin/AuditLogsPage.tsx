@@ -34,6 +34,9 @@ import { AuditDetailRenderer } from "./AuditDetailRenderer";
 import { AuditSealsTab } from "./AuditSealsTab";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { usePreferences } from "@/providers/PreferencesProvider";
+import { SavedViews } from "@platform/features/saved-views";
+import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
+import { Trash } from "@phosphor-icons/react/dist/csr/Trash";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -441,13 +444,337 @@ function FilterForm({
 }
 
 // ---------------------------------------------------------------------------
+// Advanced filter builder
+//
+// Additive to the existing JQL bar / legacy form. Each row targets one of the
+// server-supported comma-OR fields (action / status / user_id / stage) and
+// the operator adds values as chips within that row. Multiple rows on the
+// same field merge (a chip added on any row for `stage` OR-joins with every
+// other `stage` chip -- matches the backend semantics for a single query
+// param). A dedicated since/until row drives the date range.
+// ---------------------------------------------------------------------------
+
+type BuilderField = "action" | "status" | "user_id" | "stage";
+
+interface BuilderConditionRow {
+  /** stable client id; not persisted */
+  rowId: string;
+  field: BuilderField;
+  values: string[];
+}
+
+interface AdvancedBuilderState {
+  conditions: BuilderConditionRow[];
+  since: string;
+  until: string;
+}
+
+const EMPTY_BUILDER: AdvancedBuilderState = {
+  conditions: [],
+  since: "",
+  until: "",
+};
+
+const BUILDER_FIELDS: readonly { key: BuilderField; label: string; placeholder: string }[] = [
+  { key: "action", label: "Action", placeholder: "scan.start" },
+  { key: "status", label: "Status", placeholder: "completed, failed" },
+  { key: "user_id", label: "User", placeholder: "system, admin" },
+  { key: "stage", label: "Stage", placeholder: "task, report_lookup" },
+];
+
+/** Merge a builder state into the AuditFilters shape driving GET /audit/events. */
+function builderToAuditFilters(state: AdvancedBuilderState): AuditFilters {
+  const collected: Record<BuilderField, string[]> = {
+    action: [],
+    status: [],
+    user_id: [],
+    stage: [],
+  };
+  for (const row of state.conditions) {
+    for (const raw of row.values) {
+      const trimmed = raw.trim();
+      if (trimmed && !collected[row.field].includes(trimmed)) {
+        collected[row.field].push(trimmed);
+      }
+    }
+  }
+  return {
+    runId: "",
+    stage: collected.stage.join(","),
+    action: collected.action.join(","),
+    status: collected.status.join(","),
+    userId: collected.user_id.join(","),
+    since: state.since,
+    until: state.until,
+  };
+}
+
+function newBuilderRow(field: BuilderField = "action"): BuilderConditionRow {
+  return {
+    rowId:
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `row-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    field,
+    values: [],
+  };
+}
+
+interface AdvancedFilterBuilderProps {
+  state: AdvancedBuilderState;
+  onChange: (next: AdvancedBuilderState) => void;
+  onApply: () => void;
+  onClear: () => void;
+  isFetching: boolean;
+}
+
+function AdvancedFilterBuilder({
+  state,
+  onChange,
+  onApply,
+  onClear,
+  isFetching,
+}: AdvancedFilterBuilderProps) {
+  const [draftValues, setDraftValues] = useState<Record<string, string>>({});
+
+  function updateRow(rowId: string, patch: Partial<BuilderConditionRow>) {
+    onChange({
+      ...state,
+      conditions: state.conditions.map((row) =>
+        row.rowId === rowId ? { ...row, ...patch } : row,
+      ),
+    });
+  }
+
+  function commitDraft(rowId: string) {
+    const raw = draftValues[rowId] ?? "";
+    // Support paste-in comma-separated values in one keystroke: split, trim,
+    // dedupe, and append to whichever row we're editing.
+    const additions = raw
+      .split(",")
+      .map((v) => v.trim())
+      .filter(Boolean);
+    if (additions.length === 0) return;
+    const row = state.conditions.find((r) => r.rowId === rowId);
+    if (!row) return;
+    const merged = [...row.values];
+    for (const value of additions) {
+      if (!merged.includes(value)) merged.push(value);
+    }
+    updateRow(rowId, { values: merged });
+    setDraftValues((prev) => ({ ...prev, [rowId]: "" }));
+  }
+
+  return (
+    <AilaCard variant="elevated" padding="md" techBorder glow>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="font-mono text-sm font-semibold text-text">
+          Advanced Filter Builder
+        </h2>
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="gap-1.5"
+            onClick={() =>
+              onChange({
+                ...state,
+                conditions: [...state.conditions, newBuilderRow()],
+              })
+            }
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add condition
+          </Button>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        {state.conditions.length === 0 && (
+          <p className="font-mono text-xs text-text-muted">
+            No conditions yet. Add a condition to filter by action, status, user, or stage.
+          </p>
+        )}
+        {state.conditions.map((row, index) => {
+          const spec = BUILDER_FIELDS.find((f) => f.key === row.field) ?? BUILDER_FIELDS[0];
+          const draft = draftValues[row.rowId] ?? "";
+          const fieldSelectId = `builder-field-${row.rowId}`;
+          const valueInputId = `builder-value-${row.rowId}`;
+          return (
+            <div
+              key={row.rowId}
+              className="flex flex-wrap items-start gap-2 border border-border rounded-sharp-md p-2 bg-surface"
+            >
+              <div className="flex flex-col gap-1">
+                <label
+                  className="font-mono text-[10px] text-text-muted uppercase tracking-wider"
+                  htmlFor={fieldSelectId}
+                >
+                  {index === 0 ? "Where" : "And"}
+                </label>
+                <select
+                  id={fieldSelectId}
+                  value={row.field}
+                  onChange={(e) =>
+                    updateRow(row.rowId, {
+                      field: e.target.value as BuilderField,
+                    })
+                  }
+                  className="h-8 rounded-sharp border border-border bg-base px-2 font-mono text-xs text-text outline-none focus:border-border-hover transition-colors"
+                >
+                  {BUILDER_FIELDS.map((field) => (
+                    <option key={field.key} value={field.key}>
+                      {field.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex-1 min-w-[160px] flex flex-col gap-1">
+                <label
+                  className="font-mono text-[10px] text-text-muted uppercase tracking-wider"
+                  htmlFor={valueInputId}
+                >
+                  Any of (comma-OR)
+                </label>
+                <div className="flex flex-wrap items-center gap-1.5 min-h-[2rem] border border-border rounded-sharp bg-base px-2 py-1">
+                  {row.values.map((value) => (
+                    <span
+                      key={value}
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-accent/10 border border-accent/30 rounded-sharp text-accent font-mono text-[11px]"
+                    >
+                      {value}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateRow(row.rowId, {
+                            values: row.values.filter((v) => v !== value),
+                          })
+                        }
+                        className="text-accent/70 hover:text-accent"
+                        aria-label={`Remove ${value}`}
+                      >
+                        <XIcon className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+                  <input
+                    id={valueInputId}
+                    value={draft}
+                    onChange={(e) =>
+                      setDraftValues((prev) => ({
+                        ...prev,
+                        [row.rowId]: e.target.value,
+                      }))
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === ",") {
+                        e.preventDefault();
+                        commitDraft(row.rowId);
+                      } else if (
+                        e.key === "Backspace" &&
+                        draft === "" &&
+                        row.values.length > 0
+                      ) {
+                        updateRow(row.rowId, {
+                          values: row.values.slice(0, -1),
+                        });
+                      }
+                    }}
+                    onBlur={() => commitDraft(row.rowId)}
+                    placeholder={spec.placeholder}
+                    className="flex-1 min-w-[80px] bg-transparent outline-none font-mono text-xs text-text placeholder:text-text-muted"
+                  />
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  onChange({
+                    ...state,
+                    conditions: state.conditions.filter(
+                      (r) => r.rowId !== row.rowId,
+                    ),
+                  })
+                }
+                className="mt-5 text-text-muted hover:text-critical transition-colors"
+                aria-label={`Remove condition ${index + 1}`}
+                title="Remove condition"
+              >
+                <Trash size={14} />
+              </button>
+            </div>
+          );
+        })}
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 mt-1">
+          <div className="flex flex-col gap-1">
+            <label
+              className="font-mono text-[10px] text-text-muted uppercase tracking-wider"
+              htmlFor="builder-since"
+            >
+              Since (ISO 8601)
+            </label>
+            <Input
+              id="builder-since"
+              type="datetime-local"
+              value={state.since}
+              onChange={(e) => onChange({ ...state, since: e.target.value })}
+              className="font-mono text-xs"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label
+              className="font-mono text-[10px] text-text-muted uppercase tracking-wider"
+              htmlFor="builder-until"
+            >
+              Until (ISO 8601)
+            </label>
+            <Input
+              id="builder-until"
+              type="datetime-local"
+              value={state.until}
+              onChange={(e) => onChange({ ...state, until: e.target.value })}
+              className="font-mono text-xs"
+            />
+          </div>
+        </div>
+
+        <div className="flex gap-2 mt-2">
+          <Button type="button" size="sm" onClick={onApply} disabled={isFetching}>
+            {isFetching ? "Loading…" : "Apply Builder"}
+          </Button>
+          <Button type="button" size="sm" variant="outline" onClick={onClear}>
+            Clear Builder
+          </Button>
+        </div>
+      </div>
+    </AilaCard>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
+
+/**
+ * Serialized shape stored under entity_type='audit' in /saved-filters.
+ * `mode` records which UI produced the preset so applying it restores the
+ * matching input surface; `filters` is always the merged AuditFilters that
+ * drives GET /audit/events, and `builder` is the optional builder scaffold
+ * for round-tripping the chip UI.
+ */
+interface AuditSavedViewState {
+  mode: "jql" | "form" | "builder";
+  filters: AuditFilters;
+  builder?: AdvancedBuilderState;
+}
 
 export function AuditLogsPage() {
   const [draftFilters, setDraftFilters] = useState<AuditFilters>(EMPTY_FILTERS);
   const [activeFilters, setActiveFilters] = useState<AuditFilters>(EMPTY_FILTERS);
-  const [useJql, setUseJql] = useState(true);
+  const [filterMode, setFilterMode] = useState<"jql" | "form" | "builder">("jql");
+  const [builderState, setBuilderState] = useState<AdvancedBuilderState>(EMPTY_BUILDER);
   // Operator preference drives the AilaTable page window; the server fetch
   // stays at SERVER_PAGE_SIZE (backend max) so filter-narrowed sets remain
   // representative regardless of the chosen client-side page size.
@@ -469,10 +796,47 @@ export function AuditLogsPage() {
   const clearFilters = useCallback(() => {
     setDraftFilters(EMPTY_FILTERS);
     setActiveFilters(EMPTY_FILTERS);
+    setBuilderState(EMPTY_BUILDER);
   }, []);
 
   const handleJqlChange = useCallback((filters: JqlFilter[]) => {
     setActiveFilters(jqlToAuditFilters(filters));
+  }, []);
+
+  const applyBuilder = useCallback(() => {
+    setActiveFilters(builderToAuditFilters(builderState));
+  }, [builderState]);
+
+  const clearBuilder = useCallback(() => {
+    setBuilderState(EMPTY_BUILDER);
+    setActiveFilters(EMPTY_FILTERS);
+  }, []);
+
+  const savedViewState: AuditSavedViewState = useMemo(
+    () => ({
+      mode: filterMode,
+      filters: activeFilters,
+      builder: filterMode === "builder" ? builderState : undefined,
+    }),
+    [filterMode, activeFilters, builderState],
+  );
+
+  const applySavedView = useCallback((state: AuditSavedViewState) => {
+    // Applied views may originate from any mode; restore the mode too so the
+    // matching surface is what the operator sees post-apply. `filters` is
+    // authoritative for the query -- `builder` is UI scaffolding.
+    if (state.mode === "builder" && state.builder) {
+      setBuilderState({
+        conditions: state.builder.conditions.map((row) => ({ ...row })),
+        since: state.builder.since,
+        until: state.builder.until,
+      });
+    }
+    if (state.mode === "form") {
+      setDraftFilters({ ...state.filters });
+    }
+    setFilterMode(state.mode);
+    setActiveFilters({ ...state.filters });
   }, []);
 
   const hasDateRange = activeFilters.since || activeFilters.until;
@@ -519,29 +883,55 @@ export function AuditLogsPage() {
         )}
       </div>
 
-      {/* Filter bar -- JQL chip input is default; legacy form available as fallback */}
+      {/* Filter bar -- JQL chip input is default; legacy form and advanced
+          builder available on demand. Each mode drives the same
+          `activeFilters` state and the SavedViews control persists the
+          currently active mode + filters under entity_type='audit'. */}
       <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-mono text-xs text-text-muted uppercase tracking-wider">
             Filters
           </h2>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            className="h-6 px-2 font-mono text-[10px] text-text-muted"
-            onClick={() => setUseJql((v) => !v)}
+          <div
+            role="tablist"
+            aria-label="Audit filter mode"
+            className="flex items-center gap-1 border border-border rounded-sharp-md p-0.5"
           >
-            {useJql ? "Use form" : "Use filter bar"}
-          </Button>
+            {(
+              [
+                { key: "jql", label: "Filter bar" },
+                { key: "builder", label: "Builder" },
+                { key: "form", label: "Form" },
+              ] as const
+            ).map((option) => {
+              const active = filterMode === option.key;
+              return (
+                <button
+                  key={option.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setFilterMode(option.key)}
+                  className={`h-6 px-2 font-mono text-[10px] rounded-sharp transition-colors ${
+                    active
+                      ? "bg-accent/15 text-accent"
+                      : "text-text-muted hover:text-text"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
-        {useJql ? (
+        {filterMode === "jql" && (
           <JqlFilterBar
             fields={AUDIT_JQL_FIELDS}
             onChange={handleJqlChange}
             placeholder="Filter (e.g. stage:ssh, status:failed, search:web01)"
           />
-        ) : (
+        )}
+        {filterMode === "form" && (
           <FilterForm
             draft={draftFilters}
             onDraftChange={(patch) =>
@@ -552,6 +942,22 @@ export function AuditLogsPage() {
             isFetching={auditQuery.isFetching}
           />
         )}
+        {filterMode === "builder" && (
+          <AdvancedFilterBuilder
+            state={builderState}
+            onChange={setBuilderState}
+            onApply={applyBuilder}
+            onClear={clearBuilder}
+            isFetching={auditQuery.isFetching}
+          />
+        )}
+        <SavedViews<AuditSavedViewState>
+          entityType="audit"
+          entityLabel="Audit log"
+          currentState={savedViewState}
+          onApply={applySavedView}
+          className="mt-1"
+        />
       </div>
 
       {/* Metric cards */}

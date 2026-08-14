@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ActivityTimeline } from "@platform/features/activity/ActivityTimeline";
+import { SavedViews } from "@platform/features/saved-views";
 
 import {
   useCancelTask,
@@ -444,6 +445,32 @@ export function ScanCenterPage() {
                 )}
               </div>
             </div>
+            {/* Saved views for the scan console (entity_type='scan').
+                Round-trips query text, targets, and the run-status filter
+                through /saved-filters so operators can bookmark recurring
+                scans. */}
+            <SavedViews<{
+              query: string;
+              targets: string;
+              status: TaskStatus | "";
+            }>
+              entityType="scan"
+              entityLabel="Scan console"
+              currentState={{
+                query: queryText,
+                targets: targetsText,
+                status: statusFilter ?? "",
+              }}
+              onApply={(state) => {
+                setSearchParams(
+                  updateSearchParams(searchParams, {
+                    query: state.query ?? "",
+                    targets: state.targets ?? "",
+                    status: state.status || null,
+                  }),
+                );
+              }}
+            />
           
             {tasksQuery.isLoading && <LoadingSkeletonGroup lines={4} />}
           

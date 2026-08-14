@@ -7,6 +7,42 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.22] - 2026-08-13 -- Saved views and advanced filtering parity
+
+Brings the saved-view experience (previously only on vulnerability findings) to
+every high-cardinality surface using the generic saved-filters backend, and adds
+an advanced filter builder to the audit log. Additive; existing filters and
+behavior preserved (#221). No backend changes.
+
+### Added
+
+- Saved views on the audit log, systems, tasks, and scan lists (shell); VR
+  investigations, findings, and targets; malware investigations, findings,
+  observations, and targets; and forensics projects and investigations. Each
+  view saves the surface's current filter, search, and sort state as a named,
+  pinnable, team-shareable preset via `/saved-filters` and applies it in one
+  click. Pin, share, and delete are owner-only, with a graceful fallback on a
+  malformed saved payload.
+- An advanced filter builder on the audit log: add-condition rows over action,
+  status, user, and stage (comma-OR within a field) plus a since/until range,
+  driving `/audit/events`. The existing JQL and form filters are preserved behind
+  a three-way toggle.
+
+### Changed
+
+- The systems, tasks, and scan saved views honor the operator default-page-size
+  preference on apply.
+
+### Note
+
+- The Phosphor icon vendor chunk has grown to 516 kB (gzip 124 kB) as icon usage
+  accumulated across recent releases, so Vite's 500 kB chunk-size advisory fires
+  again on that chunk. It is a separately-cached vendor chunk, not the
+  application entry chunk, which stays at 375 kB (gzip 110 kB). Splitting the
+  icon chunk is a tracked follow-up.
+
+All workspace type-checks and the shell production build pass.
+
 ## [0.5.21] - 2026-08-13 -- Relationship lineage explorer and per-entity activity timelines
 
 Adds a relationship/lineage explorer and per-entity activity timelines, built

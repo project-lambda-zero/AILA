@@ -33,11 +33,28 @@ import {
 } from "../queries";
 import { useDebouncedValue, useRowKeyboardNav, sortRows } from "../powerTable";
 import { useForensicsListLive } from "../useLiveInvalidation";
+import { SavedViews } from "../components/SavedViews";
 import type { InvestigationSummary, MachineReadinessResult, ProjectKind } from "../types";
 
 // Sort keys for the InvestigationsTab. The server only returns page + page_size
 // so ordering and text search are applied client-side over the loaded page.
 type InvestigationSortKey = "question" | "status" | "attempts_used";
+
+// Serialized shape stored in SavedFilterRecord.filter_json for the
+// investigations list. Kept intentionally narrow -- when new controls
+// arrive, extend the type and default missing keys on apply so older
+// saved views still round-trip cleanly.
+interface InvestigationsViewState {
+  search: string;
+  sortKey: InvestigationSortKey;
+  sortDir: "asc" | "desc";
+}
+
+const INVESTIGATION_SORT_KEYS: readonly InvestigationSortKey[] = [
+  "question",
+  "status",
+  "attempts_used",
+];
 import { buildApiUrl } from "@platform/api/http";
 import { getAuthTokenStandalone } from "@platform/auth/useAuthStore";
 import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
@@ -505,6 +522,20 @@ function InvestigationsTab({
     rowSelector: '[data-power-row="investigation"]',
   });
 
+  const savedViewState: InvestigationsViewState = { search, sortKey, sortDir };
+
+  function applySavedView(state: InvestigationsViewState) {
+    // filter_json is caller-controlled; guard each key so an older or
+    // hand-edited payload can't wedge the tab into an unknown sort.
+    if (typeof state.search === "string") setSearch(state.search);
+    if (state.sortKey && INVESTIGATION_SORT_KEYS.includes(state.sortKey)) {
+      setSortKey(state.sortKey);
+    }
+    if (state.sortDir === "asc" || state.sortDir === "desc") {
+      setSortDir(state.sortDir);
+    }
+  }
+
   const visible = React.useMemo(() => {
     const rows = investigations ?? [];
     const q = debouncedSearch;
@@ -583,6 +614,12 @@ function InvestigationsTab({
               {sortDir === "asc" ? "↑" : "↓"}
             </button>
           </label>
+          <SavedViews<InvestigationsViewState>
+            entityType="forensics_investigation"
+            currentState={savedViewState}
+            onApply={applySavedView}
+            testIdPrefix="forensics-investigations-views"
+          />
         </div>
       )}
 

@@ -36,6 +36,7 @@ import {
   useDebouncedValue,
   useTableRowNav,
 } from "../components/tableHelpers";
+import { SavedViews } from "../components/SavedViews";
 import {
   useCreateInvestigation,
   useDeleteInvestigation,
@@ -633,6 +634,45 @@ export function InvestigationsListPage() {
     resetToFirstPage();
   }
 
+  // Saved-view round-trip. Every filter/toggle the operator sees on
+  // this page is captured; pageSize/offset stay out because they are
+  // pagination state, not filter state. Stable key order so
+  // aria-pressed compares correctly regardless of insertion order.
+  const currentViewJson = JSON.stringify({
+    v: 1,
+    q: searchQ,
+    status: statusFilter,
+    kind: kindFilter,
+    verifier: verifierFilter,
+    findingsOnly,
+    favoritesOnly,
+    hideCreated,
+    groupByTarget,
+    pageSize,
+  });
+
+  function applyView(filterJson: string) {
+    try {
+      const p = JSON.parse(filterJson) as Record<string, unknown>;
+      setSearchQ(typeof p.q === "string" ? p.q : "");
+      setStatusFilter(typeof p.status === "string" ? p.status : "");
+      setKindFilter(typeof p.kind === "string" ? p.kind : "");
+      setVerifierFilter(typeof p.verifier === "string" ? p.verifier : "");
+      setFindingsOnly(p.findingsOnly === true);
+      setFavoritesOnly(p.favoritesOnly === true);
+      // hideCreated defaults to true when the view omits it so a
+      // legacy payload doesn't suddenly flood the list with queued rows.
+      setHideCreated(p.hideCreated !== false);
+      setGroupByTarget(p.groupByTarget === true);
+      if (typeof p.pageSize === "number" && p.pageSize > 0) {
+        setPageSize(p.pageSize);
+      }
+      resetToFirstPage();
+    } catch {
+      // Malformed view -- ignore rather than blank the operator's screen.
+    }
+  }
+
   const hasActiveFilters =
     !!searchQ ||
     !!statusFilter ||
@@ -872,6 +912,16 @@ export function InvestigationsListPage() {
           </div>
         </AilaCard>
       )}
+
+      {/* Saved views -- chip row above the status pills, additive to
+          every existing control. Serializes the full filter surface
+          into filter_json and restores it on apply. */}
+      <SavedViews
+        entityType="vr_investigation"
+        entityLabel="investigations"
+        currentFilterJson={currentViewJson}
+        onApply={applyView}
+      />
 
       {/* Status pills -- primary axis the operator scans by */}
       <div className="flex flex-wrap items-center gap-1.5">

@@ -23,6 +23,7 @@ import {
 import { useAuthStore } from "@platform/auth/useAuthStore";
 import { isAllowedRole } from "@platform/auth/roles";
 import { usePreferences } from "@/providers/PreferencesProvider";
+import { SavedViews } from "@platform/features/saved-views";
 import {
   useCreateSystem,
   useSystems,
@@ -122,7 +123,7 @@ export function SystemsPage() {
   // page fetch and the AilaTable pagination window so the client's rendered
   // slice never exceeds the fetched slice for any value in
   // ALLOWED_PAGE_SIZES (10 / 25 / 50 / 100 -- all under the 250 backend cap).
-  const { defaultPageSize } = usePreferences();
+  const { defaultPageSize, setDefaultPageSize, allowedPageSizes } = usePreferences();
   const systemsQuery = useSystems(1, defaultPageSize);
   const vocabQuery = useTagVocabulary();
   const createSystem = useCreateSystem();
@@ -385,6 +386,65 @@ export function SystemsPage() {
           )}
         </form></AilaCard>
       )}
+
+      {/* Saved views -- persists the current search, tag filter, and default
+          page size under entity_type='system' via /saved-filters. Applying a
+          view rewrites the URL search params so shareable links keep working
+          exactly as before. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-col gap-1">
+          <label
+            htmlFor="systems-search"
+            className="font-mono text-[10px] text-text-muted uppercase tracking-wider"
+          >
+            Search
+          </label>
+          <Input
+            id="systems-search"
+            value={searchParams.get("q") ?? ""}
+            onChange={(e) => {
+              const next = new URLSearchParams(searchParams);
+              if (e.target.value) next.set("q", e.target.value);
+              else next.delete("q");
+              setSearchParams(next, { replace: true });
+            }}
+            placeholder="host, name, distro…"
+            className="font-mono text-xs h-8 w-56"
+          />
+        </div>
+        <SavedViews<{
+          q: string;
+          tags: string[];
+          pageSize: number;
+        }>
+          entityType="system"
+          entityLabel="Systems list"
+          currentState={{
+            q: searchQuery,
+            tags: selectedTagKeys,
+            pageSize: defaultPageSize,
+          }}
+          onApply={(state) => {
+            const next = new URLSearchParams(searchParams);
+            if (state.q) next.set("q", state.q);
+            else next.delete("q");
+            if (Array.isArray(state.tags) && state.tags.length > 0) {
+              next.set("tags", state.tags.join(","));
+            } else {
+              next.delete("tags");
+            }
+            setSearchParams(next, { replace: true });
+            if (
+              typeof state.pageSize === "number" &&
+              allowedPageSizes.includes(state.pageSize) &&
+              state.pageSize !== defaultPageSize
+            ) {
+              setDefaultPageSize(state.pageSize);
+            }
+          }}
+          className="ml-auto"
+        />
+      </div>
 
       {/* Tag filter bar */}
       {vocabulary.length > 0 && (

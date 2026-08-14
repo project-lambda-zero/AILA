@@ -9,6 +9,8 @@ import { useTaskDetail, useTasks, type TaskStatus, type TaskSummary } from "@pla
 import { useTransitions } from "./useTransitions";
 import { TransitionTimeline } from "./TransitionTimeline";
 import { ActivityTimeline } from "@platform/features/activity/ActivityTimeline";
+import { SavedViews } from "@platform/features/saved-views";
+import { usePreferences } from "@/providers/PreferencesProvider";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -227,6 +229,7 @@ export function TasksPage() {
   const trackFilter = searchParams.get("track") ?? "";
   const statusFilter = normalizeTaskStatus(searchParams.get("status"));
   const selectedTaskId = searchParams.get("task") ?? "";
+  const { defaultPageSize, setDefaultPageSize, allowedPageSizes } = usePreferences();
 
   const tasksQuery = useTasks(trackFilter || undefined, statusFilter);
   const tasks = tasksQuery.data?.tasks ?? [];
@@ -269,6 +272,39 @@ export function TasksPage() {
             <option value="failed">failed</option>
             <option value="cancelled">cancelled</option>
           </select>
+        </div>
+        {/* Saved views for the task queue (entity_type='task'). Round-trips
+            the URL-persisted filter shape (track + status + default page
+            size) through /saved-filters. */}
+        <div className="ml-auto self-end">
+          <SavedViews<{
+            track: string;
+            status: TaskStatus | "";
+            pageSize: number;
+          }>
+            entityType="task"
+            entityLabel="Task queue"
+            currentState={{
+              track: trackFilter,
+              status: statusFilter ?? "",
+              pageSize: defaultPageSize,
+            }}
+            onApply={(state) => {
+              setSearchParams(
+                updateSearchParams(searchParams, {
+                  track: state.track || null,
+                  status: state.status || null,
+                }),
+              );
+              if (
+                typeof state.pageSize === "number" &&
+                allowedPageSizes.includes(state.pageSize) &&
+                state.pageSize !== defaultPageSize
+              ) {
+                setDefaultPageSize(state.pageSize);
+              }
+            }}
+          />
         </div>
       </div></AilaCard>
 

@@ -13,11 +13,59 @@ import {
   SortHeader,
   useSortableRows,
   useTableRowNav,
+  type SortDir,
   type SortValue,
 } from "../components/tableHelpers";
+import { SavedViews } from "../components/SavedViews";
 import { useAllFindings } from "../queries";
 import { useVRListInvalidation } from "../hooks/useVRListInvalidation";
 import type { DisclosureStatus, VRFinding } from "../types";
+
+// ─────────────────────────────────────────────────────────────────────
+// Saved-view payload -- version-tagged so a future schema change can
+// migrate old payloads instead of silently accepting garbage.
+// ─────────────────────────────────────────────────────────────────────
+
+interface FindingsViewPayload {
+  v: 1;
+  q?: string;
+  status?: DisclosureStatus | "";
+  crash?: string;
+  sortKey?: string;
+  sortDir?: SortDir;
+}
+
+function serializeFindingsView(payload: FindingsViewPayload): string {
+  // Stable key order so aria-pressed comparisons hold regardless of
+  // insertion order.
+  return JSON.stringify({
+    v: 1,
+    q: payload.q ?? "",
+    status: payload.status ?? "",
+    crash: payload.crash ?? "",
+    sortKey: payload.sortKey ?? "",
+    sortDir: payload.sortDir ?? null,
+  });
+}
+
+function parseFindingsView(raw: string): FindingsViewPayload | null {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return null;
+    const p = parsed as Partial<FindingsViewPayload>;
+    return {
+      v: 1,
+      q: typeof p.q === "string" ? p.q : "",
+      status: (p.status ?? "") as DisclosureStatus | "",
+      crash: typeof p.crash === "string" ? p.crash : "",
+      sortKey: typeof p.sortKey === "string" ? p.sortKey : "",
+      sortDir:
+        p.sortDir === "asc" || p.sortDir === "desc" ? p.sortDir : null,
+    };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Global findings explorer.
@@ -85,10 +133,28 @@ export function FindingsListPage() {
     }),
     [],
   );
-  const { sortedRows, sortKey, sortDir, cycleSort } = useSortableRows(
+  const { sortedRows, sortKey, sortDir, cycleSort, setSort } = useSortableRows(
     filteredRows,
     accessors,
   );
+
+  const currentViewJson = serializeFindingsView({
+    v: 1,
+    q: query,
+    status: statusFilter,
+    crash: crashFilter,
+    sortKey,
+    sortDir,
+  });
+
+  function applyView(filterJson: string) {
+    const payload = parseFindingsView(filterJson);
+    if (!payload) return;
+    setQuery(payload.q ?? "");
+    setStatusFilter(payload.status ?? "");
+    setCrashFilter(payload.crash ?? "");
+    setSort(payload.sortKey ?? "", payload.sortDir ?? null);
+  }
 
   const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
   const { tbodyProps, getRowProps } = useTableRowNav(
@@ -115,6 +181,13 @@ export function FindingsListPage() {
 
   return (
     <div className="space-y-4">
+      <SavedViews
+        entityType="vr_finding"
+        entityLabel="findings"
+        currentFilterJson={currentViewJson}
+        onApply={applyView}
+      />
+
       <AilaCard techBorder glow>
         <div className="flex items-center gap-2 flex-wrap">
           <input

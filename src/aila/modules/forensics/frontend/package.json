@@ -1,6 +1,6 @@
 {
   "name": "@aila/forensics-frontend",
-  "version": "0.5.21",
+  "version": "0.5.22",
   "private": true,
   "type": "module",
   "main": "./spec.ts",

@@ -64,8 +64,15 @@ export function useSortableRows<T>(
   sortKey: string;
   sortDir: SortDir;
   cycleSort: (columnKey: string) => void;
+  /**
+   * Direct setter used by SavedViews to restore a persisted sort
+   * without cycling through it -- the operator applies a view and
+   * the sort snaps to the stored (key, dir). Pass `("", null)` to
+   * clear.
+   */
+  setSort: (key: string, dir: SortDir) => void;
 } {
-  const [sort, setSort] = useState<{ key: string; dir: SortDir }>({
+  const [sort, setSortState] = useState<{ key: string; dir: SortDir }>({
     key: "",
     dir: null,
   });
@@ -74,12 +81,16 @@ export function useSortableRows<T>(
   accessorsRef.current = accessors;
 
   const cycleSort = useCallback((next: string) => {
-    setSort((prev) => {
+    setSortState((prev) => {
       if (prev.key !== next) return { key: next, dir: "asc" };
       if (prev.dir === "asc") return { key: next, dir: "desc" };
       if (prev.dir === "desc") return { key: "", dir: null };
       return { key: next, dir: "asc" };
     });
+  }, []);
+
+  const setSort = useCallback((key: string, dir: SortDir) => {
+    setSortState({ key: dir === null ? "" : key, dir });
   }, []);
 
   const sortedRows = useMemo(() => {
@@ -123,6 +134,7 @@ export function useSortableRows<T>(
     sortKey: sort.dir ? sort.key : "",
     sortDir: sort.dir,
     cycleSort,
+    setSort,
   };
 }
 
