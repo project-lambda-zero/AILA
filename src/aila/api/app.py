@@ -488,6 +488,13 @@ def create_app() -> FastAPI:
     from aila.api.middleware import SecurityHeadersMiddleware
     application.add_middleware(SecurityHeadersMiddleware)
 
+    # #119: enforce the CSRF double-submit contract on cookie-authenticated
+    # mutating requests. Requests carrying an Authorization: Bearer header
+    # are exempt (not cookie-auth, not CSRF-susceptible). See
+    # aila.api.middleware.csrf for the full rule set.
+    from aila.api.middleware import CSRFMiddleware
+    application.add_middleware(CSRFMiddleware)
+
     # #53: bind the caller's TeamContext to the ambient ContextVar for the
     # duration of the request so bare ``UnitOfWork()`` / ``async_session_scope()``
     # sites inherit tenant scope. Decode is silent -- the real auth layer

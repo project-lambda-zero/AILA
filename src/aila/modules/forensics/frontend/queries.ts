@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
-import { ApiHttpError, authorizedRequestJson } from "@platform/api/http";
-import { getAuthTokenStandalone } from "@platform/auth/useAuthStore";
-import { streamJsonEvents } from "@platform/api/sse";
+import { authorizedRequestJson, buildApiUrl } from "@platform/api/http";
+import { useSSEStream } from "@platform/hooks/useSSEStream";
 
 import type {
   AnalystDirective,
@@ -386,70 +385,92 @@ export interface InvestigationEvent {
   data_json?: string | null;
 }
 
+export type InvestigationFeedStatus =
+  | "idle"
+  | "connecting"
+  | "live"
+  | "unavailable"
+  | "closed"
+  | "error";
+
 /**
  * Stream live investigation progress via SSE.
- * Follows the same pattern as `useScanEventFeed` in platform/features/scans/api.ts.
- * Pass an empty string to disable (status stays "idle").
+ *
+ * Delegates transport (auth, fetch, line splitting, AbortController,
+ * reconnect+backoff) to the platform `useSSEStream` hook so a backend
+ * or worker restart mid-investigation resumes automatically with
+ * exponential backoff (1s -> 2s -> 4s -> 8s -> 16s capped at 30s;
+ * reset on every successful connect). Prior to #111/#145 this was a
+ * hand-rolled `streamJsonEvents` call that silently died on the first
+ * drop and left the "Live" tab stuck on the last event it saw.
+ *
+ * Status mapping onto the caller's contract:
+ *  - platform `reconnecting` before first byte -> "connecting"
+ *  - platform `connected` -> "live" (or "unavailable" when the first
+ *    payload is the backend's `No progress stream available` marker)
+ *  - platform `reconnecting` after a drop -> "connecting" (the amber
+ *    dot in InvestigationDetailPage keeps blinking through the
+ *    backoff instead of settling to closed)
+ *  - platform `disconnected` (buildUrl returned null: both ids empty
+ *    or the caller flipped isRunning to false) -> "idle"
+ *
+ * Pass an empty string for either id to disable (status stays "idle").
  */
 export function useInvestigationEventFeed(projectId: string, investigationId: string) {
   const [events, setEvents] = useState<InvestigationEvent[]>([]);
-  const [feedStatus, setFeedStatus] = useState<
-    "idle" | "connecting" | "live" | "unavailable" | "closed" | "error"
-  >("idle");
-  const [feedError, setFeedError] = useState<string | null>(null);
+  const [unavailable, setUnavailable] = useState(false);
 
   useEffect(() => {
-    if (!projectId || !investigationId) {
-      setEvents([]);
-      setFeedStatus("idle");
-      setFeedError(null);
-      return;
-    }
-
-    const controller = new AbortController();
-    let closedByAbort = false;
+    // Reset accumulated state whenever the target investigation changes
+    // (or is cleared). Without this, switching between investigations
+    // would append the new stream onto the previous investigation's
+    // events, and a stale "unavailable" flag would suppress the "live"
+    // status for a fresh investigation whose backend does have events.
     setEvents([]);
-    setFeedStatus("connecting");
-    setFeedError(null);
-
-    const url = `/forensics/projects/${encodeURIComponent(projectId)}/investigations/${encodeURIComponent(investigationId)}/events`;
-
-    void getAuthTokenStandalone()
-      .then((token) =>
-        streamJsonEvents<InvestigationEvent>(url, {
-          token,
-          signal: controller.signal,
-          onEvent: (event) => {
-            const message = event.data?.message ?? "";
-            if (message.startsWith("No progress stream available")) {
-              setFeedStatus("unavailable");
-            } else {
-              setFeedStatus("live");
-            }
-            setEvents((current) => [...current, event.data]);
-          },
-        })
-      )
-      .then(() => {
-        if (!closedByAbort) {
-          setFeedStatus((current) => (current === "idle" ? current : "closed"));
-        }
-      })
-      .catch((err: unknown) => {
-        if (closedByAbort || controller.signal.aborted) return;
-        const message =
-          err instanceof ApiHttpError || err instanceof Error
-            ? err.message
-            : "Investigation event streaming failed.";
-        setFeedStatus("error");
-        setFeedError(message);
-      });
-
-    return () => {
-      closedByAbort = true;
-      controller.abort();
-    };
+    setUnavailable(false);
   }, [projectId, investigationId]);
 
-  return { events, feedStatus, feedError };
+  const { status: streamStatus } = useSSEStream<InvestigationEvent>({
+    buildUrl: () => {
+      if (!projectId || !investigationId) return null;
+      return buildApiUrl(
+        `/forensics/projects/${encodeURIComponent(projectId)}/investigations/${encodeURIComponent(investigationId)}/events`,
+      );
+    },
+    parseEvent: (raw) => {
+      try {
+        return JSON.parse(raw) as InvestigationEvent;
+      } catch {
+        return null;
+      }
+    },
+    onMessage: (event) => {
+      const message = event?.message ?? "";
+      if (message.startsWith("No progress stream available")) {
+        setUnavailable(true);
+      }
+      setEvents((current) => [...current, event]);
+    },
+    reconnect: true,
+    deps: [],
+    queryKeyPrefix: ["forensics", "investigation-events", projectId, investigationId],
+  });
+
+  let feedStatus: InvestigationFeedStatus;
+  if (!projectId || !investigationId) {
+    feedStatus = "idle";
+  } else if (streamStatus === "connected") {
+    feedStatus = unavailable ? "unavailable" : "live";
+  } else {
+    // Both "reconnecting" (initial connect + between-attempts backoff)
+    // and "disconnected" (buildUrl returned null after ids cleared)
+    // map to "connecting" while the ids are set -- the reconnect loop
+    // is still trying.
+    feedStatus = "connecting";
+  }
+
+  // feedError is retained in the return shape for the callsite's
+  // structural compat but is no longer surfaced by the platform hook;
+  // transport errors trigger a reconnect rather than a terminal error.
+  return { events, feedStatus, feedError: null as string | null };
 }

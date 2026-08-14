@@ -643,6 +643,7 @@ def _resolve_oidc_role(claims: dict[str, Any]) -> str:
 @limiter.limit("10/minute")
 async def oidc_callback(
     request: Request,
+    response: Response,
     code: str = Query(..., description="Authorization code from OIDC provider"),
     state: str = Query(..., description="State token for CSRF validation"),
     redirect_uri: str = Query(default="http://localhost:3000/auth/callback"),
@@ -768,10 +769,17 @@ async def oidc_callback(
     access_token, expires_in = issue_user_jwt(user_id, role, team_id=user_team_id)
     refresh_token = await issue_user_refresh_token(user_id, role, team_id=user_team_id)
 
+    # #119: the refresh token ships as an HttpOnly cookie -- see
+    # aila.api.routers.users._set_auth_cookies for the policy. The access
+    # token stays in the JSON body; the SPA keeps it in memory only.
+    from aila.api.routers.users import _cookies_secure, _set_auth_cookies
+
+    _set_auth_cookies(response, refresh_token, secure=_cookies_secure(request))
+
     return DataEnvelope(
         data=TokenResponse(
             access_token=access_token,
-            refresh_token=refresh_token,
+            refresh_token=None,
             token_type="bearer",
             expires_in=expires_in,
         )

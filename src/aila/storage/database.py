@@ -29,7 +29,7 @@ import threading
 from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from sqlalchemy import create_engine as _create_sync_engine
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -46,8 +46,10 @@ if TYPE_CHECKING:
     from .registry import SchemaRegistry
 
 _ASYNC_ENGINES: dict[str, object] = {}
-# _ENGINES is a sync engine cache used by SQLite test fixtures via session_scope().
-# Production code always uses _ASYNC_ENGINES via async_session_scope().
+# _ENGINES is a sync psycopg engine cache used by session_scope() -- CLI
+# utilities and the small number of production call sites that need a
+# synchronous session. Test fixtures pre-populate this dict directly to
+# swap in an isolated engine.
 _ENGINES: dict[str, object] = {}
 _ENGINE_LOCK = threading.RLock()
 _INITIALIZED_URLS: set[str] = set()
@@ -350,12 +352,16 @@ async def restore_database(
 def session_scope(settings: DatabaseSettings | None = None):  # type: ignore[return]
     """Sync context manager yielding a SQLModel Session bound to the sync engine.
 
-    Used exclusively by SQLite test fixtures (conftest.py) for seeding test data.
-    Production code always uses async_session_scope().
+    Used by CLI utilities and the small number of production call sites
+    that need a synchronous session (see
+    ``aila.platform.llm.client.LLMClient``,
+    ``aila.platform.services.replay``). Request handlers always use
+    ``async_session_scope``.
 
     The sync engine is keyed on the DB URL in _ENGINES (mirroring the async
     engine cache in _ASYNC_ENGINES).  If no sync engine is cached for the URL,
-    one is created from the current database_url setting.
+    one is created from the current database_url setting. Test fixtures that
+    need to swap in an isolated engine pre-populate ``_ENGINES`` directly.
 
     Args:
         settings: Optional settings object.  Falls back to get_settings().
@@ -379,15 +385,7 @@ def session_scope(settings: DatabaseSettings | None = None):  # type: ignore[ret
     with _ENGINE_LOCK:
         engine = _ENGINES.get(sync_url)
         if engine is None:
-            # ``check_same_thread`` is a SQLite-only kwarg. Asyncpg /
-            # psycopg drivers reject unknown connect_args with a
-            # ``TypeError: connect() got an unexpected keyword argument``
-            # (observed on test_db runs against Postgres). Gate by URL
-            # scheme so Postgres URLs get a clean connect_args={}.
-            connect_args: dict[str, Any] = {}
-            if sync_url.startswith(("sqlite://", "sqlite+")):
-                connect_args["check_same_thread"] = False
-            engine = _create_sync_engine(sync_url, connect_args=connect_args)
+            engine = _create_sync_engine(sync_url)
             _ENGINES[sync_url] = engine
         factory = _SYNC_SESSION_FACTORIES.get(url)
         if factory is None:

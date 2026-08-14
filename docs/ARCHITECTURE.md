@@ -308,20 +308,18 @@ per-system, not global.
 Task results are surfaced through the module's own result tables --
 `vr_findings`, `vr_investigation_outcomes`, `scan_findings`,
 `forensics_*`, and so on -- not as file-system artifacts referenced by
-a path column. The historical `TaskRecord.result_path` column survives
-for wire-shape compatibility (the column is nullable and currently
-populated by no task in `src/aila/`); every consumer reads the result
-from the module table or its dedicated API endpoint (e.g.
-`GET /vr/investigations/{id}`, `GET /scans/{id}/findings`).
+a path column. Every consumer reads the result from the module table
+or its dedicated API endpoint (e.g. `GET /vr/investigations/{id}`,
+`GET /scans/{id}/findings`).
 
-The earlier file-path pattern existed to keep SQLite row sizes
-bounded under the single-writer model. PostgreSQL handles large rows
-without contention, the on-disk artifact directory introduced an
-orthogonal lifecycle problem (cleanup, permissions, backup), and
-modules already needed structured per-result tables anyway. The
-pattern was retired; `result_path` should not be populated by new
-code and will be dropped in a future migration once the schema
-column can be cleanly removed from every TaskResponse consumer.
+The earlier file-path pattern (a `TaskRecord.result_path` column)
+existed to keep SQLite row sizes bounded under the single-writer
+model. PostgreSQL handles large rows without contention, the on-disk
+artifact directory introduced an orthogonal lifecycle problem
+(cleanup, permissions, backup), and modules already needed structured
+per-result tables anyway. The column was dropped by migration 126
+(#144); it survived as a permanent NULL for months because no task in
+`src/aila/` ever populated it.
 
 ### INFRA-07: No Module Cross-Imports
 

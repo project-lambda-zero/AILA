@@ -1,101 +1,68 @@
 import { create } from "zustand";
-import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
 
 import {
   decodeUserTokenClaims,
   loginWithPassword,
+  logoutUser,
   refreshUserToken,
   type TokenResponse,
 } from "@platform/api/auth";
 import type { AppRole } from "@platform/auth/roles";
 
 // ---------------------------------------------------------------------------
-// #47 -- hardened auth storage.
+// #119 -- HttpOnly cookie auth storage.
 //
-// Prior versions persisted BOTH the access token and the refresh token to
-// `localStorage`. That surface is readable by any script executing in the
-// origin, so a single XSS foothold (or a rogue browser extension) exfiltrates
-// long-lived credentials that outlive the tab. The rewrite splits the two
-// tokens by lifetime and blast radius:
+// Prior versions kept the refresh token in `sessionStorage` under a TTL
+// envelope. That surface is readable by any script executing in the origin,
+// so a single XSS foothold (or a rogue browser extension) exfiltrated a
+// long-lived credential that outlived the tab. The backend now issues the
+// refresh token as an `HttpOnly; Secure; SameSite=Lax` cookie
+// (`aila_refresh`); JS cannot read it, and the browser attaches it
+// automatically to `/auth/refresh/user` and `/auth/logout`.
 //
-//   * Access token  -- kept in memory only. It never touches Web Storage, so
-//                      a page reload always forces the refresh path below.
-//                      The token dies with the JS heap; there is no on-disk
-//                      copy for an attacker to lift after the fact.
-//   * Refresh token -- persisted to `sessionStorage` with a short TTL so it
-//                      dies when the browser tab closes and additionally
-//                      self-expires after `REFRESH_TTL_MS`. `sessionStorage`
-//                      is still same-origin readable, but its lifetime is
-//                      bounded by the tab, which cuts the exposure window
-//                      dramatically compared to `localStorage`.
-//   * Lightweight UI hints (role/userId/username) travel with the refresh
-//     token so the shell can render the correct chrome during the
-//     bootstrapping refresh; they are not credentials by themselves.
+// The client contract is therefore:
 //
-// The end-state we would prefer is that neither token ever reaches JS: the
-// backend would issue the refresh token as a `HttpOnly; Secure;
-// SameSite=Strict` cookie scoped to `/auth/refresh/user`, and the access
-// token would either follow the same pattern or be short-lived enough that
-// in-memory storage suffices. That migration requires backend changes
-// (`Set-Cookie` on the login/refresh endpoints, CSRF double-submit
-// validation on every mutating route, CORS `credentials: "include"` on the
-// fetch layer). Until that lands, sessionStorage plus TTL plus double-submit
-// CSRF is the tightest posture the frontend can enforce unilaterally.
+//   * Access token  -- kept in memory only. Never written to Web Storage.
+//                      Dies with the JS heap; a page reload always goes
+//                      through the refresh path below.
+//   * Refresh token -- lives ONLY in the HttpOnly cookie. This store no
+//                      longer touches it in any form. The reload-time
+//                      refresh call succeeds when the cookie is still
+//                      valid, and fails cleanly to the login screen when
+//                      it is not.
+//   * UI hints (role/userId/username) -- persisted so the shell can render
+//                      chrome without waiting for the refresh to complete.
+//                      Not credentials.
+//   * CSRF token    -- lives in the readable `aila_csrf` cookie and is
+//                      mirrored into the `X-CSRF-Token` header by
+//                      `platform/api/http.ts` on every mutating request.
+//                      The backend enforces the double-submit match; see
+//                      `aila.api.middleware.csrf.CSRFMiddleware`.
+//
+// `sessionStorage` under the auth key is purged on load so an upgrade from
+// the old shape drops the residual refresh token immediately.
 // ---------------------------------------------------------------------------
 
 const AUTH_STORAGE_KEY = "aila-auth";
 
-/** Hard ceiling on how long a refresh token may live in sessionStorage even
- * if the tab is left open. 12h matches the backend refresh-token lifetime
- * default; anything older is treated as expired and cleared eagerly. */
-const REFRESH_TTL_MS = 12 * 60 * 60 * 1000;
-
-// Purge tokens leaked to `localStorage` by prior releases so an upgrade
-// closes the exposure immediately -- users do not need to log out first.
+// Purge any refresh token leaked to Web Storage by prior releases so the
+// upgrade closes the exposure without waiting for a logout.
 if (typeof window !== "undefined") {
   try {
     window.localStorage.removeItem(AUTH_STORAGE_KEY);
   } catch {
     // Storage disabled -- nothing to purge.
   }
+  try {
+    window.sessionStorage.removeItem(AUTH_STORAGE_KEY);
+  } catch {
+    // Storage disabled -- nothing to purge.
+  }
 }
-
-/** sessionStorage adapter with a TTL envelope. Zustand's `createJSONStorage`
- * treats the returned object as a `Storage`, calling `getItem`/`setItem`
- * with raw string payloads. We wrap the payload in `{savedAt, payload}` so a
- * stale envelope is dropped on the next read. */
-const ttlSessionStorage: StateStorage = {
-  getItem: (name: string): string | null => {
-    if (typeof sessionStorage === "undefined") return null;
-    const raw = sessionStorage.getItem(name);
-    if (!raw) return null;
-    try {
-      const parsed = JSON.parse(raw) as { savedAt?: number; payload?: string };
-      const savedAt = typeof parsed.savedAt === "number" ? parsed.savedAt : 0;
-      if (savedAt + REFRESH_TTL_MS < Date.now()) {
-        sessionStorage.removeItem(name);
-        return null;
-      }
-      return typeof parsed.payload === "string" ? parsed.payload : null;
-    } catch {
-      sessionStorage.removeItem(name);
-      return null;
-    }
-  },
-  setItem: (name: string, value: string): void => {
-    if (typeof sessionStorage === "undefined") return;
-    const envelope = JSON.stringify({ savedAt: Date.now(), payload: value });
-    sessionStorage.setItem(name, envelope);
-  },
-  removeItem: (name: string): void => {
-    if (typeof sessionStorage === "undefined") return;
-    sessionStorage.removeItem(name);
-  },
-};
 
 interface AuthState {
   accessToken: string | null;
-  refreshToken: string | null;
   role: AppRole | null;
   userId: string | null;
   username: string | null;
@@ -104,7 +71,7 @@ interface AuthState {
   // Actions
   login: (username: string, password: string) => Promise<void>;
   loginWithTokens: (tokens: TokenResponse, usernameHint?: string) => void;
-  logout: () => void;
+  logout: () => Promise<void>;
   refreshTokens: () => Promise<void>;
   getAccessToken: () => Promise<string>;
 }
@@ -140,7 +107,6 @@ export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
       accessToken: null,
-      refreshToken: null,
       role: null,
       userId: null,
       username: null,
@@ -152,7 +118,6 @@ export const useAuthStore = create<AuthState>()(
         const claims = decodeUserTokenClaims(tokens.access_token);
         set({
           accessToken: tokens.access_token,
-          refreshToken: tokens.refresh_token,
           role: claims.role,
           userId: claims.userId,
           username,
@@ -166,7 +131,6 @@ export const useAuthStore = create<AuthState>()(
         const claims = decodeUserTokenClaims(tokens.access_token);
         set({
           accessToken: tokens.access_token,
-          refreshToken: tokens.refresh_token,
           role: claims.role,
           userId: claims.userId,
           username: usernameHint ?? null,
@@ -176,11 +140,18 @@ export const useAuthStore = create<AuthState>()(
         scheduleProactiveRefresh(tokens.expires_in);
       },
 
-      logout: (): void => {
+      logout: async (): Promise<void> => {
         clearProactiveRefresh();
+        // Best-effort: revoke the DB row and clear the cookies server-side.
+        // A failure here (e.g. network offline) still tears down the local
+        // session -- the cookies will expire on their own.
+        try {
+          await logoutUser();
+        } catch {
+          // Swallow -- local teardown below is the important half.
+        }
         set({
           accessToken: null,
-          refreshToken: null,
           role: null,
           userId: null,
           username: null,
@@ -198,18 +169,13 @@ export const useAuthStore = create<AuthState>()(
           return;
         }
 
-        const currentRefreshToken = get().refreshToken;
-        if (!currentRefreshToken) {
-          get().logout();
-          return;
-        }
-
         const doRefresh = async (): Promise<void> => {
-          const tokens = await refreshUserToken(currentRefreshToken);
+          // #119: the refresh token comes from the HttpOnly cookie the
+          // browser attaches automatically. No argument to pass.
+          const tokens = await refreshUserToken();
           const claims = decodeUserTokenClaims(tokens.access_token);
           set({
             accessToken: tokens.access_token,
-            refreshToken: tokens.refresh_token,
             role: claims.role,
             userId: claims.userId,
             isAuthenticated: true,
@@ -222,11 +188,11 @@ export const useAuthStore = create<AuthState>()(
           .catch(() => {
             // Never auto-logout mid-session. If the refresh endpoint fails
             // for any reason (expired, revoked, server restart, network
-            // blip), keep the stored tokens and retry on the next cycle.
-            // The user stays "authenticated" from the UI's perspective;
-            // any protected request will surface a 401 which the HTTP
-            // layer can handle on demand. Rehydrate-time failures are
-            // handled separately in `onRehydrateStorage`.
+            // blip), keep the current in-memory access token and retry on
+            // the next cycle. The user stays "authenticated" from the UI's
+            // perspective; any protected request will surface a 401 which
+            // the HTTP layer can handle on demand. Rehydrate-time failures
+            // are handled separately in `onRehydrateStorage`.
             if (get().isAuthenticated) {
               scheduleProactiveRefresh(90);
             }
@@ -254,10 +220,10 @@ export const useAuthStore = create<AuthState>()(
             // fall through to refresh
           }
         }
-        // No in-memory token, near-expiry, or malformed -- refresh from the
-        // sessionStorage refresh token. After a full page reload the
-        // accessToken is null by design (memory only), so this is the
-        // common path on the first authorized call after navigation.
+        // No in-memory token, near-expiry, or malformed -- refresh via the
+        // HttpOnly cookie. After a full page reload the accessToken is null
+        // by design (memory only), so this is the common path on the first
+        // authorized call after navigation.
         await get().refreshTokens();
         const newToken = get().accessToken;
         if (!newToken) {
@@ -268,43 +234,32 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: AUTH_STORAGE_KEY,
-      storage: createJSONStorage(() => ttlSessionStorage),
-      // Persist ONLY the refresh token and non-credential UI hints. The
-      // access token is intentionally excluded -- it lives in memory only.
+      // Persist UI hints in sessionStorage so tab close clears them.
+      // No credentials of any kind are persisted -- the refresh token
+      // lives only in the HttpOnly cookie.
+      storage: createJSONStorage(() => sessionStorage),
       partialize: (state) => ({
-        refreshToken: state.refreshToken,
         role: state.role,
         userId: state.userId,
         username: state.username,
       }),
-      version: 2,
-      // Rehydrate: sessionStorage may have a valid refresh token but the
-      // in-memory access token is always null after a reload. Kick off a
-      // background refresh so protected routes can transition from
-      // `bootstrapping` to `authenticated` without a manual login. On
-      // refresh failure the session is cleared so the user lands on the
-      // login screen instead of hanging in bootstrapping.
+      version: 3,
+      // Rehydrate: sessionStorage carries only non-credential UI hints.
+      // Kick off a background refresh so the shell can transition from
+      // `bootstrapping` to `authenticated` when the cookie is still
+      // valid, or fall back to `unauthenticated` when it is not.
       onRehydrateStorage: () => (state) => {
         if (!state) {
-          // No persisted state (fresh session, cleared storage, or TTL
-          // expired). Transition out of `bootstrapping` so ProtectedRoute
-          // redirects to /login instead of showing a spinner forever.
           useAuthStore.setState({ status: "unauthenticated" });
           return;
         }
         // The access token never persists; make the invariant explicit.
         state.accessToken = null;
-        const { refreshToken } = state;
-        if (!refreshToken) {
-          state.status = "unauthenticated";
-          state.isAuthenticated = false;
-          return;
-        }
         // Optimistically mark the caller as authenticated so the shell can
         // render the correct chrome (username, role-gated nav) while the
         // background refresh runs. If the refresh fails we hard-clear.
         state.status = "bootstrapping";
-        state.isAuthenticated = true;
+        state.isAuthenticated = Boolean(state.userId);
         void (async () => {
           try {
             await useAuthStore.getState().refreshTokens();
@@ -317,10 +272,10 @@ export const useAuthStore = create<AuthState>()(
             } else {
               // Refresh swallowed the error; treat missing access token as
               // a hard failure at rehydrate time and clear the session.
-              useAuthStore.getState().logout();
+              await useAuthStore.getState().logout();
             }
           } catch {
-            useAuthStore.getState().logout();
+            await useAuthStore.getState().logout();
           }
         })();
       },

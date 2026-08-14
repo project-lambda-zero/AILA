@@ -138,8 +138,6 @@ async def get_scan_status(
     Per D-21/D-22: only the submitting user's group can see their scans.
     Admin sees all tasks; other roles are restricted to their own group_id.
     Returns 404 if run_id not found or belongs to a different group.
-
-    result_path is populated when status='done' (ASYNC-06: completed results retrievable).
     """
     async def _fetch() -> ScanStatusResponse | None:
         async with async_session_scope() as session:
@@ -156,7 +154,6 @@ async def get_scan_status(
                 track=record.track,
                 started_at=record.started_at.isoformat() if record.started_at else None,
                 completed_at=record.completed_at.isoformat() if record.completed_at else None,
-                result_path=record.result_path,
             )
 
     result = await _fetch()

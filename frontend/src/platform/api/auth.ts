@@ -3,7 +3,13 @@ import type { AppRole } from "@platform/auth/roles";
 
 export interface TokenResponse {
   access_token: string;
-  refresh_token: string;
+  /** #119: the refresh token now ships as an HttpOnly cookie
+   * (`aila_refresh`) set by the backend on /auth/login,
+   * /auth/refresh/user, and the OIDC callback. It is intentionally
+   * unreachable from JS -- XSS cannot exfiltrate it. The field is
+   * kept optional on the wire so non-browser API-key clients can still
+   * receive a value; browser SPAs must ignore it. */
+  refresh_token?: string | null;
   token_type: string;
   expires_in: number;
 }
@@ -52,22 +58,35 @@ export async function loginWithPassword(
   username: string,
   password: string,
 ): Promise<TokenResponse> {
+  // #119: `credentials: 'include'` lets the browser accept the Set-Cookie
+  // headers that carry the HttpOnly refresh + readable CSRF cookies.
   const envelope = await requestJson<DataEnvelope<TokenResponse>>("/auth/login", {
     method: "POST",
     body: { username, password },
+    credentials: "include",
   });
   return envelope.data;
 }
 
-export async function refreshUserToken(refreshToken: string): Promise<TokenResponse> {
-  // #36: the refresh token goes in the JSON body, never the query string --
-  // a query parameter leaks the long-lived credential into access logs and
-  // browser history. The backend rejects the query-parameter shape with 422.
+export async function refreshUserToken(): Promise<TokenResponse> {
+  // #119: the refresh token lives in the `aila_refresh` HttpOnly cookie
+  // the browser attaches automatically. `credentials: 'include'` is what
+  // triggers that attachment on same-origin CORS calls, and it also
+  // accepts the fresh cookies the backend sends back.
   const envelope = await requestJson<DataEnvelope<TokenResponse>>("/auth/refresh/user", {
     method: "POST",
-    body: { refresh_token: refreshToken },
+    credentials: "include",
   });
   return envelope.data;
+}
+
+export async function logoutUser(): Promise<void> {
+  // #119: revokes the DB row keyed off the cookie and clears both auth
+  // cookies via Set-Cookie in the response.
+  await requestJson<unknown>("/auth/logout", {
+    method: "POST",
+    credentials: "include",
+  });
 }
 
 export async function fetchOidcAuthorizeUrl(redirectUri?: string): Promise<string> {
@@ -90,8 +109,11 @@ export async function exchangeOidcCode(
   if (redirectUri) {
     params.set("redirect_uri", redirectUri);
   }
+  // #119: the callback also issues the auth cookies -- credentials must
+  // flow so the Set-Cookie headers are accepted by the browser.
   const envelope = await requestJson<DataEnvelope<TokenResponse>>(
     `/auth/oidc/callback?${params.toString()}`,
+    { credentials: "include" },
   );
   return envelope.data;
 }

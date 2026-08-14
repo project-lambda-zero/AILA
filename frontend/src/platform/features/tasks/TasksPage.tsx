@@ -129,14 +129,6 @@ function TaskDetailPanel({ taskId }: { taskId: string }) {
           {task.error}
         </div>
       )}
-      {task.result_path && (
-        <div className="flex flex-col gap-0.5">
-          <span className="font-mono text-xs text-text-muted">Result path</span>
-          <code className="font-mono text-xs text-text break-all bg-base px-2 py-1 rounded-[2px]">
-            {task.result_path}
-          </code>
-        </div>
-      )}
     </div>
     <TransitionTimeline
       rows={transitionsQuery.data ?? []}

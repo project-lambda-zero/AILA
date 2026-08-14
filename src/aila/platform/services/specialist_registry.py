@@ -63,10 +63,6 @@ class SpecialistAgentRecord(SQLModel, table=True):
         default_factory=utc_now, sa_type=DateTime(timezone=True),
     )
 
-    __table_args__ = (
-        {"sqlite_autoincrement": False},
-    )
-
 
 class SpecialistAgentSummary(BaseModel):
     """Read-only projection of a specialist agent.

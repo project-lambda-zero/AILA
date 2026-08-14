@@ -217,13 +217,14 @@ class TestTaskResponseStatus:
             TaskResponse(status=bad_status, **TASK_KWARGS)
 
     def test_optional_fields_nullable(self) -> None:
-        """started_at, completed_at, heartbeat_at, error, result_path default to None."""
+        """started_at, completed_at, heartbeat_at, error default to None."""
         resp = TaskResponse(status="queued", **TASK_KWARGS)
         assert resp.started_at is None
         assert resp.completed_at is None
         assert resp.heartbeat_at is None
         assert resp.error is None
-        assert resp.result_path is None
+        # #144: ``result_path`` was dropped from the response.
+        assert not hasattr(resp, "result_path")
 
     def test_extra_fields_rejected(self) -> None:
         """extra='forbid' rejects unknown fields."""

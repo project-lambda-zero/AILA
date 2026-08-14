@@ -43,17 +43,15 @@ def upgrade() -> None:
         ["investigation_id", "auto_steering_key"],
     )
     # Partial unique constraint: only enforce uniqueness when the column
-    # is set. Regular messages (NULL) are not constrained. PostgreSQL
-    # honours WHERE clauses on UNIQUE indexes; on SQLite the WHERE clause
-    # is also accepted (tests use SQLite in-memory). MySQL does not
-    # support partial indexes -- this codebase targets PostgreSQL.
+    # is set. Regular messages (NULL) are not constrained. PostgreSQL is
+    # the only supported backend and honours the WHERE clause on UNIQUE
+    # indexes.
     op.create_index(
         "uq_vr_investigation_messages_auto_steering_key",
         "vr_investigation_messages",
         ["investigation_id", "auto_steering_key"],
         unique=True,
         postgresql_where=sa.text("auto_steering_key IS NOT NULL"),
-        sqlite_where=sa.text("auto_steering_key IS NOT NULL"),
     )
 
 

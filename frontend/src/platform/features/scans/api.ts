@@ -27,7 +27,6 @@ export interface TaskSummary {
   completed_at: string | null;
   heartbeat_at: string | null;
   error: string | null;
-  result_path: string | null;
   has_checkpoint: boolean;
 }
 
@@ -52,7 +51,6 @@ export interface ScanStatusResponse {
   track: string | null;
   started_at: string | null;
   completed_at: string | null;
-  result_path: string | null;
 }
 
 export interface ScanEvent {

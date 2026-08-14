@@ -26,6 +26,11 @@ from sqlmodel import select
 
 from aila.api.app import _cors_allow_credentials
 from aila.api.auth import hash_user_password, issue_user_jwt
+from aila.api.middleware.csrf import (
+    AILA_CSRF_COOKIE,
+    AILA_REFRESH_COOKIE,
+    CSRF_HEADER_NAME,
+)
 from aila.config import get_settings
 from aila.storage.database import async_session_scope, session_scope
 from aila.storage.db_models import AuditEventRecord, OIDCProviderRecord, UserRecord
@@ -211,20 +216,26 @@ async def test_login_inactive_user(auth_client, admin_user):
 
 @pytest.mark.asyncio
 async def test_refresh_token_flow(auth_client, admin_user):
-    """POST /auth/refresh/user with valid refresh token returns new access token."""
-    # Login first to get a refresh token
+    """POST /auth/refresh/user with a valid session cookie returns a new access token.
+
+    #119: the refresh token is delivered by /auth/login as an ``aila_refresh``
+    HttpOnly cookie -- the JSON body no longer carries it. The AsyncClient
+    persists that cookie automatically. The CSRF middleware also requires
+    the ``X-CSRF-Token`` header to equal the ``aila_csrf`` cookie value
+    on every mutating cookie-authenticated request.
+    """
     resp = await auth_client.post(
         "/auth/login",
         json={"username": "testadmin", "password": "SecurePass1!"},
     )
     assert resp.status_code == 200
-    refresh_token = resp.json()["data"]["refresh_token"]
+    assert resp.cookies.get(AILA_REFRESH_COOKIE), "expected aila_refresh cookie on login"
+    csrf_cookie = resp.cookies.get(AILA_CSRF_COOKIE)
+    assert csrf_cookie, "expected aila_csrf cookie on login"
 
-    # #36: refresh token is submitted in the JSON body (previously it was
-    # a URL query parameter that leaked into access logs and history).
     resp2 = await auth_client.post(
         "/auth/refresh/user",
-        json={"refresh_token": refresh_token},
+        headers={CSRF_HEADER_NAME: csrf_cookie},
     )
     assert resp2.status_code == 200, resp2.text
     data = resp2.json()["data"]

@@ -180,14 +180,16 @@ async def test_on_job_start_populates_plan_json(seeded: str) -> None:
 
 @pytest.mark.asyncio
 async def test_branch_1_success(seeded: str) -> None:
+    # #144: hooks no longer inspect the returned dict for ``result_path`` --
+    # the column was dropped by migration 126. Any success outcome flips
+    # the row to DONE and stamps ``completed_at``.
     _stash_outcome(
         seeded, 1,
-        _JobOutcome(kind="success", result={"result_path": "/tmp/out"}),
+        _JobOutcome(kind="success", result={"summary": "ok"}),
     )
     await _on_job_end({"job_id": seeded, "job_try": 1})
     rec = await _get(seeded)
     assert rec.status == TaskStatus.DONE
-    assert rec.result_path == "/tmp/out"
     assert rec.completed_at is not None
     assert rec.error is None
 

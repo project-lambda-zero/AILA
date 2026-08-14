@@ -414,7 +414,7 @@ def platform_task(
 
         @platform_task(track="vulnerability", module_id="vulnerability")
         async def my_task(ctx: TaskContext, **kwargs: Any) -> dict[str, Any]:
-            return {"result_path": "/tmp/x"}
+            return {"summary": "done", "findings_written": 12}
 
     With a workflow definition the wrapper delegates to the engine; the
     body never runs directly (D-05)::

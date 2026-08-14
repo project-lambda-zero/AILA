@@ -22,7 +22,6 @@ vi.mock("@platform/features/scans/api", () => {
             heartbeat_at: null,
             has_checkpoint: false,
             error: null,
-            result_path: null,
           },
           {
             task_id: "task-deadbeef-0000",
@@ -36,7 +35,6 @@ vi.mock("@platform/features/scans/api", () => {
             heartbeat_at: null,
             has_checkpoint: false,
             error: null,
-            result_path: null,
           },
         ],
       },

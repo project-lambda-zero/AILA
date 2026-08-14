@@ -287,6 +287,10 @@ export async function requestJson<T>(
   );
 
   const response = await fetch(buildApiUrl(pathname), {
+    // #119: `credentials: "include"` by default so the HttpOnly refresh
+    // + readable CSRF cookies flow on every same-origin and CORS call.
+    // Callers may override by setting `credentials` in `options`.
+    credentials: "include",
     ...options,
     body: normalizeRequestBody(options.body),
     headers,
@@ -326,6 +330,8 @@ export async function requestBlob(
   );
 
   const response = await fetch(buildApiUrl(pathname), {
+    // #119: default to sending credentials -- see rationale in requestJson.
+    credentials: "include",
     ...options,
     body: normalizeRequestBody(options.body),
     headers,

@@ -63,10 +63,11 @@ class TaskRecord(TeamScopedMixin, SQLModel, table=True):
 
     Written by ``TaskQueue.submit``; updated by the ARQ hook layer on
     state transitions. ``user_id`` comes from ApiKeyRecord.id; ``group_id``
-    from ApiKeyRecord.role (MOD-13). ``result_path`` stores a file-system
-    path to the task output (INFRA-06). ``kwargs_json`` is the enqueue
+    from ApiKeyRecord.role (MOD-13). ``kwargs_json`` is the enqueue
     payload. ``depends_on_json`` is a JSON list of task_id strings for
-    dependency ordering (TASK-12).
+    dependency ordering (TASK-12). The retired INFRA-06 ``result_path``
+    column (#144) was dropped by migration 126; task results now surface
+    through each module's own result table.
     """
 
     __tablename__ = "taskrecord"
@@ -82,7 +83,6 @@ class TaskRecord(TeamScopedMixin, SQLModel, table=True):
     user_id: str = Field(sa_column=Column(Text, index=True))
     group_id: str = Field(sa_column=Column(Text, index=True))
     kwargs_json: str = Field(default="{}", sa_column=Column(Text, server_default="{}"))
-    result_path: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     error: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     depends_on_json: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     input_hash: str | None = Field(default=None, sa_column=Column(Text, nullable=True, index=True))

@@ -7,6 +7,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.10] - 2026-08-13 -- Refresh-token cookie hardening, SSE reconnect, dead-column removal
+
+### Security
+
+- The refresh token now lives in an HttpOnly, Secure, SameSite=Lax cookie
+  instead of script-readable sessionStorage, and a CSRF double-submit is
+  enforced server-side: cookie-authenticated state-changing requests must
+  present an X-CSRF-Token header matching the readable CSRF cookie
+  (Authorization: Bearer and API-key requests are exempt). Login, refresh, and
+  the OIDC callback set the cookies; logout clears them. The SPA no longer
+  persists the refresh token and drives auth through credentialed fetch (#119).
+
+### Fixed
+
+- The VR project-events stream and the forensics investigation-event feed now
+  reconnect with exponential backoff after a backend restart instead of dying
+  silently; both route through the shared reconnecting SSE hook (#111). A stale
+  /scans link in the empty-scans panel now points at the live /console route
+  (#145, partial).
+
+### Removed
+
+- The dead `TaskRecord.result_path` column (always NULL, no writer, surfaced as
+  a permanent null on /tasks and /scans) is dropped via migration 126, and the
+  residual SQLite-only backend guards are removed; Postgres is the single
+  supported backend (#144).
+
 ## [0.5.9] - 2026-08-13 -- Chat-first console and platform-ops UI
 
 ### Changed

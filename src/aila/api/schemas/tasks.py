@@ -33,14 +33,12 @@ class TaskResponse(APIModel):
     """Single task status response.
 
     Mirrors the TaskRecord fields surfaced via the API. All optional fields
-    (started_at, completed_at, heartbeat_at, error, result_path) are None
-    until the relevant lifecycle transition occurs.
+    (started_at, completed_at, heartbeat_at, error) are None until the
+    relevant lifecycle transition occurs.
 
     has_checkpoint indicates whether a workflow cursor snapshot exists
     for this run (Phase 179: sourced from ``workflow_state_cursor``;
     Phase 180 wires the lookup).
-
-    result_path is a filesystem path (INFRA-06: no blob storage in DB).
     """
 
     task_id: str = Field(description="TaskRecord UUID")
@@ -60,10 +58,6 @@ class TaskResponse(APIModel):
     completed_at: datetime | None = Field(default=None, description="When task reached terminal state")
     heartbeat_at: datetime | None = Field(default=None, description="Last worker heartbeat timestamp")
     error: str | None = Field(default=None, description="Error message if status=failed")
-    result_path: str | None = Field(
-        default=None,
-        description="Filesystem path to task output file (INFRA-06: file-path not blob)",
-    )
     has_checkpoint: bool = Field(
         description="True if a checkpoint snapshot is stored (MOD-12: resume from checkpoint)"
     )
@@ -124,7 +118,6 @@ class ScanStatusResponse(APIModel):
     track: str = Field(description="Task track (queue name)")
     started_at: str | None = Field(default=None, description="ISO-8601 timestamp when scan started")
     completed_at: str | None = Field(default=None, description="ISO-8601 timestamp when scan completed")
-    result_path: str | None = Field(default=None, description="Filesystem path to scan output file")
 
 
 class ScanSubmissionRequest(APIModel):
