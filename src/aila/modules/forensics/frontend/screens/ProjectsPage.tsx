@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
@@ -7,10 +7,26 @@ import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { useForensicsProjects } from "../queries";
 import { useDeleteProject } from "../mutations";
+import { useDebouncedValue, useRowKeyboardNav, sortRows } from "../powerTable";
 import type { ProjectSummary } from "../types";
 import { useForensicsListLive } from "../useLiveInvalidation";
 
 const PROJECTS_LIST_KEY = ["forensics", "projects"] as const;
+
+// Sort keys align with ProjectSummary fields the operator can reasonably rank
+// by from the grid. Server currently exposes only page + page_size (no `query`
+// / `sort` params), so ordering and free-text filtering are applied client-side
+// over the currently loaded page. When the backend grows a search param, wire
+// it into the query hook and this dropdown stays in place.
+type ProjectSortKey = "name" | "status" | "evidence_count" | "investigation_count" | "created_at";
+
+const PROJECT_SORT_OPTIONS: readonly { key: ProjectSortKey; label: string }[] = [
+  { key: "name", label: "Name" },
+  { key: "status", label: "Status" },
+  { key: "evidence_count", label: "Evidence" },
+  { key: "investigation_count", label: "Investigations" },
+  { key: "created_at", label: "Created" },
+];
 
 const statusColor: Record<string, "info" | "low" | "medium" | "high" | "critical"> = {
   created: "info",
@@ -30,7 +46,28 @@ function ProjectCard({
   onDelete: (e: React.MouseEvent) => void;
 }) {
   return (
-    <AilaCard onClick={onClick} className="cursor-pointer hover:ring-1 hover:ring-border-accent transition-shadow relative group" techBorder glow><div className="space-y-2">
+    <AilaCard
+      onClick={onClick}
+      onKeyDown={(e: React.KeyboardEvent<HTMLDivElement>) => {
+        if (e.defaultPrevented) return;
+        if (e.key === "Enter" || e.key === " ") {
+          const target = e.target as HTMLElement | null;
+          // Preserve the row-click escape hatch: inline buttons (Delete)
+          // still handle their own key events. Only fire the card's open
+          // action when focus is on the card wrapper itself.
+          if (target && target !== e.currentTarget) return;
+          e.preventDefault();
+          onClick();
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      aria-label={`Open forensics project ${project.name}`}
+      data-power-row="project"
+      className="cursor-pointer hover:ring-1 hover:ring-border-accent transition-shadow relative group focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2"
+      techBorder
+      glow
+    ><div className="space-y-2">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold font-mono text-foreground truncate">{project.name}</h2>
         <div className="flex items-center gap-2">
@@ -134,7 +171,48 @@ export function ProjectsPage() {
   useForensicsListLive(PROJECTS_LIST_KEY);
   const [confirmDelete, setConfirmDelete] = useState<ProjectSummary | null>(null);
 
-  const projects = result?.items ?? [];
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search.trim().toLowerCase(), 300);
+  const [sortKey, setSortKey] = useState<ProjectSortKey>("created_at");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  useRowKeyboardNav({
+    containerRef: gridRef,
+    rowSelector: '[data-power-row="project"]',
+  });
+
+  const rawProjects = result?.items ?? [];
+
+  const projects = useMemo(() => {
+    const q = debouncedSearch;
+    const filtered = q
+      ? rawProjects.filter((p) => {
+          const name = p.name?.toLowerCase() ?? "";
+          const desc = p.description?.toLowerCase() ?? "";
+          const system = p.system_name?.toLowerCase() ?? "";
+          return name.includes(q) || desc.includes(q) || system.includes(q);
+        })
+      : rawProjects;
+    return sortRows(
+      filtered,
+      (p) => {
+        switch (sortKey) {
+          case "name":
+            return p.name ?? "";
+          case "status":
+            return p.status ?? "";
+          case "evidence_count":
+            return p.evidence_count;
+          case "investigation_count":
+            return p.investigation_count;
+          case "created_at":
+            return p.created_at ?? "";
+        }
+      },
+      sortDir,
+    );
+  }, [rawProjects, debouncedSearch, sortKey, sortDir]);
 
   function handleDeleteClick(e: React.MouseEvent, project: ProjectSummary) {
     e.stopPropagation();
@@ -158,7 +236,41 @@ export function ProjectsPage() {
         />
       )}
 
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search projects..."
+            aria-label="Search projects by name, description, or machine"
+            data-testid="forensics-projects-search"
+            className="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-foreground placeholder:text-text-muted focus:outline-none focus:border-accent min-w-[220px]"
+          />
+          <label className="flex items-center gap-1.5 text-xs text-text-muted">
+            <span>Sort</span>
+            <select
+              value={sortKey}
+              onChange={(e) => setSortKey(e.target.value as ProjectSortKey)}
+              aria-label="Sort projects by"
+              data-testid="forensics-projects-sort-key"
+              className="px-2 py-1 text-xs rounded-md border border-border bg-surface text-foreground focus:outline-none focus:border-accent"
+            >
+              {PROJECT_SORT_OPTIONS.map((opt) => (
+                <option key={opt.key} value={opt.key}>{opt.label}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+              aria-label={`Sort direction, currently ${sortDir === "asc" ? "ascending" : "descending"}`}
+              data-testid="forensics-projects-sort-dir"
+              className="px-2 py-1 text-xs rounded-md border border-border bg-surface text-foreground hover:border-accent focus:outline-none focus:border-accent"
+            >
+              {sortDir === "asc" ? "↑" : "↓"}
+            </button>
+          </label>
+        </div>
         <button
           type="button"
           onClick={() => navigate("/forensics/projects/new")}
@@ -176,18 +288,29 @@ export function ProjectsPage() {
 
       {!isLoading && !isError && projects.length === 0 && (
         <AilaCard  techBorder glow><div className="text-center py-8">
-          <p className="text-text-muted">No forensics projects yet.</p>
-          <button
-            type="button"
-            onClick={() => navigate("/forensics/projects/new")}
-            className="mt-3 text-sm text-accent hover:underline"
-          >
-            Create your first project
-          </button>
+          {debouncedSearch ? (
+            <p className="text-text-muted">
+              No projects match &ldquo;{search}&rdquo;.
+            </p>
+          ) : (
+            <>
+              <p className="text-text-muted">No forensics projects yet.</p>
+              <button
+                type="button"
+                onClick={() => navigate("/forensics/projects/new")}
+                className="mt-3 text-sm text-accent hover:underline"
+              >
+                Create your first project
+              </button>
+            </>
+          )}
         </div></AilaCard>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div
+        ref={gridRef}
+        className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+      >
         {projects.map((project) => (
           <ProjectCard
             key={project.id}

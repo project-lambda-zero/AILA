@@ -1,42 +1,102 @@
 import { lazy } from "react";
 import type { RouteContribution } from "@platform/extension-registry/types";
 
-import { InvestigationComparePage } from "./screens/InvestigationComparePage";
-import { InvestigationDetailPage } from "./screens/InvestigationDetailPage";
-import { InvestigationsListPage } from "./screens/InvestigationsListPage";
-import { ProjectDetailPage } from "./screens/ProjectDetailPage";
-import { ProjectsPage } from "./screens/ProjectsPage";
-import { TargetDetailPage } from "./screens/TargetDetailPage";
-import { TargetsPage } from "./screens/TargetsPage";
-import { WorkspacesPage } from "./screens/WorkspacesPage";
-import { DisclosureDetailPage } from "./screens/DisclosureDetailPage";
-import { DisclosuresPage } from "./screens/DisclosuresPage";
-import { FuzzCampaignDetailPage } from "./screens/FuzzCampaignDetailPage";
-import { FuzzCampaignsPage } from "./screens/FuzzCampaignsPage";
-import { FuzzCrashDetailPage } from "./screens/FuzzCrashDetailPage";
-import { PatternDetailPage } from "./screens/PatternDetailPage";
-import { PatternsPage } from "./screens/PatternsPage";
-import { McpServersPage } from "./screens/McpServersPage";
-import { McpCallLogPage } from "./screens/McpCallLogPage";
-import { FindingDetailPage } from "./screens/FindingDetailPage";
-import { FindingsListPage } from "./screens/FindingsListPage";
-import { NdayPage } from "./screens/NdayPage";
-import { AuditLogPage } from "./screens/AuditLogPage";
-
-// Heavy pages -- ReactFlow / Monaco-style editor / wizard / branch tree
-// bundles add weight that users who never visit them shouldn't pay for
-// on the projects list. Lazy-loaded per 08_FRONTEND_UX.md §4.4.
+// Route-level code-splitting: every screen becomes its own Vite chunk so
+// the shell entry bundle stays lean. Every page below is a NAMED export,
+// re-mapped to the default shape React.lazy requires. Suspense boundaries
+// are supplied by the shell's `RoutedPage` in frontend/src/app/router.tsx,
+// which wraps every module route element flowed through
+// `buildModuleRouteObjects` -> `protectPage`. This extends the earlier
+// per-heavy-page lazy loading (08_FRONTEND_UX.md §4.4) to the whole
+// screen surface.
+const AuditLogPage = lazy(() =>
+  import("./screens/AuditLogPage").then((m) => ({ default: m.AuditLogPage })),
+);
+const BranchTreePage = lazy(() =>
+  import("./screens/BranchTreePage").then((m) => ({ default: m.BranchTreePage })),
+);
+const DisclosureDetailPage = lazy(() =>
+  import("./screens/DisclosureDetailPage").then((m) => ({
+    default: m.DisclosureDetailPage,
+  })),
+);
+const DisclosuresPage = lazy(() =>
+  import("./screens/DisclosuresPage").then((m) => ({ default: m.DisclosuresPage })),
+);
 const EvidenceGraphPage = lazy(() =>
   import("./screens/EvidenceGraphPage").then((m) => ({ default: m.EvidenceGraphPage })),
 );
 const ExploitEditorPage = lazy(() =>
   import("./screens/ExploitEditorPage").then((m) => ({ default: m.ExploitEditorPage })),
 );
+const FindingDetailPage = lazy(() =>
+  import("./screens/FindingDetailPage").then((m) => ({ default: m.FindingDetailPage })),
+);
+const FindingsListPage = lazy(() =>
+  import("./screens/FindingsListPage").then((m) => ({ default: m.FindingsListPage })),
+);
+const FuzzCampaignDetailPage = lazy(() =>
+  import("./screens/FuzzCampaignDetailPage").then((m) => ({
+    default: m.FuzzCampaignDetailPage,
+  })),
+);
+const FuzzCampaignsPage = lazy(() =>
+  import("./screens/FuzzCampaignsPage").then((m) => ({
+    default: m.FuzzCampaignsPage,
+  })),
+);
+const FuzzCrashDetailPage = lazy(() =>
+  import("./screens/FuzzCrashDetailPage").then((m) => ({
+    default: m.FuzzCrashDetailPage,
+  })),
+);
+const InvestigationComparePage = lazy(() =>
+  import("./screens/InvestigationComparePage").then((m) => ({
+    default: m.InvestigationComparePage,
+  })),
+);
+const InvestigationDetailPage = lazy(() =>
+  import("./screens/InvestigationDetailPage").then((m) => ({
+    default: m.InvestigationDetailPage,
+  })),
+);
+const InvestigationsListPage = lazy(() =>
+  import("./screens/InvestigationsListPage").then((m) => ({
+    default: m.InvestigationsListPage,
+  })),
+);
+const McpCallLogPage = lazy(() =>
+  import("./screens/McpCallLogPage").then((m) => ({ default: m.McpCallLogPage })),
+);
+const McpServersPage = lazy(() =>
+  import("./screens/McpServersPage").then((m) => ({ default: m.McpServersPage })),
+);
+const NdayPage = lazy(() =>
+  import("./screens/NdayPage").then((m) => ({ default: m.NdayPage })),
+);
 const NewProjectWizard = lazy(() =>
   import("./screens/NewProjectWizard").then((m) => ({ default: m.NewProjectWizard })),
 );
-const BranchTreePage = lazy(() =>
-  import("./screens/BranchTreePage").then((m) => ({ default: m.BranchTreePage })),
+const PatternDetailPage = lazy(() =>
+  import("./screens/PatternDetailPage").then((m) => ({ default: m.PatternDetailPage })),
+);
+const PatternsPage = lazy(() =>
+  import("./screens/PatternsPage").then((m) => ({ default: m.PatternsPage })),
+);
+const ProjectDetailPage = lazy(() =>
+  import("./screens/ProjectDetailPage").then((m) => ({ default: m.ProjectDetailPage })),
+);
+const ProjectsPage = lazy(() =>
+  import("./screens/ProjectsPage").then((m) => ({ default: m.ProjectsPage })),
+);
+const TargetDetailPage = lazy(() =>
+  import("./screens/TargetDetailPage").then((m) => ({ default: m.TargetDetailPage })),
+);
+const TargetsPage = lazy(() =>
+  import("./screens/TargetsPage").then((m) => ({ default: m.TargetsPage })),
+);
+const WorkspacesPage = lazy(() =>
+  import("./screens/WorkspacesPage").then((m) => ({ default: m.WorkspacesPage })),
 );
 
 export const routes = [

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import type { Icon } from "@phosphor-icons/react/lib";
 import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
@@ -32,6 +32,10 @@ import {
 import { OutcomeKindBadge, outcomeKindSeverity } from "../components/OutcomeKindBadge";
 import { OutcomePolarityBadge } from "../components/OutcomePolarityBadge";
 import { DeleteButton } from "../components/DeleteButton";
+import {
+  useDebouncedValue,
+  useTableRowNav,
+} from "../components/tableHelpers";
 import {
   useCreateInvestigation,
   useDeleteInvestigation,
@@ -146,12 +150,23 @@ function InvestigationCard({
   onOpen,
   onToggleFavorite,
   deleteMut,
+  rowProps,
 }: {
   inv: VRInvestigationSummary;
   targetName: string;
   onOpen: () => void;
   onToggleFavorite: () => void;
   deleteMut: ReturnType<typeof useDeleteInvestigation>;
+  /** Roving-tabindex props forwarded by the parent list so j/k/Enter
+   *  navigation works on the flat card list. Optional -- grouped view
+   *  omits it. */
+  rowProps?: {
+    tabIndex?: number;
+    "aria-selected"?: boolean;
+    "data-row-index"?: number;
+    "data-row-active"?: "true";
+    onFocus?: () => void;
+  };
 }) {
   const isRunning = inv.status === "running";
   const isCreated = inv.status === "created";
@@ -171,7 +186,11 @@ function InvestigationCard({
     <StaggeredItem
       as="li"
       onClick={onOpen}
-      className="group relative flex items-center gap-3 px-4 py-3 rounded-md border bg-surface hover:bg-elevated cursor-pointer transition-all"
+      {...(rowProps ?? {})}
+      className={
+        "group relative flex items-center gap-3 px-4 py-3 rounded-md border bg-surface hover:bg-elevated cursor-pointer transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-accent " +
+        (rowProps?.["data-row-active"] ? "bg-elevated" : "")
+      }
       style={{
         opacity: dim ? 0.55 : 1,
         borderColor: isRunning
@@ -437,12 +456,18 @@ export function InvestigationsListPage() {
   const [pageSize, setPageSize] = useState(100);
   const [offset, setOffset] = useState(0);
 
+  // Debounce the search term before it flows into the query key so
+  // TanStack Query doesn't fire a new request on every keystroke. The
+  // input stays snappy because `searchQ` still binds directly to it;
+  // only the fetch trails by ~300ms.
+  const debouncedSearchQ = useDebouncedValue(searchQ.trim(), 300);
+
   const { data: result, isLoading, isError } = useInvestigations({
     offset,
     limit: pageSize,
     status: statusFilter || undefined,
     kind: kindFilter || undefined,
-    q: searchQ || undefined,
+    q: debouncedSearchQ || undefined,
     favorites: favoritesOnly || undefined,
   });
   const targetMap = useTargetMap();
@@ -558,6 +583,19 @@ export function InvestigationsListPage() {
     });
     return copy;
   }, [filtered]);
+
+  // Roving-tabindex keyboard nav (j/k/Enter) over the flat card list.
+  // Grouped view opts out because focus semantics across collapsible
+  // sections is a bigger change than this power-table pass wants.
+  const flatListContainerRef = useRef<HTMLDivElement | null>(null);
+  const {
+    tbodyProps: flatListTbodyProps,
+    getRowProps: flatListGetRowProps,
+  } = useTableRowNav(
+    sorted,
+    (inv) => navigate(`/vr/investigations/${inv.id}`),
+    flatListContainerRef,
+  );
 
   // Group by target -- preserves the sorted order so the first group
   // shown is the target with the most "important" investigation.
@@ -1112,20 +1150,27 @@ export function InvestigationsListPage() {
 
       {/* Card list -- either flat or grouped by target */}
       {!isLoading && !isError && sorted.length > 0 && !groupByTarget && (
-        <StaggeredList as="ul" className="flex flex-col gap-2">
-          {sorted.map((inv) => (
-            <InvestigationCard
-              key={inv.id}
-              inv={inv}
-              targetName={
-                targetMap.get(inv.target_id)?.display_name ?? "loading…"
-              }
-              onOpen={() => navigate(`/vr/investigations/${inv.id}`)}
-              onToggleFavorite={() => favMut.mutate(inv.id)}
-              deleteMut={deleteMut}
-            />
-          ))}
-        </StaggeredList>
+        <div ref={flatListContainerRef}>
+          <StaggeredList
+            as="ul"
+            className="flex flex-col gap-2"
+            {...flatListTbodyProps}
+          >
+            {sorted.map((inv, idx) => (
+              <InvestigationCard
+                key={inv.id}
+                inv={inv}
+                targetName={
+                  targetMap.get(inv.target_id)?.display_name ?? "loading…"
+                }
+                onOpen={() => navigate(`/vr/investigations/${inv.id}`)}
+                onToggleFavorite={() => favMut.mutate(inv.id)}
+                deleteMut={deleteMut}
+                rowProps={flatListGetRowProps(idx)}
+              />
+            ))}
+          </StaggeredList>
+        </div>
       )}
 
       {!isLoading && !isError && sorted.length > 0 && groupByTarget && (

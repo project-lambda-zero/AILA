@@ -1,13 +1,19 @@
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
+import {
+  SortHeader,
+  useSortableRows,
+  useTableRowNav,
+  type SortValue,
+} from "../components/tableHelpers";
 import { useAllFindings } from "../queries";
 import { useVRListInvalidation } from "../hooks/useVRListInvalidation";
-import type { DisclosureStatus } from "../types";
+import type { DisclosureStatus, VRFinding } from "../types";
 
 /**
  * Global findings explorer.
@@ -27,12 +33,67 @@ export function FindingsListPage() {
   const [statusFilter, setStatusFilter] = useState<DisclosureStatus | "">("");
   const [crashFilter, setCrashFilter] = useState("");
 
+  // /vr/findings has no `q` server-side param -- quick-filter runs
+  // client-side over vulnerable_function / crash_type / cwe / cve /
+  // disclosure_status / root_cause head.
+  const [query, setQuery] = useState("");
+
   const { data, isLoading, isError } = useAllFindings({
     disclosureStatus: statusFilter || undefined,
     crashType: crashFilter || undefined,
     limit: 200,
   });
   const rows = data?.data ?? [];
+
+  const filteredRows = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return rows;
+    return rows.filter((r) => {
+      const rootHead = (r.root_cause || "").split("\n")[0] ?? "";
+      return (
+        (r.vulnerable_function ?? "").toLowerCase().includes(needle) ||
+        (r.crash_type ?? "").toLowerCase().includes(needle) ||
+        (r.cwe_id ?? "").toLowerCase().includes(needle) ||
+        (r.assigned_cve_id ?? "").toLowerCase().includes(needle) ||
+        (r.disclosure_status ?? "").toLowerCase().includes(needle) ||
+        (r.project_id ?? "").toLowerCase().includes(needle) ||
+        rootHead.toLowerCase().includes(needle)
+      );
+    });
+  }, [rows, query]);
+
+  const accessors = useMemo<
+    Record<string, (r: VRFinding) => SortValue>
+  >(
+    () => ({
+      vulnerable_function: (r) => {
+        if (r.vulnerable_function) return r.vulnerable_function;
+        const rootHead = (r.root_cause || "").split("\n")[0]?.trim() ?? "";
+        return rootHead;
+      },
+      crash_type: (r) => r.crash_type ?? null,
+      cwe_id: (r) => r.cwe_id ?? null,
+      cvss_score: (r) => r.cvss_score ?? null,
+      evidence_count: (r) => r.evidence_count ?? 0,
+      disclosure_status: (r) => r.disclosure_status ?? null,
+      project_id: (r) => r.project_id ?? null,
+      assigned_cve_id: (r) => r.assigned_cve_id ?? null,
+    }),
+    [],
+  );
+  const { sortedRows, sortKey, sortDir, cycleSort } = useSortableRows(
+    filteredRows,
+    accessors,
+  );
+
+  const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
+  const { tbodyProps, getRowProps } = useTableRowNav(
+    sortedRows,
+    (r) => {
+      if (r.id) navigate(`/vr/findings/${encodeURIComponent(r.id)}`);
+    },
+    tbodyRef,
+  );
 
   // Distinct values from the loaded set, used to populate the filters
   // without an extra round-trip. Only includes values actually present
@@ -52,6 +113,14 @@ export function FindingsListPage() {
     <div className="space-y-4">
       <AilaCard techBorder glow>
         <div className="flex items-center gap-2 flex-wrap">
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Filter findings (function / crash / CWE / CVE)…"
+            aria-label="Filter findings"
+            className="flex-1 min-w-[220px] max-w-md px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+          />
           <label className="text-sm text-text-muted">Disclosure:</label>
           <select
             value={statusFilter}
@@ -85,7 +154,9 @@ export function FindingsListPage() {
           </select>
 
           <span className="text-xs text-text-muted ml-auto">
-            {rows.length} finding{rows.length === 1 ? "" : "s"}
+            {query.trim()
+              ? `${sortedRows.length} of ${rows.length} finding${rows.length === 1 ? "" : "s"}`
+              : `${rows.length} finding${rows.length === 1 ? "" : "s"}`}
           </span>
         </div>
       </AilaCard>
@@ -114,18 +185,18 @@ export function FindingsListPage() {
             <caption className="sr-only">Team-wide vulnerability findings</caption>
             <thead>
               <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
-                <th className="px-4 py-2 font-semibold">Vulnerable function</th>
-                <th className="px-4 py-2 font-semibold">Crash</th>
-                <th className="px-4 py-2 font-semibold">CWE</th>
-                <th className="px-4 py-2 font-semibold text-right">CVSS</th>
-                <th className="px-4 py-2 font-semibold text-right">Evidence</th>
-                <th className="px-4 py-2 font-semibold">Disclosure</th>
-                <th className="px-4 py-2 font-semibold">Project</th>
-                <th className="px-4 py-2 font-semibold">CVE</th>
+                <SortHeader columnKey="vulnerable_function" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Vulnerable function</SortHeader>
+                <SortHeader columnKey="crash_type" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Crash</SortHeader>
+                <SortHeader columnKey="cwe_id" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>CWE</SortHeader>
+                <SortHeader columnKey="cvss_score" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort} align="right">CVSS</SortHeader>
+                <SortHeader columnKey="evidence_count" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort} align="right">Evidence</SortHeader>
+                <SortHeader columnKey="disclosure_status" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Disclosure</SortHeader>
+                <SortHeader columnKey="project_id" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Project</SortHeader>
+                <SortHeader columnKey="assigned_cve_id" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>CVE</SortHeader>
               </tr>
             </thead>
-            <tbody>
-              {rows.map((r) => {
+            <tbody ref={tbodyRef} {...tbodyProps}>
+              {sortedRows.map((r, idx) => {
                 if (!r.id) return null;
                 const cvssScore = r.cvss_score ?? null;
                 const evidenceCount = r.evidence_count ?? 0;
@@ -142,11 +213,16 @@ export function FindingsListPage() {
                   r.vulnerable_function ||
                   rootHead.slice(0, 110) ||
                   "(no detail)";
+                const rowProps = getRowProps(idx);
                 return (
                   <tr
                     key={r.id}
+                    {...rowProps}
                     onClick={() => navigate(target)}
-                    className="border-b border-border-default last:border-b-0 cursor-pointer hover:bg-surface transition-colors"
+                    className={
+                      "border-b border-border-default last:border-b-0 cursor-pointer hover:bg-surface transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset " +
+                      (rowProps["data-row-active"] ? "bg-elevated" : "")
+                    }
                   >
                     <td className="px-4 py-2 text-xs text-foreground max-w-[42rem]">
                       <div className="truncate" title={display}>

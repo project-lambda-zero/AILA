@@ -5031,3 +5031,43 @@ a:hover {
     @apply bg-background text-foreground;
   }
 }
+
+/* =====================================================================
+   COMPACT DENSITY LAYER
+   =====================================================================
+   Operator-selectable density (PreferencesProvider). Applied via
+   data-density on <html>. Comfortable is the baseline and is
+   deliberately left untouched here so switching back is a true no-op.
+   Compact tightens padding + line-height on the shared table/row
+   primitives -- token-driven, no arbitrary Tailwind values,
+   scoped strictly under [data-density=compact].
+   ===================================================================== */
+
+[data-density="compact"] table :where(th, td) {
+  padding-top: 0.375rem;
+  padding-bottom: 0.375rem;
+  line-height: 1.35;
+}
+
+[data-density="compact"] table :where(thead th) {
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+}
+
+/* Row primitive: any element that presents itself as a row (native
+   <tr>, or ARIA row on div-based virtual lists) gets its child cell
+   padding trimmed one step. Keeps borders and column widths intact. */
+[data-density="compact"] :where(tr, [role="row"]) > :where([role="cell"], [role="gridcell"]) {
+  padding-top: 0.375rem;
+  padding-bottom: 0.375rem;
+  line-height: 1.35;
+}
+
+/* Only animate the padding shift when the operator has not asked
+   for reduced motion. Zero cost in comfortable (no rule matches). */
+@media (prefers-reduced-motion: no-preference) {
+  [data-density="compact"] table :where(th, td),
+  [data-density="compact"] :where(tr, [role="row"]) > :where([role="cell"], [role="gridcell"]) {
+    transition: padding 120ms ease-out;
+  }
+}

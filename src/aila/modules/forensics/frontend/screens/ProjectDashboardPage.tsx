@@ -26,8 +26,13 @@ import {
   useInvestigationPolling,
   useProjectInvestigations,
 } from "../queries";
+import { useDebouncedValue, useRowKeyboardNav, sortRows } from "../powerTable";
 import { useForensicsListLive } from "../useLiveInvalidation";
 import type { InvestigationSummary, MachineReadinessResult, ProjectKind } from "../types";
+
+// Sort keys for the InvestigationsTab. The server only returns page + page_size
+// so ordering and text search are applied client-side over the loaded page.
+type InvestigationSortKey = "question" | "status" | "attempts_used";
 import { buildApiUrl } from "@platform/api/http";
 import { getAuthTokenStandalone } from "@platform/auth/useAuthStore";
 import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
@@ -218,8 +223,15 @@ function InvestigationRow({
       role="button"
       tabIndex={0}
       onClick={onNavigate}
-      onKeyDown={(e) => e.key === "Enter" && onNavigate()}
-      className="px-4 py-3 border border-border rounded-md bg-surface hover:bg-surface-secondary cursor-pointer transition-colors"
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          onNavigate();
+        }
+      }}
+      data-power-row="investigation"
+      aria-label={`Open investigation: ${display.question}`}
+      className="px-4 py-3 border border-border rounded-md bg-surface hover:bg-surface-secondary cursor-pointer transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2"
     >
       <div className="flex items-start justify-between gap-3">
         <p className="text-sm text-foreground font-medium line-clamp-2 flex-1">
@@ -477,6 +489,44 @@ function InvestigationsTab({
   );
   useForensicsListLive(investigationsListKey);
 
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search.trim().toLowerCase(), 300);
+  const [sortKey, setSortKey] = useState<InvestigationSortKey>("status");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  const listRef = useRef<HTMLDivElement | null>(null);
+  useRowKeyboardNav({
+    containerRef: listRef,
+    rowSelector: '[data-power-row="investigation"]',
+  });
+
+  const visible = React.useMemo(() => {
+    const rows = investigations ?? [];
+    const q = debouncedSearch;
+    const filtered = q
+      ? rows.filter((inv) => {
+          const question = inv.question?.toLowerCase() ?? "";
+          const answer = inv.final_answer?.toLowerCase() ?? "";
+          const status = inv.status?.toLowerCase() ?? "";
+          return question.includes(q) || answer.includes(q) || status.includes(q);
+        })
+      : rows;
+    return sortRows(
+      filtered,
+      (inv) => {
+        switch (sortKey) {
+          case "question":
+            return inv.question ?? "";
+          case "status":
+            return inv.status ?? "";
+          case "attempts_used":
+            return inv.attempts_used;
+        }
+      },
+      sortDir,
+    );
+  }, [investigations, debouncedSearch, sortKey, sortDir]);
+
   return (
     <div className="space-y-4 bg-surface text-foreground p-4 rounded-md border border-border">
       <AnalystDirectivesPanel projectId={projectId} compact />
@@ -494,14 +544,57 @@ function InvestigationsTab({
         <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load investigations.</p></AilaCard>
       )}
 
+      {!isLoading && !isError && (investigations ?? []).length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search question / answer / status..."
+            aria-label="Search investigations"
+            data-testid="forensics-investigations-search"
+            className="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-foreground placeholder:text-text-muted focus:outline-none focus:border-accent flex-1 min-w-[220px]"
+          />
+          <label className="flex items-center gap-1.5 text-xs text-text-muted">
+            <span>Sort</span>
+            <select
+              value={sortKey}
+              onChange={(e) => setSortKey(e.target.value as InvestigationSortKey)}
+              aria-label="Sort investigations by"
+              data-testid="forensics-investigations-sort-key"
+              className="px-2 py-1 text-xs rounded-md border border-border bg-surface text-foreground focus:outline-none focus:border-accent"
+            >
+              <option value="status">Status</option>
+              <option value="question">Question</option>
+              <option value="attempts_used">Attempts</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+              aria-label={`Sort direction, currently ${sortDir === "asc" ? "ascending" : "descending"}`}
+              data-testid="forensics-investigations-sort-dir"
+              className="px-2 py-1 text-xs rounded-md border border-border bg-surface text-foreground hover:border-accent focus:outline-none focus:border-accent"
+            >
+              {sortDir === "asc" ? "↑" : "↓"}
+            </button>
+          </label>
+        </div>
+      )}
+
       {!isLoading && !isError && (investigations ?? []).length === 0 && (
         <AilaCard  techBorder glow><p className="text-sm text-text-muted text-center py-6">
           No investigations yet. Start one above.
         </p></AilaCard>
       )}
 
-      <div className="space-y-2">
-        {(investigations ?? []).map((inv) => (
+      {!isLoading && !isError && (investigations ?? []).length > 0 && visible.length === 0 && (
+        <AilaCard techBorder glow><p className="text-sm text-text-muted text-center py-6">
+          No investigations match &ldquo;{search}&rdquo;.
+        </p></AilaCard>
+      )}
+
+      <div ref={listRef} className="space-y-2">
+        {visible.map((inv) => (
           <InvestigationRow
             key={inv.id}
             investigation={inv}

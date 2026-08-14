@@ -7,6 +7,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.17] - 2026-08-13 -- Module route splitting, power tables, operator preferences
+
+Finishes the frontend performance work and turns the list screens into power
+surfaces. Additive; existing routes, screens, and behavior preserved (#216).
+
+### Added
+
+- Power tables across every module list (VR, malware, forensics, vulnerability):
+  sortable column headers with `aria-sort` where a data table exists, keyboard
+  row navigation (j/k to move, Enter to open) scoped to the focused list and
+  cooperating with the global shortcut layer, and a per-list search box. Search
+  runs server-side where the endpoint exposes a query param (VR investigations;
+  vulnerability findings via the existing server filter pipeline) and
+  client-side otherwise. Existing filters, sorts, and pagination are untouched.
+- Operator preferences persisted to localStorage: a comfortable/compact density
+  toggle applied platform-wide, remembered sidebar collapsed state, and a
+  default list page size, all in a new Workspace section of Settings.
+
+### Changed
+
+- Route-level code-splitting is now complete: each module's route screens are
+  lazy-loaded (49 screens across the four modules), finishing the shell-level
+  split from v0.5.16. The initial entry chunk drops from 1,207 kB to 367 kB
+  (gzip 288 to 108 kB), and from 1,823 kB cumulatively since v0.5.15. The Vite
+  >500kB chunk-size warning is now cleared.
+
+All workspace type-checks and the shell production build pass. No backend changes.
+
 ## [0.5.16] - 2026-08-13 -- Route code-splitting, WCAG 2.2 AA pass, live-updating lists
 
 Three pure-frontend usability wins, all measured and backend-respecting.

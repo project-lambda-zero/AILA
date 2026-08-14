@@ -11,6 +11,7 @@ import { StatusBar } from "@/components/shell/StatusBar";
 import { OnboardingWizard } from "@platform/features/onboarding";
 import { useAuthStore } from "@platform/auth/useAuthStore";
 import { useIdleTimeout } from "@/hooks/useIdleTimeout";
+import { usePreferences } from "@/providers/PreferencesProvider";
 import { AppSidebar } from "./AppSidebar";
 import { AppHeader } from "./AppHeader";
 
@@ -19,24 +20,13 @@ interface AppShellProps {
   moduleSpecs: ModuleFrontendSpec[];
 }
 
-function getStoredSidebarOpen(): boolean {
-  try {
-    return localStorage.getItem("aila-sidebar-open") !== "false";
-  } catch {
-    return true;
-  }
-}
-
-function getDefaultSidebarOpen(): boolean {
-  // Tablet breakpoint (768-1024px): default to collapsed rail (D-08)
-  if (typeof window !== "undefined" && window.innerWidth < 1024) {
-    return false;
-  }
-  // Desktop (>1024px): read from localStorage
-  return getStoredSidebarOpen();
-}
-
 export function AppShell({ children, moduleSpecs }: AppShellProps) {
+  // Sidebar open/collapsed state now flows through PreferencesProvider so
+  // the operator's choice survives reloads and is settable from the
+  // Settings page. The tablet-breakpoint default (D-08) is preserved by
+  // PreferencesProvider.getInitialSidebarCollapsed when no explicit
+  // preference is stored.
+  const { sidebarCollapsed, setSidebarCollapsed } = usePreferences();
   // #47 -- clear the session after 15 minutes of inactivity so a signed-in
   // console left open on a shared workstation does not stay authenticated
   // indefinitely. The shell only renders behind ProtectedRoute, so once
@@ -50,14 +40,8 @@ export function AppShell({ children, moduleSpecs }: AppShellProps) {
 
   return (
     <SidebarProvider
-      defaultOpen={getDefaultSidebarOpen()}
-      onOpenChange={(open) => {
-        try {
-          localStorage.setItem("aila-sidebar-open", String(open));
-        } catch {
-          // localStorage unavailable -- ignore
-        }
-      }}
+      open={!sidebarCollapsed}
+      onOpenChange={(open) => setSidebarCollapsed(!open)}
     >
       {/*
         Skip-to-main-content link (B8). First focusable element in the

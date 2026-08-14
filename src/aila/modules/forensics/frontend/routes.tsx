@@ -1,9 +1,39 @@
-import { InvestigationDetailPage } from "./screens/InvestigationDetailPage";
-import { ProjectDashboardPage } from "./screens/ProjectDashboardPage";
-import { ProjectDetailsPage } from "./screens/ProjectDetailsPage";
-import { ProjectsPage } from "./screens/ProjectsPage";
-import { NewProjectPage } from "./screens/NewProjectPage";
-import { ReasoningReplayPage } from "./screens/ReasoningReplayPage";
+import { lazy } from "react";
+
+// Route-level code-splitting: each screen becomes its own Vite chunk so
+// the shell entry bundle stays lean. Every page below is a NAMED export,
+// re-mapped to the default shape React.lazy requires. Suspense boundaries
+// are supplied by the shell's `RoutedPage` in frontend/src/app/router.tsx,
+// which wraps every module route element flowed through
+// `buildModuleRouteObjects` -> `protectPage`.
+const InvestigationDetailPage = lazy(() =>
+  import("./screens/InvestigationDetailPage").then((m) => ({
+    default: m.InvestigationDetailPage,
+  })),
+);
+const ProjectDashboardPage = lazy(() =>
+  import("./screens/ProjectDashboardPage").then((m) => ({
+    default: m.ProjectDashboardPage,
+  })),
+);
+const ProjectDetailsPage = lazy(() =>
+  import("./screens/ProjectDetailsPage").then((m) => ({
+    default: m.ProjectDetailsPage,
+  })),
+);
+const ProjectsPage = lazy(() =>
+  import("./screens/ProjectsPage").then((m) => ({ default: m.ProjectsPage })),
+);
+const NewProjectPage = lazy(() =>
+  import("./screens/NewProjectPage").then((m) => ({
+    default: m.NewProjectPage,
+  })),
+);
+const ReasoningReplayPage = lazy(() =>
+  import("./screens/ReasoningReplayPage").then((m) => ({
+    default: m.ReasoningReplayPage,
+  })),
+);
 
 export const routes = [
   {

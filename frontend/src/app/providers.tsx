@@ -7,6 +7,7 @@ import {
 import type { ReactNode } from "react";
 
 import { ThemeProvider } from "@/providers/ThemeProvider";
+import { PreferencesProvider } from "@/providers/PreferencesProvider";
 import { SSEProvider } from "@/providers/SSEProvider";
 import { ActivityFeedProvider } from "@/providers/ActivityFeedProvider";
 import { KeyboardShortcutsProvider } from "@/providers/KeyboardShortcutsProvider";
@@ -56,16 +57,18 @@ interface AppProvidersProps {
 export function AppProviders({ children }: AppProvidersProps) {
   return (
     <ThemeProvider>
-      <QueryClientProvider client={queryClient}>
-        <SSEProvider>
-          <ActivityFeedProvider>
-            <KeyboardShortcutsProvider>
-              {children}
-            </KeyboardShortcutsProvider>
-          </ActivityFeedProvider>
-        </SSEProvider>
-        <Toaster />
-      </QueryClientProvider>
+      <PreferencesProvider>
+        <QueryClientProvider client={queryClient}>
+          <SSEProvider>
+            <ActivityFeedProvider>
+              <KeyboardShortcutsProvider>
+                {children}
+              </KeyboardShortcutsProvider>
+            </ActivityFeedProvider>
+          </SSEProvider>
+          <Toaster />
+        </QueryClientProvider>
+      </PreferencesProvider>
     </ThemeProvider>
   );
 }

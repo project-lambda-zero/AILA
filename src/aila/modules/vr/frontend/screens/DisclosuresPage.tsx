@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
@@ -6,6 +6,12 @@ import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { DeleteButton } from "../components/DeleteButton";
+import {
+  SortHeader,
+  useSortableRows,
+  useTableRowNav,
+  type SortValue,
+} from "../components/tableHelpers";
 import { useCreateDisclosure, useDeleteDisclosure } from "../mutations";
 import {
   useDisclosures,
@@ -17,6 +23,7 @@ import { useVRListInvalidation } from "../hooks/useVRListInvalidation";
 import type {
   ArtifactTier,
   DisclosureSubmissionStatus,
+  VRDisclosureSubmissionSummary,
 } from "../types";
 
 const STATUS_COLOR: Record<
@@ -166,11 +173,58 @@ export function DisclosuresPage() {
     }
   };
 
+  // /vr/disclosures has no `q` server-side param -- quick-filter runs
+  // client-side over track / vendor_reference / severity / poc_tier /
+  // status text.
+  const [query, setQuery] = useState("");
+
   const { data: result, isLoading, isError } = useDisclosures({
     trackId: trackFilter || undefined,
     status: statusFilter || undefined,
   });
   const rows = result?.data ?? [];
+
+  const filteredRows = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return rows;
+    return rows.filter((r) => {
+      const trackLabel = r.track_info?.display_name ?? r.track_id;
+      return (
+        trackLabel.toLowerCase().includes(needle) ||
+        r.status.toLowerCase().includes(needle) ||
+        r.poc_tier.toLowerCase().includes(needle) ||
+        (r.severity_rating ?? "").toLowerCase().includes(needle) ||
+        (r.vendor_reference ?? "").toLowerCase().includes(needle)
+      );
+    });
+  }, [rows, query]);
+
+  const accessors = useMemo<
+    Record<string, (r: VRDisclosureSubmissionSummary) => SortValue>
+  >(
+    () => ({
+      track: (r) => r.track_info?.display_name ?? r.track_id,
+      status: (r) => r.status,
+      poc_tier: (r) => r.poc_tier,
+      severity_rating: (r) => r.severity_rating ?? null,
+      embargo_until: (r) =>
+        r.embargo_until ? new Date(r.embargo_until) : null,
+      vendor_reference: (r) => r.vendor_reference ?? null,
+      bounty_awarded_usd: (r) => r.bounty_awarded_usd ?? null,
+    }),
+    [],
+  );
+  const { sortedRows, sortKey, sortDir, cycleSort } = useSortableRows(
+    filteredRows,
+    accessors,
+  );
+
+  const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
+  const { tbodyProps, getRowProps } = useTableRowNav(
+    sortedRows,
+    (r) => navigate(`/vr/disclosures/${r.id}`),
+    tbodyRef,
+  );
 
   return (
     <div className="space-y-4">
@@ -318,6 +372,14 @@ export function DisclosuresPage() {
       )}
 
       <AilaCard  techBorder glow><div className="flex items-center gap-2 flex-wrap">
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Filter disclosures (track / vendor / severity)…"
+          aria-label="Filter disclosures"
+          className="flex-1 min-w-[220px] max-w-md px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+        />
         <label className="text-sm text-text-muted">Track:</label>
         <select
           value={trackFilter}
@@ -351,7 +413,9 @@ export function DisclosuresPage() {
         </select>
       
         <span className="text-xs text-text-muted ml-auto">
-          {rows.length} submission{rows.length === 1 ? "" : "s"}
+          {query.trim()
+            ? `${sortedRows.length} of ${rows.length} submission${rows.length === 1 ? "" : "s"}`
+            : `${rows.length} submission${rows.length === 1 ? "" : "s"}`}
         </span>
       </div></AilaCard>
 
@@ -373,22 +437,28 @@ export function DisclosuresPage() {
           <caption className="sr-only">Disclosure submissions</caption>
           <thead>
             <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
-              <th className="px-4 py-2 font-semibold">Track</th>
-              <th className="px-4 py-2 font-semibold">Status</th>
-              <th className="px-4 py-2 font-semibold">PoC tier</th>
-              <th className="px-4 py-2 font-semibold">Severity</th>
-              <th className="px-4 py-2 font-semibold">Embargo until</th>
-              <th className="px-4 py-2 font-semibold">Vendor ref</th>
-              <th className="px-4 py-2 font-semibold text-right">Bounty</th>
+              <SortHeader columnKey="track" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Track</SortHeader>
+              <SortHeader columnKey="status" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Status</SortHeader>
+              <SortHeader columnKey="poc_tier" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>PoC tier</SortHeader>
+              <SortHeader columnKey="severity_rating" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Severity</SortHeader>
+              <SortHeader columnKey="embargo_until" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Embargo until</SortHeader>
+              <SortHeader columnKey="vendor_reference" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Vendor ref</SortHeader>
+              <SortHeader columnKey="bounty_awarded_usd" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort} align="right">Bounty</SortHeader>
               <th className="px-2 py-2"></th>
             </tr>
           </thead>
-          <tbody>
-            {rows.map((r) => (
+          <tbody ref={tbodyRef} {...tbodyProps}>
+            {sortedRows.map((r, idx) => {
+              const rowProps = getRowProps(idx);
+              return (
               <tr
                 key={r.id}
+                {...rowProps}
                 onClick={() => navigate(`/vr/disclosures/${r.id}`)}
-                className="border-b border-border-default last:border-b-0 cursor-pointer hover:bg-surface transition-colors"
+                className={
+                  "border-b border-border-default last:border-b-0 cursor-pointer hover:bg-surface transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset " +
+                  (rowProps["data-row-active"] ? "bg-elevated" : "")
+                }
               >
                 <td className="px-4 py-2 font-mono text-xs text-foreground">
                   {r.track_info?.display_name ?? r.track_id}
@@ -424,7 +494,8 @@ export function DisclosuresPage() {
                   />
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table></AilaCard>
       )}

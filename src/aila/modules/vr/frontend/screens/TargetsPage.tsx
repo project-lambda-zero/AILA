@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { ArrowsClockwise } from "@phosphor-icons/react/dist/csr/ArrowsClockwise";
 import { DeviceMobile } from "@phosphor-icons/react/dist/csr/DeviceMobile";
@@ -8,6 +8,12 @@ import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { DeleteButton } from "../components/DeleteButton";
+import {
+  SortHeader,
+  useSortableRows,
+  useTableRowNav,
+  type SortValue,
+} from "../components/tableHelpers";
 import {
   useCreateTarget,
   useDeleteTarget,
@@ -258,6 +264,53 @@ export function TargetsPage() {
 
   const targets = result?.data ?? [];
 
+  // /vr/targets has no `q` server-side param -- quick-filter runs
+  // client-side over display_name / kind / language / android package.
+  const [query, setQuery] = useState("");
+
+  const filteredTargets = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return targets;
+    return targets.filter((t) => {
+      return (
+        (t.display_name ?? "").toLowerCase().includes(needle) ||
+        t.kind.toLowerCase().includes(needle) ||
+        (t.primary_language ?? "").toLowerCase().includes(needle) ||
+        (t.android_package_name ?? "").toLowerCase().includes(needle) ||
+        t.status.toLowerCase().includes(needle) ||
+        t.analysis_state.toLowerCase().includes(needle) ||
+        targetRowLabel(t).toLowerCase().includes(needle)
+      );
+    });
+  }, [targets, query]);
+
+  const accessors = useMemo<
+    Record<string, (t: VRTargetSummary) => SortValue>
+  >(
+    () => ({
+      name: (t) => targetRowLabel(t),
+      kind: (t) => t.kind,
+      primary_language: (t) => t.primary_language ?? null,
+      status: (t) => t.status,
+      analysis_state: (t) => t.analysis_state,
+      analysis_completed_at: (t) =>
+        t.analysis_completed_at ? new Date(t.analysis_completed_at) : null,
+      created_at: (t) => (t.created_at ? new Date(t.created_at) : null),
+    }),
+    [],
+  );
+  const { sortedRows, sortKey, sortDir, cycleSort } = useSortableRows(
+    filteredTargets,
+    accessors,
+  );
+
+  const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
+  const { tbodyProps, getRowProps } = useTableRowNav(
+    sortedRows,
+    (t) => navigate(`/vr/targets/${t.id}`),
+    tbodyRef,
+  );
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -502,7 +555,15 @@ export function TargetsPage() {
         </AilaCard>
       )}
 
-      <AilaCard  techBorder glow><div className="flex items-center gap-2">
+      <AilaCard  techBorder glow><div className="flex items-center gap-2 flex-wrap">
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Filter targets (name / kind / language)…"
+          aria-label="Filter targets"
+          className="flex-1 min-w-[220px] max-w-md px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+        />
         <label htmlFor="target-workspace-filter" className="text-sm text-text-muted">Filter workspace:</label>
         <select
           id="target-workspace-filter"
@@ -518,7 +579,9 @@ export function TargetsPage() {
           ))}
         </select>
         <span className="text-xs text-text-muted ml-auto">
-          {targets.length} target{targets.length === 1 ? "" : "s"}
+          {query.trim()
+            ? `${sortedRows.length} of ${targets.length} target${targets.length === 1 ? "" : "s"}`
+            : `${targets.length} target${targets.length === 1 ? "" : "s"}`}
         </span>
       </div></AilaCard>
 
@@ -537,22 +600,28 @@ export function TargetsPage() {
           <caption className="sr-only">Targets in the selected workspace</caption>
           <thead>
             <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
-              <th className="px-4 py-2 font-semibold">Name</th>
-              <th className="px-4 py-2 font-semibold">Kind</th>
-              <th className="px-4 py-2 font-semibold">Language</th>
-              <th className="px-4 py-2 font-semibold">Status</th>
-              <th className="px-4 py-2 font-semibold">Analysis</th>
-              <th className="px-4 py-2 font-semibold">Analyzed at</th>
-              <th className="px-4 py-2 font-semibold">Created</th>
+              <SortHeader columnKey="name" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Name</SortHeader>
+              <SortHeader columnKey="kind" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Kind</SortHeader>
+              <SortHeader columnKey="primary_language" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Language</SortHeader>
+              <SortHeader columnKey="status" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Status</SortHeader>
+              <SortHeader columnKey="analysis_state" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Analysis</SortHeader>
+              <SortHeader columnKey="analysis_completed_at" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Analyzed at</SortHeader>
+              <SortHeader columnKey="created_at" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Created</SortHeader>
               <th className="px-2 py-2"></th>
             </tr>
           </thead>
-          <tbody className="scroll-virtual-row">
-            {targets.map((t) => (
+          <tbody ref={tbodyRef} className="scroll-virtual-row" {...tbodyProps}>
+            {sortedRows.map((t, idx) => {
+              const rowProps = getRowProps(idx);
+              return (
               <tr
                 key={t.id}
+                {...rowProps}
                 onClick={() => navigate(`/vr/targets/${t.id}`)}
-                className="border-b border-border-default last:border-b-0 cursor-pointer hover:bg-surface transition-colors"
+                className={
+                  "border-b border-border-default last:border-b-0 cursor-pointer hover:bg-surface transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset " +
+                  (rowProps["data-row-active"] ? "bg-elevated" : "")
+                }
               >
                 <td className="px-4 py-2 font-semibold text-foreground">
                   {targetRowLabel(t)}
@@ -602,7 +671,8 @@ export function TargetsPage() {
                   </div>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table></AilaCard>
       )}

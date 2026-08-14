@@ -7,11 +7,21 @@ import { Palette } from "@phosphor-icons/react/dist/csr/Palette";
 import { Sun } from "@phosphor-icons/react/dist/csr/Sun";
 import { Moon } from "@phosphor-icons/react/dist/csr/Moon";
 
+import { SlidersHorizontal } from "@phosphor-icons/react/dist/csr/SlidersHorizontal";
+
 import { useAuthStore } from "@platform/auth/useAuthStore";
 import { useTheme, type Theme } from "@/providers/ThemeProvider";
+import { usePreferences, type Density } from "@/providers/PreferencesProvider";
 import { appEnv } from "@platform/config/env";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 // ---------------------------------------------------------------------------
 // Section card wrapper
@@ -864,6 +874,14 @@ function ThemePreview({ theme }: { theme: Theme }) {
 export function SettingsPage() {
   const { username, role, userId } = useAuthStore();
   const { theme, mode, setTheme, toggleMode, isDark, themes } = useTheme();
+  const {
+    density,
+    defaultPageSize,
+    setDensity,
+    setDefaultPageSize,
+    resetPreferences,
+    allowedPageSizes,
+  } = usePreferences();
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -968,6 +986,112 @@ export function SettingsPage() {
               </button>
             );
           })}
+        </div>
+      </Section>
+
+      {/* Workspace preferences */}
+      <Section icon={<SlidersHorizontal size={18} />} title="Workspace">
+        <p className="text-xs text-text-muted -mt-1">
+          Personal preferences for how this console renders on your machine.
+          Persisted locally; not shared with other operators.
+        </p>
+
+        {/* Density */}
+        <div className="flex items-center justify-between gap-4 pb-3 border-b border-border">
+          <div className="min-w-0">
+            <label
+              htmlFor="pref-density"
+              className="text-sm font-medium text-foreground"
+            >
+              Density
+            </label>
+            <p className="text-xs text-text-muted mt-0.5">
+              Compact tightens row and cell padding on tables and lists.
+            </p>
+          </div>
+          <Select
+            value={density}
+            onValueChange={(v) => {
+              if (typeof v === "string") setDensity(v as Density);
+            }}
+          >
+            <SelectTrigger
+              id="pref-density"
+              aria-label="Interface density"
+              className="font-mono text-xs h-8 w-[160px]"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="comfortable" className="font-mono text-xs">
+                Comfortable
+              </SelectItem>
+              <SelectItem value="compact" className="font-mono text-xs">
+                Compact
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Default page size */}
+        <div className="flex items-center justify-between gap-4 pb-3 border-b border-border">
+          <div className="min-w-0">
+            <label
+              htmlFor="pref-page-size"
+              className="text-sm font-medium text-foreground"
+            >
+              Default page size
+            </label>
+            <p className="text-xs text-text-muted mt-0.5">
+              How many rows list screens load per page by default.
+            </p>
+          </div>
+          <Select
+            value={String(defaultPageSize)}
+            onValueChange={(v) => {
+              if (typeof v === "string") setDefaultPageSize(Number.parseInt(v, 10));
+            }}
+          >
+            <SelectTrigger
+              id="pref-page-size"
+              aria-label="Default rows per page"
+              className="font-mono text-xs h-8 w-[100px]"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {allowedPageSizes.map((n) => (
+                <SelectItem
+                  key={n}
+                  value={String(n)}
+                  className="font-mono text-xs"
+                >
+                  {n}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Reset */}
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-foreground">
+              Reset preferences
+            </p>
+            <p className="text-xs text-text-muted mt-0.5">
+              Restores density, page size, and sidebar defaults. Does not
+              affect theme or session.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={resetPreferences}
+            aria-label="Reset workspace preferences to defaults"
+          >
+            Reset
+          </Button>
         </div>
       </Section>
 
