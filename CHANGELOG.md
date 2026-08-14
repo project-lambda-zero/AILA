@@ -7,6 +7,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.26] - 2026-08-13 -- Fix: command palette no longer treats plain words as entity ids
+
+### Fixed
+
+- Typing an ordinary word of eight or more letters into the command palette
+  (for example "dashboard" or "investigations") produced a bogus "Jump to" group
+  of dead-route targets and suppressed the real Navigate and Search results, so
+  the operator could not reach a page by typing its name. The entity-id
+  heuristic (`looksLikeEntityId`) matched any 8-to-32 character alphanumeric
+  string; it now also requires at least one digit, so genuine ids (UUIDs, ULIDs,
+  hashes, task ids) still trigger the jump while dictionary words do not. The `#`
+  prefix remains the explicit jump escape hatch. Verified live in the running
+  palette. Found by driving the console (#226).
+
+Shell type-check and production build pass.
+
 ## [0.5.25] - 2026-08-13 -- Fix: drop the ignored CSP frame-ancestors <meta> directive
 
 ### Fixed

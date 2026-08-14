@@ -96,7 +96,13 @@ const DETAIL_PATTERNS: readonly DetailPattern[] = [
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // Hex/ULID-ish slug covering 8-32 char ids (ULIDs, short hashes, task ids).
-const SLUG_REGEX = /^[0-9a-z]{8,32}$/i;
+// The `(?=.*[0-9])` lookahead REQUIRES at least one digit so ordinary search
+// words (e.g. "dashboard", "investigations") are not mistaken for entity ids
+// -- those would otherwise fire a bogus "Jump to" group AND suppress the real
+// Navigate/Search results. Real ids in this platform (UUIDs, ULIDs, hashes,
+// task ids) always carry digits; a `#` prefix stays available in
+// `parseEntityJump` as the explicit escape hatch for a rare all-letter id.
+const SLUG_REGEX = /^(?=.*[0-9])[0-9a-z]{8,32}$/i;
 
 /** True when `value` looks like an entity id we could jump to. */
 export function looksLikeEntityId(value: string): boolean {
