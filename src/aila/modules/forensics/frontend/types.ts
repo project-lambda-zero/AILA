@@ -142,6 +142,8 @@ export interface InvestigationSummary {
   confidence: string | null;
   task_id?: string | null;
   parent_investigation_id?: string | null;
+  needs_reap?: boolean;
+  needs_reap_reason?: string | null;
 }
 
 export interface InvestigationDetail extends InvestigationSummary {
@@ -354,4 +356,54 @@ export interface RetrieveFileResult {
   filename: string;
   size_bytes: number;
   sha256: string;
+}
+
+// ----- Reasoning-graph replay contracts (mirrors platform contracts:
+// ReasoningGraphNode/Edge, ReasoningEvidenceGraph, ReasoningGraphSnapshot,
+// ReasoningGraphDiff, ReasoningGraphDiffResult).
+
+export interface ReasoningGraphNode {
+  id: string;
+  kind: string;
+  label: string;
+  attributes: Record<string, unknown>;
+}
+
+export interface ReasoningGraphEdge {
+  source: string;
+  target: string;
+  kind: string;
+  attributes: Record<string, unknown>;
+}
+
+export interface ReasoningEvidenceGraph {
+  nodes: ReasoningGraphNode[];
+  edges: ReasoningGraphEdge[];
+}
+
+export interface ReasoningGraphSnapshot {
+  id: string;
+  run_id: string | null;
+  module_id: string;
+  subject_kind: string;
+  subject_id: string;
+  step_number: number;
+  strategy_family: string;
+  graph: ReasoningEvidenceGraph;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface ReasoningGraphDiff {
+  from_step: number;
+  to_step: number;
+  added_nodes: ReasoningGraphNode[];
+  removed_nodes: ReasoningGraphNode[];
+  added_edges: ReasoningGraphEdge[];
+  removed_edges: ReasoningGraphEdge[];
+}
+
+export interface ReasoningGraphDiffResult {
+  investigation_id: string;
+  diff: ReasoningGraphDiff;
 }

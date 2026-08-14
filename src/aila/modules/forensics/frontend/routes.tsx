@@ -3,6 +3,7 @@ import { ProjectDashboardPage } from "./screens/ProjectDashboardPage";
 import { ProjectDetailsPage } from "./screens/ProjectDetailsPage";
 import { ProjectsPage } from "./screens/ProjectsPage";
 import { NewProjectPage } from "./screens/NewProjectPage";
+import { ReasoningReplayPage } from "./screens/ReasoningReplayPage";
 
 export const routes = [
   {
@@ -49,5 +50,14 @@ export const routes = [
     nav: false,
     slot: "page.full" as const,
     breadcrumb: "Investigation",
+  },
+  {
+    id: "forensics.reasoning-replay",
+    path: "/forensics/projects/:projectId/investigations/:investigationId/reasoning-replay",
+    page: ReasoningReplayPage,
+    title: "Reasoning Replay",
+    nav: false,
+    slot: "page.full" as const,
+    breadcrumb: "Reasoning Replay",
   },
 ];

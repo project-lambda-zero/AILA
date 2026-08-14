@@ -6,10 +6,11 @@
  *   1. Engine dot + label from GET /health (public endpoint)
  *   2. Queue depth from GET /tasks/queue-depth (admin-only; hidden on 4xx/5xx)
  *   3. Active module (first path segment; "" -> CHAT)
- *   4. flex spacer
- *   5. Online/offline (navigator.onLine + online/offline events)
- *   6. Build tag: v<version> <short-sha>
- *   7. HH:MM:SS live clock
+ *   4. ROI %% from GET /cost/roi (hidden on error/permission miss)
+ *   5. flex spacer
+ *   6. Online/offline (navigator.onLine + online/offline events)
+ *   7. Build tag: v<version> <short-sha>
+ *   8. HH:MM:SS live clock
  *
  * Motion: the queue-count pulse reuses the existing
  * `.animate-severity-pulse` utility which already opts out under
@@ -40,6 +41,17 @@ interface DataEnvelope<T> {
 
 /** GET /tasks/queue-depth returns `{ data: { <status>: count, ... } }`. */
 type QueueDepthPayload = Record<string, number>;
+
+/** Matches `aila.api.schemas.cost.ROIResponse`. */
+interface ROIResponse {
+  period_start: string;
+  period_end: string;
+  llm_cost_usd: number;
+  human_equivalent_cost_usd: number;
+  human_equivalent_hours: number;
+  roi_percentage: number;
+  run_count: number;
+}
 
 // ---------------------------------------------------------------------------
 // Hooks
@@ -88,6 +100,26 @@ function useQueueDepth(): number | null {
   if (query.isError || !query.data) return null;
   const depth = query.data.data ?? {};
   return Object.values(depth).reduce<number>((sum, n) => sum + (Number(n) || 0), 0);
+}
+
+/**
+ * Fetch platform-wide LLM-vs-human ROI (defaults to trailing 3 months
+ * server-side). Aggregated over months of cost records so a fast refetch
+ * cadence buys nothing; slow polling is also friendlier to the 120/min
+ * limiter on `/cost/roi`. On error/empty the caller hides the segment.
+ */
+function useROI(): ROIResponse | null {
+  const query = useQuery({
+    queryKey: ["system-status", "roi"],
+    queryFn: () =>
+      authorizedRequestJson<DataEnvelope<ROIResponse>>("/cost/roi"),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+    retry: false,
+  });
+
+  if (query.isError || !query.data?.data) return null;
+  return query.data.data;
 }
 
 function useOnline(): boolean {
@@ -182,6 +214,7 @@ function Divider() {
 export function StatusBar() {
   const engine = useEngineStatus();
   const queue = useQueueDepth();
+  const roi = useROI();
   const online = useOnline();
   const clock = useClock();
   const moduleLabel = useModuleLabel();
@@ -265,7 +298,38 @@ export function StatusBar() {
       <Divider />
       <span>CTX {moduleLabel}</span>
 
-      {/* 4. flex spacer */}
+      {/* 4. ROI vs human-equivalent -- hidden on error/permission miss */}
+      {roi !== null && (
+        <>
+          <Divider />
+          <span
+            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+            title={
+              `ROI over ${roi.period_start} -> ${roi.period_end}: ` +
+              `LLM $${roi.llm_cost_usd.toFixed(2)} vs human ` +
+              `$${roi.human_equivalent_cost_usd.toFixed(2)} ` +
+              `(${roi.human_equivalent_hours.toFixed(1)}h across ${roi.run_count} run${roi.run_count === 1 ? "" : "s"})`
+            }
+          >
+            <span>ROI</span>
+            <span
+              style={{
+                color:
+                  roi.roi_percentage > 0
+                    ? "var(--status-completed)"
+                    : roi.roi_percentage < 0
+                      ? "var(--status-failed)"
+                      : "var(--color-text-muted)",
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {`${roi.roi_percentage > 0 ? "+" : ""}${roi.roi_percentage.toFixed(0)}%`}
+            </span>
+          </span>
+        </>
+      )}
+
+      {/* 5. flex spacer */}
       <span style={{ flex: 1 }} />
 
       {/* 5. Online / offline */}

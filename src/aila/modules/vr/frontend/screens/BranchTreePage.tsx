@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useParams } from "react-router";
 
 import {
@@ -16,12 +16,27 @@ import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import {
+  useAbandonBranch,
+  useForkBranch,
+  usePauseBranch,
+  usePromoteBranch,
+  useResumeBranch,
+  useSpawnStrategyBranch,
+} from "../mutations";
+import {
   useInvestigation,
   useInvestigationBranches,
 } from "../queries";
-import type { BranchStatus, VRBranchSummary } from "../types";
+import type { BranchStatus, PersonaVoice, VRBranchSummary } from "../types";
 import { formatBranchDisplayName } from "../branchDisplay";
 import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
+
+/** Persona-voice values operators can attach to a spawn / fork.
+ *  Mirrors PersonaVoice in contracts/enums.py (core roles only —
+ *  specialists are on-demand and belong on a dedicated spawn UI). */
+const PERSONA_VOICES: readonly PersonaVoice[] = [
+  "halvar", "maddie", "yuki", "renzo", "noor", "wei",
+];
 
 // Colour-code branches by status. Aligns with the AilaBadge palette so
 // the tree + list views look consistent.
@@ -264,9 +279,317 @@ export function BranchTreePage() {
       {branches.length === 0 && (
         <AilaCard  techBorder glow><p className="text-sm text-text-muted text-center py-4">
           No branches yet. Create the primary branch via the investigation
-          workflow or POST /vr/investigations/{`{id}`}/strategy-branches.
+          workflow, or spawn one below.
         </p></AilaCard>
       )}
+
+      <AilaCard techBorder glow>
+        <h2 className="text-sm font-semibold text-foreground mb-2">
+          Spawn strategy branch
+        </h2>
+        <p className="text-3xs text-text-muted mb-3">
+          POST /vr/investigations/{`{id}`}/strategy-branches — creates a new
+          branch tagged with a strategy_family. Leave parent empty for a
+          genuinely-parallel strategy; pick a parent to inherit its
+          case_state.
+        </p>
+        <StrategyBranchSpawnForm invId={invId} branches={branches} />
+      </AilaCard>
+
+      {branches.length > 0 && (
+        <AilaCard techBorder glow>
+          <h2 className="text-sm font-semibold text-foreground mb-2">
+            Branch operations
+          </h2>
+          <p className="text-3xs text-text-muted mb-3">
+            Per-branch fork / promote / abandon / pause / resume. Merge (two
+            branches into a new one) is not surfaced here — pick a merge
+            target from the dedicated merge dialog when available.
+          </p>
+          <BranchOpsTable invId={invId} branches={branches} />
+        </AilaCard>
+      )}
     </div>
+  );
+}
+
+// ─── Strategy branch spawn form ─────────────────────────────────────────
+function StrategyBranchSpawnForm({
+  invId,
+  branches,
+}: {
+  invId: string;
+  branches: VRBranchSummary[];
+}) {
+  const [strategyFamily, setStrategyFamily] = useState("");
+  const [personaVoice, setPersonaVoice] = useState<PersonaVoice | "">("");
+  const [rationale, setRationale] = useState("");
+  const [parentBranchId, setParentBranchId] = useState<string>("");
+  const spawnMut = useSpawnStrategyBranch(invId);
+
+  const disabled = spawnMut.isPending || strategyFamily.trim().length === 0;
+
+  return (
+    <form
+      className="space-y-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (disabled) return;
+        spawnMut.mutate(
+          {
+            strategy_family: strategyFamily.trim(),
+            persona_voice: personaVoice === "" ? null : personaVoice,
+            rationale: rationale.trim(),
+            parent_branch_id: parentBranchId === "" ? null : parentBranchId,
+          },
+          {
+            onSuccess: () => {
+              setStrategyFamily("");
+              setRationale("");
+            },
+          },
+        );
+      }}
+    >
+      <div className="grid gap-2 md:grid-cols-3">
+        <label className="text-xs">
+          <span className="block text-3xs text-text-muted uppercase tracking-wide mb-0.5">
+            Strategy family (required)
+          </span>
+          <input
+            type="text"
+            value={strategyFamily}
+            onChange={(e) => setStrategyFamily(e.target.value)}
+            placeholder="e.g. taint-first, memory-corruption"
+            maxLength={128}
+            className="w-full text-xs font-mono px-2 py-1 rounded bg-surface border border-border-default focus:border-accent focus:outline-none"
+          />
+        </label>
+        <label className="text-xs">
+          <span className="block text-3xs text-text-muted uppercase tracking-wide mb-0.5">
+            Persona voice
+          </span>
+          <select
+            value={personaVoice}
+            onChange={(e) => setPersonaVoice(e.target.value as PersonaVoice | "")}
+            className="w-full text-xs px-2 py-1 rounded bg-surface border border-border-default"
+          >
+            <option value="">(none)</option>
+            {PERSONA_VOICES.map((v) => (
+              <option key={v} value={v}>{v}</option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs">
+          <span className="block text-3xs text-text-muted uppercase tracking-wide mb-0.5">
+            Parent branch (optional — inherits case_state)
+          </span>
+          <select
+            value={parentBranchId}
+            onChange={(e) => setParentBranchId(e.target.value)}
+            className="w-full text-xs font-mono px-2 py-1 rounded bg-surface border border-border-default"
+          >
+            <option value="">(fresh — no parent)</option>
+            {branches.map((b) => (
+              <option key={b.id} value={b.id}>
+                {formatBranchDisplayName(b)} · {b.status}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <textarea
+        value={rationale}
+        onChange={(e) => setRationale(e.target.value)}
+        placeholder="Rationale (optional) — why this strategy is worth exploring"
+        rows={2}
+        maxLength={2048}
+        className="w-full text-xs font-mono p-2 rounded bg-surface border border-border-default focus:border-accent focus:outline-none"
+      />
+      <div className="flex justify-end">
+        <button
+          type="submit"
+          disabled={disabled}
+          className="text-xs px-3 py-1 rounded bg-accent text-white disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {spawnMut.isPending ? "Spawning…" : "Spawn branch"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// ─── Per-branch ops table ───────────────────────────────────────────────
+function BranchOpsTable({
+  invId,
+  branches,
+}: {
+  invId: string;
+  branches: VRBranchSummary[];
+}) {
+  const forkMut = useForkBranch(invId);
+  const promoteMut = usePromoteBranch(invId);
+  const abandonMut = useAbandonBranch(invId);
+  const pauseMut = usePauseBranch(invId);
+  const resumeMut = useResumeBranch(invId);
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="border-b border-border-default text-left text-text-muted">
+            <th className="px-2 py-1 font-semibold">Branch</th>
+            <th className="px-2 py-1 font-semibold">Status</th>
+            <th className="px-2 py-1 font-semibold">Turns</th>
+            <th className="px-2 py-1 font-semibold text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {branches.map((b) => {
+            const active = b.status === "active";
+            const paused = b.status === "paused";
+            return (
+              <tr
+                key={b.id}
+                className="border-b border-border-default last:border-b-0 align-top"
+              >
+                <td className="px-2 py-2 font-mono">
+                  <div className="text-foreground">{formatBranchDisplayName(b)}</div>
+                  <div className="text-3xs text-text-muted">
+                    {b.strategy_family ?? "(no strategy)"}
+                    {b.persona_voice ? ` · ${b.persona_voice}` : ""}
+                  </div>
+                </td>
+                <td className="px-2 py-2">
+                  <AilaBadge
+                    severity={
+                      active
+                        ? "low"
+                        : paused
+                          ? "medium"
+                          : b.status === "abandoned"
+                            ? "high"
+                            : "info"
+                    }
+                    size="sm"
+                  >
+                    {b.status}
+                  </AilaBadge>
+                </td>
+                <td className="px-2 py-2 font-mono">{b.turn_count}</td>
+                <td className="px-2 py-2">
+                  <div className="flex gap-1 flex-wrap justify-end">
+                    <BranchOpButton
+                      label="Fork"
+                      title="Fork this branch into a new child (prompts for a fork reason)"
+                      disabled={forkMut.isPending || !active}
+                      onClick={() => {
+                        const reason = window.prompt(
+                          `Fork reason for branch ${formatBranchDisplayName(b)}?`,
+                          "",
+                        );
+                        if (reason == null) return;
+                        forkMut.mutate({
+                          branchId: b.id,
+                          body: { reason },
+                        });
+                      }}
+                    />
+                    <BranchOpButton
+                      label="Promote"
+                      title="Promote to authoritative — sibling ACTIVE branches → ABANDONED"
+                      variant="accent"
+                      disabled={promoteMut.isPending || !active}
+                      onClick={() => {
+                        if (!window.confirm(
+                          `Promote branch ${formatBranchDisplayName(b)} to authoritative?\n\n` +
+                          `Sibling ACTIVE branches will be ABANDONED.`,
+                        )) return;
+                        const reason = window.prompt(
+                          "Promotion reason (optional)?",
+                          "",
+                        ) ?? "";
+                        promoteMut.mutate({ branchId: b.id, body: { reason } });
+                      }}
+                    />
+                    {paused ? (
+                      <BranchOpButton
+                        label="Resume"
+                        title="Resume a PAUSED branch (status PAUSED → ACTIVE)"
+                        disabled={resumeMut.isPending}
+                        onClick={() => {
+                          const reason = window.prompt("Resume reason (optional)?", "") ?? "";
+                          resumeMut.mutate({ branchId: b.id, body: { reason } });
+                        }}
+                      />
+                    ) : (
+                      <BranchOpButton
+                        label="Pause"
+                        title="Pause an ACTIVE branch (status ACTIVE → PAUSED)"
+                        disabled={pauseMut.isPending || !active}
+                        onClick={() => {
+                          const reason = window.prompt("Pause reason (optional)?", "") ?? "";
+                          pauseMut.mutate({ branchId: b.id, body: { reason } });
+                        }}
+                      />
+                    )}
+                    <BranchOpButton
+                      label="Abandon"
+                      title="Close a branch without promotion"
+                      variant="danger"
+                      disabled={abandonMut.isPending || (!active && !paused)}
+                      onClick={() => {
+                        if (!window.confirm(
+                          `Abandon branch ${formatBranchDisplayName(b)}?`,
+                        )) return;
+                        const reason = window.prompt(
+                          "Abandon reason (optional)?",
+                          "",
+                        ) ?? "";
+                        abandonMut.mutate({ branchId: b.id, body: { reason } });
+                      }}
+                    />
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function BranchOpButton({
+  label,
+  title,
+  onClick,
+  disabled,
+  variant,
+}: {
+  label: string;
+  title: string;
+  onClick: () => void;
+  disabled?: boolean;
+  variant?: "accent" | "danger";
+}) {
+  const base =
+    "text-3xs font-mono px-2 py-0.5 rounded border transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
+  const style =
+    variant === "accent"
+      ? "bg-accent text-white border-accent hover:bg-accent/90"
+      : variant === "danger"
+        ? "bg-surface border-border-danger text-text-danger hover:bg-surface-hover"
+        : "bg-surface border-border-default hover:bg-surface-hover";
+  return (
+    <button
+      type="button"
+      title={title}
+      disabled={disabled}
+      onClick={onClick}
+      className={`${base} ${style}`}
+    >
+      {label}
+    </button>
   );
 }

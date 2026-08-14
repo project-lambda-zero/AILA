@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { authorizedRequestJson, requestBlob } from "@platform/api/http";
+import { ApiHttpError, authorizedRequestJson, requestBlob } from "@platform/api/http";
 import { saveBlobResponse } from "@platform/api/download";
 import { toast } from "@/components/ui/sonner";
 
@@ -252,6 +252,47 @@ export function useCancelInvestigation(projectId: string) {
     },
     onError: (err: Error) => {
       toast.error(`Failed to cancel investigation: ${err.message}`);
+    },
+  });
+}
+
+/**
+ * Force-flip a zombie investigation to ``failed`` (§49). Backend returns
+ * 409 when the row is no longer in a reapable state -- treat that as a
+ * benign "your view was stale" and refetch instead of surfacing an error.
+ */
+export function useReapInvestigation(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (investigationId: string) =>
+      authorizedRequestJson<Envelope<InvestigationSummary>>(
+        `/forensics/projects/${encodeURIComponent(projectId)}/investigations/${encodeURIComponent(investigationId)}/reap`,
+        { method: "POST" },
+      ),
+    onSuccess: (_result, investigationId) => {
+      queryClient.invalidateQueries({
+        queryKey: ["forensics", "investigations", projectId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["forensics", "investigation", projectId, investigationId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["forensics", "investigation-poll", projectId, investigationId],
+      });
+      toast.success("Zombie investigation reaped -- status flipped to failed.");
+    },
+    onError: (err: Error, investigationId) => {
+      if (err instanceof ApiHttpError && err.status === 409) {
+        toast.info("Not in a reapable state -- refreshing.");
+        queryClient.invalidateQueries({
+          queryKey: ["forensics", "investigation", projectId, investigationId],
+        });
+        queryClient.invalidateQueries({
+          queryKey: ["forensics", "investigations", projectId],
+        });
+        return;
+      }
+      toast.error(`Failed to reap investigation: ${err.message}`);
     },
   });
 }

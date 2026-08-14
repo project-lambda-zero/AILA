@@ -18,6 +18,8 @@ import type {
   PaginatedResponse,
   ProjectSummary,
   PromotedLead,
+  ReasoningGraphDiffResult,
+  ReasoningGraphSnapshot,
   RegisteredSystem,
   RegistryAnalysis,
   SolidEvidence,
@@ -473,4 +475,58 @@ export function useInvestigationEventFeed(projectId: string, investigationId: st
   // structural compat but is no longer surfaced by the platform hook;
   // transport errors trigger a reconnect rather than a terminal error.
   return { events, feedStatus, feedError: null as string | null };
+}
+
+/**
+ * List durable reasoning-graph snapshots for one investigation, one row per
+ * reasoning turn. Snapshots are ordered by ``step_number`` on the server;
+ * the replay UI walks them in that order.
+ */
+export function useReasoningGraphs(projectId: string, investigationId: string) {
+  return useQuery({
+    queryKey: ["forensics", "reasoning-graphs", projectId, investigationId],
+    queryFn: async () =>
+      (
+        await authorizedRequestJson<Envelope<ReasoningGraphSnapshot[]>>(
+          `/forensics/projects/${encodeURIComponent(projectId)}/investigations/${encodeURIComponent(investigationId)}/reasoning-graphs`,
+        )
+      ).data,
+    enabled: !!projectId && !!investigationId,
+  });
+}
+
+/**
+ * Fetch the diff between two reasoning-graph snapshots (by ``step_number``).
+ * Backend validates ``from_step``/``to_step`` >= 1; hook stays disabled until
+ * both are truthy so the initial render does not blow up on 422.
+ */
+export function useReasoningGraphDiff(
+  projectId: string,
+  investigationId: string,
+  fromStep: number | null,
+  toStep: number | null,
+) {
+  return useQuery({
+    queryKey: [
+      "forensics",
+      "reasoning-graph-diff",
+      projectId,
+      investigationId,
+      fromStep,
+      toStep,
+    ],
+    queryFn: async () =>
+      (
+        await authorizedRequestJson<Envelope<ReasoningGraphDiffResult>>(
+          `/forensics/projects/${encodeURIComponent(projectId)}/investigations/${encodeURIComponent(investigationId)}/reasoning-graphs/diff?from_step=${fromStep}&to_step=${toStep}`,
+        )
+      ).data,
+    enabled:
+      !!projectId &&
+      !!investigationId &&
+      typeof fromStep === "number" &&
+      fromStep >= 1 &&
+      typeof toStep === "number" &&
+      toStep >= 1,
+  });
 }

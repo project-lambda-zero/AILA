@@ -1,4 +1,6 @@
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
@@ -9,6 +11,7 @@ import { CVSSBreakdown } from "../components/CVSSBadge";
 import { AdjudicationBanner } from "../components/AdjudicationBanner";
 import { ObligationChecklist } from "../components/ObligationChecklist";
 import { SyntaxHighlighter } from "../components/SyntaxHighlighter";
+import { useDraftPoc } from "../mutations";
 import { useVRFinding, useVRFindingById } from "../queries";
 import type { DisclosureStatus } from "../types";
 import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
@@ -62,6 +65,41 @@ export function FindingDetailPage() {
   const { data: finding, isLoading, isError } = projectId
     ? scopedQuery
     : globalQuery;
+
+  const draftMut = useDraftPoc();
+  const queryClient = useQueryClient();
+  // Wall-clock timestamp of the last draft-poc submission. Non-null
+  // means "poll aggressively until the writer's poc lands, or 3 minutes
+  // elapse". Cleared when the poc.code differs from what we saw at
+  // dispatch time (writer finished) or after the timeout.
+  const [draftInFlightAt, setDraftInFlightAt] = useState<number | null>(null);
+  // Snapshot of poc.code at the moment the operator hit Draft. Compared
+  // against the live query result to detect that the writer's overwrite
+  // has landed. Captured in the mutate onSuccess (below) rather than
+  // read from the cache inside the effect so the effect doesn't
+  // self-clear the moment the freshly-refetched poc.code arrives.
+  const preDraftPocRef = useRef<string>("");
+  const currentPocCode = finding?.poc?.code ?? "";
+  useEffect(() => {
+    if (draftInFlightAt == null) return;
+    if (currentPocCode && currentPocCode !== preDraftPocRef.current) {
+      setDraftInFlightAt(null);
+      return;
+    }
+    // Bail after 3 minutes — the writer normally lands in 30-120s;
+    // beyond that assume the task failed silently and stop polling.
+    if (Date.now() - draftInFlightAt > 180_000) {
+      setDraftInFlightAt(null);
+      return;
+    }
+    const invalidateKey: readonly unknown[] = projectId
+      ? ["vr", "finding", projectId, findingId]
+      : ["vr", "finding-by-id", findingId];
+    const t = setTimeout(() => {
+      queryClient.invalidateQueries({ queryKey: invalidateKey });
+    }, 8000);
+    return () => clearTimeout(t);
+  }, [draftInFlightAt, currentPocCode, projectId, findingId, queryClient]);
 
   // Fallback title chain: vulnerable_function (real triage),
   // root_cause's first line (audit-derived findings often carry a
@@ -223,33 +261,62 @@ export function FindingDetailPage() {
             : "PoC"
         }
         actions={
-          f.poc?.code && (
-            <div className="flex gap-1">
-              <button
-                type="button"
-                onClick={() => {
-                  void navigator.clipboard?.writeText(f.poc?.code ?? "");
-                }}
-                className="px-2 py-0.5 text-3xs font-mono rounded bg-surface border border-border-default hover:bg-surface-hover"
-              >
-                Copy
-              </button>
-              <button
-                type="button"
-                onClick={downloadPoC}
-                className="px-2 py-0.5 text-3xs font-mono rounded bg-surface border border-border-default hover:bg-surface-hover"
-                title={`Download ${pocFileName}`}
-              >
-                Download
-              </button>
-              <Link
-                to={`/vr/projects/${projectId}/findings/${findingId}/exploit`}
-                className="px-2 py-0.5 text-3xs font-mono rounded bg-accent text-white hover:bg-accent/90"
-              >
-                Open in editor →
-              </Link>
-            </div>
-          )
+          <div className="flex gap-1 flex-wrap">
+            <button
+              type="button"
+              disabled={draftMut.isPending || draftInFlightAt != null}
+              onClick={() => {
+                preDraftPocRef.current = currentPocCode;
+                draftMut.mutate(
+                  { findingId },
+                  { onSuccess: () => setDraftInFlightAt(Date.now()) },
+                );
+              }}
+              className="px-2 py-0.5 text-3xs font-mono rounded bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
+              title={
+                f.poc?.code
+                  ? "Re-draft the PoC — overwrites the existing poc.code."
+                  : "Enqueue the PoC writer (run_vr_draft_poc). Result lands on this finding's poc.code in ~30-120s."
+              }
+            >
+              {draftInFlightAt != null
+                ? "Drafting…"
+                : draftMut.isPending
+                  ? "Queuing…"
+                  : f.poc?.code
+                    ? "Re-draft PoC (agent)"
+                    : "Draft PoC (agent)"}
+            </button>
+            {f.poc?.code && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(f.poc?.code ?? "");
+                  }}
+                  className="px-2 py-0.5 text-3xs font-mono rounded bg-surface border border-border-default hover:bg-surface-hover"
+                >
+                  Copy
+                </button>
+                <button
+                  type="button"
+                  onClick={downloadPoC}
+                  className="px-2 py-0.5 text-3xs font-mono rounded bg-surface border border-border-default hover:bg-surface-hover"
+                  title={`Download ${pocFileName}`}
+                >
+                  Download
+                </button>
+                {projectId && (
+                  <Link
+                    to={`/vr/projects/${projectId}/findings/${findingId}/exploit`}
+                    className="px-2 py-0.5 text-3xs font-mono rounded bg-accent text-white hover:bg-accent/90"
+                  >
+                    Open in editor →
+                  </Link>
+                )}
+              </>
+            )}
+          </div>
         }
       />
       {f.poc?.code ? (
@@ -257,6 +324,11 @@ export function FindingDetailPage() {
           code={f.poc.code}
           language={f.poc.language ?? "python"}
         />
+      ) : draftInFlightAt != null ? (
+        <p className="text-xs text-text-muted">
+          Writer running… polling for the new PoC every 8s (auto-stops after 3
+          min). The PoC card populates when run_vr_draft_poc finishes.
+        </p>
       ) : (
         <p className="text-xs text-text-muted">No PoC yet.</p>
       )}</AilaCard>

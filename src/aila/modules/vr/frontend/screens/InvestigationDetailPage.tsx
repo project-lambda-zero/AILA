@@ -48,6 +48,7 @@ import { FuzzProposalsPanel } from "../components/FuzzProposalCard";
 import { useInvestigationMessagesStream } from "../hooks/useInvestigationMessagesStream";
 import { useVRKeyboardShortcuts } from "../hooks/useVRKeyboardShortcuts";
 import {
+  useCreateOutcomeReview,
   useDeleteInvestigation,
   usePauseInvestigation,
   useReenqueueInvestigation,
@@ -72,7 +73,9 @@ import type {
   InvestigationStatus,
   OperatorIntent,
   OutcomeDispatchStatus,
+  OutcomeReviewVote,
   PersonaVoice,
+  VRBranchSummary,
   VRMessageSummary,
 } from "../types";
 import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
@@ -451,6 +454,7 @@ export function InvestigationDetailPage() {
   const deleteMut = useDeleteInvestigation();
   const reverifyMut = useReverifyInvestigation();
   const promoteMut = usePromoteOutcomeToFinding(invId);
+  const reviewMut = useCreateOutcomeReview(invId);
 
   const [messageText, setMessageText] = useState("");
 
@@ -926,8 +930,10 @@ export function InvestigationDetailPage() {
                 outcome={primaryOutcome}
                 persona={branches.find((b) => b.id === primaryOutcome.branch_id)?.persona_voice ?? null}
                 invId={invId}
+                branches={branches}
                 reverifyMut={reverifyMut}
                 promoteMut={promoteMut}
+                reviewMut={reviewMut}
               />
             )}
             {primaryOutcome && (
@@ -946,8 +952,10 @@ export function InvestigationDetailPage() {
                       outcome={o}
                       persona={oPers}
                       invId={invId}
+                      branches={branches}
                       reverifyMut={reverifyMut}
                       promoteMut={promoteMut}
+                      reviewMut={reviewMut}
                     />
                   );
                 })}
@@ -1354,9 +1362,154 @@ type OutcomeRowProps = {
   outcome: import("../types").VROutcomeSummary;
   persona: PersonaVoice | string | null;
   invId: string;
+  branches: VRBranchSummary[];
   reverifyMut: ReturnType<typeof useReverifyInvestigation>;
   promoteMut: ReturnType<typeof usePromoteOutcomeToFinding>;
+  reviewMut: ReturnType<typeof useCreateOutcomeReview>;
 };
+
+const REVIEW_VOTES: readonly OutcomeReviewVote[] = [
+  "approve", "reject", "request_edit", "abstain", "not_ready",
+];
+
+/** Inline vote form on any draft outcome. Casts a review on behalf of
+ *  a sibling branch — the backend evaluates quorum after every insert
+ *  and, when approve-quorum flips, fires the dispatcher inline. */
+function SiblingReviewForm({
+  outcomeId,
+  outcomeBranchId,
+  branches,
+  reviewMut,
+}: {
+  outcomeId: string;
+  outcomeBranchId: string | null | undefined;
+  branches: VRBranchSummary[];
+  reviewMut: ReturnType<typeof useCreateOutcomeReview>;
+}) {
+  // Default reviewer_branch_id to the first sibling branch that isn't
+  // the branch that wrote the outcome — voting on your own draft is
+  // legal but meaningless for quorum. Falls back to the first branch
+  // if there's only one.
+  const defaultBranch =
+    branches.find((b) => b.id !== outcomeBranchId)?.id ??
+    branches[0]?.id ??
+    "";
+  const [reviewerBranchId, setReviewerBranchId] = useState<string>(defaultBranch);
+  const [vote, setVote] = useState<OutcomeReviewVote>("approve");
+  const [comment, setComment] = useState("");
+  const [open, setOpen] = useState(false);
+
+  if (branches.length === 0) return null;
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen(true);
+        }}
+        className="inline-flex items-center gap-1.5 px-2 py-0.5 text-3xs rounded border border-border-default text-text-muted hover:text-foreground hover:border-accent transition-colors"
+        title="Cast a sibling review — approve quorum flips this outcome to APPROVED and fires the dispatcher."
+      >
+        ⚖ Review
+      </button>
+    );
+  }
+
+  const disabled =
+    reviewMut.isPending || reviewerBranchId === "" || vote === undefined;
+
+  return (
+    <form
+      className="w-full mt-2 space-y-2 rounded border border-border-default/60 bg-elevated/40 p-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (disabled) return;
+        reviewMut.mutate(
+          {
+            outcomeId,
+            body: {
+              reviewer_branch_id: reviewerBranchId,
+              vote,
+              comment: comment.trim(),
+            },
+          },
+          {
+            onSuccess: () => {
+              setComment("");
+              setOpen(false);
+            },
+          },
+        );
+      }}
+    >
+      <div className="flex gap-2 flex-wrap">
+        <label className="text-3xs">
+          <span className="block text-text-muted uppercase tracking-wide mb-0.5">
+            Reviewer branch
+          </span>
+          <select
+            value={reviewerBranchId}
+            onChange={(e) => setReviewerBranchId(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+            className="text-2xs font-mono px-2 py-0.5 rounded bg-surface border border-border-default"
+          >
+            {branches.map((b) => (
+              <option key={b.id} value={b.id}>
+                {formatBranchDisplayName(b)}
+                {b.id === outcomeBranchId ? " (self)" : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="text-3xs">
+          <span className="block text-text-muted uppercase tracking-wide mb-0.5">
+            Vote
+          </span>
+          <select
+            value={vote}
+            onChange={(e) => setVote(e.target.value as OutcomeReviewVote)}
+            onClick={(e) => e.stopPropagation()}
+            className="text-2xs font-mono px-2 py-0.5 rounded bg-surface border border-border-default"
+          >
+            {REVIEW_VOTES.map((v) => (
+              <option key={v} value={v}>{v}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <textarea
+        value={comment}
+        onChange={(e) => setComment(e.target.value)}
+        onClick={(e) => e.stopPropagation()}
+        placeholder="Comment (optional). For not_ready, state the blocker."
+        rows={2}
+        maxLength={4096}
+        className="w-full text-2xs font-mono p-1.5 rounded bg-surface border border-border-default focus:border-accent focus:outline-none"
+      />
+      <div className="flex justify-end gap-1">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpen(false);
+          }}
+          className="text-3xs px-2 py-0.5 rounded border border-border-default text-text-muted hover:bg-surface-hover"
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          disabled={disabled}
+          className="text-3xs px-2 py-0.5 rounded bg-accent text-white disabled:opacity-50"
+        >
+          {reviewMut.isPending ? "…" : "Submit review"}
+        </button>
+      </div>
+    </form>
+  );
+}
 
 function readVerifier(payload: Record<string, unknown> | undefined) {
   return (payload?.verifier_report as
@@ -1430,8 +1583,10 @@ function PrimaryOutcomeCard({
   outcome: o,
   persona,
   invId,
+  branches,
   reverifyMut,
   promoteMut,
+  reviewMut,
 }: OutcomeRowProps) {
   const vr = readVerifier(o.payload);
   const persMeta = personaMeta(persona);
@@ -1523,6 +1678,12 @@ function PrimaryOutcomeCard({
           <ShieldCheck weight="regular" size={12} />
           {reverifyMut.isPending ? "…" : vr?.verdict ? "Re-verify" : "Verify"}
         </button>
+        <SiblingReviewForm
+          outcomeId={o.id}
+          outcomeBranchId={o.branch_id}
+          branches={branches}
+          reviewMut={reviewMut}
+        />
         {o.outcome_kind === "assessment_report" && o.dispatch_status === "skipped" && (
           <button
             type="button"
@@ -1567,8 +1728,10 @@ function CompactOutcomeRow({
   outcome: o,
   persona,
   invId,
+  branches,
   reverifyMut,
   promoteMut,
+  reviewMut,
 }: OutcomeRowProps) {
   const [expanded, setExpanded] = useState(false);
   const vr = readVerifier(o.payload);
@@ -1639,6 +1802,14 @@ function CompactOutcomeRow({
           )}
           {vr?.verdict && <VerifierBanner vr={vr} />}
           <PayloadPreview payload={o.payload} />
+          <div className="flex justify-start">
+            <SiblingReviewForm
+              outcomeId={o.id}
+              outcomeBranchId={o.branch_id}
+              branches={branches}
+              reviewMut={reviewMut}
+            />
+          </div>
           {o.outcome_kind === "assessment_report" && o.dispatch_status === "skipped" && (
             <div className="flex gap-2 pt-1">
               <button

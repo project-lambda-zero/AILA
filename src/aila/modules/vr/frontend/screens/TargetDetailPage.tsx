@@ -21,6 +21,7 @@ import {
   useApkStaticAudit,
   useDeleteTarget,
   useMasvsAudit,
+  useResumeTargetAnalysis,
   useRankTarget,
   useUploadTargetArtifact,
 } from "../mutations";
@@ -1549,6 +1550,7 @@ export function TargetDetailPage() {
   });
 
   const analyzeMut = useAnalyzeTarget(tid);
+  const resumeAnalysisMut = useResumeTargetAnalysis(tid);
   const rankMut = useRankTarget(tid);
   const uploadMut = useUploadTargetArtifact(tid);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1611,6 +1613,17 @@ export function TargetDetailPage() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          {target.analysis_state === "failed" && (
+            <button
+              type="button"
+              onClick={() => resumeAnalysisMut.mutate()}
+              disabled={resumeAnalysisMut.isPending}
+              title="Reset any FAILED stages back to PENDING and re-enqueue the ingest → profile → ranking pipeline. Stages already DONE are skipped (StageTracker idempotence). Distinct from Re-analyze, which resubmits everything unconditionally."
+              className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border-default hover:bg-surface-hover disabled:opacity-50"
+            >
+              {resumeAnalysisMut.isPending ? "Resuming…" : "Resume analysis"}
+            </button>
+          )}
           {(target.analysis_state === "failed" ||
             target.analysis_state === "ready") && (
             <button

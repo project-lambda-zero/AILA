@@ -1,12 +1,25 @@
+import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { HexView } from "../components/HexView";
+import { useAppendCrashTriage } from "../mutations";
 import { useFuzzCrash } from "../queries";
 import type { CrashTriageVerdict } from "../types";
 import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
+
+/** CrashTriageVerdict enum, mirrors contracts/fuzz.py. Kept in-file so
+ *  the triage form dropdown stays in lockstep with the badge-color map
+ *  at the top of this file. */
+const TRIAGE_VERDICT_VALUES: readonly CrashTriageVerdict[] = [
+  "untriaged",
+  "security_relevant",
+  "likely_harmless",
+  "duplicate",
+  "needs_manual_review",
+];
 
 const VERDICT_COLOR: Record<
   CrashTriageVerdict,
@@ -235,7 +248,10 @@ export function FuzzCrashDetailPage() {
         Per-turn reasoning rows (decompile_function / data_flow_trace /
         hypothesis_create / exploitability_assess from §2.4) still
         require a crash → reasoning-turn join table -- backend pending.
-      </p></AilaCard>
+      </p>
+      <div className="mt-4 pt-4 border-t border-border-default">
+        <TriageEventForm crashId={cid} />
+      </div></AilaCard>
 
       {/* LLM one-line summary (§1.6) -- derived from the structured
           report; placeholder when not present. */}
@@ -344,5 +360,101 @@ export function FuzzCrashDetailPage() {
         </pre></AilaCard>
       )}
     </div>
+  );
+}
+
+/** Operator-facing "add triage event" form (POST /vr/fuzz/crashes/:id/triage).
+ *
+ *  The backend appends the event onto triage_chain_json AND flips the
+ *  crash's top-level triage_verdict / triage_reason to the latest
+ *  event. The verdict dropdown mirrors contracts/fuzz.py::CrashTriageVerdict
+ *  (see TRIAGE_VERDICT_VALUES at the top of the file). The actor is
+ *  stamped as "operator" — the backend does not require caller-supplied
+ *  actor identity, and we deliberately don't inject the logged-in
+ *  user's display name to keep the audit trail attribution consistent
+ *  with the other operator-driven paths (message send / reset / etc).
+ */
+function TriageEventForm({ crashId }: { crashId: string }) {
+  const [verdict, setVerdict] = useState<CrashTriageVerdict>(
+    "needs_manual_review",
+  );
+  const [reason, setReason] = useState("");
+  const [notes, setNotes] = useState("");
+  const triageMut = useAppendCrashTriage(crashId);
+
+  const disabled = triageMut.isPending || reason.trim().length === 0;
+
+  return (
+    <form
+      className="space-y-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (disabled) return;
+        triageMut.mutate(
+          {
+            at: new Date().toISOString(),
+            actor: "operator",
+            verdict,
+            reason: reason.trim(),
+            notes: notes.trim(),
+          },
+          {
+            onSuccess: () => {
+              setReason("");
+              setNotes("");
+            },
+          },
+        );
+      }}
+    >
+      <h3 className="text-xs font-semibold text-foreground">
+        Add triage event
+      </h3>
+      <div className="flex gap-2 flex-wrap items-center">
+        <label className="text-3xs text-text-muted uppercase tracking-wide">
+          Verdict
+        </label>
+        <select
+          value={verdict}
+          onChange={(e) => setVerdict(e.target.value as CrashTriageVerdict)}
+          className="text-xs px-2 py-1 rounded bg-surface border border-border-default"
+          aria-label="Triage verdict"
+        >
+          {TRIAGE_VERDICT_VALUES.map((v) => (
+            <option key={v} value={v}>
+              {v}
+            </option>
+          ))}
+        </select>
+      </div>
+      <textarea
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+        placeholder="Reason (required) — one-liner justifying the verdict change"
+        rows={2}
+        className="w-full text-xs font-mono p-2 rounded bg-surface border border-border-default focus:border-accent focus:outline-none"
+        aria-label="Triage reason"
+      />
+      <textarea
+        value={notes}
+        onChange={(e) => setNotes(e.target.value)}
+        placeholder="Notes (optional) — free-form context, links, follow-ups"
+        rows={2}
+        className="w-full text-xs font-mono p-2 rounded bg-surface border border-border-default focus:border-accent focus:outline-none"
+        aria-label="Triage notes"
+      />
+      <div className="flex items-center justify-end gap-2">
+        <span className="text-3xs text-text-muted">
+          Appends to triage_chain and rewrites triage_verdict/triage_reason to the latest.
+        </span>
+        <button
+          type="submit"
+          disabled={disabled}
+          className="text-xs px-3 py-1 rounded bg-accent text-white disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {triageMut.isPending ? "Appending…" : "Append event"}
+        </button>
+      </div>
+    </form>
   );
 }

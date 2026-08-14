@@ -11,6 +11,7 @@ import { AnalystDirectivesPanel } from "../components/AnalystDirectivesPanel";
 import { RetrieveFilePanel } from "../components/RetrieveFilePanel";
 import {
   useCancelInvestigation,
+  useReapInvestigation,
   useRerunInvestigation,
   useTagInvestigation,
 } from "../mutations";
@@ -496,6 +497,61 @@ function InvestigationControls({
   );
 }
 
+interface ZombieReapBannerProps {
+  projectId: string;
+  investigationId: string;
+  reason: string | null;
+}
+
+/**
+ * Operator affordance for §49 zombie reap. The backend's GET handlers
+ * mark a row ``needs_reap=true`` when the task is dead but the row's
+ * ``status`` never got flipped; the POST re-checks the same predicate
+ * and only then transitions to ``failed``. 409 means the row is no
+ * longer stuck (someone else reaped, or the task recovered) -- the
+ * mutation handles that as a benign refetch.
+ */
+function ZombieReapBanner({ projectId, investigationId, reason }: ZombieReapBannerProps) {
+  const reap = useReapInvestigation(projectId);
+  const handleReap = () => {
+    const ok = window.confirm(
+      "Force-fail this zombie investigation? This flips its status to `failed` and writes an audit note. Use only when the task is confirmed dead.",
+    );
+    if (!ok) return;
+    reap.mutate(investigationId);
+  };
+  return (
+    <AilaCard className="border-amber-700/50 bg-amber-950/20" techBorder glow>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="space-y-1 flex-1" style={{ minWidth: "16rem" }}>
+          <p className="text-xs font-mono text-amber-300 uppercase tracking-wide">
+            Zombie investigation detected
+          </p>
+          <p className="text-sm text-foreground">
+            The backing task has settled but this row was never flipped to a
+            terminal status. Reaping records an audit-friendly failure so
+            downstream views stop treating it as live.
+          </p>
+          {reason && (
+            <p className="text-xs font-mono text-text-muted break-all">
+              reason: {reason}
+            </p>
+          )}
+        </div>
+        <Button
+          size="sm"
+          variant="destructive"
+          onClick={handleReap}
+          disabled={reap.isPending}
+          className="shrink-0"
+        >
+          {reap.isPending ? "Reaping…" : "Reap (force-fail zombie)"}
+        </Button>
+      </div>
+    </AilaCard>
+  );
+}
+
 // ----- Main page -----
 export function InvestigationDetailPage() {
   const { projectId, investigationId } = useParams<{
@@ -591,6 +647,16 @@ export function InvestigationDetailPage() {
         </div></AilaCard>
       )}
 
+      {/* Zombie-reap banner (§49). Shown only when the backend flags the
+          row as reapable; POSTing to /reap flips the status to failed. */}
+      {investigation.needs_reap && (
+        <ZombieReapBanner
+          projectId={projectId}
+          investigationId={investigationId}
+          reason={investigation.needs_reap_reason ?? null}
+        />
+      )}
+
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="space-y-1 flex-1" style={{ minWidth: "16rem" }}>
@@ -603,6 +669,20 @@ export function InvestigationDetailPage() {
             {investigation.confidence && (
               <span>Confidence: {investigation.confidence}</span>
             )}
+          </div>
+          <div>
+            <button
+              type="button"
+              onClick={() =>
+                navigate(
+                  `/forensics/projects/${projectId}/investigations/${investigationId}/reasoning-replay`,
+                )
+              }
+              className="text-xs px-2 py-1 rounded border border-border text-text-muted hover:text-foreground hover:bg-surface-secondary transition-colors"
+              title="Step through the reasoning-graph snapshots this investigation recorded"
+            >
+              Reasoning replay {"\u2192"}
+            </button>
           </div>
         </div>
         <InvestigationControls

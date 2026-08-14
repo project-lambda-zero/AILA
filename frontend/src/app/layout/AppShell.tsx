@@ -4,7 +4,9 @@ import type { ReactNode } from "react";
 import { type ModuleFrontendSpec } from "@platform/extension-registry/types";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { CommandPalette } from "@/components/shell/CommandPalette";
+import { KeyboardShortcutsController } from "@/components/shell/KeyboardShortcutsController";
 import { OfflineBanner } from "@/components/shell/OfflineBanner";
+import { ShortcutsCheatsheet } from "@/components/shell/ShortcutsCheatsheet";
 import { StatusBar } from "@/components/shell/StatusBar";
 import { OnboardingWizard } from "@platform/features/onboarding";
 import { useAuthStore } from "@platform/auth/useAuthStore";
@@ -95,6 +97,18 @@ export function AppShell({ children, moduleSpecs }: AppShellProps) {
       </SidebarInset>
       {/* CommandPalette renders via portal -- outside layout flow (D-09, D-10) */}
       <CommandPalette />
+
+      {/*
+        Platform-wide keyboard shortcut layer. The controller attaches
+        the document keydown listener and calls `useNavigate` (so it
+        MUST live inside the RouterProvider tree -- AppShell qualifies);
+        the cheatsheet is a portalled dialog driven by the shared
+        KeyboardShortcutsProvider context. Mounted here (not in
+        providers.tsx) so shortcuts only fire behind ProtectedRoute
+        and never on /login, /auth/callback, /403, or /500.
+      */}
+      <KeyboardShortcutsController />
+      <ShortcutsCheatsheet />
 
       {/*
         App-level cyber-tech overlay -- corner brackets + top hairline

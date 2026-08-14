@@ -7,6 +7,46 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.14] - 2026-08-13 -- Module operator-drive surfaces, reasoning replay, global shortcuts
+
+Wires module write endpoints the backend already staged but the frontends only
+rendered read-side, plus two cross-cutting usability features. Additive:
+existing screens and behavior are unchanged (#213).
+
+### Added
+
+- VR operator controls: fuzz-crash triage (append a verdict + reason to the
+  triage chain), an agent draft-PoC trigger that polls until the drafted code
+  lands, outcome sibling-review voting, strategy-branch spawn, per-branch
+  operations (fork, promote, abandon, pause, resume) from the branch tree, and a
+  failed-target analysis resume. Wires `POST /vr/fuzz/crashes/{id}/triage`,
+  `/vr/findings/{id}/draft-poc`, `/vr/investigations/{id}/outcomes/{oid}/reviews`,
+  `/vr/investigations/{id}/strategy-branches`,
+  `/vr/investigations/{id}/branches/{bid}/{fork,promote,abandon,pause,resume}`,
+  `/vr/targets/{id}/resume-analysis`.
+- Malware operator controls: operator-message acknowledgement (stops a steering
+  message re-firing for 24h), operator observation create, branch promote and
+  abandon from the branch tree, and investigation finalize. Wires
+  `POST /malware/messages/{id}/ack`, `/malware/observations`,
+  `/malware/branches/{id}/{promote,abandon}`,
+  `/malware/investigations/{id}/finalize`.
+- Forensics reasoning-graph replay: a step-ordered snapshot timeline with an
+  added and removed node-and-edge diff between any two steps, plus an operator
+  zombie-reap action shown only for investigations the backend marks reapable
+  (409 on a stale view refetches instead of erroring). Wires
+  `GET /forensics/.../reasoning-graphs`, `.../reasoning-graphs/diff`, and
+  `POST /forensics/.../reap`.
+- Cross-team comparison on the Teams admin page (systems, runs, and members per
+  team) from `GET /admin/teams/cross-view`, and a live ROI figure in the status
+  bar from `GET /cost/roi` that hides itself cleanly on error.
+- A platform-wide keyboard-shortcut layer: chorded navigation (`g d`, `g o`,
+  `g c`, `g t`) and a `?` cheatsheet overlay. It cooperates with the existing
+  command-palette and sidebar bindings and stays inert while a field is focused.
+
+### Changed
+
+- The status bar gains a ROI segment; no layout shift, same 24px mono strip.
+
 ## [0.5.13] - 2026-08-13 -- Operator console: ML-Ops, infra control, command palette, war room, topology, audit seals
 
 Surfaces a large set of backend capabilities that previously had no frontend. A

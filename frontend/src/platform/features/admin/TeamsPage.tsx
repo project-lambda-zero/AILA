@@ -27,6 +27,11 @@ import {
 } from "@/components/ui/dialog";
 import { authorizedRequestJson } from "@platform/api/http";
 
+import {
+  useCrossTeamStats,
+  type CrossTeamStatsRow,
+} from "./crossTeamQueries";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -38,14 +43,6 @@ interface Team {
   created_at: string;
   updated_at: string;
   member_count: number;
-}
-
-interface CrossTeamStatsRow {
-  team_id: string;
-  team_name: string;
-  systems_count: number;
-  runs_count: number;
-  members_count: number;
 }
 
 interface DataEnvelope<T> {
@@ -218,13 +215,7 @@ export function TeamsPage() {
     queryFn: () => authorizedRequestJson<DataEnvelope<Team[]>>("/admin/teams"),
   });
 
-  const crossQuery = useQuery({
-    queryKey: ["platform", "admin-teams", "cross-view"],
-    queryFn: () =>
-      authorizedRequestJson<DataEnvelope<CrossTeamStatsRow[]>>(
-        "/admin/teams/cross-view",
-      ),
-  });
+  const crossQuery = useCrossTeamStats();
 
   const createMutation = useMutation({
     mutationFn: (req: CreateTeamRequest) =>
@@ -316,6 +307,119 @@ export function TeamsPage() {
           <AilaTable.Pagination pageSizeOptions={[10, 25, 50]} />
         </AilaTable>
       )}
+
+      {!crossQuery.isLoading && !crossQuery.isError && crossRows.length > 0 && (
+        <CrossTeamComparison rows={crossRows} />
+      )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Cross-team comparison -- CSS-width horizontal bars per metric.
+//
+// One row per team, three tracks (systems / runs / members). Each track is
+// normalized to the max across the whole set so the widest team fills the
+// track; the numeric readout stays exact so a lopsided distribution is
+// legible without hover.
+// ---------------------------------------------------------------------------
+
+interface CrossTeamComparisonProps {
+  rows: CrossTeamStatsRow[];
+}
+
+const METRIC_TRACKS: ReadonlyArray<{
+  key: "systems_count" | "runs_count" | "members_count";
+  label: string;
+  color: string;
+}> = [
+  { key: "systems_count", label: "Systems", color: "var(--color-accent)" },
+  { key: "runs_count", label: "Runs", color: "var(--status-running)" },
+  { key: "members_count", label: "Members", color: "var(--status-completed)" },
+];
+
+function CrossTeamComparison({ rows }: CrossTeamComparisonProps) {
+  const maxima = useMemo(() => {
+    const m = { systems_count: 0, runs_count: 0, members_count: 0 };
+    for (const r of rows) {
+      if (r.systems_count > m.systems_count) m.systems_count = r.systems_count;
+      if (r.runs_count > m.runs_count) m.runs_count = r.runs_count;
+      if (r.members_count > m.members_count) m.members_count = r.members_count;
+    }
+    return m;
+  }, [rows]);
+
+  const sorted = useMemo(
+    () =>
+      [...rows].sort(
+        (a, b) =>
+          b.systems_count + b.runs_count + b.members_count -
+          (a.systems_count + a.runs_count + a.members_count),
+      ),
+    [rows],
+  );
+
+  return (
+    <AilaCard variant="default" padding="md" techBorder glow>
+      <div className="flex items-center justify-between mb-4">
+        <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+          Cross-team comparison
+        </p>
+        <p className="font-mono text-[10.5px] uppercase tracking-wider text-text-muted opacity-70">
+          {rows.length} team{rows.length === 1 ? "" : "s"}
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-4">
+        {sorted.map((row) => (
+          <div key={row.team_id} className="flex flex-col gap-2">
+            <div className="flex items-center justify-between font-mono text-xs">
+              <span className="text-text truncate">{row.team_name}</span>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              {METRIC_TRACKS.map((track) => {
+                const value = row[track.key];
+                const max = maxima[track.key];
+                const pct = max > 0 ? Math.round((value / max) * 100) : 0;
+                return (
+                  <div
+                    key={track.key}
+                    className="grid items-center gap-3 font-mono text-[10.5px] uppercase tracking-wider"
+                    style={{ gridTemplateColumns: "72px 1fr 44px" }}
+                  >
+                    <span className="text-text-muted">{track.label}</span>
+                    <span
+                      aria-hidden
+                      style={{
+                        position: "relative",
+                        height: 6,
+                        background: "var(--color-border)",
+                        opacity: 0.35,
+                      }}
+                    >
+                      <span
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          width: `${pct}%`,
+                          background: track.color,
+                          opacity: 0.85,
+                        }}
+                      />
+                    </span>
+                    <span
+                      className="text-text text-right"
+                      style={{ fontVariantNumeric: "tabular-nums" }}
+                    >
+                      {value}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </AilaCard>
   );
 }
