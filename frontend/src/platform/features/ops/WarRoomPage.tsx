@@ -1,17 +1,22 @@
 /**
- * WarRoomPage -- Ops War Room, a console-aesthetic real-time surface.
+ * WarRoomPage -- Ops War Room, a security-operations-center surface.
  *
- * Three columns on wide viewports (stack on narrow):
+ * A command-bar masthead (live SSE indicator + wall clock) sits above a
+ * three-panel command-center composition on wide viewports (panels stack
+ * on narrow):
  *   1. Live event stream from the shared SSE fan-out (buffered by
- *      {@link ActivityFeedProvider}). Newest on top, mono, type/scope
- *      colouring, chip filters, freeze-on-hover so a clicking user does
+ *      {@link ActivityFeedProvider}). Dense monospace log-stream, newest
+ *      on top, severity-coloured left accents, absolute + relative
+ *      timestamps, chip filters, freeze-on-hover so a clicking user does
  *      not race a fresh event that reorders the list under the pointer.
- *   2. Active runs grid seeded from ``GET /tasks/queue-depth`` and any
- *      run ids observed in the activity buffer. Each card shows the
- *      last event for that resource; per-run drill-down streams are
- *      opt-in and stay out of this initial cut.
- *   3. Vitals rail: queue depth (5s), dead-letter count (admin only,
- *      30s), and SSE connection state from {@link useSSEContext}.
+ *   2. Active runs board seeded from ``GET /tasks/queue-depth`` and any
+ *      run ids observed in the activity buffer. Each row shows the status
+ *      dot, module tag, last event, and elapsed time. Per-run drill-down
+ *      streams are opt-in and stay out of this initial cut.
+ *   3. Vitals rail as live gauges: queue depth (5s), dead-letter count
+ *      (admin only, 30s), and SSE connection state from
+ *      {@link useSSEContext} -- big numerals, hot-pink when non-zero /
+ *      critical, muted when idle.
  *
  * Renders bare content (no PageShell/PageFrame) -- ``protectPage`` in
  * the router owns the title bar.
@@ -20,6 +25,7 @@ import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Broadcast } from "@phosphor-icons/react/dist/csr/Broadcast";
 import { CircleNotch } from "@phosphor-icons/react/dist/csr/CircleNotch";
+import { Clock } from "@phosphor-icons/react/dist/csr/Clock";
 import { Pulse } from "@phosphor-icons/react/dist/csr/Pulse";
 import { Queue } from "@phosphor-icons/react/dist/csr/Queue";
 import { Skull } from "@phosphor-icons/react/dist/csr/Skull";
@@ -102,7 +108,18 @@ function formatRelative(now: number, at: number): string {
   return `${Math.floor(delta / 86_400_000)}d`;
 }
 
-function severityForEvent(event: ActivityEvent): "critical" | "high" | "medium" | "low" | "info" | "neutral" {
+/** Absolute wall-clock timestamp for a log row -- fixed 24h HH:MM:SS so
+ *  events correlate cleanly regardless of locale. Pure display formatting
+ *  of the ingest time already carried on the event. */
+function formatClock(at: number): string {
+  const d = new Date(at);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+type EventSeverity = "critical" | "high" | "medium" | "low" | "info" | "neutral";
+
+function severityForEvent(event: ActivityEvent): EventSeverity {
   const type = event.type;
   if (type === "system_unreachable") return "high";
   if (type === "finding_arrived") {
@@ -123,6 +140,56 @@ function severityForEvent(event: ActivityEvent): "critical" | "high" | "medium" 
     return "info";
   }
   return "neutral";
+}
+
+/** Severity affordances for the log stream + run board: a left accent bar
+ *  (background token) and a matching text colour. Kept off the badge so an
+ *  operator reads urgency from the rail colour at a glance. */
+const SEVERITY_STYLE: Record<EventSeverity, { bar: string; text: string }> = {
+  critical: { bar: "bg-critical", text: "text-critical" },
+  high: { bar: "bg-high", text: "text-high" },
+  medium: { bar: "bg-medium", text: "text-medium" },
+  low: { bar: "bg-low", text: "text-low" },
+  info: { bar: "bg-lavender", text: "text-lavender" },
+  neutral: { bar: "bg-border", text: "text-text-muted" },
+};
+
+// ---------------------------------------------------------------------------
+// Shared presentational chrome
+// ---------------------------------------------------------------------------
+
+/** Consistent panel masthead -- accent icon, mono small-caps label, and an
+ *  optional right-aligned readout slot. Gives the three panels a single
+ *  command-center header rhythm. */
+function PanelHeader({
+  icon,
+  label,
+  right,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  right?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-b border-border pb-2.5">
+      <div className="flex items-center gap-2 text-accent">
+        {icon}
+        <span className="font-mono text-2xs uppercase tracking-cyber text-text-muted">{label}</span>
+      </div>
+      {right}
+    </div>
+  );
+}
+
+/** Command-bar wall clock. Self-contained 1Hz tick -- purely decorative
+ *  chrome, no bearing on the feed or queries. */
+function LiveClock() {
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(id);
+  }, []);
+  return <span className="font-mono text-xs tabular-nums text-text-muted">{formatClock(now)}</span>;
 }
 
 // ---------------------------------------------------------------------------
@@ -173,24 +240,38 @@ function LiveEventStream({
 
   return (
     <AilaCard variant="elevated" padding="md" className="flex flex-col" style={{ minHeight: 640 }}>
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <Broadcast className="h-4 w-4 text-accent" />
-          <span className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Live Event Stream
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[10px] uppercase tracking-wider text-text-muted">
-            {totalIngested} total | showing {visible.length}
-          </span>
-          {activeScopes.size > 0 && (
-            <Button variant="ghost" size="sm" onClick={onReset} className="h-6 px-2 font-mono text-[10px]">
-              CLEAR FILTERS
-            </Button>
-          )}
-        </div>
-      </div>
+      <PanelHeader
+        icon={<Broadcast className="h-4 w-4" />}
+        label="Live Event Stream"
+        right={
+          <div className="flex items-center gap-3">
+            <span
+              className={`inline-flex items-center gap-1.5 font-mono text-3xs uppercase tracking-cyber-sm ${paused ? "text-text-muted" : "text-accent"}`}
+            >
+              <span
+                aria-hidden
+                className={`inline-block h-1.5 w-1.5 rounded-full ${paused ? "bg-text-muted" : "bg-accent"}`}
+              />
+              {paused ? "Paused" : "Live"}
+            </span>
+            <span className="font-mono text-3xs uppercase tracking-cyber-sm text-text-muted">
+              <span className="tabular-nums text-text-primary">{totalIngested}</span> total
+              <span aria-hidden className="px-1 text-border">/</span>
+              <span className="tabular-nums text-text-primary">{visible.length}</span> shown
+            </span>
+            {activeScopes.size > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onReset}
+                className="h-6 px-2 font-mono text-3xs uppercase tracking-cyber-sm"
+              >
+                Clear filters
+              </Button>
+            )}
+          </div>
+        }
+      />
 
       <div className="mt-3 flex flex-wrap gap-1.5">
         {CHIP_DEFS.map((chip) => {
@@ -202,10 +283,10 @@ function LiveEventStream({
               type="button"
               onClick={() => onToggleScope(chip.scope)}
               className={
-                "rounded-[2px] border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider transition-colors " +
+                "rounded-sharp border px-2 py-0.5 font-mono text-3xs uppercase tracking-cyber-sm transition-colors " +
                 (active
-                  ? "border-accent bg-accent/15 text-accent"
-                  : "border-border text-text-muted hover:border-accent hover:text-accent")
+                  ? "border-accent bg-accent-muted text-accent"
+                  : "border-border text-text-muted hover:border-accent/60 hover:text-text-primary")
               }
             >
               {chip.label} {count > 0 ? `[${count}]` : ""}
@@ -215,22 +296,22 @@ function LiveEventStream({
       </div>
 
       <div
-        className="mt-3 flex-1 overflow-y-auto rounded-[2px] border border-border bg-black/30 p-2 font-mono text-xs"
+        className="mt-3 flex-1 overflow-y-auto rounded-sharp border border-border bg-base/60 p-2 font-mono text-xs"
         style={{ maxHeight: 560 }}
         onMouseEnter={() => setPaused(true)}
         onMouseLeave={() => setPaused(false)}
       >
         {paused && (
-          <div className="sticky top-0 z-10 mb-1 rounded-[2px] border border-accent/40 bg-black/70 px-2 py-0.5 text-center text-[10px] uppercase tracking-wider text-accent">
+          <div className="sticky top-0 z-10 mb-1 rounded-sharp border border-accent/40 bg-base/90 px-2 py-0.5 text-center text-3xs uppercase tracking-cyber-sm text-accent">
             paused -- move cursor away to resume
           </div>
         )}
         {visible.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-text-muted">
+          <div className="flex h-full items-center justify-center font-mono text-3xs uppercase tracking-cyber-sm text-text-muted">
             {activeScopes.size > 0 ? "no matching events" : "waiting for events…"}
           </div>
         ) : (
-          <ul className="space-y-0.5">
+          <ul className="flex flex-col">
             {visible.map((event) => (
               <StreamRow key={event.id} event={event} now={now} />
             ))}
@@ -243,13 +324,13 @@ function LiveEventStream({
 
 function StreamRow({ event, now }: { event: ActivityEvent; now: number }) {
   const severity = severityForEvent(event);
+  const style = SEVERITY_STYLE[severity];
   const scopeClass = SCOPE_TEXT_CLASS[event.scope];
   return (
-    <li className="flex items-baseline gap-2 border-b border-border/30 py-0.5 last:border-b-0">
-      <span className="w-8 shrink-0 text-right text-[10px] text-text-muted">
-        {formatRelative(now, event.at)}
-      </span>
-      <span className={`w-24 shrink-0 truncate text-[10px] uppercase tracking-wider ${scopeClass}`}>
+    <li className="relative flex items-baseline gap-2.5 border-b border-border/20 py-1 pr-1 pl-3 transition-colors last:border-b-0 hover:bg-elevated/40 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-200">
+      <span aria-hidden className={`pointer-events-none absolute inset-y-0 left-0 w-0.5 ${style.bar}`} />
+      <span className="shrink-0 tabular-nums text-3xs text-text-muted">{formatClock(event.at)}</span>
+      <span className={`w-24 shrink-0 truncate text-3xs uppercase tracking-cyber-sm ${scopeClass}`}>
         {event.scope}
       </span>
       <AilaBadge severity={severity} size="sm" className="shrink-0">
@@ -258,11 +339,10 @@ function StreamRow({ event, now }: { event: ActivityEvent; now: number }) {
       <span className="min-w-0 flex-1 truncate text-text-primary">
         {event.summary}
       </span>
-      {event.resourceId && (
-        <span className="w-24 shrink-0 truncate text-right text-[10px] text-text-muted">
-          {event.resourceId.slice(0, 8)}
-        </span>
-      )}
+      <span className="flex shrink-0 items-baseline gap-2 text-3xs text-text-muted">
+        {event.resourceId && <span className="max-w-24 truncate">{event.resourceId.slice(0, 8)}</span>}
+        <span className="w-8 text-right tabular-nums">{formatRelative(now, event.at)}</span>
+      </span>
     </li>
   );
 }
@@ -334,23 +414,25 @@ function ActiveRunsGrid({ events, queueDepth, isLoading }: ActiveRunsGridProps) 
 
   return (
     <AilaCard variant="elevated" padding="md" className="flex flex-col" style={{ minHeight: 640 }}>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <CircleNotch className="h-4 w-4 text-accent" />
-          <span className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Active Runs
+      <PanelHeader
+        icon={<CircleNotch className="h-4 w-4" />}
+        label="Active Runs"
+        right={
+          <span className="font-mono text-3xs uppercase tracking-cyber-sm text-text-muted">
+            <span className="tabular-nums text-text-primary">{runs.length}</span> tracked
+            <span aria-hidden className="px-1 text-border">/</span>
+            <span className="tabular-nums text-text-primary">{runningCount}</span> running
+            <span aria-hidden className="px-1 text-border">/</span>
+            <span className="tabular-nums text-text-primary">{queuedCount}</span> queued
           </span>
-        </div>
-        <span className="font-mono text-[10px] uppercase tracking-wider text-text-muted">
-          {runs.length} tracked | {runningCount} running | {queuedCount} queued
-        </span>
-      </div>
+        }
+      />
 
       <div className="mt-3 flex-1 overflow-y-auto pr-1" style={{ maxHeight: 560 }}>
         {isLoading && runs.length === 0 ? (
           <div className="grid gap-2">
             {[0, 1, 2].map((n) => (
-              <div key={n} className="h-16 animate-pulse rounded-[2px] border border-border bg-surface/40" />
+              <div key={n} className="h-16 animate-pulse rounded-sharp border border-border bg-surface/40" />
             ))}
           </div>
         ) : runs.length === 0 ? (
@@ -364,7 +446,7 @@ function ActiveRunsGrid({ events, queueDepth, isLoading }: ActiveRunsGridProps) 
             }
           />
         ) : (
-          <ul className="grid gap-2">
+          <ul className="flex flex-col">
             {runs.map((run) => (
               <RunCard key={run.resourceId} run={run} now={now} />
             ))}
@@ -377,21 +459,25 @@ function ActiveRunsGrid({ events, queueDepth, isLoading }: ActiveRunsGridProps) 
 
 function RunCard({ run, now }: { run: ActiveRun; now: number }) {
   const severity = severityForEvent(run.lastEvent);
+  const style = SEVERITY_STYLE[severity];
   return (
-    <li className="rounded-[2px] border border-border bg-surface/40 p-3 transition-colors hover:border-accent/60">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <AilaBadge severity={severity} size="sm">{run.scope}</AilaBadge>
-          <span className="truncate font-mono text-xs text-text-primary">
+    <li className="relative flex items-center gap-3 border-b border-border/20 py-2 pr-1 pl-3 transition-colors last:border-b-0 hover:bg-elevated/40">
+      <span aria-hidden className={`pointer-events-none absolute inset-y-0 left-0 w-0.5 ${style.bar}`} />
+      <span aria-hidden className={`inline-block h-2 w-2 shrink-0 rounded-full ${style.bar}`} />
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <div className="flex items-center gap-2">
+          <AilaBadge severity={severity} size="sm" className="shrink-0">{run.scope}</AilaBadge>
+          <span className="min-w-0 flex-1 truncate font-mono text-2xs text-text-primary">
             {run.resourceId}
           </span>
         </div>
-        <span className="shrink-0 font-mono text-[10px] uppercase tracking-wider text-text-muted">
-          {formatRelative(now, run.lastEvent.at)} | {run.eventCount} evt
-        </span>
+        <div className="truncate font-mono text-3xs text-text-muted">
+          <span className={style.text}>{run.lastEvent.type}</span>: {run.lastEvent.summary}
+        </div>
       </div>
-      <div className="mt-1.5 truncate font-mono text-[11px] text-text-muted">
-        {run.lastEvent.type}: {run.lastEvent.summary}
+      <div className="flex shrink-0 flex-col items-end gap-0.5 font-mono text-3xs text-text-muted">
+        <span className="tabular-nums text-text-primary">{formatRelative(now, run.lastEvent.at)}</span>
+        <span className="tabular-nums">{run.eventCount} evt</span>
       </div>
     </li>
   );
@@ -432,54 +518,56 @@ function VitalsRail({
     : sseStatus === "connecting"
       ? "bg-medium"
       : "bg-critical";
+  const sseTextClass = sseStatus === "connected"
+    ? "text-mint"
+    : sseStatus === "connecting"
+      ? "text-medium"
+      : "text-critical";
   const shouldPulse = sseStatus === "connected" && !reducedMotion;
 
   return (
     <AilaCard variant="elevated" padding="md" className="flex flex-col" style={{ minHeight: 640 }}>
-      <div className="flex items-center gap-2">
-        <Pulse className="h-4 w-4 text-accent" />
-        <span className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Vitals
-        </span>
-      </div>
+      <PanelHeader icon={<Pulse className="h-4 w-4" />} label="Vitals" />
 
       {/* SSE connection */}
       <div className="mt-4">
-        <div className="font-mono text-[10px] uppercase tracking-wider text-text-muted">
+        <div className="font-mono text-2xs uppercase tracking-cyber text-text-muted">
           SSE Stream
         </div>
-        <div className="mt-1 flex items-center gap-2">
+        <div className="mt-1.5 flex items-center gap-2">
           <span
-            className={`inline-block h-2 w-2 rounded-full ${sseDotClass} ${shouldPulse ? "animate-pulse" : ""}`}
+            className={`inline-block h-2.5 w-2.5 rounded-full ${sseDotClass} ${shouldPulse ? "animate-pulse" : ""}`}
             aria-hidden
           />
-          <span className="font-mono text-sm uppercase tracking-wider text-text-primary">
+          <span className={`font-mono text-base uppercase tracking-cyber-sm ${sseTextClass}`}>
             {sseStatus}
           </span>
         </div>
       </div>
 
       {/* Queue depth */}
-      <div className="mt-4">
+      <div className="mt-4 border-t border-border/60 pt-4">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-text-muted">
+          <div className="flex items-center gap-1.5 font-mono text-2xs uppercase tracking-cyber text-text-muted">
             <Queue className="h-3 w-3" />
             Queue Depth
           </div>
-          <span className="font-mono text-[10px] text-text-muted">5s</span>
+          <span className="font-mono text-3xs tabular-nums text-text-muted">5s</span>
         </div>
         {queueDepthError ? (
-          <div className="mt-1 rounded-[2px] border border-destructive bg-destructive/10 px-2 py-1 font-mono text-[10px] text-destructive">
+          <div className="mt-1.5 rounded-sharp border border-destructive/50 bg-destructive/10 px-2 py-1 font-mono text-3xs uppercase tracking-cyber-sm text-destructive">
             unavailable
           </div>
         ) : queueRows.length === 0 ? (
-          <div className="mt-1 font-mono text-xs text-text-muted">--</div>
+          <div className="mt-1.5 font-mono text-xl tabular-nums text-text-muted">--</div>
         ) : (
-          <ul className="mt-1 space-y-0.5">
+          <ul className="mt-1.5 space-y-1.5">
             {queueRows.map(([status, count]) => (
-              <li key={status} className="flex items-center justify-between font-mono text-xs">
-                <span className="uppercase tracking-wider text-text-muted">{status}</span>
-                <span className="tabular-nums text-text-primary">{count}</span>
+              <li key={status} className="flex items-baseline justify-between gap-2">
+                <span className="font-mono text-3xs uppercase tracking-cyber-sm text-text-muted">{status}</span>
+                <span className={`font-mono text-lg tabular-nums ${count > 0 ? "text-accent" : "text-text-muted"}`}>
+                  {count}
+                </span>
               </li>
             ))}
           </ul>
@@ -488,24 +576,26 @@ function VitalsRail({
 
       {/* Dead-letter (admin only) */}
       {isAdmin && (
-        <div className="mt-4">
+        <div className="mt-4 border-t border-border/60 pt-4">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-text-muted">
+            <div className="flex items-center gap-1.5 font-mono text-2xs uppercase tracking-cyber text-text-muted">
               <Skull className="h-3 w-3" />
               Dead Letter
             </div>
-            <span className="font-mono text-[10px] text-text-muted">30s</span>
+            <span className="font-mono text-3xs tabular-nums text-text-muted">30s</span>
           </div>
           {deadLetterError ? (
-            <div className="mt-1 rounded-[2px] border border-destructive bg-destructive/10 px-2 py-1 font-mono text-[10px] text-destructive">
+            <div className="mt-1.5 rounded-sharp border border-destructive/50 bg-destructive/10 px-2 py-1 font-mono text-3xs uppercase tracking-cyber-sm text-destructive">
               unavailable
             </div>
           ) : (
-            <div className="mt-1 flex items-baseline gap-2">
-              <span className="font-mono text-xl tabular-nums text-text-primary">
+            <div className="mt-1.5 flex items-baseline gap-2">
+              <span
+                className={`font-mono text-3xl tabular-nums ${deadLetterCount && deadLetterCount > 0 ? "text-critical" : "text-text-muted"}`}
+              >
                 {deadLetterCount ?? "--"}
               </span>
-              <span className="font-mono text-[10px] uppercase tracking-wider text-text-muted">
+              <span className="font-mono text-3xs uppercase tracking-cyber-sm text-text-muted">
                 exhausted retries
               </span>
             </div>
@@ -591,14 +681,45 @@ export function WarRoomPage() {
 
   return (
     <div className="flex flex-col gap-4">
+      {/* Command bar -- persistent SSE indicator + wall clock */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-sharp-md border border-border bg-surface/60 px-4 py-2">
+        <div className="flex items-center gap-2.5">
+          <Broadcast className="h-4 w-4 text-accent" />
+          <span className="font-mono text-xs uppercase tracking-cyber text-text-primary">Ops War Room</span>
+          <span aria-hidden className="h-3 w-px bg-border" />
+          <span className="font-mono text-3xs uppercase tracking-cyber-sm text-text-muted">
+            real-time operations
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              aria-hidden
+              className={`inline-block h-2 w-2 shrink-0 rounded-full ${sseStatus === "connected" ? "bg-mint" : sseStatus === "connecting" ? "bg-medium" : "bg-critical"} ${sseStatus === "connected" && !reducedMotion ? "animate-pulse" : ""}`}
+            />
+            <span
+              className={`font-mono text-3xs uppercase tracking-cyber-sm ${sseStatus === "connected" ? "text-mint" : sseStatus === "connecting" ? "text-medium" : "text-critical"}`}
+            >
+              SSE {sseStatus}
+            </span>
+          </span>
+          <span aria-hidden className="h-3 w-px bg-border" />
+          <span className="inline-flex items-center gap-1.5 text-text-muted">
+            <Clock className="h-3.5 w-3.5" />
+            <LiveClock />
+          </span>
+        </div>
+      </div>
+
       {sseBanner && (
         <div
           role="alert"
-          className="flex items-start gap-3 rounded-[4px] border border-destructive bg-destructive/10 px-4 py-3"
+          className="relative flex items-start gap-3 overflow-hidden rounded-sharp-md border border-destructive/50 bg-destructive/10 py-3 pr-4 pl-4"
         >
+          <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-destructive" />
           <WarningOctagon className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
           <div className="min-w-0">
-            <div className="font-mono text-sm uppercase tracking-wider text-destructive">
+            <div className="font-mono text-sm uppercase tracking-cyber-sm text-destructive">
               {sseBanner.title}
             </div>
             <div className="mt-0.5 font-mono text-xs text-text-muted">

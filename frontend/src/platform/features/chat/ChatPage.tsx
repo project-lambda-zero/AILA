@@ -132,12 +132,21 @@ function SessionsSidebar({
                   data-testid="chat-session-row"
                   data-session-id={session.session_id}
                   onClick={() => onSelect(session.session_id)}
-                  className={`w-full text-left flex flex-col gap-1 border-b border-border px-3 py-2 transition-colors hover:bg-elevated focus:outline focus:outline-2 focus:outline-accent ${
-                    active ? "bg-accent/5" : ""
+                  style={
+                    active
+                      ? { boxShadow: "inset 2px 0 0 var(--color-accent)" }
+                      : undefined
+                  }
+                  className={`w-full text-left flex flex-col gap-1 border-b border-border px-3 py-2.5 transition-colors hover:bg-elevated focus:outline focus:outline-2 focus:outline-accent ${
+                    active ? "bg-accent/10" : ""
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-mono text-xs font-semibold text-text truncate">
+                    <span
+                      className={`font-mono text-xs font-semibold truncate ${
+                        active ? "text-accent" : "text-text"
+                      }`}
+                    >
                       {session.title || "Untitled"}
                     </span>
                     <span className="font-mono text-[10px] text-text-muted shrink-0">
@@ -172,6 +181,27 @@ function SessionsSidebar({
 // Message bubble
 // ---------------------------------------------------------------------------
 
+/**
+ * Streaming / "thinking" indicator -- three hot-pink dots on a gentle
+ * staggered opacity pulse. Hot pink (#ff5f87) is reserved for the live
+ * state. The `animate-severity-pulse` utility is switched off under
+ * prefers-reduced-motion (globals.css), leaving the dots visible but
+ * static, so the affordance still reads without motion.
+ */
+function StreamingDots() {
+  return (
+    <span className="inline-flex items-center gap-1 py-0.5" aria-hidden="true">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="h-1.5 w-1.5 rounded-full bg-accent animate-severity-pulse"
+          style={{ animationDelay: `${i * 0.2}s` }}
+        />
+      ))}
+    </span>
+  );
+}
+
 function MessageBubble({
   role,
   content,
@@ -185,30 +215,49 @@ function MessageBubble({
 }) {
   const isUser = role === "user";
   const align = isUser ? "items-end" : "items-start";
-  const tint = isUser
-    ? "bg-accent/10 border-accent/30"
-    : "bg-surface border-border";
   const Icon = isUser ? UserIcon : Robot;
+  // Hot pink is reserved for the live/active state, so a streaming turn is
+  // the only one that gets the accent treatment. Resting turns sit on the
+  // neutral charcoal tiers -- the operator's own turns lifted onto the
+  // elevated tier, assistant turns on the surface tier.
+  const bubbleTint = isStreaming
+    ? "border-accent/50 bg-accent/5"
+    : isUser
+      ? "border-border bg-elevated"
+      : "border-border bg-surface";
+  const avatarTint = isStreaming
+    ? "border-accent/50 bg-accent/10 text-accent"
+    : isUser
+      ? "border-border bg-elevated text-text-peach"
+      : "border-border bg-elevated text-lavender";
 
   return (
     <div
-      className={`flex flex-col gap-1 ${align}`}
+      className={`flex flex-col gap-1.5 ${align}`}
       data-testid="chat-message"
       data-role={role}
     >
-      <div className="flex items-center gap-2">
-        <AilaBadge severity={isUser ? "info" : "neutral"} size="sm">
-          <Icon size={12} weight="bold" />
-          <span className="ml-1">{isUser ? "You" : "Assistant"}</span>
-        </AilaBadge>
+      {/* Role + metadata row. The operator's own turns mirror to the right
+          so the two voices read as distinct columns of the transcript. */}
+      <div
+        className={`flex items-center gap-2 ${isUser ? "flex-row-reverse" : ""}`}
+      >
+        <span
+          className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[4px] border ${avatarTint}`}
+        >
+          <Icon size={13} weight="bold" />
+        </span>
+        <span className="font-mono text-[11px] font-semibold text-text">
+          {isUser ? "You" : "Assistant"}
+        </span>
         <span className="font-mono text-[10px] text-text-muted">
           {isStreaming ? "streaming…" : shortTimestamp(createdAt)}
         </span>
       </div>
       <div
-        className={`rounded-[4px] border px-3 py-2 max-w-[85%] font-mono text-xs leading-relaxed text-text whitespace-pre-wrap break-words ${tint}`}
+        className={`rounded-[4px] border px-3 py-2 max-w-[85%] font-mono text-xs leading-relaxed text-text whitespace-pre-wrap break-words ${bubbleTint}`}
       >
-        {content || (isStreaming ? "…" : "")}
+        {content || (isStreaming ? <StreamingDots /> : "")}
       </div>
     </div>
   );
@@ -241,39 +290,62 @@ function Composer({
   };
 
   return (
-    <div className="flex flex-col gap-2 border-t border-border bg-surface p-3">
-      <Textarea
-        aria-label="Message composer"
-        ref={textareaRef}
-        value={value}
-        onChange={(e) => onValueChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            submit();
-          }
-        }}
-        placeholder="Ask the platform anything -- Enter to send, Shift+Enter for newline."
-        disabled={disabled}
-        rows={3}
-        data-testid="chat-composer"
-        className="font-mono text-xs"
-      />
-      <div className="flex items-center justify-between">
-        <span className="font-mono text-[10px] text-text-muted">
-          {disabled ? "Streaming reply…" : `${value.length} characters`}
-        </span>
-        <Button
-          size="sm"
-          variant="default"
-          onClick={submit}
-          disabled={disabled || value.trim().length === 0}
-          data-testid="chat-send"
-          className="gap-2"
-        >
-          <PaperPlaneRight size={14} weight="bold" />
-          Send
-        </Button>
+    <div className="border-t border-border bg-surface p-3">
+      {/* Input bay -- a recessed console well that lifts to the hot-pink
+          accent on focus. The textarea's own frame + ring are neutralised
+          so the bay owns a single, clear focus affordance. */}
+      <div className="rounded-[4px] border border-border bg-base transition-colors focus-within:border-accent/60">
+        <Textarea
+          aria-label="Message composer"
+          ref={textareaRef}
+          value={value}
+          onChange={(e) => onValueChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              submit();
+            }
+          }}
+          placeholder="Ask the platform anything -- Enter to send, Shift+Enter for newline."
+          disabled={disabled}
+          rows={3}
+          data-testid="chat-composer"
+          className="resize-none border-transparent bg-transparent font-mono text-xs focus-visible:border-transparent focus-visible:ring-0"
+        />
+        <div className="flex items-center justify-between gap-2 border-t border-border px-2.5 py-1.5">
+          <span className="flex items-center gap-1.5 font-mono text-[10px] text-text-muted">
+            {disabled ? (
+              <>
+                <span
+                  className="h-1.5 w-1.5 rounded-full bg-accent animate-severity-pulse"
+                  aria-hidden="true"
+                />
+                Streaming reply…
+              </>
+            ) : (
+              `${value.length} characters`
+            )}
+          </span>
+          <div className="flex items-center gap-2.5">
+            <span className="hidden items-center gap-1 font-mono text-[10px] text-text-muted sm:inline-flex">
+              <kbd className="rounded-[2px] border border-border bg-elevated px-1 py-px text-text">
+                Enter
+              </kbd>
+              to send
+            </span>
+            <Button
+              size="sm"
+              variant="default"
+              onClick={submit}
+              disabled={disabled || value.trim().length === 0}
+              data-testid="chat-send"
+              className="gap-2"
+            >
+              <PaperPlaneRight size={14} weight="bold" />
+              Send
+            </Button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -369,7 +441,7 @@ function ThreadPanel({
     <div className="flex-1 min-w-0 flex flex-col border border-border rounded-[4px] bg-surface overflow-hidden">
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto p-4 flex flex-col gap-4"
+        className="flex-1 overflow-y-auto p-4 flex flex-col gap-5"
         data-testid="chat-thread"
       >
         {persistedMessages.length === 0 && !state.isStreaming ? (
@@ -396,7 +468,7 @@ function ThreadPanel({
 
         {/* Optional: show a placeholder while the backend is persisting the user message */}
         {userJustSent && state.buffer.length === 0 && (
-          <p className="font-mono text-[10px] text-text-muted text-center">
+          <p className="font-mono text-[10px] italic text-text-muted">
             Waiting for the assistant to respond…
           </p>
         )}
@@ -489,9 +561,17 @@ export function ChatPage() {
         </div>
       )}
       {sessionParam && (
-        <p className="font-mono text-[10px] text-text-muted">
-          Started {formatTimestamp(sessions.find((s) => s.session_id === sessionParam)?.created_at)}
-        </p>
+        <div className="flex items-center gap-2 font-mono text-[10px] text-text-muted">
+          <span className="rounded-[2px] border border-border px-1.5 py-0.5 font-semibold uppercase tracking-widest">
+            Session
+          </span>
+          <span>
+            Started{" "}
+            {formatTimestamp(
+              sessions.find((s) => s.session_id === sessionParam)?.created_at,
+            )}
+          </span>
+        </div>
       )}
 
       <div className="flex flex-col gap-4 lg:flex-row lg:items-stretch min-h-[60vh]">

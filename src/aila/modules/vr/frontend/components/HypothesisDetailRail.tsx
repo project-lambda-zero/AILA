@@ -190,13 +190,19 @@ export function HypothesisDetailRail({
         >
           <Chevron open={state.railOpen} />
           <span>Hypotheses</span>
-          <span className="text-3xs text-text-muted font-mono font-normal">
+          <span className="text-3xs text-text-muted font-mono font-normal tabular-nums">
             ({items.length}
             {items.length > 0 ? (
               <>
-                {counts.live > 0 ? `, ${counts.live} live` : ""}
-                {counts.rejected > 0 ? `, ${counts.rejected} rej` : ""}
-                {counts.mixed > 0 ? `, ${counts.mixed} mixed` : ""}
+                {counts.live > 0 ? (
+                  <>, <span style={{ color: "var(--color-accent)" }}>{counts.live} live</span></>
+                ) : ""}
+                {counts.rejected > 0 ? (
+                  <>, <span className="opacity-60">{counts.rejected} rej</span></>
+                ) : ""}
+                {counts.mixed > 0 ? (
+                  <>, <span style={{ color: "var(--color-text)" }}>{counts.mixed} mixed</span></>
+                ) : ""}
               </>
             ) : null}
             )
@@ -265,6 +271,16 @@ function HypothesisRow({
   const sev =
     h.state === "live" ? "info" : h.state === "rejected" ? "low" : "medium";
 
+  // Presentational state accent for the row's left stripe -- live reads
+  // hot-pink (the "watch this" cue), rejected recedes to the border
+  // tone, everything else settles on cream.
+  const stateAccent =
+    h.state === "live"
+      ? "var(--color-accent)"
+      : h.state === "rejected"
+        ? "var(--color-border)"
+        : "var(--color-text)";
+
   const hasDetail =
     Boolean(h.why_plausible) ||
     Boolean(h.kill_criterion) ||
@@ -273,7 +289,10 @@ function HypothesisRow({
     h.rejected_in_branches.length > 0;
 
   return (
-    <li className="border border-border-default rounded bg-surface/40 break-words">
+    <li
+      className="border border-border-default rounded bg-surface/40 break-words"
+      style={{ borderLeftColor: stateAccent, borderLeftWidth: 3 }}
+    >
       <button
         type="button"
         onClick={onToggle}
@@ -289,7 +308,7 @@ function HypothesisRow({
             <span className="inline-block w-3" aria-hidden="true" />
           )}
         </span>
-        <p className="text-sm text-foreground flex-1 min-w-0">
+        <p className={`text-sm flex-1 min-w-0 ${h.state === "rejected" ? "text-text-muted" : "text-foreground"}`}>
           {h.claim || h.id}
         </p>
         <AilaBadge severity={sev} size="sm">

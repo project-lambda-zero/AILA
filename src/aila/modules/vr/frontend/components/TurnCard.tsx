@@ -47,34 +47,35 @@ const COLLAPSE_THRESHOLD_CHARS = 600;
 // ─── Sender visual identity ────────────────────────────────────────────
 
 interface SenderStyle {
-  border: string;
-  bg: string;
+  accent: string;
   Icon: IconCmp;
   label: string;
 }
 
+// Role identity in the midnight-cloud-8 palette (mirrors the page's
+// PERSONA_META / status hues instead of the generic Tailwind ramp):
+//   researcher -> lavender (the agent's reasoning)
+//   tool       -> mint (machine reads)
+//   operator   -> hot-pink accent (human-in-the-loop steering pops)
+//   system     -> muted tan (low-key notes)
 const SENDER_STYLES: Record<string, SenderStyle> = {
   engine: {
-    border: "border-l-cyan-500",
-    bg: "bg-cyan-500/[0.04]",
+    accent: "#af87d7",
     Icon: Brain,
     label: "Researcher",
   },
   operator: {
-    border: "border-l-amber-500",
-    bg: "bg-amber-500/[0.04]",
+    accent: "#ff5f87",
     Icon: User,
     label: "Operator",
   },
   tool: {
-    border: "border-l-emerald-500",
-    bg: "bg-emerald-500/[0.04]",
+    accent: "#97dbbe",
     Icon: Wrench,
     label: "Tool",
   },
   system: {
-    border: "border-l-slate-500",
-    bg: "bg-slate-500/[0.04]",
+    accent: "#af8c6c",
     Icon: GearSix,
     label: "System",
   },
@@ -100,18 +101,20 @@ function resolveDisplaySender(
 // ─── Persona avatars ───────────────────────────────────────────────────
 
 interface PersonaStyle {
-  bg: string;
-  text: string;
+  color: string;
   initial: string;
 }
 
+// Persona identity -- mirrors PERSONA_META in InvestigationDetailPage so
+// a researcher reads the same colour in the turn stream, branch list, and
+// outcome cards (the "mirror this scheme in TurnCard" note, now honoured).
 const PERSONA_STYLES: Record<string, PersonaStyle> = {
-  halvar: { bg: "bg-red-500/25 border border-red-500/40", text: "text-red-300", initial: "H" },
-  maddie: { bg: "bg-violet-500/25 border border-violet-500/40", text: "text-violet-300", initial: "M" },
-  renzo: { bg: "bg-teal-500/25 border border-teal-500/40", text: "text-teal-300", initial: "R" },
-  noor: { bg: "bg-amber-500/25 border border-amber-500/40", text: "text-amber-300", initial: "N" },
-  yuki: { bg: "bg-blue-500/25 border border-blue-500/40", text: "text-blue-300", initial: "Y" },
-  wei: { bg: "bg-emerald-500/25 border border-emerald-500/40", text: "text-emerald-300", initial: "W" },
+  halvar: { color: "#f0a8c7", initial: "H" },
+  maddie: { color: "#af87d7", initial: "M" },
+  renzo: { color: "#97dbbe", initial: "R" },
+  noor: { color: "#f0c97a", initial: "N" },
+  yuki: { color: "#8ec5ff", initial: "Y" },
+  wei: { color: "#7bdfd3", initial: "W" },
 };
 
 function personaStyle(senderId: string | null): PersonaStyle | null {
@@ -373,7 +376,12 @@ export function TurnCard({
   return (
     <article
       id={`turn-${index}`}
-      className={`relative rounded-md border border-border-default border-l-4 ${senderStyle.border} ${senderStyle.bg} overflow-hidden`}
+      className="relative rounded-md border border-border-default overflow-hidden"
+      style={{
+        borderLeftWidth: 4,
+        borderLeftColor: senderStyle.accent,
+        background: `color-mix(in srgb, ${senderStyle.accent} 4%, transparent)`,
+      }}
     >
       <header
         onClick={() => setBodyOpen((v) => !v)}
@@ -395,14 +403,24 @@ export function TurnCard({
           {persona ? (
             <span
               aria-label={`Persona ${personaVoice ?? senderId}`}
-              className={`shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full font-mono text-2xs font-bold ${persona.bg} ${persona.text}`}
+              className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full font-mono text-2xs font-bold"
+              style={{
+                background: `color-mix(in srgb, ${persona.color} 16%, transparent)`,
+                color: persona.color,
+                border: `1px solid ${persona.color}`,
+              }}
             >
               {persona.initial}
             </span>
           ) : (
             <span
               aria-hidden
-              className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full bg-surface/70 text-text-muted border border-border-default"
+              className="shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-full border"
+              style={{
+                background: `color-mix(in srgb, ${senderStyle.accent} 14%, transparent)`,
+                color: senderStyle.accent,
+                borderColor: `color-mix(in srgb, ${senderStyle.accent} 40%, transparent)`,
+              }}
             >
               <SenderIcon size={13} weight="duotone" />
             </span>
@@ -562,9 +580,9 @@ interface VoiceSection {
 }
 
 const VOICE_COLORS: Record<string, { border: string; label: string; bg: string }> = {
-  researcher: { border: "border-l-cyan-500/60", label: "text-cyan-400", bg: "bg-cyan-500/5" },
-  critic:     { border: "border-l-amber-500/60", label: "text-amber-400", bg: "bg-amber-500/5" },
-  implementer:{ border: "border-l-emerald-500/60", label: "text-emerald-400", bg: "bg-emerald-500/5" },
+  researcher: { border: "border-l-violet-400/60", label: "text-violet-300", bg: "bg-violet-500/5" },
+  critic:     { border: "border-l-pink-400/60", label: "text-pink-300", bg: "bg-pink-500/5" },
+  implementer:{ border: "border-l-sky-400/60", label: "text-sky-300", bg: "bg-sky-500/5" },
   unknown:    { border: "border-l-gray-500/40", label: "text-gray-400", bg: "bg-gray-500/5" },
 };
 
@@ -626,8 +644,14 @@ function ToolCallBody({
   return (
     <div className="space-y-2">
       {/* Tool invocation -- always visible */}
-      <div className="flex items-center gap-2 flex-wrap px-2 py-1.5 rounded bg-emerald-500/8 border border-emerald-500/20">
-        <Terminal size={14} weight="fill" className="text-emerald-400 shrink-0" />
+      <div
+        className="flex items-center gap-2 flex-wrap px-2 py-1.5 rounded border"
+        style={{
+          background: "color-mix(in srgb, #97dbbe 8%, transparent)",
+          borderColor: "color-mix(in srgb, #97dbbe 25%, transparent)",
+        }}
+      >
+        <Terminal size={14} weight="fill" className="shrink-0" style={{ color: "#97dbbe" }} />
         <code className="font-mono text-sm text-foreground font-medium break-all">
           {name}
         </code>

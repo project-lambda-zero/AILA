@@ -318,7 +318,7 @@ function StatusIndicator({ status, pauseReason }: {
       <span className="relative inline-flex items-center justify-center w-3 h-3">
         {meta.pulse && (
           <span
-            className="absolute inset-0 rounded-full animate-ping"
+            className="absolute inset-0 rounded-full animate-ping motion-reduce:animate-none"
             style={{ background: meta.color, opacity: 0.4 }}
           />
         )}
@@ -686,9 +686,9 @@ export function InvestigationDetailPage() {
   const otherOutcomes = sortedOutcomes.filter((o) => o.id !== inv.primary_outcome_id);
 
   return (
-    <div className="space-y-4 max-w-full min-w-0 overflow-x-hidden break-words">
-      {/* Header toolbar */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
+    <div className="space-y-3 max-w-full min-w-0 overflow-x-hidden break-words">
+      {/* Header toolbar -- utility command bar */}
+      <div className="flex items-center justify-between gap-3 flex-wrap rounded-md border border-border-default/60 bg-surface/40 px-2.5 py-2">
         <div className="flex items-center gap-2 flex-wrap">
           <LiveDot status={liveStatus} />
           <span className="w-px h-5 bg-border-default mx-1" aria-hidden />
@@ -770,7 +770,6 @@ export function InvestigationDetailPage() {
         </div>
       </div>
 
-      {/* Workflow stepper */}
       {/* §9 / §25 / §82 -- WorkflowStepper currentState. The real source
           of truth is workflow_state_cursor.current_state, which is not
           yet exposed via the API.
@@ -789,7 +788,11 @@ export function InvestigationDetailPage() {
           investigation_setup / loop / emit into one display when
           inv.status === 'running'. The paused branch below is the §9
           explicit case so the UI does NOT mis-render setup. */}
-      <AilaCard techBorder glow><WorkflowStepper
+      {/* Command console -- phase progress, run state, live metrics and
+          run controls unified into one strip so the operator reads the
+          whole situation without scrolling past stacked cards. */}
+      <AilaCard techBorder glow>
+        <WorkflowStepper
         flow="investigate"
         currentState={
           // fix §9 -- explicit paused mapping: pass null so the stepper
@@ -806,11 +809,10 @@ export function InvestigationDetailPage() {
                   : "investigation_setup"
         }
         failedAt={inv.status === "failed" ? "investigation_loop" : null}
-      /></AilaCard>
+        />
 
-      {/* Status + cost ribbon */}
-      <AilaCard techBorder glow>
-        <div className="flex items-start justify-between gap-4 flex-wrap">
+        {/* Run state + controls */}
+        <div className="mt-3 pt-3 border-t border-border-default/60 flex items-start justify-between gap-4 flex-wrap">
           <div className="flex flex-col gap-1 min-w-0">
             <StatusIndicator status={inv.status} pauseReason={inv.pause_reason} />
             {inv.status === "failed" && inv.failure_reason && (
@@ -818,7 +820,7 @@ export function InvestigationDetailPage() {
                 {inv.failure_reason}
               </p>
             )}
-            <p className="text-xs text-text-muted font-mono">
+            <p className="text-2xs text-text-muted font-mono uppercase tracking-cyber-sm">
               {humanize(inv.strategy_family)} strategy
             </p>
           </div>
@@ -889,25 +891,25 @@ export function InvestigationDetailPage() {
         </div>
 
         {/* Compact stats row -- no giant KPI boxes, no duplication */}
-        <div className="mt-3 flex items-center gap-4 flex-wrap text-xs font-mono text-text-muted">
+        <div className="mt-3 flex items-center gap-x-4 gap-y-1.5 flex-wrap text-xs font-mono text-text-muted">
           <span className="inline-flex items-center gap-1.5">
             <TreeStructure weight="fill" size={13} className="text-accent" />
-            <span className="text-foreground font-semibold">{inv.branch_count}</span> branches
+            <span className="text-foreground font-semibold tabular-nums">{inv.branch_count}</span> branches
           </span>
           <span className="w-px h-3 bg-border-default" />
           <span className="inline-flex items-center gap-1.5">
             <ChatCircleText weight="fill" size={13} className="text-text-muted" />
-            <span className="text-foreground font-semibold">{inv.message_count.toLocaleString()}</span> turns
+            <span className="text-foreground font-semibold tabular-nums">{inv.message_count.toLocaleString()}</span> turns
           </span>
           <span className="w-px h-3 bg-border-default" />
           <span className="inline-flex items-center gap-1.5">
             <Lightning weight="fill" size={13} className="text-text-muted" />
-            ~<span className="text-foreground font-semibold">{((inv.message_count * 28000) / 1_000_000).toFixed(1)}M</span> tokens
+            ~<span className="text-foreground font-semibold tabular-nums">{((inv.message_count * 28000) / 1_000_000).toFixed(1)}M</span> tokens
           </span>
           <span className="w-px h-3 bg-border-default" />
           <span className="inline-flex items-center gap-1.5">
             <Target weight="fill" size={13} className={inv.outcome_count > 0 ? "text-emerald-400" : "text-text-muted"} />
-            <span className="text-foreground font-semibold">{inv.outcome_count}</span> outcomes
+            <span className="text-foreground font-semibold tabular-nums">{inv.outcome_count}</span> outcomes
           </span>
         </div>
       </AilaCard>
@@ -966,7 +968,7 @@ export function InvestigationDetailPage() {
       )}
 
       {/* Main layout -- aside (order-1 = above) + timeline (order-2 = below) */}
-      <div className="grid grid-cols-1 gap-4">
+      <div className="grid grid-cols-1 gap-3">
         {/* Timeline column -- order-2 so it renders BELOW the aside.
             Default scroll-to-bottom lands operator at the latest turn
             (page bottom = last turn in timeline). To see hypotheses /
@@ -1231,6 +1233,7 @@ export function InvestigationDetailPage() {
                         <li
                           key={b.id}
                           className="flex items-center gap-3 rounded-md border border-border-default/60 bg-elevated/40 p-2 hover:border-accent/40 transition-colors"
+                          style={{ borderLeftColor: statusMeta.color, borderLeftWidth: 3 }}
                         >
                           <PersonaAvatar voice={b.persona_voice} size={32} />
                           <div className="min-w-0 flex-1">
@@ -1266,7 +1269,7 @@ export function InvestigationDetailPage() {
                             {isActive && b.turn_count > 0 && (
                               <div className="mt-1.5 h-0.5 rounded-full bg-elevated overflow-hidden">
                                 <div
-                                  className="h-full animate-pulse"
+                                  className="h-full animate-pulse motion-reduce:animate-none"
                                   style={{
                                     width: "60%",
                                     background: `linear-gradient(to right, transparent, ${pm.color}, transparent)`,
@@ -1736,8 +1739,22 @@ function CompactOutcomeRow({
   const [expanded, setExpanded] = useState(false);
   const vr = readVerifier(o.payload);
   const persMeta = personaMeta(persona);
+  // Presentational left stripe keyed to the verifier verdict so the
+  // outcome list scans at a glance -- confirmed=mint, refuted=soft-pink,
+  // any-other verdict=amber, unverified=neutral border.
+  const verdictStripe =
+    vr?.verdict === "confirmed"
+      ? "#97dbbe"
+      : vr?.verdict === "refuted"
+        ? "#f0a8c7"
+        : vr?.verdict
+          ? "#f0c97a"
+          : "var(--color-border)";
   return (
-    <li className="rounded-md border border-border-default/60 bg-elevated/30 overflow-hidden">
+    <li
+      className="rounded-md border border-border-default/60 bg-elevated/30 overflow-hidden"
+      style={{ borderLeftColor: verdictStripe, borderLeftWidth: 3 }}
+    >
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}

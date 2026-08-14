@@ -7,6 +7,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.15] - 2026-08-13 -- Malware Projects surface, investigation compare, core-screen craft pass
+
+Adds two backend-confirmed surfaces and elevates three core screens. Additive:
+existing routes, screens, and behavior are preserved (#214).
+
+### Added
+
+- Malware Projects surface: a projects list with inline create, a project detail
+  page, and archive-with-confirm (`GET/POST /malware/projects`,
+  `GET/DELETE /malware/projects/{id}`); a non-file "add target by descriptor"
+  entry point (`POST /malware/targets`) beside the existing file upload; an
+  investigation settings drawer (title, auto-pilot, favorite via
+  `PATCH /malware/investigations/{id}`); and an investigation target-attachment
+  panel (`GET/POST/DELETE /malware/investigations/{id}/targets`).
+- VR investigation compare: a side-by-side view of up to four investigations
+  (status, outcome mix, hypothesis counts) with per-row divergence highlighting,
+  built on the existing per-investigation reads. Deep-links via `?ids=a,b`.
+
+### Changed
+
+- Chat console (home) restyled into an operator launchpad: a labeled quick-lane
+  launcher, avatar-based turns with hot-pink reserved for the live streaming
+  state, a recessed composer bay, and a live-channel session row. All send,
+  stream, and session behavior is unchanged.
+- VR investigation workspace tightened into a command console: the two chrome
+  cards merged into one header strip, role- and persona-keyed turn identity,
+  status-keyed left stripes on branches and outcomes, and a color-coded
+  hypothesis rail. All handlers and data paths unchanged.
+- Ops war room restyled into an operations center: a command-bar masthead with a
+  live clock, a dense monospace event stream with severity accents, a
+  status-board active-runs grid, and live vitals gauges. The single SSE
+  subscription and all filter logic unchanged.
+
+Full workspace type-check + shell production build pass. No backend changes.
+
 ## [0.5.14] - 2026-08-13 -- Module operator-drive surfaces, reasoning replay, global shortcuts
 
 Wires module write endpoints the backend already staged but the frontends only

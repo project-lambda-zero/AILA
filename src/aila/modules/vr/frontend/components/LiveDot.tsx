@@ -25,7 +25,7 @@ export function LiveDot({
   return (
     <span className="inline-flex items-center gap-1.5 text-3xs font-mono uppercase tracking-wide">
       <span
-        className={`w-1.5 h-1.5 rounded-full ${tone.pulse ? "animate-pulse" : ""}`}
+        className={`w-1.5 h-1.5 rounded-full ${tone.pulse ? "animate-pulse motion-reduce:animate-none" : ""}`}
         style={{
           backgroundColor: tone.color,
           boxShadow: `0 0 4px ${tone.color}80`,

@@ -1,6 +1,7 @@
 import { lazy } from "react";
 import type { RouteContribution } from "@platform/extension-registry/types";
 
+import { InvestigationComparePage } from "./screens/InvestigationComparePage";
 import { InvestigationDetailPage } from "./screens/InvestigationDetailPage";
 import { InvestigationsListPage } from "./screens/InvestigationsListPage";
 import { ProjectDetailPage } from "./screens/ProjectDetailPage";
@@ -78,6 +79,18 @@ export const routes = [
     minRole: "reader",
     slot: "page.full" as const,
     breadcrumb: "Investigations",
+  },
+  {
+    id: "vr.investigations-compare",
+    // NOTE: static path MUST land above the `:investigationId` route so
+    // react-router doesn't treat "compare" as an id.
+    path: "/vr/investigations/compare",
+    page: InvestigationComparePage,
+    title: "Compare Investigations",
+    nav: true,
+    minRole: "reader",
+    slot: "page.full" as const,
+    breadcrumb: "Compare",
   },
   {
     id: "vr.investigation-detail",

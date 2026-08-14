@@ -10,6 +10,7 @@ import { Lightning } from "@phosphor-icons/react/dist/csr/Lightning";
 import { ShieldCheck } from "@phosphor-icons/react/dist/csr/ShieldCheck";
 import { Star } from "@phosphor-icons/react/dist/csr/Star";
 import { X } from "@phosphor-icons/react/dist/csr/X";
+import { Scales } from "@phosphor-icons/react/dist/csr/Scales";
 import { CaretLeft } from "@phosphor-icons/react/dist/csr/CaretLeft";
 import { CaretRight } from "@phosphor-icons/react/dist/csr/CaretRight";
 import { GitBranch } from "@phosphor-icons/react/dist/csr/GitBranch";
@@ -461,29 +462,45 @@ export function InvestigationsListPage() {
   // the filter bar.
   const headerActions = useMemo(
     () => (
-      <button
-        type="button"
-        onClick={() => setShowForm((v) => !v)}
-        className="touch-target inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all hover:-translate-y-px"
-        style={{
-          background: showForm
-            ? "color-mix(in srgb, var(--color-text-muted) 28%, transparent)"
-            : "var(--color-accent)",
-          color: showForm ? "var(--color-foreground)" : "var(--color-base)",
-          boxShadow: showForm
-            ? "none"
-            : "0 0 0 1px color-mix(in srgb, var(--color-accent) 50%, transparent), 0 0 12px color-mix(in srgb, var(--color-accent) 28%, transparent)",
-        }}
-      >
-        {showForm ? (
-          <X className="h-3.5 w-3.5" />
-        ) : (
-          <Plus className="h-3.5 w-3.5" weight="bold" />
-        )}
-        {showForm ? "Cancel" : "New investigation"}
-      </button>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => navigate("/vr/investigations/compare")}
+          className="touch-target inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all hover:-translate-y-px border"
+          style={{
+            borderColor: "var(--color-border-default)",
+            color: "var(--color-foreground)",
+            background: "transparent",
+          }}
+          title="Compare investigations side by side"
+        >
+          <Scales className="h-3.5 w-3.5" weight="bold" />
+          Compare
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowForm((v) => !v)}
+          className="touch-target inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all hover:-translate-y-px"
+          style={{
+            background: showForm
+              ? "color-mix(in srgb, var(--color-text-muted) 28%, transparent)"
+              : "var(--color-accent)",
+            color: showForm ? "var(--color-foreground)" : "var(--color-base)",
+            boxShadow: showForm
+              ? "none"
+              : "0 0 0 1px color-mix(in srgb, var(--color-accent) 50%, transparent), 0 0 12px color-mix(in srgb, var(--color-accent) 28%, transparent)",
+          }}
+        >
+          {showForm ? (
+            <X className="h-3.5 w-3.5" />
+          ) : (
+            <Plus className="h-3.5 w-3.5" weight="bold" />
+          )}
+          {showForm ? "Cancel" : "New investigation"}
+        </button>
+      </div>
     ),
-    [showForm],
+    [showForm, navigate],
   );
   useUpdatePageHeader({ actions: headerActions });
 
