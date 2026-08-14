@@ -37,6 +37,7 @@ import { KpiTile } from "@/components/aila/KpiTile";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { FeatureBoundary } from "@app/FeatureBoundary";
 import type { UseQueryResult } from "@tanstack/react-query";
 
 import type {
@@ -103,27 +104,42 @@ export function TopologyPage() {
         }
       />
 
+      {/* Sidebar + canvas each get their own boundary: a subnet-query
+          render fault only kills the sidebar; a canvas render fault
+          only kills the graph. */}
       <div className="flex-1 grid gap-3 min-h-0" style={{ gridTemplateColumns: "260px 1fr" }}>
-        <SubnetSidebar
-          subnets={sidebarSubnets}
-          nodes={full.data?.nodes ?? []}
-          focused={focusedSubnet}
-          onFocus={handleSubnetPick}
-          loading={subnetsQuery.isLoading && !subnetsQuery.data}
-        />
-        <AilaCard
-          padding="none"
-          className="flex flex-col min-h-0 overflow-hidden"
-          decorations={["tech-border"]}
+        <FeatureBoundary
+          label="Subnet sidebar"
+          resetKeys={[subnetsQuery.dataUpdatedAt, sidebarSubnets.length]}
+          onReset={() => void subnetsQuery.refetch()}
         >
-          <TopologyBody
-            full={full}
-            overlays={overlays}
-            focusedSubnet={focusedSubnet}
-            onNodeClick={handleNodeClick}
-            canvasRef={canvasRef}
+          <SubnetSidebar
+            subnets={sidebarSubnets}
+            nodes={full.data?.nodes ?? []}
+            focused={focusedSubnet}
+            onFocus={handleSubnetPick}
+            loading={subnetsQuery.isLoading && !subnetsQuery.data}
           />
-        </AilaCard>
+        </FeatureBoundary>
+        <FeatureBoundary
+          label="Topology graph"
+          resetKeys={[full.dataUpdatedAt, focusedSubnet]}
+          onReset={() => void full.refetch()}
+        >
+          <AilaCard
+            padding="none"
+            className="flex flex-col min-h-0 overflow-hidden"
+            decorations={["tech-border"]}
+          >
+            <TopologyBody
+              full={full}
+              overlays={overlays}
+              focusedSubnet={focusedSubnet}
+              onNodeClick={handleNodeClick}
+              canvasRef={canvasRef}
+            />
+          </AilaCard>
+        </FeatureBoundary>
       </div>
 
       <TopologyDetailSheet

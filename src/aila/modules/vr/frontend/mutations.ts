@@ -337,20 +337,93 @@ export function useCreateInvestigation() {
 
 export function useToggleInvestigationFavorite() {
   const queryClient = useQueryClient();
-  return useMutation({
+  // Optimistic favorite toggle. Flips is_favorite in every cached
+  // ["vr","investigations",...] list (and the ["vr","investigations-for-target",...]
+  // per-target list) plus the single ["vr","investigation", id] detail row
+  // immediately so the star reacts instantly. On mutationFn failure we
+  // restore the exact prior cache from a snapshot captured in onMutate.
+  // Every affected key is invalidated onSettled so the server response
+  // wins the race even if the operator double-toggles.
+  type CachedList = Envelope<VRInvestigationSummary[]> | undefined;
+  type Ctx = {
+    listSnap: [readonly unknown[], CachedList][];
+    targetListSnap: [readonly unknown[], CachedList][];
+    singleSnap: VRInvestigationSummary | undefined;
+  };
+  return useMutation<Envelope<VRInvestigationSummary>, Error, string, Ctx>({
     mutationFn: (investigationId: string) =>
       authorizedRequestJson<Envelope<VRInvestigationSummary>>(
         `/vr/investigations/${encodeURIComponent(investigationId)}/favorite`,
         { method: "PATCH" },
       ),
+    onMutate: async (investigationId) => {
+      await queryClient.cancelQueries({ queryKey: ["vr", "investigations"] });
+      await queryClient.cancelQueries({ queryKey: ["vr", "investigations-for-target"] });
+      await queryClient.cancelQueries({ queryKey: ["vr", "investigation", investigationId] });
+
+      const listSnap = queryClient.getQueriesData<Envelope<VRInvestigationSummary[]>>(
+        { queryKey: ["vr", "investigations"] },
+      );
+      const targetListSnap = queryClient.getQueriesData<Envelope<VRInvestigationSummary[]>>(
+        { queryKey: ["vr", "investigations-for-target"] },
+      );
+      const singleSnap = queryClient.getQueryData<VRInvestigationSummary>(
+        ["vr", "investigation", investigationId],
+      );
+
+      const flipList = (cached: CachedList): CachedList => {
+        if (!cached) return cached;
+        return {
+          ...cached,
+          data: cached.data.map((inv) =>
+            inv.id === investigationId
+              ? { ...inv, is_favorite: !inv.is_favorite }
+              : inv,
+          ),
+        };
+      };
+      queryClient.setQueriesData<CachedList>(
+        { queryKey: ["vr", "investigations"] },
+        flipList,
+      );
+      queryClient.setQueriesData<CachedList>(
+        { queryKey: ["vr", "investigations-for-target"] },
+        flipList,
+      );
+      if (singleSnap) {
+        queryClient.setQueryData<VRInvestigationSummary>(
+          ["vr", "investigation", investigationId],
+          { ...singleSnap, is_favorite: !singleSnap.is_favorite },
+        );
+      }
+      return { listSnap, targetListSnap, singleSnap };
+    },
+    onError: (err, investigationId, ctx) => {
+      if (ctx) {
+        for (const [key, data] of ctx.listSnap) {
+          queryClient.setQueryData(key, data);
+        }
+        for (const [key, data] of ctx.targetListSnap) {
+          queryClient.setQueryData(key, data);
+        }
+        if (ctx.singleSnap !== undefined) {
+          queryClient.setQueryData(
+            ["vr", "investigation", investigationId],
+            ctx.singleSnap,
+          );
+        }
+      }
+      toast.error(`Favorite toggle failed: ${err.message}`);
+    },
     onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ["vr", "investigations"] });
       toast.success(
         result.data.is_favorite ? "Added to favorites" : "Removed from favorites",
       );
     },
-    onError: (err: Error) => {
-      toast.error(`Favorite toggle failed: ${err.message}`);
+    onSettled: (_data, _err, investigationId) => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "investigations"] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "investigations-for-target"] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "investigation", investigationId] });
     },
   });
 }

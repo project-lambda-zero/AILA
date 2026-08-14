@@ -21,7 +21,7 @@ import { Broom } from "@phosphor-icons/react/dist/csr/Broom";
 
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
+import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -533,9 +533,13 @@ export function TaskQueueAdminPage() {
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Total Tasks
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {queueDepthQuery.isLoading ? "--" : totalQueued}
-        </p>
+        <div className="mt-1 min-h-[2rem]">
+          {queueDepthQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading total task count" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{totalQueued}</p>
+          )}
+        </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Across all statuses
         </p></AilaCard>
@@ -543,9 +547,13 @@ export function TaskQueueAdminPage() {
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Running
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {queueDepthQuery.isLoading ? "--" : (queueDepth["running"] ?? 0)}
-        </p>
+        <div className="mt-1 min-h-[2rem]">
+          {queueDepthQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading running task count" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{queueDepth["running"] ?? 0}</p>
+          )}
+        </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           In-flight workers
         </p></AilaCard>
@@ -553,9 +561,13 @@ export function TaskQueueAdminPage() {
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Dead-lettered
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {deadLetterQuery.isLoading ? "--" : deadLetterEntries.length}
-        </p>
+        <div className="mt-1 min-h-[2rem]">
+          {deadLetterQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading dead-lettered task count" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{deadLetterEntries.length}</p>
+          )}
+        </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Awaiting manual recovery
         </p></AilaCard>

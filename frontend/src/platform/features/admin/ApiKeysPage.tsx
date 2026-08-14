@@ -19,7 +19,7 @@ import { Check } from "@phosphor-icons/react/dist/csr/Check";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaTable } from "@/components/aila/AilaTable";
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
+import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -536,17 +536,25 @@ export function ApiKeysPage() {
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Total Keys
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {keysQuery.isLoading ? "--" : totalKeys}
-        </p>
+        <div className="mt-1 min-h-[2rem]">
+          {keysQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading keys" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{totalKeys}</p>
+          )}
+        </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">All time</p></AilaCard>
 
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Active Keys
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {keysQuery.isLoading ? "--" : activeKeys}
-        </p>
+        <div className="mt-1 min-h-[2rem]">
+          {keysQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading keys" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{activeKeys}</p>
+          )}
+        </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Not revoked
         </p></AilaCard>
@@ -554,9 +562,13 @@ export function ApiKeysPage() {
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Revoked Keys
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {keysQuery.isLoading ? "--" : revokedKeys}
-        </p>
+        <div className="mt-1 min-h-[2rem]">
+          {keysQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading keys" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{revokedKeys}</p>
+          )}
+        </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Invalidated
         </p></AilaCard>

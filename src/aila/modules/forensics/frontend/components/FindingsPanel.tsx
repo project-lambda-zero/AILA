@@ -1,9 +1,12 @@
 import { useMemo, useState } from "react";
 
+import { Warning } from "@phosphor-icons/react/dist/csr/Warning";
+
 import { AilaCard } from "@/components/aila/AilaCard";
-import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { EmptyState } from "@/components/aila/EmptyState";
 import { Button } from "@/components/ui/button";
 
+import { FindingRowSkeletonList } from "./skeletons";
 import { useSuppressFinding } from "../mutations";
 import type { Finding } from "../queries";
 import { useProjectFindings } from "../queries";
@@ -263,7 +266,7 @@ export function FindingsPanel({ projectId }: { projectId: string }) {
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
   const [expandAll, setExpandAll] = useState(false);
 
-  if (isLoading) return <LoadingSkeleton size="md" width="full" />;
+  if (isLoading) return <FindingRowSkeletonList count={5} />;
   if (isError) {
     return (
       <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load findings.</p></AilaCard>
@@ -328,10 +331,11 @@ export function FindingsPanel({ projectId }: { projectId: string }) {
     </div>
     
     {findings.length === 0 ? (
-      <p className="text-sm text-text-muted italic py-6 text-center">
-        No suspicious findings yet. Run Full Analysis to populate -- the heuristics will tag any
-        LOLBAS, AppData/Temp execution, or double-extension patterns automatically.
-      </p>
+      <EmptyState
+        icon={<Warning className="h-10 w-10" />}
+        title="No suspicious findings yet."
+        description="Run Full Analysis on the project dashboard to populate this list -- the collector heuristics tag LOLBAS, AppData/Temp execution, and double-extension patterns automatically."
+      />
     ) : (
       <ol className="space-y-1.5">
         {findings.map((f, i) => (

@@ -38,6 +38,7 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
+import { FeatureBoundary } from "@app/FeatureBoundary";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -1866,9 +1867,26 @@ export function MlOpsPage() {
               <TabsTrigger value="prompts">Prompts</TabsTrigger>
             </TabsList>
           </div>
-          <TabsContent value="lifecycle"><LifecycleTab activeKey={activeKey} /></TabsContent>
-          <TabsContent value="evals"><EvalsTab activeKey={activeKey} /></TabsContent>
-          <TabsContent value="prompts"><PromptsTab activeKey={activeKey} /></TabsContent>
+          {/* Per-tab FeatureBoundary: a single tab's queries can misbehave
+              (recharts render fault, malformed transition payload, unknown
+              alias schema) without blanking the whole ML-Ops surface. Tab
+              switches remount via resetKeys so a repeat fault gets a fresh
+              render pass. */}
+          <TabsContent value="lifecycle">
+            <FeatureBoundary label="Lifecycle" resetKeys={[activeKey, tab]}>
+              <LifecycleTab activeKey={activeKey} />
+            </FeatureBoundary>
+          </TabsContent>
+          <TabsContent value="evals">
+            <FeatureBoundary label="Evals" resetKeys={[activeKey, tab]}>
+              <EvalsTab activeKey={activeKey} />
+            </FeatureBoundary>
+          </TabsContent>
+          <TabsContent value="prompts">
+            <FeatureBoundary label="Prompts" resetKeys={[activeKey, tab]}>
+              <PromptsTab activeKey={activeKey} />
+            </FeatureBoundary>
+          </TabsContent>
         </Tabs>
       )}
     </div>

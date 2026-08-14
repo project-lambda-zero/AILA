@@ -46,6 +46,7 @@ import { WorkflowStepper } from "../components/WorkflowStepper";
 import { LiveRunPanel, LIVE_PANEL_STATUSES } from "../components/LiveRunPanel";
 import { HypothesisDetailRail } from "../components/HypothesisDetailRail";
 import { FuzzProposalsPanel } from "../components/FuzzProposalCard";
+import { PanelBoundary } from "../components/PanelBoundary";
 import { useInvestigationMessagesStream } from "../hooks/useInvestigationMessagesStream";
 import { useVRKeyboardShortcuts } from "../hooks/useVRKeyboardShortcuts";
 import {
@@ -781,12 +782,17 @@ export function InvestigationDetailPage() {
           completed / failed / abandoned the existing outcome hero and
           final banners cover the same surface, so we render nothing. */}
       {LIVE_PANEL_STATUSES[inv.status] === true && (
-        <LiveRunPanel
-          investigation={inv}
-          messages={messages}
-          branches={branches}
-          liveStatus={liveStatus}
-        />
+        <PanelBoundary
+          label="Live run"
+          invalidateKeyPrefix={["vr", "investigation-messages", inv.id]}
+        >
+          <LiveRunPanel
+            investigation={inv}
+            messages={messages}
+            branches={branches}
+            liveStatus={liveStatus}
+          />
+        </PanelBoundary>
       )}
 
       {/* §9 / §25 / §82 -- WorkflowStepper currentState. The real source

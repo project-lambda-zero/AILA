@@ -1,10 +1,14 @@
 import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 
+import { Folder } from "@phosphor-icons/react/dist/csr/Folder";
+import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
+
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
-import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { EmptyState } from "@/components/aila/EmptyState";
 
+import { ProjectCardSkeletonGrid } from "../components/skeletons";
 import { useForensicsProjects } from "../queries";
 import { useDeleteProject } from "../mutations";
 import { useDebouncedValue, useRowKeyboardNav, sortRows } from "../powerTable";
@@ -280,31 +284,29 @@ export function ProjectsPage() {
         </button>
       </div>
 
-      {isLoading && <LoadingSkeleton size="lg" width="full" />}
+      {isLoading && <ProjectCardSkeletonGrid count={6} />}
 
       {isError && (
         <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load forensics projects.</p></AilaCard>
       )}
 
       {!isLoading && !isError && projects.length === 0 && (
-        <AilaCard  techBorder glow><div className="text-center py-8">
-          {debouncedSearch ? (
-            <p className="text-text-muted">
-              No projects match &ldquo;{search}&rdquo;.
-            </p>
-          ) : (
-            <>
-              <p className="text-text-muted">No forensics projects yet.</p>
-              <button
-                type="button"
-                onClick={() => navigate("/forensics/projects/new")}
-                className="mt-3 text-sm text-accent hover:underline"
-              >
-                Create your first project
-              </button>
-            </>
-          )}
-        </div></AilaCard>
+        debouncedSearch ? (
+          <EmptyState
+            icon={<MagnifyingGlass className="h-10 w-10" />}
+            title={`No projects match “${search}”.`}
+            description="Clear the search to see every forensics project on this workspace."
+            action={{ label: "Clear search", onClick: () => setSearch("") }}
+            secondaryAction={{ label: "New project", onClick: () => navigate("/forensics/projects/new") }}
+          />
+        ) : (
+          <EmptyState
+            icon={<Folder className="h-10 w-10" />}
+            title="No forensics projects yet."
+            description="Start with an evidence upload or a raw directory to unlock intake, findings, and reasoning replays."
+            action={{ label: "New project", onClick: () => navigate("/forensics/projects/new") }}
+          />
+        )
       )}
 
       <div

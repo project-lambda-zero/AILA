@@ -22,7 +22,7 @@ import { Trash } from "@phosphor-icons/react/dist/csr/Trash";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaTable } from "@/components/aila/AilaTable";
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
+import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -496,27 +496,39 @@ export function AutomationPage() {
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Total Schedules
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {schedulesQuery.isLoading ? "--" : schedules.length}
-        </p>
+        <div className="mt-1 min-h-[2rem]">
+          {schedulesQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading total schedules" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{schedules.length}</p>
+          )}
+        </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Across your team
         </p></AilaCard>
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Enabled
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {schedulesQuery.isLoading ? "--" : enabledCount}
-        </p>
+        <div className="mt-1 min-h-[2rem]">
+          {schedulesQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading enabled schedule count" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{enabledCount}</p>
+          )}
+        </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Currently firing on cron
         </p></AilaCard>
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Available Actions
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {actionsQuery.isLoading ? "--" : actions.length}
-        </p>
+        <div className="mt-1 min-h-[2rem]">
+          {actionsQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading action count" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{actions.length}</p>
+          )}
+        </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Registered by modules
         </p></AilaCard>

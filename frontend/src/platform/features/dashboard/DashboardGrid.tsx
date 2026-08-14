@@ -5,6 +5,7 @@ import { GripHorizontal, X } from "lucide-react";
 import "react-grid-layout/css/styles.css";
 
 import { AilaCard } from "@/components/aila/AilaCard";
+import { FeatureBoundary } from "@app/FeatureBoundary";
 import { getWidgetById } from "./widgetRegistry";
 import type { DashboardLayoutItem } from "./types";
 
@@ -134,10 +135,14 @@ export function DashboardGrid({
                     </div>
                   )}
 
-                  {/* Widget content */}
+                  {/* Widget content -- per-widget FeatureBoundary so one
+                      failed widget renders a scoped retry surface instead
+                      of blanking the entire grid (V-24 resilience). */}
                   <AilaCard padding="none"
                   className="flex-1 overflow-auto min-h-0" techBorder glow>{WidgetComponent ? (
-                    <WidgetComponent />
+                    <FeatureBoundary label={widgetDef?.name ?? "Widget"}>
+                      <WidgetComponent />
+                    </FeatureBoundary>
                   ) : (
                     <div className="flex items-center justify-center h-full p-4 text-sm text-muted-foreground">
                       Widget not available

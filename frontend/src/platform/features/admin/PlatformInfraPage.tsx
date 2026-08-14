@@ -27,6 +27,7 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
+import { FeatureBoundary } from "@app/FeatureBoundary";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -993,11 +994,19 @@ export function PlatformInfraPage() {
           <TabsTrigger value="mcp">MCP Registry</TabsTrigger>
           <TabsTrigger value="specialists">Specialists</TabsTrigger>
         </TabsList>
+        {/* Each tab is its own scoped boundary: a render fault in the
+            MCP registry table doesn't take down the whole admin page,
+            and switching tabs re-mounts the tab's children so a repeat
+            fault gets a fresh render pass. */}
         <TabsContent value="mcp">
-          <McpRegistryTab />
+          <FeatureBoundary label="MCP Registry" resetKeys={[tab]}>
+            <McpRegistryTab />
+          </FeatureBoundary>
         </TabsContent>
         <TabsContent value="specialists">
-          <SpecialistsTab />
+          <FeatureBoundary label="Specialists" resetKeys={[tab]}>
+            <SpecialistsTab />
+          </FeatureBoundary>
         </TabsContent>
       </Tabs>
     </div>

@@ -7,6 +7,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.20] - 2026-08-13 -- Frontend resilience and perceived-performance polish
+
+A backend/frontend cross-reference confirmed all 305 real endpoints are already
+wired, so this release hardens the frontend rather than adding capability.
+Additive; existing screens and behavior preserved (#219). No backend changes.
+
+### Added
+
+- A scoped feature error boundary with a Retry action, wrapping heavy async
+  widgets across the shell (dashboard widgets, cost and executive charts, war
+  room, topology, ML-Ops, platform-infra) and module panels (evidence graph,
+  branch tree, live run, reasoning replay, timeline) -- about 31 sites. A single
+  failed query now renders a scoped retry card instead of blanking the surface.
+- Content-shaped loading skeletons replacing spinners and KPI placeholders
+  across the shell and all four modules (about 69 conversions), so lists and
+  detail panels reserve layout and read as fast.
+- Guided empty states (icon, one-line guidance, and a primary action where one
+  fits) on about 23 list and detail surfaces.
+
+### Changed
+
+- Favorite, acknowledge, and settings toggles now update optimistically with
+  rollback on error (investigation favorite, malware message acknowledge and
+  investigation patch, forensics finding suppression), so the UI responds
+  instantly.
+
+All additions carry screen-reader affordances and respect prefers-reduced-motion.
+All workspace type-checks and the shell production build pass.
+
 ## [0.5.19] - 2026-08-13 -- Live run panels, table export and quick-peek, palette recents
 
 Adds interaction-model power: real-time run panels, table export, row quick-peek,

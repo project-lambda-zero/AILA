@@ -5,7 +5,7 @@ import { Trash } from "@phosphor-icons/react/dist/csr/Trash";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
-import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
+import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -215,27 +215,39 @@ export function TagVocabularyPage() {
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Total Keys
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {vocabQuery.isLoading ? "--" : vocabulary.length}
-        </p>
+        <div className="mt-1 min-h-[2rem]">
+          {vocabQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading vocab" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{vocabulary.length}</p>
+          )}
+        </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Defaults + custom
         </p></AilaCard>
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Custom Keys
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {vocabQuery.isLoading ? "--" : userDefinedCount}
-        </p>
+        <div className="mt-1 min-h-[2rem]">
+          {vocabQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading vocab" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{userDefinedCount}</p>
+          )}
+        </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Added by admins
         </p></AilaCard>
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Keys In Use
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {systemsQuery.isLoading || vocabQuery.isLoading ? "--" : inUseCount}
-        </p>
+        <div className="mt-1 min-h-[2rem]">
+          {systemsQuery.isLoading || vocabQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading keys-in-use count" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{inUseCount}</p>
+          )}
+        </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Assigned to ≥1 system
         </p></AilaCard>

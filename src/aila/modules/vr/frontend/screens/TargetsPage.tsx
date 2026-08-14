@@ -5,7 +5,9 @@ import { DeviceMobile } from "@phosphor-icons/react/dist/csr/DeviceMobile";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
+import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { Target as TargetIcon } from "@phosphor-icons/react/dist/csr/Target";
 
 import { DeleteButton } from "../components/DeleteButton";
 import {
@@ -592,7 +594,23 @@ export function TargetsPage() {
       )}
 
       {!isLoading && !isError && targets.length === 0 && (
-        <AilaCard  techBorder glow><p className="text-center py-6 text-text-muted">No targets yet.</p></AilaCard>
+        <EmptyState
+          icon={<TargetIcon className="h-7 w-7" weight="duotone" />}
+          title="No targets yet"
+          description={
+            workspaces.length === 0
+              ? "A workspace is the precondition for a target. Create one first, then upload or register a binary/source repo here."
+              : "Register a source repo or upload a binary (APK, ELF, PE, macho) to make it investigable."
+          }
+          action={
+            workspaces.length === 0
+              ? undefined
+              : {
+                  label: showForm ? "Cancel" : "New Target",
+                  onClick: () => setShowForm((v) => !v),
+                }
+          }
+        />
       )}
 
       {!isLoading && !isError && targets.length > 0 && (

@@ -19,10 +19,11 @@ import { FileArrowDown } from "@phosphor-icons/react/dist/csr/FileArrowDown";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaChart } from "@/components/aila/AilaChart";
-import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
+import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { FeatureBoundary } from "@app/FeatureBoundary";
 import { requestBlob } from "@platform/api/http";
 import { saveBlobResponse } from "@platform/api/download";
 import { getAuthTokenStandalone } from "@platform/auth/useAuthStore";
@@ -196,12 +197,21 @@ export function ExecutivePage() {
               </p>
               <span aria-hidden className="h-px flex-1 bg-border" />
             </div>
-            <p
-              className="font-mono font-semibold leading-none text-text"
-              style={{ fontSize: "clamp(4rem, 9vw, 7.5rem)" }}
-            >
-              {healthQuery.isLoading ? "--" : totalFindings}
-            </p>
+            {healthQuery.isLoading ? (
+              <LoadingSkeleton
+                size="xl"
+                width="third"
+                className="!h-24 lg:!h-32"
+                aria-label="Loading total findings"
+              />
+            ) : (
+              <p
+                className="font-mono font-semibold leading-none text-text"
+                style={{ fontSize: "clamp(4rem, 9vw, 7.5rem)" }}
+              >
+                {totalFindings}
+              </p>
+            )}
             <p className="font-mono text-sm text-text-muted">
               Active findings across the fleet · refreshed{" "}
               {healthQuery.isLoading
@@ -226,11 +236,17 @@ export function ExecutivePage() {
               <p className="font-mono text-2xs uppercase tracking-cyber text-text-muted">
                 Affected systems
               </p>
-              <p className="font-mono text-3xl font-semibold leading-tight text-text">
-                {healthQuery.isLoading
-                  ? "--"
-                  : (health?.systems_with_findings ?? 0)}
-              </p>
+              {healthQuery.isLoading ? (
+                <LoadingSkeleton
+                  size="md"
+                  width="third"
+                  aria-label="Loading affected systems"
+                />
+              ) : (
+                <p className="font-mono text-3xl font-semibold leading-tight text-text">
+                  {health?.systems_with_findings ?? 0}
+                </p>
+              )}
               <p className="font-mono text-2xs text-text-muted">
                 With at least one finding
               </p>
@@ -252,13 +268,21 @@ export function ExecutivePage() {
               <p className="font-mono text-2xs uppercase tracking-cyber text-text-muted">
                 Immediate risk
               </p>
-              <p
-                className={`font-mono text-3xl font-semibold leading-tight ${
-                  immediateCount > 0 ? "text-critical" : "text-text"
-                }`}
-              >
-                {healthQuery.isLoading ? "--" : immediateCount}
-              </p>
+              {healthQuery.isLoading ? (
+                <LoadingSkeleton
+                  size="md"
+                  width="third"
+                  aria-label="Loading immediate risk count"
+                />
+              ) : (
+                <p
+                  className={`font-mono text-3xl font-semibold leading-tight ${
+                    immediateCount > 0 ? "text-critical" : "text-text"
+                  }`}
+                >
+                  {immediateCount}
+                </p>
+              )}
               <p className="font-mono text-2xs text-text-muted">
                 Requires action now
               </p>
@@ -297,7 +321,14 @@ export function ExecutivePage() {
       )}
 
       {/* Severity breakdown -- offset right at lg+ to deliberately break the
-          hero's left edge alignment, reinforcing the asymmetric rhythm */}
+          hero's left edge alignment, reinforcing the asymmetric rhythm.
+          Scoped FeatureBoundary so a render fault in the severity grid
+          doesn't blank the whole executive surface. */}
+      <FeatureBoundary
+        label="Risk posture"
+        resetKeys={[health?.total_findings ?? -1]}
+        onReset={() => void healthQuery.refetch()}
+      >
       <AilaCard
         variant="default"
         padding="md"
@@ -340,13 +371,21 @@ export function ExecutivePage() {
           </div>
         )}
       </AilaCard>
+      </FeatureBoundary>
 
       {/* Severity distribution pie -- additive visual of the same
           /executive/health payload. The card grid above stays as the
-          numeric readout; this chart is the at-a-glance shape. */}
+          numeric readout; this chart is the at-a-glance shape. Scoped
+          FeatureBoundary so a recharts render fault only kills the
+          chart card, not the downloads that follow. */}
       {!healthQuery.isLoading &&
         !healthQuery.isError &&
         severityPieData.length > 0 && (
+          <FeatureBoundary
+            label="Severity distribution chart"
+            resetKeys={[severityPieData.length, totalFindings]}
+            onReset={() => void healthQuery.refetch()}
+          >
           <AilaCard
             variant="default"
             padding="md"
@@ -371,6 +410,7 @@ export function ExecutivePage() {
               ariaLabel="Severity distribution pie chart"
             />
           </AilaCard>
+          </FeatureBoundary>
         )}
 
       {/* Downloads */}

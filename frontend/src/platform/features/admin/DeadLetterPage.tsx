@@ -18,7 +18,7 @@ import { ArrowCounterClockwise } from "@phosphor-icons/react/dist/csr/ArrowCount
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaTable } from "@/components/aila/AilaTable";
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
+import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { Button } from "@/components/ui/button";
 import { authorizedRequestJson } from "@platform/api/http";
@@ -266,18 +266,26 @@ export function DeadLetterPage() {
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Dead-Lettered Tasks
         </p>
-        <p className="font-mono text-2xl font-semibold text-critical mt-1">
-          {entriesQuery.isLoading ? "--" : entries.length}
-        </p>
+        <div className="mt-1 min-h-[2rem]">
+          {entriesQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading dead-letter count" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-critical">{entries.length}</p>
+          )}
+        </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           {trackFilter ? `Track: ${trackFilter}` : "All tracks"}
         </p></AilaCard>
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Distinct Tracks
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {entriesQuery.isLoading ? "--" : tracks.length}
-        </p>
+        <div className="mt-1 min-h-[2rem]">
+          {entriesQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading distinct track count" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{tracks.length}</p>
+          )}
+        </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           With at least one dead-lettered task
         </p></AilaCard>

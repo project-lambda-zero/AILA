@@ -1,11 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
+import { GitBranch } from "@phosphor-icons/react/dist/csr/GitBranch";
+
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
+import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
+import { PanelBoundary } from "../components/PanelBoundary";
+import { SnapshotListSkeleton } from "../components/skeletons";
 import {
   useInvestigationDetail,
   useReasoningGraphDiff,
@@ -263,7 +268,7 @@ export function ReasoningReplayPage() {
     );
   }
 
-  if (isLoading) return <LoadingSkeleton size="lg" width="full" />;
+  if (isLoading) return <SnapshotListSkeleton count={8} />;
 
   if (isError) {
     return (
@@ -287,14 +292,16 @@ export function ReasoningReplayPage() {
         >
           {"\u2190"} Back to investigation
         </button>
-        <AilaCard className="border-border" techBorder glow>
-          <p className="text-sm text-text-muted">
-            No reasoning-graph snapshots have been recorded for this
-            investigation. The reasoning engine writes one snapshot per
-            turn; if the run has not started, or the engine did not emit
-            graphs on this run, this list stays empty.
-          </p>
-        </AilaCard>
+        <EmptyState
+          icon={<GitBranch className="h-10 w-10" />}
+          title="No reasoning-graph snapshots recorded."
+          description="The reasoning engine writes one snapshot per turn. If the investigation has not started, or the engine did not emit graphs on this run, this list stays empty."
+          action={{
+            label: "Back to investigation",
+            onClick: () =>
+              navigate(`/forensics/projects/${projectId}/investigations/${investigationId}`),
+          }}
+        />
       </div>
     );
   }
@@ -440,12 +447,14 @@ export function ReasoningReplayPage() {
       </AilaCard>
 
       {/* Diff */}
-      <DiffPanel
-        projectId={projectId}
-        investigationId={investigationId}
-        fromStep={fromStep}
-        toStep={toStep}
-      />
+      <PanelBoundary label="Reasoning graph diff">
+        <DiffPanel
+          projectId={projectId}
+          investigationId={investigationId}
+          fromStep={fromStep}
+          toStep={toStep}
+        />
+      </PanelBoundary>
     </div>
   );
 }

@@ -3,7 +3,9 @@ import { useNavigate } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
+import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { Bookmarks } from "@phosphor-icons/react/dist/csr/Bookmarks";
 
 import { DeleteButton } from "../components/DeleteButton";
 import {
@@ -199,10 +201,11 @@ export function PatternsPage() {
       )}
 
       {!isLoading && !isError && patterns.length === 0 && (
-        <AilaCard  techBorder glow><p className="text-center py-6 text-text-muted">
-          No patterns. Auto-extraction runs when investigations complete
-          successfully; you can also create patterns manually via the API.
-        </p></AilaCard>
+        <EmptyState
+          icon={<Bookmarks className="h-7 w-7" weight="duotone" />}
+          title="No patterns yet"
+          description="Auto-extraction runs when an investigation completes successfully. You can also create patterns manually via the API."
+        />
       )}
 
       {!isLoading && !isError && patterns.length > 0 && (

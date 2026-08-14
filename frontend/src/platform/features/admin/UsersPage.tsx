@@ -17,7 +17,7 @@ import { UserPlus } from "@phosphor-icons/react/dist/csr/UserPlus";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaTable } from "@/components/aila/AilaTable";
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
+import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -494,17 +494,25 @@ export function UsersPage() {
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Total Users
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {usersQuery.isLoading ? "--" : totalUsers}
-        </p>
+        <div className="mt-1 min-h-[2rem]">
+          {usersQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading total user count" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{totalUsers}</p>
+          )}
+        </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">All accounts</p></AilaCard>
 
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Active Users
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {usersQuery.isLoading ? "--" : activeUsers}
-        </p>
+        <div className="mt-1 min-h-[2rem]">
+          {usersQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading active user count" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{activeUsers}</p>
+          )}
+        </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Can log in
         </p></AilaCard>
@@ -512,9 +520,13 @@ export function UsersPage() {
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Inactive Users
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {usersQuery.isLoading ? "--" : inactiveUsers}
-        </p>
+        <div className="mt-1 min-h-[2rem]">
+          {usersQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading inactive user count" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{inactiveUsers}</p>
+          )}
+        </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Deactivated
         </p></AilaCard>

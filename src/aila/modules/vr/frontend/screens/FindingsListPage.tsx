@@ -4,7 +4,9 @@ import { useNavigate } from "react-router";
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaChart } from "@/components/aila/AilaChart";
+import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { Bug } from "@phosphor-icons/react/dist/csr/Bug";
 import { useThemeChartColors } from "@platform/features/viz/chartColors";
 
 import {
@@ -180,13 +182,11 @@ export function FindingsListPage() {
       )}
 
       {!isLoading && !isError && rows.length === 0 && (
-        <AilaCard techBorder glow>
-          <p className="text-center py-6 text-text-muted">
-            No findings yet. They get materialised by{" "}
-            <b>vr.crash_triage</b> + investigation workflows; come back after
-            triage runs land.
-          </p>
-        </AilaCard>
+        <EmptyState
+          icon={<Bug className="h-7 w-7" weight="duotone" />}
+          title="No findings yet"
+          description="Findings get materialised by vr.crash_triage and investigation workflows once evidence is promoted. They surface here as they land."
+        />
       )}
 
       {!isLoading && !isError && rows.length > 0 && (

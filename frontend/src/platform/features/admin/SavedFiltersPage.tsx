@@ -15,7 +15,7 @@ import { Trash } from "@phosphor-icons/react/dist/csr/Trash";
 
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
+import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -471,9 +471,13 @@ export function SavedFiltersPage() {
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Total Filters
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {filtersQuery.isLoading ? "--" : totalFilters}
-        </p>
+        <div className="mt-1 min-h-[2rem]">
+          {filtersQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading filters" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{totalFilters}</p>
+          )}
+        </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Visible to current user
         </p></AilaCard>
@@ -481,9 +485,13 @@ export function SavedFiltersPage() {
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Pinned
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {filtersQuery.isLoading ? "--" : pinnedFilters}
-        </p>
+        <div className="mt-1 min-h-[2rem]">
+          {filtersQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading filters" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{pinnedFilters}</p>
+          )}
+        </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Surfaced in toolbars
         </p></AilaCard>
@@ -491,9 +499,13 @@ export function SavedFiltersPage() {
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Team-Shared
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {filtersQuery.isLoading ? "--" : sharedFilters}
-        </p>
+        <div className="mt-1 min-h-[2rem]">
+          {filtersQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading filters" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{sharedFilters}</p>
+          )}
+        </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Shared across the team
         </p></AilaCard>

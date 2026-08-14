@@ -35,6 +35,7 @@ import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { Button } from "@/components/ui/button";
+import { FeatureBoundary } from "@app/FeatureBoundary";
 import { authorizedRequestJson } from "@platform/api/http";
 import { useAuthStore } from "@platform/auth/useAuthStore";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
@@ -729,34 +730,58 @@ export function WarRoomPage() {
         </div>
       )}
 
+      {/* Per-panel FeatureBoundary so a render fault in the live event
+          stream, active runs grid, or vitals rail collapses to a scoped
+          retry surface -- the other two panels stay live. */}
       <div className="grid gap-4 lg:grid-cols-12">
         <div className="lg:col-span-5">
-          <LiveEventStream
-            events={feed.events}
-            activeScopes={activeScopes}
-            onToggleScope={toggleScope}
+          <FeatureBoundary
+            label="Live event stream"
+            resetKeys={[activeScopes]}
             onReset={resetScopes}
-            scopeCounts={feed.scopeCounts}
-            totalIngested={feed.totalIngested}
-          />
+          >
+            <LiveEventStream
+              events={feed.events}
+              activeScopes={activeScopes}
+              onToggleScope={toggleScope}
+              onReset={resetScopes}
+              scopeCounts={feed.scopeCounts}
+              totalIngested={feed.totalIngested}
+            />
+          </FeatureBoundary>
         </div>
         <div className="lg:col-span-4">
-          <ActiveRunsGrid
-            events={feed.events}
-            queueDepth={queueDepth}
-            isLoading={queueDepthQuery.isLoading}
-          />
+          <FeatureBoundary
+            label="Active runs board"
+            resetKeys={[queueDepthQuery.dataUpdatedAt]}
+            onReset={() => void queueDepthQuery.refetch()}
+          >
+            <ActiveRunsGrid
+              events={feed.events}
+              queueDepth={queueDepth}
+              isLoading={queueDepthQuery.isLoading}
+            />
+          </FeatureBoundary>
         </div>
         <div className="lg:col-span-3">
-          <VitalsRail
-            queueDepth={queueDepth}
-            queueDepthError={queueDepthQuery.error}
-            deadLetterCount={deadLetterCount}
-            deadLetterError={deadLetterQuery.error}
-            isAdmin={isAdmin}
-            sseStatus={sseStatus}
-            reducedMotion={reducedMotion}
-          />
+          <FeatureBoundary
+            label="Vitals rail"
+            resetKeys={[queueDepthQuery.dataUpdatedAt, deadLetterQuery.dataUpdatedAt]}
+            onReset={() => {
+              void queueDepthQuery.refetch();
+              if (isAdmin) void deadLetterQuery.refetch();
+            }}
+          >
+            <VitalsRail
+              queueDepth={queueDepth}
+              queueDepthError={queueDepthQuery.error}
+              deadLetterCount={deadLetterCount}
+              deadLetterError={deadLetterQuery.error}
+              isAdmin={isAdmin}
+              sseStatus={sseStatus}
+              reducedMotion={reducedMotion}
+            />
+          </FeatureBoundary>
         </div>
       </div>
     </div>

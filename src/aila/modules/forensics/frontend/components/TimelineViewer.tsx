@@ -1,9 +1,13 @@
 import { useState } from "react";
 
+import { Clock } from "@phosphor-icons/react/dist/csr/Clock";
+
 import { AilaCard } from "@/components/aila/AilaCard";
-import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { EmptyState } from "@/components/aila/EmptyState";
 
 import { useOccurrences, useTimeline } from "../queries";
+import { PanelBoundary } from "./PanelBoundary";
+import { TableSkeleton } from "./skeletons";
 import { TimelineDistribution } from "./TimelineDistribution";
 import { TimelineTrack } from "./TimelineTrack";
 
@@ -155,7 +159,7 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
     minConfidence: confidence,
   });
 
-  if (isLoading || occLoading) return <LoadingSkeleton size="lg" width="full" />;
+  if (isLoading || occLoading) return <TableSkeleton rows={8} cells={4} />;
 
   if (isError) {
     return (
@@ -233,27 +237,42 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
 
       {/* Section 0 -- Visual analytics (additive; list views below stay intact) */}
       {safeEntries.length > 0 && (
-        <div className="space-y-3">
-          <div className="flex items-baseline justify-between">
-            <h3 className="text-sm font-semibold text-foreground">
-              Visual timeline
-              <span className="ml-2 text-xs font-normal text-text-muted">
-                {safeEntries.length} event
-                {safeEntries.length === 1 ? "" : "s"} at{" "}
-                <code>{confidence}</code> confidence -- click a dot for
-                detail, list view below
-              </span>
-            </h3>
+        <PanelBoundary label="Visual timeline">
+          <div className="space-y-3">
+            <div className="flex items-baseline justify-between">
+              <h3 className="text-sm font-semibold text-foreground">
+                Visual timeline
+                <span className="ml-2 text-xs font-normal text-text-muted">
+                  {safeEntries.length} event
+                  {safeEntries.length === 1 ? "" : "s"} at{" "}
+                  <code>{confidence}</code> confidence -- click a dot for
+                  detail, list view below
+                </span>
+              </h3>
+            </div>
+            <TimelineTrack
+              entries={safeEntries}
+              activeSource={sourceFilter}
+              onSourceClick={(src) =>
+                setSourceFilter((cur) => (cur === src ? null : src))
+              }
+            />
+            <TimelineDistribution entries={safeEntries} />
           </div>
-          <TimelineTrack
-            entries={safeEntries}
-            activeSource={sourceFilter}
-            onSourceClick={(src) =>
-              setSourceFilter((cur) => (cur === src ? null : src))
-            }
-          />
-          <TimelineDistribution entries={safeEntries} />
-        </div>
+        </PanelBoundary>
+      )}
+
+      {/* Empty guidance when there is nothing at either lane -- shown once,
+          replaces two identical "no entries" cards further below when both
+          lanes are empty. When one lane has data we fall through to the
+          section-specific inline empty text so the operator can still see
+          which lane fired. */}
+      {safeEntries.length === 0 && safeOcc.length === 0 && (
+        <EmptyState
+          icon={<Clock className="h-10 w-10" />}
+          title={`No timeline entries at ${confidence} confidence.`}
+          description="Lower the confidence bar, run Full Analysis on the dashboard, or start an investigation -- collector + agent findings both feed the timeline."
+        />
       )}
 
       {/* Section 1 -- Timeline (event-time correlation) */}

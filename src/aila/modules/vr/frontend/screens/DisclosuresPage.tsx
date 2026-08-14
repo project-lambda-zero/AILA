@@ -3,7 +3,9 @@ import { useNavigate } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
+import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { EnvelopeSimple } from "@phosphor-icons/react/dist/csr/EnvelopeSimple";
 
 import { DeleteButton } from "../components/DeleteButton";
 import {
@@ -426,10 +428,15 @@ export function DisclosuresPage() {
       )}
 
       {!isLoading && !isError && rows.length === 0 && (
-        <AilaCard  techBorder glow><p className="text-center py-6 text-text-muted">
-          No disclosure submissions yet. Click <b>New Disclosure</b> above to
-          file one against a finding.
-        </p></AilaCard>
+        <EmptyState
+          icon={<EnvelopeSimple className="h-7 w-7" weight="duotone" />}
+          title="No disclosure submissions yet"
+          description="File a disclosure against a promoted finding. Each submission tracks status, communications, and vendor-response timelines."
+          action={{
+            label: showForm ? "Cancel" : "New Disclosure",
+            onClick: () => setShowForm((v) => !v),
+          }}
+        />
       )}
 
       {!isLoading && !isError && rows.length > 0 && (

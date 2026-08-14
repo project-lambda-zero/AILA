@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { EmptyState } from "@/components/aila/EmptyState";
+import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { useInvestigationHypotheses } from "../queries";
 import type { HypothesisProjection } from "../queries";
@@ -221,7 +222,23 @@ export function HypothesisDetailRail({
       </div>
       {state.railOpen ? (
         isLoading ? (
-          <p className="text-xs text-text-muted">Loading…</p>
+          // Content-shaped skeleton mirrors the hypothesis-row layout so
+          // the rail keeps its height while the fetch resolves.
+          <ul
+            className="space-y-2"
+            aria-busy="true"
+            aria-label="Loading hypotheses"
+          >
+            {[0, 1, 2].map((i) => (
+              <li
+                key={i}
+                className="rounded border border-border-default/60 px-2 py-2 space-y-1.5"
+              >
+                <LoadingSkeleton size="sm" width="half" />
+                <LoadingSkeleton size="sm" width="full" />
+              </li>
+            ))}
+          </ul>
         ) : items.length === 0 ? (
           <EmptyState
             title="No hypotheses yet"

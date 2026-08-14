@@ -7,6 +7,8 @@ import { ShieldWarning } from "@phosphor-icons/react/dist/csr/ShieldWarning";
 import { fetchSessions, revokeSession, type SessionRecord } from "./api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/aila/EmptyState";
+import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 
 // ---------------------------------------------------------------------------
 // User-agent parsing
@@ -190,10 +192,14 @@ export function SessionsPage() {
         </div>
       )}
 
-      {/* Loading state */}
+      {/* Loading state -- content-shaped skeleton mirrors the sessions table rows */}
       {sessionsQuery.isLoading && (
-        <div className="rounded-lg border border-border bg-surface p-8 text-center text-sm text-text-muted">
-          Loading sessions...
+        <div
+          className="rounded-lg border border-border bg-surface p-6"
+          aria-label="Loading sessions"
+          aria-busy="true"
+        >
+          <LoadingSkeletonGroup lines={4} />
         </div>
       )}
 
@@ -209,9 +215,11 @@ export function SessionsPage() {
       {!sessionsQuery.isLoading && (
         <div className="rounded-lg border border-border bg-surface overflow-hidden">
           {sessions.length === 0 ? (
-            <div className="p-8 text-center text-sm text-text-muted">
-              No active sessions found.
-            </div>
+            <EmptyState
+              icon={<Monitor className="h-10 w-10" />}
+              title="No active sessions"
+              description="Your account has no active browser sessions. Sign in from another device to see it listed here."
+            />
           ) : (
             <table aria-label="Active sessions" className="w-full text-left">
               <thead>

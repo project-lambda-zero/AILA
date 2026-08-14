@@ -630,7 +630,22 @@ function RecentReasoningRollup({
       </Link>
     </div>
     {isLoading ? (
-      <p className="text-xs text-text-muted">Loading…</p>
+      // Content-shaped skeleton mirrors the reasoning list rows so the
+      // card keeps its footprint while messages load.
+      <ol
+        className="space-y-1"
+        aria-busy="true"
+        aria-label="Loading recent reasoning"
+      >
+        {[0, 1, 2, 3].map((i) => (
+          <li
+            key={i}
+            className="border border-border-default rounded px-2 py-1"
+          >
+            <LoadingSkeleton size="sm" width="full" />
+          </li>
+        ))}
+      </ol>
     ) : recent.length === 0 ? (
       <p className="text-xs text-text-muted">
         No turns yet -- engine hasn't reasoned about this target.

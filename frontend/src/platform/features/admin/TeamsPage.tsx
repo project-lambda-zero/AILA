@@ -15,7 +15,7 @@ import { useNavigate } from "react-router";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaTable } from "@/components/aila/AilaTable";
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
+import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -252,27 +252,43 @@ export function TeamsPage() {
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Teams
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {teamsQuery.isLoading ? "--" : teams.length}
-        </p></AilaCard>
+        <div className="mt-1 min-h-[2rem]">
+          {teamsQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading teams" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{teams.length}</p>
+          )}
+        </div></AilaCard>
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Members
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {crossQuery.isLoading ? "--" : totalMembers}
-        </p></AilaCard>
+        <div className="mt-1 min-h-[2rem]">
+          {crossQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading cross" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{totalMembers}</p>
+          )}
+        </div></AilaCard>
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Systems
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {crossQuery.isLoading ? "--" : totalSystems}
-        </p></AilaCard>
+        <div className="mt-1 min-h-[2rem]">
+          {crossQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading cross" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{totalSystems}</p>
+          )}
+        </div></AilaCard>
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Workflow runs
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {crossQuery.isLoading ? "--" : totalRuns}
-        </p></AilaCard>
+        <div className="mt-1 min-h-[2rem]">
+          {crossQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading cross" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{totalRuns}</p>
+          )}
+        </div></AilaCard>
       </div>
 
       {teamsQuery.isError && (

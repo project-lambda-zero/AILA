@@ -29,6 +29,7 @@ import {
 } from "../queries";
 import type { BranchStatus, PersonaVoice, VRBranchSummary } from "../types";
 import { formatBranchDisplayName } from "../branchDisplay";
+import { PanelBoundary } from "../components/PanelBoundary";
 import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
 /** Persona-voice values operators can attach to a spawn / fork.
@@ -261,20 +262,25 @@ export function BranchTreePage() {
         })}
       </div></AilaCard>
 
-      <AilaCard className="p-0 overflow-hidden" techBorder glow><div style={{ width: "100%", height: 600 }}>
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          fitView
-          nodesDraggable
-          nodesConnectable={false}
-          elementsSelectable
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background gap={20} size={1} color="#1e293b" />
-          <Controls showInteractive={false} />
-        </ReactFlow>
-      </div></AilaCard>
+      <PanelBoundary
+        label="Branch tree"
+        invalidateKeyPrefix={["vr", "investigation-branches", invId]}
+      >
+        <AilaCard className="p-0 overflow-hidden" techBorder glow><div style={{ width: "100%", height: 600 }}>
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            fitView
+            nodesDraggable
+            nodesConnectable={false}
+            elementsSelectable
+            proOptions={{ hideAttribution: true }}
+          >
+            <Background gap={20} size={1} color="#1e293b" />
+            <Controls showInteractive={false} />
+          </ReactFlow>
+        </div></AilaCard>
+      </PanelBoundary>
 
       {branches.length === 0 && (
         <AilaCard  techBorder glow><p className="text-sm text-text-muted text-center py-4">

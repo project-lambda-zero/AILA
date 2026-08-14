@@ -2,10 +2,15 @@ import * as React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
+import { Detective } from "@phosphor-icons/react/dist/csr/Detective";
+import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
+
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
+import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
+import { InvestigationRowSkeletonList, InvestigationDetailSkeleton } from "../components/skeletons";
 import { AnalystDirectivesPanel } from "../components/AnalystDirectivesPanel";
 import { FetchRawFilePanel } from "../components/FetchRawFilePanel";
 import { RetrieveFilePanel } from "../components/RetrieveFilePanel";
@@ -538,7 +543,7 @@ function InvestigationsTab({
       {isRaw ? <RawDirectoryNotice /> : <FullAnalysisButton projectId={projectId} />}
       <StartInvestigationForm projectId={projectId} />
 
-      {isLoading && <LoadingSkeleton size="md" width="full" />}
+      {isLoading && <InvestigationRowSkeletonList count={4} />}
 
       {isError && (
         <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load investigations.</p></AilaCard>
@@ -582,15 +587,20 @@ function InvestigationsTab({
       )}
 
       {!isLoading && !isError && (investigations ?? []).length === 0 && (
-        <AilaCard  techBorder glow><p className="text-sm text-text-muted text-center py-6">
-          No investigations yet. Start one above.
-        </p></AilaCard>
+        <EmptyState
+          icon={<Detective className="h-10 w-10" />}
+          title="No investigations yet."
+          description="Ask a question in the box above to start the first investigation on this project."
+        />
       )}
 
       {!isLoading && !isError && (investigations ?? []).length > 0 && visible.length === 0 && (
-        <AilaCard techBorder glow><p className="text-sm text-text-muted text-center py-6">
-          No investigations match &ldquo;{search}&rdquo;.
-        </p></AilaCard>
+        <EmptyState
+          icon={<MagnifyingGlass className="h-10 w-10" />}
+          title={`No investigations match “${search}”.`}
+          description="Clear the search to see every investigation for this project."
+          action={{ label: "Clear search", onClick: () => setSearch("") }}
+        />
       )}
 
       <div ref={listRef} className="space-y-2">
@@ -779,7 +789,7 @@ export function ProjectDashboardPage() {
     );
   }
 
-  if (isLoading) return <LoadingSkeleton size="lg" width="full" />;
+  if (isLoading) return <InvestigationDetailSkeleton />;
 
   if (isError || !project) {
     return (

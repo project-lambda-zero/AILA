@@ -3,7 +3,9 @@ import { useNavigate } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
+import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { Lightning } from "@phosphor-icons/react/dist/csr/Lightning";
 
 import { DeleteButton } from "../components/DeleteButton";
 import {
@@ -150,12 +152,12 @@ export function FuzzCampaignsPage() {
       )}
 
       {!isLoading && !isError && rows.length === 0 && (
-        <AilaCard  techBorder glow><p className="text-center py-6 text-text-muted">
-          No fuzz campaigns. Create via POST /vr/fuzz/campaigns referencing a
-          target_id + workspace_id.
-        </p></AilaCard>
+        <EmptyState
+          icon={<Lightning className="h-7 w-7" weight="duotone" />}
+          title="No fuzz campaigns yet"
+          description="Campaigns get proposed by the reasoning agent (accept them from an investigation's Fuzz proposals panel) or created directly via POST /vr/fuzz/campaigns."
+        />
       )}
-
       {!isLoading && !isError && rows.length > 0 && (
         <AilaCard className="overflow-x-auto p-0" techBorder glow><table className="w-full text-sm">
           <caption className="sr-only">Fuzz campaigns</caption>

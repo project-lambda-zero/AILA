@@ -1,12 +1,20 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
+import { Detective } from "@phosphor-icons/react/dist/csr/Detective";
+import { GitBranch } from "@phosphor-icons/react/dist/csr/GitBranch";
+
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
-import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { EmptyState } from "@/components/aila/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 
+import {
+  InvestigationDetailSkeleton,
+  InvestigationRowSkeletonList,
+} from "../components/skeletons";
+import { PanelBoundary } from "../components/PanelBoundary";
 import { AnalystDirectivesPanel } from "../components/AnalystDirectivesPanel";
 import { LiveRunPanel } from "../components/LiveRunPanel";
 import { RetrieveFilePanel } from "../components/RetrieveFilePanel";
@@ -601,7 +609,7 @@ export function InvestigationDetailPage() {
     );
   }
 
-  if (isLoading) return <LoadingSkeleton size="lg" width="full" />;
+  if (isLoading) return <InvestigationDetailSkeleton />;
 
   if (isError || !investigation) {
     return (
@@ -720,14 +728,16 @@ export function InvestigationDetailPage() {
           detail query so the header + summary flip and this panel
           unmounts on the next render. */}
       {isRunning && (
-        <LiveRunPanel
-          status={investigation.status}
-          attemptsUsed={investigation.attempts_used}
-          maxAttempts={investigation.max_attempts}
-          events={liveEvents}
-          feedStatus={feedStatus}
-          latestStage={latestStage}
-        />
+        <PanelBoundary label="Live run panel">
+          <LiveRunPanel
+            status={investigation.status}
+            attemptsUsed={investigation.attempts_used}
+            maxAttempts={investigation.max_attempts}
+            events={liveEvents}
+            feedStatus={feedStatus}
+            latestStage={latestStage}
+          />
+        </PanelBoundary>
       )}
 
       {/* Analyst directives -- readable on every turn by AILA */}
@@ -910,27 +920,41 @@ export function InvestigationDetailPage() {
         )}
 
         {activeTab === "steps" && (
-          <div className="space-y-3">
-            {investigation.steps.length === 0 ? (
-              <AilaCard  techBorder glow><p className="text-sm text-text-muted text-center py-6">
-                No steps recorded yet.
-              </p></AilaCard>
-            ) : (
-              investigation.steps
-                .slice()
-                .sort((a, b) => a.step_number - b.step_number)
-                .map((step) => <StepCard key={step.id} step={step} />)
-            )}
-          </div>
+          <PanelBoundary label="Reasoning steps">
+            <div className="space-y-3">
+              {investigation.steps.length === 0 ? (
+                <EmptyState
+                  icon={<GitBranch className="h-10 w-10" />}
+                  title="No steps recorded yet."
+                  description={
+                    isRunning
+                      ? "The reasoning engine will emit step frames as soon as it lands the first turn -- watch the Live tab meanwhile."
+                      : "Rerun (enriched) will re-drive the investigation and record fresh reasoning steps."
+                  }
+                />
+              ) : (
+                investigation.steps
+                  .slice()
+                  .sort((a, b) => a.step_number - b.step_number)
+                  .map((step) => <StepCard key={step.id} step={step} />)
+              )}
+            </div>
+          </PanelBoundary>
         )}
 
         {activeTab === "answers" && (
           <div className="space-y-3">
-            {answersLoading && <LoadingSkeleton size="md" width="full" />}
+            {answersLoading && <InvestigationRowSkeletonList count={2} />}
             {!answersLoading && (answers ?? []).length === 0 && (
-              <AilaCard  techBorder glow><p className="text-sm text-text-muted text-center py-6">
-                No answer candidates for this investigation yet.
-              </p></AilaCard>
+              <EmptyState
+                icon={<Detective className="h-10 w-10" />}
+                title="No answer candidates yet."
+                description={
+                  isRunning
+                    ? "AILA is still collecting evidence. Candidates surface as soon as the first hypothesis crosses a confidence threshold."
+                    : "Rerun (enriched) will re-drive this question and record fresh answer candidates."
+                }
+              />
             )}
             {(answers ?? []).map((a) => (
               <AnswerCard key={a.id} answer={a} />

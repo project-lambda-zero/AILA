@@ -19,7 +19,7 @@ import { Check } from "@phosphor-icons/react/dist/csr/Check";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaTable } from "@/components/aila/AilaTable";
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
+import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -434,9 +434,13 @@ export function PlatformConfigPage() {
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Namespaces
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {configQuery.isLoading ? "--" : namespaceCount}
-        </p>
+        <div className="mt-1 min-h-[2rem]">
+          {configQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading config" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{namespaceCount}</p>
+          )}
+        </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Module groups
         </p></AilaCard>

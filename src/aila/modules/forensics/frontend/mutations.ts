@@ -19,6 +19,7 @@ import type {
   SolidEvidence,
   TagInvestigationRequest,
 } from "./types";
+import type { Finding } from "./queries";
 
 import type { BlobResponsePayload } from "@platform/api/http";
 
@@ -347,6 +348,7 @@ export function useTagInvestigation(projectId: string) {
 
 export function useSuppressFinding(projectId: string) {
   const queryClient = useQueryClient();
+  const findingsKey = ["forensics", "findings", projectId] as const;
   return useMutation({
     mutationFn: (body: FindingSuppressionRequest) =>
       authorizedRequestJson<Envelope<FindingSuppression>>(
@@ -356,22 +358,40 @@ export function useSuppressFinding(projectId: string) {
           body: JSON.stringify(body),
         }
       ),
+    // Optimistic hide: drop the row with this fingerprint from the
+    // cached findings list so the operator sees the effect before the
+    // POST round-trips. Rolled back on error. `onSettled` invalidates
+    // so the server-truth list re-hydrates every time.
+    onMutate: async (body) => {
+      await queryClient.cancelQueries({ queryKey: findingsKey });
+      const previous = queryClient.getQueryData<Envelope<Finding[]>>(findingsKey);
+      if (previous && body.fingerprint) {
+        queryClient.setQueryData<Envelope<Finding[]>>(findingsKey, {
+          ...previous,
+          data: previous.data.filter((f) => f.fingerprint !== body.fingerprint),
+        });
+      }
+      return { previous } as const;
+    },
+    onError: (err: Error, _body, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(findingsKey, context.previous);
+      }
+      toast.error(`Failed to mark false positive: ${err.message}`);
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ["forensics", "findings", projectId],
-      });
+      toast.success(
+        "Marked as false positive -- hidden from findings, future runs will treat as benign."
+      );
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: findingsKey });
       queryClient.invalidateQueries({
         queryKey: ["forensics", "finding-suppressions", projectId],
       });
       queryClient.invalidateQueries({
         queryKey: ["forensics", "directives", projectId],
       });
-      toast.success(
-        "Marked as false positive -- hidden from findings, future runs will treat as benign."
-      );
-    },
-    onError: (err: Error) => {
-      toast.error(`Failed to mark false positive: ${err.message}`);
     },
   });
 }

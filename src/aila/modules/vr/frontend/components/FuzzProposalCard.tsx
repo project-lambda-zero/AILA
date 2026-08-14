@@ -3,6 +3,7 @@ import { useState } from "react";
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { EmptyState } from "@/components/aila/EmptyState";
+import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import {
   useAcceptFuzzProposal,
@@ -56,7 +57,25 @@ export function FuzzProposalsPanel({
       </span>
     </div>
     {isLoading ? (
-      <p className="text-xs text-text-muted">Loading…</p>
+      // Content-shaped skeleton: three proposal-row placeholders so the
+      // rail keeps its footprint (avoids layout shift when the real
+      // list lands). aria-hidden inherited from LoadingSkeleton.
+      <ul
+        className="space-y-3"
+        aria-busy="true"
+        aria-label="Loading fuzz proposals"
+      >
+        {[0, 1, 2].map((i) => (
+          <li
+            key={i}
+            className="rounded border border-border-default/60 p-3 space-y-2"
+          >
+            <LoadingSkeleton size="sm" width="third" />
+            <LoadingSkeleton size="sm" width="full" />
+            <LoadingSkeleton size="sm" width="half" />
+          </li>
+        ))}
+      </ul>
     ) : proposals.length === 0 ? (
       <EmptyState
         title="No pending fuzz proposals"

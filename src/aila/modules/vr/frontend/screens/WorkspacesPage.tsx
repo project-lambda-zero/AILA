@@ -2,7 +2,9 @@ import { useMemo, useRef, useState } from "react";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
+import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { Briefcase } from "@phosphor-icons/react/dist/csr/Briefcase";
 
 import { DeleteButton } from "../components/DeleteButton";
 import {
@@ -211,13 +213,15 @@ export function WorkspacesPage() {
       )}
 
       {!isLoading && !isError && workspaces.length === 0 && (
-        <AilaCard  techBorder glow><div className="text-center py-8">
-          <p className="text-text-muted">No workspaces yet.</p>
-          <p className="text-text-muted text-xs mt-2">
-            Create one above. Workspace is the precondition for creating
-            targets and investigations.
-          </p>
-        </div></AilaCard>
+        <EmptyState
+          icon={<Briefcase className="h-7 w-7" weight="duotone" />}
+          title="No workspaces yet"
+          description="A workspace groups targets and investigations under a shared theme (browser engines, kernel, container runtimes, and so on). It's the precondition for creating targets and investigations."
+          action={{
+            label: showForm ? "Cancel" : "New Workspace",
+            onClick: () => setShowForm((v) => !v),
+          }}
+        />
       )}
 
       {!isLoading && !isError && workspaces.length > 0 && (

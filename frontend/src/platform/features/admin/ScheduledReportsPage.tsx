@@ -21,7 +21,7 @@ import { PaperPlaneTilt } from "@phosphor-icons/react/dist/csr/PaperPlaneTilt";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaTable } from "@/components/aila/AilaTable";
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
+import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -533,25 +533,37 @@ export function ScheduledReportsPage() {
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Total Reports
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {reportsQuery.isLoading ? "--" : reports.length}
-        </p>
+        <div className="mt-1 min-h-[2rem]">
+          {reportsQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading reports" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{reports.length}</p>
+          )}
+        </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">All configured</p></AilaCard>
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Active
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {reportsQuery.isLoading ? "--" : activeCount}
-        </p>
+        <div className="mt-1 min-h-[2rem]">
+          {reportsQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading reports" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{activeCount}</p>
+          )}
+        </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Firing on schedule
         </p></AilaCard>
         <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Paused
         </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {reportsQuery.isLoading ? "--" : reports.length - activeCount}
-        </p>
+        <div className="mt-1 min-h-[2rem]">
+          {reportsQuery.isLoading ? (
+            <LoadingSkeleton size="md" width="third" aria-label="Loading reports" />
+          ) : (
+            <p className="font-mono text-2xl font-semibold text-text">{reports.length - activeCount}</p>
+          )}
+        </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Won't fire automatically
         </p></AilaCard>

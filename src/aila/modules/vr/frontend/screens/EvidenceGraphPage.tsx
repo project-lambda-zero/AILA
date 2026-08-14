@@ -11,6 +11,7 @@ import {
   type GraphEdgeInput,
   type GraphNodeInput,
 } from "../components/EvidenceGraph";
+import { PanelBoundary } from "../components/PanelBoundary";
 import {
   useEvidenceGraph,
   useInvestigation,
@@ -192,22 +193,27 @@ export function EvidenceGraphPage() {
 
 
       <div className="grid grid-cols-1 lg:grid-cols-rail gap-3">
-        <EvidenceGraph
-          nodes={nodes}
-          edges={edges}
-          serverPositions={serverPositions}
-          height={620}
-          onNodeClick={(node, event) => {
-            // Cmd/Ctrl-click → open the node's dedicated page in a new
-            // tab per §3.6 / §1.9. Each node kind has its own target URL.
-            if (event.metaKey || event.ctrlKey) {
-              const url = openUrlForNode(node);
-              if (url) window.open(url, "_blank", "noopener");
-              return;
-            }
-            setSelected(node);
-          }}
-        />
+        <PanelBoundary
+          label="Evidence graph"
+          invalidateKeyPrefix={["vr", "evidence-graph", investigationId]}
+        >
+          <EvidenceGraph
+            nodes={nodes}
+            edges={edges}
+            serverPositions={serverPositions}
+            height={620}
+            onNodeClick={(node, event) => {
+              // Cmd/Ctrl-click → open the node's dedicated page in a new
+              // tab per §3.6 / §1.9. Each node kind has its own target URL.
+              if (event.metaKey || event.ctrlKey) {
+                const url = openUrlForNode(node);
+                if (url) window.open(url, "_blank", "noopener");
+                return;
+              }
+              setSelected(node);
+            }}
+          />
+        </PanelBoundary>
 
         {/* Right rail: selected node detail */}
         <aside className="space-y-2">

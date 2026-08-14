@@ -25,10 +25,11 @@ import { UsersThree } from "@phosphor-icons/react/dist/csr/UsersThree";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaChart } from "@/components/aila/AilaChart";
-import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
+import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { FeatureBoundary } from "@app/FeatureBoundary";
 import { useThemeChartColors } from "@platform/features/viz/chartColors";
 
 import {
@@ -492,9 +493,15 @@ export function CostPage() {
           <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
             Total Cost ({historyMonths}m)
           </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {historyQuery.isLoading ? "--" : formatUsd(grandTotal, 2)}
-          </p>
+          <div className="mt-1 min-h-[2rem]">
+            {historyQuery.isLoading ? (
+              <LoadingSkeleton size="md" width="half" aria-label="Loading total cost" />
+            ) : (
+              <p className="font-mono text-2xl font-semibold text-text">
+                {formatUsd(grandTotal, 2)}
+              </p>
+            )}
+          </div>
           <p className="font-mono text-xs text-text-muted mt-0.5">
             Sum of monthly spend
           </p>
@@ -504,9 +511,15 @@ export function CostPage() {
           <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
             Cost / Scan
           </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1">
-            {roiQuery.isLoading ? "--" : formatUsd(costPerRun, 4)}
-          </p>
+          <div className="mt-1 min-h-[2rem]">
+            {roiQuery.isLoading ? (
+              <LoadingSkeleton size="md" width="half" aria-label="Loading cost per scan" />
+            ) : (
+              <p className="font-mono text-2xl font-semibold text-text">
+                {formatUsd(costPerRun, 4)}
+              </p>
+            )}
+          </div>
           <p className="font-mono text-xs text-text-muted mt-0.5">
             {roi ? `${roi.run_count} runs · ${roiMonths}m` : "--"}
           </p>
@@ -516,17 +529,23 @@ export function CostPage() {
           <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
             MoM Trend
           </p>
-          <p className="font-mono text-2xl font-semibold text-text mt-1 flex items-center gap-1.5">
-            {historyQuery.isLoading || trendDelta === null
-              ? "--"
-              : `${trendDelta >= 0 ? "+" : ""}${trendDelta.toFixed(1)}%`}
-            {trendDelta !== null && trendDelta >= 0 && (
-              <TrendUp className="h-5 w-5 text-high" />
+          <div className="mt-1 min-h-[2rem]">
+            {historyQuery.isLoading ? (
+              <LoadingSkeleton size="md" width="third" aria-label="Loading month-over-month trend" />
+            ) : (
+              <p className="font-mono text-2xl font-semibold text-text flex items-center gap-1.5">
+                {trendDelta === null
+                  ? "--"
+                  : `${trendDelta >= 0 ? "+" : ""}${trendDelta.toFixed(1)}%`}
+                {trendDelta !== null && trendDelta >= 0 && (
+                  <TrendUp className="h-5 w-5 text-high" />
+                )}
+                {trendDelta !== null && trendDelta < 0 && (
+                  <TrendDown className="h-5 w-5 text-low" />
+                )}
+              </p>
             )}
-            {trendDelta !== null && trendDelta < 0 && (
-              <TrendDown className="h-5 w-5 text-low" />
-            )}
-          </p>
+          </div>
           <p className="font-mono text-xs text-text-muted mt-0.5">
             Latest vs previous month
           </p>
@@ -536,22 +555,34 @@ export function CostPage() {
           <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
             ROI ({roiMonths}m)
           </p>
-          <p
-            className={`font-mono text-2xl font-semibold mt-1 ${
-              roi && roi.roi_percentage >= 0 ? "text-low" : "text-high"
-            }`}
-          >
-            {roiQuery.isLoading || !roi
-              ? "--"
-              : `${roi.roi_percentage >= 0 ? "+" : ""}${roi.roi_percentage.toFixed(1)}%`}
-          </p>
+          <div className="mt-1 min-h-[2rem]">
+            {roiQuery.isLoading ? (
+              <LoadingSkeleton size="md" width="third" aria-label="Loading ROI" />
+            ) : (
+              <p
+                className={`font-mono text-2xl font-semibold ${
+                  roi && roi.roi_percentage >= 0 ? "text-low" : "text-high"
+                }`}
+              >
+                {!roi
+                  ? "--"
+                  : `${roi.roi_percentage >= 0 ? "+" : ""}${roi.roi_percentage.toFixed(1)}%`}
+              </p>
+            )}
+          </div>
           <p className="font-mono text-xs text-text-muted mt-0.5">
             vs human-equivalent
           </p>
         </AilaCard>
       </div>
 
-      {/* History card */}
+      {/* History card -- scoped boundary so a render fault in the trend
+          card doesn't nuke the rest of the cost console. */}
+      <FeatureBoundary
+        label="Cost trend"
+        resetKeys={[historyMonths]}
+        onReset={() => void historyQuery.refetch()}
+      >
       <AilaCard variant="default" padding="md" techBorder glow>
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
@@ -601,11 +632,19 @@ export function CostPage() {
           <MonthlyTrend months={months} />
         )}
       </AilaCard>
+      </FeatureBoundary>
 
       {/* Cost trend + Model usage side-by-side on wide viewports. Both feed
-          off the same /cost/history payload so no extra request fires. */}
+          off the same /cost/history payload so no extra request fires.
+          Each chart gets its own scoped boundary -- one broken recharts
+          render should not take down its sibling. */}
       {!historyQuery.isLoading && !historyQuery.isError && months.length > 0 && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <FeatureBoundary
+            label="Cost over time chart"
+            resetKeys={[historyMonths, months.length]}
+            onReset={() => void historyQuery.refetch()}
+          >
           <AilaCard variant="default" padding="md" techBorder glow>
             <div className="flex items-center gap-2 mb-3">
               <ChartLineUp className="h-4 w-4 text-accent" />
@@ -618,7 +657,13 @@ export function CostPage() {
             </p>
             <CostTrendChart months={months} accent={themeColors.accent} />
           </AilaCard>
+          </FeatureBoundary>
 
+          <FeatureBoundary
+            label="Model usage chart"
+            resetKeys={[historyMonths, modelRollup.length]}
+            onReset={() => void historyQuery.refetch()}
+          >
           <AilaCard variant="default" padding="md" techBorder glow>
             <div className="flex items-center gap-2 mb-3">
               <CurrencyDollar className="h-4 w-4 text-accent" />
@@ -635,10 +680,16 @@ export function CostPage() {
             </p>
             <ModelUsageChart rows={modelRollup} palette={modelPalette} />
           </AilaCard>
+          </FeatureBoundary>
         </div>
       )}
 
       {/* ROI card */}
+      <FeatureBoundary
+        label="ROI summary"
+        resetKeys={[roiMonths]}
+        onReset={() => void roiQuery.refetch()}
+      >
       <AilaCard variant="default" padding="md" techBorder glow>
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
@@ -705,8 +756,14 @@ export function CostPage() {
           </div>
         )}
       </AilaCard>
+      </FeatureBoundary>
 
       {/* Per-run drilldown -- GET /cost/runs/{run_id} */}
+      <FeatureBoundary
+        label="Run cost drilldown"
+        resetKeys={[activeRunId]}
+        onReset={() => void runQuery.refetch()}
+      >
       <AilaCard variant="default" padding="md" techBorder glow>
         <div className="flex items-center gap-2 mb-3">
           <MagnifyingGlass className="h-4 w-4 text-accent" />
@@ -772,6 +829,7 @@ export function CostPage() {
           </div>
         )}
       </AilaCard>
+      </FeatureBoundary>
 
       {/* Pre-scan estimate -- POST /cost/estimate */}
       <AilaCard variant="default" padding="md" techBorder glow>
