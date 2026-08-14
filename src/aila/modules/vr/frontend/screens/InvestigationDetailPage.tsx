@@ -43,6 +43,7 @@ import {
 } from "../components/VRNarrativeControls";
 import { TurnCard } from "../components/TurnCard";
 import { WorkflowStepper } from "../components/WorkflowStepper";
+import { LiveRunPanel, LIVE_PANEL_STATUSES } from "../components/LiveRunPanel";
 import { HypothesisDetailRail } from "../components/HypothesisDetailRail";
 import { FuzzProposalsPanel } from "../components/FuzzProposalCard";
 import { useInvestigationMessagesStream } from "../hooks/useInvestigationMessagesStream";
@@ -307,8 +308,10 @@ function CostProgressBar({ actual, budget }: { actual: number; budget: number })
   );
 }
 
-/** Animated status dot + label. Pulses for live `running` state. */
-function StatusIndicator({ status, pauseReason }: {
+/** Animated status dot + label. Pulses for live `running` state.
+ *  Exported so LiveRunPanel can render the same badge above the
+ *  stepper without duplicating STATUS_META. */
+export function StatusIndicator({ status, pauseReason }: {
   status: InvestigationStatus;
   pauseReason?: string | null;
 }) {
@@ -769,6 +772,22 @@ export function InvestigationDetailPage() {
           />
         </div>
       </div>
+
+      {/* Live run panel -- additive card shown ONLY while the
+          investigation is non-terminal. Consolidates status, workflow
+          stage, wall-clock elapsed (ticker gated on reduced motion),
+          live cost accrual and a 5-turn activity ticker sourced from
+          the existing ["vr","investigation-messages",...] cache. On
+          completed / failed / abandoned the existing outcome hero and
+          final banners cover the same surface, so we render nothing. */}
+      {LIVE_PANEL_STATUSES[inv.status] === true && (
+        <LiveRunPanel
+          investigation={inv}
+          messages={messages}
+          branches={branches}
+          liveStatus={liveStatus}
+        />
+      )}
 
       {/* §9 / §25 / §82 -- WorkflowStepper currentState. The real source
           of truth is workflow_state_cursor.current_state, which is not

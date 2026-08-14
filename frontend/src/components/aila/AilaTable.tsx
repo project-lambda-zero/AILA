@@ -6,6 +6,7 @@ import {
   type PaginationState,
   type Row,
   type RowData,
+  type Table,
   useReactTable,
   getCoreRowModel,
   getSortedRowModel,
@@ -13,8 +14,30 @@ import {
   getPaginationRowModel,
   flexRender,
 } from "@tanstack/react-table"
+import { Download, Eye } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  exportRowsAsCsv,
+  exportRowsAsJson,
+  type TableExportColumn,
+} from "@/lib/tableExport"
+
+/** Injected column id for the row peek affordance. Kept out of export. */
+const PEEK_COLUMN_ID = "__aila_peek__"
 
 /**
  * Selectors that mark a descendant as "handle its own interaction --
@@ -36,21 +59,30 @@ function isInlineInteractive(target: EventTarget | null, container: HTMLElement)
 // Context -- shared table instance between compound components
 // ─────────────────────────────────────────────────────────
 
-interface AilaTableContextValue<TData extends RowData> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  table: ReturnType<typeof useReactTable<any>>
+/**
+ * Shared context payload for the compound components. All row-typed slots
+ * bottom out at `unknown` because the context is a single React runtime
+ * instance shared across every AilaTable mount; callers who need their
+ * `TData` narrowing use the strongly-typed props on the root, not the
+ * context.
+ */
+export interface AilaTableContextValue {
+  table: Table<RowData>
   enableFiltering: boolean
   filterValue: string
   setFilterValue: (value: string) => void
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  onRowClick?: (row: Row<any>) => void
+  onRowClick?: (row: Row<RowData>) => void
+  enableExport: boolean
+  exportFilename: string
+  exportColumns?: readonly TableExportColumn<RowData>[]
+  hasPeek: boolean
+  onOpenPeek?: (row: RowData) => void
+  peekLabel?: (row: RowData) => string
 }
 
-// Using any here because React context generics are not inferrable at runtime
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const AilaTableContext = React.createContext<AilaTableContextValue<any> | null>(null)
+const AilaTableContext = React.createContext<AilaTableContextValue | null>(null)
 
-function useAilaTable() {
+function useAilaTable(): AilaTableContextValue {
   const ctx = React.useContext(AilaTableContext)
   if (!ctx) {
     throw new Error("AilaTable sub-components must be used inside <AilaTable>")
@@ -100,6 +132,51 @@ export interface AilaTableProps<TData extends RowData> {
    * via stopPropagation-equivalent target audit (D-32).
    */
   onRowClick?: (row: Row<TData>) => void
+  /**
+   * Render the current view as CSV or JSON from a small toolbar control.
+   * Defaults to `true`. Set `false` to hide the Export button entirely.
+   * The exported row set is the current filter/sort output (all filtered
+   * rows across pages, not just the visible page); the exported columns
+   * default to every column with an accessor and can be overridden via
+   * `exportColumns`.
+   */
+  enableExport?: boolean
+  /**
+   * Base filename (no extension) for CSV / JSON downloads. Non-word chars
+   * are collapsed to `-`. Defaults to `"table-export"`.
+   */
+  exportFilename?: string
+  /**
+   * Optional explicit export column spec. When omitted, AilaTable derives
+   * one column per accessor column (accessorKey OR accessorFn), using the
+   * column's string header as the label. Provide this to flatten nested
+   * fields, join arrays, or expose values that are computed in the cell
+   * render but absent from the underlying row shape.
+   */
+  exportColumns?: readonly TableExportColumn<TData>[]
+  /**
+   * Opt-in row quick-peek. When set, each row grows a keyboard-accessible
+   * peek button in a trailing actions column; clicking it opens a Sheet
+   * (right-side slide-over) that renders the caller's peek content for
+   * that row. When absent, no column is injected and the rendered table
+   * markup is byte-identical to today.
+   */
+  renderRowPeek?: (row: TData) => React.ReactNode
+  /**
+   * aria-label producer for the peek button. Defaults to `"Show details"`.
+   * Supply a per-row label (e.g. `` (row) => `Details for ${row.name}` ``)
+   * so assistive tech can distinguish rows.
+   */
+  peekLabel?: (row: TData) => string
+  /**
+   * Sheet title. Defaults to `"Details"`. Rendered inside the standard
+   * SheetHeader (visible + programmatically accessible).
+   */
+  peekTitle?: (row: TData) => React.ReactNode
+  /**
+   * Optional Sheet description, rendered under the title.
+   */
+  peekDescription?: (row: TData) => React.ReactNode
 }
 
 /**
@@ -132,6 +209,13 @@ function AilaTable<TData extends RowData>({
   className,
   children,
   onRowClick,
+  enableExport = true,
+  exportFilename = "table-export",
+  exportColumns,
+  renderRowPeek,
+  peekLabel,
+  peekTitle,
+  peekDescription,
 }: AilaTableProps<TData>) {
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
@@ -140,10 +224,45 @@ function AilaTable<TData extends RowData>({
     pageSize,
   })
   const [filterValue, setFilterValue] = React.useState("")
+  const [peekRow, setPeekRow] = React.useState<TData | null>(null)
+
+  // Inject a trailing peek column only when `renderRowPeek` is set. When the
+  // caller does not provide one we return the caller's array by-reference so
+  // TanStack's column identity stays stable and the rendered markup is
+  // byte-identical to a plain AilaTable.
+  const effectiveColumns = React.useMemo<ColumnDef<TData>[]>(() => {
+    if (!renderRowPeek) return columns
+    const peekColumn: ColumnDef<TData> = {
+      id: PEEK_COLUMN_ID,
+      enableSorting: false,
+      enableGlobalFilter: false,
+      header: () => <span className="sr-only">Row details</span>,
+      cell: ({ row }) => (
+        <button
+          type="button"
+          data-no-row-click=""
+          onClick={(event) => {
+            event.stopPropagation()
+            setPeekRow(row.original)
+          }}
+          aria-label={peekLabel?.(row.original) ?? "Show details"}
+          className={cn(
+            "inline-flex items-center justify-center h-6 w-6 rounded-[2px]",
+            "border border-border bg-base text-text-muted",
+            "hover:text-accent hover:border-border-hover transition-colors duration-100",
+            "focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2",
+          )}
+        >
+          <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+        </button>
+      ),
+    }
+    return [...columns, peekColumn]
+  }, [columns, renderRowPeek, peekLabel])
 
   const table = useReactTable({
     data,
-    columns,
+    columns: effectiveColumns,
     state: {
       sorting,
       columnFilters,
@@ -161,8 +280,40 @@ function AilaTable<TData extends RowData>({
     enableSorting,
   })
 
+  // The context loses TData narrowing (see AilaTableContextValue). Widen at
+  // this one boundary; the sub-components only reach into the row via
+  // `flexRender`, which typechecks on the ColumnDef, not the context.
+  const contextValue = React.useMemo<AilaTableContextValue>(
+    () => ({
+      table: table as unknown as Table<RowData>,
+      enableFiltering,
+      filterValue,
+      setFilterValue,
+      onRowClick: onRowClick as ((row: Row<RowData>) => void) | undefined,
+      enableExport,
+      exportFilename,
+      exportColumns: exportColumns as readonly TableExportColumn<RowData>[] | undefined,
+      hasPeek: Boolean(renderRowPeek),
+      onOpenPeek: renderRowPeek
+        ? ((row: RowData) => setPeekRow(row as TData))
+        : undefined,
+      peekLabel: peekLabel as ((row: RowData) => string) | undefined,
+    }),
+    [
+      table,
+      enableFiltering,
+      filterValue,
+      onRowClick,
+      enableExport,
+      exportFilename,
+      exportColumns,
+      renderRowPeek,
+      peekLabel,
+    ],
+  )
+
   return (
-    <AilaTableContext.Provider value={{ table, enableFiltering, filterValue, setFilterValue, onRowClick }}>
+    <AilaTableContext.Provider value={contextValue}>
       <div className={cn("bg-surface border border-border rounded-[4px] overflow-hidden", className)}>
         {children ?? (
           <>
@@ -172,7 +323,128 @@ function AilaTable<TData extends RowData>({
           </>
         )}
       </div>
+      {renderRowPeek && (
+        <Sheet
+          open={peekRow !== null}
+          onOpenChange={(open) => {
+            if (!open) setPeekRow(null)
+          }}
+        >
+          <SheetContent side="right" className="w-full max-w-md sm:max-w-md">
+            <SheetHeader>
+              <SheetTitle className="font-mono text-text">
+                {peekRow !== null && peekTitle
+                  ? peekTitle(peekRow)
+                  : "Details"}
+              </SheetTitle>
+              {peekRow !== null && peekDescription && (
+                <SheetDescription className="font-mono text-xs text-text-muted">
+                  {peekDescription(peekRow)}
+                </SheetDescription>
+              )}
+            </SheetHeader>
+            <div className="flex-1 overflow-y-auto px-4 pb-4">
+              {peekRow !== null && renderRowPeek(peekRow)}
+            </div>
+          </SheetContent>
+        </Sheet>
+      )}
     </AilaTableContext.Provider>
+  )
+}
+
+// ─────────────────────────────────────────────────────────
+// Toolbar -- Export control
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Derive an export column list from the table's visible columns whenever the
+ * caller has not supplied `exportColumns`. Skip:
+ *  - the injected peek column (no data)
+ *  - any column without an accessor (selection checkbox, actions column)
+ * Use the column's string header as the CSV / JSON key; fall back to the
+ * column id when the header is a render function.
+ */
+function deriveExportColumnsFromTable(
+  table: Table<RowData>,
+): TableExportColumn<RowData>[] {
+  const spec: TableExportColumn<RowData>[] = []
+  for (const col of table.getVisibleFlatColumns()) {
+    if (col.id === PEEK_COLUMN_ID) continue
+    const def = col.columnDef
+    const hasAccessorKey = "accessorKey" in def && def.accessorKey !== undefined
+    const hasAccessorFn = "accessorFn" in def && typeof def.accessorFn === "function"
+    if (!hasAccessorKey && !hasAccessorFn) continue
+    const header =
+      typeof def.header === "string" && def.header.length > 0 ? def.header : col.id
+    spec.push({
+      id: col.id,
+      header,
+      // `Column.accessorFn` is stored on the internal column instance and
+      // reads the resolved value for a row -- this is the identical path
+      // TanStack uses to render `getValue()`.
+      accessor: (row) => {
+        const fn = col.accessorFn
+        if (typeof fn === "function") return fn(row, 0)
+        return undefined
+      },
+    })
+  }
+  return spec
+}
+
+interface AilaTableExportControlProps {
+  table: Table<RowData>
+  filename: string
+  exportColumns?: readonly TableExportColumn<RowData>[]
+}
+
+function AilaTableExportControl({
+  table,
+  filename,
+  exportColumns,
+}: AilaTableExportControlProps) {
+  const runExport = (format: "csv" | "json") => {
+    // Post-filter, post-sort, pre-pagination -- the full row set the operator
+    // is currently viewing across pages.
+    const rows = table.getSortedRowModel().rows.map((r) => r.original)
+    const cols = exportColumns ?? deriveExportColumnsFromTable(table)
+    if (format === "csv") {
+      exportRowsAsCsv(rows, cols, filename)
+    } else {
+      exportRowsAsJson(rows, cols, filename)
+    }
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        aria-label="Export current table view"
+        className={cn(
+          "inline-flex items-center gap-1 rounded-[2px] border border-border bg-base",
+          "px-2 py-1 font-mono text-xs text-text",
+          "hover:border-border-hover hover:text-accent transition-colors duration-100",
+          "focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2",
+        )}
+      >
+        <Download className="h-3.5 w-3.5" aria-hidden="true" />
+        <span>Export</span>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-[8rem]">
+        <DropdownMenuItem
+          onClick={() => runExport("csv")}
+          aria-label="Export current view as CSV"
+        >
+          CSV
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => runExport("json")}
+          aria-label="Export current view as JSON"
+        >
+          JSON
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -193,24 +465,45 @@ export interface AilaTableHeaderProps {
  * When `enableFiltering` is true on the parent, renders a global search input above headers.
  */
 function AilaTableHeader({ className }: AilaTableHeaderProps) {
-  const { table, enableFiltering, filterValue, setFilterValue } = useAilaTable()
+  const {
+    table,
+    enableFiltering,
+    filterValue,
+    setFilterValue,
+    enableExport,
+    exportFilename,
+    exportColumns,
+  } = useAilaTable()
+
+  const showToolbar = enableFiltering || enableExport
 
   return (
     <div className={cn("", className)}>
-      {enableFiltering && (
-        <div className="px-4 py-2 border-b border-border">
-          <input
-            aria-label="Filter table rows"
-            value={filterValue}
-            onChange={(e) => setFilterValue(e.target.value)}
-            placeholder="Filter..."
-            className={cn(
-              "w-full rounded-[2px] border border-border bg-base px-2.5 py-1",
-              "font-mono text-text text-sm placeholder:text-text-muted",
-              "focus:border-border-hover",
-              "transition-colors duration-100"
-            )}
-          />
+      {showToolbar && (
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-border">
+          {enableFiltering ? (
+            <input
+              aria-label="Filter table rows"
+              value={filterValue}
+              onChange={(e) => setFilterValue(e.target.value)}
+              placeholder="Filter..."
+              className={cn(
+                "flex-1 min-w-0 rounded-[2px] border border-border bg-base px-2.5 py-1",
+                "font-mono text-text text-sm placeholder:text-text-muted",
+                "focus:border-border-hover",
+                "transition-colors duration-100"
+              )}
+            />
+          ) : (
+            <span className="flex-1" aria-hidden="true" />
+          )}
+          {enableExport && (
+            <AilaTableExportControl
+              table={table}
+              filename={exportFilename}
+              exportColumns={exportColumns}
+            />
+          )}
         </div>
       )}
       <table aria-label="Data table columns" className="w-full border-collapse">

@@ -584,12 +584,76 @@ export function ScheduledReportsPage() {
           pageSize={25}
           enableSorting
           enableFiltering={false}
+          exportFilename="aila-scheduled-reports"
+          peekLabel={(row) => `Scheduled report summary for ${row.name}`}
+          peekTitle={(row) => row.name}
+          peekDescription={(row) => `${row.report_type} · ${row.cron_expression}`}
+          renderRowPeek={(row) => <ReportRowPeek report={row} />}
         >
           <AilaTable.Header />
           <AilaTable.Body emptyState="No scheduled reports." />
           <AilaTable.Pagination pageSizeOptions={[10, 25, 50]} />
         </AilaTable>
       )}
+    </div>
+  );
+}
+
+/**
+ * Row quick-peek body for a ScheduledReport row. Renders the fields the
+ * summary table hides (recipient list, JSON config, timestamps) using data
+ * the row already carries; no extra fetches.
+ */
+function ReportRowPeek({ report }: { report: ScheduledReport }) {
+  const recipients = parseRecipients(report.recipient_emails_json);
+  let configPretty = report.config_json;
+  try {
+    configPretty = JSON.stringify(JSON.parse(report.config_json), null, 2);
+  } catch {
+    // leave raw
+  }
+  return (
+    <div className="flex flex-col gap-3 font-mono text-xs text-text">
+      <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1.5">
+        <dt className="text-text-muted uppercase tracking-wider">ID</dt>
+        <dd className="break-all">{report.id}</dd>
+        <dt className="text-text-muted uppercase tracking-wider">Type</dt>
+        <dd>{report.report_type}</dd>
+        <dt className="text-text-muted uppercase tracking-wider">Cron</dt>
+        <dd>{report.cron_expression}</dd>
+        <dt className="text-text-muted uppercase tracking-wider">Status</dt>
+        <dd>
+          <AilaBadge severity={report.is_active ? "info" : "neutral"} size="sm">
+            {report.is_active ? "Active" : "Paused"}
+          </AilaBadge>
+        </dd>
+        <dt className="text-text-muted uppercase tracking-wider">Last run</dt>
+        <dd>{formatTimestamp(report.last_run_at)}</dd>
+        <dt className="text-text-muted uppercase tracking-wider">Created</dt>
+        <dd>{formatTimestamp(report.created_at)} by {report.created_by}</dd>
+        <dt className="text-text-muted uppercase tracking-wider">Updated</dt>
+        <dd>{formatTimestamp(report.updated_at)}</dd>
+      </dl>
+      <div className="border-t border-border pt-2">
+        <p className="text-text-muted uppercase tracking-wider mb-1">
+          Recipients ({recipients.length})
+        </p>
+        {recipients.length === 0 ? (
+          <p className="text-text-muted">--</p>
+        ) : (
+          <ul className="flex flex-col gap-0.5">
+            {recipients.map((email) => (
+              <li key={email} className="break-all">{email}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className="border-t border-border pt-2">
+        <p className="text-text-muted uppercase tracking-wider mb-1">Config</p>
+        <pre className="whitespace-pre-wrap break-all rounded-[2px] border border-border bg-base p-2 text-[11px]">
+          {configPretty}
+        </pre>
+      </div>
     </div>
   );
 }

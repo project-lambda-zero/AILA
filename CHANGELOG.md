@@ -7,6 +7,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.19] - 2026-08-13 -- Live run panels, table export and quick-peek, palette recents
+
+Adds interaction-model power: real-time run panels, table export, row quick-peek,
+and a faster command palette. Additive; existing screens and behavior preserved
+(#218). No backend changes.
+
+### Added
+
+- Live run panels on running investigations (VR, malware, forensics): an additive
+  panel that consolidates live state -- status, stage or attempt progress, an
+  elapsed timer, live cost where available, and a live turn/activity ticker --
+  driven by the existing message and event streams (no second socket). Forensics
+  investigation detail, which previously had no live streaming, now consumes its
+  `.../events` progress feed and settles to terminal automatically without a
+  manual refresh.
+- Table export: any shared table can export its current filtered and sorted view
+  as CSV (RFC 4180, UTF-8 BOM) or JSON from a toolbar control.
+- Row quick-peek: an opt-in table affordance that opens a slide-over with a row
+  summary without navigating away, wired into the systems and scheduled-report
+  tables as the reference. Tables that do not opt in are byte-identical to before.
+- Command palette: a Recent group of recently-visited entities (localStorage) and
+  an entity-jump path so an id-like or `#`-prefixed query offers a direct open,
+  alongside the existing navigate, search, and action groups.
+
+Every addition carries a screen-reader affordance (aria-live regions, labeled
+controls) and respects prefers-reduced-motion. All workspace type-checks and the
+shell production build pass.
+
 ## [0.5.18] - 2026-08-13 -- Module analytics and visualization
 
 Adds data visualization across all four modules and enriches the platform

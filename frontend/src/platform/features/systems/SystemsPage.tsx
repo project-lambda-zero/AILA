@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useSearchParams } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { Monitor, Plus, Upload } from "lucide-react";
 
 import { SystemCSVImport } from "./SystemCSVImport";
@@ -48,6 +48,57 @@ function matchesTagFilter(system: SystemSummaryEnriched, selectedTagKeys: string
   if (selectedTagKeys.length === 0) return true;
   const systemTagKeys = (system.tags ?? []).map((t) => t.tag_key);
   return selectedTagKeys.some((key) => systemTagKeys.includes(key));
+}
+
+/**
+ * Row quick-peek body -- renders inside the AilaTable-managed Sheet when the
+ * operator activates the row's peek button. Purely reads the enriched summary
+ * that the list query already carries; no extra fetches.
+ */
+function SystemRowPeek({ system }: { system: SystemSummaryEnriched }) {
+  const tags = system.tags ?? [];
+  return (
+    <div className="flex flex-col gap-3 font-mono text-xs text-text">
+      <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1.5">
+        <dt className="text-text-muted uppercase tracking-wider">Host</dt>
+        <dd>{system.host}:{system.port}</dd>
+        <dt className="text-text-muted uppercase tracking-wider">User</dt>
+        <dd>{system.username}</dd>
+        <dt className="text-text-muted uppercase tracking-wider">Distro</dt>
+        <dd>{system.distro}</dd>
+        <dt className="text-text-muted uppercase tracking-wider">SSH</dt>
+        <dd>{system.connectivity_status ?? "unknown"}</dd>
+        <dt className="text-text-muted uppercase tracking-wider">Severity</dt>
+        <dd>{system.top_severity ? system.top_severity.toUpperCase() : "N/A"}</dd>
+        <dt className="text-text-muted uppercase tracking-wider">Last scan</dt>
+        <dd>{system.last_scan_at ? new Date(system.last_scan_at).toLocaleString() : "never"}</dd>
+        <dt className="text-text-muted uppercase tracking-wider">Last status</dt>
+        <dd>{system.last_scan_status ?? "--"}</dd>
+      </dl>
+      {system.description && (
+        <p className="text-text-muted whitespace-pre-wrap border-t border-border pt-2">
+          {system.description}
+        </p>
+      )}
+      {tags.length > 0 && (
+        <div className="flex flex-wrap gap-1 border-t border-border pt-2">
+          {tags.map((t) => (
+            <AilaBadge key={`${t.tag_key}:${t.tag_value}`} severity="info" size="sm">
+              {t.tag_key}:{t.tag_value}
+            </AilaBadge>
+          ))}
+        </div>
+      )}
+      <div className="border-t border-border pt-3">
+        <Link
+          to={`/systems/${system.id}`}
+          className="font-semibold text-accent hover:text-accent/80 transition-colors duration-100"
+        >
+          Open full detail →
+        </Link>
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -400,6 +451,13 @@ export function SystemsPage() {
             pageSize={defaultPageSize}
             enableSorting
             enableFiltering
+            exportFilename="aila-systems"
+            peekLabel={(row) => `System summary for ${row.name}`}
+            peekTitle={(row) => row.name}
+            peekDescription={(row) => `${row.username}@${row.host}:${row.port} · ${row.distro}`}
+            renderRowPeek={(row) => (
+              <SystemRowPeek system={row} />
+            )}
           >
             <AilaTable.Header />
             <AilaTable.Body

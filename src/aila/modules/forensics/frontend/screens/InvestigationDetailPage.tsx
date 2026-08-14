@@ -8,14 +8,16 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 
 import { AnalystDirectivesPanel } from "../components/AnalystDirectivesPanel";
+import { LiveRunPanel } from "../components/LiveRunPanel";
 import { RetrieveFilePanel } from "../components/RetrieveFilePanel";
+import { useForensicsInvestigationEvents } from "../hooks/useForensicsInvestigationEvents";
 import {
   useCancelInvestigation,
   useReapInvestigation,
   useRerunInvestigation,
   useTagInvestigation,
 } from "../mutations";
-import { useInvestigationAnswers, useInvestigationDetail, useInvestigationEventFeed } from "../queries";
+import { useInvestigationAnswers, useInvestigationDetail } from "../queries";
 import type { AgentStep, AnswerCandidate, TagVerdict } from "../types";
 import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
@@ -583,10 +585,15 @@ export function InvestigationDetailPage() {
   } = useInvestigationAnswers(projectId ?? "", investigationId ?? "");
 
   const isRunning = investigation ? RUNNING_STATUSES.has(investigation.status) : false;
-  const { events: liveEvents, feedStatus } = useInvestigationEventFeed(
-    isRunning ? (projectId ?? "") : "",
-    isRunning ? (investigationId ?? "") : "",
-  );
+  const {
+    events: liveEvents,
+    feedStatus,
+    latestStage,
+  } = useForensicsInvestigationEvents({
+    projectId: projectId ?? "",
+    investigationId: investigationId ?? "",
+    isRunning,
+  });
 
   if (!projectId || !investigationId) {
     return (
@@ -703,6 +710,24 @@ export function InvestigationDetailPage() {
           </p>
           <p className="text-sm text-foreground">{investigation.final_answer}</p>
         </div></AilaCard>
+      )}
+
+      {/* Additive live run panel -- surfaces streaming status, attempts
+          progress, elapsed time and the latest events without the
+          operator having to open the Live tab. Only mounted while the
+          investigation is running; on terminal, the
+          ``useForensicsInvestigationEvents`` hook invalidates the
+          detail query so the header + summary flip and this panel
+          unmounts on the next render. */}
+      {isRunning && (
+        <LiveRunPanel
+          status={investigation.status}
+          attemptsUsed={investigation.attempts_used}
+          maxAttempts={investigation.max_attempts}
+          events={liveEvents}
+          feedStatus={feedStatus}
+          latestStage={latestStage}
+        />
       )}
 
       {/* Analyst directives -- readable on every turn by AILA */}

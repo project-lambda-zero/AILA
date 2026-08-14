@@ -60,6 +60,13 @@ import { loadModuleFrontendSpecs } from "@platform/extension-registry/loadModule
 import { useTheme } from "@/providers/ThemeProvider";
 import { useRecentlyViewed } from "@/hooks/useRecentlyViewed";
 import { useSearchHistory } from "@/hooks/useSearchHistory";
+import {
+  parseEntityJump,
+  resolveEntityJumpTargets,
+  shortId,
+  useRecentEntities,
+  useRecordEntityVisit,
+} from "@/lib/recentEntities";
 
 import {
   entityRoute,
@@ -352,6 +359,11 @@ export function CommandPalette() {
   const { cycleTheme } = useTheme();
   const { items: recentItems } = useRecentlyViewed();
   const { items: searchHistory, addSearch, clearHistory } = useSearchHistory();
+  const { items: recentEntities, clear: clearRecentEntitiesList } =
+    useRecentEntities();
+  // Record entity/detail-route visits once, at the always-mounted palette.
+  // Mounting here avoids editing AppShell while still covering every route.
+  useRecordEntityVisit();
   const role = useAuthStore((s) => s.role);
 
   // `>` prefix is the classic command-mode filter: only Navigate + Actions,
@@ -502,6 +514,17 @@ export function CommandPalette() {
   const isEmptyQuery = query === "";
   const searchList = searchResults.data?.results ?? [];
   const showSearchGroup = !isCommandMode && debouncedSearch.length >= 2;
+  // Entity-jump: `#<id>` / `#<type> <id>` / bare id-looking token. Suppressed
+  // in command mode (`>`), which is reserved for nav + actions only.
+  const entityJump = useMemo(
+    () => (isCommandMode ? null : parseEntityJump(rawQuery)),
+    [isCommandMode, rawQuery],
+  );
+  const jumpTargets = useMemo(
+    () => (entityJump ? resolveEntityJumpTargets(entityJump) : []),
+    [entityJump],
+  );
+  const showJumpGroup = !isEmptyQuery && jumpTargets.length > 0;
   const placeholderText = isCommandMode
     ? "> Command…"
     : "Navigate, search, or run an action…";
@@ -525,6 +548,34 @@ export function CommandPalette() {
             {/* Empty query: preserve recent + history behavior. */}
             {isEmptyQuery && (
               <>
+                {recentEntities.length > 0 && (
+                  <CommandGroup heading="Recent">
+                    {recentEntities.map((entity) => (
+                      <CommandItem
+                        key={`recent-entity:${entity.path}`}
+                        value={`recent-entity:${entity.path}`}
+                        onSelect={() => closeAndNavigate(entity.path)}
+                      >
+                        <AilaBadge severity="info" size="sm">
+                          {entity.type}
+                        </AilaBadge>
+                        <span className="truncate">{entity.title}</span>
+                        <CommandShortcut>{shortId(entity.id)}</CommandShortcut>
+                      </CommandItem>
+                    ))}
+                    <CommandItem
+                      value="recent-entity:clear"
+                      onSelect={() => clearRecentEntitiesList()}
+                      className="text-text-muted"
+                    >
+                      <X size={16} />
+                      <span>Clear recent entities</span>
+                    </CommandItem>
+                  </CommandGroup>
+                )}
+                {recentEntities.length > 0 && recentItems.length > 0 && (
+                  <CommandSeparator />
+                )}
                 {recentItems.length > 0 && (
                   <CommandGroup heading="Recently viewed">
                     {recentItems.map((item) => (
@@ -564,11 +615,14 @@ export function CommandPalette() {
                     </CommandGroup>
                   </>
                 )}
-                {recentItems.length === 0 && searchHistory.length === 0 && (
-                  <CommandEmpty>
-                    Type to search, prefix with &ldquo;&gt;&rdquo; for command mode.
-                  </CommandEmpty>
-                )}
+                {recentEntities.length === 0 &&
+                  recentItems.length === 0 &&
+                  searchHistory.length === 0 && (
+                    <CommandEmpty>
+                      Type to search, prefix with &ldquo;&gt;&rdquo; for command
+                      mode or &ldquo;#&rdquo; to jump to an id.
+                    </CommandEmpty>
+                  )}
               </>
             )}
 
@@ -577,6 +631,7 @@ export function CommandPalette() {
               <>
                 {filteredRoutes.length === 0 &&
                   filteredActions.length === 0 &&
+                  !showJumpGroup &&
                   (!showSearchGroup ||
                     (searchList.length === 0 && !searchResults.isFetching)) && (
                     <CommandEmpty>
@@ -586,27 +641,51 @@ export function CommandPalette() {
                     </CommandEmpty>
                   )}
 
-                {/* Navigate */}
-                {filteredRoutes.length > 0 && (
-                  <CommandGroup heading="Navigate">
-                    {filteredRoutes.slice(0, 12).map((entry) => (
+                {/* Entity jump -- `#<id>` / bare id-looking token. */}
+                {showJumpGroup && entityJump && (
+                  <CommandGroup heading="Jump to">
+                    {jumpTargets.map((target) => (
                       <CommandItem
-                        key={entry.id}
-                        value={`nav:${entry.id}`}
-                        onSelect={() => closeAndNavigate(entry.to)}
+                        key={`jump:${target.type}`}
+                        value={`jump:${target.type}:${entityJump.id}`}
+                        onSelect={() => closeAndNavigate(target.build(entityJump.id))}
                       >
-                        {entry.icon}
-                        <span>{entry.label}</span>
-                        <CommandShortcut>{entry.to}</CommandShortcut>
+                        <ArrowSquareOut size={16} />
+                        <span>
+                          Open {target.label} {shortId(entityJump.id)}
+                        </span>
+                        <CommandShortcut>{target.build(entityJump.id)}</CommandShortcut>
                       </CommandItem>
                     ))}
                   </CommandGroup>
                 )}
 
+                {/* Navigate */}
+                {filteredRoutes.length > 0 && (
+                  <>
+                    {showJumpGroup && <CommandSeparator />}
+                    <CommandGroup heading="Navigate">
+                      {filteredRoutes.slice(0, 12).map((entry) => (
+                        <CommandItem
+                          key={entry.id}
+                          value={`nav:${entry.id}`}
+                          onSelect={() => closeAndNavigate(entry.to)}
+                        >
+                          {entry.icon}
+                          <span>{entry.label}</span>
+                          <CommandShortcut>{entry.to}</CommandShortcut>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </>
+                )}
+
                 {/* Search */}
                 {showSearchGroup && (
                   <>
-                    {filteredRoutes.length > 0 && <CommandSeparator />}
+                    {(showJumpGroup || filteredRoutes.length > 0) && (
+                      <CommandSeparator />
+                    )}
                     <CommandGroup heading="Search">
                       {searchResults.isFetching && searchList.length === 0 && (
                         <CommandItem value="search:loading" disabled>
@@ -671,7 +750,7 @@ export function CommandPalette() {
                 {/* Actions */}
                 {filteredActions.length > 0 && (
                   <>
-                    {(filteredRoutes.length > 0 || showSearchGroup) && (
+                    {(showJumpGroup || filteredRoutes.length > 0 || showSearchGroup) && (
                       <CommandSeparator />
                     )}
                     <CommandGroup heading="Actions">
@@ -698,7 +777,7 @@ export function CommandPalette() {
             )}
 
             {/* Hint footer -- only when empty state is showing a real hint */}
-            {isEmptyQuery && (recentItems.length > 0 || searchHistory.length > 0) && (
+            {isEmptyQuery && (recentEntities.length > 0 || recentItems.length > 0 || searchHistory.length > 0) && (
               <>
                 <CommandSeparator />
                 <CommandGroup heading="Tips">
