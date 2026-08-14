@@ -24,15 +24,19 @@
         deployment-specific (proxied through same origin OR configured
         via AILA_API_URL) so this stays permissive; the real barrier
         is the JWT auth layer.
-      * frame-ancestors 'none' + frame-src 'none' -- refuse framing and
-        refuse to embed frames.
+      * frame-src 'none' -- refuse to embed frames (honored in a <meta>).
+        Clickjacking protection (refusing to BE framed) uses
+        frame-ancestors, which browsers only honor as an HTTP header, not
+        in a <meta>; it is delivered by the backend SecurityHeadersMiddleware
+        (Content-Security-Policy: frame-ancestors 'none' + X-Frame-Options:
+        DENY), so it is intentionally not repeated here (#225).
       * object-src 'none' + base-uri 'self' + form-action 'self' --
         block plugin content, <base> hijacking, and off-origin form
         posts.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com; connect-src 'self' http: https: ws: wss:; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self';"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com; connect-src 'self' http: https: ws: wss:; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self';"
     />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
 

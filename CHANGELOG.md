@@ -7,6 +7,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.25] - 2026-08-13 -- Fix: drop the ignored CSP frame-ancestors <meta> directive
+
+### Fixed
+
+- `index.html` delivered the Content-Security-Policy via a `<meta>` tag that
+  included `frame-ancestors 'none'`, which browsers ignore in a `<meta>` element
+  (it is honored only as an HTTP response header). The directive therefore
+  provided no protection where it sat and logged a warning on every page.
+  Removed it from the meta (the meta-valid `frame-src 'none'` stays) and
+  corrected the explanatory comment. Effective clickjacking protection is
+  unchanged: it is delivered as HTTP headers (`X-Frame-Options: DENY` and CSP
+  `frame-ancestors 'none'`) by the backend `SecurityHeadersMiddleware`. Verified
+  live that the per-page console warning is gone and the built meta CSP no longer
+  carries the ignored directive. Found by driving the running console (#225).
+
+Shell type-check and production build pass.
+
 ## [0.5.24] - 2026-08-13 -- Fix: console no longer hangs on "Restoring session"
 
 ### Fixed
