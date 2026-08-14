@@ -25,15 +25,56 @@ import { useSSE, type SSEConnectionStatus, type SSEEvent } from "@/hooks/useSSE"
 // Context
 // ---------------------------------------------------------------------------
 
-interface SSEContextValue {
+/** Listener callback invoked for every raw SSE frame received on the shared
+ *  ``/events/stream`` subscription. Subscribers see every event type
+ *  (including ping keepalives) verbatim -- they filter for their own needs. */
+export type SSEListener = (event: SSEEvent) => void;
+
+export interface SSEContextValue {
   status: SSEConnectionStatus;
+  /** HTTP status of the most recent failed connect attempt, or ``null`` if
+   *  no failure has been observed since the provider mounted. Set on every
+   *  non-OK response; consumers use this to render a red banner when the
+   *  backend returns 503 (per-user SSE ceiling hit) or 401 (auth expired). */
+  lastHttpError: number | null;
+  /** Register a listener for the shared SSE stream. Returns an
+   *  unsubscribe function. Multiple listeners fan out from the single
+   *  global connection; adding a listener MUST NOT open a second stream. */
+  subscribe: (listener: SSEListener) => () => void;
 }
 
-const SSEContext = React.createContext<SSEContextValue>({ status: "disconnected" });
+const defaultSSEContext: SSEContextValue = {
+  status: "disconnected",
+  lastHttpError: null,
+  subscribe: () => () => {},
+};
+
+const SSEContext = React.createContext<SSEContextValue>(defaultSSEContext);
 
 /** Returns the current SSE connection status for the global platform stream. */
 export function useSSEStatus(): SSEConnectionStatus {
   return React.useContext(SSEContext).status;
+}
+
+/** Returns the full SSE context: status, last HTTP error, and the
+ *  ``subscribe`` fan-out. Prefer {@link useSSESubscribe} for the common
+ *  case of registering a listener; use this hook when a component needs
+ *  connection health independently of subscription. */
+export function useSSEContext(): SSEContextValue {
+  return React.useContext(SSEContext);
+}
+
+/** Subscribe a listener to the shared SSE stream for the component's
+ *  lifetime. The listener ref is captured so the subscription only
+ *  registers/unregisters on mount/unmount, never on every render. */
+export function useSSESubscribe(listener: SSEListener): void {
+  const { subscribe } = React.useContext(SSEContext);
+  const listenerRef = React.useRef(listener);
+  listenerRef.current = listener;
+  React.useEffect(() => {
+    const dispatch: SSEListener = (event) => listenerRef.current(event);
+    return subscribe(dispatch);
+  }, [subscribe]);
 }
 
 // ---------------------------------------------------------------------------
@@ -60,9 +101,35 @@ export function SSEProvider({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const queryClient = useQueryClient();
   const [status, setStatus] = React.useState<SSEConnectionStatus>("disconnected");
+  const [lastHttpError, setLastHttpError] = React.useState<number | null>(null);
+
+  // Fan-out to arbitrary in-app listeners without opening a second socket.
+  // The set is stored in a ref so re-renders don't churn the identity of
+  // ``subscribe``; ``useSSESubscribe`` depends on that stability.
+  const listenersRef = React.useRef<Set<SSEListener>>(new Set());
+  const subscribe = React.useCallback<SSEContextValue["subscribe"]>((listener) => {
+    listenersRef.current.add(listener);
+    return () => {
+      listenersRef.current.delete(listener);
+    };
+  }, []);
 
   const handleEvent = useCallback(
     (event: SSEEvent) => {
+      // Fan-out FIRST so subscribers see every event (including ping
+      // keepalives) verbatim before the built-in invalidate/toast side
+      // effects run. Listener throws are isolated per subscriber so one
+      // buggy consumer cannot suppress downstream fan-out.
+      for (const listener of listenersRef.current) {
+        try {
+          listener(event);
+        } catch (err) {
+          if (import.meta.env.DEV) {
+             
+            console.error("SSEProvider listener threw", err);
+          }
+        }
+      }
       switch (event.type) {
         // ------------------------------------------------------------------ //
         // notification -- a new NotificationRecord was persisted for the user   //
@@ -164,11 +231,24 @@ export function SSEProvider({ children }: { children: React.ReactNode }) {
     url: "/events/stream",
     enabled: isAuthenticated,
     onEvent: handleEvent,
-    onStatusChange: setStatus,
+    onStatusChange: (next) => {
+      setStatus(next);
+      // Clear the last HTTP error the moment we're connected again so a
+      // stale 503 banner cannot linger past recovery.
+      if (next === "connected") {
+        setLastHttpError(null);
+      }
+    },
+    onHttpError: setLastHttpError,
   });
 
+  const contextValue = React.useMemo<SSEContextValue>(
+    () => ({ status, lastHttpError, subscribe }),
+    [status, lastHttpError, subscribe],
+  );
+
   return (
-    <SSEContext.Provider value={{ status }}>
+    <SSEContext.Provider value={contextValue}>
       {children}
     </SSEContext.Provider>
   );

@@ -14,15 +14,20 @@ import { Robot as RobotIcon } from "@phosphor-icons/react/dist/csr/Robot";
 import { ShieldCheck as ShieldCheckIcon } from "@phosphor-icons/react/dist/csr/ShieldCheck";
 import { Users as UsersIcon } from "@phosphor-icons/react/dist/csr/Users";
 import { Tag as TagIcon } from "@phosphor-icons/react/dist/csr/Tag";
+import { TreeStructure as TreeStructureIcon } from "@phosphor-icons/react/dist/csr/TreeStructure";
 import { UsersThree as UsersThreeIcon } from "@phosphor-icons/react/dist/csr/UsersThree";
 import { Wrench as WrenchIcon } from "@phosphor-icons/react/dist/csr/Wrench";
 import { BookmarkSimple as BookmarkSimpleIcon } from "@phosphor-icons/react/dist/csr/BookmarkSimple";
+import { Pulse as PulseIcon } from "@phosphor-icons/react/dist/csr/Pulse";
 import { Queue as QueueIcon } from "@phosphor-icons/react/dist/csr/Queue";
 import { Skull as SkullIcon } from "@phosphor-icons/react/dist/csr/Skull";
 import { ArrowsClockwise as ArrowsClockwiseIcon } from "@phosphor-icons/react/dist/csr/ArrowsClockwise";
 import { Calendar as CalendarIcon } from "@phosphor-icons/react/dist/csr/Calendar";
 import { CurrencyDollar as CurrencyDollarIcon } from "@phosphor-icons/react/dist/csr/CurrencyDollar";
 import { Briefcase as BriefcaseIcon } from "@phosphor-icons/react/dist/csr/Briefcase";
+import { Brain as BrainIcon } from "@phosphor-icons/react/dist/csr/Brain";
+import { PlugsConnected as PlugsConnectedIcon } from "@phosphor-icons/react/dist/csr/PlugsConnected";
+import { MagnifyingGlass as MagnifyingGlassIcon } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
 
 import type { AppRole } from "@platform/auth/roles";
 import type { ModuleFrontendSpec, NavContribution } from "@platform/extension-registry/types";
@@ -91,6 +96,18 @@ const platformSidebarItems: SidebarItem[] = [
   // contributed by the vulnerability module's nav.ts and render under
   // the Vulnerability subgroup of the Modules section.
   {
+    id: "platform.topology",
+    slot: "sidebar.main",
+    label: "Topology",
+    to: "/topology",
+    order: 32,
+    description: "Interactive network topology map -- nodes, edges, subnets",
+    icon: TreeStructureIcon,
+    section: "platform",
+    minRole: "operator",
+    blockedMessage: "Topology map requires operator role.",
+  },
+  {
     id: "platform.tasks",
     slot: "sidebar.main",
     label: "Tasks",
@@ -109,6 +126,30 @@ const platformSidebarItems: SidebarItem[] = [
     order: 5,
     description: "Platform assistant -- natural language across every module",
     icon: ChatCircleDotsIcon,
+    section: "platform",
+  },
+  // Global search -- faceted results across every backend entity type.
+  {
+    id: "platform.search",
+    slot: "sidebar.main",
+    label: "Search",
+    to: "/search",
+    order: 6,
+    description: "Faceted global search across systems, findings, sessions, and modules",
+    icon: MagnifyingGlassIcon,
+    section: "platform",
+  },
+  // Epic 212 -- Ops War Room: real-time SSE tail, active-runs grid,
+  // vitals rail. Placed high (order 8) so operators reach it fast
+  // during an incident.
+  {
+    id: "platform.ops.war-room",
+    slot: "sidebar.main",
+    label: "War Room",
+    to: "/ops",
+    order: 8,
+    description: "Real-time event stream, active runs, and system vitals",
+    icon: PulseIcon,
     section: "platform",
   },
   // Admin section -- D-06, D-14
@@ -339,6 +380,33 @@ const platformSidebarItems: SidebarItem[] = [
     section: "admin",
     minRole: "admin",
     blockedMessage: "Platform Ops requires admin role.",
+  },
+  // ML Ops -- god-tier admin surface for the lifecycle controller,
+  // eval harness (runs + calibrators), and prompt version store.
+  {
+    id: "platform.admin.ml-ops",
+    slot: "sidebar.main",
+    label: "ML Ops",
+    to: "/admin/ml-ops",
+    order: 84.5,
+    description: "Lifecycle, evals, prompt versions",
+    icon: BrainIcon,
+    section: "admin",
+    minRole: "admin",
+    blockedMessage: "ML Ops requires admin role.",
+  },
+  // Platform Infra -- MCP registry, specialist-agent registry, state reconcile.
+  {
+    id: "platform.admin.platform-infra",
+    slot: "sidebar.main",
+    label: "Platform Infra",
+    to: "/admin/platform-infra",
+    order: 85,
+    description: "MCP server catalog, specialist agents, and state reconcile",
+    icon: PlugsConnectedIcon,
+    section: "admin",
+    minRole: "admin",
+    blockedMessage: "Platform Infra requires admin role.",
   },
   // Phase 177 -- OIDC providers (Microsoft, Google, generic)
   {

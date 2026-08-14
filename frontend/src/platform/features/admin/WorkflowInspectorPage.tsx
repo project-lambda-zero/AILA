@@ -36,8 +36,20 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { TransitionTimeline } from "@platform/features/tasks/TransitionTimeline";
+import type { TransitionView } from "@platform/features/tasks/transitions";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 
-import { fetchWorkflowRunTransitions, fetchWorkflowRuns } from "./workflow-inspector-api";
+import {
+  fetchWorkflowRunTransition,
+  fetchWorkflowRunTransitions,
+  fetchWorkflowRuns,
+} from "./workflow-inspector-api";
 import type { WorkflowRunView } from "./workflow-inspector-types";
 
 // ---------------------------------------------------------------------------
@@ -244,6 +256,9 @@ function RunDetailPanel({ run }: RunDetailPanelProps) {
     staleTime: 15_000,
   });
 
+  const [selectedTransition, setSelectedTransition] =
+    useState<TransitionView | null>(null);
+
   return (
     <AilaCard variant="elevated" padding="md" className="flex flex-col gap-4" techBorder glow>{/* Run metadata header */}
     <div className="flex flex-col gap-2">
@@ -280,13 +295,188 @@ function RunDetailPanel({ run }: RunDetailPanelProps) {
         </div>
       </div>
     </div>
-    
-    {/* Transition timeline -- reused from tasks/ (not duplicated) */}
+
+    {/* State machine sketch -- text-only ordered edge list derived from the
+       observed transitions. Mermaid is intentionally NOT rendered because
+       it is not a workspace dependency; the ordered list is the durable
+       readable form of the same information. */}
+    {(transitions?.length ?? 0) > 0 && (
+      <StateMachineSketch rows={transitions ?? []} />
+    )}
+
+    {/* Transition timeline -- reused from tasks/ (not duplicated).
+       Row click opens the drill-down drawer via onRowSelect. */}
     <TransitionTimeline
       rows={transitions ?? []}
       isLoading={isLoading}
       isError={isError}
+      onRowSelect={setSelectedTransition}
+    />
+
+    {/* Drill-down drawer for a single transition */}
+    <TransitionDetailSheet
+      row={selectedTransition}
+      onClose={() => setSelectedTransition(null)}
     /></AilaCard>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// StateMachineSketch -- ordered edge list derived from observed transitions.
+// (Mermaid render is intentionally omitted; no workspace dep.)
+// ---------------------------------------------------------------------------
+
+function StateMachineSketch({ rows }: { rows: TransitionView[] }) {
+  const edges = useMemo(() => {
+    const seen = new Set<string>();
+    const ordered: { from: string; to: string; count: number }[] = [];
+    const counts = new Map<string, number>();
+    for (const r of rows) {
+      if (r.from_state === null) continue;
+      const key = `${r.from_state}→${r.to_state}`;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+      if (!seen.has(key)) {
+        seen.add(key);
+        ordered.push({ from: r.from_state, to: r.to_state, count: 0 });
+      }
+    }
+    for (const edge of ordered) {
+      edge.count = counts.get(`${edge.from}→${edge.to}`) ?? 0;
+    }
+    return ordered;
+  }, [rows]);
+
+  if (edges.length === 0) return null;
+
+  return (
+    <div className="rounded-[2px] border border-border bg-elevated/30 p-2">
+      <p className="font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+        Observed edges ({edges.length})
+      </p>
+      <ul className="flex flex-col gap-0.5 font-mono text-[10px]">
+        {edges.map((e) => (
+          <li key={`${e.from}→${e.to}`} className="flex items-center gap-2">
+            <span className="text-foreground opacity-80">{e.from}</span>
+            <span className="text-muted-foreground">→</span>
+            <span className="text-foreground">{e.to}</span>
+            {e.count > 1 && (
+              <span className="text-muted-foreground opacity-60">×{e.count}</span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// TransitionDetailSheet -- drill-down drawer for a single transition
+// ---------------------------------------------------------------------------
+
+interface TransitionDetailSheetProps {
+  row: TransitionView | null;
+  onClose: () => void;
+}
+
+function TransitionDetailSheet({ row, onClose }: TransitionDetailSheetProps) {
+  // Refetch the authoritative row via /transitions/{seq} so the drawer shows
+  // the server-side canonical data (not a snapshot from the list). The list
+  // row is the seed for the drawer; the query is the source of truth once
+  // opened.
+  const query = useQuery({
+    queryKey: [
+      "workflow-run-transition",
+      row?.run_id ?? "",
+      row?.seq ?? -1,
+    ],
+    queryFn: () => fetchWorkflowRunTransition(row!.run_id, row!.seq),
+    enabled: row !== null,
+    staleTime: 30_000,
+    initialData: row ?? undefined,
+  });
+
+  const view = query.data ?? row;
+
+  return (
+    <Sheet
+      open={row !== null}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <SheetContent side="right" className="w-full sm:max-w-lg p-4 sm:p-6">
+        <SheetHeader className="flex flex-col gap-1">
+          <SheetTitle className="font-mono text-sm">
+            Transition seq #{view?.seq ?? "--"}
+          </SheetTitle>
+          <SheetDescription className="font-mono text-[11px]">
+            run {view?.run_id ?? ""}
+          </SheetDescription>
+        </SheetHeader>
+
+        {view === undefined && (
+          <p className="font-mono text-xs text-muted-foreground">Loading…</p>
+        )}
+
+        {query.isError && (
+          <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-[11px] text-destructive">
+            Failed to fetch transition:{" "}
+            {(query.error as Error).message}
+          </div>
+        )}
+
+        {view !== undefined && view !== null && (
+          <div className="flex flex-col gap-3 overflow-y-auto">
+            <div className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 font-mono text-[11px]">
+              <span className="text-muted-foreground">event</span>
+              <span className={`font-semibold ${stateBadgeClass(view.to_state)}`}>
+                {view.event}
+              </span>
+
+              <span className="text-muted-foreground">from_state</span>
+              <span className="text-foreground">
+                {view.from_state ?? <span className="opacity-60">(initial)</span>}
+              </span>
+
+              <span className="text-muted-foreground">to_state</span>
+              <span className={`font-semibold ${stateBadgeClass(view.to_state)}`}>
+                {view.to_state}
+              </span>
+
+              <span className="text-muted-foreground">duration_ms</span>
+              <span className="text-foreground tabular-nums">
+                {view.duration_ms ?? "--"}
+              </span>
+
+              <span className="text-muted-foreground">happened_at</span>
+              <span className="text-foreground">{view.happened_at}</span>
+
+              <span className="text-muted-foreground">task_id</span>
+              <span className="text-foreground break-all">
+                {view.task_id ?? <span className="opacity-60">(none)</span>}
+              </span>
+            </div>
+
+            {view.error_class !== null && (
+              <div className="rounded-[2px] border border-destructive/40 bg-destructive/5 p-2">
+                <p className="font-mono text-[10px] font-semibold uppercase tracking-wider text-destructive mb-1">
+                  Error
+                </p>
+                <p className="font-mono text-[11px] text-destructive">
+                  {view.error_class}
+                </p>
+                {view.error_message !== null &&
+                  view.error_message !== view.error_class && (
+                    <pre className="mt-1 max-h-64 overflow-auto font-mono text-[10px] text-destructive whitespace-pre-wrap break-words">
+{view.error_message}
+                    </pre>
+                  )}
+              </div>
+            )}
+          </div>
+        )}
+      </SheetContent>
+    </Sheet>
   );
 }
 

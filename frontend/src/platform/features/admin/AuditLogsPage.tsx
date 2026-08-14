@@ -31,6 +31,8 @@ import {
   type JqlFilter,
 } from "@/components/filters/JqlFilterBar";
 import { AuditDetailRenderer } from "./AuditDetailRenderer";
+import { AuditSealsTab } from "./AuditSealsTab";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -473,8 +475,18 @@ export function AuditLogsPage() {
     ? [activeFilters.since, activeFilters.until].filter(Boolean).join(" → ")
     : "All time";
 
+  const [tab, setTab] = useState<string>("events");
+
   return (
-    <div className="flex flex-col gap-6 p-4 lg:p-6">
+    <div className="flex flex-col gap-4 p-4 lg:p-6">
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList variant="line" className="mb-2">
+          <TabsTrigger value="events">Events</TabsTrigger>
+          <TabsTrigger value="seals">Seals</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="events">
+        <div className="flex flex-col gap-6">
       {/* Page header */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
 
@@ -667,6 +679,13 @@ export function AuditLogsPage() {
           )}
         </div>
       )}
+        </div>
+        </TabsContent>
+
+        <TabsContent value="seals">
+          <AuditSealsTab />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

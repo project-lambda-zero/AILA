@@ -11,12 +11,13 @@
  *
  * All endpoints require admin role; the route is gated via protectPage("admin").
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowsCounterClockwise } from "@phosphor-icons/react/dist/csr/ArrowsCounterClockwise";
 import { Pause } from "@phosphor-icons/react/dist/csr/Pause";
 import { Queue } from "@phosphor-icons/react/dist/csr/Queue";
 import { Skull } from "@phosphor-icons/react/dist/csr/Skull";
+import { Broom } from "@phosphor-icons/react/dist/csr/Broom";
 
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaBadge } from "@/components/aila/AilaBadge";
@@ -31,6 +32,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { authorizedRequestJson } from "@platform/api/http";
+import {
+  useReconcileTask,
+  type ReconcileReport,
+} from "./platformInfraQueries";
 
 // ---------------------------------------------------------------------------
 // Types -- mirror src/aila/api/schemas/tasks.py and admin_dead_letter.py
@@ -262,6 +267,165 @@ function RequeueFailedDialog({ open, isPending, onConfirm, onClose }: RequeueDia
 }
 
 // ---------------------------------------------------------------------------
+// Reconcile dialog -- POST /admin/reconcile { task_id }
+// ---------------------------------------------------------------------------
+
+interface ReconcileDialogProps {
+  open: boolean;
+  initialTaskId: string;
+  onClose: () => void;
+}
+
+function ReconcileDialog({ open, initialTaskId, onClose }: ReconcileDialogProps) {
+  const [taskId, setTaskId] = useState(initialTaskId);
+  const [error, setError] = useState<string | null>(null);
+  const [report, setReport] = useState<ReconcileReport | null>(null);
+  const reconcileMutation = useReconcileTask();
+
+  // Sync the field with a preselected task id when the dialog opens.
+  useEffect(() => {
+    if (open) {
+      setTaskId(initialTaskId);
+      setError(null);
+      setReport(null);
+    }
+  }, [open, initialTaskId]);
+
+  function handleClose() {
+    setError(null);
+    setReport(null);
+    onClose();
+  }
+
+  async function handleRun() {
+    setError(null);
+    const trimmed = taskId.trim();
+    if (!trimmed) {
+      setError("Task id is required.");
+      return;
+    }
+    try {
+      const envelope = await reconcileMutation.mutateAsync(trimmed);
+      setReport(envelope.data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Reconcile failed");
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="font-mono text-text">Reconcile task state</DialogTitle>
+        </DialogHeader>
+
+        <div className="flex flex-col gap-3">
+          <p className="font-mono text-xs text-text-muted">
+            Cross-checks the three sources of truth (TaskRecord status,
+            workflow cursor, ARQ lock) and heals drift. Idempotent: a
+            consistent row returns healed=false with no actions.
+          </p>
+
+          <label className="font-mono text-xs text-text-muted flex flex-col gap-1">
+            Task id
+            <Input
+              value={taskId}
+              onChange={(e) => setTaskId(e.target.value)}
+              className="font-mono text-sm"
+              placeholder="task_..."
+            />
+          </label>
+
+          {error && (
+            <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
+              {error}
+            </div>
+          )}
+
+          {report && (
+            <div className="flex flex-col gap-3 rounded-[4px] border border-border bg-elevated/50 p-3">
+              <div className="flex items-center gap-2">
+                <AilaBadge
+                  severity={report.healed ? "medium" : "low"}
+                  size="sm"
+                >
+                  {report.healed ? "healed" : "no drift"}
+                </AilaBadge>
+                <span className="font-mono text-xs text-text-muted truncate">
+                  {report.task_id}
+                </span>
+              </div>
+
+              <div>
+                <p className="font-mono text-xs font-semibold uppercase tracking-wider text-text-muted mb-1">
+                  Signals
+                </p>
+                <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-xs">
+                  <span className="text-text-muted">task_status</span>
+                  <span className="text-text">{report.signals.task_status ?? "--"}</span>
+                  <span className="text-text-muted">task_heartbeat_at</span>
+                  <span className="text-text">
+                    {formatTimestamp(report.signals.task_heartbeat_at)}
+                  </span>
+                  <span className="text-text-muted">cursor_state</span>
+                  <span className="text-text">{report.signals.cursor_state ?? "--"}</span>
+                  <span className="text-text-muted">lock_present</span>
+                  <span className="text-text">
+                    {report.signals.lock_present === null
+                      ? "--"
+                      : report.signals.lock_present
+                        ? "true"
+                        : "false"}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <p className="font-mono text-xs font-semibold uppercase tracking-wider text-text-muted mb-1">
+                  Actions ({report.actions.length})
+                </p>
+                {report.actions.length === 0 ? (
+                  <p className="font-mono text-xs text-text-muted">
+                    No mutations required.
+                  </p>
+                ) : (
+                  <ul className="flex flex-col gap-1">
+                    {report.actions.map((action, idx) => (
+                      <li
+                        key={`${action.kind}-${idx}`}
+                        className="rounded-[2px] border border-border bg-base px-2 py-1 font-mono text-xs"
+                      >
+                        <code className="text-text">{action.kind}</code>
+                        <span className="ml-2 text-text-muted">{action.reason}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-2 pt-1">
+            <Button
+              type="button"
+              size="sm"
+              className="flex-1"
+              onClick={handleRun}
+              disabled={reconcileMutation.isPending}
+            >
+              {reconcileMutation.isPending ? "Reconciling..." : "Run reconcile"}
+            </Button>
+            <Button type="button" size="sm" variant="outline" onClick={handleClose}>
+              Close
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
@@ -269,6 +433,8 @@ export function TaskQueueAdminPage() {
   const queryClient = useQueryClient();
   const [drainOpen, setDrainOpen] = useState(false);
   const [requeueOpen, setRequeueOpen] = useState(false);
+  const [reconcileOpen, setReconcileOpen] = useState(false);
+  const [reconcileTaskId, setReconcileTaskId] = useState("");
 
   const queueDepthQuery = useQuery({
     queryKey: ["platform", "tasks", "queue-depth"],
@@ -447,7 +613,7 @@ export function TaskQueueAdminPage() {
       <AilaCard variant="default" padding="md" techBorder glow><h2 className="font-mono text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">
         Admin Actions
       </h2>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div className="rounded-[4px] border border-border p-3 flex flex-col gap-2">
           <div className="flex items-center gap-2">
             <Pause className="h-4 w-4 text-medium" />
@@ -483,6 +649,28 @@ export function TaskQueueAdminPage() {
             className="self-start"
           >
             {requeueFailedMutation.isPending ? "Requeueing..." : "Requeue Failed"}
+          </Button>
+        </div>
+
+        <div className="rounded-[4px] border border-border p-3 flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <Broom className="h-4 w-4 text-info" />
+            <h3 className="font-mono text-sm font-semibold text-text">Reconcile State</h3>
+          </div>
+          <p className="font-mono text-xs text-text-muted">
+            Heal drift between TaskRecord, workflow cursor, and ARQ lock
+            for a single task.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setReconcileTaskId("");
+              setReconcileOpen(true);
+            }}
+            className="self-start"
+          >
+            Reconcile...
           </Button>
         </div>
       </div></AilaCard>
@@ -557,16 +745,30 @@ export function TaskQueueAdminPage() {
                     {formatTimestamp(entry.dead_lettered_at)}
                   </td>
                   <td className="py-2 px-3">
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      disabled={requeueDeadLetterMutation.isPending}
-                      onClick={() =>
-                        requeueDeadLetterMutation.mutate(entry.task_id)
-                      }
-                    >
-                      Requeue
-                    </Button>
+                    <div className="flex flex-wrap gap-1">
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        disabled={requeueDeadLetterMutation.isPending}
+                        onClick={() =>
+                          requeueDeadLetterMutation.mutate(entry.task_id)
+                        }
+                      >
+                        Requeue
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() => {
+                          setReconcileTaskId(entry.task_id);
+                          setReconcileOpen(true);
+                        }}
+                        title="Reconcile task state"
+                      >
+                        <Broom className="h-3 w-3" />
+                        Reconcile
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -596,6 +798,11 @@ export function TaskQueueAdminPage() {
           return result.data;
         }}
         onClose={() => setRequeueOpen(false)}
+      />
+      <ReconcileDialog
+        open={reconcileOpen}
+        initialTaskId={reconcileTaskId}
+        onClose={() => setReconcileOpen(false)}
       />
     </div>
   );

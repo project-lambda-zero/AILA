@@ -7,6 +7,48 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.13] - 2026-08-13 -- Operator console: ML-Ops, infra control, command palette, war room, topology, audit seals
+
+Surfaces a large set of backend capabilities that previously had no frontend. A
+deep endpoint pass found 37 admin-tier endpoints with zero UI plus several
+partial surfaces; this release wires them into the operator console. All
+additive: existing routes, pages, and behavior are unchanged (#212).
+
+### Added
+
+- ML-Ops console (`/admin/ml-ops`): model lifecycle (evaluate, approve, promote,
+  rollback, shadow, canary) with a per-version metrics table, route preview, and
+  transition timeline; an eval and calibrator dashboard; and a prompt registry
+  with alias deploy plus a version diff. Wires `/admin/lifecycle/*`,
+  `/admin/eval/*`, `/admin/prompts/*`.
+- Platform Infra console (`/admin/platform-infra`): an MCP zero-trust registry
+  (approve, revoke, schema-drift, per-instance tools) and a specialist-agent
+  registry. A state-reconcile action was added to the task-queue admin page.
+  Wires `/platform/mcp/instances/*`, `/agents/specialists/*`, `/admin/reconcile`.
+- Audit seals viewer: a Seals tab on the audit page renders the cryptographic
+  decision trail (seal, input, and output hashes, model, classification,
+  evidence validation) with a structural chain-linkage check (not an HMAC
+  recomputation; the key stays server-side) and a range export. The workflow
+  inspector gains a per-transition drill-down. Wires `/audit/seals`,
+  `/audit/seals/export`, `/admin/workflows/runs/{id}/transitions/{seq}`.
+- Universal command palette: the palette now navigates every route, runs a live
+  global search (`GET /search`), and executes role-gated, confirm-guarded
+  actions (new scan, new session, drain or requeue the task queue, export the
+  corpus, replay journal deadletters, reconcile a task). A dedicated `/search`
+  page adds faceted results.
+- Ops War Room (`/ops`): a live activity feed built on the existing single global
+  SSE subscription (rolling 500-event window with type filters), an active-runs
+  grid, and a vitals rail (queue depth, dead-letter count, SSE connection state).
+- Network topology map (`/topology`): the full node payload (ports, services,
+  severity counts, uptime, staleness, host metadata) rendered as an interactive
+  graph with severity-heat, stale-only, and subnet overlays plus a node-detail
+  drawer and a subnet sidebar. Wires `/topology`, `/topology/subnets`.
+
+### Changed
+
+- The command-palette search result type was corrected to the real `/search`
+  response shape (entity_type, entity_id, title, snippet, module_id, score).
+
 ## [0.5.12] - 2026-08-13 -- Console status bar and chat-home launcher
 
 ### Added

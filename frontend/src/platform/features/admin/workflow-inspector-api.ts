@@ -43,3 +43,21 @@ export async function fetchWorkflowRunTransitions(
   );
   return envelope.data;
 }
+
+/**
+ * Fetch a single transition by (run_id, seq).
+ *
+ * Endpoint: GET /admin/workflows/runs/{run_id}/transitions/{seq}
+ * Returns 404 if the (run_id, seq) pair is not persisted; the caller sees
+ * an ApiHttpError with status=404.
+ */
+export async function fetchWorkflowRunTransition(
+  runId: string,
+  seq: number,
+): Promise<TransitionView> {
+  const envelope = await authorizedRequestJson<DataEnvelope<TransitionView>>(
+    `/admin/workflows/runs/${encodeURIComponent(runId)}/transitions/${seq}`,
+    { method: "GET" },
+  );
+  return envelope.data;
+}

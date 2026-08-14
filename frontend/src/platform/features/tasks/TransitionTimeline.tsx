@@ -62,12 +62,36 @@ function eventLabel(event: string): string {
 // Row
 // ---------------------------------------------------------------------------
 
-function TransitionRow({ row }: { row: TransitionView }) {
+interface TransitionRowProps {
+  row: TransitionView;
+  onSelect?: (row: TransitionView) => void;
+}
+
+function TransitionRow({ row, onSelect }: TransitionRowProps) {
   const colour = eventColour(row.event);
   const isError = row.error_class !== null;
+  const clickable = onSelect !== undefined;
 
   return (
-    <div className="flex flex-col gap-0.5 border-b border-border py-1.5 last:border-0">
+    <div
+      className={[
+        "flex flex-col gap-0.5 border-b border-border py-1.5 last:border-0",
+        clickable ? "cursor-pointer hover:bg-elevated/60 transition-colors" : "",
+      ].join(" ")}
+      onClick={clickable ? () => onSelect(row) : undefined}
+      onKeyDown={
+        clickable
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onSelect(row);
+              }
+            }
+          : undefined
+      }
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+    >
       {/* Main line */}
       <div className="flex items-center gap-2 font-mono text-[11px]">
         {/* seq */}
@@ -123,12 +147,19 @@ interface TransitionTimelineProps {
   rows: TransitionView[];
   isLoading: boolean;
   isError: boolean;
+  /**
+   * Optional per-row click handler. When supplied, each row becomes a
+   * keyboard-activatable button that surfaces the row upward (e.g. for a
+   * drill-down drawer). When omitted, rows are non-interactive as before.
+   */
+  onRowSelect?: (row: TransitionView) => void;
 }
 
 export function TransitionTimeline({
   rows,
   isLoading,
   isError,
+  onRowSelect,
 }: TransitionTimelineProps) {
   return (
     <div className="mt-4">
@@ -157,7 +188,11 @@ export function TransitionTimeline({
       {!isLoading && !isError && rows.length > 0 && (
         <div className="max-h-64 overflow-y-auto rounded-[2px] border border-border">
           {rows.map((row) => (
-            <TransitionRow key={`${row.run_id}-${row.seq}`} row={row} />
+            <TransitionRow
+              key={`${row.run_id}-${row.seq}`}
+              row={row}
+              onSelect={onRowSelect}
+            />
           ))}
         </div>
       )}

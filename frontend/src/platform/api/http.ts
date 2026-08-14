@@ -378,3 +378,29 @@ export async function authorizedRequestJson<T>(
     throw error;
   }
 }
+
+/**
+ * Authenticated blob download. Mirrors `authorizedRequestJson` but returns a
+ * `BlobResponsePayload` for use with `saveBlobResponse`. Retries once on 401
+ * after refreshing the access token.
+ */
+export async function authorizedRequestBlob(
+  pathname: string,
+  options: Omit<RequestJsonOptions, "token"> = {},
+): Promise<BlobResponsePayload> {
+  const { getAuthTokenStandalone } = await import("@platform/auth/useAuthStore");
+  const token = await getAuthTokenStandalone();
+  try {
+    return await requestBlob(pathname, { ...options, token });
+  } catch (error) {
+    if (error instanceof ApiHttpError && error.status === 401) {
+      const { useAuthStore } = await import("@platform/auth/useAuthStore");
+      await useAuthStore.getState().refreshTokens();
+      const newToken = useAuthStore.getState().accessToken;
+      if (newToken) {
+        return await requestBlob(pathname, { ...options, token: newToken });
+      }
+    }
+    throw error;
+  }
+}

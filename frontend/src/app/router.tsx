@@ -19,7 +19,9 @@ import { ToolsConsolePage } from "@platform/features/admin/ToolsConsolePage";
 import { WorkflowInspectorPage } from "@platform/features/admin/WorkflowInspectorPage";
 import { OidcProvidersPage } from "@platform/features/admin/OidcProvidersPage";
 import { PlatformConfigPage } from "@platform/features/admin/PlatformConfigPage";
+import { PlatformInfraPage } from "@platform/features/admin/PlatformInfraPage";
 import { PlatformOpsPage } from "@platform/features/admin/PlatformOpsPage";
+import { MlOpsPage } from "@platform/features/admin/MlOpsPage";
 import { TagVocabularyPage } from "@platform/features/admin/TagVocabularyPage";
 import { SystemHealthPage } from "@platform/features/admin/SystemHealthPage";
 import { TeamDetailPage } from "@platform/features/admin/TeamDetailPage";
@@ -32,6 +34,7 @@ import { AutomationPage } from "@platform/features/admin/AutomationPage";
 import { ScheduledReportsPage } from "@platform/features/admin/ScheduledReportsPage";
 import { CostPage } from "@platform/features/admin/CostPage";
 import { ExecutivePage } from "@platform/features/admin/ExecutivePage";
+import { WarRoomPage } from "@platform/features/ops/WarRoomPage";
 import { DashboardPage } from "@platform/features/dashboard/DashboardPage";
 import { ScanCenterPage } from "@platform/features/scans/ScanCenterPage";
 import { SystemDetailPage } from "@platform/features/systems/SystemDetailPage";
@@ -44,10 +47,13 @@ import { SessionsPage } from "@platform/features/sessions/SessionsPage";
 import { ChatPage } from "@platform/features/chat/ChatPage";
 import { SettingsPage } from "@platform/features/settings/SettingsPage";
 import { RadarPage } from "@platform/features/radar/RadarPage";
+import { TopologyPage } from "@platform/features/topology/TopologyPage";
 import { VizPage } from "@platform/features/viz/VizPage";
+import { SearchPage } from "@platform/features/search/SearchPage";
 import { House } from "@phosphor-icons/react/dist/csr/House";
 import { HardDrives } from "@phosphor-icons/react/dist/csr/HardDrives";
 import { Broadcast } from "@phosphor-icons/react/dist/csr/Broadcast";
+import { TreeStructure } from "@phosphor-icons/react/dist/csr/TreeStructure";
 import { ChartLine } from "@phosphor-icons/react/dist/csr/ChartLine";
 import { Terminal } from "@phosphor-icons/react/dist/csr/Terminal";
 import { ListChecks } from "@phosphor-icons/react/dist/csr/ListChecks";
@@ -70,7 +76,11 @@ import { Calendar } from "@phosphor-icons/react/dist/csr/Calendar";
 import { CurrencyDollar } from "@phosphor-icons/react/dist/csr/CurrencyDollar";
 import { Briefcase } from "@phosphor-icons/react/dist/csr/Briefcase";
 import { Monitor } from "@phosphor-icons/react/dist/csr/Monitor";
+import { PlugsConnected } from "@phosphor-icons/react/dist/csr/PlugsConnected";
 import { Warning } from "@phosphor-icons/react/dist/csr/Warning";
+import { Pulse } from "@phosphor-icons/react/dist/csr/Pulse";
+import { Brain } from "@phosphor-icons/react/dist/csr/Brain";
+import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
 
 // C2: CrashNow is a DEV-only test crash component. In production builds we
 // never reference the module so Vite tree-shakes it out of the bundle.
@@ -140,6 +150,7 @@ const PLATFORM_PAGE_ICONS: Record<string, ReactElement> = {
   Systems: <HardDrives />,
   "System Detail": <HardDrives />,
   "Network Radar": <Broadcast />,
+  Topology: <TreeStructure />,
   "Data Visualization": <ChartLine />,
   Console: <Terminal />,
   Tasks: <ListChecks />,
@@ -156,6 +167,8 @@ const PLATFORM_PAGE_ICONS: Record<string, ReactElement> = {
   "LLM Log": <Robot />,
   "Platform Config": <GearSix />,
   "Platform Ops": <Wrench />,
+  "ML Ops": <Brain />,
+  "Platform Infra": <PlugsConnected />,
   "Tag Vocabulary": <Tag />,
   "System Health": <Heartbeat />,
   "OIDC Providers": <Key />,
@@ -168,7 +181,9 @@ const PLATFORM_PAGE_ICONS: Record<string, ReactElement> = {
   "Scheduled Reports": <Calendar />,
   "Cost Intelligence": <CurrencyDollar />,
   "Executive Dashboard": <Briefcase />,
+  "War Room": <Pulse />,
   "Not Found": <Warning />,
+  Search: <MagnifyingGlass />,
 };
 
 function protectPage(
@@ -295,6 +310,11 @@ export const routeObjects: RouteObject[] = [
         handle: { breadcrumb: "Radar" },
       },
       {
+        path: "topology",
+        element: protectPage("Topology", TopologyPage, "operator"),
+        handle: { breadcrumb: "Topology" },
+      },
+      {
         path: "viz",
         element: protectPage("Data Visualization", VizPage),
         handle: { breadcrumb: "Data Visualization" },
@@ -384,6 +404,16 @@ export const routeObjects: RouteObject[] = [
         handle: { breadcrumb: "Platform Ops" },
       },
       {
+        path: "admin/ml-ops",
+        element: protectPage("ML Ops", MlOpsPage, "admin"),
+        handle: { breadcrumb: "ML Ops" },
+      },
+      {
+        path: "admin/platform-infra",
+        element: protectPage("Platform Infra", PlatformInfraPage, "admin"),
+        handle: { breadcrumb: "Platform Infra" },
+      },
+      {
         path: "admin/tags",
         element: protectPage("Tag Vocabulary", TagVocabularyPage, "admin"),
         handle: { breadcrumb: "Tag Vocabulary" },
@@ -444,6 +474,11 @@ export const routeObjects: RouteObject[] = [
         handle: { breadcrumb: "Executive" },
       },
       {
+        path: "ops",
+        element: protectPage("War Room", WarRoomPage),
+        handle: { breadcrumb: "War Room" },
+      },
+      {
         path: "settings",
         element: protectPage("Settings", SettingsPage),
         handle: { breadcrumb: "Settings" },
@@ -456,6 +491,11 @@ export const routeObjects: RouteObject[] = [
       {
         path: "findings",
         element: <Navigate to="/vulnerability/findings" replace />,
+      },
+      {
+        path: "search",
+        element: protectPage("Search", SearchPage),
+        handle: { breadcrumb: "Search" },
       },
       ...testOnlyRoutes,
       ...buildModuleRouteObjects(moduleSpecs),

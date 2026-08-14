@@ -35,6 +35,11 @@ export interface UseSSEOptions {
   onEvent: (event: SSEEvent) => void;
   /** Optional callback for connection status changes. */
   onStatusChange?: (status: SSEConnectionStatus) => void;
+  /** Optional callback invoked with the HTTP status when the initial
+   *  fetch fails with a non-OK response (e.g. 503 ceiling hit, 401
+   *  auth expired). Fires per attempt; reconnect logic continues
+   *  independently. */
+  onHttpError?: (status: number) => void;
 }
 
 const BACKOFF_STEPS_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000];
@@ -65,6 +70,7 @@ export function useSSE({
   enabled = true,
   onEvent,
   onStatusChange,
+  onHttpError,
 }: UseSSEOptions): SSEConnectionStatus {
   const [status, setStatus] = useState<SSEConnectionStatus>("disconnected");
   const abortRef = useRef<AbortController | null>(null);
@@ -79,6 +85,8 @@ export function useSSE({
   onEventRef.current = onEvent;
   const onStatusChangeRef = useRef(onStatusChange);
   onStatusChangeRef.current = onStatusChange;
+  const onHttpErrorRef = useRef(onHttpError);
+  onHttpErrorRef.current = onHttpError;
 
   useEffect(() => {
     if (!enabled) {
@@ -120,6 +128,9 @@ export function useSSE({
         });
 
         if (!response.ok || !response.body) {
+          if (!response.ok) {
+            onHttpErrorRef.current?.(response.status);
+          }
           scheduleReconnect();
           return;
         }

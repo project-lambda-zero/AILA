@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 
 import { ThemeProvider } from "@/providers/ThemeProvider";
 import { SSEProvider } from "@/providers/SSEProvider";
+import { ActivityFeedProvider } from "@/providers/ActivityFeedProvider";
 import { Toaster } from "@/components/ui/sonner";
 import { apiErrorHandler } from "@/lib/apiErrorHandler";
 
@@ -56,7 +57,9 @@ export function AppProviders({ children }: AppProvidersProps) {
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
         <SSEProvider>
-          {children}
+          <ActivityFeedProvider>
+            {children}
+          </ActivityFeedProvider>
         </SSEProvider>
         <Toaster />
       </QueryClientProvider>
