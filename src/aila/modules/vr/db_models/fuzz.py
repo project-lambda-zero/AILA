@@ -57,6 +57,27 @@ class VRFuzzCampaignRecord(TeamScopedMixin, SQLModel, table=True):
     coverage_pct: float | None = Field(default=None)
     crashes_found: int = Field(default=0)
 
+    # #173: link back to the investigation whose outcome proposed this
+    # campaign. Populated when the proposal-accept flow creates the row;
+    # left NULL for operator-initiated campaigns. The register_crash +
+    # patch_campaign feedback path posts steering / event messages back
+    # to this investigation so the reasoning loop closes on real fuzz
+    # signal (crash confirmed, coverage jump) instead of dead-ending at
+    # storage.
+    source_investigation_id: str | None = Field(
+        default=None, max_length=64, index=True,
+    )
+    source_outcome_id: str | None = Field(default=None, max_length=64)
+
+    # #148 feedback half: last coverage_pct the coverage-delta emitter
+    # posted an event for. patch_campaign compares the incoming
+    # coverage_pct against this value; when the delta crosses the
+    # operator-tunable threshold (VRConfigSchema.fuzz_coverage_emit_delta_pct)
+    # a fuzz.coverage_delta message is written to source_investigation_id
+    # and this value is bumped to the new coverage_pct. NULL until the
+    # first emit so the very first meaningful coverage always fires.
+    last_coverage_emitted_pct: float | None = Field(default=None)
+
     started_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     stopped_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
     last_progress_at: datetime | None = Field(

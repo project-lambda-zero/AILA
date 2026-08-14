@@ -643,6 +643,10 @@ def create_app() -> FastAPI:
     from aila.api.routers.admin_eval import router as admin_eval_router
     application.include_router(admin_eval_router)
 
+    # Issue #158: trajectory-mined SFT/DPO corpus export + stats (god-tier admin).
+    from aila.api.routers.platform_corpus import router as platform_corpus_router
+    application.include_router(platform_corpus_router)
+
     # RFC-10: Admin agent-lifecycle router (god-tier admin -- evaluate/promote/rollback + journal)
     from aila.api.routers.admin_lifecycle import router as admin_lifecycle_router
     application.include_router(admin_lifecycle_router)
@@ -667,6 +671,12 @@ def create_app() -> FastAPI:
 
     from aila.api.routers.tools import router as tools_router
     application.include_router(tools_router)
+
+    # Issue #147: platform sandbox exec (god-tier admin, rate-limited).
+    # Drives SandboxService directly for operator ops -- module callers
+    # reach the sandbox through the ``sandbox_exec`` tool instead.
+    from aila.api.routers.platform_sandbox import router as platform_sandbox_router
+    application.include_router(platform_sandbox_router)
 
     # Platform tasks router: /tasks (Phase 54 plan 05 -- task queue API surface)
     from aila.api.routers.tasks import router as tasks_router

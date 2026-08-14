@@ -32,6 +32,7 @@ from ..tools import (
     KnowledgeStoreTool,
     PermanentMemoryTool,
     ReportsQueryTool,
+    SandboxExecTool,
     SecretsManageTool,
     SSHCommandTool,
     SystemRegistryTool,
@@ -88,6 +89,7 @@ PLATFORM_TOOL_KEYS: frozenset[str] = frozenset({
     "registry.systems",
     "memory.permanent",
     "ssh.command",
+    "sandbox.exec",
     "reports.query",
     "artifacts.store",
     "artifacts.search",
@@ -204,6 +206,13 @@ async def build_platform_runtime(*, app_settings: ApplicationSettings, platform_
         ("registry.systems", SystemRegistryTool(platform_settings)),
         ("memory.permanent", PermanentMemoryTool(platform_settings)),
         ("ssh.command", SSHCommandTool(platform_settings)),
+        # Platform sandbox executor (issue #147). Dispatches to
+        # nsjail / Firecracker over SSH -- see
+        # ``aila.platform.services.sandbox`` for the deploy contract.
+        # When no backend host is configured, every invocation raises
+        # SandboxUnavailableError; there is no local un-isolated
+        # fallback by design.
+        ("sandbox.exec", SandboxExecTool(platform_settings)),
         ("reports.query", ReportsQueryTool(platform_settings)),
         ("artifacts.store", ArtifactStoreTool(platform_settings)),
         ("artifacts.search", ArtifactSearchTool(platform_settings)),

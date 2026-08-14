@@ -47,7 +47,11 @@ from aila.platform.contracts.enums import OperatorIntent, SenderKind
 from aila.platform.contracts.mcp_payload import PayloadKind
 from aila.platform.uow import UnitOfWork
 
-__all__ = ["maybe_post_auto_steering", "post_dispatch_stall_escalation"]
+__all__ = [
+    "maybe_post_auto_steering",
+    "post_dispatch_stall_escalation",
+    "post_manual_steering",
+]
 
 _log = logging.getLogger(__name__)
 
@@ -755,6 +759,42 @@ async def _post(
             return None
         await uow.session.refresh(msg)
         return msg.id
+
+
+async def post_manual_steering(
+    investigation_id: str,
+    branch_id: str | None,
+    text: str,
+    auto_steering_key: str,
+    *,
+    message_model: Any,
+    branch_model: Any,
+) -> str | None:
+    """Public wrapper: post a caller-composed steering message.
+
+    Callers outside the tool-executor rule engine (e.g. the fuzz
+    feedback path in :mod:`aila.modules.vr.services.fuzz_service` --
+    #173/#148 feedback half) need the same dedup semantics
+    :func:`_already_posted` + :func:`_post` provide to the built-in
+    detectors, but they compose the ``text`` + ``auto_steering_key``
+    themselves rather than deriving them from a tool result.
+
+    Returns the posted message id, or ``None`` when a matching un-acked
+    steering already exists for this investigation (dedup on the
+    ``(investigation_id, auto_steering_key)`` partial-unique index --
+    migration 063). Never raises: any DB failure inside ``_post`` maps
+    to a returned ``None`` via the same ``IntegrityError`` race path
+    the internal detectors use.
+    """
+    if await _already_posted(
+        investigation_id, auto_steering_key,
+        message_model=message_model, branch_model=branch_model,
+    ):
+        return None
+    return await _post(
+        investigation_id, branch_id, text, auto_steering_key,
+        message_model=message_model, branch_model=branch_model,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────

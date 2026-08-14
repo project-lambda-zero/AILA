@@ -7,6 +7,45 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-08-13 -- Platform sandbox, fuzz feedback loop, trajectory corpus
+
+### Added
+
+- Platform sandbox service (#147). A platform-owned `SandboxService` plus a
+  `sandbox_exec` tool and `POST /platform/sandbox/exec` (god-tier admin) give
+  every module one audited isolation boundary for agent-derived code execution.
+  Two backends dispatch over SSH to a Linux host: nsjail (namespaces + rlimits,
+  developer tier) and Firecracker (microVM, production tier). Policy is enforced
+  before dispatch (timeout clamped to `sandbox_max_timeout_s`, network forced
+  off unless `sandbox_allow_network`, stdout/stderr and per-file output capped).
+  When no backend is provisioned the service raises a typed unavailable error
+  rather than running code un-isolated on the host. Fifteen `sandbox_*` platform
+  config keys select the backend, host, and ceilings. Live execution requires a
+  Linux sandbox host (nsjail, or KVM plus Firecracker with a rootfs and kernel);
+  the control plane is complete and inert until one is configured.
+- Fuzz coverage and crash feedback loop (#173, #148). A security-relevant crash
+  on a campaign linked to a source investigation now posts a deduped operator
+  steering message to that investigation and emits a `fuzz.crash_confirmed`
+  event; a coverage jump past `fuzz_coverage_emit_delta_pct` (default 5.0) posts
+  a `fuzz.coverage_delta` observable the reasoning loop consumes. Campaigns
+  carry `source_investigation_id` and `source_outcome_id`, stamped at proposal
+  acceptance (migration `123_vr_fuzz_source_investigation`). Feedback runs after
+  the crash or coverage row commits, so a steering failure never rolls back the
+  stored row. Optional child-investigation spawn on a confirmed crash is gated
+  behind `fuzz_crash_spawn_child` (default off).
+- Trajectory SFT and DPO corpus plus a LoRA pipeline (#158). A
+  `TrajectoryCorpusBuilder` mines resolved investigations from the immutable
+  platform journal into ShareGPT-style SFT records (from approved or dispatched
+  branches) and state-conditioned DPO preference pairs (chosen from an approved
+  branch, rejected from a rejected sibling on the same investigation). A nightly
+  `run_corpus_export` task and `POST /platform/eval/corpus/export` plus
+  `GET /platform/eval/corpus/stats` (god-tier admin) write `sft.jsonl`,
+  `dpo.jsonl`, and a manifest. A complete TRL and PEFT QLoRA
+  SFT-then-DPO-then-merge script (`aila.platform.eval.training.train_lora`) runs
+  behind a `training` optional dependency set on a GPU host. Ten `corpus_*` and
+  `training_*` config keys tune the export and the run. The corpus builder reads
+  module outcome state through read-only SQL and never imports module code.
+
 ## [0.5.4] - 2026-08-13 -- Activate deferred #209 residual knobs
 
 ### Added

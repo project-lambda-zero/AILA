@@ -398,5 +398,33 @@ class VRConfigSchema(ModuleConfigBase):
         ),
     )
 
+    # --- Fuzz -> source-investigation feedback loop (#173/#148) ----------
+    fuzz_coverage_emit_delta_pct: float = Field(
+        default=5.0,
+        ge=0.1,
+        le=100.0,
+        description=(
+            "Coverage-percentage delta (in percentage points) that "
+            "patch_campaign must observe against the campaign's "
+            "``last_coverage_emitted_pct`` before a fuzz.coverage_delta "
+            "event is posted to the source investigation. Default 5.0 "
+            "keeps the reasoning loop from being spammed on noisy sub- "
+            "percent jitter. Env: AILA_VR_FUZZ_COVERAGE_EMIT_DELTA_PCT."
+        ),
+    )
+    fuzz_crash_spawn_child: bool = Field(
+        default=False,
+        description=(
+            "When True AND a SECURITY_RELEVANT crash lands on a campaign "
+            "linked back to a source investigation, register_crash also "
+            "enqueues a child VR investigation targeting the crash's "
+            "reproducer (parent_investigation_id = the source). The "
+            "primary loop-closer stays the steering message; this knob "
+            "is opt-in because auto-spawn multiplies the fan-out of the "
+            "child investigation graph. Default OFF. Env: "
+            "AILA_VR_FUZZ_CRASH_SPAWN_CHILD."
+        ),
+    )
+
 
 VR_DEFAULTS = VRConfigSchema()

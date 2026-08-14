@@ -194,6 +194,13 @@ class ProposalPreparer:
                 f"Auto-created from fuzz proposal {proposal_id}. "
                 f"Rationale: {proposal.rationale[:512]}"
             ),
+            # #173: link the campaign back to the investigation + outcome
+            # that proposed it. The fuzz_service feedback path (crash
+            # confirmed + coverage delta) routes observables to this
+            # investigation so the reasoning loop closes on real fuzz
+            # signal instead of dead-ending at storage.
+            source_investigation_id=proposal.investigation_id,
+            source_outcome_id=proposal.outcome_id,
         )
         try:
             summary = await FuzzCampaignService().create_campaign(

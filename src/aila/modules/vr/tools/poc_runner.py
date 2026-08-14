@@ -1,5 +1,17 @@
 """PoC runner -- uploads, compiles, and executes vulnerability PoCs over SSH.
 
+Follow-up (issue #147): the platform now owns a real sandbox primitive at
+``aila.platform.services.sandbox`` (nsjail / Firecracker over SSH, exposed
+as the ``sandbox_exec`` platform tool). Once an operator provisions a
+sandbox host for a given deployment, the module MUST migrate this file
+to route every ``firejail`` / ``unshare`` invocation through
+``SandboxService.run``, deleting the local isolator resolver + wrapper
+plumbing below. The migration is deliberately deferred here because the
+sandbox has no configured host on the current deployment, and removing
+the local firejail/unshare fallback before that would leave VR PoC
+execution un-isolated -- exactly the failure mode the new primitive is
+supposed to prevent. See ``docs/CLAUDE.md`` follow-ups section.
+
 Sandbox model (fix #51):
 
 1. ``poc_path`` is confined to :data:`_REMOTE_DIR` -- any request whose

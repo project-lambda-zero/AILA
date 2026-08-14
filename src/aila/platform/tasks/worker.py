@@ -631,6 +631,8 @@ def _bootstrap_platform_tasks() -> None:
         "aila.platform.tasks.entrypoints",
         "aila.platform.tasks.report_tasks",
         "aila.platform.tasks.discovery",
+        # Issue #158: nightly + on-demand trajectory -> SFT/DPO corpus export.
+        "aila.platform.tasks.corpus_export",
     ):
         try:
             __import__(platform_module)

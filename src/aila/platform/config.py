@@ -472,3 +472,112 @@ class PlatformConfigSchema(BaseModel):
     # a stalled hub always emits ``hub_stalled`` -> COMPLETED.
     dispatch_replan_timeout_s: float = 1800.0
 
+    # ------------------------------------------------------------------
+    # Platform sandbox service (issue #147). See
+    # ``aila.platform.services.sandbox`` for the executor implementation.
+    #
+    # The sandbox is a platform-owned, one-VM-per-run isolation primitive
+    # every module reaches through ``SandboxService.run``. Backends run
+    # over SSH on a Linux host (Firecracker needs KVM; nsjail needs the
+    # nsjail binary). When no host is provisioned, callers see
+    # ``SandboxUnavailableError`` -- there is no local un-isolated
+    # fallback by design.
+    #
+    # sandbox_backend:
+    #   ``none``          -- no backend; every ``run`` raises Unavailable.
+    #   ``nsjail``        -- namespace + seccomp sandbox on the host.
+    #   ``firecracker``   -- microVM (KVM required); needs rootfs + kernel.
+    # sandbox_ssh_host / _user / _port:
+    #   SSH target for the sandbox host. Empty ``sandbox_ssh_host`` also
+    #   trips Unavailable so the operator cannot forget the wiring.
+    # sandbox_default_timeout_s / _max_timeout_s:
+    #   Service clamps every ``spec.timeout_s`` to ``max_timeout_s`` so
+    #   an over-eager caller cannot ask for a multi-hour run.
+    # sandbox_allow_network:
+    #   Master switch. When False the service forces every ``spec.network``
+    #   to False regardless of the caller's request.
+    # sandbox_vcpu / _mem_mb:
+    #   Per-run defaults when the caller left them at the SandboxSpec
+    #   defaults (1 vCPU, 512 MiB). Callers that pass explicit non-default
+    #   values are honoured up to the policy ceiling the backend enforces.
+    # sandbox_output_max_bytes:
+    #   Byte cap applied to stdout, stderr, and every collected output
+    #   file. Hitting the cap sets ``SandboxResult.truncated = True``.
+    # sandbox_nsjail_bin / _firecracker_bin / _jailer_bin:
+    #   Binary names or absolute paths on the sandbox host. Resolved via
+    #   ``command -v`` before every run; a missing binary raises
+    #   ``SandboxExecutionError`` with an actionable message.
+    # sandbox_rootfs_path / _kernel_path:
+    #   Required for the Firecracker backend. Point at the ext4 rootfs
+    #   image + Firecracker-compatible vmlinux on the sandbox host. The
+    #   rootfs MUST implement the guest-runner contract documented in
+    #   ``aila.platform.services.sandbox.backends.firecracker``.
+    # ------------------------------------------------------------------
+    # Trajectory-mined SFT/DPO corpus + LoRA fine-tune pipeline (issue #158).
+    #
+    # The nightly ``run_corpus_export`` platform task walks the last N
+    # days of module outcome-review rows, reconstructs each CHOSEN
+    # branch's turn history from platform_journal, and writes
+    # ``sft.jsonl`` + ``dpo.jsonl`` + ``manifest.json`` to
+    # ``corpus_output_dir``. The training script under
+    # :mod:`aila.platform.eval.training.train_lora` consumes the same
+    # files -- SFT then DPO then merge-and-unload -- behind the
+    # ``[training]`` optional extra.
+    #
+    # corpus_output_dir:
+    #   Absolute or project-relative directory the corpus files live
+    #   in. Empty string resolves to ``<PROJECT_ROOT>/data/eval_corpus``
+    #   -- the same ``data/`` tree ``secret_keyring_path`` claims by
+    #   default, so a fresh install has a usable path with no operator
+    #   setup.
+    # corpus_modules:
+    #   Comma-separated list of module ids whose outcome tables the
+    #   builder should scan (``<module_id>_investigation_outcomes``).
+    # corpus_min_turns:
+    #   Drop CHOSEN branches with fewer recorded turns than this
+    #   threshold. Typical fine-tune runs need a couple of turns of
+    #   context to be useful; 2 is the smallest defensible floor.
+    # corpus_max_field_chars:
+    #   Per-message soft cap applied at record construction time so a
+    #   single runaway tool result cannot dominate a SFT example.
+    # corpus_sft_states:
+    #   Outcome states treated as CHOSEN / expert. Rejected trajectories
+    #   are always ``rejected`` (hard-coded on the DPO side).
+    # training_base_model:
+    #   HuggingFace model id the LoRA pipeline fine-tunes. Empty ->
+    #   :mod:`aila.platform.eval.training.train_lora` refuses with a
+    #   clear ValueError so a GPU host cannot silently pick a random
+    #   base.
+    # training_lora_r / _alpha / _dropout:
+    #   Standard LoRA rank + alpha + dropout, wired straight into
+    #   ``peft.LoraConfig`` on the SFT step and reused on the DPO step.
+    # training_output_dir:
+    #   Absolute or project-relative directory the merged checkpoint
+    #   lands in. Empty -> ``<PROJECT_ROOT>/data/lora_out``.
+    corpus_output_dir: str = ""
+    corpus_modules: str = "vr,malware,forensics"
+    corpus_min_turns: int = 2
+    corpus_max_field_chars: int = 24_000
+    corpus_sft_states: str = "approved,dispatched"
+    training_base_model: str = ""
+    training_lora_r: int = 32
+    training_lora_alpha: int = 16
+    training_lora_dropout: float = 0.05
+    training_output_dir: str = ""
+
+    sandbox_backend: str = "none"
+    sandbox_ssh_host: str = ""
+    sandbox_ssh_user: str = ""
+    sandbox_ssh_port: int = 22
+    sandbox_default_timeout_s: float = 30.0
+    sandbox_max_timeout_s: float = 300.0
+    sandbox_allow_network: bool = False
+    sandbox_vcpu: int = 1
+    sandbox_mem_mb: int = 512
+    sandbox_output_max_bytes: int = 1_048_576
+    sandbox_nsjail_bin: str = "nsjail"
+    sandbox_firecracker_bin: str = "firecracker"
+    sandbox_jailer_bin: str = "jailer"
+    sandbox_rootfs_path: str = ""
+    sandbox_kernel_path: str = ""
+
