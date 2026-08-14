@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import time
 import urllib.error
 import urllib.request
@@ -209,36 +210,69 @@ class AilaClient:
         return False
 
 
-def stack_hash_of(stack_trace: str) -> str:
-    """Compute the AILA-canonical stack hash -- SHA-256 of the top frames.
+def stack_hash_of(stack_trace: str, crash_type: str = "") -> str:
+    """Compute the AILA-canonical stack hash (#174).
 
-    Matches the platform's expectation in fuzz_service.register_crash
-    which dedupes by ``(campaign_id, stack_hash)``. The function names
-    in the top-5 frames make the canonical signature; the file:line
-    are excluded so the same bug across builds collapses.
+    Delegates to :func:`aila.modules.vr.services.stack_hash.stack_hash_from_trace`
+    so the sidecar hash is byte-identical to what the agent's
+    ``vr.crash_triage`` tool produces for the same crash. Prior to the
+    unification the sidecar used top-5 raw function names joined by
+    newline; the canonical form now includes ``crash_type`` and the
+    ``function@module`` normalisation used by the triage tool. The
+    dedup key on ``vr_fuzz_crashes`` is ``(campaign_id, stack_hash)``.
+
+    ``crash_type`` is optional here because the sidecar rarely has
+    a classification at scrape time; the empty-string default keeps
+    the hash stable for the untyped fallback path.
     """
-    if not stack_trace:
-        return hashlib.sha256(b"").hexdigest()
+    # Lazy-import so the sidecar continues to boot even when the
+    # canonical helper is unavailable (e.g. someone airdrops the
+    # sidecar onto a workstation without the aila package). The
+    # fallback matches the canonical algorithm byte-for-byte.
+    try:
+        from aila.modules.vr.services.stack_hash import stack_hash_from_trace  # noqa: PLC0415
+    except ImportError:
+        return _stack_hash_fallback(stack_trace, crash_type)
+    return stack_hash_from_trace(stack_trace, crash_type)
+
+
+# Standalone-fallback duplicate of the canonical algorithm. Kept
+# byte-identical to :func:`aila.modules.vr.services.stack_hash.canonical_stack_hash`;
+# a shared unit test in ``tests/test_canonical_stack_hash.py`` pins
+# both implementations against a fixed ASAN sample so drift is caught.
+_HEX_ADDR_RE = re.compile(r"0[xX][0-9a-fA-F]+")
+_ASAN_FRAME_RE = re.compile(
+    r"#\d+\s+0[xX][0-9a-fA-F]+\s+in\s+(?P<sym>\S+)(?:\s+(?P<mod>\S+))?",
+)
+
+
+def _stack_hash_fallback(stack_trace: str, crash_type: str) -> str:
     frames: list[str] = []
-    for raw in stack_trace.splitlines():
-        line = raw.strip()
+    for raw_line in (stack_trace or "").splitlines():
+        line = raw_line.strip()
         if not line:
             continue
-        # Best-effort function name extraction. Each engine formats
-        # differently; the heuristic picks anything between "in" and
-        # the first "(" or whitespace, falling back to the whole line.
-        token = line
-        if " in " in line:
+        m = _ASAN_FRAME_RE.match(line)
+        if m is not None:
+            fn = m.group("sym") or ""
+            mod = (m.group("mod") or "").strip()
+            token = f"{fn}@{mod}" if mod else fn
+        elif " in " in line:
             token = line.split(" in ", 1)[1]
-        if "(" in token:
-            token = token.split("(", 1)[0]
-        token = token.strip()
+            if "(" in token:
+                token = token.split("(", 1)[0]
+            token = token.strip()
+        elif " " not in line and line:
+            token = line
+        else:
+            continue
+        token = _HEX_ADDR_RE.sub("0x?", token)
         if token:
             frames.append(token)
         if len(frames) >= 5:
             break
-    canonical = "\n".join(frames).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest()
+    canonical = (crash_type or "") + "|" + "|".join(frames)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def file_head(path: Path, limit: int = 4096) -> bytes:

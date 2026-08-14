@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import func
 from sqlmodel import select
 
 from aila.api.auth import AuthContext, require_user_or_api_key
@@ -62,17 +63,24 @@ async def list_notifications(
     Optionally filter by is_read state.
     """
     async with async_session_scope() as session:
+        # #204: count + page in SQL. Previously loaded every matching row
+        # into Python and sliced ``[offset:offset+limit]``.
+        base_filter = [NotificationRecord.user_id == auth.user_id]
+        if is_read is not None:
+            base_filter.append(NotificationRecord.is_read == is_read)
+
+        count_stmt = select(func.count(NotificationRecord.id)).where(*base_filter)
+        total = int((await session.exec(count_stmt)).one())
+
         stmt = (
             select(NotificationRecord)
-            .where(NotificationRecord.user_id == auth.user_id)
+            .where(*base_filter)
             .order_by(NotificationRecord.created_at.desc())  # type: ignore[attr-defined]
+            .offset(offset)
+            .limit(limit)
         )
-        if is_read is not None:
-            stmt = stmt.where(NotificationRecord.is_read == is_read)
-        all_rows = (await session.exec(stmt)).all()
+        page_rows = (await session.exec(stmt)).all()
 
-    total = len(all_rows)
-    page_rows = all_rows[offset : offset + limit]
     meta = PaginatedMeta(total=total, offset=offset, limit=limit).model_dump()
     return DataEnvelope(data=[_record_to_response(r) for r in page_rows], meta=meta)
 
@@ -92,18 +100,22 @@ async def get_unread_notifications(
     Per T-138-18: strictly scoped to auth.user_id.
     """
     async with async_session_scope() as session:
-        stmt = (
-            select(NotificationRecord)
-            .where(
-                NotificationRecord.user_id == auth.user_id,
-                NotificationRecord.is_read == False,
-            )
-            .order_by(NotificationRecord.created_at.desc())  # type: ignore[attr-defined]
-        )
-        all_unread = (await session.exec(stmt)).all()
+        # #204: SQL count + LIMIT 10 instead of loading every unread row.
+        unread_filter = [
+            NotificationRecord.user_id == auth.user_id,
+            NotificationRecord.is_read.is_(False),
+        ]
+        count_stmt = select(func.count(NotificationRecord.id)).where(*unread_filter)
+        unread_count = int((await session.exec(count_stmt)).one())
 
-    unread_count = len(all_unread)
-    latest_10 = all_unread[:10]
+        latest_stmt = (
+            select(NotificationRecord)
+            .where(*unread_filter)
+            .order_by(NotificationRecord.created_at.desc())  # type: ignore[attr-defined]
+            .limit(10)
+        )
+        latest_10 = (await session.exec(latest_stmt)).all()
+
     return DataEnvelope(
         data=UnreadNotificationsResponse(
             unread_count=unread_count,

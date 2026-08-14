@@ -13,9 +13,11 @@ deployment can scale the pool without a code change (#45). Env-only, not
 ConfigRegistry, because the engine is built before the registry exists on some
 paths (test fixtures, early bootstrap).
 
-Platform tables (storage/db_models.py) are always created via SQLModel.metadata.
-Module-owned tables are registered with SchemaRegistry and created only when
-a SchemaRegistry is passed to init_db().
+Platform and module tables are created exclusively via the SchemaRegistry
+passed into init_db(); the fresh-database bootstrap lives in
+scripts/db_init.py (invoked by ``make db-init``) and every subsequent schema
+change ships as an Alembic revision. init_db() no longer has a
+``SQLModel.metadata.create_all`` fallback (#108, INFRA-08).
 """
 
 from __future__ import annotations
@@ -32,7 +34,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from sqlalchemy import create_engine as _create_sync_engine
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import sessionmaker as _sync_sessionmaker
-from sqlmodel import Session, SQLModel
+from sqlmodel import Session
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..config import get_settings
@@ -190,29 +192,46 @@ async def init_db(
     Fast-path: if the database URL is already in _INITIALIZED_URLS, this
     function returns immediately without touching the DB.
 
-    Schema creation:
-    1. If schema_registry is provided, calls registry.create_all_with_connection()
-       inside an async connection's run_sync.
-    2. Otherwise falls back to SQLModel.metadata.create_all for platform-only
-       tables (storage/db_models.py).
+    Schema creation is contractually gated (#108, INFRA-08): a
+    ``schema_registry`` MUST be supplied by every production caller so the
+    exact set of module-owned tables is known. When ``schema_registry`` is
+    ``None`` this function is a no-op -- it does NOT fall back to
+    ``SQLModel.metadata.create_all``. Fresh-database bootstrap is the job of
+    ``scripts/db_init.py`` (via ``make db-init``) and Alembic. Test fixtures
+    bootstrap their own schema through ``tests/_db_bootstrap.py``.
 
     Args:
         settings: Optional settings object.  Falls back to get_settings().
-        schema_registry: Optional SchemaRegistry populated by module
-            register_tools() calls.  Pass None for platform-only init.
+        schema_registry: SchemaRegistry populated by module
+            ``register_tools()`` calls. Required in production. ``None`` is
+            accepted for legacy call sites and results in a no-op with a
+            single warning per URL.
     """
     active_settings = settings or get_settings()
     database_url = active_settings.database_url
     if database_url in _INITIALIZED_URLS:
         return
+    if schema_registry is None:
+        # #108: no create_all fallback in normal operation. Bootstrapping
+        # happens through make db-init / Alembic / test fixtures. Log once
+        # per URL so unmigrated call sites are visible without a hard crash.
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "init_db(%s) called without a schema_registry -- skipping schema "
+            "bootstrap. Production callers must route through _cli_bootstrap "
+            "or the platform runtime builder; test fixtures should bootstrap "
+            "their own schema.",
+            database_url,
+        )
+        with _ENGINE_LOCK:
+            _INITIALIZED_URLS.add(database_url)
+        return
     engine = get_async_engine(active_settings)
     async with engine.begin() as conn:
-        if schema_registry is not None:
-            await conn.run_sync(
-                lambda sync_conn: schema_registry.create_all_with_connection(sync_conn)
-            )
-        else:
-            await conn.run_sync(SQLModel.metadata.create_all)
+        await conn.run_sync(
+            lambda sync_conn: schema_registry.create_all_with_connection(sync_conn)
+        )
     with _ENGINE_LOCK:
         _INITIALIZED_URLS.add(database_url)
 

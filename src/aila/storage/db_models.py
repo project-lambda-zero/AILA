@@ -137,6 +137,10 @@ class WorkflowRunRecord(TeamScopedMixin, SQLModel, table=True):
 
     __table_args__ = (
         Index("ix_wfr_status_completed", "status", "completed_at"),
+        # #176: systems scan_map orders by ``completed_at DESC`` per
+        # matching row without a ``status`` predicate; the compound
+        # ``(status, completed_at)`` index cannot serve that ORDER BY.
+        Index("ix_workflowrunrecord_completed_at", "completed_at"),
     )
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     query_text: str
@@ -422,6 +426,13 @@ class AuditEventRecord(TeamScopedMixin, SQLModel, table=True):
     "system" for automated actions; operator-initiated actions set it explicitly.
     Records are immutable once written -- no UPDATE operations are performed.
     """
+
+    # #204: audit list is scoped by team_id and ordered by created_at
+    # DESC; the standalone ``ix_auditeventrecord_created_at`` (migration
+    # 075) still serves the god-tier admin scan.
+    __table_args__ = (
+        Index("ix_auditeventrecord_team_created", "team_id", "created_at"),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     run_id: str = Field(index=True)
@@ -985,6 +996,12 @@ class FindingWorkflowRecord(SQLModel, table=True):
     """
 
     __tablename__ = "finding_workflow_records"
+    # #204: dashboard MTTR aggregation buckets by ``current_state`` and
+    # orders by ``created_at``; the individual column indexes cannot
+    # serve the combined predicate + ORDER BY on their own.
+    __table_args__ = (
+        Index("ix_finding_workflow_state_created", "current_state", "created_at"),
+    )
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     finding_id: str = Field(index=True)

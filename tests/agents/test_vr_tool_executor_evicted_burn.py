@@ -88,8 +88,12 @@ async def test_burn_writes_one_row_per_string_observation() -> None:
     for observable_key, call in by_key.items():
         assert call["namespace"] == "vr.observation.workspace.ws-123"
         assert call["dedup_key"] == f"obs:inv-1:br-1:{observable_key}"
-        assert call["extract_entities"] is False
-        assert call["link_neighbors"] is False
+        # #128: observation KB writes MUST create graph edges so the
+        # graph retrieval route can traverse observations. Without
+        # link_neighbors=True the RFC-12 semantic-neighbour promise
+        # silently excludes the highest-volume KB writes.
+        assert call["extract_entities"] is True
+        assert call["link_neighbors"] is True
         md = call["metadata"]
         assert md["investigation_id"] == "inv-1"
         assert md["branch_id"] == "br-1"

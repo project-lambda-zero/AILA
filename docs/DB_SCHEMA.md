@@ -16,7 +16,7 @@ Two creation paths coexist:
 - Platform + module tables that predate the Alembic baseline
   (`001_baseline_stamp`) are created on first boot by `make db-init`, which runs
   `SQLModel.metadata.create_all()` then stamps `alembic_version` at the current
-  head (`124_llm_cost_user_id`).
+  head (`125_perf_indexes`).
 - Every schema change since then ships as an Alembic revision under
   `src/aila/alembic/versions/`. See [`DATABASE_MIGRATIONS.md`](DATABASE_MIGRATIONS.md).
 

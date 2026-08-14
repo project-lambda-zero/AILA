@@ -82,6 +82,7 @@ from typing import Any
 from sqlalchemy import text as _sql_text
 from sqlalchemy.exc import SQLAlchemyError
 
+from aila.platform.services.recovery_claim import try_claim_recovery
 from aila.storage.database import async_session_scope
 
 __all__ = [
@@ -301,16 +302,29 @@ async def sweep_stalled_investigations(
         inv_kind = row["kind"]
         inv_status = row.get("status", "running")
         team_id = row["team_id"]
+        seen_updated_at = row["updated_at"]
 
-        # Stalled investigations need their status flipped back to
-        # running before the workflow setup handler will accept them.
-        # The replan ledger entries are superseded by
-        # reenqueue_investigation (called by the API); here we do the
-        # minimal direct flip so the setup handler re-spawns branches.
+        # Issue #121: shared mutual exclusion with stuck_healer (and
+        # cross-process cron ticks). Both sweeps can independently
+        # match the same investigation in one tick and would submit
+        # twice without a claim. The claim is either the atomic
+        # ``status = 'stalled' -> 'running'`` flip below (whose
+        # ``WHERE status='stalled'`` clause matches at most one racer,
+        # so rowcount == 1 means we won) or, for non-stalled rows, a
+        # compare-and-set on ``updated_at`` via ``try_claim_recovery``.
+        # The losing racer's UPDATE affects zero rows and the loop
+        # skips its submit for this tick.
         if inv_status == "stalled":
+            # Stalled investigations need their status flipped back to
+            # running before the workflow setup handler will accept
+            # them. The replan ledger entries are superseded by
+            # reenqueue_investigation (called by the API); here we do
+            # the minimal direct flip so the setup handler re-spawns
+            # branches. The flip itself is the recovery claim (see
+            # above).
             try:
                 async with async_session_scope() as _s:
-                    await _s.execute(
+                    _flip = await _s.execute(
                         _sql_text(
                             f"UPDATE {investigations_table} "
                             f"SET status = 'running', "
@@ -320,14 +334,40 @@ async def sweep_stalled_investigations(
                         ).bindparams(inv_id=inv_id),
                     )
                     await _s.commit()
-                _log.info(
-                    "stall_recovery: flipped stalled->running inv=%s",
-                    inv_id,
-                )
             except (OSError, RuntimeError, SQLAlchemyError):
                 _log.warning(
                     "stall_recovery: failed to flip stalled->running inv=%s",
                     inv_id, exc_info=True,
+                )
+                continue
+            if not (_flip.rowcount or 0):
+                # Another sweep (this process or another worker) beat
+                # us to the atomic flip. The winner owns the submit.
+                _log.info(
+                    "stall_recovery: inv=%s stalled->running flip lost "
+                    "to concurrent claim; skipping",
+                    inv_id,
+                )
+                continue
+            _log.info(
+                "stall_recovery: flipped stalled->running inv=%s",
+                inv_id,
+            )
+        else:
+            # Non-stalled eligible row: bump updated_at as the claim.
+            # Compare-and-set on ``updated_at = seen_updated_at`` so
+            # racers observing the same SELECT window converge on
+            # exactly one winner.
+            if not await try_claim_recovery(
+                inv_table=investigations_table,
+                timestamp_column="updated_at",
+                inv_id=inv_id,
+                seen_timestamp=seen_updated_at,
+            ):
+                _log.info(
+                    "stall_recovery: inv=%s lost claim to concurrent "
+                    "recovery sweep; skipping",
+                    inv_id,
                 )
                 continue
 

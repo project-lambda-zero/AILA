@@ -57,6 +57,7 @@ from aila.platform.services.investigation_lifecycle import (
     ReenqueueInvestigationError,
     reenqueue_investigation,
 )
+from aila.platform.services.recovery_claim import try_claim_recovery
 from aila.platform.services.resilience import get_default_resilience_layer
 from aila.storage.database import async_session_scope
 
@@ -153,8 +154,16 @@ async def _fetch_stuck_ids(
     inv_timestamp_column: str,
     cutoff: datetime,
     limit: int,
-) -> list[str]:
-    """Return investigation ids that match the stuck-but-dead criteria.
+) -> list[tuple[str, datetime]]:
+    """Return (id, timestamp) pairs that match the stuck-but-dead criteria.
+
+    The paired ``timestamp`` is the value of ``inv_timestamp_column`` at
+    SELECT time; the caller feeds it to
+    :func:`aila.platform.services.recovery_claim.try_claim_recovery` as
+    the compare-and-set guard so the mutual exclusion with
+    :mod:`aila.platform.services.stall_recovery` (issue #121) does not
+    require a second SELECT round-trip.
+
 
     Every clause below MUST hold for a row to appear:
 
@@ -176,7 +185,8 @@ async def _fetch_stuck_ids(
     """
     stmt = _sql_text(
         f"""
-        SELECT inv.id::text AS id
+        SELECT inv.id::text AS id,
+               inv.{inv_timestamp_column} AS seen_ts
         FROM {investigations_table} inv
         WHERE inv.status = ANY(:running_values)
           AND inv.{inv_timestamp_column} < :cutoff
@@ -204,7 +214,8 @@ async def _fetch_stuck_ids(
     )
     async with async_session_scope() as session:
         return [
-            r["id"] for r in (await session.execute(stmt)).mappings().all()
+            (r["id"], r["seen_ts"])
+            for r in (await session.execute(stmt)).mappings().all()
         ]
 
 
@@ -295,7 +306,28 @@ async def sweep_stuck_investigations(
 
     healed_ids: list[str] = []
     resilience = get_default_resilience_layer()
-    for inv_id in stuck_ids:
+    for inv_id, seen_ts in stuck_ids:
+        # Issue #121: shared mutual exclusion with stall_recovery (and
+        # cross-process cron ticks). Both sweeps' eligibility clauses
+        # overlap on ``status=running, no live task, past idle grace``,
+        # so the same investigation can appear in both. The atomic
+        # compare-and-set on the timestamp column ensures only one
+        # racer proceeds; the loser's UPDATE affects zero rows and this
+        # iteration skips. Bumping the timestamp also hides the row
+        # from the next tick's SELECT until the fresh re-enqueue drives
+        # a turn that settles the row.
+        if not await try_claim_recovery(
+            inv_table=investigations_table,
+            timestamp_column=inv_timestamp_column,
+            inv_id=inv_id,
+            seen_timestamp=seen_ts,
+        ):
+            _log.info(
+                "stuck_healer[%s]: inv=%s lost claim to concurrent "
+                "recovery sweep; skipping",
+                module_id, inv_id,
+            )
+            continue
         try:
             await reenqueue_investigation(
                 inv_id,

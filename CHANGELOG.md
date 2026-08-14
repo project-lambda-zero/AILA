@@ -7,6 +7,36 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.8] - 2026-08-13 -- Recovery-race, query-performance, loader, and reasoning fixes
+
+### Fixed
+
+- Race: a shared recovery-claim primitive (atomic compare-and-set on the
+  investigation row) ensures the stall-recovery and stuck-healer sweeps cannot
+  both resubmit the same investigation in one tick (#121). The calibrator,
+  proposer, and finalizer writers plus the reaper/finalizer lock order were
+  verified already-consistent from the prior pass (#202, #177).
+- Performance: the systems scan map and per-system scan list compute in SQL
+  (DISTINCT ON + count/limit) instead of a full WorkflowRunRecord scan into
+  Python (#176); the cost history/estimate/ROI, notifications, LLM-log,
+  saved-filters, and scheduled-reports endpoints aggregate and paginate in SQL
+  rather than loading every row (#204). Migration 125 adds the supporting
+  indexes with CREATE INDEX CONCURRENTLY IF NOT EXISTS.
+- Module loader: one broken module is isolated at load and logged instead of
+  aborting all module discovery (#190); discovery order is sorted by module id
+  so it is deterministic across platforms (#200); init_db no longer falls back
+  to metadata.create_all, closing the schema-drift path (fresh installs use the
+  bootstrap script + Alembic) (#108).
+- Reasoning: a hypothesis id that was rejected can no longer be resurrected as
+  live through absorb (#165); the fuzz subsystem uses one canonical stack-hash
+  so sidecar and agent-side dedup keys match (#174); observation knowledge-base
+  writes create entity and neighbour graph edges so the graph route can traverse
+  them (#128).
+- Forensics: investigations now run the shared closure, observation-aging, and
+  unresolved-hypothesis submit-gate contract the other modules get from the
+  platform reasoning base (#175). The multi-branch persona panel remains a
+  deferred follow-up (its loop body is still a stub).
+
 ## [0.5.7] - 2026-08-13 -- Security hardening and CLI crash fixes
 
 ### Fixed

@@ -7,7 +7,6 @@ List endpoint returns enriched items with connectivity, tags, scan status, and t
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import math
 import time as _time
@@ -16,6 +15,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import Text, cast
+from sqlalchemy import text as sa_text
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import func, select
 
@@ -155,29 +155,52 @@ async def _build_scan_map(session: object, system_names: list[str]) -> dict[str,
 
     Uses the route_json string-contains pattern established in get_system() (D-12).
     Returns the most recent completed_at per system name.
+
+    #176: previously loaded every ``WorkflowRunRecord`` into Python and did
+    O(N*M) ``json.dumps`` + substring matching. The DISTINCT ON query below
+    performs the name match and per-name "most recent" selection in a single
+    round-trip -- only rows whose serialized ``route_json`` contains at least
+    one supplied system name are considered, and Postgres returns exactly one
+    row per matched name (the one with the greatest ``completed_at``).
+
+    ``strpos(route_json::text, name) > 0`` preserves the pre-JSONB
+    substring semantics without LIKE wildcard escaping. Postgres serializes
+    JSONB in a compact form (no whitespace, canonical key order) whereas
+    ``json.dumps`` used the Python dict's insertion order; for realistic
+    system-name identifiers the string appears verbatim in both encodings
+    so the observable result is unchanged.
     """
     if not system_names:
         return {}
 
     try:
-        all_runs = (await session.exec(select(WorkflowRunRecord))).all()  # type: ignore[union-attr]
+        rows = (await session.exec(  # type: ignore[union-attr]
+            sa_text(
+                "SELECT DISTINCT ON (n.name) n.name AS name, "
+                "       w.completed_at AS completed_at, "
+                "       w.status AS status "
+                "FROM unnest(CAST(:names AS text[])) AS n(name) "
+                "JOIN workflowrunrecord w "
+                "  ON strpos(CAST(w.route_json AS text), n.name) > 0 "
+                "ORDER BY n.name, w.completed_at DESC NULLS LAST"
+            ).bindparams(names=list(system_names))
+        )).all()
     except Exception:
         _log.debug("scan_map query failed", exc_info=True)
         return {}
 
-    # Group by system name match (string-contains, same trade-off as
-    # get_system). #45: ``route_json`` is now JSONB and arrives as a dict via
-    # SQLAlchemy on both drivers; serialize it back to text so the substring
-    # semantics are byte-identical to the pre-JSONB ``Text``-column behavior.
     result: dict[str, tuple[object, str | None]] = {}
-    for run in all_runs:
-        payload = run.route_json if isinstance(run.route_json, dict) else {}
-        route = json.dumps(payload) if payload else ""
-        for name in system_names:
-            if name in route:
-                existing = result.get(name)
-                if existing is None or (run.completed_at and (existing[0] is None or run.completed_at > existing[0])):
-                    result[name] = (run.completed_at, run.status)
+    for row in rows:
+        # Row is a SQLAlchemy Row -- support both mapping and tuple access
+        # depending on session driver.
+        mapping = row._mapping if hasattr(row, "_mapping") else None
+        if mapping is not None:
+            name = mapping["name"]
+            completed_at = mapping["completed_at"]
+            status_ = mapping["status"]
+        else:  # pragma: no cover -- defensive
+            name, completed_at, status_ = row[0], row[1], row[2]
+        result[name] = (completed_at, status_)
     return result
 
 
@@ -621,33 +644,49 @@ async def get_system_scans(
     """Return scan history for a system (workflow runs linked to this system)."""
     from aila.api.schemas.reports import ReportSummaryResponse
 
-    async def _query() -> tuple[ManagedSystemRecord | None, list[WorkflowRunRecord]]:
+    async def _query() -> tuple[ManagedSystemRecord | None, int, list[WorkflowRunRecord]]:
         async with async_session_scope(team_context=TeamContext.from_auth(auth)) as session:
             sys_record = (await session.exec(
                 select(ManagedSystemRecord).where(ManagedSystemRecord.id == system_id)
             )).first()
             if sys_record is None:
-                return None, []
-            stmt = select(WorkflowRunRecord).order_by(WorkflowRunRecord.created_at.desc())  # type: ignore[attr-defined]  # SQLModel column expression
-            all_runs = list((await session.exec(stmt)).all())
-            # #45: JSONB round-trip through json.dumps preserves the pre-JSONB
-            # substring-match semantics (route_json arrives as a dict).
-            matching = [
-                r for r in all_runs
-                if sys_record.name in json.dumps(r.route_json if isinstance(r.route_json, dict) else {})
-            ]
-            return sys_record, matching
+                return None, 0, []
 
-    sys_record, runs = await _query()
+            # #176: push the name-match, count, and page into SQL. Previously
+            # loaded every ``WorkflowRunRecord`` into Python and filtered by
+            # ``sys_record.name in json.dumps(route_json)``; this is the same
+            # substring semantics expressed as ``strpos(...) > 0`` on the
+            # JSONB text form (Postgres serializes JSONB compactly with
+            # canonical key order, which contains realistic system-name
+            # identifiers verbatim).
+            match_predicate = sa_text(
+                "strpos(CAST(route_json AS text), :sys_name) > 0"
+            ).bindparams(sys_name=sys_record.name)
+
+            count_stmt = (
+                select(func.count(WorkflowRunRecord.id))
+                .where(match_predicate)
+            )
+            total_ = int((await session.exec(count_stmt)).one())
+
+            offset = (page - 1) * page_size
+            page_stmt = (
+                select(WorkflowRunRecord)
+                .where(match_predicate)
+                .order_by(WorkflowRunRecord.created_at.desc())  # type: ignore[attr-defined]
+                .offset(offset)
+                .limit(page_size)
+            )
+            page_runs = list((await session.exec(page_stmt)).all())
+            return sys_record, total_, page_runs
+
+    sys_record, total, page_runs = await _query()
     if sys_record is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"System {system_id} not found -- verify the ID via GET /systems",
         )
 
-    total = len(runs)
-    offset = (page - 1) * page_size
-    page_runs = runs[offset : offset + page_size]
     items = [
         ReportSummaryResponse(
             run_id=r.id,

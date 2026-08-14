@@ -318,9 +318,11 @@ class ToolExecutor(ToolExecutorHelpersBase):
     # store so a later branch turn can still recall it by query. Best
     # effort by base-class contract -- a store failure logs and returns;
     # it MUST NOT propagate because the tool result has already committed.
-    # extract_entities/link_neighbors are off: evicted observations are
-    # high-volume and the per-write cost of entity extraction is not paid
-    # back on this retrieval path (query hits go through the vector index).
+    # #128: extract_entities and link_neighbors are enabled so observation
+    # entries carry graph edges (semantic neighbours + entity edges) --
+    # otherwise the graph retrieval route cannot traverse observations
+    # and the RFC-12 semantic-neighbour promise silently excludes the
+    # highest-volume KB writes. Matches pattern_store's write shape.
     async def _on_observables_evicted(
         self,
         investigation_id: str,
@@ -357,8 +359,8 @@ class ToolExecutor(ToolExecutorHelpersBase):
                         "source": "evicted_observation",
                     },
                     dedup_key=f"obs:{investigation_id}:{branch_id}:{key}",
-                    extract_entities=False,
-                    link_neighbors=False,
+                    extract_entities=True,
+                    link_neighbors=True,
                 )
             except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
                 _log.warning(

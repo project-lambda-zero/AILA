@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import func
 from sqlmodel import select
 
 from aila.api.auth import AuthContext, require_user_or_api_key
@@ -110,15 +111,25 @@ async def list_scheduled_reports(
 ) -> DataEnvelope[list[ScheduledReportResponse]]:
     """List all scheduled reports. Admin only."""
     async with async_session_scope() as session:
-        stmt = select(ScheduledReportRecord).order_by(ScheduledReportRecord.created_at.desc())  # type: ignore[attr-defined]
         # #48-6: team-scoped admins see only their team; god-tier (team_id
         # None) sees all.
+        # #204: SQL count + LIMIT/OFFSET instead of loading every row.
+        base_filter: list = []
         if auth.team_id is not None:
-            stmt = stmt.where(ScheduledReportRecord.team_id == auth.team_id)
-        all_rows = (await session.exec(stmt)).all()
+            base_filter.append(ScheduledReportRecord.team_id == auth.team_id)
 
-    total = len(all_rows)
-    page_rows = all_rows[offset : offset + limit]
+        count_stmt = select(func.count(ScheduledReportRecord.id)).where(*base_filter)
+        total = int((await session.exec(count_stmt)).one())
+
+        stmt = (
+            select(ScheduledReportRecord)
+            .where(*base_filter)
+            .order_by(ScheduledReportRecord.created_at.desc())  # type: ignore[attr-defined]
+            .offset(offset)
+            .limit(limit)
+        )
+        page_rows = (await session.exec(stmt)).all()
+
     meta = PaginatedMeta(total=total, offset=offset, limit=limit).model_dump()
     return DataEnvelope(data=[_record_to_response(r) for r in page_rows], meta=meta)
 

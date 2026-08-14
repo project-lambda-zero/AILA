@@ -529,7 +529,8 @@ def health() -> None:
     failures: list[str] = []
     app_settings = get_settings()
     platform_settings = build_platform_settings(app_settings)
-    _run_async(init_db(platform_settings))
+    # #108: schema-registry bootstrap only; no create_all fallback.
+    _cli_init_full_db()
 
     # 1. DB connectivity
     try:
@@ -630,9 +631,8 @@ def audit_log(
         stmt = stmt.where(AuditEventRecord.status == status)
     if user_id:
         stmt = stmt.where(AuditEventRecord.user_id == user_id)
-    app_settings = get_settings()
-    platform_settings = build_platform_settings(app_settings)
-    _run_async(init_db(platform_settings))
+    # #108: schema-registry bootstrap only; no create_all fallback.
+    _cli_init_full_db()
     try:
         with session_scope() as _s:
             records = list(_s.exec(stmt))

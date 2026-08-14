@@ -4,13 +4,18 @@ Parses ASAN/GDB output, classifies the crash type into the project-wide
 ``CrashType`` vocabulary, and computes a stable SHA256 dedup signature
 from the top-5 normalized stack frames. Also exposes a coarse
 exploitability heuristic for triage prioritization.
+
+The signature hash itself is produced by
+:func:`aila.modules.vr.services.stack_hash.canonical_stack_hash` so the
+sidecar (``aila_fuzz_reporter``) and this tool agree byte-for-byte on
+the ``(campaign_id, stack_hash)`` dedup key (#174).
 """
 from __future__ import annotations
 
-import hashlib
 import re
 from typing import Any
 
+from aila.modules.vr.services.stack_hash import canonical_stack_hash, normalize_frame
 from aila.platform.tools import Tool
 
 __all__ = ["CrashTriageTool"]
@@ -39,10 +44,6 @@ _FRAME_RE = re.compile(r"#(\d+)\s+0x[0-9a-fA-F]+\s+in\s+(\S+)(?:\s+(\S+))?")
 _LOCATED_RE = re.compile(
     r"is located (\d+) bytes (?:to the )?(\w+)(?: of)? (\d+)-byte region"
 )
-# Address pattern for normalization (strip ASLR base for non-PIE).
-_HEX_ADDR_RE = re.compile(r"0x[0-9a-fA-F]+")
-
-
 class CrashTriageTool(Tool):
     """Parse crash reports, classify, and compute dedup signatures."""
 
@@ -129,35 +130,37 @@ class CrashTriageTool(Tool):
         }
 
     def compute_signature(self, crash_type: str, frames: list[Any]) -> dict:
-        """Build a deterministic SHA256 dedup signature.
+        """Build a deterministic SHA256 dedup signature (#174).
 
-        Frames are normalized (raw hex addresses stripped) before hashing
-        so that ASLR bases and load offsets do not split otherwise-identical
-        crashes into separate buckets. Only the top 5 frames participate.
+        Delegates to :func:`canonical_stack_hash` -- the single source
+        of truth shared with the sidecar's ``stack_hash_of`` -- so a
+        crash triaged by the agent hashes identically to a crash
+        POSTed by :mod:`aila_fuzz_reporter`. Frames are normalised
+        (hex addresses stripped, top-5 kept) inside the canonical
+        helper; the surface here just validates the caller inputs and
+        re-exposes the normalised frame list for observability.
         """
         if not crash_type:
             return {"status": "error", "error": "crash_type must be non-empty."}
         if not isinstance(frames, list):
             return {"status": "error", "error": "frames must be a list."}
 
+        # Re-derive the normalised top-5 for the response payload; the
+        # hash itself comes from canonical_stack_hash so drift is
+        # impossible.
         normalized: list[str] = []
         for raw in frames:
-            if isinstance(raw, dict):
-                fn, mod = str(raw.get("function") or "").strip(), str(raw.get("module") or "").strip()
-                token = f"{fn}@{mod}" if mod else fn
-            else:
-                token = str(raw).strip()
-            token = _HEX_ADDR_RE.sub("0x?", token)
+            token = normalize_frame(raw)
             if token:
                 normalized.append(token)
+            if len(normalized) >= 5:
+                break
 
-        top5 = normalized[:5]
-        canonical = crash_type + "|" + "|".join(top5)
-        sig = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        sig = canonical_stack_hash(crash_type, frames)
         return {
             "status": "ready",
             "crash_type": crash_type,
-            "frames": top5,
+            "frames": normalized,
             "signature_hash": sig,
         }
 

@@ -192,6 +192,30 @@ class _CaptureSubmit:
         self.calls.append((inv_kind, inv_id, branch_id, team_id))
 
 
+async def _rebackdate_all_investigations() -> None:
+    """Back-date every seeded investigation past the idle threshold.
+
+    Issue #121's atomic claim bumps ``updated_at`` on every successful
+    submit so the same row is not swept a second time. Test scenarios
+    that call the sweep multiple times against the same fixture set
+    must re-back-date between calls, otherwise the second call's
+    SELECT finds no eligible rows.
+    """
+    from sqlalchemy import text as _sql_text  # noqa: PLC0415
+    async with UnitOfWork() as uow:
+        # Anchor to created_at so the ORDER BY updated_at ASC tie-break
+        # preserves the original seed order (A -> B -> C -> ... -> I).
+        # Scenario 2 depends on A winning the first eligibility slot.
+        await uow.session.exec(
+            _sql_text(
+                "UPDATE vr_investigations "
+                "SET updated_at = created_at - INTERVAL '30 minutes' "
+                "WHERE status NOT IN ('completed', 'paused')",
+            ),
+        )
+        await uow.session.commit()
+
+
 def _by_inv(
     calls: list[tuple[str, str, str | None, str | None]],
 ) -> dict[str, list[str | None]]:
@@ -337,6 +361,11 @@ async def test_stall_recovery_full_matrix() -> None:
     # ─────────────────────────────────────────────────────────────────
     # Scenario 2: tight cap (2) -- partial fan-out mid-fixture
     # ─────────────────────────────────────────────────────────────────
+    # Scenario 1's successful claim (issue #121 atomic-claim primitive)
+    # bumped updated_at on every row it recovered. Re-back-date the
+    # fixtures so the second scenario's SELECT still finds them
+    # eligible.
+    await _rebackdate_all_investigations()
     # The eligibility query sorts by updated_at ASC, oldest first.
     # Fixtures A-C-H-B were all back-dated to NOW-30min in seed order
     # (A → B → C → H), so A wins the first slot. With cap=2, only
@@ -381,6 +410,9 @@ async def test_stall_recovery_full_matrix() -> None:
     # Scenario 4: submit_fn raises every time
     # Verifies the sweep doesn't abort on per-submit failures.
     # ─────────────────────────────────────────────────────────────────
+    # Re-back-date so the atomic claim (issue #121) has fresh rows to
+    # examine after scenario 2 bumped their updated_at.
+    await _rebackdate_all_investigations()
     raising = _CaptureSubmit(raise_on_call=True)
     result4 = await sweep_stalled_investigations(
         idle_minutes=15,

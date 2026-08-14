@@ -40,6 +40,10 @@ class LLMCostRecord(TeamScopedMixin, SQLModel, table=True):
     __table_args__ = (
         Index("ix_llmcostrecord_run_id_model_id", "run_id", "model_id"),
         Index("ix_llmcostrecord_team_created", "team_id", "created_at"),
+        # #204: admin god-tier cost/history/roi queries filter by
+        # ``created_at`` alone (no team_id predicate), so the compound
+        # ``(team_id, created_at)`` index above cannot serve them.
+        Index("ix_llmcostrecord_created_at", "created_at"),
     )
 
     id: str = Field(

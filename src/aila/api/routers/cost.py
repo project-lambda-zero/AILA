@@ -21,6 +21,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import func
 from sqlmodel import select
 
 from aila.api.auth import AuthContext, require_user_or_api_key
@@ -152,58 +153,58 @@ async def get_cost_history(
     """
     since = datetime.now(UTC) - timedelta(days=months * 30)
 
+    # #204: aggregate in SQL. Previously loaded every matching row into Python
+    # (months of history per request) and did the sum/group there.
+    month_expr = func.to_char(
+        func.date_trunc("month", LLMCostRecord.created_at),
+        "YYYY-MM",
+    )
     async with async_session_scope() as session:
         stmt = (
-            select(LLMCostRecord)
+            select(
+                month_expr.label("year_month"),
+                LLMCostRecord.model_id.label("model_id"),  # type: ignore[attr-defined]
+                func.coalesce(func.sum(LLMCostRecord.prompt_tokens), 0).label("prompt_tokens"),
+                func.coalesce(func.sum(LLMCostRecord.completion_tokens), 0).label("completion_tokens"),
+                func.coalesce(func.sum(LLMCostRecord.cost_usd), 0.0).label("cost_usd"),
+                func.count().label("call_count"),
+            )
             .where(LLMCostRecord.created_at >= since)
             .where(LLMCostRecord.task_type != _COST_ESTIMATION_TASK_TYPE)
+            .group_by("year_month", LLMCostRecord.model_id)
+            .order_by("year_month", LLMCostRecord.model_id)
         )
         if auth.team_id is not None:
             stmt = stmt.where(LLMCostRecord.team_id == auth.team_id)
-        records = (await session.exec(stmt)).all()
+        rows = (await session.exec(stmt)).all()
 
-    # Group by year-month + model_id
-    # month_model_map: {year_month: {model_id: {...}}}
-    month_model_map: dict[str, dict[str, dict[str, Any]]] = {}
-    for rec in records:
-        ym = rec.created_at.strftime("%Y-%m") if rec.created_at else "unknown"
-        month_entry = month_model_map.setdefault(ym, {})
-        model_entry = month_entry.setdefault(
-            rec.model_id,
-            {
-                "model_id": rec.model_id,
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "cost_usd": 0.0,
-                "call_count": 0,
-            },
-        )
-        model_entry["prompt_tokens"] += rec.prompt_tokens
-        model_entry["completion_tokens"] += rec.completion_tokens
-        model_entry["cost_usd"] += rec.cost_usd
-        model_entry["call_count"] += 1
-
-    # Build sorted month entries
-    month_entries: list[MonthlyCostEntry] = []
-    for ym in sorted(month_model_map.keys()):
-        models = [
+    # Bucket the flat (year_month, model_id) rows into MonthlyCostEntry ->
+    # [ModelCostEntry]. The DB has already ordered by year_month; a single
+    # linear pass preserves month + model ordering.
+    month_map: dict[str, list[ModelCostEntry]] = {}
+    for row in rows:
+        ym = row.year_month if row.year_month is not None else "unknown"
+        prompt_tokens = int(row.prompt_tokens or 0)
+        completion_tokens = int(row.completion_tokens or 0)
+        month_map.setdefault(ym, []).append(
             ModelCostEntry(
-                model_id=e["model_id"],
-                prompt_tokens=e["prompt_tokens"],
-                completion_tokens=e["completion_tokens"],
-                total_tokens=e["prompt_tokens"] + e["completion_tokens"],
-                cost_usd=round(e["cost_usd"], 6),
-                call_count=e["call_count"],
+                model_id=row.model_id,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=prompt_tokens + completion_tokens,
+                cost_usd=round(float(row.cost_usd or 0.0), 6),
+                call_count=int(row.call_count or 0),
             )
-            for e in month_model_map[ym].values()
-        ]
-        month_total = round(sum(m.cost_usd for m in models), 6)
-        month_tokens = sum(m.total_tokens for m in models)
+        )
+
+    month_entries: list[MonthlyCostEntry] = []
+    for ym in sorted(month_map.keys()):
+        models = month_map[ym]
         month_entries.append(
             MonthlyCostEntry(
                 year_month=ym,
-                total_cost_usd=month_total,
-                total_tokens=month_tokens,
+                total_cost_usd=round(sum(m.cost_usd for m in models), 6),
+                total_tokens=sum(m.total_tokens for m in models),
                 models=models,
             )
         )
@@ -252,21 +253,27 @@ async def estimate_scan_cost(
     task_type_stats: dict[str, dict[str, Any]] = {}
 
     if task_types and auth.team_id is not None:
+        # #204: aggregate in SQL instead of streaming every historical row
+        # for the team into Python.
         async with async_session_scope() as session:
             stmt = (
-                select(LLMCostRecord)
+                select(
+                    LLMCostRecord.task_type.label("task_type"),  # type: ignore[attr-defined]
+                    func.coalesce(func.sum(LLMCostRecord.cost_usd), 0.0).label("total_cost"),
+                    func.count().label("count"),
+                )
                 .where(LLMCostRecord.team_id == auth.team_id)
                 .where(LLMCostRecord.task_type.in_(task_types))  # type: ignore[union-attr]
                 .where(LLMCostRecord.task_type != _COST_ESTIMATION_TASK_TYPE)
+                .group_by(LLMCostRecord.task_type)
             )
-            records = (await session.exec(stmt)).all()
+            rows = (await session.exec(stmt)).all()
 
-        for rec in records:
-            entry = task_type_stats.setdefault(
-                rec.task_type, {"total_cost": 0.0, "count": 0}
-            )
-            entry["total_cost"] += rec.cost_usd
-            entry["count"] += 1
+        for row in rows:
+            task_type_stats[row.task_type] = {
+                "total_cost": float(row.total_cost or 0.0),
+                "count": int(row.count or 0),
+            }
     elif task_types and auth.team_id is None:
         # No team context -- refuse cross-tenant estimation queries. There is
         # deliberately no fallback query here: a team-less principal cannot run
@@ -439,32 +446,29 @@ async def get_roi(
     period_start = since.date().isoformat()
     period_end = now.date().isoformat()
 
+    # #204: aggregate in SQL. Previously loaded every matching row into Python
+    # to compute the same SUMs and DISTINCT run_ids -- a full worker
+    # materialization of months of LLM-call history per request.
     async with async_session_scope() as session:
-        stmt = select(LLMCostRecord).where(LLMCostRecord.created_at >= since)
+        stmt = (
+            select(
+                func.coalesce(func.sum(LLMCostRecord.cost_usd), 0.0).label("llm_cost"),
+                func.coalesce(func.sum(LLMCostRecord.human_cost_usd), 0.0).label("human_cost"),
+                func.coalesce(func.sum(LLMCostRecord.human_cost_hours), 0.0).label("human_hours"),
+                func.count(func.distinct(LLMCostRecord.run_id)).label("run_count"),
+            )
+            .where(LLMCostRecord.created_at >= since)
+            .where(LLMCostRecord.task_type != _COST_ESTIMATION_TASK_TYPE)
+        )
         if auth.team_id is not None:
             stmt = stmt.where(LLMCostRecord.team_id == auth.team_id)
-        records = (await session.exec(stmt)).all()
+        row = (await session.exec(stmt)).one()
 
-    llm_cost = 0.0
-    human_cost = 0.0
-    human_hours = 0.0
-    run_ids: set[str] = set()
+    llm_cost = float(row.llm_cost or 0.0)
+    human_cost = float(row.human_cost or 0.0)
+    human_hours = float(row.human_hours or 0.0)
+    run_count = int(row.run_count or 0)
 
-    for rec in records:
-        # Exclude cost_estimation calls from ALL totals (T-175-10)
-        if rec.task_type == _COST_ESTIMATION_TASK_TYPE:
-            continue
-
-        llm_cost += rec.cost_usd
-        run_ids.add(rec.run_id)
-
-        # Human cost: read from original records (no sentinel pattern)
-        if rec.human_cost_usd is not None:
-            human_cost += rec.human_cost_usd
-        if rec.human_cost_hours is not None:
-            human_hours += rec.human_cost_hours
-
-    run_count = len(run_ids)
     roi_percentage = 0.0
     if human_cost > 0:
         roi_percentage = ((human_cost - llm_cost) / human_cost) * 100.0

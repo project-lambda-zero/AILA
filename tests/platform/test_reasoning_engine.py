@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import logging
+from datetime import datetime
+
 import pytest
+from pydantic import ValidationError as PydanticValidationError
 
 from aila.modules.vr.module import VRModule
 from aila.platform.contracts.reasoning import (
@@ -160,6 +164,61 @@ def test_absorb_preserves_locked_contract_and_dedupes_rejected() -> None:
     assert len(merged.rejected) == 2
     assert merged.observables["package"] == "com.example.app"
     assert merged.observables["loader"] == "DexClassLoader"
+
+
+def test_absorb_refuses_to_resurrect_rejected_hypothesis(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#165: an id already in ``rejected`` cannot be re-added as live.
+
+    Rejection is permanent -- if the model re-emits a previously-rejected
+    id under ``decision.hypotheses`` (with either the same or a rephrased
+    claim) ``absorb()`` MUST drop it, keep the id in the rejected set,
+    and log a WARNING so the operator can see the resurrection attempt.
+    Guards the ``render_case_model`` "Rejected (do not re-propose)"
+    render directive against silent contradiction and blocks the stale-
+    hypothesis / sibling-consensus directives from re-firing on ids the
+    branch already closed.
+    """
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    initial = ReasoningCaseState(
+        hypotheses=[Hypothesis(id="H_live", claim="still open")],
+        rejected=[
+            RejectedHypothesis(
+                id="H_gone", claim="the model gave up on this",
+                reason="disproved by evidence file X",
+            ),
+        ],
+    )
+
+    with caplog.at_level(logging.WARNING, logger="aila.platform.services.reasoning"):
+        merged = engine.absorb(
+            initial,
+            ReasoningTurnDecision(
+                reasoning="reviving H_gone with a fresh claim",
+                action="reasoning",
+                hypotheses=[
+                    Hypothesis(id="H_live", claim="still open (refined)"),
+                    # Same id as the prior-turn rejection -- MUST be refused.
+                    Hypothesis(id="H_gone", claim="the model changed its mind"),
+                    # Genuinely new id -- MUST be accepted.
+                    Hypothesis(id="H_new", claim="a legitimate lead"),
+                ],
+            ),
+        )
+
+    live_ids = [h.id for h in merged.hypotheses]
+    assert "H_gone" not in live_ids, (
+        f"rejected id resurrected as live: {live_ids}"
+    )
+    assert live_ids == ["H_live", "H_new"]
+    # Rejection sticks.
+    assert [r.id for r in merged.rejected] == ["H_gone"]
+    # Operator-visible signal that resurrection was attempted.
+    assert any(
+        "refusing to resurrect" in rec.getMessage() and "H_gone" in rec.getMessage()
+        for rec in caplog.records
+    ), caplog.text
 
 
 def test_render_case_model_includes_contract_hypotheses_and_rejections() -> None:
@@ -406,26 +465,16 @@ def test_build_evidence_graph_links_contract_evidence_and_answer() -> None:
 
 
 def test_case_state_rejects_non_json_observable() -> None:
-    from datetime import datetime
-
-    from pydantic import ValidationError as PydanticValidationError
-
     with pytest.raises(PydanticValidationError, match="JSON-serializable"):
         ReasoningCaseState(observables={"ts": datetime(2026, 7, 20)})
 
 
 def test_case_state_rejects_bytes_observable() -> None:
-    from pydantic import ValidationError as PydanticValidationError
-
     with pytest.raises(PydanticValidationError, match="JSON-serializable"):
         ReasoningCaseState(observables={"blob": b"\x00\x01"})
 
 
 def test_turn_decision_rejects_non_json_observable() -> None:
-    from datetime import datetime
-
-    from pydantic import ValidationError as PydanticValidationError
-
     with pytest.raises(PydanticValidationError, match="JSON-serializable"):
         ReasoningTurnDecision(
             reasoning="x",
