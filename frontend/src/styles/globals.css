@@ -74,6 +74,11 @@
   --font-sans: "Bricolage Grotesque", system-ui, sans-serif;
   --font-mono: "Fira Code", ui-monospace, "Cascadia Code", monospace;
 
+  /* Fixed-height console status bar at the bottom of AppShell (issue #211).
+     Named token so a future dense/comfortable mode can shrink or grow it
+     without hunting every consumer. */
+  --statusbar-h: 24px;
+
   /* STATUS tokens (Phase 176a-02) -- theme-neutral defaults, kept unchanged */
   --status-completed: #4ade80;
   --status-running: #fbbf24;

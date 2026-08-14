@@ -5,8 +5,8 @@ import { type ModuleFrontendSpec } from "@platform/extension-registry/types";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { CommandPalette } from "@/components/shell/CommandPalette";
 import { OfflineBanner } from "@/components/shell/OfflineBanner";
+import { StatusBar } from "@/components/shell/StatusBar";
 import { OnboardingWizard } from "@platform/features/onboarding";
-import { buildIdentity } from "@platform/config/version";
 import { useAuthStore } from "@platform/auth/useAuthStore";
 import { useIdleTimeout } from "@/hooks/useIdleTimeout";
 import { AppSidebar } from "./AppSidebar";
@@ -83,22 +83,15 @@ export function AppShell({ children, moduleSpecs }: AppShellProps) {
           {children}
         </main>
         {/*
-          B13 -- low-prominence contentinfo footer. Renders the app
-          version + short git SHA so a reviewer / support engineer can
-          identify the exact build from a screenshot. Kept inside
-          SidebarInset so the sidebar overlay doesn't paint over it.
-          `text-text-muted` + small monospace keeps it out of the
-          visual hierarchy; `aria-label` distinguishes it from any
-          page-owned footer a child route might render.
+          Issue #211 -- pinned 24px console status bar. Renders the
+          live engine dot (from GET /health), queue depth (from
+          GET /tasks/queue-depth, hidden on 4xx/5xx), active module,
+          online/offline, build tag (v<version> <short-sha>), and a
+          ticking clock. Replaces the earlier `<footer>` that only
+          showed the build identity -- the version+SHA now lives in
+          the status bar's build-tag segment.
         */}
-        <footer
-          aria-label="Application info"
-          className="shrink-0 border-t border-border bg-surface px-4 py-2 font-mono text-2xs text-text-muted"
-        >
-          <span>AILA</span>
-          <span className="mx-2 select-none" aria-hidden>·</span>
-          <span>{buildIdentity}</span>
-        </footer>
+        <StatusBar />
       </SidebarInset>
       {/* CommandPalette renders via portal -- outside layout flow (D-09, D-10) */}
       <CommandPalette />

@@ -24,6 +24,7 @@ import { EmptyState } from "@/components/aila/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiHttpError } from "@platform/api/http";
+import { ChatLauncher } from "./ChatLauncher";
 import {
   useCreateSession,
   useSendMessage,
@@ -218,20 +219,23 @@ function MessageBubble({
 // ---------------------------------------------------------------------------
 
 function Composer({
+  value,
+  onValueChange,
   onSend,
   disabled,
+  textareaRef,
 }: {
+  value: string;
+  onValueChange: (next: string) => void;
   onSend: (content: string) => void;
   disabled: boolean;
+  textareaRef: React.RefObject<HTMLTextAreaElement | null>;
 }) {
-  const [draft, setDraft] = useState("");
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-
   const submit = () => {
-    const trimmed = draft.trim();
+    const trimmed = value.trim();
     if (!trimmed || disabled) return;
     onSend(trimmed);
-    setDraft("");
+    onValueChange("");
     // Restore focus for rapid-fire chatting.
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
@@ -241,8 +245,8 @@ function Composer({
       <Textarea
         aria-label="Message composer"
         ref={textareaRef}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
+        value={value}
+        onChange={(e) => onValueChange(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
@@ -257,13 +261,13 @@ function Composer({
       />
       <div className="flex items-center justify-between">
         <span className="font-mono text-[10px] text-text-muted">
-          {disabled ? "Streaming reply…" : `${draft.length} characters`}
+          {disabled ? "Streaming reply…" : `${value.length} characters`}
         </span>
         <Button
           size="sm"
           variant="default"
           onClick={submit}
-          disabled={disabled || draft.trim().length === 0}
+          disabled={disabled || value.trim().length === 0}
           data-testid="chat-send"
           className="gap-2"
         >
@@ -289,6 +293,21 @@ function ThreadPanel({
   const messagesQuery = useSessionMessages(sessionId);
   const { state, send } = useSendMessage(sessionId);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const [draft, setDraft] = useState("");
+
+  const seedComposer = (prompt: string) => {
+    setDraft(prompt);
+    // Defer focus so the textarea has the seeded value in the DOM
+    // before the caret jump (otherwise selection collapses at index 0
+    // which reads oddly for prompts with a <placeholder> token).
+    requestAnimationFrame(() => {
+      const el = composerRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(prompt.length, prompt.length);
+    });
+  };
 
   const persistedMessages: ChatMessage[] = useMemo(
     () => messagesQuery.data?.items ?? [],
@@ -354,9 +373,7 @@ function ThreadPanel({
         data-testid="chat-thread"
       >
         {persistedMessages.length === 0 && !state.isStreaming ? (
-          <p className="font-mono text-xs text-text-muted text-center py-8">
-            No messages yet. Ask a question below to get started.
-          </p>
+          <ChatLauncher onPick={seedComposer} />
         ) : (
           persistedMessages.map((msg) => (
             <MessageBubble
@@ -404,10 +421,13 @@ function ThreadPanel({
       </div>
 
       <Composer
+        value={draft}
+        onValueChange={setDraft}
         onSend={(content) => {
           void send(content);
         }}
         disabled={state.isStreaming}
+        textareaRef={composerRef}
       />
     </div>
   );

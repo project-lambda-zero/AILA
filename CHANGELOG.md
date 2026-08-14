@@ -7,6 +7,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.12] - 2026-08-13 -- Console status bar and chat-home launcher
+
+### Added
+
+- A live console status bar pinned to the bottom of every authenticated page:
+  an engine health dot (from GET /health), background task-queue depth (from
+  GET /tasks/queue-depth, pulsing when non-zero), the active module context,
+  online/offline state, the build version and short SHA, and a live clock. It
+  replaces the prior version-only footer and respects prefers-reduced-motion
+  (#211).
+- A chat-home launcher: an empty chat session now shows a short console
+  greeting plus quick-action chips (scan a host, start a VR investigation,
+  analyze a malware sample, forensics triage, platform health, capability
+  overview) that seed the composer without auto-sending, turning the chat-first
+  home into a launchpad across modules (#211).
+
 ## [0.5.11] - 2026-08-13 -- Routing prompt injection hardening
 
 ### Security
