@@ -7,6 +7,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.23] - 2026-08-13 -- Icon vendor chunk split (build)
+
+Resolves the 500 kB chunk-size advisory reported in v0.5.22 without changing any
+behavior or the application entry chunk (#222).
+
+### Changed
+
+- The Phosphor icon set, previously forced into a single ~516 kB vendor chunk
+  that tripped Vite's advisory, is now bucketed into four bounded, parallel-loaded
+  chunks (largest about 243 kB) keyed deterministically by icon module id. The
+  icons stay out of the eager entry chunk, which holds at 376 kB, so initial load
+  is unchanged and no chunk exceeds 500 kB. The total icon payload is unchanged;
+  every icon is genuinely imported, so this is a chunking change, not a reduction.
+
+The shell production build now passes with no chunk-size advisory, and all
+workspace type-checks pass. No backend or behavior changes.
+
 ## [0.5.22] - 2026-08-13 -- Saved views and advanced filtering parity
 
 Brings the saved-view experience (previously only on vulnerability findings) to
