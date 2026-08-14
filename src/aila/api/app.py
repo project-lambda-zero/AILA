@@ -623,6 +623,14 @@ def create_app() -> FastAPI:
     from aila.api.routers.admin_workflows import router as admin_workflows_router
     application.include_router(admin_workflows_router)
 
+    # #209: Admin journal dead-letter replay router (god-tier admin -- drains
+    # platform_journal_deadletter back into the hash-chained journal, stamping
+    # replayed_at + replay_seq so a second call is idempotent).
+    from aila.api.routers.admin_journal_replay import (
+        router as admin_journal_replay_router,
+    )
+    application.include_router(admin_journal_replay_router)
+
     # RFC-09: Admin prompt-version router (god-tier admin -- deploy/rollback prompts)
     from aila.api.routers.admin_prompts import router as admin_prompts_router
     application.include_router(admin_prompts_router)

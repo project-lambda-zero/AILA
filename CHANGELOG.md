@@ -7,6 +7,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-08-13 -- Activate deferred #209 residual knobs
+
+### Added
+
+- Malware playbook auto-trigger. Family-verdict dispatch now classifies each
+  ACTIVE playbook assigned to the matched family into auto / confirm / suggest
+  / none using the module thresholds (`playbook_auto_trigger_threshold` 0.85,
+  `playbook_confirm_threshold` 0.60, `playbook_suggest_threshold` 0.40), with a
+  per-assignment `auto_trigger_threshold` override applied to the auto edge
+  only. AUTO enqueues the playbook run on the malware track (the same path as
+  the operator-triggered run); CONFIRM and SUGGEST land on the target's
+  capability profile so the UI can surface the tier and reason.
+- Journal dead-letter replay. A `replay_deadletters` service plus
+  `POST /admin/journal/deadletter/replay` (god-tier admin) re-append
+  dead-lettered journal entries through the normal chain-hashed append path and
+  stamp the previously-unwritten `replayed_at` and `replay_seq` columns. Each
+  entry runs in its own savepoint so one still-failing row cannot roll back the
+  rows already replayed.
+
+### Changed
+
+- Malware function ranking now honors the per-depth TopN caps
+  (`topn_functions_low` / `_medium` / `_high` = 20 / 50 / 150) instead of a
+  hardcoded slice, and the ULTIMATE-depth achievement gate enforces
+  `ultimate_coverage_floor` (0.95 of the non-library, non-wrapper, non-signatured
+  function set) before it fires.
+- Malware cross-target observation propagation now honors
+  `MalwareInvestigationRecord.inherit_observations`: when False, propagation is
+  skipped entirely (no similarity probe, no shadow rows). The opt-out had been
+  documented but never read, so it propagated regardless. Default (True) is
+  unchanged.
+- Documented the CVE feed poller (`VRCVEFeedStateRecord` / `poll_cve_feeds`) as
+  intentionally deferred. The feed-state table is reserved for that future cron
+  task; operators ingest CVEs manually through the existing endpoint.
+
 ## [0.5.3] - 2026-08-13 -- Clean-install dependency and schema fixes surfaced by CI
 
 ### Fixed

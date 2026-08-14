@@ -58,6 +58,14 @@ class VRCVEFeedStateRecord(SQLModel, table=True):
 
     One row per (source). Stores last successful poll timestamp + cursor
     so the poller resumes where it left off.
+
+    DEFERRED (issue #209): the automated NVD / GHSA feed poller
+    (``poll_cve_feeds``) is intentionally NOT built -- see
+    ``services/cve_service.py`` module docstring. This table is reserved for
+    that future cron task; it stays unwritten until the poller ships.
+    Operators currently ingest CVEs manually through the ingest endpoint, so
+    these columns carry no rows in normal operation. Kept (not dropped) so the
+    poller can land without a migration when it is prioritized.
     """
 
     __tablename__ = "vr_cve_feed_state"
