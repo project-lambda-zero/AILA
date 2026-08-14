@@ -5,51 +5,142 @@ import { AppErrorBoundary } from "@app/ErrorBoundary";
 import { ProtectedRoute } from "@app/auth/ProtectedRoute";
 import { AppShell } from "@app/layout/AppShell";
 import { PageFrame } from "@app/layout/PageFrame";
-import { DocsPage } from "@app/screens/DocsPage";
-import { ForbiddenPage } from "@app/screens/ForbiddenPage";
-import { LoginPage } from "@app/screens/LoginPage";
-import { NotFoundPage } from "@app/screens/NotFoundPage";
-import { OidcCallbackPage } from "@app/screens/OidcCallbackPage";
-import { ServerErrorPage } from "@app/screens/ServerErrorPage";
 import type { AppRole } from "@platform/auth/roles";
-import { ApiKeysPage } from "@platform/features/admin/ApiKeysPage";
-import { AuditLogsPage } from "@platform/features/admin/AuditLogsPage";
-import { LLMLogPage } from "@platform/features/admin/LLMLogPage";
-import { ToolsConsolePage } from "@platform/features/admin/ToolsConsolePage";
-import { WorkflowInspectorPage } from "@platform/features/admin/WorkflowInspectorPage";
-import { OidcProvidersPage } from "@platform/features/admin/OidcProvidersPage";
-import { PlatformConfigPage } from "@platform/features/admin/PlatformConfigPage";
-import { PlatformInfraPage } from "@platform/features/admin/PlatformInfraPage";
-import { PlatformOpsPage } from "@platform/features/admin/PlatformOpsPage";
-import { MlOpsPage } from "@platform/features/admin/MlOpsPage";
-import { TagVocabularyPage } from "@platform/features/admin/TagVocabularyPage";
-import { SystemHealthPage } from "@platform/features/admin/SystemHealthPage";
-import { TeamDetailPage } from "@platform/features/admin/TeamDetailPage";
-import { TeamsPage } from "@platform/features/admin/TeamsPage";
-import { UsersPage } from "@platform/features/admin/UsersPage";
-import { SavedFiltersPage } from "@platform/features/admin/SavedFiltersPage";
-import { TaskQueueAdminPage } from "@platform/features/admin/TaskQueueAdminPage";
-import { DeadLetterPage } from "@platform/features/admin/DeadLetterPage";
-import { AutomationPage } from "@platform/features/admin/AutomationPage";
-import { ScheduledReportsPage } from "@platform/features/admin/ScheduledReportsPage";
-import { CostPage } from "@platform/features/admin/CostPage";
-import { ExecutivePage } from "@platform/features/admin/ExecutivePage";
-import { WarRoomPage } from "@platform/features/ops/WarRoomPage";
-import { DashboardPage } from "@platform/features/dashboard/DashboardPage";
-import { ScanCenterPage } from "@platform/features/scans/ScanCenterPage";
-import { SystemDetailPage } from "@platform/features/systems/SystemDetailPage";
-import { SystemsPage } from "@platform/features/systems/SystemsPage";
-import { TasksPage } from "@platform/features/tasks/TasksPage";
 import { AppStateScreen } from "@platform/ui/AppStateScreen";
 import { loadModuleFrontendSpecs } from "@platform/extension-registry/loadModuleSpecs";
 import type { ModuleFrontendSpec } from "@platform/extension-registry/types";
-import { SessionsPage } from "@platform/features/sessions/SessionsPage";
-import { ChatPage } from "@platform/features/chat/ChatPage";
-import { SettingsPage } from "@platform/features/settings/SettingsPage";
-import { RadarPage } from "@platform/features/radar/RadarPage";
-import { TopologyPage } from "@platform/features/topology/TopologyPage";
-import { VizPage } from "@platform/features/viz/VizPage";
-import { SearchPage } from "@platform/features/search/SearchPage";
+
+// Route-level code-splitting: every page component below is loaded on demand
+// via React.lazy so the initial shell bundle only ships the framework, the
+// AppShell chrome, and the routing table. Each `import(...)` becomes its own
+// Vite chunk. All pages here are NAMED exports, so we re-map to a default
+// export shape (React.lazy requires `{ default: ComponentType }`). Suspense
+// boundaries are already in place inside `RoutedPage` (below) for every
+// protected route, and are added inline around the public login/error pages
+// and the catch-all NotFoundPage.
+const DocsPage = lazy(() =>
+  import("@app/screens/DocsPage").then((m) => ({ default: m.DocsPage })),
+);
+const ForbiddenPage = lazy(() =>
+  import("@app/screens/ForbiddenPage").then((m) => ({ default: m.ForbiddenPage })),
+);
+const LoginPage = lazy(() =>
+  import("@app/screens/LoginPage").then((m) => ({ default: m.LoginPage })),
+);
+const NotFoundPage = lazy(() =>
+  import("@app/screens/NotFoundPage").then((m) => ({ default: m.NotFoundPage })),
+);
+const OidcCallbackPage = lazy(() =>
+  import("@app/screens/OidcCallbackPage").then((m) => ({ default: m.OidcCallbackPage })),
+);
+const ServerErrorPage = lazy(() =>
+  import("@app/screens/ServerErrorPage").then((m) => ({ default: m.ServerErrorPage })),
+);
+const ApiKeysPage = lazy(() =>
+  import("@platform/features/admin/ApiKeysPage").then((m) => ({ default: m.ApiKeysPage })),
+);
+const AuditLogsPage = lazy(() =>
+  import("@platform/features/admin/AuditLogsPage").then((m) => ({ default: m.AuditLogsPage })),
+);
+const LLMLogPage = lazy(() =>
+  import("@platform/features/admin/LLMLogPage").then((m) => ({ default: m.LLMLogPage })),
+);
+const ToolsConsolePage = lazy(() =>
+  import("@platform/features/admin/ToolsConsolePage").then((m) => ({ default: m.ToolsConsolePage })),
+);
+const WorkflowInspectorPage = lazy(() =>
+  import("@platform/features/admin/WorkflowInspectorPage").then((m) => ({ default: m.WorkflowInspectorPage })),
+);
+const OidcProvidersPage = lazy(() =>
+  import("@platform/features/admin/OidcProvidersPage").then((m) => ({ default: m.OidcProvidersPage })),
+);
+const PlatformConfigPage = lazy(() =>
+  import("@platform/features/admin/PlatformConfigPage").then((m) => ({ default: m.PlatformConfigPage })),
+);
+const PlatformInfraPage = lazy(() =>
+  import("@platform/features/admin/PlatformInfraPage").then((m) => ({ default: m.PlatformInfraPage })),
+);
+const PlatformOpsPage = lazy(() =>
+  import("@platform/features/admin/PlatformOpsPage").then((m) => ({ default: m.PlatformOpsPage })),
+);
+const MlOpsPage = lazy(() =>
+  import("@platform/features/admin/MlOpsPage").then((m) => ({ default: m.MlOpsPage })),
+);
+const TagVocabularyPage = lazy(() =>
+  import("@platform/features/admin/TagVocabularyPage").then((m) => ({ default: m.TagVocabularyPage })),
+);
+const SystemHealthPage = lazy(() =>
+  import("@platform/features/admin/SystemHealthPage").then((m) => ({ default: m.SystemHealthPage })),
+);
+const TeamDetailPage = lazy(() =>
+  import("@platform/features/admin/TeamDetailPage").then((m) => ({ default: m.TeamDetailPage })),
+);
+const TeamsPage = lazy(() =>
+  import("@platform/features/admin/TeamsPage").then((m) => ({ default: m.TeamsPage })),
+);
+const UsersPage = lazy(() =>
+  import("@platform/features/admin/UsersPage").then((m) => ({ default: m.UsersPage })),
+);
+const SavedFiltersPage = lazy(() =>
+  import("@platform/features/admin/SavedFiltersPage").then((m) => ({ default: m.SavedFiltersPage })),
+);
+const TaskQueueAdminPage = lazy(() =>
+  import("@platform/features/admin/TaskQueueAdminPage").then((m) => ({ default: m.TaskQueueAdminPage })),
+);
+const DeadLetterPage = lazy(() =>
+  import("@platform/features/admin/DeadLetterPage").then((m) => ({ default: m.DeadLetterPage })),
+);
+const AutomationPage = lazy(() =>
+  import("@platform/features/admin/AutomationPage").then((m) => ({ default: m.AutomationPage })),
+);
+const ScheduledReportsPage = lazy(() =>
+  import("@platform/features/admin/ScheduledReportsPage").then((m) => ({ default: m.ScheduledReportsPage })),
+);
+const CostPage = lazy(() =>
+  import("@platform/features/admin/CostPage").then((m) => ({ default: m.CostPage })),
+);
+const ExecutivePage = lazy(() =>
+  import("@platform/features/admin/ExecutivePage").then((m) => ({ default: m.ExecutivePage })),
+);
+const WarRoomPage = lazy(() =>
+  import("@platform/features/ops/WarRoomPage").then((m) => ({ default: m.WarRoomPage })),
+);
+const DashboardPage = lazy(() =>
+  import("@platform/features/dashboard/DashboardPage").then((m) => ({ default: m.DashboardPage })),
+);
+const ScanCenterPage = lazy(() =>
+  import("@platform/features/scans/ScanCenterPage").then((m) => ({ default: m.ScanCenterPage })),
+);
+const SystemDetailPage = lazy(() =>
+  import("@platform/features/systems/SystemDetailPage").then((m) => ({ default: m.SystemDetailPage })),
+);
+const SystemsPage = lazy(() =>
+  import("@platform/features/systems/SystemsPage").then((m) => ({ default: m.SystemsPage })),
+);
+const TasksPage = lazy(() =>
+  import("@platform/features/tasks/TasksPage").then((m) => ({ default: m.TasksPage })),
+);
+const SessionsPage = lazy(() =>
+  import("@platform/features/sessions/SessionsPage").then((m) => ({ default: m.SessionsPage })),
+);
+const ChatPage = lazy(() =>
+  import("@platform/features/chat/ChatPage").then((m) => ({ default: m.ChatPage })),
+);
+const SettingsPage = lazy(() =>
+  import("@platform/features/settings/SettingsPage").then((m) => ({ default: m.SettingsPage })),
+);
+const RadarPage = lazy(() =>
+  import("@platform/features/radar/RadarPage").then((m) => ({ default: m.RadarPage })),
+);
+const TopologyPage = lazy(() =>
+  import("@platform/features/topology/TopologyPage").then((m) => ({ default: m.TopologyPage })),
+);
+const VizPage = lazy(() =>
+  import("@platform/features/viz/VizPage").then((m) => ({ default: m.VizPage })),
+);
+const SearchPage = lazy(() =>
+  import("@platform/features/search/SearchPage").then((m) => ({ default: m.SearchPage })),
+);
 import { House } from "@phosphor-icons/react/dist/csr/House";
 import { HardDrives } from "@phosphor-icons/react/dist/csr/HardDrives";
 import { Broadcast } from "@phosphor-icons/react/dist/csr/Broadcast";
@@ -125,6 +216,35 @@ function ProtectedLayout() {
         <Outlet />
       </AppShell>
     </ProtectedRoute>
+  );
+}
+
+/**
+ * Suspense wrapper for the handful of public / direct-render route
+ * elements (login, oidc callback, 403, 500, and the catch-all 404).
+ * Protected routes already receive a Suspense boundary inside
+ * `RoutedPage`; this keeps the fallback consistent for the public ones
+ * without any layout shift or new dependency.
+ */
+function LazyBoundary({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactElement;
+}) {
+  return (
+    <Suspense
+      fallback={(
+        <AppStateScreen
+          title={`Loading ${title}`}
+          message="Fetching the page module."
+          tone="neutral"
+        />
+      )}
+    >
+      {children}
+    </Suspense>
   );
 }
 
@@ -256,22 +376,22 @@ function ScansRedirect() {
 export const routeObjects: RouteObject[] = [
   {
     path: "/login",
-    element: <LoginPage />,
+    element: <LazyBoundary title="Sign In"><LoginPage /></LazyBoundary>,
   },
   {
     // OIDC callback -- public, no ProtectedRoute (T-140-08)
     path: "/auth/callback",
-    element: <OidcCallbackPage />,
+    element: <LazyBoundary title="Sign In"><OidcCallbackPage /></LazyBoundary>,
   },
   {
     // 403 page -- public (redirected here from ProtectedRoute on role failure)
     path: "/403",
-    element: <ForbiddenPage />,
+    element: <LazyBoundary title="Forbidden"><ForbiddenPage /></LazyBoundary>,
   },
   {
     // 500 page -- public direct navigation
     path: "/500",
-    element: <ServerErrorPage />,
+    element: <LazyBoundary title="Server Error"><ServerErrorPage /></LazyBoundary>,
   },
   {
     path: "/",
@@ -503,7 +623,9 @@ export const routeObjects: RouteObject[] = [
         path: "*",
         element: (
           <PageFrame title="Not Found">
-            <NotFoundPage />
+            <LazyBoundary title="Not Found">
+              <NotFoundPage />
+            </LazyBoundary>
           </PageFrame>
         ),
       },

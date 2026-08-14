@@ -1,3 +1,4 @@
+import * as React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
@@ -25,6 +26,7 @@ import {
   useInvestigationPolling,
   useProjectInvestigations,
 } from "../queries";
+import { useForensicsListLive } from "../useLiveInvalidation";
 import type { InvestigationSummary, MachineReadinessResult, ProjectKind } from "../types";
 import { buildApiUrl } from "@platform/api/http";
 import { getAuthTokenStandalone } from "@platform/auth/useAuthStore";
@@ -465,6 +467,15 @@ function InvestigationsTab({
   const navigate = useNavigate();
   const { data: investigations, isLoading, isError } = useProjectInvestigations(projectId);
   const isRaw = projectKind === "raw_directory";
+  // Additive live refetch: any forensics-scoped platform SSE event
+  // invalidates the investigations cache for this project, so a new
+  // investigation started by a teammate (or a state transition on an
+  // existing one) surfaces without waiting on the polling cadence.
+  const investigationsListKey = React.useMemo(
+    () => ["forensics", "investigations", projectId] as const,
+    [projectId],
+  );
+  useForensicsListLive(investigationsListKey);
 
   return (
     <div className="space-y-4 bg-surface text-foreground p-4 rounded-md border border-border">

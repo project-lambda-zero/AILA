@@ -78,7 +78,7 @@ export class AppErrorBoundary extends Component<Props, State> {
 
     return (
       <div
-        role="alert"
+        role="alert" aria-live="assertive"
         className="mx-auto max-w-xl p-6"
         data-testid="app-error-boundary-fallback"
       >

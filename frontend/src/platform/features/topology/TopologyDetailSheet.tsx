@@ -215,7 +215,7 @@ function KeyValueGrid({ rows }: { rows: Array<[string, string]> }) {
 function PortsTable({ ports }: { ports: PortInfo[] }) {
   return (
     <div className="border border-border rounded-[2px] overflow-hidden">
-      <table className="w-full text-[11px]">
+      <table aria-label="Node ports" className="w-full text-[11px]">
         <thead>
           <tr className="bg-surface text-text-muted uppercase text-[9px]">
             <th className="text-left px-2 py-1">Port</th>
@@ -242,7 +242,7 @@ function PortsTable({ ports }: { ports: PortInfo[] }) {
 function ServicesTable({ services }: { services: ServiceInfo[] }) {
   return (
     <div className="border border-border rounded-[2px] overflow-hidden">
-      <table className="w-full text-[11px]">
+      <table aria-label="Node vulnerabilities" className="w-full text-[11px]">
         <thead>
           <tr className="bg-surface text-text-muted uppercase text-[9px]">
             <th className="text-left px-2 py-1">Service</th>

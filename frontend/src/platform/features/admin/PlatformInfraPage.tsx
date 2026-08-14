@@ -163,24 +163,25 @@ function NewMcpDialog({ open, onClose, onSubmit, isPending }: NewMcpDialogProps)
         <div className="flex flex-col gap-3">
           <label className="font-mono text-xs text-text-muted flex flex-col gap-1">
             Name
-            <Input value={name} onChange={(e) => setName(e.target.value)} className="font-mono text-sm" />
+            <Input aria-label="MCP instance name" value={name} onChange={(e) => setName(e.target.value)} className="font-mono text-sm" />
           </label>
           <label className="font-mono text-xs text-text-muted flex flex-col gap-1">
             Transport (http | stdio)
-            <Input value={transport} onChange={(e) => setTransport(e.target.value)} className="font-mono text-sm" />
+            <Input aria-label="Transport (http or stdio)" value={transport} onChange={(e) => setTransport(e.target.value)} className="font-mono text-sm" />
           </label>
           <label className="font-mono text-xs text-text-muted flex flex-col gap-1">
             Endpoint (URL for http, command for stdio)
-            <Input value={endpoint} onChange={(e) => setEndpoint(e.target.value)} className="font-mono text-sm" />
+            <Input aria-label="Endpoint URL or command" value={endpoint} onChange={(e) => setEndpoint(e.target.value)} className="font-mono text-sm" />
           </label>
           <label className="font-mono text-xs text-text-muted flex flex-col gap-1">
             Module scope (optional)
-            <Input value={moduleScope} onChange={(e) => setModuleScope(e.target.value)} className="font-mono text-sm" />
+            <Input aria-label="Module scope (optional)" value={moduleScope} onChange={(e) => setModuleScope(e.target.value)} className="font-mono text-sm" />
           </label>
           <label className="font-mono text-xs text-text-muted flex flex-col gap-1">
             Capability tags (comma-separated)
-            <Input value={capabilityTags} onChange={(e) => setCapabilityTags(e.target.value)} className="font-mono text-sm" />
+            <Input aria-label="Capability tags (comma-separated)" value={capabilityTags} onChange={(e) => setCapabilityTags(e.target.value)} className="font-mono text-sm" />
           </label>
+          {/* Single-toggle checkbox: WCAG 1.3.1 fieldset/legend applies to related-option groups, not to individual on/off toggles labelled via wrapping <label>. */}
           <label className="font-mono text-xs text-text-muted inline-flex items-center gap-2">
             <input
               type="checkbox"
@@ -388,7 +389,7 @@ function McpToolsPanel({ instanceId }: McpToolsPanelProps) {
       )}
       {data && data.tools.length > 0 && (
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table aria-label="MCP instances" className="w-full">
             <thead>
               <tr className="border-b border-border">
                 <th className="py-1.5 px-2 text-left font-mono text-xs text-text-muted">Name</th>
@@ -473,7 +474,7 @@ function McpRegistryTab() {
         )}
         {!instancesQuery.isLoading && rows.length > 0 && (
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table aria-label="MCP capability audit" className="w-full">
               <thead>
                 <tr className="border-b border-border">
                   <th className="w-6"></th>
@@ -698,15 +699,15 @@ function NewSpecialistDialog({ moduleId, open, onClose, onSubmit, isPending }: N
         <div className="flex flex-col gap-3">
           <label className="font-mono text-xs text-text-muted flex flex-col gap-1">
             Name (persona voice)
-            <Input value={name} onChange={(e) => setName(e.target.value)} className="font-mono text-sm" />
+            <Input aria-label="Specialist name (persona voice)" value={name} onChange={(e) => setName(e.target.value)} className="font-mono text-sm" />
           </label>
           <label className="font-mono text-xs text-text-muted flex flex-col gap-1">
             Capability (matches dispatch PhaseSpec.capability)
-            <Input value={capability} onChange={(e) => setCapability(e.target.value)} className="font-mono text-sm" />
+            <Input aria-label="Capability (dispatch PhaseSpec.capability)" value={capability} onChange={(e) => setCapability(e.target.value)} className="font-mono text-sm" />
           </label>
           <label className="font-mono text-xs text-text-muted flex flex-col gap-1">
             Strategy family (optional)
-            <Input value={strategy} onChange={(e) => setStrategy(e.target.value)} className="font-mono text-sm" />
+            <Input aria-label="Strategy family (optional)" value={strategy} onChange={(e) => setStrategy(e.target.value)} className="font-mono text-sm" />
           </label>
           <label className="font-mono text-xs text-text-muted flex flex-col gap-1">
             Description

@@ -196,6 +196,7 @@ function SandboxTab() {
               <span className="font-mono text-xs uppercase tracking-wider text-text-muted">
                 network
               </span>
+              {/* Single-toggle checkbox: WCAG 1.3.1 fieldset/legend applies to related-option groups, not to individual on/off toggles labelled via wrapping <label>. */}
               <label className="inline-flex h-8 items-center gap-2 font-mono text-xs text-text">
                 <input
                   type="checkbox"
@@ -469,7 +470,7 @@ function CorpusTab() {
                 Manifest carried no per-module counts.
               </p>
             ) : (
-              <table className="w-full font-mono text-xs">
+              <table aria-label="Sandbox runs" className="w-full font-mono text-xs">
                 <thead>
                   <tr className="text-left text-text-muted">
                     <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">

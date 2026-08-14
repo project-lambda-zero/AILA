@@ -8,6 +8,7 @@ import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { DeleteButton } from "../components/DeleteButton";
 import { useDeletePattern } from "../mutations";
 import { usePatterns, useWorkspaces } from "../queries";
+import { useVRListInvalidation } from "../hooks/useVRListInvalidation";
 import type { PatternKind, PatternScope, PatternStatus } from "../types";
 
 const KINDS: PatternKind[] = [
@@ -41,6 +42,7 @@ const scopeColor: Record<
 
 export function PatternsPage() {
   const navigate = useNavigate();
+  useVRListInvalidation("patterns");
   const { data: workspacesResult } = useWorkspaces();
   const workspaces = workspacesResult?.data ?? [];
   const deleteMut = useDeletePattern();
@@ -142,6 +144,7 @@ export function PatternsPage() {
 
       {!isLoading && !isError && patterns.length > 0 && (
         <AilaCard className="overflow-x-auto p-0" techBorder glow><table className="w-full text-sm">
+          <caption className="sr-only">Reusable investigation patterns</caption>
           <thead>
             <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
               <th className="px-4 py-2 font-semibold">Summary</th>

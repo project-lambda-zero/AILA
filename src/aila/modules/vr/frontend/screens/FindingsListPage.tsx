@@ -6,6 +6,7 @@ import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { useAllFindings } from "../queries";
+import { useVRListInvalidation } from "../hooks/useVRListInvalidation";
 import type { DisclosureStatus } from "../types";
 
 /**
@@ -22,6 +23,7 @@ import type { DisclosureStatus } from "../types";
  */
 export function FindingsListPage() {
   const navigate = useNavigate();
+  useVRListInvalidation("findings");
   const [statusFilter, setStatusFilter] = useState<DisclosureStatus | "">("");
   const [crashFilter, setCrashFilter] = useState("");
 
@@ -109,6 +111,7 @@ export function FindingsListPage() {
       {!isLoading && !isError && rows.length > 0 && (
         <AilaCard className="overflow-x-auto p-0" techBorder glow>
           <table className="w-full text-sm">
+            <caption className="sr-only">Team-wide vulnerability findings</caption>
             <thead>
               <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
                 <th className="px-4 py-2 font-semibold">Vulnerable function</th>

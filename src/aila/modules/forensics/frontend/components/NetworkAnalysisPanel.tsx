@@ -534,7 +534,8 @@ function DataTable({
         </span>
       </div>
       <div className="overflow-x-auto overflow-y-auto" style={{ maxHeight: 600 }}>
-        <table className="w-full text-xs">
+        <table className="w-full text-xs" aria-label="Network analysis records">
+          <caption className="sr-only">Structured network telemetry extracted from the packet capture.</caption>
           <thead className="bg-surface-secondary sticky top-0 z-10">
             <tr>
               <th className="text-left px-3 py-2 text-text-muted font-medium w-8">#</th>

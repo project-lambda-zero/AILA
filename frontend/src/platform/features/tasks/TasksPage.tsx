@@ -290,7 +290,7 @@ export function TasksPage() {
               />
             ) : (
               <AilaCard variant="default" padding="none" techBorder glow><div className="overflow-x-auto">
-                <table className="w-full">
+                <table aria-label="Task queue" className="w-full">
                   <thead>
                     <tr className="border-b border-border">
                       <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Task ID</th>

@@ -213,7 +213,7 @@ function AilaTableHeader({ className }: AilaTableHeaderProps) {
           />
         </div>
       )}
-      <table className="w-full border-collapse">
+      <table aria-label="Data table columns" className="w-full border-collapse">
         <thead>
           {table.getHeaderGroups().map((headerGroup) => (
             <tr key={headerGroup.id} className="bg-elevated border-b border-border">
@@ -274,7 +274,24 @@ function AilaTableBody({ className, emptyState }: AilaTableBodyProps) {
 
   return (
     <div className={cn("overflow-x-auto", className)}>
-      <table className="w-full border-collapse">
+      <table aria-label="Data table rows" className="w-full border-collapse">
+        {/*
+          The visible header lives in the sibling <AilaTableHeader> so
+          the header row can stay pinned while the body scrolls. For
+          assistive tech, we mirror the column headers into a
+          visually-hidden <thead> here so this body table also carries
+          the <th scope="col"> cells the WCAG 1.3.1 table-headers
+          check requires.
+        */}
+        <thead className="sr-only">
+          <tr>
+            {table.getAllColumns().map((col) => (
+              <th key={col.id} scope="col">
+                {typeof col.columnDef.header === "string" ? col.columnDef.header : col.id}
+              </th>
+            ))}
+          </tr>
+        </thead>
         <tbody>
           {rows.length === 0 ? (
             <tr>

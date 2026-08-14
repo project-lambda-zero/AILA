@@ -87,7 +87,7 @@ function validateRow(rawRow: Record<string, string>, rowIndex: number): ParsedRo
 function PreviewTable({ rows }: { rows: ParsedRow[] }) {
   return (
     <div className="overflow-x-auto rounded-[2px] border border-border">
-      <table className="w-full min-w-[600px] font-mono text-xs border-collapse">
+      <table aria-label="CSV import preview" className="w-full min-w-[600px] font-mono text-xs border-collapse">
         <thead>
           <tr className="border-b border-border bg-surface">
             {["#", "Name", "Host", "Port", "Username", "Distro", "Status"].map((col) => (

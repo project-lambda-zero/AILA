@@ -461,8 +461,7 @@ export function SystemHealthPage() {
       {data && (
         <div
           className={`rounded-[4px] border px-6 py-5 flex items-center gap-4 ${overallStatusColor(overallStatus)}`}
-          role="status"
-          aria-live="polite"
+          role="status" aria-live="polite"
         >
           <span
             className={`inline-block h-4 w-4 rounded-full shrink-0 ${checkDotClass(

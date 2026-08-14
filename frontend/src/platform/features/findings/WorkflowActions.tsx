@@ -193,7 +193,7 @@ function TransitionDialog({
 
           {error && (
             <div
-              role="alert"
+              role="alert" aria-live="assertive"
               className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive"
             >
               {error}
@@ -279,7 +279,7 @@ export function WorkflowActions({
       <div
         className={wrapperClass}
         data-testid="workflow-actions"
-        role="alert"
+        role="alert" aria-live="assertive"
       >
         <span className="font-mono text-xs text-destructive">
           Could not load workflow states.

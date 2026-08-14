@@ -395,6 +395,7 @@ export function AuditSealsTab() {
                 className="font-mono text-xs"
               />
             </div>
+            {/* Single-toggle checkbox: WCAG 1.3.1 fieldset/legend applies to related-option groups, not to individual on/off toggles labelled via wrapping <label>. */}
             <label className="flex items-center gap-2 font-mono text-[11px] text-text-muted">
               <input
                 type="checkbox"
@@ -540,7 +541,7 @@ export function AuditSealsTab() {
 
       {activeRunId && items.length > 0 && (
         <div className="overflow-x-auto rounded-[4px] border border-border">
-          <table className="w-full font-mono text-xs">
+          <table aria-label="Seal events" className="w-full font-mono text-xs">
             <thead>
               <tr className="border-b border-border bg-elevated text-left">
                 <th className="w-6 px-2 py-2" />

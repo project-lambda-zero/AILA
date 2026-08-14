@@ -132,7 +132,8 @@ function RecordTable({
         className="overflow-auto rounded border border-border"
         style={{ maxHeight: fullscreen ? "70vh" : "32rem" }}
       >
-        <table className="min-w-full text-xs font-mono">
+        <table className="min-w-full text-xs font-mono" aria-label="Forensics artifacts">
+          <caption className="sr-only">Collected forensics artifacts filtered by the controls above.</caption>
           <thead className="bg-surface-secondary sticky top-0 z-10">
             <tr>
               <th className="px-2 py-1.5 text-left text-text-muted font-semibold w-6" />
@@ -287,13 +288,14 @@ function ArtifactRow({ a }: { a: ArtifactWithData }) {
         <div className="space-y-3">
           {structuredEntries.length > 0 && (
             <div className="rounded border border-border bg-surface text-foreground overflow-hidden">
-              <table className="w-full text-xs">
+              <table className="w-full text-xs" aria-label="Artifact structured fields">
+                <caption className="sr-only">Parsed key/value fields for the selected artifact.</caption>
                 <tbody>
                   {structuredEntries.map(([k, v]) => (
                     <tr key={k} className="border-b border-border last:border-b-0">
-                      <td className="px-3 py-1.5 font-mono text-text-muted bg-surface-secondary align-top whitespace-nowrap w-1/4">
+                      <th scope="row" className="px-3 py-1.5 font-mono text-text-muted bg-surface-secondary align-top whitespace-nowrap w-1/4 text-left font-normal">
                         {k}
-                      </td>
+                      </th>
                       <td className="px-3 py-1.5 font-mono text-foreground break-all">
                         {Array.isArray(v) ? (
                           <ul className="space-y-0.5">
@@ -320,13 +322,14 @@ function ArtifactRow({ a }: { a: ArtifactWithData }) {
               <div className="px-3 py-1.5 bg-surface-secondary text-xs font-mono text-text-muted border-b border-border">
                 observables ({Object.keys(nestedObservables).length})
               </div>
-              <table className="w-full text-xs">
+              <table className="w-full text-xs" aria-label="Artifact nested observables">
+                <caption className="sr-only">Structured observables emitted alongside the artifact record.</caption>
                 <tbody>
                   {Object.entries(nestedObservables).map(([k, v]) => (
                     <tr key={k} className="border-b border-border last:border-b-0">
-                      <td className="px-3 py-1.5 font-mono text-blue-400 align-top whitespace-nowrap w-1/4">
+                      <th scope="row" className="px-3 py-1.5 font-mono text-blue-400 align-top whitespace-nowrap w-1/4 text-left font-normal">
                         {k}
-                      </td>
+                      </th>
                       <td className="px-3 py-1.5 font-mono text-foreground break-all">
                         {typeof v === "object"
                           ? JSON.stringify(v)

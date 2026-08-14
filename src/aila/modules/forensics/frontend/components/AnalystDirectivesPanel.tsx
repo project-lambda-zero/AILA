@@ -131,24 +131,29 @@ export function AnalystDirectivesPanel({
       />
       <div className="flex items-center justify-between gap-2">
         {investigationId ? (
-          <div className="flex items-center gap-2 text-xs">
-            <label className="flex items-center gap-1 cursor-pointer">
-              <input
-                type="radio"
-                checked={scope === "investigation"}
-                onChange={() => setScope("investigation")}
-              />
-              <span>This investigation only</span>
-            </label>
-            <label className="flex items-center gap-1 cursor-pointer">
-              <input
-                type="radio"
-                checked={scope === "project"}
-                onChange={() => setScope("project")}
-              />
-              <span>Project-wide</span>
-            </label>
-          </div>
+          <fieldset className="border-0 p-0 m-0">
+            <legend className="sr-only">Directive scope</legend>
+            <div className="flex items-center gap-2 text-xs">
+              <label className="flex items-center gap-1 cursor-pointer">
+                <input
+                  type="radio"
+                  name="analyst-directive-scope"
+                  checked={scope === "investigation"}
+                  onChange={() => setScope("investigation")}
+                />
+                <span>This investigation only</span>
+              </label>
+              <label className="flex items-center gap-1 cursor-pointer">
+                <input
+                  type="radio"
+                  name="analyst-directive-scope"
+                  checked={scope === "project"}
+                  onChange={() => setScope("project")}
+                />
+                <span>Project-wide</span>
+              </label>
+            </div>
+          </fieldset>
         ) : (
           <span className="text-xs text-text-muted">
             Project-wide -- applies to every investigation

@@ -299,6 +299,7 @@ function HypothesesTab({ targetId }: { targetId: string }) {
       )}</AilaCard>
 
       <AilaCard className="p-0 overflow-x-auto" techBorder glow><table className="w-full text-sm">
+        <caption className="sr-only">Cross-investigation hypotheses for this target</caption>
         <thead>
           <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
             <th className="px-3 py-2 font-semibold">State</th>
@@ -1329,6 +1330,7 @@ function MasvsControlTable({
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
+              <caption className="sr-only">MASVS control verdicts</caption>
               <thead>
                 <tr className="border-b border-border-default text-left text-text-muted">
                   <th className="px-2 py-1 font-semibold">Control</th>
@@ -1928,6 +1930,7 @@ export function TargetDetailPage() {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
+              <caption className="sr-only">Top-ranked candidate functions</caption>
               <thead>
                 <tr className="border-b border-border-default text-left text-text-muted">
                   <th className="px-2 py-1 font-semibold w-10">#</th>

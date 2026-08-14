@@ -427,7 +427,7 @@ export function ScanCenterPage() {
           
             {tasks.length > 0 && (
               <div className="overflow-x-auto">
-                <table className="w-full">
+                <table aria-label="Scan runs" className="w-full">
                   <thead>
                     <tr className="border-b border-border">
                       <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Run ID</th>

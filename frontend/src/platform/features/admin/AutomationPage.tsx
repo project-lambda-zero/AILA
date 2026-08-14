@@ -211,6 +211,7 @@ function CreateScheduleDialog({
               </span>
             </div>
 
+            {/* Single-toggle checkbox: WCAG 1.3.1 fieldset/legend applies to related-option groups, not to individual on/off toggles labelled via wrapping <label>. */}
             <label className="flex items-center gap-2 font-mono text-xs text-text-muted">
               <input
                 type="checkbox"

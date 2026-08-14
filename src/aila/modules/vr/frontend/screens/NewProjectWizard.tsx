@@ -199,14 +199,17 @@ export function NewProjectWizard() {
             </select>
           </Field>
         
-          <label className="flex items-center gap-2 text-xs">
-            <input
-              type="checkbox"
-              checked={sourceAvailable}
-              onChange={(e) => setSourceAvailable(e.target.checked)}
-            />
-            <span>Source code available (enables source-aware analysis)</span>
-          </label>
+          <fieldset className="border-0 p-0 m-0 min-w-0">
+            <legend className="sr-only">Source availability</legend>
+            <label className="flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={sourceAvailable}
+                onChange={(e) => setSourceAvailable(e.target.checked)}
+              />
+              <span>Source code available (enables source-aware analysis)</span>
+            </label>
+          </fieldset>
         
           {/* Source-specific fields */}
           {inputSource === "git_repo" && (

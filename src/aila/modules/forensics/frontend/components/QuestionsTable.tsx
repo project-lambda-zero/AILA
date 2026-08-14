@@ -31,7 +31,8 @@ export function QuestionsTable({ projectId }: { projectId: string }) {
 
   return (
     <div className="border border-border rounded-md bg-surface text-foreground overflow-x-auto">
-      <table className="w-full text-sm">
+      <table className="w-full text-sm" aria-label="Investigation questions">
+        <caption className="sr-only">Investigator-authored questions with their current status and assigned owner.</caption>
         <thead className="bg-surface-secondary">
           <tr>
             <th className="text-left px-3 py-2 text-text-muted font-medium">Question</th>

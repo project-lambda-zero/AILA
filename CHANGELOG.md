@@ -7,6 +7,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.16] - 2026-08-13 -- Route code-splitting, WCAG 2.2 AA pass, live-updating lists
+
+Three pure-frontend usability wins, all measured and backend-respecting.
+Additive; existing routes, screens, and behavior preserved (#215).
+
+### Added
+
+- Live-updating lists: the investigations, targets, findings, observations, and
+  other list screens across VR, malware, forensics, and vulnerability now
+  subscribe to the existing global SSE stream and refresh in place when a
+  matching event lands, instead of only on manual refresh or a timer. Each
+  module adds one shared subscription that reuses the single existing socket and
+  is a no-op for unmatched events, with cross-module isolation (a vulnerability
+  event does not refresh forensics lists). No backend change.
+- A skip-to-content link, a single `<main>` landmark, and a labeled primary
+  `<nav>` in the shell layout (WCAG 2.4.1, 1.3.1), plus `aria-live` on the
+  offline banner, status bar, and error boundary.
+
+### Changed
+
+- Route-level code-splitting: the shell's ~40 route pages are now lazy-loaded.
+  The initial entry chunk drops from 1,823 kB to 1,207 kB (gzip 402 to 288 kB);
+  each page and its subtree loads on first navigation. The chunk-size advisory
+  still fires because the eager module-spec registry keeps the entry chunk above
+  the threshold; splitting that registry is a follow-up.
+- Accessibility (WCAG 2.2 AA): 128 real findings across the shell and all four
+  module frontends fixed to zero. Every form input and select now has a
+  programmatic label, radio and checkbox groups have a fieldset and legend, data
+  tables have captions and scoped headers, dynamic regions announce via
+  `aria-live`, heading order is sequential, and the two non-button click targets
+  are keyboard-operable. Per-page landmark and heading checks are satisfied
+  centrally by the shell layout rather than duplicated on each page.
+
+All workspace type-checks and the shell production build pass. No backend changes.
+
 ## [0.5.15] - 2026-08-13 -- Malware Projects surface, investigation compare, core-screen craft pass
 
 Adds two backend-confirmed surfaces and elevates three core screens. Additive:

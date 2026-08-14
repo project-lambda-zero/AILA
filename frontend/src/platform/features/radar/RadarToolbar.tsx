@@ -143,8 +143,8 @@ export function RadarToolbar({
         <span className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider">
           Color by:
         </span>
-        <Select value={colorBy} onValueChange={(v) => onColorByChange(v as ColorByMode)}>
-          <SelectTrigger className="h-7 w-[140px] font-mono text-xs">
+        <Select aria-label="Color radar nodes by" value={colorBy} onValueChange={(v) => onColorByChange(v as ColorByMode)}>
+          <SelectTrigger aria-label="Color radar nodes by" className="h-7 w-[140px] font-mono text-xs">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

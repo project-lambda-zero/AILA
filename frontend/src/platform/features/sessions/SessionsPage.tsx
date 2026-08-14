@@ -213,7 +213,7 @@ export function SessionsPage() {
               No active sessions found.
             </div>
           ) : (
-            <table className="w-full text-left">
+            <table aria-label="Active sessions" className="w-full text-left">
               <thead>
                 <tr className="border-b border-border bg-surface-raised">
                   <th className="px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">

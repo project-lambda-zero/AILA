@@ -476,7 +476,7 @@ function ThreadPanel({
         {state.error && (
           <div
             className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive"
-            role="alert"
+            role="alert" aria-live="assertive"
             data-testid="chat-error"
           >
             <div className="flex items-center gap-2 font-semibold">

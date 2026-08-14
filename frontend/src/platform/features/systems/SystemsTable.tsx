@@ -61,6 +61,8 @@ export function useSystemColumns(
     () => [
       {
         id: "select",
+        // Row-selection checkboxes: WCAG 1.3.1 fieldset/legend applies to
+        // related-option groups; row-select toggles use aria-label instead.
         header: ({ table }) => (
           <input
             type="checkbox"

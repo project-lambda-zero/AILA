@@ -8,6 +8,9 @@ import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { useForensicsProjects } from "../queries";
 import { useDeleteProject } from "../mutations";
 import type { ProjectSummary } from "../types";
+import { useForensicsListLive } from "../useLiveInvalidation";
+
+const PROJECTS_LIST_KEY = ["forensics", "projects"] as const;
 
 const statusColor: Record<string, "info" | "low" | "medium" | "high" | "critical"> = {
   created: "info",
@@ -78,7 +81,19 @@ function ConfirmDeleteDialog({
   onCancel: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onCancel}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      role="button"
+      tabIndex={0}
+      aria-label="Close delete confirmation"
+      onClick={onCancel}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " " || e.key === "Escape") {
+          if (e.key === " ") e.preventDefault();
+          onCancel();
+        }
+      }}
+    >
       <div
         className="bg-surface-elevated border border-border-default rounded-lg p-6 max-w-sm w-full mx-4 space-y-4"
         onClick={(e) => e.stopPropagation()}
@@ -112,6 +127,11 @@ export function ProjectsPage() {
   const navigate = useNavigate();
   const { data: result, isLoading, isError } = useForensicsProjects();
   const deleteProject = useDeleteProject();
+  // Additive live refetch: forensics-scoped platform SSE events (e.g.
+  // a new project/investigation lifecycle transition) invalidate the
+  // projects list cache so the grid reflects teammate activity without
+  // a full reload. No-op for unrelated events.
+  useForensicsListLive(PROJECTS_LIST_KEY);
   const [confirmDelete, setConfirmDelete] = useState<ProjectSummary | null>(null);
 
   const projects = result?.items ?? [];

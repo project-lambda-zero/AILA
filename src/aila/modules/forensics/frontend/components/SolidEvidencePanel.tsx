@@ -81,7 +81,8 @@ export function SolidEvidencePanel({ projectId }: Props) {
         <span className="text-amber-400">FALSE: {falseCount}</span>
       </div>
       <div className="rounded-md border border-border overflow-hidden bg-surface text-foreground">
-        <table className="w-full text-sm">
+        <table className="w-full text-sm" aria-label="Solid-evidence tags">
+          <caption className="sr-only">Analyst-confirmed and disproved findings tagged as solid evidence.</caption>
           <thead className="bg-surface-secondary text-xs text-text-muted">
             <tr>
               <th className="text-left px-3 py-2 font-semibold w-20">Verdict</th>

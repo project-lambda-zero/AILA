@@ -67,6 +67,7 @@ export function McpCallLogPage() {
       {rows.length > 0 && (
         <AilaCard  techBorder glow><div className="overflow-x-auto">
           <table className="w-full text-xs">
+            <caption className="sr-only">MCP call log</caption>
             <thead>
               <tr className="border-b border-border-default text-left text-text-muted">
                 <th className="px-2 py-1 font-semibold">When</th>

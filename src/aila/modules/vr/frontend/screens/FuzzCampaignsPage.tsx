@@ -8,6 +8,7 @@ import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { DeleteButton } from "../components/DeleteButton";
 import { useDeleteFuzzCampaign } from "../mutations";
 import { useFuzzCampaigns, useWorkspaces } from "../queries";
+import { useVRListInvalidation } from "../hooks/useVRListInvalidation";
 import type { CampaignStatus } from "../types";
 
 const STATUS_COLOR: Record<
@@ -28,6 +29,7 @@ const STATUSES: CampaignStatus[] = [
 
 export function FuzzCampaignsPage() {
   const navigate = useNavigate();
+  useVRListInvalidation("fuzz-campaigns");
   const { data: workspacesResult } = useWorkspaces();
   const workspaces = workspacesResult?.data ?? [];
   const deleteMut = useDeleteFuzzCampaign();
@@ -95,6 +97,7 @@ export function FuzzCampaignsPage() {
 
       {!isLoading && !isError && rows.length > 0 && (
         <AilaCard className="overflow-x-auto p-0" techBorder glow><table className="w-full text-sm">
+          <caption className="sr-only">Fuzz campaigns</caption>
           <thead>
             <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
               <th className="px-4 py-2 font-semibold">Name</th>

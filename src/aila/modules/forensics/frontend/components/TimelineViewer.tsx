@@ -117,16 +117,18 @@ function InspectRow({
   }
   return (
     <div className="px-3 py-2 bg-black/20 border-t border-border">
-      <table className="w-full text-2xs">
+      <table className="w-full text-2xs" aria-label="Investigation timeline">
+        <caption className="sr-only">Chronological timeline of forensics events, one row per timestamped record.</caption>
         <tbody>
           {rows.map((r, i) => (
             <tr key={i} className="align-top">
-              <td
+              <th
+                scope="row"
                 className="pr-3 py-0.5 font-mono text-text-muted whitespace-nowrap truncate"
                 style={{ maxWidth: 220 }}
               >
                 {r.key}
-              </td>
+              </th>
               <td className="py-0.5 font-mono text-foreground break-all">
                 {r.value}
               </td>
@@ -248,7 +250,8 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
         ) : (
           <div className="border border-border rounded-lg overflow-hidden bg-surface text-foreground">
             <div className="overflow-y-auto" style={{ maxHeight: 500 }}>
-              <table className="w-full text-xs">
+              <table className="w-full text-xs" aria-label="Timeline events">
+                <caption className="sr-only">Per-event timeline rows for the current confidence level.</caption>
                 <thead className="bg-surface-secondary sticky top-0 z-10">
                   <tr>
                     <th className="text-left px-3 py-2 text-text-muted font-medium w-44">Timestamp</th>
@@ -362,7 +365,8 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
         ) : (
           <div className="border border-border rounded-lg overflow-hidden bg-surface text-foreground">
             <div className="overflow-y-auto" style={{ maxHeight: 500 }}>
-              <table className="w-full text-xs">
+              <table className="w-full text-xs" aria-label="Occurrences">
+                <caption className="sr-only">Untimed findings and artifacts discovered during the investigation.</caption>
                 <thead className="bg-surface-secondary sticky top-0 z-10">
                   <tr>
                     <th className="text-left px-3 py-2 text-text-muted font-medium w-32">Source</th>

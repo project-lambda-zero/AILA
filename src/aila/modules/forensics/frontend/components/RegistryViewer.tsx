@@ -166,7 +166,8 @@ function RegistryTable({ rows }: { rows: Record<string, unknown>[] }) {
         </span>
       </div>
       <div className="overflow-x-auto overflow-y-auto" style={{ maxHeight: 600 }}>
-        <table className="w-full text-xs">
+        <table className="w-full text-xs" aria-label="Registry entries">
+          <caption className="sr-only">Windows registry keys and values recovered from the evidence hive.</caption>
           <thead className="bg-surface-secondary sticky top-0 z-10">
             <tr>
               <th className="text-left px-3 py-2 text-text-muted font-medium w-8">#</th>

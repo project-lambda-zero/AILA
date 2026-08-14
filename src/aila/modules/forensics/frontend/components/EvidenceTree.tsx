@@ -213,7 +213,8 @@ export function EvidenceTree({ projectId }: { projectId: string }) {
       ) : (
         <div className="border border-border rounded-lg bg-surface text-foreground overflow-hidden">
           <div className="overflow-y-auto" style={{ maxHeight: 620 }}>
-            <table className="w-full text-xs">
+            <table className="w-full text-xs" aria-label="Evidence artifacts">
+              <caption className="sr-only">Evidence artifacts grouped by source with size, hash, and status.</caption>
               <thead className="bg-surface-secondary sticky top-0 z-10">
                 <tr>
                   <SortHeader

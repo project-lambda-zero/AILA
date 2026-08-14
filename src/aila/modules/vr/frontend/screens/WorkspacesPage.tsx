@@ -7,6 +7,7 @@ import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { DeleteButton } from "../components/DeleteButton";
 import { useCreateWorkspace, useDeleteWorkspace } from "../mutations";
 import { useWorkspaces } from "../queries";
+import { useVRListInvalidation } from "../hooks/useVRListInvalidation";
 import type { WorkspaceTheme } from "../types";
 
 const THEMES: { value: WorkspaceTheme; label: string }[] = [
@@ -28,6 +29,7 @@ function formatDate(value?: string | null): string {
 }
 
 export function WorkspacesPage() {
+  useVRListInvalidation("workspaces");
   const { data: result, isLoading, isError } = useWorkspaces();
   const createMut = useCreateWorkspace();
   const deleteMut = useDeleteWorkspace();
@@ -148,6 +150,7 @@ export function WorkspacesPage() {
 
       {!isLoading && !isError && workspaces.length > 0 && (
         <AilaCard className="overflow-x-auto p-0" techBorder glow><table className="w-full text-sm">
+          <caption className="sr-only">Workspaces</caption>
           <thead>
             <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
               <th className="px-4 py-2 font-semibold">Name</th>

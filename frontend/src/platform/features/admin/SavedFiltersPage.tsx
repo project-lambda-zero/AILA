@@ -255,7 +255,8 @@ function FilterEditorDialog({
             />
           </div>
 
-          <div className="flex flex-col gap-2">
+          <fieldset className="flex flex-col gap-2 border-0 p-0">
+            <legend className="sr-only">Filter visibility options</legend>
             <label className="flex items-center gap-2 font-mono text-xs text-text">
               <input
                 type="checkbox"
@@ -274,7 +275,7 @@ function FilterEditorDialog({
               />
               Share with team
             </label>
-          </div>
+          </fieldset>
 
           {error && (
             <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
@@ -523,7 +524,7 @@ export function SavedFiltersPage() {
       {/* Filters table */}
       {!filtersQuery.isLoading && filters.length > 0 && (
         <AilaCard variant="default" padding="none" techBorder glow><div className="overflow-x-auto">
-          <table className="w-full">
+          <table aria-label="Saved filters" className="w-full">
             <thead>
               <tr className="border-b border-border">
                 <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Name</th>

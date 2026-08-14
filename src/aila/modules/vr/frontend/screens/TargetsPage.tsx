@@ -16,14 +16,15 @@ import {
   useUploadArtifactByTargetId,
 } from "../mutations";
 import { useTargets, useWorkspaces } from "../queries";
+import { useVRListInvalidation } from "../hooks/useVRListInvalidation";
 import type { AnalysisState, TargetKind, TargetStatus, VRTargetSummary } from "../types";
 
-// Per-kind input-field schema. Each field becomes a labeled <input>
+// Per-kind input-field schema. Each field becomes a labeled input
 // in the create form; values get assembled into the descriptor JSON
 // the backend expects. android_apk has no fields here -- it uses the
 // multipart upload-apk endpoint with a file picker, handled separately.
-// Per-kind input-field schema. Each field is either a labeled <input>
-// (type="text") or a <input type="file"> file picker. The submit
+// Per-kind input-field schema. Each field is either a labeled text
+// field (type="text") or a file picker (type="file"). The submit
 // handler assembles text fields into the descriptor JSON; file fields
 // are POSTed via a follow-up call to the matching upload endpoint
 // (android_apk -> /targets/upload-apk in one shot, every other binary
@@ -193,6 +194,7 @@ function targetRowLabel(t: VRTargetSummary): string {
 
 export function TargetsPage() {
   const navigate = useNavigate();
+  useVRListInvalidation("targets");
   const { data: workspacesResult } = useWorkspaces();
   const workspaces = workspacesResult?.data ?? [];
 
@@ -532,6 +534,7 @@ export function TargetsPage() {
 
       {!isLoading && !isError && targets.length > 0 && (
         <AilaCard className="overflow-x-auto p-0" techBorder glow><table className="w-full text-sm">
+          <caption className="sr-only">Targets in the selected workspace</caption>
           <thead>
             <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
               <th className="px-4 py-2 font-semibold">Name</th>

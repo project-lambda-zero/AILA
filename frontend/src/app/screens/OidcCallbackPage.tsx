@@ -54,7 +54,7 @@ export function OidcCallbackPage() {
   if (error) {
     return (
       <div className="oidc-callback">
-        <p className="oidc-callback__error" role="alert">
+        <p className="oidc-callback__error" role="alert" aria-live="assertive">
           {error}
         </p>
         <Link className="oidc-callback__link" to="/login">

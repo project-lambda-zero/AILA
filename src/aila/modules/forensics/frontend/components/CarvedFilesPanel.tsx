@@ -223,7 +223,8 @@ export function CarvedFilesPanel({ projectId }: { projectId: string }) {
       {/* Table */}
       <div className="border border-border rounded-lg bg-surface text-foreground overflow-hidden">
         <div className="overflow-y-auto" style={{ maxHeight: 500 }}>
-          <table className="w-full text-xs">
+          <table className="w-full text-xs" aria-label="Zeek-carved files">
+            <caption className="sr-only">Files carved out of network captures by Zeek during pcap analysis.</caption>
             <thead className="bg-surface-secondary sticky top-0 z-10">
               <tr>
                 <th className="text-left px-3 py-2 text-text-muted font-medium w-72">

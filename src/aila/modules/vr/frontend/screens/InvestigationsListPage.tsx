@@ -43,6 +43,7 @@ import {
   useTargets,
   useWorkspaces,
 } from "../queries";
+import { useVRListInvalidation } from "../hooks/useVRListInvalidation";
 import type {
   InvestigationKind,
   InvestigationStatus,
@@ -420,6 +421,7 @@ function StatusPill({
 
 export function InvestigationsListPage() {
   const navigate = useNavigate();
+  useVRListInvalidation("investigations");
 
   const [searchQ, setSearchQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("");
@@ -970,38 +972,41 @@ export function InvestigationsListPage() {
           <option value="refuted">refuted</option>
           <option value="inconclusive">inconclusive</option>
         </select>
-        <label className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border uppercase tracking-wider cursor-pointer">
-          <input
-            type="checkbox"
-            className="accent-accent"
-            checked={findingsOnly}
-            onChange={(e) => setFindingsOnly(e.target.checked)}
-          />
-          findings only
-        </label>
-        <label
-          className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-mono rounded-md border uppercase tracking-wider cursor-pointer transition-colors"
-          style={{
-            borderColor: hideCreated
-              ? "var(--color-accent)"
-              : "var(--color-border)",
-            background: hideCreated
-              ? "color-mix(in srgb, var(--color-accent) 10%, transparent)"
-              : "var(--color-surface)",
-            color: hideCreated
-              ? "var(--color-accent)"
-              : "var(--color-text-muted)",
-          }}
-          title="Hide queued (created) investigations from the list"
-        >
-          <input
-            type="checkbox"
-            className="accent-accent"
-            checked={hideCreated}
-            onChange={(e) => setHideCreated(e.target.checked)}
-          />
-          hide created
-        </label>
+        <fieldset className="contents border-0 p-0 m-0 min-w-0">
+          <legend className="sr-only">Investigation list toggles</legend>
+          <label className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border uppercase tracking-wider cursor-pointer">
+            <input
+              type="checkbox"
+              className="accent-accent"
+              checked={findingsOnly}
+              onChange={(e) => setFindingsOnly(e.target.checked)}
+            />
+            findings only
+          </label>
+          <label
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-mono rounded-md border uppercase tracking-wider cursor-pointer transition-colors"
+            style={{
+              borderColor: hideCreated
+                ? "var(--color-accent)"
+                : "var(--color-border)",
+              background: hideCreated
+                ? "color-mix(in srgb, var(--color-accent) 10%, transparent)"
+                : "var(--color-surface)",
+              color: hideCreated
+                ? "var(--color-accent)"
+                : "var(--color-text-muted)",
+            }}
+            title="Hide queued (created) investigations from the list"
+          >
+            <input
+              type="checkbox"
+              className="accent-accent"
+              checked={hideCreated}
+              onChange={(e) => setHideCreated(e.target.checked)}
+            />
+            hide created
+          </label>
+        </fieldset>
         <button
           type="button"
           onClick={() => {

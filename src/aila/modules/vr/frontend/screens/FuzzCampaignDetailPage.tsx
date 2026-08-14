@@ -414,6 +414,7 @@ export function FuzzCampaignDetailPage() {
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
+            <caption className="sr-only">Registered crashes for this campaign</caption>
             <thead>
               <tr className="border-b border-border-default text-left text-text-muted">
                 <th className="px-2 py-1 font-semibold">Stack hash</th>

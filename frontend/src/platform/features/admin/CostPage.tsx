@@ -157,7 +157,7 @@ function RunBreakdownTable({ data }: { data: CostBreakdownResponse }) {
   }
   return (
     <div className="overflow-x-auto">
-      <table className="w-full font-mono text-xs">
+      <table aria-label="Cost aggregates" className="w-full font-mono text-xs">
         <thead>
           <tr className="text-left text-text-muted">
             <th className="py-1.5 pr-4 font-normal uppercase tracking-wider">
@@ -711,7 +711,7 @@ export function CostPage() {
             </div>
             {estResult.breakdown.length > 0 && (
               <div className="overflow-x-auto">
-                <table className="w-full font-mono text-xs">
+                <table aria-label="Cost breakdown" className="w-full font-mono text-xs">
                   <thead>
                     <tr className="text-left text-text-muted">
                       <th className="py-1.5 pr-4 font-normal uppercase tracking-wider">

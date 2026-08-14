@@ -436,6 +436,7 @@ function BranchOpsTable({
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
+        <caption className="sr-only">Investigation branches with status and actions</caption>
         <thead>
           <tr className="border-b border-border-default text-left text-text-muted">
             <th className="px-2 py-1 font-semibold">Branch</th>

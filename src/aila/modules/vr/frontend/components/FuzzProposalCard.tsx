@@ -217,14 +217,17 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
                 className="px-2 py-1 rounded bg-surface border border-border-default font-mono w-20"
               />
             </label>
-            <label className="flex items-center gap-1">
-              <input
-                type="checkbox"
-                checked={autoLaunch}
-                onChange={(e) => setAutoLaunch(e.target.checked)}
-              />
-              <span>auto-launch after build</span>
-            </label>
+            <fieldset className="border-0 p-0 m-0 min-w-0">
+              <legend className="sr-only">Fuzz proposal overrides</legend>
+              <label className="flex items-center gap-1">
+                <input
+                  type="checkbox"
+                  checked={autoLaunch}
+                  onChange={(e) => setAutoLaunch(e.target.checked)}
+                />
+                <span>auto-launch after build</span>
+              </label>
+            </fieldset>
             <button
               type="button"
               disabled={!ready || acceptMut.isPending}

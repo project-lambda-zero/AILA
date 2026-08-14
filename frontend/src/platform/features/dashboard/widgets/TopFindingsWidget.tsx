@@ -121,7 +121,7 @@ export function TopFindingsWidget() {
         Top Critical Findings
       </p>
       <div className="overflow-auto flex-1 min-h-0">
-        <table className="w-full text-xs font-mono border-collapse" data-table>
+        <table aria-label="Top findings" className="w-full text-xs font-mono border-collapse" data-table>
           <thead>
             <tr className="border-b border-border">
               <th className="text-left text-text-muted font-medium pb-1 pr-3">CVE ID</th>

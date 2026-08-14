@@ -13,6 +13,7 @@ import {
   useInvestigations,
   useWorkspaces,
 } from "../queries";
+import { useVRListInvalidation } from "../hooks/useVRListInvalidation";
 import type {
   ArtifactTier,
   DisclosureSubmissionStatus,
@@ -47,6 +48,7 @@ const POC_TIERS: { value: ArtifactTier; label: string }[] = [
 
 export function DisclosuresPage() {
   const navigate = useNavigate();
+  useVRListInvalidation("disclosures");
   const { data: tracksData } = useDisclosureTracks();
   const tracks = tracksData ?? [];
   const { data: workspacesData } = useWorkspaces();
@@ -368,6 +370,7 @@ export function DisclosuresPage() {
 
       {!isLoading && !isError && rows.length > 0 && (
         <AilaCard className="overflow-x-auto p-0" techBorder glow><table className="w-full text-sm">
+          <caption className="sr-only">Disclosure submissions</caption>
           <thead>
             <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
               <th className="px-4 py-2 font-semibold">Track</th>

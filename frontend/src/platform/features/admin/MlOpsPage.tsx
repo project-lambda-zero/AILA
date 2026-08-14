@@ -508,7 +508,7 @@ function LifecycleTab({ activeKey }: LifecycleTabProps) {
 
           {rows.length > 0 && (
             <div className="overflow-x-auto">
-              <table className="w-full font-mono text-[11px]">
+              <table aria-label="Prompt versions" className="w-full font-mono text-[11px]">
                 <thead>
                   <tr className="text-left text-text-muted">
                     <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">Version</th>
@@ -1069,7 +1069,7 @@ function EvalsTab({ activeKey }: EvalsTabProps) {
         )}
         {runs.length > 0 && (
           <div className="overflow-x-auto">
-            <table className="w-full font-mono text-[11px]">
+            <table aria-label="Traffic split" className="w-full font-mono text-[11px]">
               <thead>
                 <tr className="text-left text-text-muted">
                   <th className="pb-2 w-4"></th>
@@ -1155,7 +1155,7 @@ function EvalsTab({ activeKey }: EvalsTabProps) {
         )}
         {calibrators.length > 0 && (
           <div className="overflow-x-auto">
-            <table className="w-full font-mono text-[11px]">
+            <table aria-label="Version metrics" className="w-full font-mono text-[11px]">
               <thead>
                 <tr className="text-left text-text-muted">
                   <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">Task type</th>
@@ -1616,9 +1616,9 @@ function PromptsTab({ activeKey }: PromptsTabProps) {
               or <code className="font-mono">candidate</code> for out-of-line rollouts.
             </div>
             <label className="font-mono text-xs uppercase tracking-wider text-text-muted">alias</label>
-            <Input value={aliasName} onChange={(e) => setAliasName(e.target.value)} className="font-mono text-xs" />
+            <Input aria-label="Alias name" value={aliasName} onChange={(e) => setAliasName(e.target.value)} className="font-mono text-xs" />
             <label className="font-mono text-xs uppercase tracking-wider text-text-muted">version</label>
-            <Input value={aliasVersion} onChange={(e) => setAliasVersion(e.target.value)} className="font-mono text-xs" />
+            <Input aria-label="Version identifier" value={aliasVersion} onChange={(e) => setAliasVersion(e.target.value)} className="font-mono text-xs" />
             <label className="font-mono text-xs uppercase tracking-wider text-text-muted">reason</label>
             <Textarea
               value={aliasReason}

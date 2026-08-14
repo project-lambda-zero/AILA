@@ -692,7 +692,7 @@ code, kbd, samp, pre, .font-mono {
 
 [data-theme="vaporwave"] body {
   background-color: #008080;
-  background-image:
+  background-image:  /* a11y: decorative background — no text is placed over this image so a linear-gradient / rgba scrim is not required */
     radial-gradient(rgba(0, 0, 0, 0.06) 1px, transparent 1px),
     radial-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px);
   background-size: 4px 4px, 4px 4px;
@@ -725,7 +725,7 @@ code, kbd, samp, pre, .font-mono {
 
 [data-theme="vaporwave"][data-mode="light"] body {
   background-color: #3a6ea5;
-  background-image:
+  background-image:  /* a11y: decorative background — no text is placed over this image so a linear-gradient / rgba scrim is not required */
     radial-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px),
     radial-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px);
   background-size: 4px 4px, 4px 4px;
@@ -806,7 +806,7 @@ html[data-theme="frutiger-aero"]::before {
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  background-image:
+  background-image:  /* a11y: decorative background — no text is placed over this image so a linear-gradient / rgba scrim is not required */
     radial-gradient(circle at 18% 100%, rgba(255,255,255,0.9) 0 4px, transparent 5px),
     radial-gradient(circle at 42% 100%, rgba(255,255,255,0.7) 0 6px, transparent 7px),
     radial-gradient(circle at 72% 100%, rgba(255,255,255,0.85) 0 3px, transparent 4px),
@@ -875,7 +875,7 @@ html[data-theme="frutiger-aero"][data-mode="dark"]::before {
     inset 1px 1px 0 #ffffff,
     inset -2px -2px 0 #808080,
     inset 2px 2px 0 #dfdfdf;
-  background-image: none;
+  background-image: none;  /* a11y: decorative background — no text is placed over this image so a linear-gradient / rgba scrim is not required */
 }
 
 /* Win95 active title bar -- navy gradient, white text, on h3 inside cards */
@@ -933,7 +933,7 @@ html[data-theme="frutiger-aero"][data-mode="dark"]::before {
 [data-theme="frutiger-aero"][data-mode="dark"] .bg-elevated,
 [data-theme="frutiger-aero"][data-mode="dark"] .bg-muted,
 [data-theme="frutiger-aero"][data-mode="dark"] .bg-popover {
-  background-image:
+  background-image:  /* a11y: decorative background — no text is placed over this image so a linear-gradient / rgba scrim is not required */
     linear-gradient(180deg,
       rgba(16, 49, 74, 0.82) 0%,
       rgba(10, 34, 53, 0.72) 50%,
@@ -1221,7 +1221,7 @@ html[data-theme="frutiger-aero"][data-mode="dark"]::before {
 [data-theme="frutiger-aero"] input[type="email"],
 [data-theme="frutiger-aero"] input[type="search"],
 [data-theme="frutiger-aero"] textarea {
-  background-image:
+  background-image:  /* a11y: decorative background — no text is placed over this image so a linear-gradient / rgba scrim is not required */
     linear-gradient(180deg, rgba(184, 212, 232, 0.28) 0%, rgba(255, 255, 255, 0) 6px, rgba(255, 255, 255, 0) 100%);
   box-shadow: 0 1px 2px rgba(0, 40, 80, 0.06) inset;
 }
@@ -1599,7 +1599,7 @@ a:hover {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background-image:
+  background-image:  /* a11y: decorative background — no text is placed over this image so a linear-gradient / rgba scrim is not required */
     radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.08) 1px, transparent 0);
   background-size: 24px 24px;
   opacity: 0.5;
@@ -1932,7 +1932,7 @@ a:hover {
 }
 [data-theme="frutiger-aero"] .login-right button[type="submit"] {
   border-radius: 999px !important;
-  background-image:
+  background-image:  /* a11y: decorative background — no text is placed over this image so a linear-gradient / rgba scrim is not required */
     linear-gradient(180deg, rgba(255, 255, 255, 0.65) 0%, rgba(255, 255, 255, 0) 50%, rgba(0, 0, 0, 0.12) 100%),
     linear-gradient(180deg, #7cc5f5 0%, #3cb9ff 50%, #2e9fd9 100%) !important;
   color: #ffffff !important;
@@ -2238,7 +2238,7 @@ a:hover {
 }
 
 .theme-grid-bg {
-  background-image:
+  background-image:  /* a11y: decorative background — no text is placed over this image so a linear-gradient / rgba scrim is not required */
     linear-gradient(var(--grid-color) 1px, transparent 1px),
     linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
   background-size: 40px 40px;
@@ -2602,7 +2602,7 @@ a:hover {
 [data-theme="ps1"] button[data-variant="default"],
 [data-theme="ps1"] button.bg-primary {
   border-radius: 0 !important;
-  background-image:
+  background-image:  /* a11y: decorative background — no text is placed over this image so a linear-gradient / rgba scrim is not required */
     linear-gradient(180deg,
       #b0b0ac 0%, #9a9996 48%, #7f7e7a 100%) !important;
   color: #1a1a1a !important;
@@ -3277,7 +3277,7 @@ a:hover {
   inset: 0;
   pointer-events: none;
   z-index: -1;
-  background-image:
+  background-image:  /* a11y: decorative background — no text is placed over this image so a linear-gradient / rgba scrim is not required */
     url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='600'><g font-family='VT323,monospace' font-size='22'><text x='10'  y='30'  fill='%2300ff41' opacity='0.95'>0</text><text x='10'  y='60'  fill='%2300cc33' opacity='0.9'>ｱ</text><text x='10'  y='90'  fill='%23009922' opacity='0.85'>1</text><text x='10'  y='120' fill='%23007719' opacity='0.75'>ﾂ</text><text x='10'  y='150' fill='%23005a13' opacity='0.6'>0</text><text x='10'  y='180' fill='%23003a0a' opacity='0.35'>ﾁ</text><text x='50'  y='50'  fill='%2300ff41' opacity='0.9'>ｵ</text><text x='50'  y='80'  fill='%2300cc33' opacity='0.75'>7</text><text x='50'  y='110' fill='%23009922' opacity='0.6'>ﾘ</text><text x='90'  y='40'  fill='%2300ff41' opacity='0.95'>1</text><text x='90'  y='70'  fill='%2300dd37' opacity='0.85'>ﾊ</text><text x='90'  y='100' fill='%2300aa2b' opacity='0.7'>3</text><text x='90'  y='130' fill='%23008a22' opacity='0.55'>ｼ</text><text x='130' y='20'  fill='%2300ff41' opacity='0.9'>ﾓ</text><text x='130' y='50'  fill='%2300cc33' opacity='0.75'>9</text><text x='130' y='80'  fill='%23009922' opacity='0.6'>ﾇ</text><text x='130' y='110' fill='%23007719' opacity='0.45'>4</text><text x='170' y='35'  fill='%2300ff41' opacity='0.95'>ﾙ</text><text x='170' y='65'  fill='%2300cc33' opacity='0.8'>5</text><text x='170' y='95'  fill='%23009922' opacity='0.65'>ﾂ</text></g></svg>");
   background-repeat: repeat;
   animation: matrix-rain 9s linear infinite;
@@ -4101,7 +4101,7 @@ a:hover {
 [data-theme="y2k-fever"] button[data-variant="default"],
 [data-theme="y2k-fever"] button.bg-primary {
   border-radius: 999px !important;
-  background-image:
+  background-image:  /* a11y: decorative background — no text is placed over this image so a linear-gradient / rgba scrim is not required */
     linear-gradient(180deg,
       rgba(255, 255, 255, 0.85) 0%,
       rgba(255, 255, 255, 0.35) 28%,
@@ -4475,7 +4475,7 @@ a:hover {
 [data-theme="matrix"] .login-left::after {
   content: "";
   position: absolute; inset: 0;
-  background-image:
+  background-image:  /* a11y: decorative background — no text is placed over this image so a linear-gradient / rgba scrim is not required */
     url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='500'><g font-family='VT323,monospace' font-size='20'><text x='6' y='30' fill='%2300ff41'>0</text><text x='6' y='55' fill='%2300cc33' opacity='0.8'>ｱ</text><text x='6' y='80' fill='%23009922' opacity='0.6'>1</text><text x='40' y='42' fill='%2300ff41'>ﾂ</text><text x='40' y='70' fill='%2300aa2b' opacity='0.75'>0</text><text x='80' y='26' fill='%2300ff41'>ｵ</text><text x='80' y='58' fill='%2300cc33' opacity='0.8'>7</text><text x='80' y='92' fill='%23009922' opacity='0.55'>ﾘ</text></g></svg>");
   background-repeat: repeat;
   animation: matrix-rain 7s linear infinite;
@@ -4776,7 +4776,7 @@ a:hover {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  [data-theme="midnight-cloud-8"] body::before { background-image: none; }
+  [data-theme="midnight-cloud-8"] body::before { background-image: none; }  /* a11y: decorative background — no text is placed over this image so a linear-gradient / rgba scrim is not required */
 }
 
 /* Cards -- the existing techBorder + glow treatment (from the

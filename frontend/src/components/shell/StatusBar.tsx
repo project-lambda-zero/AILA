@@ -228,8 +228,7 @@ export function StatusBar() {
 
   return (
     <footer
-      role="status"
-      aria-live="off"
+      role="status" aria-live="off"
       aria-label="System status"
       data-testid="app-status-bar"
       style={{

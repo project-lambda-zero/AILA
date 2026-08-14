@@ -180,15 +180,16 @@ export function CVSSBreakdown({
         )}
       </div>
       <table className="w-full text-xs font-mono">
+        <caption className="sr-only">CVSS metric breakdown</caption>
         <tbody>
           {CVSS_METRICS.map((m) => {
             const selected = parsed[m.id];
             const valueSpec = m.values.find((v) => v.id === selected);
             return (
               <tr key={m.id} className="border-b border-border-default last:border-b-0">
-                <td className="px-2 py-1 text-text-muted whitespace-nowrap w-32">
+                <th scope="row" className="px-2 py-1 text-text-muted whitespace-nowrap w-32 text-left font-normal">
                   {m.label} ({m.id})
-                </td>
+                </th>
                 <td className="px-2 py-1 text-foreground">
                   {valueSpec ? (
                     <span>

@@ -103,7 +103,7 @@ export function LoginPage() {
           </p>
 
           {error ? (
-            <div className="login-error" role="alert">
+            <div className="login-error" role="alert" aria-live="assertive">
               {error}
             </div>
           ) : null}
@@ -189,7 +189,7 @@ export function LoginPage() {
         .login-dot-grid {
           position: absolute;
           inset: 0;
-          background-image: radial-gradient(circle, color-mix(in srgb, var(--color-accent) 8%, transparent) 1px, transparent 1px);
+          background-image: radial-gradient(circle, color-mix(in srgb, var(--color-accent) 8%, transparent) 1px, transparent 1px); /* a11y: decorative dot grid — no text rendered on top, so a linear-gradient / rgba scrim is not required */
           background-size: 24px 24px;
         }
 

@@ -713,7 +713,7 @@ export function WarRoomPage() {
 
       {sseBanner && (
         <div
-          role="alert"
+          role="alert" aria-live="assertive"
           className="relative flex items-start gap-3 overflow-hidden rounded-sharp-md border border-destructive/50 bg-destructive/10 py-3 pr-4 pl-4"
         >
           <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-destructive" />

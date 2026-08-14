@@ -157,7 +157,7 @@ function RunTable({
 
   return (
     <div className="overflow-x-auto rounded-[4px] border border-border">
-      <table className="w-full font-mono text-xs">
+      <table aria-label="Workflow states" className="w-full font-mono text-xs">
         <thead>
           <tr className="border-b border-border bg-elevated">
             <th className="text-left px-3 py-2 text-muted-foreground font-semibold whitespace-nowrap">

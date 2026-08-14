@@ -323,7 +323,7 @@ export function TagVocabularyPage() {
       {/* Vocabulary table */}
       {!vocabQuery.isLoading && vocabulary.length > 0 && (
         <AilaCard variant="default" padding="none" techBorder glow><div className="overflow-x-auto">
-          <table className="w-full">
+          <table aria-label="Tag vocabulary entries" className="w-full">
             <thead className="border-b border-border bg-elevated">
               <tr>
                 <th className="px-4 py-2 text-left font-mono text-xs uppercase tracking-wider text-text-muted">

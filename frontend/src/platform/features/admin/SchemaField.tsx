@@ -93,11 +93,11 @@ export interface SchemaFieldProps {
 /**
  * Renders a single JSON Schema property as a form field.
  *
- * - string  → <Input type="text">
- * - integer | number → <Input type="number">
- * - boolean → native checkbox
- * - object | array → JSON <Textarea> with live parse validation
- * - unknown type → fallback <Input type="text">
+ * - string  -> Input[type=text]
+ * - integer | number -> Input[type=number]
+ * - boolean -> native checkbox
+ * - object | array -> JSON Textarea with live parse validation
+ * - unknown type -> fallback Input[type=text]
  */
 export function SchemaField({
   name,
@@ -159,6 +159,9 @@ export function SchemaField({
 
   if (schema.type === "boolean") {
     const checked = Boolean(value);
+    // Single-toggle checkbox: WCAG 1.3.1 fieldset/legend applies to
+    // related-option groups, not to a single JSON-schema boolean field
+    // that already has an explicit <label htmlFor>.
     return (
       <div className="flex items-center gap-2">
         <input

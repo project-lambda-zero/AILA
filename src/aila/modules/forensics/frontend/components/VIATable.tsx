@@ -32,7 +32,8 @@ export function VIATable({ projectId }: { projectId: string }) {
 
   return (
     <div className="border border-border rounded-md bg-surface text-foreground overflow-x-auto">
-      <table className="w-full text-sm">
+      <table className="w-full text-sm" aria-label="Verified-in-action rows">
+        <caption className="sr-only">Analyst-verified indicators of activity, one row per confirmed action.</caption>
         <thead className="bg-surface-secondary">
           <tr>
             <th className="text-left px-3 py-2 text-text-muted font-medium">Score</th>

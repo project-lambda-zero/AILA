@@ -61,7 +61,8 @@ export function MachineReadinessCheck({ readinessResult, isLoading, onRetry, onC
         <p className="text-sm text-text-muted">{readinessResult.message}</p>
     
         <div className="border border-border rounded-md bg-surface text-foreground overflow-hidden">
-          <table className="w-full text-sm">
+          <table className="w-full text-sm" aria-label="Machine readiness checks">
+            <caption className="sr-only">Prerequisite checks for the analyzer host, with status and remediation notes.</caption>
             <thead className="bg-surface-secondary">
               <tr>
                 <th className="text-left px-3 py-2 text-text-muted font-medium">Tool</th>
