@@ -211,6 +211,41 @@ class PlatformConfigSchema(BaseModel):
     llm_tool_timeout_s: float = 300.0
     llm_kill_switch: bool = False
 
+    # fix #132 -- in-call LLM retry loop knobs. Previously read as
+    # module-level constants at ``client.py`` import time via
+    # ``os.environ.get("AILA_LLM_MAX_RETRIES"|"AILA_LLM_RETRY_BASE_DELAY_S"
+    # |"AILA_LLM_RETRY_MAX_DELAY_S"|"AILA_LLM_STRUCTURED_JSON_MAX_ATTEMPTS")``,
+    # which froze the value at process start and bypassed PUT /config.
+    # Now resolved through ConfigRegistry so operators can tune the
+    # fast-fail budget at runtime. Env form is
+    # ``AILA_PLATFORM_LLM_MAX_RETRIES`` (etc), which participates in the
+    # env > DB > default chain like every other platform key. Defaults
+    # match the historical fast-fail budget: 3 attempts, 1.0s base, 30s
+    # ceiling, 3 structured-JSON correction attempts.
+    llm_max_retries: int = 3
+    llm_retry_base_delay_s: float = 1.0
+    llm_retry_max_delay_s: float = 30.0
+    llm_structured_json_max_attempts: int = 3
+
+    # Per-call OpenAI/OmniRoute HTTP timeout in seconds. Previously read
+    # via ``os.environ.get("AILA_LLM_TIMEOUT_SECONDS")`` at each call;
+    # now resolved through ConfigRegistry so ops can widen the ceiling
+    # for slow providers without a worker restart.
+    llm_timeout_seconds: float = 180.0
+
+    # fix #132 -- platform reaper cron knobs (previously read via
+    # module-level ``os.environ.get("PLATFORM_WORKER_HEARTBEAT_GRACE_S"
+    # |"PLATFORM_REAPER_ZOMBIE_HEARTBEAT_MIN"
+    # |"PLATFORM_REAPER_CURSOR_BATCH_CAP")`` in ``tasks/worker.py`` at
+    # import time). Renamed env form (still env-first): the layered
+    # lookup accepts ``AILA_PLATFORM_REAPER_CRON_GRACE_S`` etc, and the
+    # DB value can be overridden via PUT /config/platform. Defaults
+    # match the historical values -- 600s cron grace, 10-min zombie
+    # heartbeat threshold, 5000 cursor rows per reaper tick.
+    reaper_cron_grace_s: int = 600
+    reaper_zombie_heartbeat_min: int = 10
+    reaper_cursor_batch_cap: int = 5000
+
     # LLM Pipeline step defaults (Phase 116)
     # Per-task-type overrides via PUT /config at runtime:
     #   llm_pipeline_{step}_{task_type} = true/false

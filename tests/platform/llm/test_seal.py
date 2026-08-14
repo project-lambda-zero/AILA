@@ -54,11 +54,46 @@ class FakeConfigRegistry:
         self._data[key] = value
 
 
+class FakeSecretStore:
+    """Minimal SecretStore fake exposing the two methods the seal step uses.
+
+    #113: _resolve_hmac_key now stores the seal HMAC key via SecretStore
+    (encrypted at rest) rather than ConfigRegistry (plaintext). The fake keeps
+    an in-memory (scope, secret_key)->plaintext map so tests can seed a known
+    key without wiring up the real keyring.
+    """
+
+    def __init__(self, secrets: dict[tuple[str, str], str] | None = None) -> None:
+        self._secrets: dict[tuple[str, str], str] = dict(secrets or {})
+
+    async def get_secret_by_key(self, session: Any, *, scope: str, secret_key: str) -> str | None:
+        return self._secrets.get((scope, secret_key))
+
+    async def upsert_secret(
+        self,
+        session: Any,
+        *,
+        scope: str,
+        secret_key: str,
+        plaintext: str,
+    ) -> None:
+        self._secrets[(scope, secret_key)] = plaintext
+
+
 class FakeConfigProvider:
-    """Wraps FakeConfigRegistry as _registry attribute (mimics LLMConfigProvider)."""
+    """Wraps FakeConfigRegistry / FakeSecretStore (mimics LLMConfigProvider)."""
+
+    _SEAL_KEY = ("platform", "llm_seal_hmac_key")
 
     def __init__(self, overrides: dict[str, Any] | None = None) -> None:
         self._registry = FakeConfigRegistry(overrides)
+        seed: dict[tuple[str, str], str] = {}
+        # Legacy tests seed the seal key by dropping it into the registry
+        # overrides. #113 moved the key to SecretStore; keep the ergonomic
+        # single-dict setup by mirroring that override into the fake store.
+        if overrides and "llm_seal_hmac_key" in overrides:
+            seed[self._SEAL_KEY] = overrides["llm_seal_hmac_key"]
+        self._secret_store = FakeSecretStore(seed)
 
     async def is_step_enabled(self, step: str, task_type: str) -> bool:
         return True
@@ -558,7 +593,11 @@ class TestSealHMACKey:
 
         await step(ctx, sample_messages, routing)
 
-        stored_key = await config._registry.get("platform", "llm_seal_hmac_key")
+        # #113: the key is persisted in SecretStore (encrypted at rest), not
+        # ConfigRegistry. Read it back through the fake's SecretStore surface.
+        stored_key = await config._secret_store.get_secret_by_key(
+            None, scope="platform", secret_key="llm_seal_hmac_key",
+        )
         assert stored_key is not None
         assert len(stored_key) == 64  # 32 bytes = 64 hex chars
         int(stored_key, 16)  # Valid hex
@@ -598,8 +637,11 @@ class TestSealHMACKey:
             task_type="scoring",
             hmac_key=known_key,
         )
-        # The key was used (not auto-generated)
-        assert await config._registry.get("platform", "llm_seal_hmac_key") == known_key
+        # The key was used (not auto-generated) -- read via the SecretStore
+        # fake since #113 moved storage off ConfigRegistry.
+        assert await config._secret_store.get_secret_by_key(
+            None, scope="platform", secret_key="llm_seal_hmac_key",
+        ) == known_key
         assert len(seal_id) == 64
 
 

@@ -55,6 +55,7 @@ from aila.platform.contracts.reasoning import (
     ReasoningCaseState,
     ReasoningContract,
     RejectedHypothesis,
+    ResolvedHypothesis,
 )
 from aila.platform.services.ledger import LedgerService
 from aila.platform.uow import UnitOfWork
@@ -568,6 +569,36 @@ class BranchPool:
             )
 
         async with UnitOfWork() as uow:
+            # fix #167 -- mirror fork()'s cap enforcement. Lock the
+            # investigation row first so concurrent spawn_strategy
+            # calls (and spawn_strategy racing fork) serialize on the
+            # cap check, then count ACTIVE branches against the same
+            # ``max_branches_per_investigation`` cap. Without this the
+            # API's 30/min rate limiter is the only backstop and
+            # parallel calls can fork-bomb an investigation past the
+            # cap, each extra branch consuming an ARQ slot + LLM
+            # budget.
+            await uow.session.exec(
+                _select(self._investigation_model)
+                .where(self._investigation_model.id == self.investigation_id)
+                .with_for_update(),
+            )
+            cap = await self._max_branches()
+            active_rows = (await uow.session.exec(
+                _select(self._branch_model).where(
+                    self._branch_model.investigation_id
+                    == self.investigation_id,
+                    self._branch_model.status
+                    == BranchStatus.ACTIVE.value,
+                ),
+            )).all()
+            if len(active_rows) >= cap:
+                raise BranchManagerError(
+                    f"branch count cap exceeded: {cap} active branches "
+                    f"on investigation {self.investigation_id} "
+                    f"(tune via PUT /config/{self._module_id}/max_branches_per_investigation)",
+                )
+
             inherited_case_state = "{}"
             parent_at_turn: int | None = None
             if parent_branch_id:
@@ -836,14 +867,30 @@ def merge_rejected(
     return list(by_id.values())
 
 
+def merge_resolved(
+    a: list[ResolvedHypothesis], b: list[ResolvedHypothesis],
+) -> list[ResolvedHypothesis]:
+    """Union of two auto-resolved-hypothesis lists by id."""
+    by_id: dict[str, ResolvedHypothesis] = {h.id: h for h in a}
+    for h in b:
+        by_id[h.id] = h
+    return list(by_id.values())
+
+
 def _merge_case_states(
     a: ReasoningCaseState, b: ReasoningCaseState,
 ) -> ReasoningCaseState:
     """Merge two case states for branch merge.
 
     Contract: prefer the more-specific (non-default) contract.
-    Hypotheses + rejected: id-union (later wins on duplicate id).
+    Hypotheses + rejected + resolved: id-union (later wins on
+    duplicate id).
     Observables: dict union (b wins on key conflict).
+    current_turn: max of the two -- the merged branch inherits the
+    later turn number so the staleness directive
+    (``age = current_turn - opened_at_turn``) keeps producing positive
+    ages for hypotheses that pre-date the merge; fix #178 (a reset
+    to 0 hid every stale hypothesis and removed convergence pressure).
     """
     contract = a.contract
     if not _has_contract(contract) and _has_contract(b.contract):
@@ -853,7 +900,13 @@ def _merge_case_states(
         contract=contract,
         hypotheses=merge_hypotheses(a.hypotheses, b.hypotheses),
         rejected=merge_rejected(a.rejected, b.rejected),
+        # fix #178 -- union of resolved (auto-closed at terminal); the
+        # prior omission dropped every resolved hypothesis from both
+        # source branches on merge, so the frontend rendered them as
+        # gone instead of resolved.
+        resolved=merge_resolved(a.resolved, b.resolved),
         observables={**a.observables, **b.observables},
+        current_turn=max(a.current_turn, b.current_turn),
     )
 
 

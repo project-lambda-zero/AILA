@@ -28,7 +28,10 @@ one is stale, and the fix depends on which one:
 +-----------------+------------------+---------------------+----------------------------+
 | terminal        | resumable        | absent              | delete stale cursor        |
 +-----------------+------------------+---------------------+----------------------------+
-| RUNNING         | any              | present + fresh hb  | consistent, no-op          |
+| RUNNING         | resumable        | present             | consistent, no-op          |
++-----------------+------------------+---------------------+----------------------------+
+| RUNNING         | reserved terminal| present             | Case D: flip FAILED + drop |
+|                 |                  |                     | lock + delete cursor       |
 +-----------------+------------------+---------------------+----------------------------+
 
 The reconciler does NOT restart any process, kill any worker, or touch
@@ -515,10 +518,82 @@ class StateReconciler:
                 healed=bool(actions), actions=tuple(actions),
             )
 
-        # Everything else (task QUEUED / WAITING / RUNNING+lock present,
-        # or the lock-probe was skipped) is either consistent or falls
-        # under a periodic sweep's owned scope; the reconciler declines
-        # to heal so we do not fork any of those paths here.
+        # Case D (#120): task RUNNING, ARQ in-progress lock present,
+        # BUT the workflow cursor already sits in a reserved terminal.
+        # This is the "worker completed the workflow, then crashed
+        # before updating TaskRecord" window. The lock is a ghost worker
+        # slot AND the row is a stuck-RUNNING zombie -- neither the
+        # heartbeat reaper (still fresh, worker died mid-teardown) nor
+        # Case B (which requires lock absent) nor Case C (which requires
+        # terminal task status) covers it. Without Case D on-demand
+        # reconcile returns healed=False and falsely reports the row as
+        # consistent; only the 24h periodic reaper eventually cleans it.
+        #
+        # Heal: flip status FAILED with a distinct suffix so the audit
+        # trail names the crash-mid-teardown mode, drop the ghost lock,
+        # and delete the terminal cursor (same three mutations Case B
+        # would run if it saw the same cursor state).
+        if (
+            signals.task_status == TaskStatus.RUNNING.value
+            and signals.lock_present is True
+            and signals.cursor_state in _TERMINAL_CURSOR_STATES
+        ):
+            await self._flip_status(
+                task_id,
+                new_status=TaskStatus.FAILED.value,
+                error_suffix=(
+                    f"[state_reconciler: cursor terminal "
+                    f"({signals.cursor_state}) but task RUNNING with "
+                    "in-progress lock -- worker crashed mid-teardown]"
+                ),
+            )
+            actions.append(ReconcileAction(
+                kind="flip_status_failed",
+                reason=(
+                    f"RUNNING + lock present + cursor terminal "
+                    f"({signals.cursor_state}); worker crashed after "
+                    "workflow completion but before status flip -- "
+                    "status -> FAILED"
+                ),
+            ))
+            dropped = await self._drop_lock(task_id)
+            if dropped:
+                actions.append(ReconcileAction(
+                    kind="drop_in_progress_lock",
+                    reason=(
+                        "ARQ in-progress lock was a ghost slot "
+                        "(worker died mid-teardown); dropped"
+                    ),
+                ))
+            await self._delete_cursor(task_id)
+            actions.append(ReconcileAction(
+                kind="delete_stale_cursor",
+                reason=(
+                    f"cursor was in reserved terminal "
+                    f"({signals.cursor_state}); deleted post-heal"
+                ),
+            ))
+            await resilience.emit_recovery_event(
+                investigation_id=signals.investigation_id,
+                action="reconcile_crashed_mid_teardown",
+                detail={
+                    "task_id": task_id,
+                    "task_status": signals.task_status,
+                    "cursor_state": signals.cursor_state,
+                    "lock_dropped": bool(dropped),
+                },
+                source="state_reconciler",
+            )
+            return ReconcileReport(
+                task_id=task_id, signals=signals,
+                healed=True, actions=tuple(actions),
+            )
+
+        # Everything else (task QUEUED / WAITING / RUNNING+lock present
+        # with a resumable cursor, or the lock-probe was skipped) is
+        # either consistent or falls under a periodic sweep's owned
+        # scope; the reconciler declines to heal so we do not fork any
+        # of those paths here.
         return ReconcileReport(
             task_id=task_id, signals=signals,
             healed=False, actions=(),

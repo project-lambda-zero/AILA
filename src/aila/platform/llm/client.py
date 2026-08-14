@@ -23,7 +23,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import os
 import re
 import time as _time_mod
 from collections.abc import Awaitable, Callable
@@ -39,6 +38,7 @@ from openai import (
 )
 from pydantic import BaseModel, ValidationError
 
+from ..config_base import _shared_registry
 from ..exceptions import AILAError
 from .cancellation import LLMCancelledError, is_run_cancelled
 from .config import LLMConfigProvider
@@ -325,7 +325,7 @@ class LLMResponse:
 # Background (the change shipped on 2026-06-13 after the maddie /
 # <inv-uuid-a> stall was diagnosed on inv <inv-uuid-b> et al):
 #
-# The old budget was _MAX_RETRIES=100 × up-to-30s backoff = ~48 min
+# The old budget was max_retries=100 × up-to-30s backoff = ~48 min
 # of in-task retry burn. That meant a single worker process would
 # pin itself on ONE task's retry loop for nearly an hour during any
 # sustained provider degradation (NVIDIA NIM 40 RPM throttling,
@@ -341,24 +341,59 @@ class LLMResponse:
 # ``retryable=True`` so ARQ knows the task can resume; cursor SSOT
 # preserves the workflow state between attempts.
 #
-# With _MAX_RETRIES=3 and capped 30s backoff:
+# With max_retries=3 and capped 30s backoff:
 #   attempts 1-3: 1s, 2s, 4s
 # Total in-task budget ≈ 7 seconds. Anything longer is the queue
 # layer's job, not the in-call retry loop.
 #
 # For ``RateLimitError`` specifically: when the provider sends a
-# ``Retry-After`` header, honour it (capped at _RETRY_MAX_DELAY).
+# ``Retry-After`` header, honour it (capped at retry_max_delay).
 # That lets us delay-and-retry within the existing 3-attempt
 # budget instead of failing immediately on a known-recoverable
 # 429 with a "try again in N seconds" signal.
 #
-# Env knobs (defaults landed for the new fast-fail behavior):
-#   AILA_LLM_MAX_RETRIES        -- in-call attempts cap (default 3)
-#   AILA_LLM_RETRY_BASE_DELAY_S -- first-attempt backoff (default 1.0s)
-#   AILA_LLM_RETRY_MAX_DELAY_S  -- per-attempt backoff cap (default 30.0s)
-_MAX_RETRIES = max(1, int(os.environ.get("AILA_LLM_MAX_RETRIES", "3")))
-_RETRY_BASE_DELAY = max(0.1, float(os.environ.get("AILA_LLM_RETRY_BASE_DELAY_S", "1.0")))
-_RETRY_MAX_DELAY = max(_RETRY_BASE_DELAY, float(os.environ.get("AILA_LLM_RETRY_MAX_DELAY_S", "30.0")))
+# fix #132 -- knobs live on ``PlatformConfigSchema`` and are resolved
+# through :class:`aila.storage.registry.ConfigRegistry` at each call,
+# not read as module-level constants at import time. The env form is
+# ``AILA_PLATFORM_LLMmax_retries`` /
+# ``AILA_PLATFORM_LLMretry_base_delay_S`` /
+# ``AILA_PLATFORM_LLMretry_max_delay_S``, participating in the
+# env > DB > default chain so ``PUT /config/platform/llm_max_retries``
+# lands on the next call without a worker restart. Defaults match the
+# historical fast-fail budget (see the "Retry budget" essay above).
+def _resolve_retry_budget() -> tuple[int, float, float]:
+    """Return ``(max_retries, base_delay_s, max_delay_s)`` from ConfigRegistry.
+
+    Sync call for hot retry paths. Values are cached inside the registry
+    (60s TTL + cross-process invalidation), so repeated resolution is
+    close to a dict get. Enforces the same floors the module-level
+    reads used to enforce (``max(1, ...)`` for retries; ``max(0.1, ...)``
+    for base delay; base <= max delay).
+    """
+    registry = _shared_registry()
+    max_retries = max(1, int(registry.get_sync("platform", "llm_max_retries")))
+    base = max(0.1, float(registry.get_sync("platform", "llm_retry_base_delay_s")))
+    ceiling = max(base, float(registry.get_sync("platform", "llm_retry_max_delay_s")))
+    return max_retries, base, ceiling
+
+
+def _resolve_structured_json_max_attempts() -> int:
+    """Return the chat_structured() correction-loop budget."""
+    return max(1, int(
+        _shared_registry().get_sync(
+            "platform", "llm_structured_json_max_attempts",
+        )
+    ))
+
+
+def _resolve_llm_timeout_seconds() -> float:
+    """Return the per-call HTTP timeout in seconds."""
+    try:
+        return float(
+            _shared_registry().get_sync("platform", "llm_timeout_seconds")
+        )
+    except (TypeError, ValueError):
+        return 180.0
 
 # chat_structured() correction-loop budget. TIGHT BY DESIGN.
 #
@@ -376,10 +411,9 @@ _RETRY_MAX_DELAY = max(_RETRY_BASE_DELAY, float(os.environ.get("AILA_LLM_RETRY_M
 # ``ValidationError`` text and, when available, the partial JSON that was
 # extracted, so the model sees exactly which field it botched instead of
 # a generic "try again" nudge. This is per-call (chat_structured); the
-# outer ``_MAX_RETRIES`` still gates provider-side transient failures.
-_STRUCTURED_JSON_MAX_ATTEMPTS = max(
-    1, int(os.environ.get("AILA_LLM_STRUCTURED_JSON_MAX_ATTEMPTS", "3"))
-)
+# outer ``llm_max_retries`` still gates provider-side transient failures.
+# The value is resolved through ``_resolve_structured_json_max_attempts()``
+# above (see fix #132 essay), not read as a module-level constant.
 
 # HTTP status codes that stay retryable even though they land in the 4xx
 # range: request-timeout (408), too-early (425), and rate-limit (429).
@@ -795,9 +829,11 @@ class AilaLLMClient:
         4. Returns LLMResponse with valid JSON as .content
 
         On parse or schema-validation failure, retries with an escalating
-        correction prompt bounded by ``_STRUCTURED_JSON_MAX_ATTEMPTS``
-        (env override ``AILA_LLM_STRUCTURED_JSON_MAX_ATTEMPTS``, default 3
-        total attempts). Every retry after the first embeds the verbatim
+        correction prompt bounded by the
+        ``platform.llm_structured_json_max_attempts`` config knob (env
+        override ``AILA_PLATFORM_LLMstructured_json_max_attempts``,
+        default 3 total attempts, resolved through ConfigRegistry so
+        ``PUT /config`` lands on the next call -- fix #132). Every retry after the first embeds the verbatim
         pydantic ``ValidationError`` text and, when the model at least
         produced parseable JSON, the extracted partial payload -- so the
         model sees exactly which field is wrong instead of a generic
@@ -831,7 +867,14 @@ class AilaLLMClient:
         prior_error_text: str = ""
         prior_partial_json: str | None = None
 
-        for attempt in range(_STRUCTURED_JSON_MAX_ATTEMPTS):
+        # fix #132 -- resolve the budget through ConfigRegistry so
+        # PUT /config lands on the next call, and hoist to a local so
+        # every log line + terminal raise reports the SAME cap the
+        # loop iterated (a mid-call registry mutation cannot desync
+        # the reported cap from the actual iteration count).
+        structured_json_max_attempts = _resolve_structured_json_max_attempts()
+
+        for attempt in range(structured_json_max_attempts):
             # #44: cancellation peek between correction attempts. chat_json's
             # own retry loop honours the token too; this catches a cancel
             # that flipped between the previous correction call and the
@@ -839,7 +882,7 @@ class AilaLLMClient:
             if run_id is not None and is_run_cancelled(run_id):
                 raise LLMCancelledError(
                     f"run {run_id} cancelled during chat_structured "
-                    f"(attempt {attempt + 1}/{_STRUCTURED_JSON_MAX_ATTEMPTS})"
+                    f"(attempt {attempt + 1}/{structured_json_max_attempts})"
                 )
 
             if attempt == 0:
@@ -895,7 +938,7 @@ class AilaLLMClient:
 
             logger.warning(
                 "chat_structured: attempt %d/%d failed for %s -- %s",
-                attempt + 1, _STRUCTURED_JSON_MAX_ATTEMPTS, model_class.__name__,
+                attempt + 1, structured_json_max_attempts, model_class.__name__,
                 (error_text or "unparseable").replace("\n", " | ")[:400],
             )
 
@@ -905,7 +948,7 @@ class AilaLLMClient:
 
         raise LLMError(
             f"Failed to parse LLM response into {model_class.__name__} "
-            f"after {_STRUCTURED_JSON_MAX_ATTEMPTS} attempts",
+            f"after {structured_json_max_attempts} attempts",
             retryable=False,
         )
 
@@ -1024,18 +1067,22 @@ class AilaLLMClient:
 
         # Per-task timeout: OmniRoute fronts real provider models which can take
         # >60s on a large prompt (observed: 7.5k-char forensic prompts timing
-        # out on cc/claude-sonnet-4-6). Default raised to 180s and overridable
-        # via env (AILA_LLM_TIMEOUT_SECONDS) or ConfigRegistry for ops.
-        import os as _os
-        try:
-            _timeout_s = float(_os.environ.get("AILA_LLM_TIMEOUT_SECONDS", "180"))
-        except ValueError:
-            _timeout_s = 180.0
+        # out on cc/claude-sonnet-4-6). Default 180s; resolved live through
+        # ConfigRegistry (fix #132) so PUT /config/platform/llm_timeout_seconds
+        # lands on the next call.
+        _timeout_s = _resolve_llm_timeout_seconds()
         client = self._client_pool.get(
             api_key=routing.api_key,
             base_url=routing.base_url,
             timeout_s=_timeout_s,
         )
+
+        # These were module-level constants before fix #132 hoisted them
+        # into ConfigRegistry. Locals now, resolved once at call start so
+        # every log line / terminal raise reports the SAME cap the loop
+        # iterated (a mid-call registry mutation cannot desync the
+        # reported cap from the actual iteration count).
+        max_retries, retry_base_delay, retry_max_delay = _resolve_retry_budget()
 
         last_error: Exception | None = None
         # #44: per-attempt idempotency state. Recreated on every retry so
@@ -1046,7 +1093,7 @@ class AilaLLMClient:
         # against the same investigation and duplicate side effects.
         call_state = _CallState()
 
-        for attempt in range(_MAX_RETRIES):
+        for attempt in range(max_retries):
             # #44: abort promptly if the run was cancelled mid-retry. An
             # investigation keys its cancellation token on run_id
             # (== investigation_id) and creates it at the turn-boundary check
@@ -1229,7 +1276,7 @@ class AilaLLMClient:
                 # long to wait. NVIDIA NIM, OpenRouter, OpenAI all send
                 # this header on 429s -- it's the most accurate delay we
                 # can pick. Fallback to exponential backoff (capped at
-                # _RETRY_MAX_DELAY) when the header is missing.
+                # retry_max_delay) when the header is missing.
                 _record_llm_error(routing.base_url, kind="http_5xx")
                 if self._commit_gate_blocks_retry(
                     call_state, exc, attempt, routing.model_id
@@ -1247,14 +1294,14 @@ class AilaLLMClient:
                         except (TypeError, ValueError):
                             retry_after_s = None
                 if retry_after_s is not None:
-                    delay = min(max(retry_after_s, 0.1), _RETRY_MAX_DELAY)
+                    delay = min(max(retry_after_s, 0.1), retry_max_delay)
                 else:
-                    delay = min(_RETRY_BASE_DELAY * (2 ** attempt), _RETRY_MAX_DELAY)
+                    delay = min(retry_base_delay * (2 ** attempt), retry_max_delay)
                 logger.warning(
                     "LLM rate-limit (attempt %d/%d): %s -- retrying in %.1fs "
                     "(retry_after_hdr=%s)",
                     attempt + 1,
-                    _MAX_RETRIES,
+                    max_retries,
                     type(exc).__name__,
                     delay,
                     retry_after_s,
@@ -1271,11 +1318,11 @@ class AilaLLMClient:
                 ):
                     raise self._wrap_non_retryable_after_commit(exc, call_state) from exc
                 last_error = exc
-                delay = min(_RETRY_BASE_DELAY * (2 ** attempt), _RETRY_MAX_DELAY)
+                delay = min(retry_base_delay * (2 ** attempt), retry_max_delay)
                 logger.warning(
                     "LLM transient error (attempt %d/%d): %s -- retrying in %.1fs",
                     attempt + 1,
-                    _MAX_RETRIES,
+                    max_retries,
                     type(exc).__name__,
                     delay,
                 )
@@ -1288,11 +1335,11 @@ class AilaLLMClient:
                     ):
                         raise self._wrap_non_retryable_after_commit(exc, call_state) from exc
                     last_error = exc
-                    delay = min(_RETRY_BASE_DELAY * (2 ** attempt), _RETRY_MAX_DELAY)
+                    delay = min(retry_base_delay * (2 ** attempt), retry_max_delay)
                     logger.warning(
                         "LLM retryable error (attempt %d/%d): %s -- retrying in %.1fs",
                         attempt + 1,
-                        _MAX_RETRIES,
+                        max_retries,
                         exc.message,
                         delay,
                     )
@@ -1356,11 +1403,11 @@ class AilaLLMClient:
                 ):
                     raise self._wrap_non_retryable_after_commit(exc, call_state) from exc
                 last_error = exc
-                delay = min(_RETRY_BASE_DELAY * (2 ** attempt), _RETRY_MAX_DELAY)
+                delay = min(retry_base_delay * (2 ** attempt), retry_max_delay)
                 logger.warning(
                     "LLM provider error (attempt %d/%d): %s: %s -- retrying in %.1fs",
                     attempt + 1,
-                    _MAX_RETRIES,
+                    max_retries,
                     type(exc).__name__,
                     redact_secrets(str(exc))[:200],
                     delay,
@@ -1371,7 +1418,7 @@ class AilaLLMClient:
         # redact_secrets is imported at runtime rather than at module load.
         from ..services.log_redact import redact_secrets
         raise LLMError(
-            f"LLM API failed after {_MAX_RETRIES} retries: "
+            f"LLM API failed after {max_retries} retries: "
             f"{redact_secrets(str(last_error))}",
             retryable=True,
         )
@@ -1465,10 +1512,8 @@ class AilaLLMClient:
         if self.cost_tracker is not None and run_id is not None:
             await self.cost_tracker.check_budget_async(run_id, routing.task_type)
 
-        try:
-            _timeout_s = float(os.environ.get("AILA_LLM_TIMEOUT_SECONDS", "180"))
-        except ValueError:
-            _timeout_s = 180.0
+        # fix #132 -- ConfigRegistry-backed HTTP timeout (see essay above).
+        _timeout_s = _resolve_llm_timeout_seconds()
         client = self._client_pool.get(
             api_key=routing.api_key,
             base_url=routing.base_url,

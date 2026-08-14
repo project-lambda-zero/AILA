@@ -7,6 +7,58 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-08-13 -- Security, race, and wiring fixes from the peer-review backlog
+
+### Fixed
+
+- Security: admin/workflows now refuses a team-scoped admin (god-tier gate,
+  team_id must be None), closing a cross-tenant read (#103). The seal HMAC key
+  is stored encrypted through the SecretStore instead of plaintext in the config
+  registry (#113). automation schedule update and delete are team-scoped and
+  return 404 for an out-of-scope id instead of a 403 that leaked existence
+  (#114). The NVD API key resolves through the SecretStore first, with the
+  environment variable kept only as a documented bootstrap fallback (#116).
+  OIDC and the auth key-list endpoints carry rate limits consistent with their
+  siblings (#206).
+- Race: the state reconciler now handles the RUNNING + lock-present +
+  terminal-cursor case (crash mid-teardown), healing the row idempotently
+  (#120).
+- Bug: the investigation cost read degrades to zero on a database error instead
+  of returning a 500 (#101); domain-event persistence catches and logs
+  SQLAlchemyError instead of losing journal writes silently (#122); the LLM log
+  filters by the caller user id (a new indexed llm_cost_records.user_id column,
+  migration 124) instead of matching on team id (#124); the ARQ worker sets
+  max_jobs to 1 so concurrency matches the documented single-task-per-process
+  contract (#196).
+- Performance: the knowledge router keeps common-word queries on the cheap path
+  and only routes genuine multi-hop shapes to the graph (#126); a MiniLM
+  embedding dimension mismatch raises and falls back to full-text search instead
+  of zero-padding vectors into an incomparable space (#127); expired seal records
+  are purged on a cron instead of an O(N) delete on every LLM call (#129); the
+  cost-ceiling lookup uses the async path so the LLM hot path no longer spawns an
+  untracked sync connection pool (#130); the audit-mcp observable caps are back
+  to 32 KiB so the context-shrink actually fires (#194).
+
+### Changed
+
+- Reasoning: the tool-prefix set includes android_mcp and the engine ledger
+  prefix, so android_mcp evidence is never evicted and the agent cannot shadow
+  the ledger observable (#109, #179). The post-turn branch read is FOR UPDATE,
+  serializing the turn-count and case-state write under double-dispatch (#180).
+  spawn_strategy takes an investigation lock and enforces the fork cap (#167).
+  Case-state merges preserve resolved hypotheses and keep the higher turn number
+  (#178).
+- Wiring: forensics, platform, and module tuning knobs read through the config
+  registry instead of environment variables, so live config edits take effect
+  (#131, #132). ModuleProtocol.report_count carries team_id across the protocol
+  and every module implementer, and the vulnerability count filters by run id
+  (#192, #125). The malware module registers real reasoning strategies and a
+  domain profile (#110); malware persona prompts use the supported string-listing
+  tool and the full action vocabulary (#187, #188); fleet severity counts allow
+  co-existing severities on one system (#199). The bridge read-function adapter
+  preserves the fallback marker (#193) and the audit-mcp middleware drops unknown
+  pagination kwargs (#195).
+
 ## [0.5.5] - 2026-08-13 -- Platform sandbox, fuzz feedback loop, trajectory corpus
 
 ### Added

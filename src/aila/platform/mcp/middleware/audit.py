@@ -30,6 +30,8 @@ from typing import TYPE_CHECKING, Any
 
 from aila.platform.mcp.middleware._kwarg_alias import (
     build_alias_map,
+    build_known_params,
+    drop_unknown_pagination_kwargs,
     normalize_kwargs,
 )
 
@@ -398,6 +400,19 @@ class AuditMcpMiddleware:
     # ``list_tool_specs()`` after the first /tools fetch.
     _AUTO_ALIAS_MAP: dict[str, dict[str, str]] = {}
 
+    # fix #195 -- canonical params per action, used by
+    # ``drop_unknown_pagination_kwargs`` to strip pagination-style kwargs
+    # (limit / offset / page / cursor / count) that an agent attaches
+    # to audit-mcp tools that do not declare them (attack_surface,
+    # complexity_hotspots, ...). Without this drop, the kwargs reach
+    # validation and burn a full agent turn as ``unknown parameter``.
+    # ``ida.py`` already applied this drop; ``audit.py`` was missing
+    # it, so agents tuned to IDA's forgiving behaviour incurred an
+    # extra error cycle on every audit-mcp call. Populated by
+    # ``list_tool_specs()`` from the live catalog alongside
+    # ``_AUTO_ALIAS_MAP``.
+    _KNOWN_PARAMS: dict[str, frozenset[str]] = {}
+
     # ── Schema-driven tool catalog ────────────────────────────────────
     #
     # The MCP server exposes the full JSON Schema for every tool via
@@ -466,8 +481,24 @@ class AuditMcpMiddleware:
     def _normalize_kwargs(
         cls, action: str, kwargs: dict[str, Any],
     ) -> tuple[dict[str, Any], list[str]]:
-        """Delegate to the shared resolver against the live alias map."""
-        return normalize_kwargs(action, kwargs, cls._AUTO_ALIAS_MAP)
+        """Alias-resolve, then strip pagination kwargs the tool doesn't declare.
+
+        fix #195 -- mirrors ``ida.py``: alias renaming ->
+        :func:`drop_unknown_pagination_kwargs`. When ``_KNOWN_PARAMS``
+        is still empty (first call before ``list_tool_specs`` populated
+        it), the drop step is a no-op and the caller sees only the
+        alias-resolver output, preserving prior behaviour on cold
+        start.
+        """
+        renamed, alias_notes = normalize_kwargs(
+            action, kwargs, cls._AUTO_ALIAS_MAP,
+        )
+        if not cls._KNOWN_PARAMS:
+            return renamed, alias_notes
+        filtered, drop_notes = drop_unknown_pagination_kwargs(
+            action, renamed, cls._KNOWN_PARAMS,
+        )
+        return filtered, alias_notes + drop_notes
 
     # ── Heavy-tool semaphore ──────────────────────────────────────────
 
@@ -977,6 +1008,9 @@ class AuditMcpMiddleware:
         cls._AUTO_ALIAS_MAP = build_alias_map(
             cls._SPEC_CACHE, cls._KW_FAMILIES, cls._MANUAL_OVERRIDES,
         )
+        # fix #195 -- known-params index feeds
+        # ``drop_unknown_pagination_kwargs`` in ``_normalize_kwargs``.
+        cls._KNOWN_PARAMS = build_known_params(cls._SPEC_CACHE)
         _log.info(
             "audit_mcp_bridge: catalog loaded -- %d tools, %d with "
             "alias maps",

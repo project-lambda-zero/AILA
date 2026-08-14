@@ -28,6 +28,8 @@ import logging
 import threading
 from typing import Any
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from aila.platform.exceptions import AILAError
 
 from .bus import _payload_dict
@@ -41,7 +43,10 @@ _log = logging.getLogger(__name__)
 # Failure-mode isolation for the async worker used by the persistence
 # subscriber. Runtime errors from asyncio.run + SQLAlchemy errors are
 # absorbed so a broken journal never blocks the business action that
-# fired the domain event.
+# fired the domain event. ``SQLAlchemyError`` is mandatory here (#122):
+# without it a DB hiccup during a background persist escapes into the
+# discarded Future the executor holds and the failure is silently lost --
+# no log, no metric, no dead-letter row.
 _PERSIST_ERRORS: tuple[type[BaseException], ...] = (
     RuntimeError,
     OSError,
@@ -51,6 +56,7 @@ _PERSIST_ERRORS: tuple[type[BaseException], ...] = (
     AttributeError,
     KeyError,
     ImportError,
+    SQLAlchemyError,
     AILAError,
 )
 

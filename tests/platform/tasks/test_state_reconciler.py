@@ -110,7 +110,13 @@ async def _read_cursor(task_id: str) -> WorkflowStateCursor | None:
 
 
 class _NoLockReconciler(StateReconciler):
-    """Reconciler variant with a deterministic ``_probe_lock`` return."""
+    """Reconciler variant with a deterministic ``_probe_lock`` return.
+
+    Also stubs ``_drop_lock`` so the Redis mutation is deterministic
+    (returns whatever ``lock_present`` reports -- True means the ghost
+    key was ``delete``-d, False means the probe returned absent so
+    there was nothing to drop). Tests never open a real Redis client.
+    """
 
     def __init__(self, *, lock_present: bool | None) -> None:
         super().__init__(
@@ -119,9 +125,14 @@ class _NoLockReconciler(StateReconciler):
             zombie_threshold_s=30,
         )
         self._forced_lock = lock_present
+        self._drop_lock_calls: list[str] = []
 
     async def _probe_lock(self, task_id: str) -> bool | None:  # noqa: ARG002
         return self._forced_lock
+
+    async def _drop_lock(self, task_id: str) -> bool:
+        self._drop_lock_calls.append(task_id)
+        return bool(self._forced_lock)
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +274,44 @@ class TestDriftHeal:
         assert rec is not None
         assert rec.status == TaskStatus.FAILED.value
         assert await _read_cursor(task_id) is None
+
+    async def test_case_d_running_lock_present_terminal_cursor_heals(
+        self, test_db,
+    ) -> None:
+        """Case D (#120): worker completed the workflow (cursor is in a
+        reserved terminal) but crashed before flipping TaskRecord, and
+        the ARQ in-progress lock is still ghost-present. Without a
+        dedicated case the reconciler falls through to the "consistent"
+        no-op and reports healed=False, so the row sits stuck-RUNNING
+        for 24h until the periodic reaper picks it up. The heal path
+        MUST flip status FAILED, drop the ghost lock, and delete the
+        terminal cursor -- three mutations, all idempotent."""
+        del test_db
+        # Fresh heartbeat: proves the heal fires on the cursor+lock
+        # signal, not the stale-heartbeat reaper path (which would
+        # otherwise mask the bug the test guards against).
+        task_id = await _seed_task(
+            heartbeat_delta_min=0, started_delta_min=5,
+        )
+        await _seed_cursor(task_id, "__succeeded__")
+        r = _NoLockReconciler(lock_present=True)
+        report = await r.reconcile(task_id)
+        assert report.healed is True
+        kinds = report.get_action_kinds()
+        assert "flip_status_failed" in kinds
+        assert "drop_in_progress_lock" in kinds
+        assert "delete_stale_cursor" in kinds
+        assert r._drop_lock_calls == [task_id]
+        rec = await _read_task(task_id)
+        assert rec is not None
+        assert rec.status == TaskStatus.FAILED.value
+        assert rec.error is not None
+        assert "crashed mid-teardown" in rec.error
+        assert await _read_cursor(task_id) is None
+        # Second call: everything is already consistent -- healed=False.
+        r2 = _NoLockReconciler(lock_present=False)
+        second = await r2.reconcile(task_id)
+        assert second.healed is False
 
     async def test_running_fresh_heartbeat_no_lock_left_alone(
         self, test_db,

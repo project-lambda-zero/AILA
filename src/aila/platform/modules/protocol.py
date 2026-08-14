@@ -393,16 +393,32 @@ class ModuleProtocol(Protocol):
         """
         return {"items": [], "total": 0}
 
-    async def report_count(self, run_id: str, session: Any) -> dict[str, Any]:
+    async def report_count(
+        self,
+        run_id: str,
+        session: Any,
+        *,
+        team_id: str | None = None,
+    ) -> dict[str, Any]:
         """Return semantic count breakdown for a report owned by this module (optional).
 
-        Called by GET /reports/{run_id}/count. The vulnerability module returns
-        severity breakdown + kev_count. Modules that do not own this run_id
+        Called by GET /reports/{run_id}/count and by the platform
+        dashboard aggregator. The vulnerability module returns severity
+        breakdown + kev_count. Modules that do not own this run_id
         should return {} without raising.
 
         Args:
-            run_id: WorkflowRunRecord primary key.
+            run_id: WorkflowRunRecord primary key. Dashboard aggregator
+                passes an empty string when it wants a module-wide
+                summary (each module decides what that means).
             session: Active AsyncSession.
+            team_id: Caller's team id (#36). When provided, implementations
+                MUST scope aggregate queries to that team so a per-team
+                dashboard cannot leak counts from other teams. ``None``
+                means god-tier (TEAM-06) and no team filter is applied.
+                Every dashboard caller passes ``team_id``, so silently
+                accepting the kwarg is required -- an implementation that
+                omits it raises ``TypeError`` on every dashboard load.
 
         Returns:
             Dict of count fields (e.g. {"total_findings": 55, "critical": 5}).
@@ -491,6 +507,31 @@ class ModuleProtocol(Protocol):
         Returns:
             Dict mapping system_id to top severity string (critical|high|medium|low).
             Omit a system_id if it has no findings. Return {} if the module has no data.
+        """
+        return {}
+
+    async def fleet_severity_counts(
+        self, system_ids: list[int], session: Any,
+    ) -> dict[int, dict[str, int]]:
+        """Return per-severity counts per system_id for the given fleet slice.
+
+        Companion to ``fleet_severity_summary`` (which collapses to a single
+        top-severity label). This method preserves the full distribution so
+        the topology overlay can render, e.g., critical=1 AND high=1 on a
+        single system. The systems list endpoint continues to use the
+        top-severity summary; only overlays that display multi-severity
+        counts should call this.
+
+        Args:
+            system_ids: List of ManagedSystemRecord primary keys.
+            session: Active AsyncSession.
+
+        Returns:
+            Dict mapping system_id to a ``{severity_slot: count}`` mapping
+            using the topology ``SeverityCounts`` slots
+            (``critical`` / ``high`` / ``medium`` / ``low``). Omit a
+            system_id if it has no findings. Return ``{}`` if the module
+            has no data.
         """
         return {}
 

@@ -117,13 +117,23 @@ async def list_llm_log(
             pattern = f"%{search}%"
             stmt = stmt.where(LLMCostRecord.prompt_preview.ilike(pattern))  # type: ignore[attr-defined]
 
+        # #124 user filter: LLMCostRecord.user_id is populated at write time
+        # from ``current_user_id()`` (the ContextVar bound by the auth
+        # dependency). The pre-fix filter compared the query string against
+        # ``WorkflowRunRecord.team_id`` and returned wrong or empty results
+        # -- WorkflowRun has no user_id, so per-user filtering was impossible
+        # as written. Now the filter is an index scan on the correct column.
+        # Worker-triggered rows (agent turns, background scans) have NULL
+        # user_id and never match, which is honest -- they have no live user.
+        if user:
+            stmt = stmt.where(LLMCostRecord.user_id == user)
+
         # Pull all matching rows so we can compute total + total_cost without
         # a separate COUNT/SUM round-trip. LLMCostRecord is small (one row per
         # LLM call) and filtered; paging over >1M records isn't a concern yet.
         all_rows = list((await session.exec(stmt)).all())
 
-        # Optional user_id filter runs via WorkflowRun join. We defer it here
-        # so we can reuse a single run-id resolution pass and avoid N+1s.
+        # Resolve run task_type context via a single join-pass to avoid N+1s.
         run_ids = {r.run_id for r in all_rows if r.run_id and r.run_id != "_no_run"}
         run_map: dict[str, WorkflowRunRecord] = {}
         if run_ids:
@@ -132,20 +142,6 @@ async def list_llm_log(
             )
             for run in (await session.exec(run_stmt)).all():
                 run_map[run.id] = run
-
-    # Apply user filter (WorkflowRunRecord has no user_id today -- the
-    # closest honest signal is the run's team_id, so we match on that when
-    # `user` is passed).  If the user filter cannot be resolved honestly we
-    # produce zero rows rather than silently ignore the filter.
-    if user:
-        filtered: list[LLMCostRecord] = []
-        for rec in all_rows:
-            run = run_map.get(rec.run_id)
-            # Match if the explicit user string equals the run's team_id --
-            # the only user-linked identifier presently stored on WorkflowRun.
-            if run is not None and run.team_id == user:
-                filtered.append(rec)
-        all_rows = filtered
 
     # Sort newest-first for the log view.
     all_rows.sort(
@@ -172,7 +168,7 @@ async def list_llm_log(
                 duration_ms=rec.duration_ms,
                 status=rec.status,
                 run_id=rec.run_id,
-                user_id=None,
+                user_id=rec.user_id,
                 team_id=rec.team_id,
                 prompt_preview=rec.prompt_preview,
                 response_preview=rec.response_preview,

@@ -47,7 +47,6 @@ from __future__ import annotations
 
 import json as _json_local
 import logging
-import os
 
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import SQLAlchemyError
@@ -86,7 +85,7 @@ from aila.modules.vr.services.investigation_finalizers import (
 )
 from aila.modules.vr.services.outcome_review import evaluate_quorum
 from aila.modules.vr.workflow.task import run_vr_investigate
-from aila.platform.config_base import ModuleConfigReader
+from aila.platform.config_base import ModuleConfigReader, _shared_registry
 from aila.platform.contracts import utc_now
 from aila.platform.services.branch_cleanup import close_orphan_branches_on_terminal
 from aila.platform.uow import UnitOfWork
@@ -240,15 +239,19 @@ async def _run_sweep_step(
 
 
 def _batch_size() -> int:
-    """Read MASVS_AUDIT_BATCH_SIZE env var with safe default.
+    """Read ``vr.masvs_audit_batch_size`` from ConfigRegistry.
 
-    Keeps tunable read inline (cheap) instead of cached at import -- an
-    operator can flip the env between dispatches and the next reconciler
-    tick picks up the new value.
+    fix #132 -- previously read a bare ``MASVS_AUDIT_BATCH_SIZE`` env
+    var, which bypassed ``PUT /config`` and audit logging. Env spelling
+    is now ``AILA_VR_MASVS_AUDIT_BATCH_SIZE`` per the standard layered
+    lookup. Keeping the read inline (rather than caching at import) so
+    an operator PUT lands on the next reconciler tick without a worker
+    restart -- ConfigRegistry itself already provides a 60s TTL cache
+    with cross-process Redis invalidation.
     """
     try:
-        n = int(os.environ.get("MASVS_AUDIT_BATCH_SIZE", "5"))
-    except ValueError:
+        n = int(_shared_registry().get_sync("vr", "masvs_audit_batch_size"))
+    except (TypeError, ValueError):
         n = 5
     return max(1, n)
 

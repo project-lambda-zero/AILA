@@ -14,7 +14,6 @@ import asyncio
 import json
 import json as _json
 import logging
-import os as _os
 from collections.abc import AsyncGenerator
 from typing import Any, Literal
 
@@ -32,7 +31,7 @@ from aila.api.limiter import limiter
 from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
 from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.modules.vr.services.outcome_polarity import derive_outcome_polarity
-from aila.platform.config_base import ModuleConfigReader
+from aila.platform.config_base import ModuleConfigReader, _shared_registry
 from aila.platform.contracts import utc_now
 from aila.platform.contracts.auth import AuthContext, require_auth
 from aila.platform.services.factory import ServiceFactory
@@ -2961,10 +2960,15 @@ def create_vr_router() -> APIRouter:
         # 2) Resolve the upload root + per-team subdir. With admin auth
         #    (TEAM-06 god-tier) team_id is None; those uploads land
         #    under a "shared" subdir to avoid clashing with team data.
-        upload_root_env = os.environ.get("ANDROID_MCP_UPLOAD_DIR")
+        # fix #132 -- ConfigRegistry-backed knob (env
+        # ``AILA_VR_ANDROID_MCP_UPLOAD_DIR``, DB overridable via
+        # ``PUT /config/vr/android_mcp_upload_dir``).
+        upload_root_cfg = str(_shared_registry().get_sync(
+            "vr", "android_mcp_upload_dir",
+        ) or "").strip()
         upload_root = (
-            Path(upload_root_env)
-            if upload_root_env
+            Path(upload_root_cfg)
+            if upload_root_cfg
             else Path.home() / ".android-mcp" / "uploads"
         )
         team_subdir = auth.team_id or "shared"
@@ -3403,12 +3407,14 @@ def create_vr_router() -> APIRouter:
         # Source-repo / cve / patch-diff targets continue to fan-out-all
         # because their per-child LLM cost is small enough to not strain
         # the proxy (no jadx graph traversal, no 64K-token contexts).
-        # Operator-tunable batch size; deferred import per file convention.
+        # fix #132 -- ConfigRegistry-backed knob
+        # (``AILA_VR_MASVS_AUDIT_BATCH_SIZE`` / DB via
+        # ``PUT /config/vr/masvs_audit_batch_size``).
         try:
             _batch_size_raw = int(
-                _os.environ.get("MASVS_AUDIT_BATCH_SIZE", "5"),
+                _shared_registry().get_sync("vr", "masvs_audit_batch_size"),
             )
-        except ValueError:
+        except (TypeError, ValueError):
             _batch_size_raw = 5
         masvs_batch_size = max(1, min(_batch_size_raw, len(child_ids)))
         is_apk = target.kind == TargetKind.ANDROID_APK.value
@@ -3448,7 +3454,7 @@ def create_vr_router() -> APIRouter:
                 _log.info(
                     "MASVS audit %s (APK) batched: enqueued %d/%d children, "
                     "%d deferred (parent reconciler will enqueue as slots free). "
-                    "batch_size=%d via MASVS_AUDIT_BATCH_SIZE env.",
+                    "batch_size=%d via vr.masvs_audit_batch_size config knob.",
                     parent.id, len(initial_batch), len(child_ids),
                     len(deferred), masvs_batch_size,
                 )
@@ -3731,13 +3737,14 @@ def create_vr_router() -> APIRouter:
 
         # Throttled enqueue -- identical rationale to the MASVS batch: a
         # full fan-out of ~80 children streaming through the shared LLM
-        # proxy at once OOMs it. Only MASVS_AUDIT_BATCH_SIZE children go
-        # in now; the parent reconciler enqueues the rest as slots free.
+        # proxy at once OOMs it. Only ``vr.masvs_audit_batch_size``
+        # children go in now; the parent reconciler enqueues the rest
+        # as slots free. fix #132 -- ConfigRegistry-backed.
         try:
             _batch_size_raw = int(
-                _os.environ.get("MASVS_AUDIT_BATCH_SIZE", "5"),
+                _shared_registry().get_sync("vr", "masvs_audit_batch_size"),
             )
-        except ValueError:
+        except (TypeError, ValueError):
             _batch_size_raw = 5
         apk_batch_size = max(1, min(_batch_size_raw, len(child_ids)))
         initial_batch = child_ids[:apk_batch_size]
@@ -3776,7 +3783,7 @@ def create_vr_router() -> APIRouter:
                 _log.info(
                     "APK static audit %s batched: enqueued %d/%d children, "
                     "%d deferred (parent reconciler enqueues as slots free). "
-                    "batch_size=%d via MASVS_AUDIT_BATCH_SIZE env.",
+                    "batch_size=%d via vr.masvs_audit_batch_size config knob.",
                     parent.id, len(initial_batch), len(child_ids),
                     len(deferred), apk_batch_size,
                 )

@@ -386,7 +386,16 @@ async def require_api_key(
             detail="Missing Authorization: Bearer <token> header",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return await decode_and_blacklist_check(credentials.credentials, expected_typ=JWT_TYP_ACCESS)
+    key_record = await decode_and_blacklist_check(
+        credentials.credentials, expected_typ=JWT_TYP_ACCESS,
+    )
+    # #124 user attribution: bind ApiKeyRecord.id as the user id for
+    # downstream LLM cost writes so admin /llm-log ``user=`` filters
+    # isolate a single API caller. Fire-and-forget -- request task
+    # lifetime bounds the contextvar.
+    from aila.platform.llm.correlation import bind_user_id
+    bind_user_id(key_record.id)
+    return key_record
 
 
 def require_role(required_role: str) -> Callable[..., AuthContext]:
@@ -636,11 +645,23 @@ async def require_user_or_api_key(
                 detail="User account not found or deactivated",
             )
         team_id = payload.get("team_id")  # TEAM-02: may be None for admin users
+        # #124 user attribution: bind the resolved user id to the current
+        # async task so downstream LLM cost writes (persist_cost_record)
+        # capture the caller. Fire-and-forget -- each request runs in a
+        # fresh asgi task with its own contextvars context, so no reset
+        # is required.
+        from aila.platform.llm.correlation import bind_user_id
+        bind_user_id(user.id)
         return AuthContext(user_id=user.id, role=user.role, auth_type="user", team_id=team_id)
 
     elif typ == JWT_TYP_ACCESS:
         # API key JWT -- delegate to existing blacklist check
         key_record = await decode_and_blacklist_check(token, expected_typ=JWT_TYP_ACCESS)
+        # #124: bind API-key ApiKeyRecord.id as the user id for attribution.
+        # Downstream LLM writes get a stable per-key identifier so admin
+        # log filters can isolate one API caller's traffic.
+        from aila.platform.llm.correlation import bind_user_id
+        bind_user_id(key_record.id)
         return AuthContext(
             user_id=key_record.id,
             role=key_record.role,

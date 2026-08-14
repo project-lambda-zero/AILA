@@ -8,8 +8,12 @@ The seal step is purely observational: it reads ctx and messages but never
 modifies them.  It writes ctx["seal_id"] and persists an AuditSealRecord
 to the database.
 
-Expired seal records are pruned on each write using a single DELETE WHERE
-clause -- no background job needed.
+Expired records are pruned by the platform reaper cron
+(:func:`run_purge_expired_seals_cron`), mirroring
+``llm.idempotency_cache.run_purge_expired_cron`` and
+``llm.drift.run_purge_old_records_cron``. The prior in-request DELETE ran
+on every LLM call and was an O(N) table scan on the ``audit_seal_records``
+table -- fix §129 lifted it out of the hot path.
 """
 
 from __future__ import annotations
@@ -28,6 +32,14 @@ from cryptography.exceptions import InvalidTag
 if TYPE_CHECKING:
     from ..events.emitter import EventEmitter
     from .config import LLMConfigProvider, LLMRouting
+
+__all__ = [
+    "compute_key_id",
+    "compute_seal",
+    "make_seal_step",
+    "purge_expired_seals",
+    "run_purge_expired_seals_cron",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -116,19 +128,35 @@ def compute_seal(
 
 
 async def _resolve_hmac_key(config_provider: LLMConfigProvider) -> str:
-    """Read or auto-generate the HMAC key from ConfigRegistry.
+    """Read or auto-generate the HMAC seal key via SecretStore.
+
+    #113: The seal key gives tamper-evidence over the LLM pipeline chain.
+    Storing it in plaintext (ConfigRegistry) meant anyone with DB read
+    access could forge seal records. Route through SecretStore so the key
+    is encrypted at rest under the platform master key and mediated by
+    the audit-logged key-rotation path.
 
     If no key is set, generates a 32-byte random key via secrets.token_hex(32)
-    and stores it in ConfigRegistry for persistence across restarts.
+    and stores it in SecretStore for persistence across restarts.
     """
-    registry = config_provider._registry
-    val = await registry.get("platform", "llm_seal_hmac_key")
-    if val is not None and str(val).strip():
-        return str(val)
-    # Auto-generate and store (D-04)
-    key = secrets.token_hex(32)
-    await registry.set("platform", "llm_seal_hmac_key", key)
-    return key
+    from ...storage.database import async_session_scope
+
+    secret_store = config_provider._secret_store
+    async with async_session_scope() as session:
+        existing = await secret_store.get_secret_by_key(
+            session, scope="platform", secret_key="llm_seal_hmac_key",
+        )
+        if existing is not None and existing.strip():
+            return existing
+        # Auto-generate and store (D-04) -- encrypted at rest.
+        key = secrets.token_hex(32)
+        await secret_store.upsert_secret(
+            session,
+            scope="platform",
+            secret_key="llm_seal_hmac_key",
+            plaintext=key,
+        )
+        return key
 
 
 async def _resolve_retention_days(config_provider: LLMConfigProvider) -> int:
@@ -324,21 +352,15 @@ def make_seal_step(
             key_id=kid,
         )
 
-        # Write to DB and prune expired records (D-13, D-14)
-        retention_days = await _resolve_retention_days(config_provider)
-
-        from sqlmodel import delete as sqlmodel_delete
-
+        # Write to DB. Expired-row pruning runs off the reaper cron
+        # (:func:`run_purge_expired_seals_cron`) so the hot path never
+        # pays the O(N) DELETE the pre-fix-§129 code executed on every
+        # LLM call. The dedicated write session stays single-purpose so
+        # a purge lock never blocks a seal insert.
         from ...storage.database import async_session_scope
 
         async with async_session_scope() as session:
             session.add(record)
-            # Prune expired records in same session
-            cutoff = datetime.now(UTC) - timedelta(days=retention_days)
-            stmt = sqlmodel_delete(AuditSealRecord).where(
-                AuditSealRecord.created_at < cutoff  # type: ignore[operator]
-            )
-            await session.exec(stmt)  # type: ignore[call-overload]
             await session.commit()
 
         # Write seal_id to ctx (D-19) -- flows to LLMResponse.seal_id via _enrich_response
@@ -435,3 +457,72 @@ def make_seal_step(
             logger.debug("Drift tracking failed, continuing", exc_info=True)
 
     return _seal_step
+
+
+# ---------------------------------------------------------------------------
+# Retention purge -- driven by the platform reaper cron (fix §129)
+# ---------------------------------------------------------------------------
+
+# Retention default when the ``platform.llm_seal_retention_days`` key is unset
+# or malformed. Mirrors ``_resolve_retention_days`` above; the cron has no
+# ``LLMConfigProvider`` to inject so a module constant is the right fit.
+_DEFAULT_SEAL_RETENTION_DAYS = 90
+
+
+async def purge_expired_seals(
+    session: Any, retention_days: int = _DEFAULT_SEAL_RETENTION_DAYS,
+) -> int:
+    """Delete ``AuditSealRecord`` rows older than ``retention_days``.
+
+    Bounded single DELETE against the ``ix_auditsealrecord_created_at``
+    index. Best-effort in the drift / idempotency-cache style: transport
+    errors are logged at WARNING and swallowed so the cron continues.
+    Returns the count of rows deleted, or 0 on transport error.
+    """
+    from sqlalchemy.exc import DBAPIError, SQLAlchemyError
+    from sqlmodel import delete as sqlmodel_delete
+
+    from ...storage.db_models import AuditSealRecord
+
+    cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+    try:
+        result = await session.execute(
+            sqlmodel_delete(AuditSealRecord).where(
+                AuditSealRecord.created_at < cutoff,  # type: ignore[operator]
+            )
+        )
+        await session.commit()
+        # Some drivers report rowcount=-1 when the row count is unknown;
+        # clamp at zero to keep the cron log line non-negative (mirrors
+        # idempotency_cache.purge_expired).
+        rc = int(getattr(result, "rowcount", 0) or 0)
+        return rc if rc >= 0 else 0
+    except (SQLAlchemyError, DBAPIError) as exc:
+        logger.warning("audit seal retention purge failed: %s", exc)
+        return 0
+
+
+async def run_purge_expired_seals_cron() -> int:
+    """Open a session and call :func:`purge_expired_seals`.
+
+    Wired into ``platform/tasks/worker.py:reaper`` next to the idempotency
+    cache and drift purges (fix §129). Retention window is resolved via
+    ``ConfigRegistry`` so an operator can widen or narrow it with a live
+    PUT /config/platform/{key} without a worker restart.
+    """
+    from ...storage.database import async_session_scope
+    from ...storage.registry import ConfigRegistry
+
+    retention_days = _DEFAULT_SEAL_RETENTION_DAYS
+    try:
+        raw = await ConfigRegistry().get("platform", "llm_seal_retention_days")
+    except sqlalchemy.exc.SQLAlchemyError:
+        raw = None
+    if raw is not None:
+        try:
+            retention_days = int(raw)
+        except (ValueError, TypeError):
+            retention_days = _DEFAULT_SEAL_RETENTION_DAYS
+
+    async with async_session_scope() as session:
+        return await purge_expired_seals(session, retention_days)

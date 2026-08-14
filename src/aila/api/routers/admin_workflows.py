@@ -47,6 +47,16 @@ async def _require_admin(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Requires '{ROLE_ADMIN}' role; current role: '{ctx.role}'",
         )
+    # #103: WorkflowStateCursor / WorkflowStateTransition are cross-tenant
+    # (no team_id column); a team-scoped admin (team_id set) would otherwise
+    # read every team's workflow-run state and transition audit logs.
+    # Mirror the six sibling admin routers (admin_dead_letter, admin_reconcile,
+    # admin_lifecycle, admin_eval, admin_prompts, admin_teams).
+    if ctx.team_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Workflow-run administration is restricted to god-tier administrators.",
+        )
     return ctx
 
 

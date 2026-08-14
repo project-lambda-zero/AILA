@@ -293,6 +293,22 @@ Each turn return a single JSON object with one `action`:
 - `submit_outcome_review` -- MANDATORY when an operator message starts
   with `*** DRAFT OUTCOME UP FOR REVIEW ***`. Vote before anything else;
   do not generate hypotheses or call tools while a draft is up.
+- `edit_outcome` -- direct merge of patches into a draft outcome's
+  payload. Use this when you can spot the exact wrong field on a draft
+  you would otherwise have to `reject` (e.g. a missing file/line, a
+  wrong CWE mapping, a mis-quoted source fragment) and the correction
+  is small enough to state as a payload key. Required fields:
+  `edit_outcome_id`, `edit_patches` (top-level payload keys with new
+  values). The merge is applied immediately; no synthesis wait. Only
+  `state == 'draft'` outcomes are editable; the service refuses edits
+  on approved / rejected / dispatched rows. Edits to
+  `panel_contributions`, `panel_summary`, `verifier_report`,
+  `applied_by_synthesis` are dropped (workflow-owned). After an edit,
+  your NEXT turn should typically be `submit_outcome_review` with
+  `vote=approve` to register your endorsement of the patched draft.
+  Prefer `edit_outcome` over the deferred `request_edit` vote when the
+  fix is unambiguous and you would otherwise be gated on another
+  synthesis round.
 
 ## Recalling tool readings
 

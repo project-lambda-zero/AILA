@@ -21,6 +21,7 @@ from aila.platform.contracts.reasoning import (
     ReasoningCaseState,
     ReasoningContract,
     RejectedHypothesis,
+    ResolvedHypothesis,
 )
 
 
@@ -123,6 +124,54 @@ class TestMergeCaseStates:
         ])
         merged = _merge_case_states(a, b)
         assert {h.id for h in merged.hypotheses} == {"h1", "h2"}
+
+    def test_resolved_union_and_current_turn_max(self) -> None:
+        """fix #178 -- merge preserves resolved hypotheses (id-union
+        across both sources) and inherits max(current_turn) so the
+        staleness directive keeps producing positive ages for
+        hypotheses that pre-date the merge. Prior behavior dropped
+        every resolved entry and reset current_turn to 0.
+        """
+        a = ReasoningCaseState(
+            resolved=[
+                ResolvedHypothesis(
+                    id="r1", claim="A closed",
+                    resolved_at_turn=3, terminal_outcome_kind="finding",
+                ),
+            ],
+            current_turn=7,
+        )
+        b = ReasoningCaseState(
+            resolved=[
+                ResolvedHypothesis(
+                    id="r2", claim="B closed",
+                    resolved_at_turn=5, terminal_outcome_kind="finding",
+                ),
+                # id collision with a.r1 -- later source wins
+                ResolvedHypothesis(
+                    id="r1", claim="A closed (b variant)",
+                    resolved_at_turn=6, terminal_outcome_kind="finding",
+                ),
+            ],
+            current_turn=12,
+        )
+        merged = _merge_case_states(a, b)
+        assert {h.id for h in merged.resolved} == {"r1", "r2"}
+        by_id = {h.id: h for h in merged.resolved}
+        assert by_id["r1"].claim == "A closed (b variant)"
+        assert by_id["r1"].resolved_at_turn == 6
+        assert merged.current_turn == 12
+
+    def test_resolved_empty_inputs(self) -> None:
+        merged = _merge_case_states(ReasoningCaseState(), ReasoningCaseState())
+        assert merged.resolved == []
+        assert merged.current_turn == 0
+
+    def test_current_turn_max_when_only_one_side_set(self) -> None:
+        a = ReasoningCaseState(current_turn=0)
+        b = ReasoningCaseState(current_turn=4)
+        merged = _merge_case_states(a, b)
+        assert merged.current_turn == 4
 
 
 class TestCaseStateEncoding:

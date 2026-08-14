@@ -154,18 +154,37 @@ class CostTracker:
         self, run_id: str | None, task_type: str,
     ) -> None:
         """Async budget check that seeds the in-memory totals from the
-        durable ledger (``LLMCostRecord``) before the synchronous check
-        runs (fix §128 / §129).
+        durable ledger (``LLMCostRecord``) before enforcement runs
+        (fix §128 / §129).
 
         Worker restart no longer resets the budget to zero; sibling
         workers see the same total. The sync :meth:`check_budget` keeps
-        its old contract for tests + sync callers -- only the async
-        client path needs the seed, and only on a fresh process.
+        its old contract for tests + sync callers.
+
+        Ceiling resolution goes through :meth:`_resolve_ceiling_async`
+        (native async ``registry.get``) so the LLM hot path never spawns
+        the untracked sync psycopg pool that ``get_sync`` opens through
+        ``session_scope`` -- that pool is not tracked by
+        ``dispose_engine`` and would leak connections under load
+        (fix §130).
         """
         rid = run_id or _NO_RUN
-        if rid != _NO_RUN:
-            await self._mem.ensure_cost_seeded(rid)
-        self.check_budget(run_id, task_type)
+        if rid == _NO_RUN:
+            return
+
+        await self._mem.ensure_cost_seeded(rid)
+
+        ceiling = await self._resolve_ceiling_async(task_type)
+        if ceiling <= 0:
+            return
+
+        usage = self.get_usage(run_id)
+        total = usage["total_tokens"]
+        if total >= ceiling:
+            raise BudgetExceededError(
+                f"LLM budget exceeded for run {rid}: "
+                f"{total}/{ceiling} tokens used. Partial results preserved."
+            )
 
     def _resolve_ceiling(self, task_type: str) -> int:
         """Read budget ceiling from ConfigRegistry.
@@ -177,6 +196,10 @@ class CostTracker:
         unlimited) so an operator can set a global cap without writing
         one row per task_type. Returns 0 (unlimited) when neither key
         resolves or the value cannot be converted to int.
+
+        Sync twin used by :meth:`check_budget`. The async LLM path uses
+        :meth:`_resolve_ceiling_async` so no per-call sync psycopg pool
+        is opened on the hot path (fix §130).
         """
         # Use get_sync here (sync method): the async get produced an un-awaited
         # coroutine that was not None and failed conversion, so the budget
@@ -184,12 +207,42 @@ class CostTracker:
         raw = self._registry.get_sync("platform", f"llm_budget_max_total_tokens_{task_type}")
         if raw is None:
             raw = self._registry.get_sync("platform", "llm_budget_max_total_tokens_default")
+        return _coerce_ceiling(raw)
+
+    async def _resolve_ceiling_async(self, task_type: str) -> int:
+        """Async twin of :meth:`_resolve_ceiling` (fix §130).
+
+        Reads the same platform keys via ``await registry.get(...)`` so
+        the ceiling lookup on every LLM call stays on the async DB path.
+        The previous sync twin ``get_sync`` fell back to
+        ``session_scope()`` (a psycopg engine not tracked by
+        ``dispose_engine``); on a cache miss every call opened a fresh
+        untracked connection pool and could exhaust ``max_connections``
+        under load.
+        """
+        raw = await self._registry.get(
+            "platform", f"llm_budget_max_total_tokens_{task_type}",
+        )
         if raw is None:
-            return 0
-        try:
-            return int(raw)
-        except (ValueError, TypeError):
-            return 0
+            raw = await self._registry.get(
+                "platform", "llm_budget_max_total_tokens_default",
+            )
+        return _coerce_ceiling(raw)
+
+
+def _coerce_ceiling(raw: object | None) -> int:
+    """Coerce a ConfigRegistry ceiling value to a non-negative int.
+
+    None or a value that fails ``int(...)`` returns 0 (unlimited),
+    matching the schema default so a malformed row leaves budget
+    enforcement disabled rather than raising into the LLM hot path.
+    """
+    if raw is None:
+        return 0
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        return 0
 
 
 # ---------------------------------------------------------------------------
@@ -310,6 +363,7 @@ async def persist_cost_record(
             current_join_keys,
             current_prompt_content_hash,
             current_prompt_version,
+            current_user_id,
         )
         from aila.platform.llm.cost_record import LLMCostRecord
         from aila.storage.database import async_session_scope
@@ -317,11 +371,18 @@ async def persist_cost_record(
         _inv, _branch, _turn = current_join_keys()
         _phash = current_prompt_content_hash()
         _pver = current_prompt_version()
+        # #124 user attribution: read the user id from the request-scoped
+        # ContextVar populated by ``require_user_or_api_key`` (API path)
+        # or a caller that opted in via ``user_id_scope`` / ``bind_user_id``.
+        # None on worker-triggered writes (agent turns, scheduled reports)
+        # -- honest attribution beats fabricating a team_id substitute.
+        _uid = current_user_id()
         record = LLMCostRecord(
             run_id=run_id or "_no_run",
             model_id=model_id,
             task_type=task_type or "",
             team_id=team_id,
+            user_id=_uid,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             cost_usd=cost_usd,

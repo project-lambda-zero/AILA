@@ -604,23 +604,6 @@ async def test_topology_without_vulnerability_data(seeded_network, async_client,
         assert node["severity_counts"] is None
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "Two production bugs keep the severity overlay empty:\n"
-        "  1. src/aila/api/routers/topology.py:87 calls\n"
-        "     module.fleet_severity_summary(system_ids, None) -- passing None as\n"
-        "     the session. The module short-circuits when session is None\n"
-        "     (src/aila/modules/vulnerability/module.py:685 latest_findings\n"
-        "     returns []), so labels is always {} regardless of seeded findings.\n"
-        "  2. Even if labels were populated, _load_severity_counts\n"
-        "     (src/aila/api/routers/topology.py:92-100) only increments the\n"
-        "     ONE top-severity slot per system. fleet_severity_summary returns\n"
-        "     dict[int, str] (top severity only), so the SeverityCounts payload\n"
-        "     can never carry counts for multiple severities on one system as\n"
-        "     the test asserts (critical==1 AND high==1)."
-    ),
-)
 @pytest.mark.asyncio
 async def test_topology_with_severity_overlay(seeded_network, async_client, admin_token):
     """Topology includes severity_counts when vulnerability data exists (D-02)."""

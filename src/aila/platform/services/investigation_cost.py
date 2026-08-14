@@ -20,6 +20,7 @@ from typing import Any
 
 from sqlalchemy import func as sa_func
 from sqlalchemy import update as sa_update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select
 
 from aila.platform.contracts.investigation_base import InvestigationRecordBase
@@ -37,6 +38,11 @@ async def compute_live_investigation_cost(
 
     Best-effort: returns 0.0 on any query error so the budget gauge
     degrades to the stored zero rather than crashing the read path.
+    The catch tuple mirrors ``persist_cost_record`` / ``reconcile_budget_state``
+    -- a real DB failure (connection timeout, pool exhaustion, missing
+    table) raises a :class:`sqlalchemy.exc.SQLAlchemyError` subclass
+    (OperationalError, ProgrammingError, InterfaceError); those must be
+    absorbed here or the investigation detail read path 500s (#101).
     """
     try:
         sum_q = select(
@@ -44,7 +50,14 @@ async def compute_live_investigation_cost(
         ).where(LLMCostRecord.run_id == investigation_id)
         total = (await uow.session.exec(sum_q)).one()
         return float(total)
-    except (AttributeError, ImportError, ValueError) as exc:
+    except (
+        SQLAlchemyError,
+        OSError,
+        RuntimeError,
+        AttributeError,
+        ImportError,
+        ValueError,
+    ) as exc:
         _log.warning(
             "compute_live_investigation_cost failed reason=%s", exc,
         )

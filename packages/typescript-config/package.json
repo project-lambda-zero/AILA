@@ -1,6 +1,6 @@
 {
   "name": "@aila/typescript-config",
-  "version": "0.5.5",
+  "version": "0.5.6",
   "private": true,
   "exports": {
     "./base": "./base.json",

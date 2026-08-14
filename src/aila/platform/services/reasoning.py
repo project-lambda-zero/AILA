@@ -55,8 +55,10 @@ __all__ = [
 _TOOL_PREFIXES: tuple[str, ...] = (
     "audit_mcp:", "audit_mcp.",
     "ida_headless:", "ida_headless.",
+    "android_mcp:", "android_mcp.",
     "_directive.",
     "_recall.",
+    "_ledger.",
 )
 
 # Fallback hard cap on agent-self-set observable keys across all turns

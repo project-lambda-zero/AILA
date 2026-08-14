@@ -426,5 +426,41 @@ class VRConfigSchema(ModuleConfigBase):
         ),
     )
 
+    # fix #132 -- knobs previously read via bare ``os.environ.get`` at
+    # the ``vr/api_router.py`` and ``vr/reporting/pdf_report.py`` call
+    # sites. Routing them through this schema unlocks ``PUT /config``
+    # and audit logging; the env spellings become ``AILA_VR_*`` per
+    # the standard ConfigRegistry layered lookup.
+    masvs_audit_batch_size: int = Field(
+        default=5,
+        ge=1,
+        le=200,
+        description=(
+            "MASVS audit fan-out ceiling per parent. Enqueues at most "
+            "this many child audits at once for APK targets to protect "
+            "the shared LLM proxy from OOM; the parent reconciler "
+            "enqueues the next slice as slots free. Env: "
+            "AILA_VR_MASVS_AUDIT_BATCH_SIZE."
+        ),
+    )
+    android_mcp_upload_dir: str = Field(
+        default="",
+        description=(
+            "Root directory for android-mcp APK uploads. Empty (default) "
+            "resolves to ``~/.android-mcp/uploads``. Team subdirs are "
+            "created lazily under this root. Env: "
+            "AILA_VR_ANDROID_MCP_UPLOAD_DIR."
+        ),
+    )
+    audit_mcp_clone_dir: str = Field(
+        default="",
+        description=(
+            "Root directory holding audit-mcp source clones consumed by "
+            "the VR PDF reporter. Empty (default) resolves to "
+            "``~/.cache/audit-mcp/clones``. Env: "
+            "AILA_VR_AUDIT_MCP_CLONE_DIR."
+        ),
+    )
+
 
 VR_DEFAULTS = VRConfigSchema()

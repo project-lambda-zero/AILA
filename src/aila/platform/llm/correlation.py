@@ -17,11 +17,14 @@ from dataclasses import dataclass
 
 __all__ = [
     "CorrelationContext",
+    "bind_user_id",
     "correlation_scope",
     "current_canary_key",
     "current_join_keys",
     "current_prompt_content_hash",
     "current_prompt_version",
+    "current_user_id",
+    "user_id_scope",
 ]
 
 
@@ -39,6 +42,18 @@ class CorrelationContext:
 
 _correlation: ContextVar[CorrelationContext | None] = ContextVar(
     "aila_llm_correlation", default=None,
+)
+
+
+# #124 user attribution ContextVar. Independent lifecycle from
+# ``_correlation`` (which is per-turn): user_id is per-request, set once
+# by the API auth dependency and inherited by every LLM cost write that
+# happens under that request task. Kept as its own ContextVar so nested
+# ``correlation_scope`` blocks (which replace ``_correlation`` wholesale
+# with turn-scoped values) do not accidentally wipe the request-level
+# user attribution.
+_user_id: ContextVar[str | None] = ContextVar(
+    "aila_llm_user_id", default=None,
 )
 
 
@@ -126,3 +141,54 @@ def correlation_scope(
         yield
     finally:
         _correlation.reset(token)
+
+
+def current_user_id() -> str | None:
+    """Return the user id attributed to the current async task, or None.
+
+    Read by :func:`persist_cost_record` so every LLM cost row records the
+    user whose auth context drove the call (#124). Set by
+    :func:`bind_user_id` (fire-and-forget request-lifetime bind used by
+    the FastAPI auth dependency) or by :func:`user_id_scope` (contextlib
+    scope used by tests and callers that manage their own lifetime).
+    None when no user attribution is available -- worker-triggered LLM
+    calls (agent turns, background scans) run outside a user session.
+
+    Normalises the empty string to ``None`` so a caller that hands the
+    dependency a blank subject id (a misconfigured token, a placeholder
+    left in a test double) yields "no attribution" downstream instead
+    of a bogus filter key that would silently match every row a future
+    ``LEFT JOIN`` treats as unattributed.
+    """
+    uid = _user_id.get()
+    if not uid:
+        return None
+    return uid
+
+
+def bind_user_id(user_id: str | None) -> None:
+    """Set the ambient user id for the current async task.
+
+    Fire-and-forget: no reset. Intended for FastAPI dependencies where
+    the request task's lifetime naturally bounds the ContextVar's
+    visibility (each request runs in its own asyncio.Task with its own
+    private context copy). Tests and callers with a bounded block
+    should use :func:`user_id_scope` instead.
+    """
+    _user_id.set(user_id)
+
+
+@contextlib.contextmanager
+def user_id_scope(user_id: str | None) -> Iterator[None]:
+    """Set the ambient user id for the duration of the block.
+
+    Restores the prior value on exit so a following unit of work does
+    not inherit stale attribution. Preferred over :func:`bind_user_id`
+    when the caller can bound the lifetime explicitly (tests, opt-in
+    attribution around a specific worker task).
+    """
+    token = _user_id.set(user_id)
+    try:
+        yield
+    finally:
+        _user_id.reset(token)

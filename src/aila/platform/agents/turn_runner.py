@@ -960,10 +960,20 @@ class AgentTurnRunnerBase:
             )
             uow.session.add(msg)
 
+            # fix #180 -- lock the branch row for the duration of this
+            # UoW so a double-dispatch race (two turn runners on the
+            # same branch, reachable via #121) serializes on the
+            # read-modify-write of ``turn_count`` / ``case_state_json``.
+            # Without FOR UPDATE both readers see the same turn_count,
+            # both bump it, and the last committer overwrites the
+            # first -- one full turn of reasoning silently lost.
+            # Mirrors the FOR UPDATE pattern in
+            # ``services/outcome_review.evaluate_quorum`` and
+            # ``BranchPool.fork`` / ``BranchPool._load_branch``.
             branch_row = (await uow.session.exec(
                 _select(self._branch_model).where(
                     self._branch_model.id == self.branch_id,
-                )
+                ).with_for_update()
             )).first()
             if branch_row is None:
                 raise self._error_cls(

@@ -418,7 +418,9 @@ async def list_public_providers() -> DataEnvelope[list[OIDCProviderPublicRespons
     response_model=DataEnvelope[OIDCAuthorizeResponse],
     summary="Get OIDC authorization URL",
 )
+@limiter.limit("10/minute")
 async def oidc_authorize(
+    request: Request,
     response: Response,
     redirect_uri: str = Query(default="http://localhost:3000/auth/callback"),
     provider_id: str | None = Query(default=None, description="Specific provider id (optional)"),
@@ -638,7 +640,9 @@ def _resolve_oidc_role(claims: dict[str, Any]) -> str:
     response_model=DataEnvelope[TokenResponse],
     summary="OIDC authorization callback",
 )
+@limiter.limit("10/minute")
 async def oidc_callback(
+    request: Request,
     code: str = Query(..., description="Authorization code from OIDC provider"),
     state: str = Query(..., description="State token for CSRF validation"),
     redirect_uri: str = Query(default="http://localhost:3000/auth/callback"),

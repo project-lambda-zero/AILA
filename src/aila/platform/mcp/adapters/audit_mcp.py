@@ -224,23 +224,15 @@ def _split_by_category(
             attention.append(enriched)
     return real, attention, dropped
 
-# Observable cap for read_function output. Bumped progressively after
-# observing the agent loop on functions that exceeded the cap:
-#   3000  → ngx_http_script_regex_start_code (154 lines, 3669 chars)
-#           agent saw head + truncation marker, looped re-issuing
-#   12000 → ngx_http_proxy_merge_loc_conf (513 lines, ~40000 chars)
-#           agent saw first ~150 lines (the prologue), missed the
-#           body-compile block at line 4067 where complete_lengths=1
-#           is set, submitted a false-positive "missing NULL sentinel"
-#           finding (two observed investigations)
-#   50000 → covers ~600+ lines of typical C, enough for every
-#           in-tree nginx function we've seen the agent need.
-# The FULL body is always preserved in payload.pseudocode (message
-# store) -- this cap is only the per-turn slice the agent sees via
-# observables. Future fix: stream a structured summary (signature
-# + N anchor lines around each search_source hit) for functions
-# that overflow this cap.
-_MAX_OBS_READ_FUNCTION = 100000000
+# Observable cap for read_function output. fix §271 shrunk the generic
+# adapter budget to :data:`MAX_OBS_DUMP_CHARS` (32 KiB); this specialised
+# adapter had drifted to a 100 MB literal so the shared truncation gate
+# effectively never fired and a fat function body rode verbatim through
+# every prompt build. Re-couple to the shared constant so the whole
+# system moves in lockstep. The FULL body is always preserved in
+# ``payload.pseudocode`` (message store) -- this cap is only the
+# per-turn slice the agent sees via ``observables_delta``.
+_MAX_OBS_READ_FUNCTION = MAX_OBS_DUMP_CHARS
 
 
 def _list_or_empty(raw: dict[str, Any], *keys: str) -> list[Any]:
@@ -834,6 +826,22 @@ def adapt_read_function(
     line = raw.get("start_line") or raw.get("line")
     line_count = int(raw.get("line_count") or (body.count("\n") + (1 if body else 0)))
 
+    # fix #193 -- ``AuditMcpMiddleware`` (see
+    # ``platform/mcp/middleware/audit.py``) writes ``_bridge_note`` on the
+    # raw response whenever the read_function fallback chain fires: the
+    # requested symbol was a class (returned a class-level slice), the
+    # bare-name rewrite hit, the disk read fallback served the file
+    # head, or the semantic_search top match was substituted. Without
+    # propagation the agent's observable is indistinguishable from a
+    # canonical function read and it may reason on the wrong slice
+    # (e.g. treat 300 lines of a class as the function body).
+    # ``_audit_xref_result`` propagates the same field for xrefs;
+    # this mirrors that shape.
+    raw_note = raw.get("_bridge_note") if isinstance(raw, dict) else None
+    bridge_note = (
+        raw_note.strip() if isinstance(raw_note, str) and raw_note.strip() else ""
+    )
+
     payload: dict[str, Any] = {
         "function_name": fn_name,
         "address": f"{path}:{line}" if path and line else path,
@@ -842,6 +850,8 @@ def adapt_read_function(
         "language": language,
         "source_provenance": provenance_stamp(ctx),
     }
+    if bridge_note:
+        payload["bridge_note"] = bridge_note
 
     if len(body) <= _MAX_OBS_READ_FUNCTION:
         obs_value = body
@@ -879,11 +889,22 @@ def adapt_read_function(
         )
         obs_value = banner + kept
         truncation_suffix = "  ⚠ TRUNCATED"
+    if bridge_note:
+        # Top-of-observable banner so the agent notices the fallback
+        # before it starts reading the body. Mirrors the truncation
+        # banner shape above.
+        obs_value = (
+            f"!! BRIDGE FALLBACK !! {bridge_note}\n\n" + obs_value
+        )
+    summary_suffix = "  ⚠ FALLBACK" if bridge_note else ""
     return AdapterResult(
         payload_kind=PayloadKind.DECOMPILED_FUNCTION,
         payload=payload,
         observables_delta={obs_key_for(ctx, f"source.{fn_name}"): obs_value},
-        summary=f"read_function {fn_name} ({line_count} lines, lang={language or '?'}){truncation_suffix}",
+        summary=(
+            f"read_function {fn_name} ({line_count} lines, "
+            f"lang={language or '?'}){truncation_suffix}{summary_suffix}"
+        ),
     )
 
 
@@ -891,10 +912,13 @@ def adapt_read_function(
 # search_* family -- specialized dense rendering
 # ----------------------------------------------------------------------
 
-# Per-result observable cap for search_* adapters. 30000 chars covers
-# ~200-400 matches in dense file:line:text format vs ~8 matches when
-# the old generic JSON-dump path capped at MAX_OBS_DUMP_CHARS=100000000.
-_MAX_OBS_SEARCH = 100000000
+# Per-result observable cap for search_* adapters. fix §271 shrunk the
+# generic adapter budget to :data:`MAX_OBS_DUMP_CHARS` (32 KiB); this
+# specialised adapter had drifted to a 100 MB literal so the shared
+# truncation gate effectively never fired and a search returning thousands
+# of matches dumped multi-MB into ``observables_delta`` (fix §194).
+# Re-couple to the shared constant so the whole system moves in lockstep.
+_MAX_OBS_SEARCH = MAX_OBS_DUMP_CHARS
 
 
 def _render_matches_dense(raw: dict[str, Any]) -> tuple[str, int]:

@@ -238,21 +238,31 @@ class TemplateModule(ModuleProtocol):
         del system_id, session
         return {}
 
-    async def report_count(self, run_id: str, session: Session) -> dict[str, Any]:
+    async def report_count(
+        self,
+        run_id: str,
+        session: Session,
+        *,
+        team_id: str | None = None,
+    ) -> dict[str, Any]:
         """Return semantic count breakdown for a report owned by this module.
 
-        Called by GET /reports/{run_id}/count. Override to return a severity
-        or category breakdown (e.g. ``{"total_findings": 55, "critical": 5}``).
-        Return ``{}`` if this module does not own the given run_id.
+        Called by GET /reports/{run_id}/count and the platform dashboard
+        aggregator. Override to return a severity or category breakdown
+        (e.g. ``{"total_findings": 55, "critical": 5}``). Return ``{}``
+        if this module does not own the given run_id.
 
         Args:
             run_id: WorkflowRunRecord primary key.
             session: Active SQLModel session. Do not create a new session_scope.
+            team_id: Caller's team id (#192). ``None`` means god-tier
+                (TEAM-06) with no team filter. Every dashboard call
+                passes this kwarg, so implementations MUST accept it.
 
         Returns:
             Dict of count fields. Empty dict means no contribution.
         """
-        del run_id, session
+        del run_id, session, team_id
         return {}
 
     def health_checks(self) -> dict[str, object]:
