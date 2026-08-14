@@ -7,6 +7,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.24] - 2026-08-13 -- Fix: console no longer hangs on "Restoring session"
+
+### Fixed
+
+- The console hung indefinitely on the "Restoring session" screen and never
+  reached the login page when there was no active session (logged out, an expired
+  cookie, or a fresh browser), because the auth store had no bounded path out of
+  its initial `bootstrapping` status: it purges the persisted session hints on
+  every load, so the rehydrate refresh transition did not run, and nothing else
+  guaranteed a terminal status. A new mount-time `bootstrap()` watchdog in
+  `useAuthStore` (called from `App.tsx`) races the cookie refresh against a 6 s
+  bound and always resolves to a terminal status -- `authenticated` on success,
+  otherwise `unauthenticated`, which routes to `/login` -- so the sign-in form is
+  always reachable, even if the refresh call stalls. The action is idempotent and
+  a no-op once `login` or the rehydrate path has set a terminal status, so the
+  happy path is unchanged (verified live: a valid sign-in still reaches the
+  console). Found by driving the running console (#223).
+
+Shell type-check and production build pass.
+
 ## [0.5.23] - 2026-08-13 -- Icon vendor chunk split (build)
 
 Resolves the 500 kB chunk-size advisory reported in v0.5.22 without changing any

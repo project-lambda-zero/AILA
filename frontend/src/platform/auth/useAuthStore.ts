@@ -74,6 +74,7 @@ interface AuthState {
   logout: () => Promise<void>;
   refreshTokens: () => Promise<void>;
   getAccessToken: () => Promise<string>;
+  bootstrap: () => Promise<void>;
 }
 
 // Module-level proactive refresh timer -- lives outside React lifecycle.
@@ -230,6 +231,48 @@ export const useAuthStore = create<AuthState>()(
           throw new Error("Session expired. Sign in again.");
         }
         return newToken;
+      },
+
+      bootstrap: async (): Promise<void> => {
+        // Guarantee the console never wedges on the "Restoring session"
+        // screen. `onRehydrateStorage` is the only other path out of the
+        // initial `bootstrapping` status, and it does not reliably run its
+        // refresh transition (sessionStorage is purged on load, and a
+        // slow/unreachable backend can stall the cookie refresh). This
+        // mount-time watchdog bounds the refresh and always resolves to a
+        // terminal status, so the login screen is reachable even when the
+        // refresh hangs. Idempotent: a no-op once a terminal status is set.
+        if (get().status !== "bootstrapping") {
+          return;
+        }
+        const watchdog = new Promise<void>((resolve) => {
+          window.setTimeout(resolve, 6000);
+        });
+        try {
+          await Promise.race([get().refreshTokens(), watchdog]);
+        } catch {
+          // refreshTokens swallows its own errors; ignore here too.
+        }
+        // A concurrent path (login, or the rehydrate refresh) may have
+        // resolved the status already -- do not override it.
+        if (get().status !== "bootstrapping") {
+          return;
+        }
+        if (get().accessToken) {
+          set({ status: "authenticated", isAuthenticated: true });
+          return;
+        }
+        // No token within the bound: fall through to the login screen.
+        // Clear locally WITHOUT a network logout (which could also hang).
+        clearProactiveRefresh();
+        set({
+          accessToken: null,
+          role: null,
+          userId: null,
+          username: null,
+          isAuthenticated: false,
+          status: "unauthenticated",
+        });
       },
     }),
     {
