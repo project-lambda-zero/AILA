@@ -7,6 +7,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.18] - 2026-08-13 -- Module analytics and visualization
+
+Adds data visualization across all four modules and enriches the platform
+metrics surfaces, using the already-bundled chart wrapper. Additive; existing
+screens and behavior preserved (#217). No entry-chunk regression: charts ride
+the existing vendor chunk and per-route code-split.
+
+### Added
+
+- VR: MASVS and APK-static audit-aggregate charts on the target detail, a
+  findings CVSS-band and disclosure-status distribution, and a 2x2 fuzz
+  telemetry time-series (coverage, execs per second, corpus size, crashes).
+- Malware (previously charted nothing): a per-investigation cost breakdown, plus
+  observation-kind, target kind and state, family, and investigation-throughput
+  distributions.
+- Forensics (previously charted nothing): a visual timeline track for project
+  timeline events, color-coded by source with click-to-inspect, plus
+  events-by-source and event-type distribution charts. The existing timeline
+  table is preserved.
+- Vulnerability: workflow-state, KEV, top-package, and top-host facet charts and
+  a 30-day findings-throughput trend, alongside the existing severity chart.
+- Platform: a cost-over-time area chart and a model-usage breakdown on the cost
+  page, and a severity distribution on the executive page.
+
+### Changed
+
+- The operator default-page-size preference now drives the initial page size on
+  the systems and audit-log lists (completing the preference wired in v0.5.17).
+
+Every chart carries a screen-reader table mirror and resolves theme colors to
+hex for SVG. All workspace type-checks and the shell production build pass. No
+backend changes.
+
 ## [0.5.17] - 2026-08-13 -- Module route splitting, power tables, operator preferences
 
 Finishes the frontend performance work and turns the list screens into power

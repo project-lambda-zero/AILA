@@ -96,6 +96,51 @@ export interface HumanEstimateResponse {
   reasoning: string;
 }
 
+/**
+ * Per-model rollup across the requested cost-history window. Aggregated
+ * client-side from `CostHistoryResponse.months[].models[]`; the /cost/history
+ * endpoint already groups by (year_month, model_id) so this fold is exact --
+ * no double-counting, no rounding drift beyond what the SQL SUM produced.
+ */
+export interface ModelUsageEntry {
+  model_id: string;
+  cost_usd: number;
+  total_tokens: number;
+  call_count: number;
+}
+
+/**
+ * aggregateModelsAcrossMonths -- collapse the (month, model) matrix into a
+ * per-model rollup for the requested window. Feeds the "Model usage" chart on
+ * the CostPage. Ordered by cost descending so the pie / bar chart's first
+ * slot is always the biggest spender.
+ */
+export function aggregateModelsAcrossMonths(
+  months: MonthlyCostEntry[],
+): ModelUsageEntry[] {
+  const map = new Map<string, ModelUsageEntry>();
+  for (const month of months) {
+    for (const mc of month.models) {
+      const prior = map.get(mc.model_id);
+      if (prior) {
+        prior.cost_usd += mc.cost_usd;
+        prior.total_tokens += mc.total_tokens;
+        prior.call_count += mc.call_count;
+        continue;
+      }
+      map.set(mc.model_id, {
+        model_id: mc.model_id,
+        cost_usd: mc.cost_usd,
+        total_tokens: mc.total_tokens,
+        call_count: mc.call_count,
+      });
+    }
+  }
+  const rows = Array.from(map.values());
+  rows.sort((a, b) => b.cost_usd - a.cost_usd);
+  return rows;
+}
+
 // ---------------------------------------------------------------------------
 // Query keys
 // ---------------------------------------------------------------------------

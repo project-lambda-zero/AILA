@@ -4,6 +4,8 @@ import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { useOccurrences, useTimeline } from "../queries";
+import { TimelineDistribution } from "./TimelineDistribution";
+import { TimelineTrack } from "./TimelineTrack";
 
 type Confidence = "low" | "medium" | "high";
 
@@ -228,6 +230,31 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
           ))}
         </div>
       </div>
+
+      {/* Section 0 -- Visual analytics (additive; list views below stay intact) */}
+      {safeEntries.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-baseline justify-between">
+            <h3 className="text-sm font-semibold text-foreground">
+              Visual timeline
+              <span className="ml-2 text-xs font-normal text-text-muted">
+                {safeEntries.length} event
+                {safeEntries.length === 1 ? "" : "s"} at{" "}
+                <code>{confidence}</code> confidence -- click a dot for
+                detail, list view below
+              </span>
+            </h3>
+          </div>
+          <TimelineTrack
+            entries={safeEntries}
+            activeSource={sourceFilter}
+            onSourceClick={(src) =>
+              setSourceFilter((cur) => (cur === src ? null : src))
+            }
+          />
+          <TimelineDistribution entries={safeEntries} />
+        </div>
+      )}
 
       {/* Section 1 -- Timeline (event-time correlation) */}
       <div className="space-y-1">

@@ -33,6 +33,7 @@ import {
 import { AuditDetailRenderer } from "./AuditDetailRenderer";
 import { AuditSealsTab } from "./AuditSealsTab";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { usePreferences } from "@/providers/PreferencesProvider";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -447,6 +448,10 @@ export function AuditLogsPage() {
   const [draftFilters, setDraftFilters] = useState<AuditFilters>(EMPTY_FILTERS);
   const [activeFilters, setActiveFilters] = useState<AuditFilters>(EMPTY_FILTERS);
   const [useJql, setUseJql] = useState(true);
+  // Operator preference drives the AilaTable page window; the server fetch
+  // stays at SERVER_PAGE_SIZE (backend max) so filter-narrowed sets remain
+  // representative regardless of the chosen client-side page size.
+  const { defaultPageSize } = usePreferences();
   const [selectedEvent, setSelectedEvent] = useState<AuditEvent | null>(null);
 
   const auditQuery = useQuery({
@@ -629,7 +634,7 @@ export function AuditLogsPage() {
           <AilaTable
             data={items}
             columns={AUDIT_COLUMNS_WITH_DETAILS(setSelectedEvent)}
-            pageSize={25}
+            pageSize={defaultPageSize}
             enableSorting
             enableFiltering={false}
           >

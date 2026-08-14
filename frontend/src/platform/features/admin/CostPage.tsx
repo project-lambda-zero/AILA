@@ -24,12 +24,15 @@ import { UsersThree } from "@phosphor-icons/react/dist/csr/UsersThree";
 
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaBadge } from "@/components/aila/AilaBadge";
+import { AilaChart } from "@/components/aila/AilaChart";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useThemeChartColors } from "@platform/features/viz/chartColors";
 
 import {
+  aggregateModelsAcrossMonths,
   useCostHistory,
   useCostRoi,
   useEstimateHumanCost,
@@ -39,6 +42,7 @@ import {
   type CostEstimateResponse,
   type HumanEstimateResponse,
   type MonthlyCostEntry,
+  type ModelUsageEntry,
 } from "./cost/queries";
 
 // ---------------------------------------------------------------------------
@@ -139,6 +143,86 @@ function MonthlyTrend({ months }: { months: MonthlyCostEntry[] }) {
         );
       })}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Cost trend chart -- AilaChart area over months
+// ---------------------------------------------------------------------------
+//
+// Chronological view of monthly cost totals. The inline MonthlyTrend bars
+// above stay as the detailed per-month per-model drilldown; this chart
+// provides the at-a-glance direction (up/down/flat) that a stack of bars
+// with mixed magnitudes does not read cleanly.
+
+interface CostTrendPoint extends Record<string, unknown> {
+  year_month: string;
+  total_cost_usd: number;
+  total_tokens: number;
+}
+
+function CostTrendChart({
+  months,
+  accent,
+}: {
+  months: MonthlyCostEntry[];
+  accent: string;
+}) {
+  const points: CostTrendPoint[] = months.map((m) => ({
+    year_month: m.year_month,
+    // recharts serialises the value verbatim; round to a stable dollar
+    // precision so tooltips don't leak float-add drift like 3.1400000000004.
+    total_cost_usd: Math.round(m.total_cost_usd * 10000) / 10000,
+    total_tokens: m.total_tokens,
+  }));
+  return (
+    <AilaChart
+      type="area"
+      data={points}
+      dataKey="total_cost_usd"
+      xKey="year_month"
+      colors={[accent]}
+      size="md"
+      ariaLabel="Monthly LLM cost trend"
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Model usage chart -- per-model rollup pie across the requested window
+// ---------------------------------------------------------------------------
+//
+// Which models drove spend in the selected window. Sourced from the same
+// `/cost/history` payload as the trend above; no extra round trip.
+
+function ModelUsageChart({
+  rows,
+  palette,
+}: {
+  rows: ModelUsageEntry[];
+  palette: string[];
+}) {
+  if (rows.length === 0) {
+    return (
+      <p className="font-mono text-xs text-text-muted">
+        No model-level cost records in the selected window.
+      </p>
+    );
+  }
+  const data = rows.map((r) => ({
+    ...r,
+    cost_usd: Math.round(r.cost_usd * 10000) / 10000,
+  }));
+  return (
+    <AilaChart
+      type="pie"
+      data={data}
+      dataKey="cost_usd"
+      xKey="model_id"
+      colors={palette}
+      size="md"
+      ariaLabel="Cost distribution by model"
+    />
   );
 }
 
@@ -286,6 +370,32 @@ export function CostPage() {
     if (prev === 0) return null;
     return ((last - prev) / prev) * 100;
   }, [months]);
+
+  // Chart palette resolved from active theme so recharts SVG fills render
+  // reliably (CSS var(--*) doesn't resolve in SVG presentation attributes).
+  const themeColors = useThemeChartColors();
+
+  // Per-model rollup across the requested history window -- reuses the same
+  // /cost/history payload the trend card renders (no extra request).
+  const modelRollup = useMemo(
+    () => aggregateModelsAcrossMonths(months),
+    [months],
+  );
+
+  // Palette for the model-usage pie: cycle through the semantic accents so
+  // no two adjacent slices share a hue. Slice count is small (few LLMs per
+  // window) so a 6-color rotation is plenty.
+  const modelPalette = useMemo<string[]>(
+    () => [
+      themeColors.accent,
+      themeColors.high,
+      themeColors.medium,
+      themeColors.critical,
+      themeColors.low,
+      themeColors.textMuted,
+    ],
+    [themeColors],
+  );
 
   function handleRunSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -491,6 +601,42 @@ export function CostPage() {
           <MonthlyTrend months={months} />
         )}
       </AilaCard>
+
+      {/* Cost trend + Model usage side-by-side on wide viewports. Both feed
+          off the same /cost/history payload so no extra request fires. */}
+      {!historyQuery.isLoading && !historyQuery.isError && months.length > 0 && (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <AilaCard variant="default" padding="md" techBorder glow>
+            <div className="flex items-center gap-2 mb-3">
+              <ChartLineUp className="h-4 w-4 text-accent" />
+              <h2 className="font-mono text-sm font-semibold text-text">
+                Cost over time
+              </h2>
+            </div>
+            <p className="font-mono text-xs text-text-muted mb-3">
+              Monthly LLM spend across the selected window.
+            </p>
+            <CostTrendChart months={months} accent={themeColors.accent} />
+          </AilaCard>
+
+          <AilaCard variant="default" padding="md" techBorder glow>
+            <div className="flex items-center gap-2 mb-3">
+              <CurrencyDollar className="h-4 w-4 text-accent" />
+              <h2 className="font-mono text-sm font-semibold text-text">
+                Model usage
+              </h2>
+            </div>
+            <p className="font-mono text-xs text-text-muted mb-3">
+              Cost distribution by model across the selected window
+              {modelRollup.length > 0
+                ? ` \u00b7 ${modelRollup.length} model${modelRollup.length === 1 ? "" : "s"}`
+                : ""}
+              .
+            </p>
+            <ModelUsageChart rows={modelRollup} palette={modelPalette} />
+          </AilaCard>
+        </div>
+      )}
 
       {/* ROI card */}
       <AilaCard variant="default" padding="md" techBorder glow>

@@ -5,6 +5,7 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaChart } from "@/components/aila/AilaChart";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { useThemeChartColors } from "@platform/features/viz/chartColors";
 
 import { DeleteButton } from "../components/DeleteButton";
 import {
@@ -467,6 +468,7 @@ export function FuzzCampaignDetailPage() {
  *  a small line chart per metric, plus a sr-only table mirror. */
 function CoverageChart({ campaignId }: { campaignId: string }) {
   const { data } = useCampaignTelemetry(campaignId);
+  const colors = useThemeChartColors();
   const points = data?.data ?? [];
   if (points.length === 0) {
     return (
@@ -481,28 +483,90 @@ function CoverageChart({ campaignId }: { campaignId: string }) {
       </div>
     );
   }
-  // Project into a single chart bound by the cheapest dimension:
-  // coverage_pct % over time.
-  const series = points.map((p) => ({
-    t: p.measured_at.slice(11, 16),
-    coverage: p.coverage_pct ?? 0,
-    corpus: p.corpus_size ?? 0,
-    eps: p.execs_per_sec ?? 0,
-  }));
+  // Project once, then feed the same rows into each metric chart. `t`
+  // is HH:MM sliced off `measured_at` (ISO 8601) so tight sample
+  // cadences don't push the axis into an unreadable full-timestamp
+  // fallback. `crashes` is a per-sample delta over the cumulative
+  // `crashes_found` reading so the bars answer "when did crashes
+  // arrive" rather than the redundant monotonic curve.
+  const series = points.map((p, i, arr) => {
+    const prevCrashes = i > 0 ? (arr[i - 1].crashes_found ?? 0) : 0;
+    const currCrashes = p.crashes_found ?? 0;
+    const delta = Math.max(0, currCrashes - prevCrashes);
+    return {
+      t: p.measured_at.slice(11, 16),
+      coverage: p.coverage_pct ?? 0,
+      corpus: p.corpus_size ?? 0,
+      eps: p.execs_per_sec ?? 0,
+      crashes: i === 0 ? currCrashes : delta,
+    };
+  });
+  const latest = points.at(-1);
   return (
-    <div className="space-y-2">
-      <AilaChart
-        type="bar"
-        data={series}
-        dataKey="coverage"
-        xKey="t"
-        size="sm"
-        ariaLabel="Coverage percent over time"
-      />
+    <div className="space-y-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div>
+          <p className="text-3xs text-text-muted font-mono uppercase tracking-wide mb-1">
+            Coverage % over time
+          </p>
+          <AilaChart
+            type="area"
+            data={series}
+            dataKey="coverage"
+            xKey="t"
+            colors={[colors.accent]}
+            size="sm"
+            ariaLabel="Coverage percent over time"
+          />
+        </div>
+        <div>
+          <p className="text-3xs text-text-muted font-mono uppercase tracking-wide mb-1">
+            Execs / second
+          </p>
+          <AilaChart
+            type="line"
+            data={series}
+            dataKey="eps"
+            xKey="t"
+            colors={[colors.high]}
+            size="sm"
+            ariaLabel="Execs per second over time"
+          />
+        </div>
+        <div>
+          <p className="text-3xs text-text-muted font-mono uppercase tracking-wide mb-1">
+            Corpus size
+          </p>
+          <AilaChart
+            type="line"
+            data={series}
+            dataKey="corpus"
+            xKey="t"
+            colors={[colors.medium]}
+            size="sm"
+            ariaLabel="Corpus size over time"
+          />
+        </div>
+        <div>
+          <p className="text-3xs text-text-muted font-mono uppercase tracking-wide mb-1">
+            New crashes per sample
+          </p>
+          <AilaChart
+            type="bar"
+            data={series}
+            dataKey="crashes"
+            xKey="t"
+            colors={[colors.critical]}
+            size="sm"
+            ariaLabel="New crashes per telemetry sample"
+          />
+        </div>
+      </div>
       <p className="text-3xs text-text-muted font-mono">
-        {series.length} samples · latest: {points.at(-1)?.coverage_pct ?? 0}% cov
-        · {points.at(-1)?.corpus_size ?? 0} corpus
-        · {points.at(-1)?.execs_per_sec?.toFixed(0) ?? 0} exec/s
+        {series.length} samples · latest: {latest?.coverage_pct ?? 0}% cov
+        · {latest?.corpus_size ?? 0} corpus
+        · {latest?.execs_per_sec?.toFixed(0) ?? 0} exec/s
+        · {latest?.crashes_found ?? 0} crashes total
       </p>
       <table className="sr-only">
         <caption>Fuzz telemetry samples</caption>
@@ -512,6 +576,7 @@ function CoverageChart({ campaignId }: { campaignId: string }) {
             <th>Coverage %</th>
             <th>Corpus size</th>
             <th>Execs/sec</th>
+            <th>New crashes</th>
           </tr>
         </thead>
         <tbody>
@@ -521,6 +586,7 @@ function CoverageChart({ campaignId }: { campaignId: string }) {
               <td>{row.coverage}</td>
               <td>{row.corpus}</td>
               <td>{row.eps}</td>
+              <td>{row.crashes}</td>
             </tr>
           ))}
         </tbody>

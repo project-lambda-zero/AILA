@@ -3,7 +3,9 @@ import { useNavigate } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
+import { AilaChart } from "@/components/aila/AilaChart";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { useThemeChartColors } from "@platform/features/viz/chartColors";
 
 import {
   SortHeader,
@@ -161,6 +163,14 @@ export function FindingsListPage() {
         </div>
       </AilaCard>
 
+      {/* Additive distribution panel -- client-aggregates the loaded
+          findings so the operator sees the shape of the current view
+          without an extra round trip. Purely read-only: the table
+          below and every filter above stay authoritative. */}
+      {!isLoading && !isError && sortedRows.length > 0 && (
+        <FindingsDistributionPanel rows={sortedRows} />
+      )}
+
       {isLoading && <LoadingSkeleton size="lg" width="full" />}
 
       {isError && (
@@ -270,5 +280,111 @@ export function FindingsListPage() {
         </AilaCard>
       )}
     </div>
+  );
+}
+
+/** CVSS bands mirror the CVE scoring specification: none (0.0),
+ *  low (0.1-3.9), medium (4.0-6.9), high (7.0-8.9), critical (9.0+). A
+ *  finding with no cvss_score is bucketed under `unscored` so the
+ *  operator sees how much of the current view lacks a score. */
+const CVSS_BANDS: ReadonlyArray<{
+  name: string;
+  test: (score: number | null) => boolean;
+  colorKey: "critical" | "high" | "medium" | "low" | "textMuted";
+}> = [
+  { name: "Critical (9+)", test: (s) => s != null && s >= 9, colorKey: "critical" },
+  { name: "High (7-8.9)", test: (s) => s != null && s >= 7 && s < 9, colorKey: "high" },
+  { name: "Medium (4-6.9)", test: (s) => s != null && s >= 4 && s < 7, colorKey: "medium" },
+  { name: "Low (0.1-3.9)", test: (s) => s != null && s > 0 && s < 4, colorKey: "low" },
+  { name: "Unscored", test: (s) => s == null || s === 0, colorKey: "textMuted" },
+];
+
+/** Read-only summary panel over the current findings view. Renders a
+ *  CVSS-band donut and a disclosure-status bar so the operator can see
+ *  the shape of what they're triaging without an extra fetch. Sourced
+ *  client-side from the exact rows the table renders below, so filters
+ *  and search stay authoritative -- narrow the view and the panel
+ *  narrows with it. */
+function FindingsDistributionPanel({
+  rows,
+}: {
+  rows: ReadonlyArray<VRFinding>;
+}) {
+  const colors = useThemeChartColors();
+  const cvssData = CVSS_BANDS.map((band) => ({
+    name: band.name,
+    count: rows.reduce(
+      (acc, r) => acc + (band.test(r.cvss_score ?? null) ? 1 : 0),
+      0,
+    ),
+  }));
+  const cvssColors = CVSS_BANDS.map((band) => colors[band.colorKey]);
+  const cvssHasData = cvssData.some((d) => d.count > 0);
+
+  const statusCounts = new Map<string, number>();
+  for (const r of rows) {
+    const k = r.disclosure_status || "unknown";
+    statusCounts.set(k, (statusCounts.get(k) ?? 0) + 1);
+  }
+  const statusData = Array.from(statusCounts.entries())
+    .map(([status, count]) => ({ status, count }))
+    .sort((a, b) => b.count - a.count);
+  const statusHasData = statusData.length > 0;
+  const scored = rows.filter((r) => r.cvss_score != null && r.cvss_score > 0);
+
+  return (
+    <AilaCard techBorder glow>
+      <div className="space-y-3">
+        <div className="flex items-baseline justify-between flex-wrap gap-2">
+          <h2 className="text-sm font-semibold text-foreground">
+            Distribution
+          </h2>
+          <span className="text-3xs text-text-muted font-mono">
+            {rows.length} finding{rows.length === 1 ? "" : "s"} in view ·{" "}
+            {scored.length} scored
+          </span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-1">
+              CVSS bands
+            </h3>
+            {cvssHasData ? (
+              <AilaChart
+                type="pie"
+                data={cvssData}
+                dataKey="count"
+                xKey="name"
+                colors={cvssColors}
+                size="sm"
+                ariaLabel="Findings by CVSS band"
+              />
+            ) : (
+              <p className="text-xs text-text-muted">No scored findings.</p>
+            )}
+          </div>
+          <div>
+            <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-1">
+              Disclosure status
+            </h3>
+            {statusHasData ? (
+              <AilaChart
+                type="bar"
+                data={statusData}
+                dataKey="count"
+                xKey="status"
+                colors={[colors.accent]}
+                size="sm"
+                ariaLabel="Findings by disclosure status"
+              />
+            ) : (
+              <p className="text-xs text-text-muted">
+                No disclosure status recorded.
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+    </AilaCard>
   );
 }

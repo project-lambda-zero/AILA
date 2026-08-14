@@ -18,6 +18,7 @@ import { FileArrowDown } from "@phosphor-icons/react/dist/csr/FileArrowDown";
 
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaBadge } from "@/components/aila/AilaBadge";
+import { AilaChart } from "@/components/aila/AilaChart";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { Button } from "@/components/ui/button";
@@ -26,6 +27,7 @@ import { requestBlob } from "@platform/api/http";
 import { saveBlobResponse } from "@platform/api/download";
 import { getAuthTokenStandalone } from "@platform/auth/useAuthStore";
 import { authorizedRequestJson } from "@platform/api/http";
+import { useThemeChartColors } from "@platform/features/viz/chartColors";
 
 // ---------------------------------------------------------------------------
 // Types -- mirror src/aila/api/schemas/endpoints.py:ExecutiveHealthResponse
@@ -95,6 +97,36 @@ export function ExecutivePage() {
       count: health.severity_breakdown[s.key] ?? 0,
     }));
   }, [health]);
+
+  // Theme-resolved chart palette. Recharts renders SVG presentation attrs
+  // so `var(--*)` never resolves; useThemeChartColors reads the computed
+  // CSS custom properties and re-evaluates on theme/mode change.
+  const themeColors = useThemeChartColors();
+
+  // Pie chart slices for the severity mix. Empty buckets are dropped so
+  // a fleet with only high + moderate never renders zero-height wedges,
+  // and the `colors` array stays 1:1 aligned with the data array (per
+  // the AilaChart pie contract in AilaChart.view.tsx).
+  const severityPieData = useMemo(() => {
+    if (!health) return [];
+    const colorByKey: Record<string, string> = {
+      Immediate: themeColors.critical,
+      High: themeColors.high,
+      Moderate: themeColors.medium,
+      Planned: themeColors.low,
+    };
+    return breakdown
+      .filter((row) => row.count > 0)
+      .map((row) => ({
+        name: row.label,
+        count: row.count,
+        color: colorByKey[row.key] ?? themeColors.textMuted,
+      }));
+  }, [breakdown, health, themeColors]);
+  const severityPieColors = useMemo(
+    () => severityPieData.map((row) => row.color),
+    [severityPieData],
+  );
 
   async function handleDownloadPdf() {
     setPdfError(null);
@@ -308,6 +340,38 @@ export function ExecutivePage() {
           </div>
         )}
       </AilaCard>
+
+      {/* Severity distribution pie -- additive visual of the same
+          /executive/health payload. The card grid above stays as the
+          numeric readout; this chart is the at-a-glance shape. */}
+      {!healthQuery.isLoading &&
+        !healthQuery.isError &&
+        severityPieData.length > 0 && (
+          <AilaCard
+            variant="default"
+            padding="md"
+            techBorder
+            glow
+            className="lg:ml-12 lg:mr-4"
+          >
+            <h2 className="font-mono text-sm font-semibold text-text mb-3">
+              Severity distribution
+            </h2>
+            <p className="font-mono text-xs text-text-muted mb-3">
+              Share of the {totalFindings} active finding
+              {totalFindings === 1 ? "" : "s"} by risk tier.
+            </p>
+            <AilaChart
+              type="pie"
+              data={severityPieData}
+              dataKey="count"
+              xKey="name"
+              colors={severityPieColors}
+              size="md"
+              ariaLabel="Severity distribution pie chart"
+            />
+          </AilaCard>
+        )}
 
       {/* Downloads */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">

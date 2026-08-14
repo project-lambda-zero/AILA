@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/sheet";
 import { useAuthStore } from "@platform/auth/useAuthStore";
 import { isAllowedRole } from "@platform/auth/roles";
+import { usePreferences } from "@/providers/PreferencesProvider";
 import {
   useCreateSystem,
   useSystems,
@@ -66,7 +67,12 @@ export function SystemsPage() {
   const [showCSVImport, setShowCSVImport] = useState(false);
   const [tagSheetSystemId, setTagSheetSystemId] = useState<number | null>(null);
   const [draftSystem, setDraftSystem] = useState<SystemMutationInput>(DEFAULT_SYSTEM_FORM);
-  const systemsQuery = useSystems();
+  // Operator preference (settings > default page size) drives both the initial
+  // page fetch and the AilaTable pagination window so the client's rendered
+  // slice never exceeds the fetched slice for any value in
+  // ALLOWED_PAGE_SIZES (10 / 25 / 50 / 100 -- all under the 250 backend cap).
+  const { defaultPageSize } = usePreferences();
+  const systemsQuery = useSystems(1, defaultPageSize);
   const vocabQuery = useTagVocabulary();
   const createSystem = useCreateSystem();
   const canOperate = isAllowedRole(role, "operator");
@@ -391,7 +397,7 @@ export function SystemsPage() {
           <AilaTable
             data={filteredSystems}
             columns={columns}
-            pageSize={50}
+            pageSize={defaultPageSize}
             enableSorting
             enableFiltering
           >
@@ -399,7 +405,7 @@ export function SystemsPage() {
             <AilaTable.Body
               emptyState="No systems match the current search."
             />
-            <AilaTable.Pagination pageSizeOptions={[25, 50, 100]} />
+            <AilaTable.Pagination pageSizeOptions={[10, 25, 50, 100]} />
           </AilaTable>
         </div>
       )}

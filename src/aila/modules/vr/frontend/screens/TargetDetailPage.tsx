@@ -3,8 +3,10 @@ import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
+import { AilaChart } from "@/components/aila/AilaChart";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { useThemeChartColors } from "@platform/features/viz/chartColors";
 
 import {
   MitigationsRibbon,
@@ -26,6 +28,7 @@ import {
   useUploadTargetArtifact,
 } from "../mutations";
 import {
+  useApkStaticAuditAggregate,
   useInvestigationsForTarget,
   useMasvsAuditAggregate,
   useTarget,
@@ -39,6 +42,8 @@ import { Link } from "react-router";
 import type {
   AnalysisState,
   ApkOverview,
+  ApkStaticControlVerdict,
+  ApkStaticVerdict,
   MasvsControlVerdict,
   MasvsVerdict,
   TargetKind,
@@ -1535,6 +1540,262 @@ function _verdictLabel(verdict: MasvsVerdict): string {
   }
 }
 
+/** Additive analytics section for android_apk targets. Renders donut +
+ *  by-group bar charts sourced from the MASVS and APK static-audit
+ *  aggregate endpoints. Silently omits either half if its parent
+ *  investigation hasn't been dispatched yet -- so on a fresh APK the
+ *  section is empty; once one dispatcher fires the matching charts
+ *  appear beside the existing tables above (which stay intact).
+ *
+ *  Reads the exact same `useMasvsAuditAggregate` /
+ *  `useApkStaticAuditAggregate` hooks the dispatcher cards use, so the
+ *  charts share the 8s poll cadence and settle in lock-step with the
+ *  per-control tables. Uses `useThemeChartColors()` for verdict fills
+ *  (CSS variables do not resolve in Recharts SVG presentation attrs). */
+function AuditAggregateAnalytics({ targetId }: { targetId: string }) {
+  const colors = useThemeChartColors();
+  const { data: investigationsResult, isLoading: isLoadingInvs } =
+    useInvestigationsForTarget(targetId);
+  const investigations = investigationsResult?.data ?? [];
+
+  const masvsParent =
+    investigations
+      .filter(
+        (inv) =>
+          (inv.kind as string) === "masvs_audit" &&
+          inv.parent_investigation_id == null,
+      )
+      .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""))[0]
+      ?? null;
+
+  const apkStaticParent =
+    investigations
+      .filter(
+        (inv) =>
+          (inv.kind as string) === "apk_static_audit" &&
+          inv.parent_investigation_id == null,
+      )
+      .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""))[0]
+      ?? null;
+
+  const { data: masvsAgg } = useMasvsAuditAggregate(
+    targetId,
+    masvsParent?.id ?? null,
+  );
+  const { data: apkStaticAgg } = useApkStaticAuditAggregate(
+    targetId,
+    apkStaticParent?.id ?? null,
+  );
+
+  if (isLoadingInvs) return null;
+  // Nothing dispatched -- keep the page unchanged from before this
+  // section landed. The dispatcher cards above already display the
+  // "not dispatched yet" empty-state pattern; no need to repeat it.
+  if (masvsParent == null && apkStaticParent == null) return null;
+
+  const masvsVerdictData = masvsAgg
+    ? _buildVerdictBuckets(masvsAgg.verdicts)
+    : [];
+  const masvsGroupData = masvsAgg
+    ? _buildMasvsGroupBuckets(masvsAgg.verdicts)
+    : [];
+  const apkVerdictData = apkStaticAgg
+    ? _buildVerdictBuckets(apkStaticAgg.verdicts)
+    : [];
+  const apkGroupData = apkStaticAgg
+    ? _buildApkStaticGroupBuckets(apkStaticAgg.verdicts)
+    : [];
+
+  const verdictColors = [
+    colors.critical, // finding
+    colors.medium, // inconclusive
+    colors.low, // no_finding
+    colors.textMuted, // not_applicable
+  ];
+  const findingColor = [colors.critical];
+
+  return (
+    <AilaCard techBorder glow>
+      <div className="space-y-4">
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">
+            Analytics
+          </h2>
+          <p className="text-xs text-text-muted mt-1">
+            Verdict distribution across MASVS controls and APK static
+            checks, plus per-group finding density. Updates live as
+            child investigations resolve.
+          </p>
+        </div>
+
+        {masvsAgg && (
+          <div className="space-y-2">
+            <div className="flex items-baseline justify-between flex-wrap gap-2">
+              <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide">
+                MASVS verdicts
+              </h3>
+              <span className="text-3xs text-text-muted font-mono">
+                {masvsAgg.verdicts.length} verdict
+                {masvsAgg.verdicts.length === 1 ? "" : "s"} · catalog{" "}
+                {masvsAgg.masvs_spec_version}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {_hasChartData(masvsVerdictData) ? (
+                <AilaChart
+                  type="pie"
+                  data={masvsVerdictData}
+                  dataKey="count"
+                  xKey="name"
+                  colors={verdictColors}
+                  size="sm"
+                  ariaLabel="MASVS verdict distribution"
+                />
+              ) : (
+                <p className="text-xs text-text-muted">
+                  No verdicts resolved yet.
+                </p>
+              )}
+              {_hasChartData(masvsGroupData) ? (
+                <AilaChart
+                  type="bar"
+                  data={masvsGroupData}
+                  dataKey="findings"
+                  xKey="group"
+                  colors={findingColor}
+                  size="sm"
+                  ariaLabel="MASVS findings per group"
+                />
+              ) : (
+                <p className="text-xs text-text-muted">
+                  No group breakdown yet.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {apkStaticAgg && (
+          <div className="space-y-2">
+            <div className="flex items-baseline justify-between flex-wrap gap-2">
+              <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide">
+                APK static verdicts
+              </h3>
+              <span className="text-3xs text-text-muted font-mono">
+                {apkStaticAgg.verdicts.length} verdict
+                {apkStaticAgg.verdicts.length === 1 ? "" : "s"} · catalog{" "}
+                {apkStaticAgg.apk_static_spec_version}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {_hasChartData(apkVerdictData) ? (
+                <AilaChart
+                  type="pie"
+                  data={apkVerdictData}
+                  dataKey="count"
+                  xKey="name"
+                  colors={verdictColors}
+                  size="sm"
+                  ariaLabel="APK static verdict distribution"
+                />
+              ) : (
+                <p className="text-xs text-text-muted">
+                  No verdicts resolved yet.
+                </p>
+              )}
+              {_hasChartData(apkGroupData) ? (
+                <AilaChart
+                  type="bar"
+                  data={apkGroupData}
+                  dataKey="findings"
+                  xKey="group"
+                  colors={findingColor}
+                  size="sm"
+                  ariaLabel="APK static findings per group"
+                />
+              ) : (
+                <p className="text-xs text-text-muted">
+                  No group breakdown yet.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </AilaCard>
+  );
+}
+
+/** Verdict → display label preserved from the per-control table so a
+ *  screen reader hits the same string in both places. Kept internal --
+ *  the chart only needs `{ name, count }` rows. */
+const _VERDICT_ORDER: ReadonlyArray<{
+  key: MasvsVerdict | ApkStaticVerdict;
+  label: string;
+}> = [
+  { key: "finding", label: "FINDING" },
+  { key: "inconclusive", label: "INCONCLUSIVE" },
+  { key: "no_finding", label: "NO FINDING" },
+  { key: "not_applicable", label: "N/A" },
+];
+
+function _buildVerdictBuckets(
+  verdicts: ReadonlyArray<MasvsControlVerdict | ApkStaticControlVerdict>,
+): Array<{ name: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const v of verdicts) {
+    counts.set(v.verdict, (counts.get(v.verdict) ?? 0) + 1);
+  }
+  return _VERDICT_ORDER.map(({ key, label }) => ({
+    name: label,
+    count: counts.get(key) ?? 0,
+  }));
+}
+
+function _buildMasvsGroupBuckets(
+  verdicts: ReadonlyArray<MasvsControlVerdict>,
+): Array<{ group: string; findings: number; total: number }> {
+  const acc = new Map<string, { findings: number; total: number }>();
+  for (const v of verdicts) {
+    const g = _extractGroupFromControlId(v.control_id);
+    const row = acc.get(g) ?? { findings: 0, total: 0 };
+    row.total += 1;
+    if (v.verdict === "finding") row.findings += 1;
+    acc.set(g, row);
+  }
+  return Array.from(acc.entries())
+    .map(([group, row]) => ({ group, ...row }))
+    .sort((a, b) => b.findings - a.findings || a.group.localeCompare(b.group));
+}
+
+function _buildApkStaticGroupBuckets(
+  verdicts: ReadonlyArray<ApkStaticControlVerdict>,
+): Array<{ group: string; findings: number; total: number }> {
+  // APK static ids share the ``APK-<GROUP>-<check>`` shape -- reuse the
+  // same split rule as MASVS so a stray non-conforming id renders under
+  // "--" instead of crashing.
+  const acc = new Map<string, { findings: number; total: number }>();
+  for (const v of verdicts) {
+    const g = _extractGroupFromControlId(v.control_id);
+    const row = acc.get(g) ?? { findings: 0, total: 0 };
+    row.total += 1;
+    if (v.verdict === "finding") row.findings += 1;
+    acc.set(g, row);
+  }
+  return Array.from(acc.entries())
+    .map(([group, row]) => ({ group, ...row }))
+    .sort((a, b) => b.findings - a.findings || a.group.localeCompare(b.group));
+}
+
+function _hasChartData(rows: ReadonlyArray<Record<string, unknown>>): boolean {
+  return rows.some((r) => {
+    for (const v of Object.values(r)) {
+      if (typeof v === "number" && v > 0) return true;
+    }
+    return false;
+  });
+}
+
 export function TargetDetailPage() {
   const { targetId } = useParams<{ targetId: string }>();
   const tid = targetId ?? "";
@@ -1872,6 +2133,17 @@ export function TargetDetailPage() {
               : target.android_package_name ?? null
           }
         />
+      )}
+
+      {/* Additive analytics -- verdict distributions + per-group finding
+          density derived from the MASVS and APK-static audit aggregates.
+          Self-hides on non-APK targets and when neither audit has been
+          dispatched yet, so nothing above this line changes when a
+          fresh target loads. */}
+      {target.kind === "android_apk"
+        && target.apk_overview?.static_summary
+        && Object.keys(target.apk_overview.static_summary).length > 0 && (
+        <AuditAggregateAnalytics targetId={target.id} />
       )}
 
       {/* Mitigations -- uses shared MitigationsRibbon (§1.4 promise) */}
