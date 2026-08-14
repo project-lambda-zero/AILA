@@ -7,6 +7,79 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-08-13 -- Clean-install dependency and schema fixes surfaced by CI
+
+### Fixed
+
+- Restored four dependency pins in `pyproject.toml` that earlier blanket
+  version-bump substitutions had advanced to nonexistent releases, which
+  broke `pip install -e ".[dev]"` in a clean environment and failed both
+  backend CI jobs at the install step: `pgvector` back to `0.4.2`,
+  `python-magic` to `0.4.27`, `python-magic-bin` to `0.4.14`, and the
+  `ruff` dev-tool floor to `>=0.5.0`. Version-site bumps are now anchored to
+  the version-declaration lines so a dependency pin can no longer be caught
+  by the same substitution.
+- Declared two test dependencies that were missing from the `dev` extra, so
+  a clean `pip install -e ".[dev]"` can now collect the suite:
+  `pytest-asyncio` (imported by `tests/conftest.py`; required by
+  `asyncio_mode = "auto"`) and `pypdf` (test-only, used to parse generated
+  MASVS report PDFs in assertions). The local developer environment already
+  had both, so only the first clean-room CI install exposed the gap.
+  `pytest-asyncio` is capped below `1.4.0`: the 1.4 loop-factory rework binds
+  the session-scoped async fixtures to a different event loop than the tests,
+  raising `RuntimeError: ... attached to a different loop` at fixture setup.
+- Declared three production dependencies that were absent from
+  `[project.dependencies]`: `asn1crypto` (APK v2 and v3 signing-block parsing
+  in `platform.apk`, imported unguarded, so importing `aila.platform.apk`
+  failed on a clean install), `PyYAML` (imported unguarded by platform code;
+  had only been reaching the environment transitively through dev tools, so a
+  production `pip install -e .` would have lacked it), and `python-multipart`
+  (FastAPI loads it at request time to parse the `Form`/`File` upload
+  endpoints under `api/uploads.py` and the module routers).
+- Added a `strategy_family` column to `forensics_investigations` (model plus
+  migration `122_forensics_strategy_family`). Platform
+  `persona_spawn` reads the investigation-level `strategy_family` as the
+  RFC-13/03 fallback when a primary branch was inserted without one, but the
+  forensics investigation table (which does not extend `InvestigationRecordBase`)
+  never carried the column, so `SELECT strategy_family FROM
+  forensics_investigations` raised `UndefinedColumnError` and the forensics
+  persona-panel spawn failed. Default `generic` matches the forensics
+  investigator's own fallback family. Alembic head moves 121 to 122.
+
+- Corrected the reports-list total in `ReportService.fetch_reports`: the count
+  query wrapped the base statement as a subquery, which left the team-scope
+  `do_orm_execute` listener appending a `team_id` predicate to an outer SELECT
+  with no matching FROM. SQLAlchemy pulled the table in implicitly, cross-joining
+  the subquery against the base table and inflating the team-scoped total by the
+  per-team row multiplier for callers behind the API middleware. The count now
+  swaps the SELECT list in place (`with_only_columns(func.count())`) so the
+  predicate is redundant rather than destructive.
+
+### Added
+
+- `microsoft-oidc` optional extra (`msal`) for the Microsoft (Entra ID) OIDC
+  provider, which imports `msal` lazily; install the extra to enable that
+  provider in production.
+- `DELETE /vr/investigations/{id}` now records an audit event
+  (`action="investigation_deleted"`, with the title, kind, status, deleting
+  user, and branch count) in the same transaction as the hard delete. Because
+  the investigation and every child row are removed, the audit trail is the
+  only durable record that the deletion happened and who initiated it -- a
+  deliberate observability fix for "where did my investigation go".
+
+### Changed
+
+- The pytest coverage floor (`[tool.coverage.report] fail_under`) returns to
+  `25` pending a measured total-coverage baseline. It had been raised to
+  `50` while CI could not run, so the higher floor was never validated
+  against an actual coverage number.
+- The CI pipeline no longer runs the backend pytest job. The suite (8781
+  tests, Postgres- and Redis-dependent, roughly 18 minutes) is too heavy for
+  the CI/CD loop; CI now runs the backend gate (ruff, compile, honesty audit)
+  and the frontend type-check and production build. Run the backend suite
+  locally with `make test`. `pytest-timeout` stays in the dev extra so a local
+  run still bounds a hanging test.
+
 ## [0.5.2] - 2026-08-13 -- Skill-library memory tier, isolation-set dedup, CI collection fix
 
 ### Added

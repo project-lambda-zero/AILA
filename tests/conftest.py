@@ -37,6 +37,26 @@ from sqlalchemy.ext.compiler import compiles
 from sqlmodel import SQLModel
 
 
+@pytest.fixture(autouse=True)
+def _reset_redis_pool_global() -> None:
+    """Reset the process-global Redis pool before every test.
+
+    ``aila.platform.services.redis_pool._pool`` is a module global set by the
+    app lifespan / ``init_redis_pool``. Under random ordering a test that runs
+    the lifespan (CI configures ``AILA_PLATFORM_REDIS_URL``) leaves the pool
+    initialized for the rest of the session. SSE endpoints then see
+    ``pool_available() is True`` and take the blocking XREAD stream path
+    instead of the no-Redis fallback, so a ``client.get()`` read-to-completion
+    hangs the whole run. Resetting to ``None`` before each test makes
+    ``pool_available()`` deterministic; tests that exercise the streaming path
+    patch ``pool_available`` directly or initialize the pool in the test body.
+    """
+    import aila.platform.services.redis_pool as _redis_pool
+
+    _redis_pool._pool = None
+    _redis_pool._url = None
+
+
 @compiles(JSONB, "sqlite")
 def _compile_jsonb_sqlite(_type, _compiler, **_kw) -> str:
     return "JSON"

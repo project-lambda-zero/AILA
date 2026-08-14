@@ -66,7 +66,9 @@ async def test_signature_tamper_byte_flip_rejected(async_client, admin_key_recor
         headers={"Authorization": f"Bearer {tampered_token}"},
     )
     assert response.status_code == 401
-    assert "malformed or has an invalid signature" in response.json()["detail"]
+    # /auth/keys is protected by require_user_or_api_key, whose decode block
+    # returns "Invalid token" on jwt.InvalidTokenError (aila/api/auth.py:596-606).
+    assert response.json()["detail"] == "Invalid token"
 
 
 async def test_wrong_secret_jwt_rejected(async_client, admin_key_record):
@@ -87,7 +89,8 @@ async def test_wrong_secret_jwt_rejected(async_client, admin_key_record):
         headers={"Authorization": f"Bearer {wrong_secret_token}"},
     )
     assert response.status_code == 401
-    assert "malformed or has an invalid signature" in response.json()["detail"]
+    # Same code path as byte-flip: require_user_or_api_key returns "Invalid token".
+    assert response.json()["detail"] == "Invalid token"
 
 
 # ── Group 2: Token type enforcement ──────────────────────────────────────────
@@ -102,7 +105,10 @@ async def test_refresh_token_rejected_as_bearer_auth(async_client, admin_key_rec
         headers={"Authorization": f"Bearer {refresh_token}"},
     )
     assert response.status_code == 401
-    assert "Expected 'access' token" in response.json()["detail"]
+    # /auth/keys runs through require_user_or_api_key; the token's typ is
+    # neither user_access nor access, so the terminal else-branch fires with
+    # "Unexpected token type 'refresh'" (aila/api/auth.py:652-655).
+    assert response.json()["detail"] == "Unexpected token type 'refresh'"
 
 
 async def test_access_token_rejected_for_refresh(async_client, admin_key_record):
@@ -176,11 +182,14 @@ async def test_random_garbage_token_rejected(async_client):
 # ── Group 4: Algorithm pinning ───────────────────────────────────────────────
 
 
-def test_alg_none_attack_rejected(admin_key_record):
+async def test_alg_none_attack_rejected(admin_key_record):
     """decode_and_blacklist_check rejects a token with algorithm='none' (alg=none attack).
 
     This verifies the algorithms=[JWT_ALGORITHM] pinning prevents unsigned
-    tokens from being accepted.
+    tokens from being accepted. ``decode_and_blacklist_check`` is async, so
+    the coroutine must be awaited inside the ``pytest.raises`` block --
+    the earlier sync-style call returned a coroutine object and never ran
+    the body, masking a genuine security assertion as ``DID NOT RAISE``.
     """
     # Craft a token with alg=none. PyJWT >= 2.4 refuses to encode with
     # algorithm="none" unless the key is "", so we build the token manually.
@@ -208,7 +217,7 @@ def test_alg_none_attack_rejected(admin_key_record):
     from fastapi import HTTPException
 
     with pytest.raises(HTTPException) as exc_info:
-        decode_and_blacklist_check(none_token, expected_typ=JWT_TYP_ACCESS)
+        await decode_and_blacklist_check(none_token, expected_typ=JWT_TYP_ACCESS)
     assert exc_info.value.status_code == 401
 
 

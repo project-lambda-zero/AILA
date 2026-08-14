@@ -51,6 +51,7 @@ _VR_PAIRS = [
     (pe.PatternStatus, vr_p.PatternStatus),
     (pe.PatternScope, vr_p.PatternScope),
     (pe.PatternConfidence, vr_p.PatternConfidence),
+    (pe.PatternTrustTier, vr_p.PatternTrustTier),
     (pe.HypothesisState, vr_contracts.HypothesisState),
 ]
 
@@ -71,6 +72,7 @@ _MW_PAIRS = [
     (pe.PatternStatus, mw_p.PatternStatus),
     (pe.PatternScope, mw_p.PatternScope),
     (pe.PatternConfidence, mw_p.PatternConfidence),
+    (pe.PatternTrustTier, mw_p.PatternTrustTier),
     (pe.HypothesisState, mw_contracts.HypothesisState),
     (pe.StageState, mw_contracts.StageState),
     (pe.StageName, mw_contracts.StageName),
@@ -87,8 +89,32 @@ def test_hoisted_enum_matches_malware(platform_enum: type, mw_enum: type) -> Non
     assert _members(platform_enum) == _members(mw_enum)
 
 
-def test_all_nineteen_enums_exported() -> None:
-    assert len(pe.__all__) == 19
+def test_all_hoisted_enums_exported() -> None:
+    # RFC-08 added PatternTrustTier (memory-poisoning trust tier stamped on
+    # every pattern row); asserting the FULL current set keeps the guardrail
+    # honest as more enums land.
+    assert set(pe.__all__) == {
+        "AnalysisState",
+        "BranchOperation",
+        "BranchStatus",
+        "HypothesisState",
+        "InvestigationPauseReason",
+        "InvestigationStatus",
+        "OperatorIntent",
+        "OutcomeConfidence",
+        "OutcomeDispatchStatus",
+        "PatternConfidence",
+        "PatternScope",
+        "PatternStatus",
+        "PatternTrustTier",
+        "PersonaVoice",
+        "SenderKind",
+        "StageName",
+        "StageState",
+        "TargetStatus",
+        "TargetTagSource",
+        "WorkspaceStatus",
+    }
 
 
 def test_hypothesis_state_is_the_hoisted_enum() -> None:

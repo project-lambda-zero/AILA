@@ -16,7 +16,7 @@ Two creation paths coexist:
 - Platform + module tables that predate the Alembic baseline
   (`001_baseline_stamp`) are created on first boot by `make db-init`, which runs
   `SQLModel.metadata.create_all()` then stamps `alembic_version` at the current
-  head (`121_backfill_investigation_cost`).
+  head (`122_forensics_strategy_family`).
 - Every schema change since then ships as an Alembic revision under
   `src/aila/alembic/versions/`. See [`DATABASE_MIGRATIONS.md`](DATABASE_MIGRATIONS.md).
 
@@ -1798,6 +1798,7 @@ and crashes on conflict; `merge()` does INSERT-or-UPDATE keyed on the PK.
 | `confidence` | VARCHAR |  |
 | `parent_investigation_id` | VARCHAR(64) | indexed |
 | `prompt_pins_json` | TEXT | default={} |
+| `strategy_family` | VARCHAR(64) | NOT NULL, default=generic |
 | `created_at` | DATETIME | NOT NULL, default=<function utc_now at 0x000000003DB54360> |
 | `updated_at` | DATETIME | default=<function utc_now at 0x000000003DB54180> |
 

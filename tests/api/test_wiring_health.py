@@ -28,11 +28,19 @@ async def test_health_returns_healthy_with_good_db(
 ) -> None:
     """GET /health returns healthy status when DB is responsive.
 
-    The test DB is a real SQLite database -- SELECT 1 succeeds.
+    The test DB is a real Postgres database -- SELECT 1 succeeds.
     With platform=None, module health checks are skipped (AttributeError caught).
-    Result: database=up, no module checks, top status=healthy.
+    Redis and ARQ workers are critical checks (Bug 12); the test harness has
+    Redis available but no ARQ worker process, so both are mocked to 'up' to
+    isolate the aggregation contract being verified here.
+    Result: database=up, redis=up, workers=up, no module checks, top status=healthy.
     """
-    resp = await async_client.get("/health")
+    up = HealthCheckResult(status="up", latency_ms=0.1)
+    with (
+        patch("aila.api.routers.health._check_redis", new_callable=AsyncMock, return_value=up),
+        patch("aila.api.routers.health._check_workers", new_callable=AsyncMock, return_value=up),
+    ):
+        resp = await async_client.get("/health")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["status"] == "healthy"
@@ -75,17 +83,22 @@ async def test_health_degraded_when_redis_down(
     mock_module_checks = {
         "redis_cache": HealthCheckResult(status="degraded", message="Redis unreachable"),
     }
+    up = HealthCheckResult(status="up", latency_ms=0.1)
 
-    with patch(
-        "aila.api.routers.health._collect_module_health_checks",
-        new_callable=AsyncMock,
-        return_value=mock_module_checks,
+    with (
+        patch("aila.api.routers.health._check_redis", new_callable=AsyncMock, return_value=up),
+        patch("aila.api.routers.health._check_workers", new_callable=AsyncMock, return_value=up),
+        patch(
+            "aila.api.routers.health._collect_module_health_checks",
+            new_callable=AsyncMock,
+            return_value=mock_module_checks,
+        ),
     ):
         resp = await async_client.get("/health")
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    # DB is up (real), module check is degraded -> top status = degraded
+    # DB=up, critical infra=up, non-critical module check is degraded -> top = degraded
     assert body["status"] == "degraded"
     assert body["checks"]["database"]["status"] == "up"
     assert body["checks"]["redis_cache"]["status"] == "degraded"
@@ -102,16 +115,24 @@ async def test_health_degraded_when_module_check_down(
     mock_module_checks = {
         "vulnerability_llm": HealthCheckResult(status="down", message="LLM provider unreachable"),
     }
+    up = HealthCheckResult(status="up", latency_ms=0.1)
 
-    with patch(
-        "aila.api.routers.health._collect_module_health_checks",
-        new_callable=AsyncMock,
-        return_value=mock_module_checks,
+    with (
+        patch("aila.api.routers.health._check_redis", new_callable=AsyncMock, return_value=up),
+        patch("aila.api.routers.health._check_workers", new_callable=AsyncMock, return_value=up),
+        patch(
+            "aila.api.routers.health._collect_module_health_checks",
+            new_callable=AsyncMock,
+            return_value=mock_module_checks,
+        ),
     ):
         resp = await async_client.get("/health")
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
+    # DB=up, critical infra=up; a non-critical module ('vulnerability_llm') is
+    # down -> aggregator returns 'degraded' (only critical DB/redis/workers
+    # down would flip the top status to 'unhealthy').
     assert body["status"] == "degraded"
     assert body["checks"]["database"]["status"] == "up"
     assert body["checks"]["vulnerability_llm"]["status"] == "down"

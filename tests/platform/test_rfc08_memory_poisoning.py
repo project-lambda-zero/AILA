@@ -274,6 +274,12 @@ async def _insert_pattern(
 
 
 def _fake_hit(pattern_id: str, score: float) -> dict[str, Any]:
+    """Shape a fake ``retrieve_routed`` result row.
+
+    Mirrors the fields :meth:`PatternStoreBase.applicable` reads: ``score``
+    for ranking, ``metadata.pattern_id`` for the join back to the
+    structured pool, and ``hop`` for the RFC-14 ``matched_by`` branch.
+    """
     return {
         "id": 0,
         "content": "irrelevant",
@@ -281,8 +287,24 @@ def _fake_hit(pattern_id: str, score: float) -> dict[str, Any]:
         "score": score,
         "vec_score": score,
         "fts_score": 0.0,
-        "source": "hybrid",
+        "source": "graph",
         "namespace": "vr.pattern.workspace.dummy",
+        "hop": 0,
+        "path": [],
+        "incoming_relation": None,
+        "incoming_weight": None,
+    }
+
+
+def _routed(hits: list[dict[str, Any]]) -> dict[str, Any]:
+    """Wrap hits in the ``retrieve_routed`` return envelope."""
+    return {
+        "status": "retrieved",
+        "route": "graph",
+        "query": "anything",
+        "count": len(hits),
+        "results": hits,
+        "hop_bound": 2,
     }
 
 
@@ -327,11 +349,11 @@ async def test_applicable_filters_negative_and_down_weights_overlap(
     )
 
     knowledge = AsyncMock()
-    knowledge.retrieve = AsyncMock(
-        return_value=[
+    knowledge.retrieve_routed = AsyncMock(
+        return_value=_routed([
             _fake_hit(positive_id, 0.9),
             _fake_hit(negative_id, 0.9),
-        ],
+        ]),
     )
     store = PatternStore(knowledge)
 
@@ -379,8 +401,8 @@ async def test_applicable_without_negative_leaves_score_unchanged(
     )
 
     knowledge = AsyncMock()
-    knowledge.retrieve = AsyncMock(
-        return_value=[_fake_hit(positive_id, 0.9)],
+    knowledge.retrieve_routed = AsyncMock(
+        return_value=_routed([_fake_hit(positive_id, 0.9)]),
     )
     store = PatternStore(knowledge)
 
@@ -421,8 +443,8 @@ async def test_applicable_unreviewed_positive_gets_single_penalty(
     )
 
     knowledge = AsyncMock()
-    knowledge.retrieve = AsyncMock(
-        return_value=[_fake_hit(positive_id, 0.9)],
+    knowledge.retrieve_routed = AsyncMock(
+        return_value=_routed([_fake_hit(positive_id, 0.9)]),
     )
     store = PatternStore(knowledge)
 

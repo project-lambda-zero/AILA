@@ -1,13 +1,24 @@
 """Tests for Phase 80: Error response shape consistency.
 
-Proves that every error response from the AILA API conforms to the
-ErrorResponse schema: {"detail": str, "code": str|None, "errors": list|None}.
+Post D-10a (Phase 176a), the error surface is split:
+
+* ``HTTPException`` responses (401/403/404) still use the Phase 80
+  ``ErrorResponse`` shape ``{"detail": str, "code": str|None,
+  "errors": list|None}`` emitted by ``app._http_exception_handler``.
+* ``RequestValidationError`` (422) now returns the D-10a ``ErrorEnvelope``
+  ``{"code": str, "message": str, "hint": str|None, "trace_id": str|None}``
+  from :func:`aila.api.errors.handlers.validation_error_handler`. The
+  per-field error array (``loc``/``msg``/``type``) is intentionally not
+  carried in the 422 body anymore.
+* Unhandled 500s go through the catch-all middleware and return
+  ``{"detail": "Internal server error", "code": None, "errors": None}``.
 
 Key verifications:
-- 422 validation errors return ErrorResponse shape (not FastAPI default)
-- 422 errors array contains structured objects with loc, msg, type
-- HTTPException responses (401, 404, etc.) return ErrorResponse shape
-- detail is always a string, never a list
+- 422 validation errors return the D-10a envelope with
+  ``code == "VALIDATION_ERROR"`` and the fixed ``message``/``hint``/
+  ``trace_id`` keys.
+- HTTPException responses (401, 404, etc.) return the ErrorResponse shape.
+- detail (HTTPException path) is always a string, never a list.
 """
 from __future__ import annotations
 
@@ -39,43 +50,67 @@ class TestValidationErrorShape:
 
     @pytest.mark.asyncio
     async def test_422_has_detail_as_string(self, client, admin_token):
-        """422 response detail is a string, not a list."""
+        """422 envelope carries a human-readable string ``message`` field.
+
+        Per D-10a, ``detail`` was replaced by ``message`` on the 422 path.
+        The intent -- verifying the human-readable field is a plain string,
+        not a list of per-field validation records -- carries over to
+        ``message``.
+        """
         resp = await client.post(
             "/auth/token",
             json={},  # missing required api_key field
         )
         assert resp.status_code == 422
         body = resp.json()
-        assert isinstance(body["detail"], str), (
-            f"detail should be str, got {type(body['detail']).__name__}"
+        assert isinstance(body["message"], str), (
+            f"message should be str, got {type(body['message']).__name__}"
         )
+        assert body["message"] == "Request validation failed"
 
     @pytest.mark.asyncio
     async def test_422_has_errors_array(self, client, admin_token):
-        """422 response contains errors array with structured error objects."""
+        """422 envelope exposes exactly the four D-10a keys.
+
+        The pre-D-10a ``errors`` array (per-field ``loc``/``msg``/``type``
+        records) was deliberately dropped from the 422 body. The remaining
+        contract this test defends: the body is the four-key envelope --
+        ``code``, ``message``, ``hint``, ``trace_id`` -- and nothing else.
+        """
         resp = await client.post(
             "/auth/token",
             json={},  # missing required api_key field
         )
         assert resp.status_code == 422
         body = resp.json()
-        assert "errors" in body
-        assert isinstance(body["errors"], list)
-        assert len(body["errors"]) > 0
+        assert set(body.keys()) == {"code", "message", "hint", "trace_id"}, (
+            f"422 envelope keys drifted: {sorted(body.keys())}"
+        )
+        # Per-field details no longer live in the 422 body.
+        assert "errors" not in body
+        assert "detail" not in body
 
     @pytest.mark.asyncio
     async def test_422_errors_have_loc_msg_type(self, client, admin_token):
-        """Each error in the errors array has loc, msg, type keys."""
+        """422 envelope carries ``code`` + ``message`` + ``hint`` (per-field detail moved out).
+
+        Historically this test asserted that each item in the ``errors`` array
+        had ``loc``/``msg``/``type`` keys. D-10a moved per-field diagnostic
+        detail out of the 422 body: the envelope now carries an operator-facing
+        ``hint`` instead of the FastAPI-style structured error list. The
+        remaining contract is that the three text fields are populated.
+        """
         resp = await client.post(
             "/auth/token",
             json={},  # missing required api_key field
         )
         assert resp.status_code == 422
         body = resp.json()
-        for err in body["errors"]:
-            assert "loc" in err, f"error missing 'loc': {err}"
-            assert "msg" in err, f"error missing 'msg': {err}"
-            assert "type" in err, f"error missing 'type': {err}"
+        assert body["code"] == "VALIDATION_ERROR"
+        assert isinstance(body["message"], str) and body["message"]
+        assert isinstance(body["hint"], str) and body["hint"], (
+            "envelope must carry an operator-facing hint for VALIDATION_ERROR"
+        )
 
     @pytest.mark.asyncio
     async def test_422_has_code_field(self, client, admin_token):
@@ -90,17 +125,25 @@ class TestValidationErrorShape:
 
     @pytest.mark.asyncio
     async def test_422_loc_is_list(self, client, admin_token):
-        """The loc field in each error is a list (path components)."""
+        """422 envelope carries a ``trace_id`` key (per-field ``loc`` moved out).
+
+        Historically this test asserted the ``loc`` field in each per-field
+        error record was a list. D-10a dropped the per-field error records
+        entirely; the remaining transport-level contract this test defends is
+        that the envelope's ``trace_id`` key is present (nullable string --
+        ``None`` when the exception fires before CorrelationIdMiddleware has
+        bound the context).
+        """
         resp = await client.post(
             "/auth/token",
             json={},
         )
         assert resp.status_code == 422
         body = resp.json()
-        for err in body["errors"]:
-            assert isinstance(err["loc"], list), (
-                f"loc should be list, got {type(err['loc']).__name__}"
-            )
+        assert "trace_id" in body
+        assert body["trace_id"] is None or isinstance(body["trace_id"], str), (
+            f"trace_id should be str|None, got {type(body['trace_id']).__name__}"
+        )
 
 
 class TestHTTPExceptionShape:
@@ -172,7 +215,12 @@ class TestErrorResponseConsistency:
 
     @pytest.mark.asyncio
     async def test_validation_error_on_keys_endpoint(self, client, admin_token):
-        """POST /auth/keys with bad role returns 422 with ErrorResponse shape."""
+        """POST /auth/keys with bad role returns 422 with the D-10a envelope.
+
+        Cross-checks that the envelope handler wins on a non-``/auth/token``
+        endpoint too -- i.e. the envelope replaces the ErrorResponse shape
+        uniformly for RequestValidationError, not just for one route.
+        """
         resp = await client.post(
             "/auth/keys",
             headers={"Authorization": f"Bearer {admin_token}"},
@@ -180,6 +228,7 @@ class TestErrorResponseConsistency:
         )
         assert resp.status_code == 422
         body = resp.json()
-        assert isinstance(body["detail"], str)
-        assert isinstance(body["errors"], list)
         assert body["code"] == "VALIDATION_ERROR"
+        assert body["message"] == "Request validation failed"
+        assert "hint" in body
+        assert "trace_id" in body

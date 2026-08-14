@@ -4938,6 +4938,31 @@ def create_vr_router() -> APIRouter:
                 for r in rows:
                     await uow.session.delete(r)
 
+            # Audit the deletion so an operator can later answer "where did my
+            # investigation go" from the audit trail. The row and all children
+            # are hard-deleted, so this is the only durable record that the
+            # deletion happened, who did it, and what was removed. Written in
+            # the same transaction as the deletes (record_audit_event only
+            # calls session.add; the commit below persists both atomically).
+            from aila.platform.services.audit import record_audit_event
+
+            record_audit_event(
+                uow.session,
+                run_id=investigation_id,
+                stage="vr",
+                action="investigation_deleted",
+                target=(getattr(inv, "title", "") or "")[:200],
+                user_id=getattr(auth, "user_id", "system"),
+                team_id=getattr(auth, "team_id", None),
+                details={
+                    "investigation_id": investigation_id,
+                    "title": getattr(inv, "title", None),
+                    "kind": getattr(inv, "kind", None),
+                    "status": getattr(inv, "status", None),
+                    "branches_deleted": len(branch_rows),
+                },
+            )
+
             await uow.session.delete(inv)
             await uow.session.commit()
 

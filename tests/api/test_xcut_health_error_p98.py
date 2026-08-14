@@ -6,7 +6,8 @@ XCUT-09: Every 4xx/5xx returns ErrorResponse with detail, code, errors fields
 from __future__ import annotations
 
 import time
-from unittest.mock import MagicMock, patch
+from contextlib import ExitStack
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -50,6 +51,27 @@ def _db_up_result() -> HealthCheckResult:
 def _db_down_result() -> HealthCheckResult:
     """Simulate a failed database check result."""
     return HealthCheckResult(status="down", message="connection refused")
+
+
+def _patch_critical_infra_up() -> ExitStack:
+    """Force the two critical infra probes (_check_redis, _check_workers) to 'up'.
+
+    The health aggregator treats database, redis, and workers as critical: any
+    of them 'down' collapses top status to 'unhealthy'. Tests here mock DB and
+    module state to build a specific scenario; the same tests must also fix
+    redis and workers, otherwise a CI without an ARQ worker (or a stripped-down
+    test harness without Redis) turns every 'DB up + module X' scenario into
+    'unhealthy' regardless of the module state we're actually testing.
+    """
+    up = HealthCheckResult(status="up", latency_ms=0.1)
+    stack = ExitStack()
+    stack.enter_context(
+        patch("aila.api.routers.health._check_redis", new_callable=AsyncMock, return_value=up)
+    )
+    stack.enter_context(
+        patch("aila.api.routers.health._check_workers", new_callable=AsyncMock, return_value=up)
+    )
+    return stack
 
 
 def _assert_error_response_shape(body: dict) -> None:
@@ -119,7 +141,8 @@ class TestHealthStateMachine:
         """DB up + no modules -> healthy."""
         health_client._stub_registry.modules = []
 
-        resp = await health_client.get("/health")
+        with _patch_critical_infra_up():
+            resp = await health_client.get("/health")
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "healthy"
@@ -138,7 +161,8 @@ class TestHealthStateMachine:
         )
         health_client._stub_registry.modules = [mod_a, mod_b]
 
-        resp = await health_client.get("/health")
+        with _patch_critical_infra_up():
+            resp = await health_client.get("/health")
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "healthy"
@@ -154,7 +178,8 @@ class TestHealthStateMachine:
         )
         health_client._stub_registry.modules = [mod]
 
-        resp = await health_client.get("/health")
+        with _patch_critical_infra_up():
+            resp = await health_client.get("/health")
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "degraded", (
@@ -172,7 +197,8 @@ class TestHealthStateMachine:
         )
         health_client._stub_registry.modules = [mod]
 
-        resp = await health_client.get("/health")
+        with _patch_critical_infra_up():
+            resp = await health_client.get("/health")
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "degraded"
@@ -192,7 +218,8 @@ class TestHealthStateMachine:
         )
         health_client._stub_registry.modules = [mod_ok, mod_bad]
 
-        resp = await health_client.get("/health")
+        with _patch_critical_infra_up():
+            resp = await health_client.get("/health")
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "degraded"
@@ -300,17 +327,22 @@ class TestErrorResponseConsistency:
 
     @pytest.mark.asyncio
     async def test_422_validation_error(self, error_client):
-        """Validation error returns ErrorResponse with code=VALIDATION_ERROR."""
+        """Validation error returns the D-10a ErrorEnvelope, code=VALIDATION_ERROR.
+
+        Per D-10a, register_error_handlers overrides the Phase 80 handler for
+        RequestValidationError, so the 422 body is the four-field envelope
+        {code, message, hint, trace_id} rather than {detail, code, errors}.
+        """
         resp = await error_client.post(
             "/auth/token",
             json={},  # missing required api_key field
         )
         assert resp.status_code == 422
         body = resp.json()
-        _assert_error_response_shape(body)
         assert body["code"] == "VALIDATION_ERROR"
-        assert isinstance(body["errors"], list)
-        assert len(body["errors"]) > 0
+        assert body["message"] == "Request validation failed"
+        assert "hint" in body
+        assert "trace_id" in body
 
     @pytest.mark.asyncio
     async def test_500_unhandled_exception_no_stack_trace(self, error_client):

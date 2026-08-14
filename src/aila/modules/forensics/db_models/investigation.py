@@ -52,6 +52,13 @@ class InvestigationRunRecord(SQLModel, table=True):
     prompt_pins_json: str = Field(
         default="{}", sa_type=Text, sa_column_kwargs={"nullable": True},
     )
+    # Platform ``persona_spawn`` (RFC-13/03) reads the investigation-level
+    # ``strategy_family`` as the fallback family when a primary branch was
+    # INSERTed without one. This table does not extend
+    # ``InvestigationRecordBase`` (see ``prompt_pins_json`` above), so the
+    # column is declared directly here; migration 122 adds it. Default
+    # "generic" mirrors the forensics investigator's own fallback family.
+    strategy_family: str = Field(default="generic", max_length=64)
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
     # RFC-09 criterion 4 requires ``resolve_pinned_prompt`` to stamp the
     # row's modification time when it persists a fresh pin. Added here

@@ -182,7 +182,20 @@ class ReportService:
             if team_id is not None:
                 base = base.where(WorkflowRunRecord.team_id == team_id)
 
-            count_stmt = select(func.count()).select_from(base.subquery())
+            # Reuse ``base``'s WHERE clauses but swap the SELECT list to
+            # ``func.count()`` in place. Wrapping ``base`` as a subquery
+            # (``select_from(base.subquery())``) leaves the outer statement
+            # with no entity in its column list AND the WorkflowRunRecord
+            # mapper still bound in ``bind_arguments``; the
+            # ``do_orm_execute`` team-scope listener then appends
+            # ``WHERE workflowrunrecord.team_id = :ctx`` to the outer SELECT
+            # which had no ``FROM workflowrunrecord`` -- SQLAlchemy pulls in
+            # the table implicitly and the query becomes a cross-join of the
+            # subquery against the base table, inflating the count by the
+            # per-team row multiplier. ``with_only_columns(func.count())``
+            # keeps the entity in the outer FROM so the appended predicate
+            # is redundant instead of destructive.
+            count_stmt = base.with_only_columns(func.count()).order_by(None)
             total_result = await sess.exec(count_stmt)
             total_scalar = total_result.one()
             total = int(total_scalar[0] if isinstance(total_scalar, tuple) else total_scalar)

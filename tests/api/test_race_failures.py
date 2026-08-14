@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import time
 from datetime import timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -68,9 +68,18 @@ async def test_race_redis_disconnect_sse_graceful(
     Approach:
     - Create a fresh app with a mock platform that returns a redis_url
     - Seed a TaskRecord so the access check passes
-    - Patch ProgressStream so catchup() returns [] and _redis.xread() raises ConnectionError
+    - Force ``pool_available`` True (the autouse ``_reset_redis_pool_global``
+      fixture in ``tests/conftest.py`` resets ``_pool`` to ``None`` before
+      every test, so without this patch the router would take the no-Redis
+      informational fallback and this test would exercise nothing).
+    - Patch ``ProgressStream`` so ``catchup()`` returns [] (must be
+      ``AsyncMock`` -- the router awaits it) and ``stream_events`` is a real
+      async generator that raises ``ConnectionError`` mid-stream.
     - Call GET /scans/{run_id}/events
-    - Assert: 200 status, text/event-stream media type, response body terminates (no hang)
+    - Assert: 200 status, text/event-stream media type, response body
+      terminates (no hang). scans.py wraps ``async for event in
+      stream.stream_events(...)`` in a try/except that logs and ends the
+      stream on any exception -- proving graceful termination.
     """
     from aila.api.app import create_app
 
@@ -101,17 +110,21 @@ async def test_race_redis_disconnect_sse_graceful(
     test_app.state.platform = stub_platform
     test_app.state.start_time = time.monotonic()
 
-    # Mock ProgressStream to simulate Redis disconnect
-    mock_redis = MagicMock()
-    mock_redis.xread.side_effect = ConnectionError("Redis disconnected")
+    async def _disconnecting_agen():
+        # Simulate Redis disconnect after the first live event.
+        yield {"stage": "scoring", "message": "Scoring", "percent": "50", "timestamp": "t0"}
+        raise ConnectionError("Redis disconnected")
 
     mock_stream_instance = MagicMock()
-    mock_stream_instance.catchup.return_value = []
-    mock_stream_instance._redis = mock_redis
+    mock_stream_instance.catchup = AsyncMock(return_value=[])
+    mock_stream_instance.stream_events.return_value = _disconnecting_agen()
 
-    with patch(
-        "aila.api.routers.scans.ProgressStream",
-        return_value=mock_stream_instance,
+    with (
+        patch("aila.api.routers.scans.pool_available", return_value=True),
+        patch(
+            "aila.api.routers.scans.ProgressStream",
+            return_value=mock_stream_instance,
+        ),
     ):
         async with AsyncClient(
             transport=ASGITransport(app=test_app),
@@ -129,7 +142,12 @@ async def test_race_redis_disconnect_sse_graceful(
     assert "text/event-stream" in resp.headers.get("content-type", ""), (
         "Expected text/event-stream media type"
     )
-    # The response body must be finite (generator broke on ConnectionError)
-    # If it hung, the test would time out. A successful completion means
-    # the generator terminated gracefully.
+    # The response body must be finite (scans.py caught the ConnectionError
+    # and ended the generator). If it hung, the test would time out.
     assert resp.is_success, "Response should indicate success (2xx)"
+    # The synthetic Connected event and the single pre-disconnect event
+    # should be present -- proving the exception was caught after the yield.
+    data_lines = [ln for ln in resp.text.splitlines() if ln.startswith("data:")]
+    assert len(data_lines) == 2, (
+        f"Expected Connected + 1 pre-disconnect event, got {len(data_lines)}: {resp.text!r}"
+    )
