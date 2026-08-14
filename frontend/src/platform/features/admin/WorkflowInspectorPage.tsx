@@ -44,6 +44,13 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
+import { ActivityTimeline } from "@platform/features/activity/ActivityTimeline";
 
 import {
   fetchWorkflowRunTransition,
@@ -304,14 +311,28 @@ function RunDetailPanel({ run }: RunDetailPanelProps) {
       <StateMachineSketch rows={transitions ?? []} />
     )}
 
-    {/* Transition timeline -- reused from tasks/ (not duplicated).
-       Row click opens the drill-down drawer via onRowSelect. */}
-    <TransitionTimeline
-      rows={transitions ?? []}
-      isLoading={isLoading}
-      isError={isError}
-      onRowSelect={setSelectedTransition}
-    />
+    {/* Transitions + Activity -- the transitions tab is the durable view the
+       inspector has always shown; the activity tab reuses the shared
+       ActivityTimeline (GET /audit/events?run_id=<id>) so the same panel
+       exposes both the state-machine trace and the audit trail without
+       duplicating the admin AuditLogsPage. */}
+    <Tabs defaultValue="transitions">
+      <TabsList variant="line">
+        <TabsTrigger value="transitions">Transitions</TabsTrigger>
+        <TabsTrigger value="activity">Activity</TabsTrigger>
+      </TabsList>
+      <TabsContent value="transitions">
+        <TransitionTimeline
+          rows={transitions ?? []}
+          isLoading={isLoading}
+          isError={isError}
+          onRowSelect={setSelectedTransition}
+        />
+      </TabsContent>
+      <TabsContent value="activity">
+        <ActivityTimeline runId={run.run_id} label="Workflow Run" />
+      </TabsContent>
+    </Tabs>
 
     {/* Drill-down drawer for a single transition */}
     <TransitionDetailSheet

@@ -11,6 +11,7 @@ import { CVSSBreakdown } from "../components/CVSSBadge";
 import { AdjudicationBanner } from "../components/AdjudicationBanner";
 import { ObligationChecklist } from "../components/ObligationChecklist";
 import { SyntaxHighlighter } from "../components/SyntaxHighlighter";
+import { FindingConnectedCard } from "../components/FindingConnectedCard";
 import { useDraftPoc } from "../mutations";
 import { useVRFinding, useVRFindingById } from "../queries";
 import type { DisclosureStatus } from "../types";
@@ -206,6 +207,11 @@ export function FindingDetailPage() {
                 : "PoC reproduces but flaky -- operator review required.",
         }}
       />
+
+      {/* Connected -- project, advisory, CVE, disclosure submissions
+          derived from the finding + its disclosure lookup. Hides itself
+          on findings with no relations set. */}
+      <FindingConnectedCard finding={finding} />
 
       {/* 1 -- Root cause */}
       <AilaCard  techBorder glow><Section title="Root cause" />

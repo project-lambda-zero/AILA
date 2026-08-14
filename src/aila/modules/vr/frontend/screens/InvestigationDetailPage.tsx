@@ -47,6 +47,9 @@ import { LiveRunPanel, LIVE_PANEL_STATUSES } from "../components/LiveRunPanel";
 import { HypothesisDetailRail } from "../components/HypothesisDetailRail";
 import { FuzzProposalsPanel } from "../components/FuzzProposalCard";
 import { PanelBoundary } from "../components/PanelBoundary";
+import { InvestigationLineagePanel } from "../components/InvestigationLineagePanel";
+import { InvestigationConnectedCard } from "../components/InvestigationConnectedCard";
+import { InvestigationActivityPanel } from "../components/InvestigationActivityPanel";
 import { useInvestigationMessagesStream } from "../hooks/useInvestigationMessagesStream";
 import { useVRKeyboardShortcuts } from "../hooks/useVRKeyboardShortcuts";
 import {
@@ -992,6 +995,18 @@ export function InvestigationDetailPage() {
         </AilaCard>
       )}
 
+      {/* Lineage -- ancestry + variant-hunt descendants derived from
+          parent_investigation_id + a client-side reverse lookup. The
+          panel self-hides when the investigation is standalone (no
+          parent, no children), so nothing changes on the historical
+          detail pages that lack lineage. */}
+      <PanelBoundary
+        label="Lineage"
+        invalidateKeyPrefix={["vr", "investigations"]}
+      >
+        <InvestigationLineagePanel investigation={inv} />
+      </PanelBoundary>
+
       {/* Main layout -- aside (order-1 = above) + timeline (order-2 = below) */}
       <div className="grid grid-cols-1 gap-3">
         {/* Timeline column -- order-2 so it renders BELOW the aside.
@@ -1231,6 +1246,22 @@ export function InvestigationDetailPage() {
           <HypothesisDetailRail investigationId={invId} live={isLive} />
           {/* Fuzz proposals queue (operator-in-the-loop) */}
           <FuzzProposalsPanel investigationId={invId} live={isLive} />
+
+          {/* Connected entities -- cross-links to target, workspace,
+              parent investigation, primary outcome, linked findings +
+              campaigns. Purely derived from the summary; hides itself
+              when nothing is set. */}
+          <InvestigationConnectedCard investigation={inv} />
+
+          {/* Activity trail -- workflow audit events for this run,
+              chronological. Uses investigation.id as run_id; empty
+              state when the backend has no rows under that key. */}
+          <PanelBoundary
+            label="Activity"
+            invalidateKeyPrefix={["vr", "investigation-audit", invId]}
+          >
+            <InvestigationActivityPanel investigationId={invId} />
+          </PanelBoundary>
 
 
           {/* Branches summary */}

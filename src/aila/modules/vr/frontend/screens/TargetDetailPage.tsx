@@ -14,6 +14,7 @@ import {
 } from "../components/MitigationsRibbon";
 import { DeleteButton } from "../components/DeleteButton";
 import { UploadDropzone } from "../components/UploadDropzone";
+import { TargetConnectedCard } from "../components/TargetConnectedCard";
 import {
   APK_STATIC_CHECK_COUNT_ESTIMATE,
   APK_STATIC_DEFAULT_CHILD_BUDGET_USD,
@@ -2029,6 +2030,12 @@ export function TargetDetailPage() {
           </div>
         </dl>
       )}</AilaCard>
+
+      {/* Connected -- workspace + reverse lookups for investigations
+          and projects (target_id / patched_target_id). Purely derived
+          from cached list queries; hides itself when nothing links to
+          this target. */}
+      <TargetConnectedCard target={target} />
 
       {/* Android APK overview -- only shown for android_apk targets that
           have at least one stage handle. Each section inside the card

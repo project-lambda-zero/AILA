@@ -1,5 +1,5 @@
 import { useMemo, useRef } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import { Crosshair } from "@phosphor-icons/react/dist/csr/Crosshair";
 import { Play } from "@phosphor-icons/react/dist/csr/Play";
 
@@ -8,8 +8,13 @@ import { AilaBadge, type TaskStatus as BadgeTaskStatus } from "@/components/aila
 import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { HelpTip } from "@/components/aila/HelpTip";
+import {
+  ConnectedEntities,
+  type ConnectedEntity,
+} from "@/components/aila/ConnectedEntities";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ActivityTimeline } from "@platform/features/activity/ActivityTimeline";
 
 import {
   useCancelTask,
@@ -194,6 +199,36 @@ function RunDetailPanel({ runId }: { runId: string }) {
     [scanEvents.events],
   );
 
+  const connectedEntities = useMemo<ConnectedEntity[]>(() => {
+    if (!runId) return [];
+    const list: ConnectedEntity[] = [];
+    // The scan surface currently only exposes one cross-entity link: the
+    // vulnerability report generated when the run completes. When more IDs
+    // land on the scan contract (findings ids, system ids, ...), append here.
+    if (scanStatusQuery.data?.status === "done") {
+      list.push({
+        id: runId,
+        type: "Report",
+        title: "Vulnerability Report",
+        href: `/vulnerability/reports/${encodeURIComponent(runId)}`,
+        severity: "info",
+      });
+    }
+    list.push({
+      id: runId,
+      type: "Task",
+      title: `Task ${runId.slice(0, 8)}`,
+      href: `/tasks?task=${encodeURIComponent(runId)}`,
+      severity: "neutral",
+    });
+    return list;
+  }, [runId, scanStatusQuery.data?.status]);
+
+  const isTaskLive =
+    taskDetailQuery.data?.status === "running" ||
+    taskDetailQuery.data?.status === "queued" ||
+    taskDetailQuery.data?.status === "waiting";
+
   if (!runId) {
     return (
       <AilaCard variant="default" padding="md" techBorder glow><p className="font-mono text-xs text-text-muted">
@@ -255,14 +290,6 @@ function RunDetailPanel({ runId }: { runId: string }) {
             >
               {resumeTask.isPending ? "Resuming..." : "Resume"}
             </Button>
-            {scanStatusQuery.data?.status === "done" && (
-              <Link
-                to={`/vulnerability/reports/${encodeURIComponent(runId)}`}
-                className="inline-flex h-7 items-center gap-1 rounded-[min(var(--radius-md),12px)] bg-primary px-2.5 text-[0.8rem] font-medium text-primary-foreground transition-all hover:bg-primary/80"
-              >
-                Open Report
-              </Link>
-            )}
           </div>
         </div>
       ) : (
@@ -316,6 +343,16 @@ function RunDetailPanel({ runId }: { runId: string }) {
           ))}
         </div>
       )}</AilaCard>
+
+      {connectedEntities.length > 0 && (
+        <AilaCard variant="default" padding="md" techBorder glow>
+          <ConnectedEntities entities={connectedEntities} heading="Connected" />
+        </AilaCard>
+      )}
+
+      <AilaCard variant="default" padding="md" techBorder glow>
+        <ActivityTimeline runId={runId} label="Scan Run" live={isTaskLive} />
+      </AilaCard>
     </div>
   );
 

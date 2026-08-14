@@ -7,6 +7,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.21] - 2026-08-13 -- Relationship lineage explorer and per-entity activity timelines
+
+Adds a relationship/lineage explorer and per-entity activity timelines, built
+entirely from data the existing GETs return. Additive; existing screens and
+behavior preserved (#220). No backend changes.
+
+### Added
+
+- Investigation lineage: on VR and malware investigation details, a navigable
+  graph of parent, source, and child investigations (variant-hunt and unpack
+  trees); forensics walks the parent chain. Each node links through, and a
+  standalone investigation shows nothing.
+- Connected-entities panels: on investigation, finding, target, outcome, and
+  report details, a card that links the related entities the record actually
+  references (target, workspace, findings, outcomes, disclosures, CVEs, project,
+  and patched or parent target chains), each a navigation link with a type badge.
+  Only relationships present in the data are shown.
+- Activity timelines: an Activity tab or panel on run-based entity details that
+  lists the audit trail via `GET /audit/events?run_id=`, with action and status
+  filters and a graceful empty state, also wired onto the shell scan, task, and
+  workflow-run surfaces.
+
+Lineage graphs carry a screen-reader relationship list, and all additions respect
+prefers-reduced-motion and hold the WCAG 2.2 AA state. All workspace type-checks
+and the shell production build pass.
+
 ## [0.5.20] - 2026-08-13 -- Frontend resilience and perceived-performance polish
 
 A backend/frontend cross-reference confirmed all 305 real endpoints are already

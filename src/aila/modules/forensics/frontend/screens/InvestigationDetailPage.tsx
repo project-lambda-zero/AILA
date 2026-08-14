@@ -15,7 +15,9 @@ import {
   InvestigationRowSkeletonList,
 } from "../components/skeletons";
 import { PanelBoundary } from "../components/PanelBoundary";
+import { ActivityPanel } from "../components/ActivityPanel";
 import { AnalystDirectivesPanel } from "../components/AnalystDirectivesPanel";
+import { ConnectedPanel } from "../components/ConnectedPanel";
 import { LiveRunPanel } from "../components/LiveRunPanel";
 import { RetrieveFilePanel } from "../components/RetrieveFilePanel";
 import { useForensicsInvestigationEvents } from "../hooks/useForensicsInvestigationEvents";
@@ -29,7 +31,7 @@ import { useInvestigationAnswers, useInvestigationDetail } from "../queries";
 import type { AgentStep, AnswerCandidate, TagVerdict } from "../types";
 import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
-type TabId = "steps" | "answers" | "live";
+type TabId = "steps" | "answers" | "live" | "connected" | "activity";
 
 const STATUS_SEVERITY: Record<string, "info" | "low" | "medium" | "high" | "critical"> = {
   created: "info",
@@ -621,6 +623,8 @@ export function InvestigationDetailPage() {
     ...(isRunning ? [{ id: "live" as TabId, label: "Live", count: liveEvents.length }] : []),
     { id: "steps", label: "Steps", count: investigation.steps.length },
     { id: "answers", label: "Answers", count: answers?.length },
+    { id: "connected", label: "Connected" },
+    { id: "activity", label: "Activity" },
   ];
 
   return (
@@ -939,6 +943,18 @@ export function InvestigationDetailPage() {
                   .map((step) => <StepCard key={step.id} step={step} />)
               )}
             </div>
+          </PanelBoundary>
+        )}
+
+        {activeTab === "connected" && (
+          <PanelBoundary label="Connected panel">
+            <ConnectedPanel projectId={projectId} investigation={investigation} />
+          </PanelBoundary>
+        )}
+
+        {activeTab === "activity" && (
+          <PanelBoundary label="Activity panel">
+            <ActivityPanel runId={investigation.task_id ?? investigationId} />
           </PanelBoundary>
         )}
 

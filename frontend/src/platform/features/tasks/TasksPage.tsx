@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/aila/EmptyState";
 import { useTaskDetail, useTasks, type TaskStatus, type TaskSummary } from "@platform/features/scans/api";
 import { useTransitions } from "./useTransitions";
 import { TransitionTimeline } from "./TransitionTimeline";
+import { ActivityTimeline } from "@platform/features/activity/ActivityTimeline";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -134,7 +135,14 @@ function TaskDetailPanel({ taskId }: { taskId: string }) {
       rows={transitionsQuery.data ?? []}
       isLoading={transitionsQuery.isLoading}
       isError={transitionsQuery.isError}
-    /></AilaCard>
+    />
+    <div className="mt-4 border-t border-border pt-4">
+      <ActivityTimeline
+        runId={taskId}
+        label="Task"
+        live={task.status === "running" || task.status === "queued" || task.status === "waiting"}
+      />
+    </div></AilaCard>
   );
 }
 
