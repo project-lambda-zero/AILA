@@ -60,9 +60,89 @@ __all__ = [
     "PrepareResult",
     "ProposalPrepareError",
     "ProposalPreparer",
+    "validate_harness_build_command",
 ]
 
 _log = logging.getLogger(__name__)
+
+
+# Issue #184 -- ``proposal.harness_build_command`` is a free-form string
+# authored by the LLM from untrusted indexed source and interpolated
+# directly into an SSH command with no shell escaping. Untrusted source
+# can steer the agent to emit a plausible-looking build line that hides
+# an exfiltration payload the operator does not scrutinize character by
+# character. The validator constrains the command to a single
+# compiler/build-tool invocation with no shell metacharacters, so the
+# only way an accepted proposal reaches the shell is a straight
+# ``gcc harness.c -o harness`` shape.
+#
+# Compound-shell builds (``make && ./install.sh``, ``mkdir -p build &&
+# cd build && cmake ..``) are refused by design: those belong in a
+# repo-committed Makefile the operator can review at write time, not in
+# a model-authored campaign payload.
+_ALLOWED_BUILD_TOOLS: frozenset[str] = frozenset({
+    "gcc", "g++", "clang", "clang++",
+    "cc", "c++",
+    "cargo", "go", "rustc",
+    "make", "cmake", "ninja", "meson", "bazel",
+    "afl-cc", "afl-c++", "afl-gcc", "afl-g++",
+    "afl-clang", "afl-clang++",
+    "afl-clang-fast", "afl-clang-fast++",
+    "afl-clang-lto", "afl-clang-lto++",
+    "hfuzz-cc", "hfuzz-c++",
+    "hfuzz-gcc", "hfuzz-g++",
+    "hfuzz-clang", "hfuzz-clang++",
+})
+# Any of these in the raw command string is a shell metacharacter that
+# would escape the intended single-invocation shape.
+_HARNESS_CMD_FORBIDDEN_CHARS: frozenset[str] = frozenset(
+    ";|&`$><\n\r()\\",
+)
+
+
+def validate_harness_build_command(command: str | None) -> str | None:
+    """Return ``None`` when ``command`` is a safe build invocation, else an error.
+
+    Issue #184. Rejects fail-closed on:
+
+    - empty / non-string input,
+    - any of ``;|&`` `` ` `` ``$><\n\r()\\`` -- shell metacharacters,
+      command chaining, redirection, subshell / substitution, escape,
+    - a first token that is not in :data:`_ALLOWED_BUILD_TOOLS`,
+    - a raw string that cannot be ``shlex.split``-parsed (unclosed
+      quote), or that ``shlex.split`` yields zero tokens.
+    """
+    if not command or not isinstance(command, str):
+        return "harness_build_command is required"
+    stripped = command.strip()
+    if not stripped:
+        return "harness_build_command is empty"
+    bad = sorted({c for c in stripped if c in _HARNESS_CMD_FORBIDDEN_CHARS})
+    if bad:
+        return (
+            "harness_build_command contains disallowed shell "
+            f"metacharacter(s): {''.join(bad)!r}"
+        )
+    try:
+        tokens = shlex.split(stripped, posix=True)
+    except ValueError as exc:  # unclosed quote / bad escape
+        return f"harness_build_command is not a valid shell token stream: {exc}"
+    if not tokens:
+        return "harness_build_command produced no tokens"
+    head = tokens[0]
+    # Refuse absolute-path or ./relative-path invocations; the allowlist
+    # is a bare tool name resolved through ``PATH`` on the workstation.
+    if "/" in head:
+        return (
+            f"harness_build_command must invoke an allowed build tool by "
+            f"bare name, not a path ({head!r})"
+        )
+    if head not in _ALLOWED_BUILD_TOOLS:
+        return (
+            f"harness_build_command must start with an allowed build tool "
+            f"({sorted(_ALLOWED_BUILD_TOOLS)}); got {head!r}"
+        )
+    return None
 
 
 class ProposalPrepareError(Exception):
@@ -351,7 +431,13 @@ class ProposalPreparer:
             transcript.append(f"$ {cmd}\n{out}")
             return out
 
-        await _run(f"mkdir -p {workdir} {workdir}/corpus")
+        # Issue #184 (defense-in-depth) -- ``workdir`` is a uuid-based
+        # string today so no metacharacter can leak through in practice,
+        # but shlex.quote it anyway so any future workdir composition
+        # change (e.g. incorporating a proposal-provided label) cannot
+        # regress the shell-safety of this command.
+        quoted_workdir = shlex.quote(workdir)
+        await _run(f"mkdir -p {quoted_workdir} {quoted_workdir}/corpus")
 
         # 1) Write the harness source.
         if proposal.harness_source:
@@ -363,10 +449,29 @@ class ProposalPreparer:
                 content=proposal.harness_source,
                 transcript=transcript,
             )
-            # 2) Build the harness.
+            # 2) Build the harness. Issue #184 -- validate the
+            # LLM-authored build command against the strict shape
+            # (allowed compiler/build-tool token, no shell
+            # metacharacters, no command chaining) BEFORE it lands
+            # in the ssh command line. Fail closed on anything else.
             if proposal.harness_build_command:
+                build_error = validate_harness_build_command(
+                    proposal.harness_build_command,
+                )
+                if build_error:
+                    _log.warning(
+                        "proposal_preparer: rejected harness_build_command "
+                        "%r: %s",
+                        proposal.harness_build_command, build_error,
+                    )
+                    transcript.append(
+                        f"[reject harness_build_command: {build_error}]",
+                    )
+                    raise ProposalPrepareError(
+                        f"harness_build_command rejected: {build_error}",
+                    )
                 await _run(
-                    f"cd {workdir} && {proposal.harness_build_command}",
+                    f"cd {quoted_workdir} && {proposal.harness_build_command}",
                     timeout=600.0,
                 )
 

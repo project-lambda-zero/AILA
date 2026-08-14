@@ -412,6 +412,22 @@ class VRConfigSchema(ModuleConfigBase):
             "percent jitter. Env: AILA_VR_FUZZ_COVERAGE_EMIT_DELTA_PCT."
         ),
     )
+    fuzz_reproducer_local_root: str = Field(
+        default="",
+        description=(
+            "Absolute local directory that the fuzz-crash ingest is "
+            "permitted to read reproducer bytes from (issue #183). The "
+            "``POST /vr/fuzz/crashes`` handler stores the first 4 KiB of "
+            "the reproducer as a hex preview; without a configured root "
+            "the file open would follow any local path an authenticated "
+            "caller supplies. When empty the head-preview is disabled "
+            "fail-closed (the crash still records, only the hex preview "
+            "is empty). When set, ``reproducer_path`` is resolved via "
+            "``Path.resolve()`` (following symlinks) and MUST land under "
+            "this root; anything else is refused and logged. "
+            "Env: AILA_VR_FUZZ_REPRODUCER_LOCAL_ROOT."
+        ),
+    )
     fuzz_crash_spawn_child: bool = Field(
         default=False,
         description=(

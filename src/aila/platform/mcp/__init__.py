@@ -40,6 +40,19 @@ from aila.platform.mcp.descriptor import (
     descriptors_from_static_specs,
 )
 from aila.platform.mcp.instance_catalog import McpInstanceCatalog, McpServerInstance
+from aila.platform.mcp.observation_sanitize import (
+    sanitize_observable_value,
+    sanitize_observables_delta,
+)
+from aila.platform.mcp.tool_authority import (
+    declare_tool_authority,
+    is_tool_authorized,
+)
+from aila.platform.mcp.tool_hash import (
+    ToolDescriptionMismatchError,
+    compute_tool_specs_hash,
+    verify_or_record_tool_specs,
+)
 
 __all__: list[str] = [
     "EmptyPoolError",
@@ -51,9 +64,16 @@ __all__: list[str] = [
     "McpServerInstance",
     "ModuleDescriptorDeclaration",
     "ResolvedInstance",
+    "ToolDescriptionMismatchError",
     "compact_tool_spec",
+    "compute_tool_specs_hash",
+    "declare_tool_authority",
     "default_capability_registry",
     "descriptors_from_static_specs",
+    "is_tool_authorized",
     "reset_default_capability_registry",
     "resolve_instance",
+    "sanitize_observable_value",
+    "sanitize_observables_delta",
+    "verify_or_record_tool_specs",
 ]

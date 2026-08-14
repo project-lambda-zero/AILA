@@ -544,38 +544,34 @@ def create_app() -> FastAPI:
                 content={"detail": "Internal server error", "code": None, "errors": None},
             )
 
-    # STRESS-12: Reject oversized request bodies before they reach application code.
-    # Default 200 MB (covers the largest realistic APK; APKs are 30-150 MB typical).
-    # Operator can tune via `AILA_MAX_REQUEST_BYTES` env var when forensics dumps,
-    # binary uploads, or LLM transcripts need a different ceiling.
-    # Returns 413 with ErrorResponse envelope. Registered after
-    # _catch_unhandled_exceptions so it runs before it (Starlette middleware
-    # stack is LIFO -- last registered runs first).
+    # STRESS-12 / issue #115: Reject oversized request bodies before they reach
+    # application code. Default 200 MB (covers the largest realistic APK; APKs
+    # are 30-150 MB typical). Operator can tune via `AILA_MAX_REQUEST_BYTES`
+    # env var when forensics dumps, binary uploads, or LLM transcripts need a
+    # different ceiling.
+    #
+    # This is BodySizeLimitMiddleware -- a pure-ASGI guard that both
+    # fast-rejects a truthful oversized Content-Length AND counts real bytes
+    # off the ASGI receive channel so a chunked-transfer body that omits (or
+    # lies about) Content-Length is still stopped after `cap + one chunk`.
+    # Returns 413 with the ErrorEnvelope shape.
+    #
+    # Registered after _catch_unhandled_exceptions so it runs OUTSIDE it
+    # (Starlette middleware stack is LIFO -- last registered runs first);
+    # rejection happens before any downstream middleware or router runs.
     import os as _os
+
+    from aila.api.middleware import BodySizeLimitMiddleware
     _default_max_body = 200 * 1024 * 1024  # 200 MB
     try:
-        _max_body_bytes = int(_os.environ.get("AILA_MAX_REQUEST_BYTES", str(_default_max_body)))
+        _max_body_bytes = int(
+            _os.environ.get("AILA_MAX_REQUEST_BYTES", str(_default_max_body))
+        )
     except ValueError:
         _max_body_bytes = _default_max_body
-    _max_body_mb = _max_body_bytes // (1024 * 1024)
-
-    @application.middleware("http")
-    async def _reject_oversized_requests(request: Request, call_next):  # type: ignore[misc]
-        content_length = request.headers.get("content-length")
-        if content_length is not None:
-            try:
-                if int(content_length) > _max_body_bytes:
-                    return JSONResponse(
-                        status_code=413,
-                        content={
-                            "detail": f"Request body too large (max {_max_body_mb}MB)",
-                            "code": "PAYLOAD_TOO_LARGE",
-                            "errors": None,
-                        },
-                    )
-            except ValueError:
-                pass  # Non-numeric content-length will be caught by ASGI server
-        return await call_next(request)
+    if _max_body_bytes <= 0:
+        _max_body_bytes = _default_max_body
+    application.add_middleware(BodySizeLimitMiddleware, max_bytes=_max_body_bytes)
 
     # OBS-01: Prometheus request instrumentation middleware.
     # Registered last among HTTP middlewares so it runs outermost (LIFO),

@@ -261,29 +261,133 @@ def _crash_record_to_summary(record: VRFuzzCrashRecord) -> VRFuzzCrashSummary:
 # 256 rows in the HexView, which fills the panel without burning RAM.
 _REPRODUCER_HEAD_LIMIT = 4096
 
+# Issue #183 -- lazy singleton so the per-request head-preview does
+# not pay the registry-construction cost on every call.
+_fuzz_registry: ConfigRegistry | None = None
+
+
+def _get_fuzz_registry() -> ConfigRegistry:
+    global _fuzz_registry
+    if _fuzz_registry is None:
+        _fuzz_registry = ConfigRegistry()
+    return _fuzz_registry
+
+
+def _resolve_reproducer_allowed_root() -> os.PathLike[str] | None:
+    """Return the operator-configured absolute reproducer-preview root, or None.
+
+    Issue #183 -- the head-preview opens files on the AILA host. Without
+    a configured allow-root every authenticated caller who can POST
+    ``/vr/fuzz/crashes`` can steer the open at arbitrary host paths (up
+    to the process's own read privileges). Empty config => preview
+    disabled fail-closed. A relative or non-existent configured root
+    is treated the same way -- the misconfiguration is logged but
+    never falls back to an implicit permissive root.
+    """
+    from pathlib import Path
+
+    try:
+        raw = _get_fuzz_registry().get(
+            "vr", "fuzz_reproducer_local_root",
+        )
+    except (RuntimeError, KeyError, ValueError, SQLAlchemyError) as exc:
+        _log.debug("reproducer preview: config lookup failed: %s", exc)
+        return None
+    if not raw or not isinstance(raw, str):
+        return None
+    candidate = Path(os.path.expanduser(raw))
+    if not candidate.is_absolute():
+        _log.warning(
+            "reproducer preview: configured root %r is not absolute; "
+            "preview disabled",
+            raw,
+        )
+        return None
+    try:
+        real = candidate.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        _log.warning(
+            "reproducer preview: configured root %r does not resolve: %s; "
+            "preview disabled",
+            raw, exc,
+        )
+        return None
+    if not real.is_dir():
+        _log.warning(
+            "reproducer preview: configured root %r is not a directory; "
+            "preview disabled",
+            raw,
+        )
+        return None
+    return real
+
 
 def _read_reproducer_head(
     path: str | None,
 ) -> tuple[str | None, int | None]:
-    """Read up to ``_REPRODUCER_HEAD_LIMIT`` bytes from ``path``.
+    """Read up to ``_REPRODUCER_HEAD_LIMIT`` bytes from ``path``, confined.
 
-    Returns ``(hex_string, bytes_read)``. When the path is missing,
-    unreadable, or empty, returns ``(None, None)``. Workers running
-    on remote workstations write to local AILA storage via the same
-    file-transfer flow that already places ``reproducer_path``; if
-    the file isn't reachable we surface that as missing -- the operator
-    will see "no minimised input bytes available" on the UI.
+    Issue #183 -- ``path`` originates from an authenticated API body
+    (``VRFuzzCrashCreate.reproducer_path``); a caller-crafted absolute
+    path would otherwise steer the local ``open`` at any file the
+    backend process can read (env files, key material). The confinement
+    is fail-closed:
+
+    - When ``fuzz_reproducer_local_root`` is unset (default), the
+      preview is disabled -- ``(None, None)`` is returned and the crash
+      still records without a hex preview.
+    - When configured, ``path`` is resolved via ``Path.resolve()`` so
+      symlink-escapes are followed BEFORE the containment check, and
+      ``..`` traversal is refused pre-resolve.
+    - The resolved real path MUST land inside the resolved real root
+      (``Path.is_relative_to``); anything else is refused and logged.
+
+    Returns ``(hex_string, bytes_read)``. Any refusal, missing file,
+    unreadable file, or empty file returns ``(None, None)`` -- the UI
+    surfaces this as "no minimised input bytes available".
     """
-    if not path:
+    from pathlib import Path
+
+    if not path or not isinstance(path, str):
+        return None, None
+    allowed_root = _resolve_reproducer_allowed_root()
+    if allowed_root is None:
+        # Fail-closed: no configured staging root => no preview.
+        return None, None
+    candidate = Path(os.path.expanduser(path))
+    if not candidate.is_absolute() or ".." in candidate.parts:
+        _log.warning(
+            "reproducer preview: refused non-absolute or traversal path %r",
+            path,
+        )
         return None, None
     try:
-        with open(path, "rb") as fh:
+        real = candidate.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        _log.warning(
+            "reproducer preview: refused unresolvable path %r: %s",
+            path, exc,
+        )
+        return None, None
+    if not real.is_relative_to(allowed_root):
+        _log.warning(
+            "reproducer preview: refused path %r (real=%s) escaping "
+            "allowed root %s",
+            path, real, allowed_root,
+        )
+        return None, None
+    try:
+        with open(real, "rb") as fh:
             data = fh.read(_REPRODUCER_HEAD_LIMIT)
-    except (OSError, PermissionError):
+    except (OSError, PermissionError) as exc:
+        _log.debug("reproducer preview: read failed for %s: %s", real, exc)
         return None, None
     if not data:
         return None, None
-    truncated = os.path.getsize(path) if os.path.exists(path) else len(data)
+    try:
+        truncated = os.path.getsize(real)
+    except OSError:
+        truncated = len(data)
     return data.hex(), int(truncated)
 
 

@@ -219,7 +219,11 @@ async def test_normal_payload_still_works(
 async def test_oversized_413_envelope(
     async_client: AsyncClient,
 ) -> None:
-    """413 response uses ErrorResponse envelope with detail/code/errors keys."""
+    """413 response uses the Phase-176a ErrorEnvelope shape.
+
+    Issue #115: BodySizeLimitMiddleware emits ``{code, message, hint,
+    trace_id}`` (not the legacy ``{detail, code, errors}`` shape).
+    """
     resp = await async_client.post(
         "/auth/token",
         content=_OVERSIZED_BODY,
@@ -227,6 +231,7 @@ async def test_oversized_413_envelope(
     )
     assert resp.status_code == 413
     data = resp.json()
-    assert "detail" in data, "413 response missing 'detail' key"
-    assert "code" in data, "413 response missing 'code' key"
-    assert "errors" in data, "413 response missing 'errors' key"
+    assert data.get("code") == "PAYLOAD_TOO_LARGE"
+    assert "message" in data and data["message"], "envelope missing message"
+    assert "hint" in data, "envelope missing hint key"
+    assert "trace_id" in data, "envelope missing trace_id key"

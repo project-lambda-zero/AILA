@@ -384,6 +384,53 @@ class AgentTurnRunnerBase:
         del inv, case_state, turn_number
         return decision
 
+    async def _maybe_reject_submit_when_draft_pending(
+        self, *, decision: Any, case_state: Any, turn_number: int,
+    ) -> Any:
+        """Gate a terminal submit while a sibling draft outcome is pending review.
+
+        Default: allow. VR and malware override to inject a
+        ``_directive.vote_before_submit`` observable and downgrade the
+        submit when another branch holds a draft this branch has not
+        yet voted on. Async because subclasses need a session to look
+        up the pending draft; the default takes no I/O.
+
+        Issue #168: keeps a minimal (``_template``) module from crashing
+        with AttributeError on the first submit action.
+        """
+        del case_state, turn_number
+        return decision
+
+    async def _maybe_reject_revote_when_already_voted(
+        self, *, decision: Any, case_state: Any, turn_number: int,
+    ) -> Any:
+        """Gate a repeat ``submit_outcome_review`` on the same outcome.
+
+        Default: allow. VR and malware override to steer the agent back
+        to investigation work when it re-emits a vote for an outcome
+        this branch already voted on (the DB UNIQUE constraint would
+        drop the row anyway, but the agent burns its turn budget). Async
+        because subclasses issue a query; the default is a no-op.
+
+        Issue #168.
+        """
+        del case_state, turn_number
+        return decision
+
+    def _maybe_reject_submit_with_unresolved_hypotheses(
+        self, *, decision: Any, case_state: Any, turn_number: int,
+    ) -> Any:
+        """Gate a terminal submit while this branch has live hypotheses.
+
+        Default: allow. VR and malware override to force each live
+        hypothesis to be explicitly rejected or folded into the
+        answer's supported evidence before the branch may submit.
+
+        Issue #168.
+        """
+        del case_state, turn_number
+        return decision
+
     def _maybe_reject_no_finding_while_sibling_open_hyp(
         self,
         *,

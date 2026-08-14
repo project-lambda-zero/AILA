@@ -16,13 +16,43 @@ router's chosen endpoint.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+from sqlalchemy.exc import SQLAlchemyError
 
 from aila.platform.mcp.client import McpClient, ResolvedInstance, resolve_instance
 from aila.platform.mcp.middleware import McpMiddleware
+from aila.platform.mcp.tool_hash import (
+    ToolDescriptionMismatchError,
+    verify_or_record_tool_specs,
+)
 from aila.platform.tools import Tool
+from aila.storage.registry import ConfigRegistry
 
 __all__ = ["McpBridgeTool"]
+
+_log = logging.getLogger(__name__)
+
+
+async def _resolve_hash_strict_flag() -> bool:
+    """Read ``platform.mcp_tool_hash_strict`` from :class:`ConfigRegistry`.
+
+    Returns ``False`` on any registry failure so a broken DB never
+    silently upgrades the pin from warn to refuse -- the operator
+    opts into strict mode explicitly by setting the key.
+    """
+    try:
+        raw = await ConfigRegistry().get("platform", "mcp_tool_hash_strict")
+    except (OSError, RuntimeError, ValueError, TypeError, SQLAlchemyError):
+        return False
+    if raw is None:
+        return False
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.strip().lower() in ("1", "true", "yes", "on")
+    return bool(raw)
 
 
 class McpBridgeTool(Tool):
@@ -81,8 +111,35 @@ class McpBridgeTool(Tool):
         return await self._mw.forward(self._client, action, kwargs)
 
     async def list_tool_specs(self) -> list[dict[str, Any]]:
-        """Return the server's compacted tool catalogue via the middleware."""
-        return await self._mw.list_tool_specs(self._client)
+        """Return the server's compacted tool catalogue via the middleware.
+
+        #159 part 1: every projected catalog is hashed and verified via
+        :func:`aila.platform.mcp.tool_hash.verify_or_record_tool_specs`
+        so a description swap between two ``tools/list`` calls surfaces
+        in the platform log. The strict flag is read from
+        ``platform.mcp_tool_hash_strict``; when set, a mismatch raises
+        :class:`ToolDescriptionMismatchError` and the bridge refuses
+        to return the poisoned catalog. In the default (warn) mode the
+        rotated hash is accepted and the caller sees the new specs.
+        """
+        specs = await self._mw.list_tool_specs(self._client)
+        strict = await _resolve_hash_strict_flag()
+        try:
+            verify_or_record_tool_specs(
+                self.module_id, self.server_id, specs, strict=strict,
+            )
+        except ToolDescriptionMismatchError:
+            # Refuse the catalog under strict mode so a poisoned tool
+            # description never lands in the agent prompt. The caller
+            # (prompt builder, tool_executor.registered_tools) sees an
+            # exception rather than a mutated tool set.
+            _log.error(
+                "mcp bridge %s/%s: STRICT tool_hash mismatch -- refusing "
+                "to return catalog",
+                self.module_id, self.server_id,
+            )
+            raise
+        return specs
 
     async def _resolve_base_url(self) -> str:
         """Resolve the current base URL (env > config > catalog > default)."""

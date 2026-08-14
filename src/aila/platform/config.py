@@ -616,3 +616,15 @@ class PlatformConfigSchema(BaseModel):
     sandbox_rootfs_path: str = ""
     sandbox_kernel_path: str = ""
 
+    # #159 part 1 -- MCP tool-description hash pin (supply-chain guard).
+    # When True, the platform bridge refuses to serve a projected tool
+    # catalogue whose sha256 differs from the first-sight pin,
+    # raising :class:`aila.platform.mcp.tool_hash.ToolDescriptionMismatchError`
+    # to the caller (prompt builder / tool_executor.registered_tools).
+    # Default False emits a WARNING and rotates the pin so legitimate
+    # rolling upgrades ("added new tool", "reworded description") do
+    # not ground every worker until an operator intervenes. Flip to
+    # True on hardened deployments where a poisoned tool description
+    # is a higher-severity outcome than a five-minute deploy stall.
+    mcp_tool_hash_strict: bool = False
+

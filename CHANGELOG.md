@@ -7,6 +7,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.7] - 2026-08-13 -- Security hardening and CLI crash fixes
+
+### Fixed
+
+- Security: fuzz reproducer reads are confined to a configured root with
+  symlink and traversal rejection, and the feature is fail-closed off until a
+  root is set (#183); the LLM-authored fuzz harness build command is validated
+  against a build-tool allowlist and rejected on shell metacharacters before it
+  reaches SSH (#184); the poc-runner target binary is confined to the known
+  workstation roots (#185). Outbound bridge upload and refresh fetches route
+  through the SSRF-validating HTTP client, so metadata, private, and loopback
+  targets are refused before the socket opens (#181). APK v2/v3 signatures are
+  now cryptographically verified per the Android signing-scheme spec (content
+  digest over the archive, signature over the signed data, public-key and
+  certificate match); parse results carry an explicit verified flag and reason
+  and are never trusted by default (#182). The request-size guard counts the
+  streaming body so a chunked-transfer or an understated Content-Length can no
+  longer bypass the limit (#115). The forensics script guard checks the parsed
+  AST for banned imports, dynamic execution, and dunder walks instead of a
+  bypassable substring scan (#118). The MCP layer pins tool-description hashes
+  (warn by default, refuse under mcp_tool_hash_strict), sanitizes injection
+  markers out of tool observations before they enter the agent case model, and
+  supports opt-in per-tool authority allowlists (#159).
+- CLI and module loader: prewarm-intel initializes the platform and awaits the
+  async prewarm instead of crashing (#170); create-api-key and the other DB
+  commands bootstrap the schema registry so they work on a fresh database
+  (#191); AgentTurnRunnerBase provides safe defaults for the three submit-gate
+  hooks so a minimal module no longer crashes on its first submit (#168); the
+  CLI tool-registry build awaits each module's async register_tools so CLI-context
+  module tools are actually registered (#169).
+
 ## [0.5.6] - 2026-08-13 -- Security, race, and wiring fixes from the peer-review backlog
 
 ### Fixed

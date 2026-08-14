@@ -35,6 +35,7 @@ from aila.platform.config_base import ModuleConfigReader, _shared_registry
 from aila.platform.contracts import utc_now
 from aila.platform.contracts.auth import AuthContext, require_auth
 from aila.platform.services.factory import ServiceFactory
+from aila.platform.services.http import build_async_http_client
 from aila.platform.services.investigation_cost import (
     compute_live_investigation_cost,
 )
@@ -44,6 +45,7 @@ from aila.platform.services.investigation_summaries import (
     build_message_summary,
     build_outcome_summary,
 )
+from aila.platform.services.ssrf import SSRFBlockedError
 from aila.platform.uow import UnitOfWork
 from aila.storage.db_models import WorkflowStateCursor
 
@@ -2671,12 +2673,27 @@ def create_vr_router() -> APIRouter:
             )
         base_url, _src = await registry_svc._resolved_url(spec)
 
+        # #181: route the refresh through the platform-guarded async client
+        # so the operator-set base_url is re-validated against the SSRF
+        # egress policy before the POST opens a socket.
+        from aila.config import get_settings as _get_settings
+        from aila.platform.config import (
+            build_platform_settings as _build_platform_settings,
+        )
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with build_async_http_client(
+                _build_platform_settings(_get_settings()),
+                timeout=120.0,
+            ) as client:
                 resp = await client.post(
                     f"{base_url}/tools/refresh_index",
                     json={"index_id": index_id, "force": bool(force)},
                 )
+        except SSRFBlockedError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"audit-mcp base_url refused by egress policy: {exc}",
+            ) from exc
         except (httpx.ConnectError, httpx.TimeoutException) as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -2804,8 +2821,19 @@ def create_vr_router() -> APIRouter:
 
         bridge = make_bridge("ida_headless", module_id="vr", recorder=record_call)
         base_url = await bridge._resolve_base_url()
+        # #181: route the upload through the platform-guarded async client
+        # so the operator-set base_url is re-validated against the SSRF
+        # egress policy (link-local / cloud IMDS / RFC1918 blocked)
+        # before the sample bytes are POSTed.
+        from aila.config import get_settings as _get_settings
+        from aila.platform.config import (
+            build_platform_settings as _build_platform_settings,
+        )
         try:
-            async with httpx.AsyncClient(timeout=300.0) as client:
+            async with build_async_http_client(
+                _build_platform_settings(_get_settings()),
+                timeout=300.0,
+            ) as client:
                 resp = await client.post(
                     f"{base_url}/upload",
                     files={
@@ -2816,6 +2844,11 @@ def create_vr_router() -> APIRouter:
                         ),
                     },
                 )
+        except SSRFBlockedError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"IDA MCP base_url refused by egress policy: {exc}",
+            ) from exc
         except (httpx.ConnectError, httpx.TimeoutException) as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
