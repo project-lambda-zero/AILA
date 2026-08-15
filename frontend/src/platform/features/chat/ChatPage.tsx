@@ -34,6 +34,7 @@ import {
   type ChatMessage,
   type SessionSummary,
 } from "./queries";
+import { ConsoleVitalsRail } from "./ConsoleVitalsRail";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -719,6 +720,7 @@ export function ChatPage() {
             void handleCreate();
           }}
         />
+        <ConsoleVitalsRail />
       </div>
     </div>
   );

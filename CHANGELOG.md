@@ -7,6 +7,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.29] - 2026-08-14 -- Console vitals rail
+
+### Added
+
+- Console home right rail. The platform console now renders the design mockup
+  third column: a `vitals` WindowPanel reporting live platform state -- fleet
+  risk and coverage, the finding severity ledger, and per-service health -- read
+  from GET /dashboard and GET /health. It appears at the xl breakpoint and up,
+  and degrades to a benign "vitals unavailable" line when the dashboard
+  aggregation is unreachable.
+
+
 ## [0.5.28] - 2026-08-14 -- Design system: console + investigation workbench, zero legacy
 
 ### Added
