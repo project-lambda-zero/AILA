@@ -11,7 +11,6 @@
   "include": [
     "src",
     "vite.config.ts",
-    "vitest.config.ts",
-    "../src/aila/modules/*/frontend/**/*"
+    "vitest.config.ts"
   ]
 }
