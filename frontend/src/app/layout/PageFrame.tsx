@@ -1,65 +1,65 @@
 import { useEffect, type ReactNode } from "react";
 
-import { PageShell } from "@/components/aila/PageShell";
+import { PageHeaderProvider, usePageHeaderOverrides } from "@/components/aila/PageHeaderContext";
 
 interface PageFrameProps {
   title: string;
   children: ReactNode;
-  /** Optional sidebar icon -- same Phosphor icons modules use in their nav.ts. */
+  /** Accepted for router.tsx compatibility; the frame no longer paints the title bar. */
   icon?: ReactNode;
-  /** Optional subtitle line under the title. */
   subtitle?: ReactNode;
-  /** Optional live-status pulse dot. */
   status?: "live" | "ready" | "paused" | "error" | null;
-  /** Optional right-aligned action row (buttons, links, menus). */
   actions?: ReactNode;
-  /** Suppress the corner brackets -- full-bleed canvases (maps, graphs). */
   hideCornerAccents?: boolean;
-  /** Suppress the top hairline. */
   hideTechBorder?: boolean;
 }
 
 /**
  * PageFrame wraps every routed feature page (mounted from router.tsx).
- * Syncs the document title to the browser tab, then renders the
- * children inside a PageShell carrying the cyber-tech aesthetic
- * (sticky header + corner brackets + accent hairline).
  *
- * Pages can forward icon / subtitle / actions / status via the props
- * here so they don't have to import PageShell themselves. When a page
- * still renders its own inline <h1>, BOTH the PageShell title and the
- * inline heading will appear -- the codemod sweep strips redundant
- * inline headers as part of the overhaul rollout.
+ * Post-rebuild responsibilities:
+ *   - Sync `document.title` to the browser tab so tabs and bookmarks read
+ *     the route name (or the dynamic override pushed by a detail page via
+ *     `useUpdatePageHeader`).
+ *   - Mount `PageHeaderProvider` so `useUpdatePageHeader` calls (e.g. from
+ *     `TeamDetailPage`, `SystemDetailPage`) have a live context to write
+ *     into. The provider is otherwise a no-op display-wise since the mock
+ *     rebuild moved page titles into per-page `SectionHeader` bodies.
+ *   - Render children on the mock's `--surface-page` canvas. NO title bar,
+ *     NO corner brackets, NO hairline -- each page owns its `SectionHeader`
+ *     via `@/components/aila/mock` (see CLAUDE.md #16: rendering a title
+ *     here on top of the page's SectionHeader produces two stacked
+ *     headers).
+ *
+ * The `icon`, `subtitle`, `status`, `actions`, `hideCornerAccents`, and
+ * `hideTechBorder` props stay in the type signature because router.tsx and
+ * a handful of detail pages still forward them; they are intentionally
+ * unused so upstream code compiles unchanged.
  */
-export function PageFrame({
-  title,
-  children,
-  icon,
-  subtitle,
-  status,
-  actions,
-  hideCornerAccents,
-  hideTechBorder,
-}: PageFrameProps) {
+export function PageFrame({ title, children }: PageFrameProps) {
+  return (
+    <PageHeaderProvider>
+      <PageFrameInner title={title}>{children}</PageFrameInner>
+    </PageHeaderProvider>
+  );
+}
+
+function PageFrameInner({ title, children }: { title: string; children: ReactNode }) {
+  const overrides = usePageHeaderOverrides();
+  const overrideTitle = typeof overrides.title === "string" ? overrides.title : null;
+  const effectiveTitle = overrideTitle && overrideTitle.length > 0 ? overrideTitle : title;
+
   useEffect(() => {
     const previous = document.title;
-    document.title = title ? `${title} · AILA` : "AILA";
+    document.title = effectiveTitle ? `${effectiveTitle} \u00b7 AILA` : "AILA";
     return () => {
       document.title = previous;
     };
-  }, [title]);
+  }, [effectiveTitle]);
 
   return (
-    <PageShell
-      title={title}
-      subtitle={subtitle}
-      icon={icon}
-      status={status ?? null}
-      actions={actions}
-      hideCornerAccents={hideCornerAccents}
-      hideTechBorder={hideTechBorder}
-    >
+    <div style={{ minHeight: "100%", background: "var(--surface-page)", color: "var(--text-primary)" }}>
       {children}
-    </PageShell>
+    </div>
   );
 }

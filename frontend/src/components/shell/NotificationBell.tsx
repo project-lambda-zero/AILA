@@ -13,23 +13,19 @@
  *
  * Per T-138-18: all queries are user-scoped on the backend.
  * Per D-12 (146-CONTEXT): polling removed, SSE invalidation drives updates.
+ *
+ * UI: rebuilt on the mock kit -- raw <button> trigger with a MonoBadge count
+ * dot, absolute-positioned <WindowPanel> dropdown, no shadcn primitives.
  */
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell } from "@phosphor-icons/react/dist/csr/Bell";
 import { Check } from "@phosphor-icons/react/dist/csr/Check";
 
 import { authorizedRequestJson } from "@platform/api/http";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { MonoBadge } from "@/components/aila/mock";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -103,12 +99,50 @@ function useUnreadCount() {
 }
 
 // ---------------------------------------------------------------------------
+// Presentation helpers
+// ---------------------------------------------------------------------------
+
+const ROW_STYLE: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 4,
+  padding: "8px 10px",
+  fontFamily: "var(--font-mono)",
+  cursor: "pointer",
+  borderBottom: "1px solid var(--border-faint)",
+  background: "transparent",
+  border: 0,
+  borderRadius: 0,
+  textAlign: "left",
+  width: "100%",
+};
+
+const FOOTER_LINK_STYLE: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+  height: 22,
+  padding: "0 8px",
+  fontFamily: "var(--font-mono)",
+  fontSize: 10,
+  letterSpacing: "0.08em",
+  color: "var(--text-muted)",
+  background: "transparent",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  cursor: "pointer",
+  textTransform: "uppercase",
+};
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
 export function NotificationBell() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
 
   const { data: recentData } = useRecentNotifications();
   const { data: unreadData } = useUnreadCount();
@@ -134,111 +168,254 @@ export function NotificationBell() {
     },
   });
 
+  const closeMenu = useCallback(() => setOpen(false), []);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(event: MouseEvent) {
+      if (!rootRef.current) return;
+      if (!rootRef.current.contains(event.target as Node)) setOpen(false);
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const ariaLabel =
+    badgeCount > 0 ? `${badgeCount} unread notifications` : "Notifications";
+  const displayCount = badgeCount > 99 ? "99+" : String(badgeCount);
+
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="sm"
-            className="relative h-8 w-8 p-0"
-            aria-label={
-              badgeCount > 0
-                ? `${badgeCount} unread notifications`
-                : "Notifications"
-            }
-          />
-        }
+    <div ref={rootRef} style={{ position: "relative", display: "inline-flex" }}>
+      <button
+        type="button"
+        aria-label={ariaLabel}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((prev) => !prev)}
+        className="touch-target flex items-center justify-center"
+        style={{
+          position: "relative",
+          width: 30,
+          height: 28,
+          padding: 0,
+          background: "transparent",
+          color: "var(--text-primary)",
+          border: "1px solid var(--border-soft)",
+          borderRadius: 3,
+          cursor: "pointer",
+        }}
       >
-        <Bell size={18} />
+        <Bell size={16} />
         {badgeCount > 0 && (
-          <Badge
-            variant="destructive"
-            className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full p-0 text-[10px] font-bold leading-none"
+          <span
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              top: -6,
+              right: -6,
+              pointerEvents: "none",
+            }}
           >
-            {badgeCount > 99 ? "99+" : badgeCount}
-          </Badge>
+            <MonoBadge tone="critical">{displayCount}</MonoBadge>
+          </span>
         )}
-      </DropdownMenuTrigger>
+      </button>
 
-      <DropdownMenuContent align="end" side="bottom" sideOffset={8} className="w-80">
-        <DropdownMenuLabel className="flex items-center justify-between">
-          <span>Notifications</span>
-          {badgeCount > 0 && (
-            <span className="text-xs text-text-muted font-normal">
-              {badgeCount} unread
-            </span>
-          )}
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-
-        {notifications.length === 0 ? (
-          <div className="p-4 text-center text-sm text-text-muted">
-            No new notifications
-          </div>
-        ) : (
-          notifications.slice(0, 5).map((notification) => (
-            <DropdownMenuItem
-              key={notification.id}
-              className="flex flex-col items-start gap-1 py-2 cursor-pointer"
-              onClick={() => {
-                if (!notification.is_read) {
-                  markRead.mutate(notification.id);
-                }
-              }}
-            >
-              <div className="flex w-full items-start justify-between gap-2">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  {!notification.is_read && (
-                    <span
-                      className="h-2 w-2 rounded-full bg-accent shrink-0 mt-0.5"
-                      aria-label="Unread"
-                    />
-                  )}
-                  <span className="text-sm font-medium text-foreground leading-snug truncate">
-                    {notification.title}
-                  </span>
-                </div>
-                {notification.created_at && (
-                  <span className="text-xs text-text-muted shrink-0 mt-0.5">
-                    {relativeTime(notification.created_at)}
-                  </span>
-                )}
-              </div>
-              {notification.body && (
-                <span className="text-xs text-text-muted leading-snug line-clamp-2 pl-3.5">
-                  {notification.body}
+      {open && (
+        <div
+          role="menu"
+          style={{
+            position: "absolute",
+            top: "calc(100% + 6px)",
+            right: 0,
+            zIndex: 60,
+            width: 340,
+          }}
+        >
+          <WindowPanel
+            title="notifications"
+            tone={badgeCount > 0 ? "warn" : "muted"}
+            actions={
+              badgeCount > 0 ? (
+                <span
+                  className="font-mono uppercase"
+                  style={{
+                    fontSize: 9.5,
+                    letterSpacing: "0.1em",
+                    color: "var(--text-muted)",
+                  }}
+                >
+                  {badgeCount} unread
                 </span>
-              )}
-            </DropdownMenuItem>
-          ))
-        )}
-
-        <DropdownMenuSeparator />
-
-        <div className="flex items-center justify-between px-2 py-1">
-          {badgeCount > 0 && (
-            <button
-              className="flex items-center gap-1 text-xs text-text-muted hover:text-foreground transition-colors"
-              onClick={(e) => {
-                e.stopPropagation();
-                markAllRead.mutate();
-              }}
-              disabled={markAllRead.isPending}
-              aria-label="Mark all notifications as read"
-            >
-              <Check size={12} />
-              Mark all read
-            </button>
-          )}
-          <DropdownMenuItem
-            className="ml-auto text-sm text-accent hover:text-accent/80 cursor-pointer px-0"
-            onClick={() => navigate("/notifications")}
+              ) : null
+            }
+            flush
           >
-            View all
-          </DropdownMenuItem>
+            {notifications.length === 0 ? (
+              <div
+                className="font-mono"
+                style={{
+                  padding: 20,
+                  textAlign: "center",
+                  fontSize: 10.5,
+                  color: "var(--text-muted)",
+                  letterSpacing: "0.04em",
+                }}
+              >
+                No new notifications
+              </div>
+            ) : (
+              <div style={{ maxHeight: 360, overflowY: "auto" }}>
+                {notifications.slice(0, 5).map((notification) => (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    key={notification.id}
+                    style={ROW_STYLE}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLElement).style.background =
+                        "var(--surface-hover)";
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLElement).style.background = "transparent";
+                    }}
+                    onClick={() => {
+                      if (!notification.is_read) {
+                        markRead.mutate(notification.id);
+                      }
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        justifyContent: "space-between",
+                        gap: 8,
+                        width: "100%",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          minWidth: 0,
+                        }}
+                      >
+                        {!notification.is_read && (
+                          <span
+                            aria-label="Unread"
+                            style={{
+                              width: 6,
+                              height: 6,
+                              flex: "0 0 auto",
+                              background: "var(--accent)",
+                              boxShadow: "0 0 6px var(--accent)",
+                            }}
+                          />
+                        )}
+                        <span
+                          style={{
+                            fontSize: 11,
+                            color: "var(--text-primary)",
+                            letterSpacing: "0.02em",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {notification.title}
+                        </span>
+                      </div>
+                      {notification.created_at && (
+                        <span
+                          style={{
+                            fontSize: 9.5,
+                            color: "var(--text-faint)",
+                            flex: "0 0 auto",
+                            letterSpacing: "0.06em",
+                          }}
+                        >
+                          {relativeTime(notification.created_at)}
+                        </span>
+                      )}
+                    </div>
+                    {notification.body && (
+                      <span
+                        style={{
+                          fontSize: 10,
+                          color: "var(--text-muted)",
+                          lineHeight: 1.4,
+                          paddingLeft: notification.is_read ? 0 : 12,
+                          display: "-webkit-box",
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: "vertical",
+                          overflow: "hidden",
+                        }}
+                      >
+                        {notification.body}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 8,
+                padding: "8px 10px",
+                borderTop: "1px solid var(--border-faint)",
+                background: "var(--surface-sunk)",
+              }}
+            >
+              {badgeCount > 0 ? (
+                <button
+                  type="button"
+                  style={FOOTER_LINK_STYLE}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    markAllRead.mutate();
+                  }}
+                  disabled={markAllRead.isPending}
+                  aria-label="Mark all notifications as read"
+                >
+                  <Check size={11} />
+                  <span>Mark all read</span>
+                </button>
+              ) : (
+                <span />
+              )}
+              <button
+                type="button"
+                role="menuitem"
+                style={{
+                  ...FOOTER_LINK_STYLE,
+                  color: "var(--accent)",
+                  border: "1px solid var(--accent)",
+                  background: "color-mix(in srgb, var(--accent) 8%, transparent)",
+                }}
+                onClick={() => {
+                  closeMenu();
+                  navigate("/notifications");
+                }}
+              >
+                View all
+              </button>
+            </div>
+          </WindowPanel>
         </div>
-      </DropdownMenuContent>
-    </DropdownMenu>
+      )}
+    </div>
   );
 }

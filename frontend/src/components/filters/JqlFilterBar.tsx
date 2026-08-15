@@ -18,6 +18,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent,
 } from "react";
 import { X } from "@phosphor-icons/react/dist/csr/X";
@@ -25,9 +26,7 @@ import { Funnel } from "@phosphor-icons/react/dist/csr/Funnel";
 import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
 import { useSearchParams } from "react-router";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { MonoBadge } from "@/components/aila/mock";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -149,6 +148,87 @@ export function filtersToQueryParams(
 }
 
 // ---------------------------------------------------------------------------
+// Mock-kit shared styles
+// ---------------------------------------------------------------------------
+
+const BAR_STYLE: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  alignItems: "center",
+  gap: 6,
+  padding: 6,
+  background: "var(--surface-card)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+};
+
+const CHIP_STYLE: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+  height: 22,
+  padding: "0 4px 0 8px",
+  fontFamily: "var(--font-mono)",
+  fontSize: 10.5,
+  letterSpacing: "0.02em",
+  color: "var(--text-primary)",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 2,
+};
+
+const CHIP_REMOVE_STYLE: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: 16,
+  height: 16,
+  padding: 0,
+  marginLeft: 2,
+  color: "var(--text-muted)",
+  background: "transparent",
+  border: "none",
+  cursor: "pointer",
+  borderRadius: 2,
+};
+
+const INPUT_STYLE: CSSProperties = {
+  flex: 1,
+  minWidth: 180,
+  height: 24,
+  padding: "0 4px",
+  fontFamily: "var(--font-mono)",
+  fontSize: 11,
+  color: "var(--text-primary)",
+  background: "transparent",
+  border: "none",
+  outline: "none",
+};
+
+const CLEAR_BUTTON_STYLE: CSSProperties = {
+  height: 24,
+  padding: "0 10px",
+  fontFamily: "var(--font-mono)",
+  fontSize: 9.5,
+  textTransform: "uppercase",
+  letterSpacing: "0.1em",
+  color: "var(--text-muted)",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  cursor: "pointer",
+};
+
+const HINT_STYLE: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  fontFamily: "var(--font-mono)",
+  fontSize: 10,
+  color: "var(--text-muted)",
+};
+
+// ---------------------------------------------------------------------------
 // Chip pill
 // ---------------------------------------------------------------------------
 
@@ -159,22 +239,24 @@ interface ChipProps {
 
 function Chip({ filter, onRemove }: ChipProps) {
   const label = serializeFilter(filter);
+  const isSearch = filter.field === SEARCH_FIELD && filter.operator === ":";
   return (
-    <span className="inline-flex items-center gap-1 rounded-[2px] border border-border bg-surface px-1.5 py-0.5 font-mono text-xs text-text">
-      {filter.field === SEARCH_FIELD && filter.operator === ":" ? (
-        <MagnifyingGlass className="h-3 w-3 text-text-muted" />
+    <span style={CHIP_STYLE}>
+      {isSearch ? (
+        <MagnifyingGlass
+          aria-hidden
+          style={{ width: 10, height: 10, color: "var(--text-muted)" }}
+        />
       ) : null}
       <span>{label}</span>
-      <Button
+      <button
         type="button"
-        size="sm"
-        variant="ghost"
-        className="h-4 w-4 p-0 ml-0.5"
         onClick={onRemove}
         aria-label={`Remove filter ${label}`}
+        style={CHIP_REMOVE_STYLE}
       >
-        <X className="h-3 w-3" />
-      </Button>
+        <X style={{ width: 10, height: 10 }} />
+      </button>
     </span>
   );
 }
@@ -285,9 +367,12 @@ export function JqlFilterBar({
   }, [fields]);
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-1.5 rounded-[4px] border border-border bg-surface p-2">
-        <Funnel className="h-4 w-4 text-text-muted shrink-0" />
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={BAR_STYLE}>
+        <Funnel
+          aria-hidden
+          style={{ width: 14, height: 14, color: "var(--text-muted)", flexShrink: 0 }}
+        />
         {filters.map((f, i) => (
           <Chip
             key={`${f.field}${f.operator}${f.value}-${i}`}
@@ -295,7 +380,7 @@ export function JqlFilterBar({
             onRemove={() => removeFilter(i)}
           />
         ))}
-        <Input
+        <input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={handleKeyDown}
@@ -303,27 +388,19 @@ export function JqlFilterBar({
             placeholder ??
             `Filter (e.g. ${fields[0]?.key ?? "module"}:value, cost>0.5)`
           }
-          className="touch-target flex-1 min-w-[180px] h-7 font-mono text-xs border-0 bg-transparent focus-visible:ring-0 px-1"
+          style={INPUT_STYLE}
           aria-label="Add filter"
         />
         {filters.length > 0 && (
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            className="h-7 font-mono text-xs text-text-muted"
-            onClick={clearAll}
-          >
+          <button type="button" onClick={clearAll} style={CLEAR_BUTTON_STYLE}>
             Clear
-          </Button>
+          </button>
         )}
       </div>
-      <p className="font-mono text-[10px] text-text-muted">
-        Fields:{" "}
-        <AilaBadge severity="neutral" size="sm" className="mx-0.5">
-          {fieldHint || "search"}
-        </AilaBadge>
-        {" · Operators: : > <"}
+      <p style={HINT_STYLE}>
+        <span>Fields:</span>
+        <MonoBadge tone="muted">{fieldHint || "search"}</MonoBadge>
+        <span>{"\u00b7 Operators: : > <"}</span>
       </p>
     </div>
   );

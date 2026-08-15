@@ -11,7 +11,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
 import { WindowPanel } from "@/components/aila/WindowPanel";
-import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import {
   SectionHeader,
@@ -285,10 +284,23 @@ export function SearchPage() {
       {/* Results */}
       {!hasQuery ? (
         <WindowPanel title="global search" tone="muted">
-          <EmptyState
-            title="Type to search across the platform"
-            description="Systems, findings, sessions, and any module-contributed entities are searched in a single pass. Facet chips narrow by entity type."
-          />
+          <div
+            className="flex flex-col items-center justify-center"
+            style={{ gap: 8, padding: 32, textAlign: "center", minHeight: 120 }}
+          >
+            <div
+              className="font-mono uppercase"
+              style={{ fontSize: 11, letterSpacing: "0.14em", color: "var(--text-primary)" }}
+            >
+              Type to search across the platform
+            </div>
+            <div
+              className="font-mono"
+              style={{ fontSize: 10.5, color: "var(--text-muted)", maxWidth: 440 }}
+            >
+              Systems, findings, sessions, and any module-contributed entities are searched in a single pass. Facet chips narrow by entity type.
+            </div>
+          </div>
         </WindowPanel>
       ) : isLoading ? (
         <WindowPanel title="results" status="LOADING" tone="muted">
@@ -309,10 +321,23 @@ export function SearchPage() {
         </WindowPanel>
       ) : results.length === 0 ? (
         <WindowPanel title="results" tone="muted">
-          <EmptyState
-            title={`No results for "${urlQuery}"`}
-            description="Try a shorter query, remove active facets, or check spelling."
-          />
+          <div
+            className="flex flex-col items-center justify-center"
+            style={{ gap: 8, padding: 32, textAlign: "center", minHeight: 120 }}
+          >
+            <div
+              className="font-mono uppercase"
+              style={{ fontSize: 11, letterSpacing: "0.14em", color: "var(--text-primary)" }}
+            >
+              {`No results for "${urlQuery}"`}
+            </div>
+            <div
+              className="font-mono"
+              style={{ fontSize: 10.5, color: "var(--text-muted)", maxWidth: 440 }}
+            >
+              Try a shorter query, remove active facets, or check spelling.
+            </div>
+          </div>
         </WindowPanel>
       ) : (
         <>

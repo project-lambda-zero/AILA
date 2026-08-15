@@ -2,7 +2,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Monitor } from "@phosphor-icons/react/dist/csr/Monitor";
 
 import { fetchSessions, revokeSession, type SessionRecord } from "./api";
-import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { WindowPanel } from "@/components/aila/WindowPanel";
 import {
@@ -181,11 +180,26 @@ export function SessionsPage() {
         </WindowPanel>
       ) : sessions.length === 0 ? (
         <WindowPanel title="session list" tone="muted">
-          <EmptyState
-            icon={<Monitor className="h-10 w-10" />}
-            title="No active sessions"
-            description="Your account has no active browser sessions. Sign in from another device to see it listed here."
-          />
+          <div
+            className="flex flex-col items-center justify-center"
+            style={{ gap: 8, padding: 32, textAlign: "center", minHeight: 120 }}
+          >
+            <span aria-hidden style={{ color: "var(--text-faint)", marginBottom: 4 }}>
+              <Monitor className="h-10 w-10" />
+            </span>
+            <div
+              className="font-mono uppercase"
+              style={{ fontSize: 11, letterSpacing: "0.14em", color: "var(--text-primary)" }}
+            >
+              No active sessions
+            </div>
+            <div
+              className="font-mono"
+              style={{ fontSize: 10.5, color: "var(--text-muted)", maxWidth: 440 }}
+            >
+              Your account has no active browser sessions. Sign in from another device to see it listed here.
+            </div>
+          </div>
         </WindowPanel>
       ) : (
         <WindowPanel

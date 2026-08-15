@@ -1,9 +1,11 @@
 /**
  * FeatureBoundary -- feature-scoped error boundary with retry.
  *
- * Wraps `AppErrorBoundary` with a compact, card-shaped fallback so a single
- * failed async widget renders a scoped retry surface instead of blanking
- * the entire page (V-24 resilience layer).
+ * Wraps `AppErrorBoundary` semantics with a compact WindowPanel fallback so a
+ * single failed async widget renders a scoped retry surface instead of
+ * blanking the entire page (V-24 resilience layer). Rebuilt to the mock kit:
+ * the fallback is a warn-toned WindowPanel with a dense mono message body
+ * and a raw mock retry button.
  *
  * Usage:
  *   <FeatureBoundary label="Cost trend" resetKeys={[historyMonths]}
@@ -21,20 +23,17 @@
  *     for the retry button so screen readers know which widget is
  *     recovering.
  *   - Reduced-motion safe: no animations, static markup.
- *   - Fallback preserves the shell's design tokens (AilaCard + destructive
- *     border) so it reads as an in-place error card, not a full-page fatal.
  *
  * The router's root `withFeatureBoundary` (per-route AppErrorBoundary)
  * remains the outer safety net; this wrapper is intended to be dropped
  * around heavy async widgets INSIDE a page (charts, tables, side panels)
  * where blanking the entire route on one failed query is not acceptable.
  */
-import { Component, type ErrorInfo, type ReactNode } from "react";
+import { Component, type CSSProperties, type ErrorInfo, type ReactNode } from "react";
 import { ArrowClockwise } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
 import { Warning } from "@phosphor-icons/react/dist/csr/Warning";
 
-import { AilaCard } from "@/components/aila/AilaCard";
-import { Button } from "@/components/ui/button";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 interface FeatureBoundaryProps {
   /** Rendered as the fallback heading and reused in the retry button's aria-label. */
@@ -72,6 +71,23 @@ function keysDiffer(
   }
   return false;
 }
+
+const RETRY_BUTTON_STYLE: CSSProperties = {
+  height: 24,
+  padding: "0 10px",
+  fontSize: 9.5,
+  letterSpacing: "0.1em",
+  textTransform: "uppercase",
+  fontFamily: "var(--font-mono)",
+  color: "var(--status-warn)",
+  background: "var(--surface-sunk)",
+  border: "1px solid color-mix(in srgb, var(--status-warn) 45%, transparent)",
+  borderRadius: 3,
+  cursor: "pointer",
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+};
 
 /**
  * FeatureBoundary owns the class-component wiring directly (rather than
@@ -136,47 +152,56 @@ export class FeatureBoundary extends Component<FeatureBoundaryProps, FeatureBoun
         : "An unexpected error occurred while rendering this section.";
     const heading = label ? `${label} failed to load` : "Section failed to load";
     const retryAria = label ? `Retry loading ${label}` : "Retry loading section";
+    const panelTitle = label ? `${label} error`.toLowerCase() : "section error";
 
     return (
-      <AilaCard
-        variant="default"
-        padding="md"
-        className="border-destructive/50 bg-destructive/5"
+      <WindowPanel
+        title={panelTitle}
+        tone="warn"
+        status="ERROR"
         role="alert"
         aria-live="polite"
         data-testid="feature-boundary-fallback"
       >
-        <div className="flex flex-col gap-3">
-          <div className="flex items-start gap-2">
+        <div className="flex flex-col" style={{ gap: 12, padding: 4 }}>
+          <div className="flex items-start" style={{ gap: 10 }}>
             <Warning
-              className="mt-0.5 h-4 w-4 shrink-0 text-destructive"
               aria-hidden="true"
               weight="fill"
+              style={{ width: 16, height: 16, flex: "0 0 auto", color: "var(--status-warn)", marginTop: 2 }}
             />
-            <div className="min-w-0 flex-1">
-              <p className="font-mono text-sm font-semibold text-text">
+            <div className="flex flex-col" style={{ minWidth: 0, flex: 1, gap: 4 }}>
+              <div
+                className="font-mono uppercase"
+                style={{
+                  fontSize: 11,
+                  letterSpacing: "0.14em",
+                  color: "var(--text-primary)",
+                }}
+              >
                 {heading}
-              </p>
-              <p className="mt-1 font-mono text-xs text-text-muted break-words">
+              </div>
+              <div
+                className="font-mono"
+                style={{ fontSize: 10.5, color: "var(--text-muted)", wordBreak: "break-word" }}
+              >
                 {message}
-              </p>
+              </div>
             </div>
           </div>
           <div>
-            <Button
+            <button
               type="button"
-              size="xs"
-              variant="outline"
               onClick={this.handleRetry}
               aria-label={retryAria}
-              className="gap-1.5"
+              style={RETRY_BUTTON_STYLE}
             >
-              <ArrowClockwise className="h-3 w-3" aria-hidden="true" />
+              <ArrowClockwise aria-hidden="true" style={{ width: 11, height: 11 }} />
               Retry
-            </Button>
+            </button>
           </div>
         </div>
-      </AilaCard>
+      </WindowPanel>
     );
   }
 }

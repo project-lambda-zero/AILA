@@ -1,4 +1,4 @@
-import { AilaBadge } from "@/components/aila/AilaBadge";
+import { MonoBadge } from "@/components/aila/mock";
 
 /** Mitigations ribbon from 08_FRONTEND_UX.md §1.4 /
  *
@@ -35,12 +35,12 @@ const SPEC: ReadonlyArray<{
 ];
 
 function flagTone(v: unknown): {
-  severity: "low" | "high" | "info";
+  tone: "low" | "high" | "info";
   text: string;
 } {
-  if (v === true) return { severity: "low", text: "ON" };
-  if (v === false) return { severity: "high", text: "OFF" };
-  return { severity: "info", text: "?" };
+  if (v === true) return { tone: "low", text: "ON" };
+  if (v === false) return { tone: "high", text: "OFF" };
+  return { tone: "info", text: "?" };
 }
 
 export function MitigationsRibbon({
@@ -57,33 +57,34 @@ export function MitigationsRibbon({
       {SPEC.map((spec) => {
         const t = flagTone(m[spec.key]);
         return (
-          <AilaBadge
+          <MonoBadge
             key={spec.key}
-            severity={t.severity}
-            size="sm"
+            tone={t.tone}
             title={`${spec.label} -- ${t.text} (source: ${source})`}
           >
             {spec.short}: {t.text}
-          </AilaBadge>
+          </MonoBadge>
         );
       })}
       {(m.relro_full || m.relro_partial) && (
-        <AilaBadge severity="low" size="sm" title={`RELRO source: ${source}`}>
+        <MonoBadge tone="low" title={`RELRO source: ${source}`}>
           RELRO: {m.relro_full ? "full" : "partial"}
-        </AilaBadge>
+        </MonoBadge>
       )}
       {(m.sanitizers ?? []).map((s) => (
-        <AilaBadge
+        <MonoBadge
           key={s}
-          severity="medium"
-          size="sm"
+          tone="medium"
           title={`Sanitizer enabled in build (source: ${source})`}
         >
           {s}
-        </AilaBadge>
+        </MonoBadge>
       ))}
       {m.notes && (
-        <span className="text-3xs text-text-muted italic ml-2">
+        <span
+          className="font-mono italic"
+          style={{ marginLeft: 8, fontSize: 10, color: "var(--text-faint)" }}
+        >
           {m.notes}
         </span>
       )}

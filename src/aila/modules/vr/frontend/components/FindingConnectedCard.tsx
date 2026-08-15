@@ -19,12 +19,9 @@
  */
 import { useMemo } from "react";
 
-import { AilaCard } from "@/components/aila/AilaCard";
-import {
-  ConnectedEntities,
-  type ConnectedEntity,
-} from "@/components/aila/ConnectedEntities";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
+import { ConnectedList, type ConnectedRowData } from "./ConnectedRow";
 import { useDisclosures } from "../queries";
 import type { VRFinding } from "../types";
 
@@ -42,8 +39,8 @@ export function FindingConnectedCard({ finding }: { finding: VRFinding }) {
     findingId ? { findingId } : undefined,
   );
 
-  const entities = useMemo<ConnectedEntity[]>(() => {
-    const rows: ConnectedEntity[] = [];
+  const entities = useMemo<ConnectedRowData[]>(() => {
+    const rows: ConnectedRowData[] = [];
 
     if (finding.project_id) {
       rows.push({
@@ -96,8 +93,8 @@ export function FindingConnectedCard({ finding }: { finding: VRFinding }) {
   if (entities.length === 0) return null;
 
   return (
-    <AilaCard techBorder glow>
-      <ConnectedEntities entities={entities} heading="Connected" />
-    </AilaCard>
+    <WindowPanel title="connected" tone="info">
+      <ConnectedList entities={entities} />
+    </WindowPanel>
   );
 }

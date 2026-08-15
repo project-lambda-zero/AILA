@@ -7,7 +7,6 @@ import {
   MonoBadge,
 } from "@/components/aila/mock";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
-import { EmptyState } from "@/components/aila/EmptyState";
 import {
   useTaskDetail,
   useTasks,
@@ -390,11 +389,44 @@ export function TasksPage() {
         >
           <div style={{ minWidth: 0 }}>
             {tasks.length === 0 ? (
-              <EmptyState
-                title="No tasks"
-                description="Tasks appear here when scans are running. Submit a scan to get started."
-                action={{ label: "Go to Console", href: "/console" }}
-              />
+              <div
+                className="flex flex-col items-center justify-center"
+                style={{ gap: 8, padding: 32, textAlign: "center", minHeight: 120 }}
+              >
+                <div
+                  className="font-mono uppercase"
+                  style={{ fontSize: 11, letterSpacing: "0.14em", color: "var(--text-primary)" }}
+                >
+                  No tasks
+                </div>
+                <div
+                  className="font-mono"
+                  style={{ fontSize: 10.5, color: "var(--text-muted)", maxWidth: 440 }}
+                >
+                  Tasks appear here when scans are running. Submit a scan to get started.
+                </div>
+                <a
+                  href="/console"
+                  className="font-mono uppercase"
+                  style={{
+                    marginTop: 6,
+                    height: 26,
+                    padding: "0 12px",
+                    fontSize: 9.5,
+                    letterSpacing: "0.1em",
+                    border: "1px solid var(--accent)",
+                    color: "var(--accent)",
+                    background: "color-mix(in srgb, var(--accent) 8%, transparent)",
+                    borderRadius: 3,
+                    textDecoration: "none",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  Go to Console
+                </a>
+              </div>
             ) : (
               <WindowPanel
                 title="task queue"

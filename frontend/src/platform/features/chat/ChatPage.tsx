@@ -22,7 +22,6 @@ import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
 import { Warning } from "@phosphor-icons/react/dist/csr/Warning";
 
 import { WindowPanel } from "@/components/aila/WindowPanel";
-import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { ApiHttpError } from "@platform/api/http";
 import { ChatLauncher, LAUNCHER_CHIPS } from "./ChatLauncher";
@@ -693,12 +692,48 @@ function ThreadPanel({
         style={{ minWidth: 0 }}
       >
         <div className="flex flex-1 items-center justify-center" style={{ padding: 24 }}>
-          <EmptyState
-            icon={<ChatCircleDots size={40} />}
-            title="Start a new chat"
-            description="Ask the platform about your scans, findings, or operational posture. Replies stream token-by-token."
-            action={{ label: "New chat", onClick: onCreateAndFocus }}
-          />
+          <div
+            className="flex flex-col items-center justify-center"
+            style={{ gap: 8, padding: 32, textAlign: "center", minHeight: 120 }}
+          >
+            <span aria-hidden style={{ color: "var(--text-faint)", marginBottom: 4 }}>
+              <ChatCircleDots size={40} />
+            </span>
+            <div
+              className="font-mono uppercase"
+              style={{ fontSize: 11, letterSpacing: "0.14em", color: "var(--text-primary)" }}
+            >
+              Start a new chat
+            </div>
+            <div
+              className="font-mono"
+              style={{ fontSize: 10.5, color: "var(--text-muted)", maxWidth: 440 }}
+            >
+              Ask the platform about your scans, findings, or operational posture. Replies stream token-by-token.
+            </div>
+            <button
+              type="button"
+              onClick={onCreateAndFocus}
+              className="font-mono uppercase"
+              style={{
+                marginTop: 6,
+                height: 26,
+                padding: "0 12px",
+                fontSize: 9.5,
+                letterSpacing: "0.1em",
+                border: "1px solid var(--accent)",
+                color: "var(--accent)",
+                background: "color-mix(in srgb, var(--accent) 8%, transparent)",
+                borderRadius: 3,
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              New chat
+            </button>
+          </div>
         </div>
       </WindowPanel>
     );

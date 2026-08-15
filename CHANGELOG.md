@@ -7,6 +7,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.31] - 2026-08-14 -- Purge remaining legacy frontend components
+
+### Removed
+
+- Deleted every legacy design component now that all pages compose the mock kit:
+  AilaCard, AilaTable, AilaBadge, SeverityPulse, KpiTile, StaggeredList,
+  PageTransition, PageShell, ConnectedEntities, AilaProgress (and their stories
+  and tests), plus the unused shadcn ui cluster (button, input, textarea, select,
+  badge, avatar, command, dialog, input-group, sheet, sidebar, scroll-area,
+  separator, skeleton, tabs, dropdown-menu). Only the toast utility (sonner) and
+  the tooltip primitive remain under components/ui. 36 files removed; the shell
+  entry bundle shrank as a result.
+
+### Changed
+
+- Rebuilt the last straggler files that still referenced legacy components to the
+  mock language: the error boundary (FeatureBoundary), the routed-page frame
+  (PageFrame / PageShell, now header-less to avoid double titles), the activity
+  timeline, the menubar chrome (command palette, notification bell, user menu,
+  shortcuts sheet), the JQL filter bar, EmptyState (now a WindowPanel surface),
+  several platform pages' empty states, the VR connected-entity cards + widgets +
+  mitigations ribbon, the malware widgets, and the hello_world page.
+
+Presentation only -- data hooks, routing, data-testid, and aria are preserved.
+Workspace type-check (0 errors across all packages) and the shell production
+build pass.
+
+
 ## [0.5.30] - 2026-08-14 -- Total frontend rebuild to the design-system mock
 
 ### Changed

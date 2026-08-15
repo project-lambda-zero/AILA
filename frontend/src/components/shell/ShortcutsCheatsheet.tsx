@@ -1,44 +1,42 @@
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { useEffect, useRef } from "react";
+
 import {
   SHORTCUT_GROUPS,
   useKeyboardShortcuts,
 } from "@/providers/KeyboardShortcutsProvider";
-import { cn } from "@/lib/utils";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 /**
  * Cheatsheet overlay listing every registered global shortcut.
  *
- * Rendered once at the app root (inside the AppShell so it inherits the
- * router context that the underlying `<Dialog>` -- base-ui -- portals
- * against). Open/close state lives in the shared
- * {@link useKeyboardShortcuts} context so the "?" key handler in
- * {@link KeyboardShortcutsController} and any future in-app trigger
- * (footer button, header help icon) all drive the same modal.
+ * Rendered once at the app root (inside the AppShell). Open/close state
+ * lives in the shared {@link useKeyboardShortcuts} context so the "?" key
+ * handler in {@link KeyboardShortcutsController} and any future in-app
+ * trigger drive the same modal.
  *
- * The dialog closes on Escape and backdrop click via base-ui's default
- * behaviour; the underlying `DialogOverlay` already uses
- * `data-open:animate-in` / `data-closed:animate-out` classes that map
- * to reduced-motion-aware keyframes in Tailwind's animate plugin.
+ * Presentation follows the OS-window mock kit: a fixed backdrop covers the
+ * viewport and a centered <WindowPanel> holds the shortcut list. Escape or
+ * a click on the backdrop dismisses.
  */
 
+const KBD_STYLE: React.CSSProperties = {
+  display: "inline-flex",
+  minWidth: 22,
+  height: 20,
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "0 6px",
+  fontFamily: "var(--font-mono)",
+  fontSize: 10,
+  letterSpacing: "0.06em",
+  color: "var(--text-primary)",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+};
+
 function ChordKey({ children }: { children: string }) {
-  return (
-    <kbd
-      className={cn(
-        "inline-flex min-w-[1.5rem] items-center justify-center rounded",
-        "border border-border bg-muted px-1.5 py-0.5",
-        "font-mono text-[0.7rem] leading-none text-foreground",
-      )}
-    >
-      {children}
-    </kbd>
-  );
+  return <kbd style={KBD_STYLE}>{children}</kbd>;
 }
 
 function renderChord(chord: string) {
@@ -48,10 +46,20 @@ function renderChord(chord: string) {
   if (chord.includes(" + ")) {
     const parts = chord.split(" + ");
     return (
-      <span className="inline-flex items-center gap-1">
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
         {parts.map((part, i) => (
-          <span key={`${part}-${i}`} className="inline-flex items-center gap-1">
-            {i > 0 && <span className="text-muted-foreground">+</span>}
+          <span
+            key={`${part}-${i}`}
+            style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+          >
+            {i > 0 && (
+              <span
+                className="font-mono"
+                style={{ fontSize: 10, color: "var(--text-muted)" }}
+              >
+                +
+              </span>
+            )}
             <ChordKey>{part}</ChordKey>
           </span>
         ))}
@@ -61,11 +69,23 @@ function renderChord(chord: string) {
   if (chord.includes(" ")) {
     const parts = chord.split(" ");
     return (
-      <span className="inline-flex items-center gap-1">
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
         {parts.map((part, i) => (
-          <span key={`${part}-${i}`} className="inline-flex items-center gap-1">
+          <span
+            key={`${part}-${i}`}
+            style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+          >
             {i > 0 && (
-              <span className="text-[0.65rem] text-muted-foreground">then</span>
+              <span
+                className="font-mono uppercase"
+                style={{
+                  fontSize: 8.5,
+                  letterSpacing: "0.1em",
+                  color: "var(--text-faint)",
+                }}
+              >
+                then
+              </span>
             )}
             <ChordKey>{part}</ChordKey>
           </span>
@@ -78,56 +98,129 @@ function renderChord(chord: string) {
 
 export function ShortcutsCheatsheet() {
   const { isCheatsheetOpen, closeCheatsheet } = useKeyboardShortcuts();
+  const panelRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!isCheatsheetOpen) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeCheatsheet();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isCheatsheetOpen, closeCheatsheet]);
+
+  if (!isCheatsheetOpen) return null;
 
   return (
-    <Dialog
-      open={isCheatsheetOpen}
-      onOpenChange={(open) => {
-        if (!open) closeCheatsheet();
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Keyboard shortcuts"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) closeCheatsheet();
+      }}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 100,
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "center",
+        padding: "10vh 16px 16px",
+        background: "color-mix(in srgb, var(--surface-page) 82%, transparent)",
+        backdropFilter: "blur(2px)",
       }}
     >
-      <DialogContent
-        className="sm:max-w-md"
-        aria-label="Keyboard shortcuts"
+      <div
+        ref={panelRef}
+        style={{ width: "100%", maxWidth: 520 }}
+        onMouseDown={(event) => event.stopPropagation()}
       >
-        <DialogHeader>
-          <DialogTitle>Keyboard shortcuts</DialogTitle>
-          <DialogDescription>
-            Press{" "}
-            <kbd className="rounded border border-border bg-muted px-1 py-0.5 font-mono text-[0.7rem]">
-              ?
-            </kbd>{" "}
-            anywhere to open this list.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="flex flex-col gap-4">
-          {SHORTCUT_GROUPS.map((group) => (
-            <section key={group.title} className="flex flex-col gap-2">
-              <h2 className="text-[0.7rem] font-semibold uppercase tracking-wider text-muted-foreground">
-                {group.title}
-              </h2>
-              <ul className="flex flex-col gap-1.5">
-                {group.entries.map((entry) => (
-                  <li
-                    key={`${group.title}-${entry.chord}`}
-                    className="flex items-center justify-between gap-3 text-sm"
-                  >
-                    <span className="flex flex-col">
-                      <span className="text-foreground">{entry.label}</span>
-                      {entry.hint && (
-                        <span className="font-mono text-[0.7rem] text-muted-foreground">
-                          {entry.hint}
+        <WindowPanel title="keyboard shortcuts" tone="info">
+          <div
+            className="font-mono"
+            style={{
+              fontSize: 10.5,
+              color: "var(--text-muted)",
+              letterSpacing: "0.02em",
+              marginBottom: 12,
+            }}
+          >
+            Press <ChordKey>?</ChordKey> anywhere to open this list.
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {SHORTCUT_GROUPS.map((group) => (
+              <section
+                key={group.title}
+                style={{ display: "flex", flexDirection: "column", gap: 8 }}
+              >
+                <h2
+                  className="font-mono uppercase"
+                  style={{
+                    fontSize: 9.5,
+                    letterSpacing: "0.14em",
+                    color: "var(--text-faint)",
+                    margin: 0,
+                  }}
+                >
+                  {group.title}
+                </h2>
+                <ul
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 6,
+                    margin: 0,
+                    padding: 0,
+                    listStyle: "none",
+                  }}
+                >
+                  {group.entries.map((entry) => (
+                    <li
+                      key={`${group.title}-${entry.chord}`}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 12,
+                      }}
+                    >
+                      <span style={{ display: "flex", flexDirection: "column" }}>
+                        <span
+                          style={{
+                            fontFamily: "var(--font-mono)",
+                            fontSize: 11,
+                            color: "var(--text-primary)",
+                            letterSpacing: "0.02em",
+                          }}
+                        >
+                          {entry.label}
                         </span>
-                      )}
-                    </span>
-                    {renderChord(entry.chord)}
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
-        </div>
-      </DialogContent>
-    </Dialog>
+                        {entry.hint && (
+                          <span
+                            className="font-mono"
+                            style={{
+                              fontSize: 9.5,
+                              color: "var(--text-faint)",
+                              letterSpacing: "0.04em",
+                            }}
+                          >
+                            {entry.hint}
+                          </span>
+                        )}
+                      </span>
+                      {renderChord(entry.chord)}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
+        </WindowPanel>
+      </div>
+    </div>
   );
 }

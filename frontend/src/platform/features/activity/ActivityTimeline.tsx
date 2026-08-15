@@ -7,16 +7,17 @@
  * `useActivity`. Intentionally NOT a replacement for the admin
  * AuditLogsPage -- that page owns the global log, JQL filters, and export.
  *
+ * Rebuilt to the mock kit: MonoBadge for status chips, raw mono <input>
+ * pair for the filter row, inline mock empty/error states.
+ *
  * A11y: the region is labelled ("Activity for run <id>"), the filter
  * inputs carry visible labels, and the event list uses role="list" so
  * screen readers announce the count.
  */
-import { useMemo, useState } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
-import { Input } from "@/components/ui/input";
+import { MonoBadge } from "@/components/aila/mock";
 
 import type { ActivityEvent, ActivityFilters } from "./api";
 import { useActivity } from "./useActivity";
@@ -45,7 +46,7 @@ export interface ActivityTimelineProps {
    * pages by 50 by default; this is a display cap for tight side panels).
    */
   maxRows?: number;
-  /** Accessible label suffix, e.g. "Scan Run" -> "Activity for Scan Run …". */
+  /** Accessible label suffix, e.g. "Scan Run" -> "Activity for Scan Run ...". */
   label?: string;
   className?: string;
 }
@@ -54,40 +55,84 @@ export interface ActivityTimelineProps {
 // Row
 // ---------------------------------------------------------------------------
 
-type BadgeSeverity = "info" | "critical" | "medium" | "neutral";
-
-const STATUS_SEVERITY: Record<string, BadgeSeverity> = {
-  completed: "info",
-  succeeded: "info",
-  success: "info",
+/**
+ * Status token -> mock kit tone. Neutral / unknown statuses fall back to
+ * `muted` so they read as faint metadata rather than an alarming colour.
+ */
+const STATUS_TONE: Record<string, string> = {
+  completed: "ok",
+  succeeded: "ok",
+  success: "ok",
   failed: "critical",
   error: "critical",
-  running: "medium",
-  in_progress: "medium",
-  started: "medium",
+  running: "info",
+  in_progress: "info",
+  started: "info",
+};
+
+const INPUT_STYLE: CSSProperties = {
+  height: 28,
+  fontSize: 11,
+  padding: "0 10px",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  outline: "none",
+  fontFamily: "var(--font-mono)",
+  width: "100%",
+};
+
+const FILTER_LABEL_STYLE: CSSProperties = {
+  fontSize: 9,
+  letterSpacing: "0.14em",
+  textTransform: "uppercase",
+  color: "var(--text-faint)",
+  fontFamily: "var(--font-mono)",
 };
 
 function ActivityRow({ row }: { row: ActivityEvent }) {
-  const severity: BadgeSeverity =
-    STATUS_SEVERITY[row.status.toLowerCase()] ?? "neutral";
+  const tone = STATUS_TONE[row.status.toLowerCase()] ?? "muted";
   const when = row.created_at ? new Date(row.created_at).toLocaleString() : "--";
   return (
-    <li className="border-l-2 border-accent/40 pl-3 py-1.5" role="listitem">
-      <div className="flex items-center gap-2 font-mono text-xs">
-        <AilaBadge severity={severity} size="sm">
-          {row.status || "?"}
-        </AilaBadge>
-        <span className="font-semibold text-text break-all">{row.action}</span>
+    <li
+      role="listitem"
+      className="font-mono"
+      style={{
+        padding: "8px 10px",
+        borderLeft: "2px solid color-mix(in srgb, var(--accent) 45%, transparent)",
+        background: "var(--surface-card)",
+      }}
+    >
+      <div className="flex items-center" style={{ gap: 8, fontSize: 11 }}>
+        <MonoBadge tone={tone}>{row.status || "?"}</MonoBadge>
+        <span
+          className="break-all"
+          style={{ color: "var(--text-primary)", fontWeight: 500 }}
+        >
+          {row.action}
+        </span>
         {row.stage ? (
-          <span className="text-text-muted opacity-70">· {row.stage}</span>
+          <span style={{ color: "var(--text-muted)", opacity: 0.75 }}>
+            {"\u00b7"} {row.stage}
+          </span>
         ) : null}
       </div>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-1 pt-0.5 font-mono text-[10px] text-text-muted">
+      <div
+        className="flex flex-wrap items-center"
+        style={{
+          columnGap: 12,
+          rowGap: 2,
+          paddingLeft: 2,
+          paddingTop: 3,
+          fontSize: 9.5,
+          color: "var(--text-muted)",
+          letterSpacing: "0.02em",
+        }}
+      >
         <span>{when}</span>
         {row.user_id ? <span>by {row.user_id}</span> : null}
-        {row.target ? (
-          <span className="break-all">target {row.target}</span>
-        ) : null}
+        {row.target ? <span className="break-all">target {row.target}</span> : null}
       </div>
     </li>
   );
@@ -127,16 +172,27 @@ export function ActivityTimeline({
 
   return (
     <section
-      className={`flex flex-col gap-3 ${className ?? ""}`}
+      className={`flex flex-col ${className ?? ""}`}
+      style={{ gap: 12 }}
       aria-label={regionLabel}
     >
-      <div className="flex items-center justify-between gap-2">
-        <h3 className="font-mono text-xs font-semibold uppercase tracking-wider text-text-muted">
+      <div className="flex items-center justify-between" style={{ gap: 8 }}>
+        <h3
+          className="font-mono uppercase"
+          style={{
+            fontSize: 10,
+            letterSpacing: "0.14em",
+            color: "var(--text-faint)",
+            fontWeight: 600,
+            margin: 0,
+          }}
+        >
           Activity
         </h3>
         {query.data ? (
           <span
-            className="font-mono text-[10px] text-text-muted tabular-nums"
+            className="font-mono tabular-nums"
+            style={{ fontSize: 9.5, color: "var(--text-faint)" }}
             aria-live="polite"
           >
             {query.data.total} event{query.data.total === 1 ? "" : "s"}
@@ -145,24 +201,26 @@ export function ActivityTimeline({
       </div>
 
       {!hideFilters && (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <label className="flex flex-col gap-1 font-mono text-[10px] uppercase tracking-wider text-text-muted">
-            <span>Action</span>
-            <Input
+        <div className="grid grid-cols-1 sm:grid-cols-2" style={{ gap: 8 }}>
+          <label className="flex flex-col" style={{ gap: 4 }}>
+            <span style={FILTER_LABEL_STYLE}>Action</span>
+            <input
+              type="text"
               value={actionFilter}
               onChange={(e) => setActionFilter(e.target.value)}
               placeholder="scan.start,ssh.execute"
-              className="h-8 font-mono text-xs"
+              style={INPUT_STYLE}
               aria-label="Filter activity by action"
             />
           </label>
-          <label className="flex flex-col gap-1 font-mono text-[10px] uppercase tracking-wider text-text-muted">
-            <span>Status</span>
-            <Input
+          <label className="flex flex-col" style={{ gap: 4 }}>
+            <span style={FILTER_LABEL_STYLE}>Status</span>
+            <input
+              type="text"
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
               placeholder="completed,failed"
-              className="h-8 font-mono text-xs"
+              style={INPUT_STYLE}
               aria-label="Filter activity by status"
             />
           </label>
@@ -170,7 +228,10 @@ export function ActivityTimeline({
       )}
 
       {!runId ? (
-        <p className="font-mono text-xs text-text-muted">
+        <p
+          className="font-mono"
+          style={{ fontSize: 11, color: "var(--text-muted)", margin: 0 }}
+        >
           No run selected -- select an entity to view its activity.
         </p>
       ) : query.isLoading ? (
@@ -178,19 +239,51 @@ export function ActivityTimeline({
       ) : query.isError ? (
         <div
           role="alert"
-          className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive"
+          className="font-mono"
+          style={{
+            padding: "8px 12px",
+            borderRadius: 3,
+            border: "1px solid color-mix(in srgb, var(--accent) 45%, transparent)",
+            background: "color-mix(in srgb, var(--accent) 8%, transparent)",
+            color: "var(--accent)",
+            fontSize: 11,
+          }}
         >
           {(query.error as Error).message}
         </div>
       ) : rows.length === 0 ? (
-        <EmptyState
-          title="No activity yet"
-          description="No audit events have been recorded for this run. Live actions will appear here."
-        />
+        <div
+          className="flex flex-col items-center justify-center"
+          style={{
+            gap: 6,
+            padding: 24,
+            textAlign: "center",
+            minHeight: 96,
+          }}
+        >
+          <div
+            className="font-mono uppercase"
+            style={{
+              fontSize: 11,
+              letterSpacing: "0.14em",
+              color: "var(--text-primary)",
+            }}
+          >
+            No activity yet
+          </div>
+          <div
+            className="font-mono"
+            style={{ fontSize: 10.5, color: "var(--text-muted)", maxWidth: 380 }}
+          >
+            No audit events have been recorded for this run. Live actions will
+            appear here.
+          </div>
+        </div>
       ) : (
         <ol
           role="list"
-          className="flex flex-col gap-1 max-h-80 overflow-y-auto"
+          className="flex flex-col"
+          style={{ gap: 4, maxHeight: 320, overflowY: "auto", listStyle: "none", padding: 0, margin: 0 }}
         >
           {rows.map((row, index) => (
             <ActivityRow key={row.id ?? `${row.created_at}-${index}`} row={row} />

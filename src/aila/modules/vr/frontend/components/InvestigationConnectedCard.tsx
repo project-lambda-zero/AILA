@@ -19,11 +19,8 @@
 import { useMemo } from "react";
 
 import { WindowPanel } from "@/components/aila/WindowPanel";
-import {
-  ConnectedEntities,
-  type ConnectedEntity,
-} from "@/components/aila/ConnectedEntities";
 
+import { ConnectedList, type ConnectedRowData } from "./ConnectedRow";
 import {
   useInvestigation,
   useTargetMap,
@@ -49,8 +46,8 @@ export function InvestigationConnectedCard({
     investigation.parent_investigation_id ?? "",
   );
 
-  const entities = useMemo<ConnectedEntity[]>(() => {
-    const rows: ConnectedEntity[] = [];
+  const entities = useMemo<ConnectedRowData[]>(() => {
+    const rows: ConnectedRowData[] = [];
 
     if (investigation.target_id) {
       const t = targetMap.get(investigation.target_id);
@@ -93,9 +90,9 @@ export function InvestigationConnectedCard({
 
     // Note: primary_outcome_id is intentionally not surfaced here --
     // the outcome hero card renders it directly on this same page, and
-    // the ConnectedEntities component would treat a hash-only href as
-    // external (opens in new tab). Deferring an in-page anchor pivot
-    // to a future outcome-card id anchor if it lands.
+    // the connected row would treat a hash-only href as external (opens
+    // in new tab). Deferring an in-page anchor pivot to a future
+    // outcome-card id anchor if it lands.
 
     for (const findingId of investigation.linked_finding_ids ?? []) {
       rows.push({
@@ -124,7 +121,7 @@ export function InvestigationConnectedCard({
 
   return (
     <WindowPanel title="connected" tone="info">
-      <ConnectedEntities entities={entities} heading="Connected" />
+      <ConnectedList entities={entities} />
     </WindowPanel>
   );
 }

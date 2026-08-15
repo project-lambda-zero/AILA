@@ -1,9 +1,10 @@
 import { useNavigate } from "react-router";
-import { Button } from "@/components/ui/button";
-import { AilaCard } from "./AilaCard";
 
 // ---------------------------------------------------------------------------
-// Types
+// EmptyState -- mock design-system empty state. A centered, bordered mono
+// panel with an uppercase title, optional description, and up to two actions.
+// API preserved from the previous AilaCard-based version so existing callers
+// keep working; presentation is the mock language (tokens + mono, no shadcn).
 // ---------------------------------------------------------------------------
 
 interface EmptyStateAction {
@@ -21,59 +22,40 @@ export interface EmptyStateProps {
   className?: string;
 }
 
-// ---------------------------------------------------------------------------
-// Action button -- handles both onClick and href navigation
-// ---------------------------------------------------------------------------
-
 function ActionButton({
   action,
-  variant = "default",
+  primary = false,
 }: {
   action: EmptyStateAction;
-  variant?: "default" | "outline";
+  primary?: boolean;
 }) {
   const navigate = useNavigate();
-
-  function handleClick() {
-    if (action.onClick) {
-      action.onClick();
-    } else if (action.href) {
-      navigate(action.href);
-    }
-  }
-
+  const handle = () => {
+    if (action.onClick) action.onClick();
+    else if (action.href) navigate(action.href);
+  };
   return (
-    <Button
-      size="sm"
-      variant={variant}
-      onClick={handleClick}
-      className="min-h-[44px] sm:min-h-auto"
+    <button
+      type="button"
+      onClick={handle}
+      className="font-mono uppercase"
+      style={{
+        height: 30,
+        padding: "0 14px",
+        fontSize: 11,
+        letterSpacing: "0.06em",
+        borderRadius: 3,
+        cursor: "pointer",
+        color: primary ? "var(--text-on-accent)" : "var(--text-muted)",
+        background: primary ? "var(--accent)" : "var(--surface-sunk)",
+        border: `1px solid ${primary ? "var(--accent)" : "var(--border-soft)"}`,
+      }}
     >
       {action.label}
-    </Button>
+    </button>
   );
 }
 
-// ---------------------------------------------------------------------------
-// EmptyState
-// ---------------------------------------------------------------------------
-
-/**
- * EmptyState -- standardized empty state component for all AILA pages.
- *
- * Shows an optional icon, title, description, and up to two action buttons.
- * Use whenever a list, table, or data area has no items to display.
- *
- * @example
- * ```tsx
- * <EmptyState
- *   icon={<Monitor className="h-10 w-10" />}
- *   title="No systems registered"
- *   description="Register your first SSH-reachable system to start scanning."
- *   action={{ label: "Register System", onClick: () => setShowForm(true) }}
- * />
- * ```
- */
 export function EmptyState({
   icon,
   title,
@@ -83,31 +65,41 @@ export function EmptyState({
   className,
 }: EmptyStateProps) {
   return (
-    <AilaCard
-      variant="default"
-      padding="lg"
-      className={`flex flex-col items-center gap-4 text-center ${className ?? ""}`}
+    <div
+      className={`flex flex-col items-center gap-3 text-center ${className ?? ""}`}
+      style={{
+        padding: 34,
+        border: "1px solid var(--border-soft)",
+        background: "var(--surface-card)",
+        borderRadius: 4,
+        boxShadow: "var(--bevel-raised)",
+      }}
     >
-      {icon && (
-        <div style={{ color: "var(--color-text-faint)" }} aria-hidden="true">
+      {icon ? (
+        <div aria-hidden="true" style={{ color: "var(--text-faint)" }}>
           {icon}
         </div>
-      )}
-
-      <div className="flex flex-col gap-1">
-        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-        {description && (
-          <p className="max-w-sm font-mono text-xs text-muted-foreground">{description}</p>
-        )}
+      ) : null}
+      <div
+        className="font-mono uppercase"
+        style={{ fontSize: 12, letterSpacing: "0.1em", color: "var(--text-primary)" }}
+      >
+        {title}
       </div>
-    
-    {(action || secondaryAction) && (
-      <div className="flex flex-col sm:flex-row items-center gap-2">
-        {action && <ActionButton action={action} variant="default" />}
-        {secondaryAction && (
-          <ActionButton action={secondaryAction} variant="outline" />
-        )}
-      </div>
-    )}</AilaCard>
+      {description ? (
+        <div
+          className="font-mono"
+          style={{ fontSize: 11, lineHeight: 1.5, color: "var(--text-muted)", maxWidth: 440 }}
+        >
+          {description}
+        </div>
+      ) : null}
+      {action || secondaryAction ? (
+        <div className="flex items-center gap-2" style={{ marginTop: 4 }}>
+          {action ? <ActionButton action={action} primary /> : null}
+          {secondaryAction ? <ActionButton action={secondaryAction} /> : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
