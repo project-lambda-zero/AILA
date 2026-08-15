@@ -1,28 +1,43 @@
 /**
- * AuditLogsPage -- admin audit trail with filterable AilaTable and CSV/JSON export.
+ * AuditLogsPage -- admin audit trail rebuilt to the AILA mock language.
  *
- * ADM-01: Filterable, sortable audit log table with server-side filtering
- * (run_id, stage, action, status, user_id, since, until) and client-side
- * sort/pagination via AilaTable. Exports current page as CSV or JSON.
+ * Layout:
+ *   SectionHeader (title + view segmented events/seals + export actions)
+ *   FilterChip row: jql / builder / form mode + saved views hook
+ *   Selected filter panel (JqlFilterBar | AdvancedFilterBuilder | FilterForm)
+ *   Stat row (WindowPanels: total / loaded / date range as BigStat)
+ *   Error banner (tokenized)
+ *   WindowPanel('audit trail', flush) DataGrid
+ *   Selected event detail WindowPanel with AuditDetailRenderer inside
  *
- * Fetches up to 250 events per server request (backend max). AilaTable
- * handles local sort/filter/pagination within the fetched set.
+ * ADM-01 preserved: server-side filters (run_id, stage, action, status,
+ * user_id, since, until), CSV/JSON export, JQL bar, form, and advanced
+ * builder all drive the same activeFilters query. Saved views round-trip
+ * through /saved-filters under entity_type='audit'.
  */
-import { useState, useCallback, useMemo } from "react";
+import {
+  useState,
+  useCallback,
+  useMemo,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
-import { type ColumnDef } from "@tanstack/react-table";
 import { Download } from "@phosphor-icons/react/dist/csr/Download";
-import { ArrowClockwise } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
 import { ClipboardText } from "@phosphor-icons/react/dist/csr/ClipboardText";
-import { X as XIcon } from "@phosphor-icons/react/dist/csr/X";
+import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
+import { Trash } from "@phosphor-icons/react/dist/csr/Trash";
 
-import { AilaCard } from "@/components/aila/AilaCard";
-import { AilaTable } from "@/components/aila/AilaTable";
-import { AilaBadge } from "@/components/aila/AilaBadge";
+import {
+  SectionHeader,
+  DataGrid,
+  MonoBadge,
+  FilterChip,
+  Segmented,
+  BigStat,
+} from "@/components/aila/mock";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
-import { EmptyState } from "@/components/aila/EmptyState";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { authorizedRequestJson } from "@platform/api/http";
 import {
   JqlFilterBar,
@@ -32,11 +47,8 @@ import {
 } from "@/components/filters/JqlFilterBar";
 import { AuditDetailRenderer } from "./AuditDetailRenderer";
 import { AuditSealsTab } from "./AuditSealsTab";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { usePreferences } from "@/providers/PreferencesProvider";
 import { SavedViews } from "@platform/features/saved-views";
-import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
-import { Trash } from "@phosphor-icons/react/dist/csr/Trash";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -86,10 +98,55 @@ const EMPTY_FILTERS: AuditFilters = {
   until: "",
 };
 
-const SERVER_PAGE_SIZE = 250; // backend max
+const SERVER_PAGE_SIZE = 250;
+
+const ACTION_BTN: CSSProperties = {
+  height: 26,
+  padding: "0 11px",
+  fontSize: 9.5,
+  letterSpacing: "0.08em",
+  borderRadius: 3,
+  cursor: "pointer",
+  color: "var(--text-primary)",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+};
+
+const PRIMARY_BTN: CSSProperties = {
+  ...ACTION_BTN,
+  color: "var(--text-on-accent)",
+  background: "var(--accent)",
+  borderColor: "var(--accent)",
+};
+
+const INPUT_STYLE: CSSProperties = {
+  height: 28,
+  padding: "0 10px",
+  fontSize: 11,
+  color: "var(--text-primary)",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  outline: "none",
+};
+
+const STATUS_TONE: Record<string, string> = {
+  ok: "ok",
+  completed: "ok",
+  running: "info",
+  pending: "info",
+  failed: "critical",
+  error: "critical",
+  cancelled: "warn",
+  timeout: "warn",
+};
+
+function statusTone(status: string): string {
+  return STATUS_TONE[status.toLowerCase()] ?? "muted";
+}
 
 // ---------------------------------------------------------------------------
-// Utilities
+// Query builder + JQL translation
 // ---------------------------------------------------------------------------
 
 function buildAuditPath(filters: AuditFilters): string {
@@ -107,8 +164,6 @@ function buildAuditPath(filters: AuditFilters): string {
   return qs ? `/audit/events?${qs}` : "/audit/events";
 }
 
-// JQL filter bar field specs -- names match the `AuditFilters` query keys so
-// `jqlToAuditFilters()` can translate one to the other without a lookup table.
 const AUDIT_JQL_FIELDS: JqlFieldSpec[] = [
   { key: "run_id", label: "Run ID", operators: [":"] },
   { key: "stage", label: "Stage", operators: [":"] },
@@ -120,7 +175,6 @@ const AUDIT_JQL_FIELDS: JqlFieldSpec[] = [
   { key: "search", label: "Search", operators: [":"] },
 ];
 
-/** Translate JQL filter chips into the legacy AuditFilters shape. */
 function jqlToAuditFilters(filters: JqlFilter[]): AuditFilters {
   const backend = filtersToQueryParams(filters);
   return {
@@ -139,16 +193,6 @@ function formatTimestamp(value: string | null): string {
   return new Date(value).toLocaleString();
 }
 
-function auditStatusSeverity(
-  status: string,
-): "info" | "critical" | "medium" | "neutral" {
-  const s = status.toLowerCase();
-  if (s === "completed") return "info";
-  if (s === "failed") return "critical";
-  if (s === "running") return "medium";
-  return "neutral";
-}
-
 // ---------------------------------------------------------------------------
 // Export helpers
 // ---------------------------------------------------------------------------
@@ -160,8 +204,27 @@ function escapeCsvCell(value: string): string {
   return value;
 }
 
+function triggerDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 function exportAsCsv(items: AuditEvent[]): void {
-  const headers = ["run_id", "stage", "action", "status", "user_id", "target", "created_at"];
+  const headers = [
+    "run_id",
+    "stage",
+    "action",
+    "status",
+    "user_id",
+    "target",
+    "created_at",
+  ];
   const rows = items.map((item) =>
     [
       item.run_id,
@@ -187,122 +250,39 @@ function exportAsJson(items: AuditEvent[]): void {
   );
 }
 
-function triggerDownload(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+// ---------------------------------------------------------------------------
+// Shared field wrapper for form + builder
+// ---------------------------------------------------------------------------
+
+function LabeledField({
+  label,
+  htmlFor,
+  children,
+}: {
+  label: string;
+  htmlFor?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col" style={{ gap: 4 }}>
+      <label
+        htmlFor={htmlFor}
+        className="font-mono uppercase"
+        style={{
+          fontSize: 9.5,
+          letterSpacing: "0.12em",
+          color: "var(--text-muted)",
+        }}
+      >
+        {label}
+      </label>
+      {children}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
-// Column definitions
-// ---------------------------------------------------------------------------
-
-const AUDIT_COLUMNS: ColumnDef<AuditEvent>[] = [
-  {
-    id: "run_id",
-    header: "Run ID",
-    accessorKey: "run_id",
-    cell: ({ getValue }) => (
-      <span className="font-mono text-xs text-text-muted truncate max-w-[120px] block" title={String(getValue())}>
-        {String(getValue()).slice(0, 8)}…
-      </span>
-    ),
-  },
-  {
-    id: "stage",
-    header: "Stage",
-    accessorKey: "stage",
-    cell: ({ getValue }) => (
-      <span className="font-mono text-xs text-text">{String(getValue())}</span>
-    ),
-  },
-  {
-    id: "action",
-    header: "Action",
-    accessorKey: "action",
-    cell: ({ getValue }) => (
-      <span className="font-mono text-xs text-text">{String(getValue())}</span>
-    ),
-  },
-  {
-    id: "status",
-    header: "Status",
-    accessorKey: "status",
-    cell: ({ getValue }) => {
-      const s = String(getValue());
-      return (
-        <AilaBadge severity={auditStatusSeverity(s)} size="sm">
-          {s}
-        </AilaBadge>
-      );
-    },
-  },
-  {
-    id: "user_id",
-    header: "User",
-    accessorKey: "user_id",
-    cell: ({ getValue }) => (
-      <span className="font-mono text-xs text-text">{String(getValue())}</span>
-    ),
-  },
-  {
-    id: "target",
-    header: "Target",
-    accessorKey: "target",
-    cell: ({ getValue }) => {
-      const v = String(getValue() ?? "");
-      return (
-        <span className="font-mono text-xs text-text-muted">{v || "--"}</span>
-      );
-    },
-  },
-  {
-    id: "created_at",
-    header: "Timestamp",
-    accessorKey: "created_at",
-    cell: ({ getValue }) => (
-      <span className="font-mono text-xs text-text-muted whitespace-nowrap">
-        {formatTimestamp(getValue() as string | null)}
-      </span>
-    ),
-  },
-];
-
-/**
- * Extend AUDIT_COLUMNS with a final "Details" column that opens the
- * AuditDetailRenderer panel for the clicked event. Defined as a builder so
- * the onSelect callback is closure-captured cleanly.
- */
-function AUDIT_COLUMNS_WITH_DETAILS(
-  onSelect: (event: AuditEvent) => void,
-): ColumnDef<AuditEvent>[] {
-  return [
-    ...AUDIT_COLUMNS,
-    {
-      id: "details",
-      header: "",
-      cell: ({ row }) => (
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="h-6 px-2 font-mono text-[10px]"
-          onClick={() => onSelect(row.original)}
-        >
-          View
-        </Button>
-      ),
-    },
-  ];
-}
-
-// ---------------------------------------------------------------------------
-// Filter form
+// Legacy form (mock-styled)
 // ---------------------------------------------------------------------------
 
 interface FilterFormProps {
@@ -321,143 +301,134 @@ function FilterForm({
   isFetching,
 }: FilterFormProps) {
   return (
-    <AilaCard variant="elevated" padding="md"><h2 className="font-mono text-sm font-semibold text-text mb-3">
-      Filters
-    </h2>
     <form
-      className="flex flex-col gap-4"
+      className="flex flex-col"
+      style={{ gap: 12 }}
       onSubmit={(e) => {
         e.preventDefault();
         onApply();
       }}
     >
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <div className="flex flex-col gap-1">
-          <label className="font-mono text-xs text-text-muted" htmlFor="af-run-id">
-            Run ID
-          </label>
-          <Input
+      <div
+        className="grid"
+        style={{
+          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+          gap: 10,
+        }}
+      >
+        <LabeledField label="Run ID" htmlFor="af-run-id">
+          <input
             id="af-run-id"
             value={draft.runId}
             onChange={(e) => onDraftChange({ runId: e.target.value })}
-            placeholder="50b5b278-1b3d-…"
-            className="font-mono text-xs"
+            placeholder="50b5b278-1b3d-..."
+            className="font-mono"
+            style={INPUT_STYLE}
           />
-        </div>
-    
-        <div className="flex flex-col gap-1">
-          <label className="font-mono text-xs text-text-muted" htmlFor="af-stage">
-            Stage
-          </label>
-          <Input
+        </LabeledField>
+        <LabeledField label="Stage" htmlFor="af-stage">
+          <input
             id="af-stage"
             value={draft.stage}
             onChange={(e) => onDraftChange({ stage: e.target.value })}
             placeholder="task,report_lookup"
-            className="font-mono text-xs"
+            className="font-mono"
+            style={INPUT_STYLE}
           />
-        </div>
-    
-        <div className="flex flex-col gap-1">
-          <label className="font-mono text-xs text-text-muted" htmlFor="af-action">
-            Action
-          </label>
-          <Input
+        </LabeledField>
+        <LabeledField label="Action" htmlFor="af-action">
+          <input
             id="af-action"
             value={draft.action}
             onChange={(e) => onDraftChange({ action: e.target.value })}
             placeholder="scan.start"
-            className="font-mono text-xs"
+            className="font-mono"
+            style={INPUT_STYLE}
           />
-        </div>
-    
-        <div className="flex flex-col gap-1">
-          <label className="font-mono text-xs text-text-muted" htmlFor="af-status">
-            Status
-          </label>
-          <Input
+        </LabeledField>
+        <LabeledField label="Status" htmlFor="af-status">
+          <input
             id="af-status"
             value={draft.status}
             onChange={(e) => onDraftChange({ status: e.target.value })}
             placeholder="completed,failed"
-            className="font-mono text-xs"
+            className="font-mono"
+            style={INPUT_STYLE}
           />
-        </div>
-    
-        <div className="flex flex-col gap-1">
-          <label className="font-mono text-xs text-text-muted" htmlFor="af-user">
-            User ID
-          </label>
-          <Input
+        </LabeledField>
+        <LabeledField label="User ID" htmlFor="af-user">
+          <input
             id="af-user"
             value={draft.userId}
             onChange={(e) => onDraftChange({ userId: e.target.value })}
             placeholder="system"
-            className="font-mono text-xs"
+            className="font-mono"
+            style={INPUT_STYLE}
           />
-        </div>
+        </LabeledField>
       </div>
-    
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div className="flex flex-col gap-1">
-          <label className="font-mono text-xs text-text-muted" htmlFor="af-since">
-            Since (ISO 8601)
-          </label>
-          <Input
+
+      <div
+        className="grid"
+        style={{
+          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+          gap: 10,
+        }}
+      >
+        <LabeledField label="Since (ISO 8601)" htmlFor="af-since">
+          <input
             id="af-since"
             type="datetime-local"
             value={draft.since}
             onChange={(e) => onDraftChange({ since: e.target.value })}
-            className="font-mono text-xs"
+            className="font-mono"
+            style={INPUT_STYLE}
           />
-        </div>
-    
-        <div className="flex flex-col gap-1">
-          <label className="font-mono text-xs text-text-muted" htmlFor="af-until">
-            Until (ISO 8601)
-          </label>
-          <Input
+        </LabeledField>
+        <LabeledField label="Until (ISO 8601)" htmlFor="af-until">
+          <input
             id="af-until"
             type="datetime-local"
             value={draft.until}
             onChange={(e) => onDraftChange({ until: e.target.value })}
-            className="font-mono text-xs"
+            className="font-mono"
+            style={INPUT_STYLE}
           />
-        </div>
+        </LabeledField>
       </div>
-    
-      <div className="flex gap-2">
-        <Button type="submit" size="sm" disabled={isFetching}>
-          {isFetching ? "Loading…" : "Apply Filters"}
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={onClear}
+
+      <div className="flex items-center" style={{ gap: 8 }}>
+        <button
+          type="submit"
+          className="font-mono uppercase"
+          disabled={isFetching}
+          style={{
+            ...PRIMARY_BTN,
+            opacity: isFetching ? 0.6 : 1,
+          }}
         >
-          Clear
-        </Button>
+          {isFetching ? "loading" : "apply filters"}
+        </button>
+        <button
+          type="button"
+          className="font-mono uppercase"
+          onClick={onClear}
+          style={ACTION_BTN}
+        >
+          clear
+        </button>
       </div>
-    </form></AilaCard>
+    </form>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Advanced filter builder
-//
-// Additive to the existing JQL bar / legacy form. Each row targets one of the
-// server-supported comma-OR fields (action / status / user_id / stage) and
-// the operator adds values as chips within that row. Multiple rows on the
-// same field merge (a chip added on any row for `stage` OR-joins with every
-// other `stage` chip -- matches the backend semantics for a single query
-// param). A dedicated since/until row drives the date range.
+// Advanced filter builder (chip rows per field + since/until)
 // ---------------------------------------------------------------------------
 
 type BuilderField = "action" | "status" | "user_id" | "stage";
 
 interface BuilderConditionRow {
-  /** stable client id; not persisted */
   rowId: string;
   field: BuilderField;
   values: string[];
@@ -475,14 +446,17 @@ const EMPTY_BUILDER: AdvancedBuilderState = {
   until: "",
 };
 
-const BUILDER_FIELDS: readonly { key: BuilderField; label: string; placeholder: string }[] = [
+const BUILDER_FIELDS: readonly {
+  key: BuilderField;
+  label: string;
+  placeholder: string;
+}[] = [
   { key: "action", label: "Action", placeholder: "scan.start" },
   { key: "status", label: "Status", placeholder: "completed, failed" },
   { key: "user_id", label: "User", placeholder: "system, admin" },
   { key: "stage", label: "Stage", placeholder: "task, report_lookup" },
 ];
 
-/** Merge a builder state into the AuditFilters shape driving GET /audit/events. */
 function builderToAuditFilters(state: AdvancedBuilderState): AuditFilters {
   const collected: Record<BuilderField, string[]> = {
     action: [],
@@ -548,8 +522,6 @@ function AdvancedFilterBuilder({
 
   function commitDraft(rowId: string) {
     const raw = draftValues[rowId] ?? "";
-    // Support paste-in comma-separated values in one keystroke: split, trim,
-    // dedupe, and append to whichever row we're editing.
     const additions = raw
       .split(",")
       .map((v) => v.trim())
@@ -566,220 +538,341 @@ function AdvancedFilterBuilder({
   }
 
   return (
-    <AilaCard variant="elevated" padding="md">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="font-mono text-sm font-semibold text-text">
-          Advanced Filter Builder
-        </h2>
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="gap-1.5"
-            onClick={() =>
-              onChange({
-                ...state,
-                conditions: [...state.conditions, newBuilderRow()],
-              })
-            }
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Add condition
-          </Button>
-        </div>
+    <div className="flex flex-col" style={{ gap: 10 }}>
+      <div className="flex items-center justify-between" style={{ gap: 8 }}>
+        <span
+          className="font-mono uppercase"
+          style={{
+            fontSize: 9.5,
+            letterSpacing: "0.12em",
+            color: "var(--text-muted)",
+          }}
+        >
+          conditions
+        </span>
+        <button
+          type="button"
+          className="font-mono uppercase flex items-center"
+          onClick={() =>
+            onChange({
+              ...state,
+              conditions: [...state.conditions, newBuilderRow()],
+            })
+          }
+          style={{ ...ACTION_BTN, gap: 6 }}
+        >
+          <Plus size={11} weight="bold" aria-hidden="true" />
+          add condition
+        </button>
       </div>
 
-      <div className="flex flex-col gap-2">
-        {state.conditions.length === 0 && (
-          <p className="font-mono text-xs text-text-muted">
-            No conditions yet. Add a condition to filter by action, status, user, or stage.
-          </p>
-        )}
-        {state.conditions.map((row, index) => {
-          const spec = BUILDER_FIELDS.find((f) => f.key === row.field) ?? BUILDER_FIELDS[0];
-          const draft = draftValues[row.rowId] ?? "";
-          const fieldSelectId = `builder-field-${row.rowId}`;
-          const valueInputId = `builder-value-${row.rowId}`;
-          return (
-            <div
-              key={row.rowId}
-              className="flex flex-wrap items-start gap-2 border border-border rounded-sharp-md p-2 bg-surface"
+      {state.conditions.length === 0 && (
+        <p
+          className="font-mono"
+          style={{ color: "var(--text-faint)", fontSize: 11 }}
+        >
+          no conditions yet. add a condition to filter by action, status,
+          user, or stage.
+        </p>
+      )}
+
+      {state.conditions.map((row, index) => {
+        const spec =
+          BUILDER_FIELDS.find((f) => f.key === row.field) ?? BUILDER_FIELDS[0];
+        const draft = draftValues[row.rowId] ?? "";
+        const fieldSelectId = `builder-field-${row.rowId}`;
+        const valueInputId = `builder-value-${row.rowId}`;
+        return (
+          <div
+            key={row.rowId}
+            className="flex items-start flex-wrap"
+            style={{
+              gap: 8,
+              padding: 8,
+              borderRadius: 3,
+              border: "1px solid var(--border-soft)",
+              background: "var(--surface-sunk)",
+            }}
+          >
+            <LabeledField
+              label={index === 0 ? "Where" : "And"}
+              htmlFor={fieldSelectId}
             >
-              <div className="flex flex-col gap-1">
-                <label
-                  className="font-mono text-[10px] text-text-muted uppercase tracking-wider"
-                  htmlFor={fieldSelectId}
-                >
-                  {index === 0 ? "Where" : "And"}
-                </label>
-                <select
-                  id={fieldSelectId}
-                  value={row.field}
-                  onChange={(e) =>
-                    updateRow(row.rowId, {
-                      field: e.target.value as BuilderField,
-                    })
-                  }
-                  className="h-8 rounded-sharp border border-border bg-base px-2 font-mono text-xs text-text outline-none focus:border-border-hover transition-colors"
-                >
-                  {BUILDER_FIELDS.map((field) => (
-                    <option key={field.key} value={field.key}>
-                      {field.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex-1 min-w-[160px] flex flex-col gap-1">
-                <label
-                  className="font-mono text-[10px] text-text-muted uppercase tracking-wider"
-                  htmlFor={valueInputId}
-                >
-                  Any of (comma-OR)
-                </label>
-                <div className="flex flex-wrap items-center gap-1.5 min-h-[2rem] border border-border rounded-sharp bg-base px-2 py-1">
-                  {row.values.map((value) => (
-                    <span
-                      key={value}
-                      className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-accent/10 border border-accent/30 rounded-sharp text-accent font-mono text-[11px]"
-                    >
-                      {value}
-                      <button
-                        type="button"
-                        onClick={() =>
-                          updateRow(row.rowId, {
-                            values: row.values.filter((v) => v !== value),
-                          })
-                        }
-                        className="text-accent/70 hover:text-accent"
-                        aria-label={`Remove ${value}`}
-                      >
-                        <XIcon className="h-3 w-3" />
-                      </button>
-                    </span>
-                  ))}
-                  <input
-                    id={valueInputId}
-                    value={draft}
-                    onChange={(e) =>
-                      setDraftValues((prev) => ({
-                        ...prev,
-                        [row.rowId]: e.target.value,
-                      }))
-                    }
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === ",") {
-                        e.preventDefault();
-                        commitDraft(row.rowId);
-                      } else if (
-                        e.key === "Backspace" &&
-                        draft === "" &&
-                        row.values.length > 0
-                      ) {
-                        updateRow(row.rowId, {
-                          values: row.values.slice(0, -1),
-                        });
-                      }
-                    }}
-                    onBlur={() => commitDraft(row.rowId)}
-                    placeholder={spec.placeholder}
-                    className="flex-1 min-w-[80px] bg-transparent outline-none font-mono text-xs text-text placeholder:text-text-muted"
-                  />
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() =>
-                  onChange({
-                    ...state,
-                    conditions: state.conditions.filter(
-                      (r) => r.rowId !== row.rowId,
-                    ),
+              <select
+                id={fieldSelectId}
+                value={row.field}
+                onChange={(e) =>
+                  updateRow(row.rowId, {
+                    field: e.target.value as BuilderField,
                   })
                 }
-                className="mt-5 text-text-muted hover:text-critical transition-colors"
-                aria-label={`Remove condition ${index + 1}`}
-                title="Remove condition"
+                className="font-mono"
+                style={{ ...INPUT_STYLE, minWidth: 120 }}
               >
-                <Trash size={14} />
-              </button>
+                {BUILDER_FIELDS.map((field) => (
+                  <option key={field.key} value={field.key}>
+                    {field.label}
+                  </option>
+                ))}
+              </select>
+            </LabeledField>
+
+            <div
+              className="flex flex-col"
+              style={{ gap: 4, flex: 1, minWidth: 200 }}
+            >
+              <label
+                htmlFor={valueInputId}
+                className="font-mono uppercase"
+                style={{
+                  fontSize: 9.5,
+                  letterSpacing: "0.12em",
+                  color: "var(--text-muted)",
+                }}
+              >
+                any of (comma-OR)
+              </label>
+              <div
+                className="flex items-center flex-wrap"
+                style={{
+                  gap: 6,
+                  minHeight: 28,
+                  padding: "3px 6px",
+                  border: "1px solid var(--border-soft)",
+                  background: "var(--surface-card)",
+                  borderRadius: 3,
+                }}
+              >
+                {row.values.map((value) => (
+                  <span
+                    key={value}
+                    className="inline-flex items-center font-mono"
+                    style={{
+                      gap: 4,
+                      padding: "1px 6px",
+                      fontSize: 10.5,
+                      color: "var(--accent)",
+                      background:
+                        "color-mix(in srgb, var(--accent) 12%, transparent)",
+                      border:
+                        "1px solid color-mix(in srgb, var(--accent) 40%, transparent)",
+                      borderRadius: 2,
+                    }}
+                  >
+                    {value}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateRow(row.rowId, {
+                          values: row.values.filter((v) => v !== value),
+                        })
+                      }
+                      aria-label={`Remove ${value}`}
+                      style={{
+                        cursor: "pointer",
+                        background: "transparent",
+                        border: 0,
+                        color: "var(--accent)",
+                        fontSize: 12,
+                        lineHeight: 1,
+                        padding: 0,
+                      }}
+                    >
+                      {"\u00d7"}
+                    </button>
+                  </span>
+                ))}
+                <input
+                  id={valueInputId}
+                  value={draft}
+                  onChange={(e) =>
+                    setDraftValues((prev) => ({
+                      ...prev,
+                      [row.rowId]: e.target.value,
+                    }))
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === ",") {
+                      e.preventDefault();
+                      commitDraft(row.rowId);
+                    } else if (
+                      e.key === "Backspace" &&
+                      draft === "" &&
+                      row.values.length > 0
+                    ) {
+                      updateRow(row.rowId, {
+                        values: row.values.slice(0, -1),
+                      });
+                    }
+                  }}
+                  onBlur={() => commitDraft(row.rowId)}
+                  placeholder={spec.placeholder}
+                  className="font-mono"
+                  style={{
+                    flex: 1,
+                    minWidth: 80,
+                    background: "transparent",
+                    outline: "none",
+                    border: 0,
+                    fontSize: 11,
+                    color: "var(--text-primary)",
+                  }}
+                />
+              </div>
             </div>
-          );
-        })}
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 mt-1">
-          <div className="flex flex-col gap-1">
-            <label
-              className="font-mono text-[10px] text-text-muted uppercase tracking-wider"
-              htmlFor="builder-since"
+            <button
+              type="button"
+              onClick={() =>
+                onChange({
+                  ...state,
+                  conditions: state.conditions.filter(
+                    (r) => r.rowId !== row.rowId,
+                  ),
+                })
+              }
+              aria-label={`Remove condition ${index + 1}`}
+              title="Remove condition"
+              style={{
+                marginTop: 22,
+                cursor: "pointer",
+                background: "transparent",
+                border: 0,
+                color: "var(--text-muted)",
+                padding: 4,
+              }}
             >
-              Since (ISO 8601)
-            </label>
-            <Input
-              id="builder-since"
-              type="datetime-local"
-              value={state.since}
-              onChange={(e) => onChange({ ...state, since: e.target.value })}
-              className="font-mono text-xs"
-            />
+              <Trash size={14} />
+            </button>
           </div>
-          <div className="flex flex-col gap-1">
-            <label
-              className="font-mono text-[10px] text-text-muted uppercase tracking-wider"
-              htmlFor="builder-until"
-            >
-              Until (ISO 8601)
-            </label>
-            <Input
-              id="builder-until"
-              type="datetime-local"
-              value={state.until}
-              onChange={(e) => onChange({ ...state, until: e.target.value })}
-              className="font-mono text-xs"
-            />
-          </div>
-        </div>
+        );
+      })}
 
-        <div className="flex gap-2 mt-2">
-          <Button type="button" size="sm" onClick={onApply} disabled={isFetching}>
-            {isFetching ? "Loading…" : "Apply Builder"}
-          </Button>
-          <Button type="button" size="sm" variant="outline" onClick={onClear}>
-            Clear Builder
-          </Button>
-        </div>
+      <div
+        className="grid"
+        style={{
+          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+          gap: 10,
+        }}
+      >
+        <LabeledField label="Since (ISO 8601)" htmlFor="builder-since">
+          <input
+            id="builder-since"
+            type="datetime-local"
+            value={state.since}
+            onChange={(e) => onChange({ ...state, since: e.target.value })}
+            className="font-mono"
+            style={INPUT_STYLE}
+          />
+        </LabeledField>
+        <LabeledField label="Until (ISO 8601)" htmlFor="builder-until">
+          <input
+            id="builder-until"
+            type="datetime-local"
+            value={state.until}
+            onChange={(e) => onChange({ ...state, until: e.target.value })}
+            className="font-mono"
+            style={INPUT_STYLE}
+          />
+        </LabeledField>
       </div>
-    </AilaCard>
+
+      <div className="flex items-center" style={{ gap: 8 }}>
+        <button
+          type="button"
+          className="font-mono uppercase"
+          onClick={onApply}
+          disabled={isFetching}
+          style={{
+            ...PRIMARY_BTN,
+            opacity: isFetching ? 0.6 : 1,
+          }}
+        >
+          {isFetching ? "loading" : "apply builder"}
+        </button>
+        <button
+          type="button"
+          className="font-mono uppercase"
+          onClick={onClear}
+          style={ACTION_BTN}
+        >
+          clear builder
+        </button>
+      </div>
+    </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Page
+// Saved-view payload
 // ---------------------------------------------------------------------------
 
-/**
- * Serialized shape stored under entity_type='audit' in /saved-filters.
- * `mode` records which UI produced the preset so applying it restores the
- * matching input surface; `filters` is always the merged AuditFilters that
- * drives GET /audit/events, and `builder` is the optional builder scaffold
- * for round-tripping the chip UI.
- */
 interface AuditSavedViewState {
   mode: "jql" | "form" | "builder";
   filters: AuditFilters;
   builder?: AdvancedBuilderState;
 }
 
-export function AuditLogsPage() {
+// ---------------------------------------------------------------------------
+// Selected event detail panel
+// ---------------------------------------------------------------------------
+
+function SelectedEventPanel({
+  event,
+  onClose,
+}: {
+  event: AuditEvent;
+  onClose: () => void;
+}) {
+  return (
+    <WindowPanel
+      title={`${event.stage} \u00b7 ${event.action}`}
+      tone={statusTone(event.status) === "critical" ? "warn" : "info"}
+      actions={
+        <button
+          type="button"
+          className="font-mono uppercase"
+          onClick={onClose}
+          aria-label="Close audit details"
+          style={{ ...ACTION_BTN, height: 22, fontSize: 9 }}
+        >
+          close
+        </button>
+      }
+      status={`${formatTimestamp(event.created_at)} \u00b7 user ${
+        event.user_id
+      } \u00b7 run ${event.run_id}`}
+    >
+      <div className="flex flex-col" style={{ gap: 12 }}>
+        <div className="flex items-center flex-wrap" style={{ gap: 8 }}>
+          <MonoBadge tone={statusTone(event.status)}>{event.status}</MonoBadge>
+          {event.target && (
+            <MonoBadge tone="muted">target: {event.target}</MonoBadge>
+          )}
+        </div>
+        <AuditDetailRenderer details={event.details} />
+      </div>
+    </WindowPanel>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Events view
+// ---------------------------------------------------------------------------
+
+type FilterMode = "jql" | "form" | "builder";
+
+function EventsView() {
   const [draftFilters, setDraftFilters] = useState<AuditFilters>(EMPTY_FILTERS);
-  const [activeFilters, setActiveFilters] = useState<AuditFilters>(EMPTY_FILTERS);
-  const [filterMode, setFilterMode] = useState<"jql" | "form" | "builder">("jql");
-  const [builderState, setBuilderState] = useState<AdvancedBuilderState>(EMPTY_BUILDER);
-  // Operator preference drives the AilaTable page window; the server fetch
-  // stays at SERVER_PAGE_SIZE (backend max) so filter-narrowed sets remain
-  // representative regardless of the chosen client-side page size.
+  const [activeFilters, setActiveFilters] =
+    useState<AuditFilters>(EMPTY_FILTERS);
+  const [filterMode, setFilterMode] = useState<FilterMode>("jql");
+  const [builderState, setBuilderState] =
+    useState<AdvancedBuilderState>(EMPTY_BUILDER);
   const { defaultPageSize } = usePreferences();
   const [selectedEvent, setSelectedEvent] = useState<AuditEvent | null>(null);
+  const [pageSize, setPageSize] = useState<number>(defaultPageSize);
+  const [pageIndex, setPageIndex] = useState<number>(0);
 
   const auditQuery = useQuery({
     queryKey: ["platform", "audit-events", activeFilters],
@@ -787,29 +880,44 @@ export function AuditLogsPage() {
       authorizedRequestJson<AuditListResponse>(buildAuditPath(activeFilters)),
   });
 
-  const items = useMemo(() => auditQuery.data?.items ?? [], [auditQuery.data]);
+  const items = useMemo(
+    () => auditQuery.data?.items ?? [],
+    [auditQuery.data],
+  );
+
+  const pagedItems = useMemo(() => {
+    const start = pageIndex * pageSize;
+    return items.slice(start, start + pageSize);
+  }, [items, pageIndex, pageSize]);
+
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
 
   const applyFilters = useCallback(() => {
     setActiveFilters({ ...draftFilters });
+    setPageIndex(0);
   }, [draftFilters]);
 
   const clearFilters = useCallback(() => {
     setDraftFilters(EMPTY_FILTERS);
     setActiveFilters(EMPTY_FILTERS);
     setBuilderState(EMPTY_BUILDER);
+    setPageIndex(0);
   }, []);
 
   const handleJqlChange = useCallback((filters: JqlFilter[]) => {
     setActiveFilters(jqlToAuditFilters(filters));
+    setPageIndex(0);
   }, []);
 
   const applyBuilder = useCallback(() => {
     setActiveFilters(builderToAuditFilters(builderState));
+    setPageIndex(0);
   }, [builderState]);
 
   const clearBuilder = useCallback(() => {
     setBuilderState(EMPTY_BUILDER);
     setActiveFilters(EMPTY_FILTERS);
+    setPageIndex(0);
   }, []);
 
   const savedViewState: AuditSavedViewState = useMemo(
@@ -822,9 +930,6 @@ export function AuditLogsPage() {
   );
 
   const applySavedView = useCallback((state: AuditSavedViewState) => {
-    // Applied views may originate from any mode; restore the mode too so the
-    // matching surface is what the operator sees post-apply. `filters` is
-    // authoritative for the query -- `builder` is UI scaffolding.
     if (state.mode === "builder" && state.builder) {
       setBuilderState({
         conditions: state.builder.conditions.map((row) => ({ ...row })),
@@ -837,266 +942,434 @@ export function AuditLogsPage() {
     }
     setFilterMode(state.mode);
     setActiveFilters({ ...state.filters });
+    setPageIndex(0);
   }, []);
 
-  const hasDateRange = activeFilters.since || activeFilters.until;
-  const dateRangeLabel = hasDateRange
-    ? [activeFilters.since, activeFilters.until].filter(Boolean).join(" → ")
+  const dateRangeLabel = activeFilters.since || activeFilters.until
+    ? [activeFilters.since, activeFilters.until].filter(Boolean).join(" \u2192 ")
     : "All time";
 
-  const [tab, setTab] = useState<string>("events");
+  const totalMatched = auditQuery.data?.total ?? 0;
 
   return (
-    <div className="flex flex-col gap-4 p-4 lg:p-6">
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList variant="line" className="mb-2">
-          <TabsTrigger value="events">Events</TabsTrigger>
-          <TabsTrigger value="seals">Seals</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="events">
-        <div className="flex flex-col gap-6">
-      {/* Page header */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-
-        {items.length > 0 && (
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              className="gap-1.5"
-              onClick={() => exportAsCsv(items)}
-            >
-              <Download className="h-4 w-4" />
-              Export CSV
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="gap-1.5"
-              onClick={() => exportAsJson(items)}
-            >
-              <Download className="h-4 w-4" />
-              Export JSON
-            </Button>
-          </div>
-        )}
-      </div>
-
-      {/* Filter bar -- JQL chip input is default; legacy form and advanced
-          builder available on demand. Each mode drives the same
-          `activeFilters` state and the SavedViews control persists the
-          currently active mode + filters under entity_type='audit'. */}
-      <div className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="font-mono text-xs text-text-muted uppercase tracking-wider">
-            Filters
-          </h2>
-          <div
-            role="tablist"
-            aria-label="Audit filter mode"
-            className="flex items-center gap-1 border border-border rounded-sharp-md p-0.5"
+    <div className="flex flex-col" style={{ gap: 14 }}>
+      {/* Filter mode + panel */}
+      <div className="flex flex-col" style={{ gap: 8 }}>
+        <div className="flex items-center flex-wrap" style={{ gap: 8 }}>
+          <span
+            className="font-mono uppercase"
+            style={{
+              fontSize: 9.5,
+              letterSpacing: "0.12em",
+              color: "var(--text-muted)",
+              marginRight: 4,
+            }}
           >
-            {(
-              [
-                { key: "jql", label: "Filter bar" },
-                { key: "builder", label: "Builder" },
-                { key: "form", label: "Form" },
-              ] as const
-            ).map((option) => {
-              const active = filterMode === option.key;
-              return (
-                <button
-                  key={option.key}
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => setFilterMode(option.key)}
-                  className={`h-6 px-2 font-mono text-[10px] rounded-sharp transition-colors ${
-                    active
-                      ? "bg-accent/15 text-accent"
-                      : "text-text-muted hover:text-text"
-                  }`}
-                >
-                  {option.label}
-                </button>
-              );
-            })}
-          </div>
+            mode
+          </span>
+          <FilterChip
+            active={filterMode === "jql"}
+            onClick={() => setFilterMode("jql")}
+          >
+            filter bar
+          </FilterChip>
+          <FilterChip
+            active={filterMode === "builder"}
+            onClick={() => setFilterMode("builder")}
+          >
+            builder
+          </FilterChip>
+          <FilterChip
+            active={filterMode === "form"}
+            onClick={() => setFilterMode("form")}
+          >
+            form
+          </FilterChip>
+          <span style={{ flex: 1 }} />
+          {items.length > 0 && (
+            <>
+              <button
+                type="button"
+                className="font-mono uppercase flex items-center"
+                onClick={() => exportAsCsv(items)}
+                style={{ ...ACTION_BTN, gap: 6 }}
+              >
+                <Download size={11} weight="bold" aria-hidden="true" />
+                csv
+              </button>
+              <button
+                type="button"
+                className="font-mono uppercase flex items-center"
+                onClick={() => exportAsJson(items)}
+                style={{ ...ACTION_BTN, gap: 6 }}
+              >
+                <Download size={11} weight="bold" aria-hidden="true" />
+                json
+              </button>
+            </>
+          )}
         </div>
-        {filterMode === "jql" && (
-          <JqlFilterBar
-            fields={AUDIT_JQL_FIELDS}
-            onChange={handleJqlChange}
-            placeholder="Filter (e.g. stage:ssh, status:failed, search:web01)"
-          />
-        )}
-        {filterMode === "form" && (
-          <FilterForm
-            draft={draftFilters}
-            onDraftChange={(patch) =>
-              setDraftFilters((prev) => ({ ...prev, ...patch }))
-            }
-            onApply={applyFilters}
-            onClear={clearFilters}
-            isFetching={auditQuery.isFetching}
-          />
-        )}
-        {filterMode === "builder" && (
-          <AdvancedFilterBuilder
-            state={builderState}
-            onChange={setBuilderState}
-            onApply={applyBuilder}
-            onClear={clearBuilder}
-            isFetching={auditQuery.isFetching}
-          />
-        )}
-        <SavedViews<AuditSavedViewState>
-          entityType="audit"
-          entityLabel="Audit log"
-          currentState={savedViewState}
-          onApply={applySavedView}
-          className="mt-1"
-        />
+
+        <WindowPanel title="filters" tone="muted">
+          {filterMode === "jql" && (
+            <JqlFilterBar
+              fields={AUDIT_JQL_FIELDS}
+              onChange={handleJqlChange}
+              placeholder="Filter (e.g. stage:ssh, status:failed, search:web01)"
+            />
+          )}
+          {filterMode === "form" && (
+            <FilterForm
+              draft={draftFilters}
+              onDraftChange={(patch) =>
+                setDraftFilters((prev) => ({ ...prev, ...patch }))
+              }
+              onApply={applyFilters}
+              onClear={clearFilters}
+              isFetching={auditQuery.isFetching}
+            />
+          )}
+          {filterMode === "builder" && (
+            <AdvancedFilterBuilder
+              state={builderState}
+              onChange={setBuilderState}
+              onApply={applyBuilder}
+              onClear={clearBuilder}
+              isFetching={auditQuery.isFetching}
+            />
+          )}
+          <div style={{ marginTop: 10 }}>
+            <SavedViews<AuditSavedViewState>
+              entityType="audit"
+              entityLabel="Audit log"
+              currentState={savedViewState}
+              onApply={applySavedView}
+            />
+          </div>
+        </WindowPanel>
       </div>
 
-      {/* Metric cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Total Events
-        </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {auditQuery.data?.total ?? "--"}
-        </p>
-        <p className="font-mono text-xs text-text-muted mt-0.5">
-          Matching active filters
-        </p></AilaCard>
-
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Loaded Events
-        </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {items.length}
-        </p>
-        <p className="font-mono text-xs text-text-muted mt-0.5">
-          This page (max {SERVER_PAGE_SIZE})
-        </p></AilaCard>
-
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Date Range
-        </p>
-        <p className="font-mono text-sm font-semibold text-text mt-1 truncate" title={dateRangeLabel}>
-          {dateRangeLabel}
-        </p>
-        <p className="font-mono text-xs text-text-muted mt-0.5">
-          Active filter range
-        </p></AilaCard>
+      {/* Stat row */}
+      <div
+        className="grid"
+        style={{
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          gap: 12,
+        }}
+      >
+        <WindowPanel title="total events">
+          <BigStat
+            value={auditQuery.data?.total ?? "--"}
+            sub="matching active filters"
+          />
+        </WindowPanel>
+        <WindowPanel title="loaded" tone="info">
+          <BigStat
+            value={items.length}
+            sub={`this window (max ${SERVER_PAGE_SIZE})`}
+          />
+        </WindowPanel>
+        <WindowPanel title="date range" tone="muted">
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <span
+              className="font-mono truncate"
+              title={dateRangeLabel}
+              style={{
+                color: "var(--text-primary)",
+                fontSize: 12,
+              }}
+            >
+              {dateRangeLabel}
+            </span>
+            <span
+              className="font-mono"
+              style={{ color: "var(--text-faint)", fontSize: 10 }}
+            >
+              active filter range
+            </span>
+          </div>
+        </WindowPanel>
       </div>
 
       {/* Error banner */}
       {auditQuery.isError && (
-        <div className="rounded-[4px] border border-destructive bg-destructive/10 px-4 py-3 font-mono text-sm text-destructive">
-          Failed to load audit events:{" "}
-          {(auditQuery.error as Error).message}
+        <div
+          className="font-mono"
+          style={{
+            border:
+              "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+            background:
+              "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+            color: "var(--status-warn)",
+            padding: "8px 12px",
+            fontSize: 11,
+            borderRadius: 3,
+          }}
+        >
+          Failed to load audit events: {(auditQuery.error as Error).message}
         </div>
       )}
 
-      {/* Loading skeleton */}
-      {auditQuery.isLoading && (
-        <AilaCard variant="default" padding="md"><LoadingSkeletonGroup lines={8} /></AilaCard>
+      {/* Data grid */}
+      <WindowPanel
+        title={`audit trail \u00b7 ${items.length}`}
+        flush
+        actions={
+          <button
+            type="button"
+            className="font-mono uppercase"
+            onClick={() => void auditQuery.refetch()}
+            disabled={auditQuery.isFetching}
+            style={{
+              ...ACTION_BTN,
+              height: 22,
+              fontSize: 9,
+              opacity: auditQuery.isFetching ? 0.6 : 1,
+            }}
+          >
+            {auditQuery.isFetching ? "refreshing" : "refresh"}
+          </button>
+        }
+      >
+        {auditQuery.isLoading ? (
+          <div style={{ padding: 16 }}>
+            <LoadingSkeletonGroup lines={8} />
+          </div>
+        ) : items.length === 0 && !auditQuery.isError ? (
+          <div
+            className="flex flex-col items-center justify-center"
+            style={{ padding: 36, textAlign: "center", gap: 8 }}
+          >
+            <span aria-hidden="true" style={{ color: "var(--text-faint)" }}>
+              <ClipboardText size={28} weight="duotone" />
+            </span>
+            <span
+              className="font-mono"
+              style={{ color: "var(--text-primary)", fontSize: 12 }}
+            >
+              No audit events
+            </span>
+            <span
+              className="font-mono"
+              style={{
+                color: "var(--text-muted)",
+                fontSize: 10.5,
+                maxWidth: 320,
+              }}
+            >
+              No events matched the current filters. Try clearing filters or
+              adjusting the date range.
+            </span>
+            <button
+              type="button"
+              className="font-mono uppercase"
+              onClick={clearFilters}
+              style={{ ...ACTION_BTN, marginTop: 6 }}
+            >
+              clear filters
+            </button>
+          </div>
+        ) : (
+          <DataGrid<AuditEvent>
+            columns={[
+              { label: "TIMESTAMP", width: "170px" },
+              { label: "ACTOR", width: "130px" },
+              { label: "ACTION", width: "1.2fr" },
+              { label: "TARGET", width: "1fr" },
+              { label: "OUTCOME", width: "110px" },
+              { label: "RUN", width: "110px" },
+              { label: "", width: "80px", align: "right" },
+            ]}
+            rows={pagedItems}
+            getKey={(r, i) => r.id ?? `${r.run_id}-${i}`}
+            onRowClick={(r) => setSelectedEvent(r)}
+            empty={
+              <div
+                className="font-mono"
+                style={{
+                  padding: 24,
+                  textAlign: "center",
+                  fontSize: 11,
+                  color: "var(--text-muted)",
+                }}
+              >
+                no events on this page.
+              </div>
+            }
+            renderCells={(r) => [
+              <span
+                key="ts"
+                className="font-mono"
+                style={{
+                  color: "var(--text-muted)",
+                  fontSize: 10.5,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {formatTimestamp(r.created_at)}
+              </span>,
+              <span
+                key="actor"
+                className="font-mono truncate"
+                style={{ color: "var(--text-primary)", fontSize: 11 }}
+              >
+                {r.user_id}
+              </span>,
+              <span
+                key="act"
+                className="font-mono truncate"
+                style={{ color: "var(--text-primary)", fontSize: 11 }}
+              >
+                <span style={{ color: "var(--text-muted)" }}>
+                  {r.stage}
+                  {" \u00b7 "}
+                </span>
+                {r.action}
+              </span>,
+              <span
+                key="tgt"
+                className="font-mono truncate"
+                title={r.target}
+                style={{ color: "var(--text-muted)", fontSize: 10.5 }}
+              >
+                {r.target || "--"}
+              </span>,
+              <MonoBadge key="st" tone={statusTone(r.status)}>
+                {r.status}
+              </MonoBadge>,
+              <span
+                key="run"
+                className="font-mono truncate"
+                title={r.run_id}
+                style={{ color: "var(--accent)", fontSize: 10.5 }}
+              >
+                {r.run_id.slice(0, 8)}
+                {"\u2026"}
+              </span>,
+              <button
+                key="view"
+                type="button"
+                className="font-mono uppercase"
+                onClick={() => setSelectedEvent(r)}
+                style={{
+                  ...ACTION_BTN,
+                  height: 22,
+                  padding: "0 10px",
+                  fontSize: 9.5,
+                }}
+              >
+                view
+              </button>,
+            ]}
+          />
+        )}
+      </WindowPanel>
+
+      {/* Pagination + page size */}
+      {items.length > 0 && (
+        <div
+          className="flex items-center justify-between flex-wrap font-mono"
+          style={{ gap: 8, fontSize: 11, color: "var(--text-muted)" }}
+        >
+          <span>
+            Showing {pagedItems.length} of {items.length} loaded events
+            {totalMatched > SERVER_PAGE_SIZE
+              ? ` (${totalMatched} total; narrow filters to see more)`
+              : totalMatched > items.length
+              ? ` (${totalMatched} total)`
+              : ""}
+          </span>
+          <div className="flex items-center" style={{ gap: 8 }}>
+            <label className="uppercase" style={{ letterSpacing: "0.1em" }}>
+              rows
+            </label>
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value));
+                setPageIndex(0);
+              }}
+              className="font-mono"
+              style={INPUT_STYLE}
+            >
+              {[10, 25, 50, 100].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="font-mono uppercase"
+              disabled={pageIndex === 0}
+              onClick={() => setPageIndex((p) => Math.max(0, p - 1))}
+              style={{ ...ACTION_BTN, opacity: pageIndex === 0 ? 0.55 : 1 }}
+            >
+              prev
+            </button>
+            <span className="tabular-nums">
+              {pageIndex + 1} / {totalPages}
+            </span>
+            <button
+              type="button"
+              className="font-mono uppercase"
+              disabled={pageIndex + 1 >= totalPages}
+              onClick={() =>
+                setPageIndex((p) => Math.min(totalPages - 1, p + 1))
+              }
+              style={{
+                ...ACTION_BTN,
+                opacity: pageIndex + 1 >= totalPages ? 0.55 : 1,
+              }}
+            >
+              next
+            </button>
+          </div>
+        </div>
       )}
 
-      {/* Empty state */}
-      {!auditQuery.isLoading && !auditQuery.isError && items.length === 0 && (
-        <EmptyState
-          icon={<ClipboardText className="h-10 w-10" />}
-          title="No audit events"
-          description="No events matched the current filters. Try clearing the filters or adjusting the date range."
-          action={{ label: "Clear Filters", onClick: clearFilters }}
+      {selectedEvent && (
+        <SelectedEventPanel
+          event={selectedEvent}
+          onClose={() => setSelectedEvent(null)}
         />
       )}
+    </div>
+  );
+}
 
-      {/* Audit table */}
-      {!auditQuery.isLoading && items.length > 0 && (
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <h2 className="font-mono text-sm font-semibold text-text">
-              Audit Trail
-            </h2>
-            <Button
-              size="sm"
-              variant="outline"
-              className="gap-1.5"
-              onClick={() => auditQuery.refetch()}
-              disabled={auditQuery.isFetching}
-            >
-              <ArrowClockwise
-                className={`h-3.5 w-3.5 ${auditQuery.isFetching ? "animate-spin" : ""}`}
-              />
-              Refresh
-            </Button>
-          </div>
+// ---------------------------------------------------------------------------
+// Page root
+// ---------------------------------------------------------------------------
 
-          <AilaTable
-            data={items}
-            columns={AUDIT_COLUMNS_WITH_DETAILS(setSelectedEvent)}
-            pageSize={defaultPageSize}
-            enableSorting
-            enableFiltering={false}
-          >
-            <AilaTable.Header />
-            <AilaTable.Body
-              emptyState="No events match the current table filter."
-            />
-            <AilaTable.Pagination pageSizeOptions={[10, 25, 50, 100]} />
-          </AilaTable>
+export function AuditLogsPage() {
+  const [view, setView] = useState<"events" | "seals">("events");
 
-          <p className="font-mono text-xs text-text-muted mt-2">
-            Showing first {items.length} of {auditQuery.data?.total ?? items.length} total events.
-            {(auditQuery.data?.total ?? 0) > SERVER_PAGE_SIZE &&
-              " Narrow the filters to see more."}
-          </p>
+  return (
+    <div className="flex flex-col" style={{ gap: 16, padding: 20 }}>
+      <SectionHeader
+        icon={
+          <ClipboardText
+            size={16}
+            weight="duotone"
+            style={{ color: "var(--text-on-accent)" }}
+            aria-hidden="true"
+          />
+        }
+        title="audit trail"
+        actions={
+          <Segmented
+            options={[
+              { value: "events", label: "EVENTS" },
+              { value: "seals", label: "SEALS" },
+            ]}
+            value={view}
+            onChange={setView}
+          />
+        }
+      />
 
-          {selectedEvent && (
-            <AilaCard variant="elevated" padding="md" className="mt-4 relative"><div className="flex items-start justify-between gap-2 mb-3">
-              <div>
-                <h3 className="font-mono text-sm font-semibold text-text">
-                  {selectedEvent.stage} · {selectedEvent.action}
-                  <AilaBadge
-                    severity={auditStatusSeverity(selectedEvent.status)}
-                    size="sm"
-                    className="ml-2"
-                  >
-                    {selectedEvent.status}
-                  </AilaBadge>
-                </h3>
-                <p className="font-mono text-[10px] text-text-muted mt-1">
-                  {formatTimestamp(selectedEvent.created_at)} · user {selectedEvent.user_id} ·
-                  run {selectedEvent.run_id}
-                </p>
-              </div>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                className="h-7 w-7 p-0"
-                onClick={() => setSelectedEvent(null)}
-                aria-label="Close audit details"
-              >
-                <XIcon className="h-4 w-4" />
-              </Button>
-            </div>
-            <AuditDetailRenderer details={selectedEvent.details} /></AilaCard>
-          )}
-        </div>
-      )}
-        </div>
-        </TabsContent>
-
-        <TabsContent value="seals">
-          <AuditSealsTab />
-        </TabsContent>
-      </Tabs>
+      {view === "events" ? <EventsView /> : <AuditSealsTab />}
     </div>
   );
 }

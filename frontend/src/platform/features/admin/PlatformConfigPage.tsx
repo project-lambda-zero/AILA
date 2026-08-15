@@ -2,27 +2,21 @@
  * PlatformConfigPage -- admin view/edit of all platform configuration entries.
  *
  * ADM-03: Fetches GET /config (all namespaces), groups entries by namespace,
- * renders each group as an AilaCard with an AilaTable. Each row has an inline
- * Edit button that expands a form with value + value_type validation before
+ * renders each group as a WindowPanel with a DataGrid. Each row has an inline
+ * Edit button that opens a form with value + value_type validation before
  * calling PUT /config/{namespace}/{key}.
- *
- * No mock data. Empty state if no config entries exist.
  */
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { type ColumnDef } from "@tanstack/react-table";
-import { GearSix } from "@phosphor-icons/react/dist/csr/GearSix";
-import { Pencil } from "@phosphor-icons/react/dist/csr/Pencil";
-import { X } from "@phosphor-icons/react/dist/csr/X";
-import { Check } from "@phosphor-icons/react/dist/csr/Check";
 
-import { AilaCard } from "@/components/aila/AilaCard";
-import { AilaTable } from "@/components/aila/AilaTable";
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
-import { EmptyState } from "@/components/aila/EmptyState";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
+import {
+  SectionHeader,
+  DataGrid,
+  MonoBadge,
+  BigStat,
+} from "@/components/aila/mock";
 import { authorizedRequestJson } from "@platform/api/http";
 
 // ---------------------------------------------------------------------------
@@ -56,26 +50,22 @@ interface ConfigUpdateRequest {
   value_type: "str" | "int" | "float" | "bool";
 }
 
-// ---------------------------------------------------------------------------
-// Utilities
-// ---------------------------------------------------------------------------
+type Tone = "critical" | "high" | "medium" | "low" | "ok" | "info" | "warn" | "muted";
 
-function formatTimestamp(value: string | null | undefined): string {
-  if (!value) return "--";
-  return new Date(value).toLocaleString();
-}
-
-function valueTypeSeverity(vt: string): "info" | "medium" | "neutral" | "low" {
+function valueTypeTone(vt: string): Tone {
   if (vt === "bool") return "info";
   if (vt === "int" || vt === "float") return "medium";
   if (vt === "str") return "low";
-  return "neutral";
+  return "muted";
 }
 
-function validateConfigValue(
-  value: string,
-  valueType: string,
-): string | null {
+function sourceTone(source: string): Tone {
+  if (source === "env") return "info";
+  if (source === "default") return "muted";
+  return "ok";
+}
+
+function validateConfigValue(value: string, valueType: string): string | null {
   if (!value.trim()) return "Value cannot be empty.";
   if (valueType === "int") {
     if (!/^-?\d+$/.test(value.trim())) return "Must be an integer (e.g. 42).";
@@ -92,17 +82,63 @@ function validateConfigValue(
 }
 
 // ---------------------------------------------------------------------------
-// Inline edit row form
+// Mock chrome
 // ---------------------------------------------------------------------------
 
-interface EditRowFormProps {
+const BTN_STYLE: React.CSSProperties = {
+  height: 22,
+  fontSize: 9,
+  padding: "0 9px",
+  letterSpacing: "0.08em",
+  borderRadius: 3,
+  border: "1px solid var(--border-soft)",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  cursor: "pointer",
+  fontFamily: "var(--font-mono)",
+  textTransform: "uppercase",
+};
+
+const BTN_ACCENT_STYLE: React.CSSProperties = {
+  ...BTN_STYLE,
+  border: "1px solid var(--accent)",
+  background: "color-mix(in srgb, var(--accent) 14%, transparent)",
+  color: "var(--accent)",
+};
+
+const INPUT_STYLE: React.CSSProperties = {
+  height: 22,
+  fontSize: 10.5,
+  padding: "0 8px",
+  borderRadius: 2,
+  border: "1px solid var(--border-soft)",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  outline: "none",
+  fontFamily: "var(--font-mono)",
+  minWidth: 120,
+};
+
+const SELECT_STYLE: React.CSSProperties = {
+  ...INPUT_STYLE,
+  minWidth: 68,
+};
+
+// ---------------------------------------------------------------------------
+// Inline edit form (rendered as expanded row)
+// ---------------------------------------------------------------------------
+
+function EditRowForm({
+  entry,
+  onSave,
+  onCancel,
+  isPending,
+}: {
   entry: ConfigEntry;
   onSave: (req: ConfigUpdateRequest) => Promise<void>;
   onCancel: () => void;
   isPending: boolean;
-}
-
-function EditRowForm({ entry, onSave, onCancel, isPending }: EditRowFormProps) {
+}) {
   const [value, setValue] = useState(entry.value);
   const [valueType, setValueType] = useState<ConfigUpdateRequest["value_type"]>(
     (entry.value_type as ConfigUpdateRequest["value_type"]) ?? "str",
@@ -129,234 +165,228 @@ function EditRowForm({ entry, onSave, onCancel, isPending }: EditRowFormProps) {
 
   if (success) {
     return (
-      <div className="flex items-center gap-2 px-2 py-1.5 text-xs font-mono text-mint">
-        <Check className="h-3.5 w-3.5" />
-        Saved
+      <div
+        className="flex items-center font-mono uppercase"
+        style={{
+          gap: 6,
+          padding: "6px 10px",
+          fontSize: 10,
+          color: "var(--status-ok)",
+          letterSpacing: "0.08em",
+        }}
+      >
+        {"\u2713"} saved
       </div>
     );
   }
 
   return (
     <form
-      className="flex items-start gap-2 flex-wrap"
+      className="flex flex-wrap items-start"
+      style={{ gap: 6 }}
       onSubmit={handleSubmit}
     >
       {entry.overridden_by_env && (
-        <div className="w-full rounded-[4px] border border-medium/40 bg-medium/10 px-4 py-3 font-mono text-xs text-medium">
-          Overridden by env var{" "}
-          <code className="font-mono">{entry.env_key}</code>. Saving updates
-          the stored fallback; the live value stays env-sourced until the
-          variable is unset.
+        <div
+          className="font-mono"
+          style={{
+            flex: "1 1 100%",
+            border:
+              "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+            background:
+              "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+            color: "var(--status-warn)",
+            padding: "6px 10px",
+            fontSize: 10,
+            borderRadius: 3,
+          }}
+        >
+          overridden by env{" "}
+          <code style={{ color: "var(--accent)" }}>{entry.env_key}</code>. Save
+          updates the stored fallback; live value stays env-sourced until unset.
         </div>
       )}
-      <div className="flex flex-col gap-1 min-w-[140px]">
-        <Input
+      <div className="flex flex-col" style={{ gap: 3, minWidth: 140 }}>
+        <input
           aria-label="Config value"
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          className="font-mono text-xs h-7 px-2"
+          style={INPUT_STYLE}
           autoFocus
         />
         {error && (
-          <span className="font-mono text-xs text-destructive">{error}</span>
+          <span
+            className="font-mono"
+            style={{ fontSize: 10, color: "var(--status-warn)" }}
+          >
+            {error}
+          </span>
         )}
       </div>
-
       <select
         aria-label="Value type"
         value={valueType}
         onChange={(e) =>
           setValueType(e.target.value as ConfigUpdateRequest["value_type"])
         }
-        className="rounded-[2px] border border-border bg-base font-mono text-xs text-text px-1.5 py-1 outline-none focus:border-border-hover transition-colors duration-100 h-7"
+        style={SELECT_STYLE}
       >
         <option value="str">str</option>
         <option value="int">int</option>
         <option value="float">float</option>
         <option value="bool">bool</option>
       </select>
-
-      <Button type="submit" size="sm" className="h-7 px-2 text-xs" disabled={isPending}>
-        {isPending ? "Saving…" : "Save"}
-      </Button>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        className="h-7 px-2 text-xs"
-        onClick={onCancel}
-      >
-        <X className="h-3 w-3" />
-      </Button>
+      <button type="submit" style={BTN_ACCENT_STYLE} disabled={isPending}>
+        {isPending ? "SAVING\u2026" : "SAVE"}
+      </button>
+      <button type="button" style={BTN_STYLE} onClick={onCancel}>
+        {"\u2715"}
+      </button>
     </form>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Namespace group -- AilaCard with AilaTable
+// Namespace group -- WindowPanel with DataGrid
 // ---------------------------------------------------------------------------
-
-interface NamespaceGroupProps {
-  namespace: string;
-  entries: ConfigEntry[];
-  onEdit: (entry: ConfigEntry, req: ConfigUpdateRequest) => Promise<void>;
-  isEditPending: boolean;
-}
 
 function NamespaceGroup({
   namespace,
   entries,
   onEdit,
   isEditPending,
-}: NamespaceGroupProps) {
+}: {
+  namespace: string;
+  entries: ConfigEntry[];
+  onEdit: (entry: ConfigEntry, req: ConfigUpdateRequest) => Promise<void>;
+  isEditPending: boolean;
+}) {
   const [editingKey, setEditingKey] = useState<string | null>(null);
 
-  const columns: ColumnDef<ConfigEntry>[] = useMemo(
-    () => [
-      {
-        id: "key",
-        header: "Key",
-        accessorKey: "key",
-        cell: ({ getValue }) => (
-          <code className="font-mono text-xs text-text">{String(getValue())}</code>
-        ),
-      },
-      {
-        id: "value",
-        header: "Value",
-        accessorKey: "value",
-        cell: ({ row }) => {
-          const entry = row.original;
-          if (editingKey === entry.key) {
-            return (
+  return (
+    <WindowPanel
+      title={namespace}
+      actions={
+        <MonoBadge tone="muted">
+          {entries.length} {entries.length === 1 ? "entry" : "entries"}
+        </MonoBadge>
+      }
+      flush
+    >
+      <DataGrid
+        columns={[
+          { label: "KEY", width: "230px" },
+          { label: "VALUE", width: "1fr" },
+          { label: "TYPE", width: "80px" },
+          { label: "SOURCE", width: "90px" },
+          { label: "UPDATED", width: "170px" },
+          { label: "ACTIONS", width: "180px", align: "right" },
+        ]}
+        rows={entries}
+        getKey={(e) => e.key}
+        empty={
+          <div
+            className="font-mono"
+            style={{
+              padding: 22,
+              textAlign: "center",
+              fontSize: 11,
+              color: "var(--text-muted)",
+            }}
+          >
+            no entries in this namespace.
+          </div>
+        }
+        renderCells={(entry) => {
+          const isEditing = editingKey === entry.key;
+          const eff = String(entry.effective_value);
+          const effDisplay = eff.length > 60 ? `${eff.slice(0, 60)}\u2026` : eff;
+          const stored = String(entry.value);
+          const storedDisplay =
+            stored.length > 60 ? `${stored.slice(0, 60)}\u2026` : stored;
+          return [
+            <code
+              key="k"
+              className="font-mono"
+              style={{ fontSize: 10.5, color: "var(--text-primary)" }}
+            >
+              {entry.key}
+            </code>,
+            isEditing ? (
               <EditRowForm
+                key="v"
                 entry={entry}
                 onSave={(req) => onEdit(entry, req)}
                 onCancel={() => setEditingKey(null)}
                 isPending={isEditPending}
               />
-            );
-          }
-          const eff = String(entry.effective_value);
-          const effDisplay = eff.length > 60 ? `${eff.slice(0, 60)}…` : eff;
-          const stored = String(entry.value);
-          const storedDisplay =
-            stored.length > 60 ? `${stored.slice(0, 60)}…` : stored;
-          return (
-            <div className="flex flex-col gap-0.5 min-w-0">
-              <div className="flex items-center gap-1.5 min-w-0">
-                <span
-                  className="font-mono text-xs text-text truncate"
-                  title={eff.length > 60 ? eff : undefined}
+            ) : (
+              <div key="v" className="flex flex-col" style={{ gap: 2 }}>
+                <div
+                  className="flex items-center"
+                  style={{ gap: 6, minWidth: 0 }}
                 >
-                  {effDisplay}
-                </span>
-                {entry.overridden_by_env && (
-                  <AilaBadge
-                    severity="info"
-                    size="sm"
-                    title={entry.env_key}
+                  <span
+                    className="font-mono truncate"
+                    title={eff.length > 60 ? eff : undefined}
+                    style={{
+                      fontSize: 10.5,
+                      color: "var(--text-primary)",
+                    }}
                   >
-                    env
-                  </AilaBadge>
+                    {effDisplay}
+                  </span>
+                  {entry.overridden_by_env && (
+                    <MonoBadge tone="info" title={entry.env_key}>
+                      env
+                    </MonoBadge>
+                  )}
+                </div>
+                {entry.overridden_by_env && (
+                  <span
+                    className="font-mono truncate"
+                    title={stored.length > 60 ? stored : undefined}
+                    style={{ fontSize: 10, color: "var(--text-faint)" }}
+                  >
+                    stored: {storedDisplay}
+                  </span>
                 )}
               </div>
-              {entry.overridden_by_env && (
-                <span
-                  className="font-mono text-xs text-text-muted truncate"
-                  title={stored.length > 60 ? stored : undefined}
-                >
-                  stored: {storedDisplay}
-                </span>
-              )}
-            </div>
-          );
-        },
-      },
-      {
-        id: "value_type",
-        header: "Type",
-        accessorKey: "value_type",
-        cell: ({ getValue }) => {
-          const vt = String(getValue());
-          return (
-            <AilaBadge severity={valueTypeSeverity(vt)} size="sm">
-              {vt}
-            </AilaBadge>
-          );
-        },
-      },
-      {
-        id: "source",
-        header: "Source",
-        enableSorting: false,
-        cell: ({ row }) => {
-          const source = row.original.effective_source;
-          const severity =
-            source === "env" ? "info" : source === "default" ? "neutral" : "low";
-          return (
-            <AilaBadge severity={severity} size="sm">
-              {source}
-            </AilaBadge>
-          );
-        },
-      },
-      {
-        id: "updated_at",
-        header: "Updated",
-        accessorKey: "updated_at",
-        cell: ({ getValue }) => (
-          <span className="font-mono text-xs text-text-muted whitespace-nowrap">
-            {formatTimestamp(getValue() as string | null)}
-          </span>
-        ),
-      },
-      {
-        id: "actions",
-        header: "Actions",
-        enableSorting: false,
-        cell: ({ row }) => {
-          const entry = row.original;
-          const isEditing = editingKey === entry.key;
-          return isEditing ? null : (
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 px-2 gap-1 text-xs"
-              onClick={() => setEditingKey(entry.key)}
+            ),
+            <MonoBadge key="t" tone={valueTypeTone(entry.value_type)}>
+              {entry.value_type}
+            </MonoBadge>,
+            <MonoBadge key="s" tone={sourceTone(entry.effective_source)}>
+              {entry.effective_source}
+            </MonoBadge>,
+            <span
+              key="u"
+              className="font-mono"
+              style={{ fontSize: 10, color: "var(--text-faint)" }}
             >
-              <Pencil className="h-3 w-3" />
-              Edit
-            </Button>
-          );
-        },
-      },
-    ],
-    [editingKey, onEdit, isEditPending],
-  );
-
-  return (
-    <AilaCard variant="elevated" padding="md"><div className="flex items-center gap-2 mb-3">
-      <h2 className="font-mono text-sm font-semibold text-text capitalize">
-        {namespace}
-      </h2>
-      <AilaBadge severity="neutral" size="sm">
-        {entries.length} {entries.length === 1 ? "entry" : "entries"}
-      </AilaBadge>
-    </div>
-    
-    <AilaTable
-      data={entries}
-      columns={columns}
-      pageSize={50}
-      enableSorting
-      enableFiltering={false}
-      className="border-0"
-    >
-      <AilaTable.Header />
-      <AilaTable.Body emptyState="No entries in this namespace." />
-      <AilaTable.Pagination pageSizeOptions={[25, 50]} />
-    </AilaTable></AilaCard>
+              {entry.updated_at
+                ? new Date(entry.updated_at).toLocaleString()
+                : "--"}
+            </span>,
+            <span
+              key="a"
+              className="flex"
+              style={{ gap: 6, justifyContent: "flex-end" }}
+            >
+              {!isEditing && (
+                <button
+                  type="button"
+                  style={BTN_STYLE}
+                  onClick={() => setEditingKey(entry.key)}
+                >
+                  {"\u270e"} EDIT
+                </button>
+              )}
+            </span>,
+          ];
+        }}
+      />
+    </WindowPanel>
   );
 }
 
@@ -394,7 +424,6 @@ export function PlatformConfigPage() {
 
   const entries = configQuery.data?.items ?? [];
 
-  // Group entries by namespace
   const namespaceGroups = useMemo(() => {
     const groups = new Map<string, ConfigEntry[]>();
     for (const entry of entries) {
@@ -406,6 +435,7 @@ export function PlatformConfigPage() {
   }, [entries]);
 
   const namespaceCount = namespaceGroups.length;
+  const totalEntries = configQuery.data?.total ?? entries.length;
 
   async function handleEdit(entry: ConfigEntry, req: ConfigUpdateRequest) {
     await updateMutation.mutateAsync({
@@ -416,58 +446,77 @@ export function PlatformConfigPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6 p-4 lg:p-6">
-      {/* Page header */}
+    <div className="flex flex-col" style={{ gap: 16, padding: 20 }}>
+      <SectionHeader
+        icon={"\u25c7"}
+        title="Platform config"
+        actions={
+          <button
+            type="button"
+            className="font-mono uppercase"
+            style={{ ...BTN_STYLE, height: 26, fontSize: 9.5, padding: "0 11px" }}
+            onClick={() => void configQuery.refetch()}
+            disabled={configQuery.isFetching}
+          >
+            {configQuery.isFetching ? "REFRESHING\u2026" : "REFRESH"}
+          </button>
+        }
+      />
 
-      {/* Metric cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Total Entries
-        </p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {configQuery.data?.total ?? "--"}
-        </p>
-        <p className="font-mono text-xs text-text-muted mt-0.5">
-          All namespaces
-        </p></AilaCard>
-
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Namespaces
-        </p>
-        <div className="mt-1 min-h-[2rem]">
-          {configQuery.isLoading ? (
-            <LoadingSkeleton size="md" width="third" aria-label="Loading config" />
-          ) : (
-            <p className="font-mono text-2xl font-semibold text-text">{namespaceCount}</p>
-          )}
-        </div>
-        <p className="font-mono text-xs text-text-muted mt-0.5">
-          Module groups
-        </p></AilaCard>
+      {/* Metric row */}
+      <div
+        className="grid"
+        style={{ gridTemplateColumns: "1fr 1fr", gap: 12 }}
+      >
+        <WindowPanel title="total entries">
+          <BigStat value={totalEntries} sub="across all namespaces" />
+        </WindowPanel>
+        <WindowPanel title="namespaces">
+          <BigStat value={namespaceCount} sub="module groups" />
+        </WindowPanel>
       </div>
 
-      {/* Error banner */}
       {configQuery.isError && (
-        <div className="rounded-[4px] border border-destructive bg-destructive/10 px-4 py-3 font-mono text-sm text-destructive">
-          Failed to load config: {(configQuery.error as Error).message}
+        <div
+          className="font-mono"
+          style={{
+            border:
+              "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+            background:
+              "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+            color: "var(--status-warn)",
+            padding: "10px 14px",
+            fontSize: 11,
+            borderRadius: 3,
+          }}
+        >
+          failed to load config: {(configQuery.error as Error).message}
         </div>
       )}
 
-      {/* Loading skeleton */}
       {configQuery.isLoading && (
-        <AilaCard variant="default" padding="md"><LoadingSkeletonGroup lines={6} /></AilaCard>
+        <WindowPanel title="config" status="LOADING" tone="muted">
+          <LoadingSkeletonGroup lines={6} />
+        </WindowPanel>
       )}
 
-      {/* Empty state */}
       {!configQuery.isLoading && !configQuery.isError && entries.length === 0 && (
-        <EmptyState
-          icon={<GearSix className="h-10 w-10" />}
-          title="No configuration entries"
-          description="No module configuration entries are registered. Entries are created when modules initialize."
-        />
+        <WindowPanel title="config">
+          <div
+            className="font-mono"
+            style={{
+              padding: 34,
+              textAlign: "center",
+              fontSize: 12,
+              color: "var(--text-muted)",
+            }}
+          >
+            no configuration entries. entries are created when modules
+            initialize.
+          </div>
+        </WindowPanel>
       )}
 
-      {/* Namespace groups */}
       {!configQuery.isLoading &&
         namespaceGroups.map(([namespace, nsEntries]) => (
           <NamespaceGroup

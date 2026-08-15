@@ -14,21 +14,18 @@
  *   POST /cost/estimate-human     -- post-scan human-equivalent estimate
  */
 import { useMemo, useState } from "react";
-import { CurrencyDollar } from "@phosphor-icons/react/dist/csr/CurrencyDollar";
-import { TrendUp } from "@phosphor-icons/react/dist/csr/TrendUp";
-import { TrendDown } from "@phosphor-icons/react/dist/csr/TrendDown";
-import { ChartLineUp } from "@phosphor-icons/react/dist/csr/ChartLineUp";
-import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
-import { Calculator } from "@phosphor-icons/react/dist/csr/Calculator";
-import { UsersThree } from "@phosphor-icons/react/dist/csr/UsersThree";
 
-import { AilaCard } from "@/components/aila/AilaCard";
-import { AilaBadge } from "@/components/aila/AilaBadge";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { AilaChart } from "@/components/aila/AilaChart";
-import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
-import { EmptyState } from "@/components/aila/EmptyState";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
+import {
+  SectionHeader,
+  FilterChip,
+  BigStat,
+  StatBar,
+  MonoBadge,
+  DataGrid,
+} from "@/components/aila/mock";
 import { FeatureBoundary } from "@app/FeatureBoundary";
 import { useThemeChartColors } from "@platform/features/viz/chartColors";
 
@@ -71,78 +68,146 @@ function parseList(raw: string): string[] {
     .filter((s) => s.length > 0);
 }
 
-function confidenceTone(
-  confidence: string,
-): "critical" | "high" | "medium" | "low" | "neutral" {
+type ConfidenceTone = "critical" | "high" | "medium" | "low" | "muted";
+
+function confidenceTone(confidence: string): ConfidenceTone {
   switch (confidence) {
     case "high":
     case "historical":
-      return "low"; // green -- reliable
+      return "low";
     case "medium":
       return "medium";
     case "low":
     case "worst_case":
-      return "high"; // amber -- shaky
+      return "high";
     default:
-      return "neutral";
+      return "muted";
   }
 }
 
 // ---------------------------------------------------------------------------
-// Trend bar -- inline horizontal bar per month
+// Mock chrome
+// ---------------------------------------------------------------------------
+
+const BTN_STYLE: React.CSSProperties = {
+  height: 26,
+  fontSize: 9.5,
+  padding: "0 11px",
+  letterSpacing: "0.08em",
+  borderRadius: 3,
+  border: "1px solid var(--border-soft)",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  cursor: "pointer",
+  fontFamily: "var(--font-mono)",
+  textTransform: "uppercase",
+};
+
+const BTN_ACCENT_STYLE: React.CSSProperties = {
+  ...BTN_STYLE,
+  border: "1px solid var(--accent)",
+  background: "color-mix(in srgb, var(--accent) 14%, transparent)",
+  color: "var(--accent)",
+};
+
+const INPUT_STYLE: React.CSSProperties = {
+  height: 28,
+  fontSize: 11,
+  padding: "0 10px",
+  borderRadius: 3,
+  border: "1px solid var(--border-soft)",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  outline: "none",
+  fontFamily: "var(--font-mono)",
+  width: "100%",
+};
+
+const LABEL_STYLE: React.CSSProperties = {
+  fontSize: 9,
+  letterSpacing: "0.1em",
+  color: "var(--text-faint)",
+  fontFamily: "var(--font-mono)",
+  textTransform: "uppercase",
+};
+
+function ErrorBox({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="font-mono"
+      style={{
+        border:
+          "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+        background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+        color: "var(--status-warn)",
+        padding: "8px 12px",
+        fontSize: 11,
+        borderRadius: 3,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Monthly trend bars (inline StatBar per month with per-model chips beneath)
 // ---------------------------------------------------------------------------
 
 function MonthlyTrend({ months }: { months: MonthlyCostEntry[] }) {
   if (months.length === 0) {
     return (
-      <p className="font-mono text-xs text-text-muted">
-        No cost data in the selected window.
+      <p
+        className="font-mono"
+        style={{ fontSize: 11, color: "var(--text-muted)" }}
+      >
+        no cost data in the selected window.
       </p>
     );
   }
   const max = Math.max(...months.map((m) => m.total_cost_usd), 0.0001);
 
   return (
-    <div className="flex flex-col gap-3">
-      {months.map((m) => {
-        const pct = (m.total_cost_usd / max) * 100;
-        return (
-          <div key={m.year_month} className="flex flex-col gap-1">
-            <div className="flex items-center justify-between font-mono text-xs">
-              <span className="text-text-muted">{m.year_month}</span>
-              <span className="text-text">
-                {formatUsd(m.total_cost_usd, 4)} ·{" "}
-                <span className="text-text-muted">
-                  {formatTokens(m.total_tokens)} tokens
-                </span>
+    <div className="flex flex-col" style={{ gap: 10 }}>
+      {months.map((m) => (
+        <div key={m.year_month} className="flex flex-col" style={{ gap: 4 }}>
+          <div
+            className="flex items-center justify-between font-mono"
+            style={{ fontSize: 10.5 }}
+          >
+            <span style={{ color: "var(--text-faint)" }}>{m.year_month}</span>
+            <span style={{ color: "var(--text-primary)" }}>
+              {formatUsd(m.total_cost_usd, 4)}
+              {"  \u00b7  "}
+              <span style={{ color: "var(--text-faint)" }}>
+                {formatTokens(m.total_tokens)} tokens
               </span>
-            </div>
-            <div className="h-2 w-full rounded-[2px] bg-base border border-border overflow-hidden">
-              <div
-                className="h-full bg-accent transition-all duration-200"
-                style={{ width: `${pct}%` }}
-                aria-label={`${m.year_month} cost ${formatUsd(m.total_cost_usd, 4)}`}
-              />
-            </div>
-            {m.models.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mt-0.5">
-                {m.models.map((mc) => (
-                  <AilaBadge
-                    key={`${m.year_month}-${mc.model_id}`}
-                    severity="neutral"
-                    size="sm"
-                  >
-                    <span className="text-text">{mc.model_id}</span>
-                    <span className="ml-1 text-text-muted">
-                      {formatUsd(mc.cost_usd, 4)}
-                    </span>
-                  </AilaBadge>
-                ))}
-              </div>
-            )}
+            </span>
           </div>
-        );
-      })}
+          <StatBar
+            label={m.year_month.slice(-5)}
+            color="var(--accent)"
+            value={Math.round((m.total_cost_usd / max) * 100)}
+            max={100}
+          />
+          {m.models.length > 0 && (
+            <div className="flex flex-wrap" style={{ gap: 5, marginTop: 2 }}>
+              {m.models.map((mc) => (
+                <MonoBadge
+                  key={`${m.year_month}-${mc.model_id}`}
+                  tone="muted"
+                >
+                  {mc.model_id}
+                  {"  "}
+                  <span style={{ color: "var(--text-muted)", marginLeft: 4 }}>
+                    {formatUsd(mc.cost_usd, 4)}
+                  </span>
+                </MonoBadge>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -150,11 +215,6 @@ function MonthlyTrend({ months }: { months: MonthlyCostEntry[] }) {
 // ---------------------------------------------------------------------------
 // Cost trend chart -- AilaChart area over months
 // ---------------------------------------------------------------------------
-//
-// Chronological view of monthly cost totals. The inline MonthlyTrend bars
-// above stay as the detailed per-month per-model drilldown; this chart
-// provides the at-a-glance direction (up/down/flat) that a stack of bars
-// with mixed magnitudes does not read cleanly.
 
 interface CostTrendPoint extends Record<string, unknown> {
   year_month: string;
@@ -171,8 +231,6 @@ function CostTrendChart({
 }) {
   const points: CostTrendPoint[] = months.map((m) => ({
     year_month: m.year_month,
-    // recharts serialises the value verbatim; round to a stable dollar
-    // precision so tooltips don't leak float-add drift like 3.1400000000004.
     total_cost_usd: Math.round(m.total_cost_usd * 10000) / 10000,
     total_tokens: m.total_tokens,
   }));
@@ -190,11 +248,8 @@ function CostTrendChart({
 }
 
 // ---------------------------------------------------------------------------
-// Model usage chart -- per-model rollup pie across the requested window
+// Model usage pie
 // ---------------------------------------------------------------------------
-//
-// Which models drove spend in the selected window. Sourced from the same
-// `/cost/history` payload as the trend above; no extra round trip.
 
 function ModelUsageChart({
   rows,
@@ -205,8 +260,11 @@ function ModelUsageChart({
 }) {
   if (rows.length === 0) {
     return (
-      <p className="font-mono text-xs text-text-muted">
-        No model-level cost records in the selected window.
+      <p
+        className="font-mono"
+        style={{ fontSize: 11, color: "var(--text-muted)" }}
+      >
+        no model-level cost records in the selected window.
       </p>
     );
   }
@@ -228,78 +286,72 @@ function ModelUsageChart({
 }
 
 // ---------------------------------------------------------------------------
-// Per-run breakdown -- GET /cost/runs/{run_id}
+// Per-run breakdown -- DataGrid replacement of the old table
 // ---------------------------------------------------------------------------
 
-function RunBreakdownTable({ data }: { data: CostBreakdownResponse }) {
+function RunBreakdownGrid({ data }: { data: CostBreakdownResponse }) {
   if (data.models.length === 0) {
     return (
-      <p className="font-mono text-xs text-text-muted">
-        No per-model cost records for run{" "}
-        <span className="text-text">{data.run_id}</span>.
+      <p
+        className="font-mono"
+        style={{ fontSize: 11, color: "var(--text-muted)" }}
+      >
+        no per-model cost records for run{" "}
+        <span style={{ color: "var(--text-primary)" }}>{data.run_id}</span>.
       </p>
     );
   }
   return (
-    <div className="overflow-x-auto">
-      <table aria-label="Cost aggregates" className="w-full font-mono text-xs border-collapse [&_th]:border [&_th]:border-border [&_th]:uppercase [&_th]:tracking-wider [&_td]:border [&_td]:border-border">
-        <thead>
-          <tr className="text-left text-text-muted">
-            <th className="py-1.5 pr-4 font-normal uppercase tracking-wider">
-              Model
-            </th>
-            <th className="py-1.5 pr-4 font-normal uppercase tracking-wider text-right">
-              Calls
-            </th>
-            <th className="py-1.5 pr-4 font-normal uppercase tracking-wider text-right">
-              Prompt tok
-            </th>
-            <th className="py-1.5 pr-4 font-normal uppercase tracking-wider text-right">
-              Completion tok
-            </th>
-            <th className="py-1.5 pr-4 font-normal uppercase tracking-wider text-right">
-              Total tok
-            </th>
-            <th className="py-1.5 font-normal uppercase tracking-wider text-right">
-              Cost
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.models.map((m) => (
-            <tr key={m.model_id} className="border-t border-border">
-              <td className="py-1.5 pr-4 text-text">{m.model_id}</td>
-              <td className="py-1.5 pr-4 text-right text-text-muted">
-                {formatTokens(m.call_count)}
-              </td>
-              <td className="py-1.5 pr-4 text-right text-text-muted">
-                {formatTokens(m.prompt_tokens)}
-              </td>
-              <td className="py-1.5 pr-4 text-right text-text-muted">
-                {formatTokens(m.completion_tokens)}
-              </td>
-              <td className="py-1.5 pr-4 text-right text-text-muted">
-                {formatTokens(m.total_tokens)}
-              </td>
-              <td className="py-1.5 text-right text-text">
-                {formatUsd(m.cost_usd, 4)}
-              </td>
-            </tr>
-          ))}
-          <tr className="border-t border-border">
-            <td className="py-1.5 pr-4 text-text font-semibold" colSpan={4}>
-              Total
-            </td>
-            <td className="py-1.5 pr-4 text-right text-text">
-              {formatTokens(data.total_tokens)}
-            </td>
-            <td className="py-1.5 text-right text-text font-semibold">
-              {formatUsd(data.total_cost_usd, 4)}
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <DataGrid
+      columns={[
+        { label: "MODEL", width: "1fr" },
+        { label: "CALLS", width: "80px", align: "right" },
+        { label: "PROMPT", width: "110px", align: "right" },
+        { label: "COMPLETION", width: "120px", align: "right" },
+        { label: "TOTAL TOK", width: "110px", align: "right" },
+        { label: "COST", width: "110px", align: "right" },
+      ]}
+      rows={data.models}
+      getKey={(m) => m.model_id}
+      renderCells={(m) => [
+        <span
+          key="m"
+          style={{ color: "var(--text-primary)", fontSize: 11 }}
+        >
+          {m.model_id}
+        </span>,
+        <span
+          key="c"
+          style={{ color: "var(--text-muted)", fontSize: 11 }}
+        >
+          {formatTokens(m.call_count)}
+        </span>,
+        <span
+          key="p"
+          style={{ color: "var(--text-muted)", fontSize: 11 }}
+        >
+          {formatTokens(m.prompt_tokens)}
+        </span>,
+        <span
+          key="cp"
+          style={{ color: "var(--text-muted)", fontSize: 11 }}
+        >
+          {formatTokens(m.completion_tokens)}
+        </span>,
+        <span
+          key="t"
+          style={{ color: "var(--text-muted)", fontSize: 11 }}
+        >
+          {formatTokens(m.total_tokens)}
+        </span>,
+        <span
+          key="$"
+          style={{ color: "var(--text-primary)", fontSize: 11 }}
+        >
+          {formatUsd(m.cost_usd, 4)}
+        </span>,
+      ]}
+    />
   );
 }
 
@@ -308,10 +360,10 @@ function RunBreakdownTable({ data }: { data: CostBreakdownResponse }) {
 // ---------------------------------------------------------------------------
 
 const RANGE_OPTIONS: { label: string; months: number }[] = [
-  { label: "1m", months: 1 },
-  { label: "3m", months: 3 },
-  { label: "6m", months: 6 },
-  { label: "12m", months: 12 },
+  { label: "1M", months: 1 },
+  { label: "3M", months: 3 },
+  { label: "6M", months: 6 },
+  { label: "12M", months: 12 },
 ];
 
 const DEFAULT_ESTIMATE_TASK_TYPES = "vulnerability_scan, remediation_planning";
@@ -320,12 +372,11 @@ const DEFAULT_HUMAN_TASK_TYPES = "triage, remediation_planning";
 export function CostPage() {
   const [historyMonths, setHistoryMonths] = useState(6);
   const [roiMonths, setRoiMonths] = useState(3);
+  const [moduleFilter, setModuleFilter] = useState<string | null>(null);
 
-  // Per-run drilldown state
   const [runIdInput, setRunIdInput] = useState("");
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
 
-  // Pre-scan estimate state
   const [estTargetCount, setEstTargetCount] = useState("10");
   const [estTaskTypesRaw, setEstTaskTypesRaw] = useState(
     DEFAULT_ESTIMATE_TASK_TYPES,
@@ -333,7 +384,6 @@ export function CostPage() {
   const [estResult, setEstResult] = useState<CostEstimateResponse | null>(null);
   const [estError, setEstError] = useState<string | null>(null);
 
-  // Human-equivalent estimate state
   const [humRunId, setHumRunId] = useState("");
   const [humTargetCount, setHumTargetCount] = useState("10");
   const [humFindingCount, setHumFindingCount] = useState("0");
@@ -341,9 +391,7 @@ export function CostPage() {
   const [humTaskTypesRaw, setHumTaskTypesRaw] = useState(
     DEFAULT_HUMAN_TASK_TYPES,
   );
-  const [humResult, setHumResult] = useState<HumanEstimateResponse | null>(
-    null,
-  );
+  const [humResult, setHumResult] = useState<HumanEstimateResponse | null>(null);
   const [humError, setHumError] = useState<string | null>(null);
 
   const historyQuery = useCostHistory(historyMonths);
@@ -372,20 +420,36 @@ export function CostPage() {
     return ((last - prev) / prev) * 100;
   }, [months]);
 
-  // Chart palette resolved from active theme so recharts SVG fills render
-  // reliably (CSS var(--*) doesn't resolve in SVG presentation attributes).
   const themeColors = useThemeChartColors();
 
-  // Per-model rollup across the requested history window -- reuses the same
-  // /cost/history payload the trend card renders (no extra request).
   const modelRollup = useMemo(
     () => aggregateModelsAcrossMonths(months),
     [months],
   );
 
-  // Palette for the model-usage pie: cycle through the semantic accents so
-  // no two adjacent slices share a hue. Slice count is small (few LLMs per
-  // window) so a 6-color rotation is plenty.
+  const filteredRollup = useMemo(() => {
+    if (!moduleFilter) return modelRollup;
+    // The rollup is keyed by model_id; "module" here is best-effort match
+    // against the model_id string (e.g. filter by provider prefix).
+    return modelRollup.filter((r) =>
+      r.model_id.toLowerCase().includes(moduleFilter.toLowerCase()),
+    );
+  }, [modelRollup, moduleFilter]);
+
+  const rollupTotal = useMemo(
+    () => filteredRollup.reduce((sum, r) => sum + r.cost_usd, 0),
+    [filteredRollup],
+  );
+
+  const providerFacets = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of modelRollup) {
+      const [head] = r.model_id.split(/[/:]/);
+      if (head) set.add(head);
+    }
+    return Array.from(set).sort();
+  }, [modelRollup]);
+
   const modelPalette = useMemo<string[]>(
     () => [
       themeColors.accent,
@@ -485,619 +549,712 @@ export function CostPage() {
     );
   }
 
+  const trendGlyph =
+    trendDelta === null ? "" : trendDelta >= 0 ? " \u25b2" : " \u25bc";
+
   return (
-    <div className="flex flex-col gap-6 p-4 lg:p-6">
-      {/* Top metric cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Total Cost ({historyMonths}m)
-          </p>
-          <div className="mt-1 min-h-[2rem]">
-            {historyQuery.isLoading ? (
-              <LoadingSkeleton size="md" width="half" aria-label="Loading total cost" />
-            ) : (
-              <p className="font-mono text-2xl font-semibold text-text">
-                {formatUsd(grandTotal, 2)}
-              </p>
-            )}
-          </div>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Sum of monthly spend
-          </p>
-        </AilaCard>
-
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Cost / Scan
-          </p>
-          <div className="mt-1 min-h-[2rem]">
-            {roiQuery.isLoading ? (
-              <LoadingSkeleton size="md" width="half" aria-label="Loading cost per scan" />
-            ) : (
-              <p className="font-mono text-2xl font-semibold text-text">
-                {formatUsd(costPerRun, 4)}
-              </p>
-            )}
-          </div>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            {roi ? `${roi.run_count} runs · ${roiMonths}m` : "--"}
-          </p>
-        </AilaCard>
-
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            MoM Trend
-          </p>
-          <div className="mt-1 min-h-[2rem]">
-            {historyQuery.isLoading ? (
-              <LoadingSkeleton size="md" width="third" aria-label="Loading month-over-month trend" />
-            ) : (
-              <p className="font-mono text-2xl font-semibold text-text flex items-center gap-1.5">
-                {trendDelta === null
-                  ? "--"
-                  : `${trendDelta >= 0 ? "+" : ""}${trendDelta.toFixed(1)}%`}
-                {trendDelta !== null && trendDelta >= 0 && (
-                  <TrendUp className="h-5 w-5 text-high" />
-                )}
-                {trendDelta !== null && trendDelta < 0 && (
-                  <TrendDown className="h-5 w-5 text-low" />
-                )}
-              </p>
-            )}
-          </div>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            Latest vs previous month
-          </p>
-        </AilaCard>
-
-        <AilaCard variant="elevated" padding="md">
-          <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            ROI ({roiMonths}m)
-          </p>
-          <div className="mt-1 min-h-[2rem]">
-            {roiQuery.isLoading ? (
-              <LoadingSkeleton size="md" width="third" aria-label="Loading ROI" />
-            ) : (
-              <p
-                className={`font-mono text-2xl font-semibold ${
-                  roi && roi.roi_percentage >= 0 ? "text-low" : "text-high"
-                }`}
-              >
-                {!roi
-                  ? "--"
-                  : `${roi.roi_percentage >= 0 ? "+" : ""}${roi.roi_percentage.toFixed(1)}%`}
-              </p>
-            )}
-          </div>
-          <p className="font-mono text-xs text-text-muted mt-0.5">
-            vs human-equivalent
-          </p>
-        </AilaCard>
-      </div>
-
-      {/* History card -- scoped boundary so a render fault in the trend
-          card doesn't nuke the rest of the cost console. */}
-      <FeatureBoundary
-        label="Cost trend"
-        resetKeys={[historyMonths]}
-        onReset={() => void historyQuery.refetch()}
-      >
-      <AilaCard variant="default" padding="md">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <ChartLineUp className="h-4 w-4 text-accent" />
-            <h2 className="font-mono text-sm font-semibold text-text">
-              Cost trend
-            </h2>
-          </div>
-          <div className="flex gap-1">
+    <div className="flex flex-col" style={{ gap: 16, padding: 20 }}>
+      <SectionHeader
+        icon={"\u25c9"}
+        title="LLM cost"
+        actions={
+          <div className="flex items-center" style={{ gap: 6 }}>
             {RANGE_OPTIONS.map((opt) => (
-              <button
+              <FilterChip
                 key={opt.label}
-                type="button"
+                active={historyMonths === opt.months}
+                color="var(--accent)"
                 onClick={() => setHistoryMonths(opt.months)}
-                className={`touch-target px-2.5 py-1 rounded-[2px] border font-mono text-xs transition-colors ${
-                  historyMonths === opt.months
-                    ? "border-accent text-accent bg-accent/10"
-                    : "border-border text-text-muted hover:border-border-hover"
-                }`}
               >
                 {opt.label}
-              </button>
+              </FilterChip>
             ))}
           </div>
+        }
+      />
+
+      {/* Filter chip row: modules / providers */}
+      {providerFacets.length > 0 && (
+        <div className="flex flex-wrap items-center" style={{ gap: 6 }}>
+          <span
+            className="font-mono uppercase"
+            style={{
+              fontSize: 9,
+              letterSpacing: "0.1em",
+              color: "var(--text-faint)",
+              marginRight: 4,
+            }}
+          >
+            module
+          </span>
+          <FilterChip
+            active={moduleFilter === null}
+            color="var(--status-info)"
+            onClick={() => setModuleFilter(null)}
+          >
+            ALL
+          </FilterChip>
+          {providerFacets.map((facet) => (
+            <FilterChip
+              key={facet}
+              active={moduleFilter === facet}
+              color="var(--status-info)"
+              onClick={() =>
+                setModuleFilter(moduleFilter === facet ? null : facet)
+              }
+            >
+              {facet}
+            </FilterChip>
+          ))}
         </div>
+      )}
 
-        {historyQuery.isError && (
-          <div className="rounded-[4px] border border-destructive bg-destructive/10 px-4 py-3 font-mono text-sm text-destructive">
-            Failed to load cost history:{" "}
-            {(historyQuery.error as Error).message}
-          </div>
-        )}
+      {/* BigStat headline row */}
+      <div
+        className="grid"
+        style={{
+          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+          gap: 12,
+        }}
+      >
+        <WindowPanel title={`total spend / ${historyMonths}m`}>
+          <BigStat
+            value={formatUsd(grandTotal, 2)}
+            sub="sum of monthly spend"
+          />
+        </WindowPanel>
+        <WindowPanel title="cost / scan">
+          <BigStat
+            value={formatUsd(costPerRun, 4)}
+            sub={roi ? `${roi.run_count} runs \u00b7 ${roiMonths}m` : "\u2014"}
+          />
+        </WindowPanel>
+        <WindowPanel title="mom trend">
+          <BigStat
+            value={
+              trendDelta === null
+                ? "\u2014"
+                : `${trendDelta >= 0 ? "+" : ""}${trendDelta.toFixed(1)}%${trendGlyph}`
+            }
+            sub="latest vs previous month"
+          />
+        </WindowPanel>
+        <WindowPanel title={`roi / ${roiMonths}m`}>
+          <BigStat
+            value={
+              !roi
+                ? "\u2014"
+                : `${roi.roi_percentage >= 0 ? "+" : ""}${roi.roi_percentage.toFixed(1)}%`
+            }
+            sub="vs human-equivalent"
+          />
+        </WindowPanel>
+      </div>
 
-        {historyQuery.isLoading && <LoadingSkeletonGroup lines={4} />}
-
-        {!historyQuery.isLoading &&
-          !historyQuery.isError &&
-          months.length === 0 && (
-            <EmptyState
-              icon={<CurrencyDollar className="h-10 w-10" />}
-              title="No cost data"
-              description="No LLM cost records exist for the selected window. Run a scan to start populating the ledger."
-            />
-          )}
-
-        {!historyQuery.isLoading && months.length > 0 && (
-          <MonthlyTrend months={months} />
-        )}
-      </AilaCard>
-      </FeatureBoundary>
-
-      {/* Cost trend + Model usage side-by-side on wide viewports. Both feed
-          off the same /cost/history payload so no extra request fires.
-          Each chart gets its own scoped boundary -- one broken recharts
-          render should not take down its sibling. */}
+      {/* Trend + model usage side-by-side */}
       {!historyQuery.isLoading && !historyQuery.isError && months.length > 0 && (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div
+          className="grid"
+          style={{ gridTemplateColumns: "1fr 1fr", gap: 12 }}
+        >
           <FeatureBoundary
             label="Cost over time chart"
             resetKeys={[historyMonths, months.length]}
             onReset={() => void historyQuery.refetch()}
           >
-          <AilaCard variant="default" padding="md">
-            <div className="flex items-center gap-2 mb-3">
-              <ChartLineUp className="h-4 w-4 text-accent" />
-              <h2 className="font-mono text-sm font-semibold text-text">
-                Cost over time
-              </h2>
-            </div>
-            <p className="font-mono text-xs text-text-muted mb-3">
-              Monthly LLM spend across the selected window.
-            </p>
-            <CostTrendChart months={months} accent={themeColors.accent} />
-          </AilaCard>
+            <WindowPanel title="cost over time">
+              <p
+                className="font-mono"
+                style={{
+                  fontSize: 10.5,
+                  color: "var(--text-muted)",
+                  marginBottom: 8,
+                }}
+              >
+                monthly LLM spend across the selected window.
+              </p>
+              <CostTrendChart months={months} accent={themeColors.accent} />
+            </WindowPanel>
           </FeatureBoundary>
 
           <FeatureBoundary
             label="Model usage chart"
-            resetKeys={[historyMonths, modelRollup.length]}
+            resetKeys={[historyMonths, filteredRollup.length]}
             onReset={() => void historyQuery.refetch()}
           >
-          <AilaCard variant="default" padding="md">
-            <div className="flex items-center gap-2 mb-3">
-              <CurrencyDollar className="h-4 w-4 text-accent" />
-              <h2 className="font-mono text-sm font-semibold text-text">
-                Model usage
-              </h2>
-            </div>
-            <p className="font-mono text-xs text-text-muted mb-3">
-              Cost distribution by model across the selected window
-              {modelRollup.length > 0
-                ? ` \u00b7 ${modelRollup.length} model${modelRollup.length === 1 ? "" : "s"}`
-                : ""}
-              .
-            </p>
-            <ModelUsageChart rows={modelRollup} palette={modelPalette} />
-          </AilaCard>
+            <WindowPanel title="model usage">
+              <p
+                className="font-mono"
+                style={{
+                  fontSize: 10.5,
+                  color: "var(--text-muted)",
+                  marginBottom: 8,
+                }}
+              >
+                cost distribution by model across the selected window
+                {filteredRollup.length > 0
+                  ? ` \u00b7 ${filteredRollup.length} model${filteredRollup.length === 1 ? "" : "s"}`
+                  : ""}
+                .
+              </p>
+              <ModelUsageChart rows={filteredRollup} palette={modelPalette} />
+            </WindowPanel>
           </FeatureBoundary>
         </div>
       )}
 
-      {/* ROI card */}
+      {/* Breakdown by module (rollup grid) */}
+      {!historyQuery.isLoading && !historyQuery.isError && filteredRollup.length > 0 && (
+        <WindowPanel title="breakdown by module" flush>
+          <DataGrid
+            columns={[
+              { label: "MODEL", width: "1fr" },
+              { label: "CALLS", width: "90px", align: "right" },
+              { label: "TOTAL TOKENS", width: "140px", align: "right" },
+              { label: "COST", width: "120px", align: "right" },
+              { label: "SHARE", width: "80px", align: "right" },
+            ]}
+            rows={filteredRollup}
+            getKey={(r) => r.model_id}
+            renderCells={(r) => [
+              <span
+                key="m"
+                style={{ color: "var(--text-primary)", fontSize: 11 }}
+              >
+                {r.model_id}
+              </span>,
+              <span
+                key="c"
+                style={{ color: "var(--text-muted)", fontSize: 11 }}
+              >
+                {formatTokens(r.call_count)}
+              </span>,
+              <span
+                key="t"
+                style={{ color: "var(--text-muted)", fontSize: 11 }}
+              >
+                {formatTokens(r.total_tokens)}
+              </span>,
+              <span
+                key="$"
+                style={{ color: "var(--text-primary)", fontSize: 11 }}
+              >
+                {formatUsd(r.cost_usd, 4)}
+              </span>,
+              <span
+                key="s"
+                style={{ color: "var(--text-faint)", fontSize: 10.5 }}
+              >
+                {rollupTotal === 0
+                  ? "\u2014"
+                  : `${((r.cost_usd / rollupTotal) * 100).toFixed(1)}%`}
+              </span>,
+            ]}
+          />
+        </WindowPanel>
+      )}
+
+      {/* Trend detail (inline bars) */}
+      <FeatureBoundary
+        label="Cost trend"
+        resetKeys={[historyMonths]}
+        onReset={() => void historyQuery.refetch()}
+      >
+        <WindowPanel title="trend">
+          {historyQuery.isError && (
+            <ErrorBox>
+              failed to load cost history:{" "}
+              {(historyQuery.error as Error).message}
+            </ErrorBox>
+          )}
+          {historyQuery.isLoading && <LoadingSkeletonGroup lines={4} />}
+          {!historyQuery.isLoading &&
+            !historyQuery.isError &&
+            months.length === 0 && (
+              <p
+                className="font-mono"
+                style={{
+                  padding: 22,
+                  textAlign: "center",
+                  fontSize: 12,
+                  color: "var(--text-muted)",
+                }}
+              >
+                no cost data. run a scan to start populating the ledger.
+              </p>
+            )}
+          {!historyQuery.isLoading && months.length > 0 && (
+            <MonthlyTrend months={months} />
+          )}
+        </WindowPanel>
+      </FeatureBoundary>
+
+      {/* ROI summary */}
       <FeatureBoundary
         label="ROI summary"
         resetKeys={[roiMonths]}
         onReset={() => void roiQuery.refetch()}
       >
-      <AilaCard variant="default" padding="md">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <TrendUp className="h-4 w-4 text-accent" />
-            <h2 className="font-mono text-sm font-semibold text-text">
-              ROI summary
-            </h2>
-          </div>
-          <div className="flex gap-1">
-            {RANGE_OPTIONS.map((opt) => (
-              <button
-                key={opt.label}
-                type="button"
-                onClick={() => setRoiMonths(opt.months)}
-                className={`touch-target px-2.5 py-1 rounded-[2px] border font-mono text-xs transition-colors ${
-                  roiMonths === opt.months
-                    ? "border-accent text-accent bg-accent/10"
-                    : "border-border text-text-muted hover:border-border-hover"
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {roiQuery.isError && (
-          <div className="rounded-[4px] border border-destructive bg-destructive/10 px-4 py-3 font-mono text-sm text-destructive">
-            Failed to load ROI: {(roiQuery.error as Error).message}
-          </div>
-        )}
-
-        {roiQuery.isLoading && <LoadingSkeletonGroup lines={4} />}
-
-        {!roiQuery.isLoading && !roiQuery.isError && roi && (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="flex flex-col gap-0.5">
-              <p className="font-mono text-xs text-text-muted">LLM Spend</p>
-              <p className="font-mono text-lg text-text">
-                {formatUsd(roi.llm_cost_usd, 2)}
-              </p>
+        <WindowPanel
+          title="roi summary"
+          actions={
+            <div className="flex items-center" style={{ gap: 5 }}>
+              {RANGE_OPTIONS.map((opt) => (
+                <FilterChip
+                  key={opt.label}
+                  active={roiMonths === opt.months}
+                  color="var(--accent)"
+                  onClick={() => setRoiMonths(opt.months)}
+                >
+                  {opt.label}
+                </FilterChip>
+              ))}
             </div>
-            <div className="flex flex-col gap-0.5">
-              <p className="font-mono text-xs text-text-muted">
-                Human-Equivalent
-              </p>
-              <p className="font-mono text-lg text-text">
-                {formatUsd(roi.human_equivalent_cost_usd, 2)}
-              </p>
-              <p className="font-mono text-xs text-text-muted">
-                {roi.human_equivalent_hours.toFixed(1)}h
-              </p>
+          }
+        >
+          {roiQuery.isError && (
+            <ErrorBox>
+              failed to load ROI: {(roiQuery.error as Error).message}
+            </ErrorBox>
+          )}
+          {roiQuery.isLoading && <LoadingSkeletonGroup lines={3} />}
+          {!roiQuery.isLoading && !roiQuery.isError && roi && (
+            <div
+              className="grid"
+              style={{
+                gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                gap: 12,
+              }}
+            >
+              <div>
+                <span
+                  className="font-mono uppercase"
+                  style={{
+                    fontSize: 9,
+                    letterSpacing: "0.1em",
+                    color: "var(--text-faint)",
+                  }}
+                >
+                  llm spend
+                </span>
+                <p
+                  className="font-mono"
+                  style={{
+                    fontSize: 16,
+                    color: "var(--text-primary)",
+                    marginTop: 2,
+                  }}
+                >
+                  {formatUsd(roi.llm_cost_usd, 2)}
+                </p>
+              </div>
+              <div>
+                <span
+                  className="font-mono uppercase"
+                  style={{
+                    fontSize: 9,
+                    letterSpacing: "0.1em",
+                    color: "var(--text-faint)",
+                  }}
+                >
+                  human-equivalent
+                </span>
+                <p
+                  className="font-mono"
+                  style={{
+                    fontSize: 16,
+                    color: "var(--text-primary)",
+                    marginTop: 2,
+                  }}
+                >
+                  {formatUsd(roi.human_equivalent_cost_usd, 2)}
+                </p>
+                <p
+                  className="font-mono"
+                  style={{ fontSize: 10, color: "var(--text-faint)" }}
+                >
+                  {roi.human_equivalent_hours.toFixed(1)}h
+                </p>
+              </div>
+              <div>
+                <span
+                  className="font-mono uppercase"
+                  style={{
+                    fontSize: 9,
+                    letterSpacing: "0.1em",
+                    color: "var(--text-faint)",
+                  }}
+                >
+                  run count
+                </span>
+                <p
+                  className="font-mono"
+                  style={{
+                    fontSize: 16,
+                    color: "var(--text-primary)",
+                    marginTop: 2,
+                  }}
+                >
+                  {roi.run_count}
+                </p>
+              </div>
+              <div>
+                <span
+                  className="font-mono uppercase"
+                  style={{
+                    fontSize: 9,
+                    letterSpacing: "0.1em",
+                    color: "var(--text-faint)",
+                  }}
+                >
+                  period
+                </span>
+                <p
+                  className="font-mono"
+                  style={{
+                    fontSize: 10.5,
+                    color: "var(--text-primary)",
+                    marginTop: 2,
+                  }}
+                >
+                  {roi.period_start} {"\u2192"} {roi.period_end}
+                </p>
+              </div>
             </div>
-            <div className="flex flex-col gap-0.5">
-              <p className="font-mono text-xs text-text-muted">Run Count</p>
-              <p className="font-mono text-lg text-text">{roi.run_count}</p>
-            </div>
-            <div className="flex flex-col gap-0.5">
-              <p className="font-mono text-xs text-text-muted">Period</p>
-              <p className="font-mono text-xs text-text">
-                {roi.period_start} → {roi.period_end}
-              </p>
-            </div>
-          </div>
-        )}
-      </AilaCard>
+          )}
+        </WindowPanel>
       </FeatureBoundary>
 
-      {/* Per-run drilldown -- GET /cost/runs/{run_id} */}
+      {/* Per-run drilldown */}
       <FeatureBoundary
         label="Run cost drilldown"
         resetKeys={[activeRunId]}
         onReset={() => void runQuery.refetch()}
       >
-      <AilaCard variant="default" padding="md">
-        <div className="flex items-center gap-2 mb-3">
-          <MagnifyingGlass className="h-4 w-4 text-accent" />
-          <h2 className="font-mono text-sm font-semibold text-text">
-            Run cost drilldown
-          </h2>
-        </div>
-        <p className="font-mono text-xs text-text-muted mb-4">
-          Look up per-model cost for a single scan run. Uses the run_id
-          returned by the scan submit endpoint.
-        </p>
-        <form
-          className="flex flex-col gap-2 sm:flex-row sm:items-end"
-          onSubmit={handleRunSubmit}
-        >
-          <div className="flex flex-col gap-1 flex-1">
-            <label
-              className="font-mono text-xs text-text-muted"
-              htmlFor="cost-run-id"
-            >
-              Run ID
-            </label>
-            <Input
-              id="cost-run-id"
-              value={runIdInput}
-              onChange={(e) => setRunIdInput(e.target.value)}
-              placeholder="e.g. 4f0f1b6c-…"
-              className="touch-target font-mono text-sm"
-            />
-          </div>
-          <Button
-            type="submit"
-            size="sm"
-            className="gap-1.5"
-            disabled={runIdInput.trim().length === 0 || runQuery.isFetching}
+        <WindowPanel title="run cost drilldown">
+          <p
+            className="font-mono"
+            style={{
+              fontSize: 10.5,
+              color: "var(--text-muted)",
+              marginBottom: 10,
+            }}
           >
-            <MagnifyingGlass className="h-4 w-4" />
-            {runQuery.isFetching ? "Loading…" : "Load run"}
-          </Button>
-        </form>
-
-        {runQuery.isError && (
-          <div className="mt-3 rounded-[4px] border border-destructive bg-destructive/10 px-4 py-3 font-mono text-xs text-destructive">
-            Failed to load run cost: {(runQuery.error as Error).message}
-          </div>
-        )}
-
-        {runBreakdown && (
-          <div className="mt-4 flex flex-col gap-3">
-            <div className="flex flex-wrap items-center gap-3 font-mono text-xs">
-              <span className="text-text-muted">Run</span>
-              <span className="text-text">{runBreakdown.run_id}</span>
-              <span className="text-text-muted">Total</span>
-              <span className="text-text">
-                {formatUsd(runBreakdown.total_cost_usd, 4)}
-              </span>
-              <span className="text-text-muted">Tokens</span>
-              <span className="text-text">
-                {formatTokens(runBreakdown.total_tokens)}
-              </span>
+            per-model cost for a single scan run. uses the run_id returned by
+            the scan submit endpoint.
+          </p>
+          <form
+            className="flex items-end"
+            style={{ gap: 8, marginBottom: 12 }}
+            onSubmit={handleRunSubmit}
+          >
+            <div className="flex flex-col" style={{ gap: 4, flex: 1 }}>
+              <label style={LABEL_STYLE} htmlFor="cost-run-id">
+                run id
+              </label>
+              <input
+                id="cost-run-id"
+                value={runIdInput}
+                onChange={(e) => setRunIdInput(e.target.value)}
+                placeholder="e.g. 4f0f1b6c-..."
+                style={INPUT_STYLE}
+              />
             </div>
-            <RunBreakdownTable data={runBreakdown} />
-          </div>
-        )}
-      </AilaCard>
+            <button
+              type="submit"
+              style={BTN_ACCENT_STYLE}
+              disabled={runIdInput.trim().length === 0 || runQuery.isFetching}
+            >
+              {runQuery.isFetching ? "LOADING\u2026" : "LOAD RUN"}
+            </button>
+          </form>
+          {runQuery.isError && (
+            <ErrorBox>
+              failed to load run cost: {(runQuery.error as Error).message}
+            </ErrorBox>
+          )}
+          {runBreakdown && (
+            <div className="flex flex-col" style={{ gap: 10 }}>
+              <div
+                className="flex flex-wrap items-center font-mono"
+                style={{ gap: 10, fontSize: 10.5 }}
+              >
+                <span style={{ color: "var(--text-faint)" }}>run</span>
+                <span style={{ color: "var(--text-primary)" }}>
+                  {runBreakdown.run_id}
+                </span>
+                <span style={{ color: "var(--text-faint)" }}>total</span>
+                <span style={{ color: "var(--text-primary)" }}>
+                  {formatUsd(runBreakdown.total_cost_usd, 4)}
+                </span>
+                <span style={{ color: "var(--text-faint)" }}>tokens</span>
+                <span style={{ color: "var(--text-primary)" }}>
+                  {formatTokens(runBreakdown.total_tokens)}
+                </span>
+              </div>
+              <RunBreakdownGrid data={runBreakdown} />
+            </div>
+          )}
+        </WindowPanel>
       </FeatureBoundary>
 
-      {/* Pre-scan estimate -- POST /cost/estimate */}
-      <AilaCard variant="default" padding="md">
-        <div className="flex items-center gap-2 mb-3">
-          <Calculator className="h-4 w-4 text-accent" />
-          <h2 className="font-mono text-sm font-semibold text-text">
-            Pre-scan cost estimate
-          </h2>
-        </div>
-        <p className="font-mono text-xs text-text-muted mb-4">
-          Projects LLM spend for a hypothetical scan from your team's
-          historical averages per task_type. Falls back to worst-case
+      {/* Pre-scan estimate */}
+      <WindowPanel title="pre-scan cost estimate">
+        <p
+          className="font-mono"
+          style={{
+            fontSize: 10.5,
+            color: "var(--text-muted)",
+            marginBottom: 10,
+          }}
+        >
+          projects LLM spend for a hypothetical scan from your team's
+          historical averages per task_type. falls back to worst-case
           multipliers when the team has no prior scans.
         </p>
         <form
-          className="grid grid-cols-1 gap-3 sm:grid-cols-3"
+          className="grid"
+          style={{
+            gridTemplateColumns: "1fr 2fr",
+            gap: 8,
+            marginBottom: 12,
+          }}
           onSubmit={handleEstimateSubmit}
         >
-          <div className="flex flex-col gap-1">
-            <label
-              className="font-mono text-xs text-text-muted"
-              htmlFor="est-targets"
-            >
-              Target count
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE} htmlFor="est-targets">
+              target count
             </label>
-            <Input
+            <input
               id="est-targets"
               value={estTargetCount}
               onChange={(e) => setEstTargetCount(e.target.value)}
               inputMode="numeric"
-              className="touch-target font-mono text-sm"
+              style={INPUT_STYLE}
             />
           </div>
-          <div className="flex flex-col gap-1 sm:col-span-2">
-            <label
-              className="font-mono text-xs text-text-muted"
-              htmlFor="est-tasks"
-            >
-              Task types (comma-separated, max 20)
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE} htmlFor="est-tasks">
+              task types (max 20)
             </label>
-            <Input
+            <input
               id="est-tasks"
               value={estTaskTypesRaw}
               onChange={(e) => setEstTaskTypesRaw(e.target.value)}
               placeholder="vulnerability_scan, remediation_planning"
-              className="touch-target font-mono text-sm"
+              style={INPUT_STYLE}
             />
           </div>
-          <div className="sm:col-span-3">
-            <Button
+          <div style={{ gridColumn: "1 / -1" }}>
+            <button
               type="submit"
-              size="sm"
-              className="gap-1.5"
+              style={BTN_ACCENT_STYLE}
               disabled={estimateMutation.isPending}
             >
-              <Calculator className="h-4 w-4" />
-              {estimateMutation.isPending ? "Estimating…" : "Estimate cost"}
-            </Button>
+              {estimateMutation.isPending ? "ESTIMATING\u2026" : "ESTIMATE COST"}
+            </button>
           </div>
         </form>
-
-        {estError && (
-          <div className="mt-3 rounded-[4px] border border-destructive bg-destructive/10 px-4 py-3 font-mono text-xs text-destructive">
-            {estError}
-          </div>
-        )}
-
+        {estError && <ErrorBox>{estError}</ErrorBox>}
         {estResult && (
-          <div className="mt-4 flex flex-col gap-3">
-            <div className="flex flex-wrap items-center gap-3 font-mono text-sm">
-              <span className="text-text-muted uppercase tracking-wider text-xs">
-                Projected
-              </span>
-              <span className="text-text text-lg">
+          <div
+            className="flex flex-col"
+            style={{ gap: 10, marginTop: 12 }}
+          >
+            <div
+              className="flex flex-wrap items-center font-mono"
+              style={{ gap: 10 }}
+            >
+              <span style={LABEL_STYLE}>projected</span>
+              <span
+                style={{
+                  fontSize: 16,
+                  color: "var(--text-primary)",
+                }}
+              >
                 {formatUsd(estResult.estimated_cost_usd, 4)}
               </span>
-              <AilaBadge
-                severity={confidenceTone(estResult.confidence)}
-                size="sm"
-              >
+              <MonoBadge tone={confidenceTone(estResult.confidence)}>
                 {estResult.confidence}
-              </AilaBadge>
+              </MonoBadge>
             </div>
             {estResult.breakdown.length > 0 && (
-              <div className="overflow-x-auto">
-                <table aria-label="Cost breakdown" className="w-full font-mono text-xs border-collapse [&_th]:border [&_th]:border-border [&_th]:uppercase [&_th]:tracking-wider [&_td]:border [&_td]:border-border">
-                  <thead>
-                    <tr className="text-left text-text-muted">
-                      <th className="py-1.5 pr-4 font-normal uppercase tracking-wider">
-                        Task type
-                      </th>
-                      <th className="py-1.5 pr-4 font-normal uppercase tracking-wider text-right">
-                        Avg cost / target
-                      </th>
-                      <th className="py-1.5 font-normal uppercase tracking-wider text-right">
-                        Sample size
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {estResult.breakdown.map((row) => (
-                      <tr
-                        key={row.task_type}
-                        className="border-t border-border"
-                      >
-                        <td className="py-1.5 pr-4 text-text">
-                          {row.task_type}
-                        </td>
-                        <td className="py-1.5 pr-4 text-right text-text-muted">
-                          {formatUsd(row.avg_cost_usd, 6)}
-                        </td>
-                        <td className="py-1.5 text-right text-text-muted">
-                          {formatTokens(row.sample_count)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <DataGrid
+                columns={[
+                  { label: "TASK TYPE", width: "1fr" },
+                  { label: "AVG COST / TARGET", width: "170px", align: "right" },
+                  { label: "SAMPLE SIZE", width: "130px", align: "right" },
+                ]}
+                rows={estResult.breakdown}
+                getKey={(r) => r.task_type}
+                renderCells={(row) => [
+                  <span
+                    key="t"
+                    style={{ color: "var(--text-primary)", fontSize: 11 }}
+                  >
+                    {row.task_type}
+                  </span>,
+                  <span
+                    key="a"
+                    style={{ color: "var(--text-muted)", fontSize: 11 }}
+                  >
+                    {formatUsd(row.avg_cost_usd, 6)}
+                  </span>,
+                  <span
+                    key="s"
+                    style={{ color: "var(--text-muted)", fontSize: 11 }}
+                  >
+                    {formatTokens(row.sample_count)}
+                  </span>,
+                ]}
+              />
             )}
           </div>
         )}
-      </AilaCard>
+      </WindowPanel>
 
-      {/* Human-equivalent estimate -- POST /cost/estimate-human */}
-      <AilaCard variant="default" padding="md">
-        <div className="flex items-center gap-2 mb-3">
-          <UsersThree className="h-4 w-4 text-accent" />
-          <h2 className="font-mono text-sm font-semibold text-text">
-            Human-equivalent estimate
-          </h2>
-        </div>
-        <p className="font-mono text-xs text-text-muted mb-4">
-          For a completed run, project what the same triage and remediation
-          work would cost done by a human. Feeds the ROI ledger.
+      {/* Human-equivalent estimate */}
+      <WindowPanel title="human-equivalent estimate">
+        <p
+          className="font-mono"
+          style={{
+            fontSize: 10.5,
+            color: "var(--text-muted)",
+            marginBottom: 10,
+          }}
+        >
+          for a completed run, project what the same triage and remediation
+          work would cost done by a human. feeds the ROI ledger.
         </p>
         <form
-          className="grid grid-cols-1 gap-3 sm:grid-cols-2"
+          className="grid"
+          style={{
+            gridTemplateColumns: "1fr 1fr",
+            gap: 8,
+            marginBottom: 12,
+          }}
           onSubmit={handleHumanSubmit}
         >
-          <div className="flex flex-col gap-1 sm:col-span-2">
-            <label
-              className="font-mono text-xs text-text-muted"
-              htmlFor="hum-run-id"
-            >
-              Run ID
+          <div className="flex flex-col" style={{ gap: 4, gridColumn: "1 / -1" }}>
+            <label style={LABEL_STYLE} htmlFor="hum-run-id">
+              run id
             </label>
-            <Input
+            <input
               id="hum-run-id"
               value={humRunId}
               onChange={(e) => setHumRunId(e.target.value)}
               placeholder="Completed scan run_id"
-              className="touch-target font-mono text-sm"
+              style={INPUT_STYLE}
             />
           </div>
-          <div className="flex flex-col gap-1">
-            <label
-              className="font-mono text-xs text-text-muted"
-              htmlFor="hum-targets"
-            >
-              Target count
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE} htmlFor="hum-targets">
+              target count
             </label>
-            <Input
+            <input
               id="hum-targets"
               value={humTargetCount}
               onChange={(e) => setHumTargetCount(e.target.value)}
               inputMode="numeric"
-              className="touch-target font-mono text-sm"
+              style={INPUT_STYLE}
             />
           </div>
-          <div className="flex flex-col gap-1">
-            <label
-              className="font-mono text-xs text-text-muted"
-              htmlFor="hum-findings"
-            >
-              Finding count
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE} htmlFor="hum-findings">
+              finding count
             </label>
-            <Input
+            <input
               id="hum-findings"
               value={humFindingCount}
               onChange={(e) => setHumFindingCount(e.target.value)}
               inputMode="numeric"
-              className="touch-target font-mono text-sm"
+              style={INPUT_STYLE}
             />
           </div>
-          <div className="flex flex-col gap-1">
-            <label
-              className="font-mono text-xs text-text-muted"
-              htmlFor="hum-duration"
-            >
-              Scan duration (min)
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE} htmlFor="hum-duration">
+              scan duration (min)
             </label>
-            <Input
+            <input
               id="hum-duration"
               value={humDurationMinutes}
               onChange={(e) => setHumDurationMinutes(e.target.value)}
               inputMode="decimal"
-              className="touch-target font-mono text-sm"
+              style={INPUT_STYLE}
             />
           </div>
-          <div className="flex flex-col gap-1">
-            <label
-              className="font-mono text-xs text-text-muted"
-              htmlFor="hum-tasks"
-            >
-              Task types performed (max 50)
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE} htmlFor="hum-tasks">
+              task types performed (max 50)
             </label>
-            <Input
+            <input
               id="hum-tasks"
               value={humTaskTypesRaw}
               onChange={(e) => setHumTaskTypesRaw(e.target.value)}
               placeholder="triage, remediation_planning"
-              className="touch-target font-mono text-sm"
+              style={INPUT_STYLE}
             />
           </div>
-          <div className="sm:col-span-2">
-            <Button
+          <div style={{ gridColumn: "1 / -1" }}>
+            <button
               type="submit"
-              size="sm"
-              className="gap-1.5"
+              style={BTN_ACCENT_STYLE}
               disabled={humanMutation.isPending}
             >
-              <UsersThree className="h-4 w-4" />
               {humanMutation.isPending
-                ? "Estimating…"
-                : "Estimate human cost"}
-            </Button>
+                ? "ESTIMATING\u2026"
+                : "ESTIMATE HUMAN COST"}
+            </button>
           </div>
         </form>
-
-        {humError && (
-          <div className="mt-3 rounded-[4px] border border-destructive bg-destructive/10 px-4 py-3 font-mono text-xs text-destructive">
-            {humError}
-          </div>
-        )}
-
+        {humError && <ErrorBox>{humError}</ErrorBox>}
         {humResult && (
-          <div className="mt-4 flex flex-col gap-3">
-            <div className="flex flex-wrap items-center gap-3 font-mono text-sm">
-              <span className="text-text-muted uppercase tracking-wider text-xs">
-                Human cost
-              </span>
-              <span className="text-text text-lg">
+          <div
+            className="flex flex-col"
+            style={{ gap: 10, marginTop: 12 }}
+          >
+            <div
+              className="flex flex-wrap items-center font-mono"
+              style={{ gap: 10 }}
+            >
+              <span style={LABEL_STYLE}>human cost</span>
+              <span
+                style={{
+                  fontSize: 16,
+                  color: "var(--text-primary)",
+                }}
+              >
                 {formatUsd(humResult.human_cost_usd, 2)}
               </span>
-              <span className="text-text-muted uppercase tracking-wider text-xs">
-                Hours
-              </span>
-              <span className="text-text">
+              <span style={LABEL_STYLE}>hours</span>
+              <span
+                style={{ fontSize: 12, color: "var(--text-primary)" }}
+              >
                 {humResult.estimated_hours.toFixed(1)}h
               </span>
-              <AilaBadge
-                severity={confidenceTone(humResult.confidence)}
-                size="sm"
-              >
+              <MonoBadge tone={confidenceTone(humResult.confidence)}>
                 {humResult.confidence}
-              </AilaBadge>
+              </MonoBadge>
             </div>
             {humResult.reasoning && (
               <div
-                className="rounded-[4px] border border-border bg-base px-3 py-2 font-mono text-xs text-text-muted whitespace-pre-wrap"
+                className="font-mono"
+                style={{
+                  border: "1px solid var(--border-soft)",
+                  background: "var(--surface-sunk)",
+                  color: "var(--text-muted)",
+                  padding: "8px 12px",
+                  fontSize: 10.5,
+                  borderRadius: 3,
+                  whiteSpace: "pre-wrap",
+                }}
                 // reasoning is html-escaped server-side (schemas/cost.py:sanitize_reasoning)
                 dangerouslySetInnerHTML={{ __html: humResult.reasoning }}
               />
             )}
           </div>
         )}
-      </AilaCard>
+      </WindowPanel>
     </div>
   );
 }

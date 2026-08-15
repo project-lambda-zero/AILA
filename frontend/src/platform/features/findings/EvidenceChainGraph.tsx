@@ -11,6 +11,8 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
+import { MonoBadge } from "@/components/aila/mock";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { useEvidenceChain, type EvidenceNode, type EvidenceEdge } from "./api";
 
@@ -42,37 +44,40 @@ const NODE_X: Record<string, number> = {
   triage: 300,
 };
 
+const TYPE_TONE: Record<string, string> = {
+  scan_session: "var(--accent)",
+  advisory: "var(--status-info)",
+  finding: "var(--accent)",
+  cvss: "var(--status-warn)",
+  epss: "var(--status-ok)",
+  triage: "var(--text-muted)",
+};
+
+const LEGEND: Array<{ type: NodeType; label: string; tone: "accent" | "info" | "warn" | "ok" | "muted" }> = [
+  { type: "scan_session", label: "SCAN", tone: "accent" },
+  { type: "advisory", label: "ADVISORY", tone: "info" },
+  { type: "finding", label: "FINDING", tone: "accent" },
+  { type: "cvss", label: "CVSS", tone: "warn" },
+  { type: "epss", label: "EPSS", tone: "ok" },
+  { type: "triage", label: "TRIAGE", tone: "muted" },
+];
+
 // ---------------------------------------------------------------------------
-// Node color by type
+// Node style by type
 // ---------------------------------------------------------------------------
 
 function nodeStyle(type: string, available: boolean): React.CSSProperties {
-  const base: React.CSSProperties = {
+  return {
     padding: "10px 14px",
-    borderRadius: 4,
+    borderRadius: 3,
     fontSize: 11,
-    fontFamily: "JetBrains Mono, monospace",
+    fontFamily: "var(--font-mono)",
     border: available ? "1px solid" : "1px dashed",
+    borderColor: available ? (TYPE_TONE[type] ?? "var(--border)") : "var(--border)",
     minWidth: 160,
     maxWidth: 200,
-    background: "var(--color-surface)",
-    color: "var(--color-text)",
-  };
-
-  const borderColors: Record<string, string> = {
-    scan_session: "var(--color-accent)",
-    advisory: "var(--color-lavender)",
-    finding: "var(--color-critical)",
-    cvss: "var(--color-medium)",
-    epss: "var(--color-mint)",
-    triage: "var(--color-border)",
-  };
-
-  return {
-    ...base,
-    borderColor: available
-      ? (borderColors[type] ?? "var(--color-border)")
-      : "var(--color-border)",
+    background: "var(--surface-card)",
+    color: "var(--text-primary)",
     opacity: available ? 1 : 0.5,
   };
 }
@@ -100,19 +105,34 @@ function buildFlowNode(node: EvidenceNode): Node {
     data: {
       label: (
         <div>
-          <div style={{ fontSize: 9, textTransform: "uppercase", opacity: 0.6, marginBottom: 4 }}>
+          <div
+            style={{
+              fontSize: 9,
+              textTransform: "uppercase",
+              letterSpacing: "0.12em",
+              color: "var(--text-muted)",
+              marginBottom: 4,
+            }}
+          >
             {node.type.replace(/_/g, " ")}
           </div>
           <div style={{ fontWeight: 600, marginBottom: available ? 6 : 0 }}>
             {node.label}
           </div>
           {available && metaLines && (
-            <div style={{ fontSize: 9, opacity: 0.7, whiteSpace: "pre-line", lineHeight: 1.4 }}>
+            <div
+              style={{
+                fontSize: 9,
+                color: "var(--text-muted)",
+                whiteSpace: "pre-line",
+                lineHeight: 1.4,
+              }}
+            >
               {metaLines}
             </div>
           )}
           {!available && (
-            <div style={{ fontSize: 9, opacity: 0.5, fontStyle: "italic" }}>
+            <div style={{ fontSize: 9, color: "var(--text-faint)", fontStyle: "italic" }}>
               Not available
             </div>
           )}
@@ -133,10 +153,10 @@ function buildFlowEdge(edge: EvidenceEdge, index: number): Edge {
     label: edge.label,
     labelStyle: {
       fontSize: 9,
-      fontFamily: "JetBrains Mono, monospace",
-      fill: "var(--color-text-muted)",
+      fontFamily: "var(--font-mono)",
+      fill: "var(--text-muted)",
     },
-    style: { stroke: "var(--color-border)", strokeWidth: 1.5 },
+    style: { stroke: "var(--border)", strokeWidth: 1.5 },
     animated: edge.from_id === "scan_session",
   };
 }
@@ -162,62 +182,88 @@ export function EvidenceChainGraph({ findingId }: EvidenceChainGraphProps) {
 
   const { nodes, edges } = useMemo(() => {
     const chain = data?.data;
-    if (!chain) return { nodes: [], edges: [] };
-
+    if (!chain) return { nodes: [] as Node[], edges: [] as Edge[] };
     return {
       nodes: chain.nodes.map(buildFlowNode),
       edges: chain.edges.map(buildFlowEdge),
     };
   }, [data]);
 
+  const legend = (
+    <div className="flex flex-wrap items-center" style={{ gap: 6 }}>
+      {LEGEND.map((entry) => (
+        <MonoBadge key={entry.type} tone={entry.tone}>
+          {entry.label}
+        </MonoBadge>
+      ))}
+    </div>
+  );
+
   if (isLoading) {
     return (
-      <div className="p-4">
+      <WindowPanel title="evidence chain" status="LOADING" tone="muted">
         <LoadingSkeletonGroup lines={6} />
-      </div>
+      </WindowPanel>
     );
   }
 
   if (isError) {
     return (
-      <div className="rounded-[2px] border border-destructive bg-destructive/10 p-4 font-mono text-xs text-destructive">
-        Failed to load evidence chain: {(error as Error).message}
-      </div>
+      <WindowPanel title="evidence chain" tone="warn">
+        <div
+          className="font-mono"
+          style={{
+            border: "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+            background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+            color: "var(--status-warn)",
+            padding: "8px 12px",
+            fontSize: 11,
+            borderRadius: 3,
+          }}
+        >
+          Failed to load evidence chain: {(error as Error).message}
+        </div>
+      </WindowPanel>
     );
   }
 
   if (nodes.length === 0) {
     return (
-      <div className="p-4 font-mono text-xs text-text-muted">
-        No evidence chain data available for this finding.
-      </div>
+      <WindowPanel title="evidence chain" tone="muted" actions={legend}>
+        <p
+          className="font-mono"
+          style={{ fontSize: 11, color: "var(--text-muted)", padding: "6px 0" }}
+        >
+          No evidence chain data available for this finding.
+        </p>
+      </WindowPanel>
     );
   }
 
   return (
-    <div style={{ height: 600, width: "100%" }}>
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        fitView
-        fitViewOptions={{ padding: 0.2 }}
-        nodesDraggable
-        nodesConnectable={false}
-        elementsSelectable
-        proOptions={{ hideAttribution: true }}
-      >
-        <Background variant={BackgroundVariant.Dots} gap={16} size={1} color="var(--color-border)" />
-        <MiniMap
-          nodeColor={(node) => {
-            const type = (node.data as { label: React.ReactNode })
-              ? "var(--color-accent)"
-              : "var(--color-border)";
-            return type;
-          }}
-          style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)" }}
-        />
-        <Controls />
-      </ReactFlow>
-    </div>
+    <WindowPanel title="evidence chain" tone="info" actions={legend} flush>
+      <div style={{ height: 600, width: "100%" }}>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          fitView
+          fitViewOptions={{ padding: 0.2 }}
+          nodesDraggable
+          nodesConnectable={false}
+          elementsSelectable
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background variant={BackgroundVariant.Dots} gap={16} size={1} color="var(--border-faint)" />
+          <MiniMap
+            nodeColor={() => "var(--accent)"}
+            style={{
+              background: "var(--surface-sunk)",
+              border: "1px solid var(--border-soft)",
+            }}
+          />
+          <Controls />
+        </ReactFlow>
+      </div>
+    </WindowPanel>
   );
 }

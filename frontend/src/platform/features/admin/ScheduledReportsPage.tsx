@@ -1,40 +1,27 @@
 /**
  * ScheduledReportsPage -- admin-only scheduled report configurations.
  *
- * Lists scheduled reports with cron expressions and recipient lists. Admins
- * can create new reports, manually trigger a run, or delete a report.
- *
  * Endpoints (admin only):
  *   GET    /scheduled-reports
  *   POST   /scheduled-reports
  *   POST   /scheduled-reports/{id}/trigger
  *   DELETE /scheduled-reports/{id}
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type ColumnDef } from "@tanstack/react-table";
-import { Calendar } from "@phosphor-icons/react/dist/csr/Calendar";
-import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
-import { Trash } from "@phosphor-icons/react/dist/csr/Trash";
-import { PaperPlaneTilt } from "@phosphor-icons/react/dist/csr/PaperPlaneTilt";
 
-import { AilaCard } from "@/components/aila/AilaCard";
-import { AilaTable } from "@/components/aila/AilaTable";
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
-import { EmptyState } from "@/components/aila/EmptyState";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  SectionHeader,
+  DataGrid,
+  MonoBadge,
+  BigStat,
+} from "@/components/aila/mock";
 import { authorizedRequestJson } from "@platform/api/http";
 
 // ---------------------------------------------------------------------------
-// Types -- mirror src/aila/api/schemas/endpoints.py:ScheduledReport*
+// Types
 // ---------------------------------------------------------------------------
 
 interface ScheduledReport {
@@ -72,15 +59,6 @@ interface DataEnvelope<T> {
   meta: Record<string, unknown>;
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function formatTimestamp(value: string | null | undefined): string {
-  if (!value) return "--";
-  return new Date(value).toLocaleString();
-}
-
 function parseRecipients(json: string): string[] {
   try {
     const parsed = JSON.parse(json);
@@ -98,6 +76,162 @@ const DEFAULT_CREATE: ScheduledReportCreate = {
   config_json: "{}",
   is_active: true,
 };
+
+// ---------------------------------------------------------------------------
+// Mock chrome
+// ---------------------------------------------------------------------------
+
+const BTN_STYLE: React.CSSProperties = {
+  height: 26,
+  fontSize: 9.5,
+  padding: "0 11px",
+  letterSpacing: "0.08em",
+  borderRadius: 3,
+  border: "1px solid var(--border-soft)",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  cursor: "pointer",
+  fontFamily: "var(--font-mono)",
+  textTransform: "uppercase",
+};
+
+const BTN_ACCENT_STYLE: React.CSSProperties = {
+  ...BTN_STYLE,
+  border: "1px solid var(--accent)",
+  background: "color-mix(in srgb, var(--accent) 14%, transparent)",
+  color: "var(--accent)",
+};
+
+const BTN_DANGER_STYLE: React.CSSProperties = {
+  ...BTN_STYLE,
+  border: "1px solid color-mix(in srgb, var(--status-warn) 55%, transparent)",
+  background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+  color: "var(--status-warn)",
+};
+
+const SMALL_BTN: React.CSSProperties = {
+  ...BTN_STYLE,
+  height: 22,
+  fontSize: 9,
+  padding: "0 9px",
+};
+const SMALL_DANGER: React.CSSProperties = {
+  ...BTN_DANGER_STYLE,
+  height: 22,
+  fontSize: 9,
+  padding: "0 9px",
+};
+
+const INPUT_STYLE: React.CSSProperties = {
+  height: 28,
+  fontSize: 11,
+  padding: "0 10px",
+  borderRadius: 3,
+  border: "1px solid var(--border-soft)",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  outline: "none",
+  fontFamily: "var(--font-mono)",
+  width: "100%",
+};
+
+const LABEL_STYLE: React.CSSProperties = {
+  fontSize: 9,
+  letterSpacing: "0.1em",
+  color: "var(--text-faint)",
+  fontFamily: "var(--font-mono)",
+  textTransform: "uppercase",
+};
+
+function ErrorBox({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="font-mono"
+      style={{
+        border:
+          "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+        background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+        color: "var(--status-warn)",
+        padding: "8px 12px",
+        fontSize: 11,
+        borderRadius: 3,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** Modal shell: fixed backdrop + centered WindowPanel. */
+function ModalShell({
+  open,
+  title,
+  onClose,
+  width = 480,
+  children,
+}: {
+  open: boolean;
+  title: React.ReactNode;
+  onClose: () => void;
+  width?: number;
+  children: React.ReactNode;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [open, onClose]);
+  if (!open) return null;
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "color-mix(in srgb, var(--surface-page) 78%, transparent)",
+        backdropFilter: "blur(2px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 20,
+        zIndex: 60,
+      }}
+    >
+      <div onClick={(e) => e.stopPropagation()} style={{ width, maxWidth: "100%" }}>
+        <WindowPanel
+          title={title}
+          actions={
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={onClose}
+              style={{
+                width: 22,
+                height: 22,
+                border: "1px solid var(--border-soft)",
+                background: "var(--surface-sunk)",
+                color: "var(--text-primary)",
+                fontSize: 10,
+                cursor: "pointer",
+                borderRadius: 2,
+                fontFamily: "var(--font-mono)",
+              }}
+            >
+              {"\u2715"}
+            </button>
+          }
+        >
+          {children}
+        </WindowPanel>
+      </div>
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Create dialog
@@ -127,7 +261,6 @@ function CreateReportDialog({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-
     const recipients = recipientsInput
       .split(",")
       .map((s) => s.trim())
@@ -141,15 +274,13 @@ function CreateReportDialog({
       setError("Cron expression is required");
       return;
     }
-
-    let configJson = form.config_json.trim() || "{}";
+    const configJson = form.config_json.trim() || "{}";
     try {
       JSON.parse(configJson);
     } catch {
       setError("config_json must be valid JSON");
       return;
     }
-
     try {
       await onCreate({
         ...form,
@@ -164,120 +295,134 @@ function CreateReportDialog({
 
   return (
     <>
-      <Button size="sm" className="gap-1.5" onClick={() => setOpen(true)}>
-        <Plus className="h-4 w-4" />
-        New report
-      </Button>
-      <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="font-mono text-text">
-              New scheduled report
-            </DialogTitle>
-          </DialogHeader>
-          <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
-            <div className="flex flex-col gap-1">
-              <label className="font-mono text-xs text-text-muted" htmlFor="nr-name">
-                Name *
-              </label>
-              <Input
-                id="nr-name"
-                value={form.name}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                placeholder="Weekly executive summary"
-                className="font-mono text-sm"
-              />
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <label className="font-mono text-xs text-text-muted" htmlFor="nr-type">
-                Report type *
-              </label>
-              <Input
-                id="nr-type"
-                value={form.report_type}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, report_type: e.target.value }))
-                }
-                placeholder="executive_summary"
-                className="font-mono text-sm"
-              />
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <label className="font-mono text-xs text-text-muted" htmlFor="nr-cron">
-                Cron expression *
-              </label>
-              <Input
-                id="nr-cron"
-                value={form.cron_expression}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, cron_expression: e.target.value }))
-                }
-                placeholder="0 9 * * MON"
-                className="font-mono text-sm"
-              />
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <label className="font-mono text-xs text-text-muted" htmlFor="nr-recipients">
-                Recipients (comma-separated emails)
-              </label>
-              <Input
-                id="nr-recipients"
-                value={recipientsInput}
-                onChange={(e) => setRecipientsInput(e.target.value)}
-                placeholder="ops@example.com, lead@example.com"
-                className="font-mono text-sm"
-              />
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <label className="font-mono text-xs text-text-muted" htmlFor="nr-config">
-                Config JSON
-              </label>
-              <textarea
-                id="nr-config"
-                rows={3}
-                value={form.config_json}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, config_json: e.target.value }))
-                }
-                placeholder="{}"
-                className="rounded-[2px] border border-border bg-base font-mono text-xs text-text px-2.5 py-1.5 outline-none focus:border-border-hover transition-colors duration-100 resize-none"
-                spellCheck={false}
-              />
-            </div>
-
-            {/* Single-toggle checkbox: WCAG 1.3.1 fieldset/legend applies to related-option groups, not to individual on/off toggles labelled via wrapping <label>. */}
-            <label className="flex items-center gap-2 font-mono text-xs text-text-muted">
-              <input
-                type="checkbox"
-                checked={form.is_active}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, is_active: e.target.checked }))
-                }
-              />
-              Active
+      <button
+        type="button"
+        style={BTN_ACCENT_STYLE}
+        onClick={() => setOpen(true)}
+      >
+        + NEW REPORT
+      </button>
+      <ModalShell
+        open={open}
+        title="new scheduled report"
+        onClose={handleClose}
+      >
+        <form
+          className="flex flex-col"
+          style={{ gap: 12 }}
+          onSubmit={handleSubmit}
+        >
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE} htmlFor="nr-name">
+              name *
             </label>
-
-            {error && (
-              <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-                {error}
-              </div>
-            )}
-
-            <div className="flex gap-2">
-              <Button type="submit" size="sm" disabled={isPending} className="flex-1">
-                {isPending ? "Creating…" : "Create"}
-              </Button>
-              <Button type="button" size="sm" variant="outline" onClick={handleClose}>
-                Cancel
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
+            <input
+              id="nr-name"
+              value={form.name}
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              placeholder="Weekly executive summary"
+              style={INPUT_STYLE}
+            />
+          </div>
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE} htmlFor="nr-type">
+              report type *
+            </label>
+            <input
+              id="nr-type"
+              value={form.report_type}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, report_type: e.target.value }))
+              }
+              placeholder="executive_summary"
+              style={INPUT_STYLE}
+            />
+          </div>
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE} htmlFor="nr-cron">
+              cron expression *
+            </label>
+            <input
+              id="nr-cron"
+              value={form.cron_expression}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, cron_expression: e.target.value }))
+              }
+              placeholder="0 9 * * MON"
+              style={INPUT_STYLE}
+            />
+          </div>
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE} htmlFor="nr-recipients">
+              recipients (comma-separated)
+            </label>
+            <input
+              id="nr-recipients"
+              value={recipientsInput}
+              onChange={(e) => setRecipientsInput(e.target.value)}
+              placeholder="ops@example.com, lead@example.com"
+              style={INPUT_STYLE}
+            />
+          </div>
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE} htmlFor="nr-config">
+              config json
+            </label>
+            <textarea
+              id="nr-config"
+              rows={3}
+              value={form.config_json}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, config_json: e.target.value }))
+              }
+              placeholder="{}"
+              style={{
+                ...INPUT_STYLE,
+                height: "auto",
+                paddingTop: 6,
+                paddingBottom: 6,
+                resize: "none",
+              }}
+              spellCheck={false}
+            />
+          </div>
+          <label
+            className="flex items-center font-mono"
+            style={{
+              gap: 6,
+              fontSize: 10.5,
+              color: "var(--text-primary)",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={form.is_active}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, is_active: e.target.checked }))
+              }
+            />
+            <span
+              className="uppercase"
+              style={{ letterSpacing: "0.08em", fontSize: 10 }}
+            >
+              active
+            </span>
+          </label>
+          {error && <ErrorBox>{error}</ErrorBox>}
+          <div className="flex" style={{ gap: 8 }}>
+            <button
+              type="submit"
+              style={{ ...BTN_ACCENT_STYLE, flex: 1 }}
+              disabled={isPending}
+            >
+              {isPending ? "CREATING\u2026" : "CREATE"}
+            </button>
+            <button type="button" style={BTN_STYLE} onClick={handleClose}>
+              CANCEL
+            </button>
+          </div>
+        </form>
+      </ModalShell>
     </>
   );
 }
@@ -304,7 +449,7 @@ function RowActions({
     setBusy(true);
     try {
       const res = await onTrigger(report.id);
-      setStatus(`Queued: ${res.task_id}`);
+      setStatus(`Queued: ${res.task_id.slice(0, 8)}\u2026`);
       setTimeout(() => setStatus(null), 5000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to trigger");
@@ -325,129 +470,49 @@ function RowActions({
   }
 
   return (
-    <div className="flex flex-col items-end gap-1">
-      <div className="flex gap-2">
-        <Button
-          size="sm"
-          variant="outline"
-          className="gap-1.5"
+    <div
+      className="flex flex-col items-end"
+      style={{ gap: 3 }}
+    >
+      <div className="flex" style={{ gap: 5 }}>
+        <button
+          type="button"
+          style={SMALL_BTN}
           disabled={busy || !report.is_active}
           onClick={handleTrigger}
-          title={!report.is_active ? "Activate the report to trigger it" : undefined}
+          title={
+            !report.is_active ? "Activate the report to trigger it" : undefined
+          }
         >
-          <PaperPlaneTilt className="h-3.5 w-3.5" />
-          Trigger
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          className="text-destructive border-destructive/40 hover:bg-destructive/10 hover:border-destructive gap-1.5"
+          TRIGGER
+        </button>
+        <button
+          type="button"
+          style={SMALL_DANGER}
           disabled={busy}
           onClick={handleDelete}
         >
-          <Trash className="h-3.5 w-3.5" />
-          Delete
-        </Button>
+          DELETE
+        </button>
       </div>
       {status && (
-        <span className="font-mono text-xs text-text-muted">{status}</span>
+        <span
+          className="font-mono"
+          style={{ fontSize: 9.5, color: "var(--text-faint)" }}
+        >
+          {status}
+        </span>
       )}
       {error && (
-        <span className="font-mono text-xs text-destructive">{error}</span>
+        <span
+          className="font-mono"
+          style={{ fontSize: 9.5, color: "var(--status-warn)" }}
+        >
+          {error}
+        </span>
       )}
     </div>
   );
-}
-
-// ---------------------------------------------------------------------------
-// Columns
-// ---------------------------------------------------------------------------
-
-function buildColumns(
-  onTrigger: (id: string) => Promise<TriggerResponse>,
-  onDelete: (id: string) => Promise<unknown>,
-): ColumnDef<ScheduledReport>[] {
-  return [
-    {
-      id: "name",
-      header: "Name",
-      accessorKey: "name",
-      cell: ({ getValue }) => (
-        <span className="font-mono text-sm text-text">{String(getValue())}</span>
-      ),
-    },
-    {
-      id: "report_type",
-      header: "Type",
-      accessorKey: "report_type",
-      cell: ({ getValue }) => (
-        <AilaBadge severity="neutral" size="sm">
-          {String(getValue())}
-        </AilaBadge>
-      ),
-    },
-    {
-      id: "cron_expression",
-      header: "Schedule",
-      accessorKey: "cron_expression",
-      cell: ({ getValue }) => (
-        <code className="font-mono text-xs text-text">{String(getValue())}</code>
-      ),
-    },
-    {
-      id: "recipients",
-      header: "Recipients",
-      accessorKey: "recipient_emails_json",
-      enableSorting: false,
-      cell: ({ getValue }) => {
-        const emails = parseRecipients(String(getValue() ?? "[]"));
-        if (emails.length === 0) {
-          return <span className="font-mono text-xs text-text-muted">--</span>;
-        }
-        return (
-          <span
-            className="font-mono text-xs text-text-muted line-clamp-1 max-w-[220px]"
-            title={emails.join(", ")}
-          >
-            {emails.join(", ")}
-          </span>
-        );
-      },
-    },
-    {
-      id: "is_active",
-      header: "Status",
-      accessorKey: "is_active",
-      cell: ({ getValue }) =>
-        getValue() ? (
-          <AilaBadge severity="info" size="sm">Active</AilaBadge>
-        ) : (
-          <AilaBadge severity="neutral" size="sm">Paused</AilaBadge>
-        ),
-    },
-    {
-      id: "last_run_at",
-      header: "Last run",
-      accessorKey: "last_run_at",
-      cell: ({ getValue }) => (
-        <span className="font-mono text-xs text-text-muted whitespace-nowrap">
-          {formatTimestamp(getValue() as string | null)}
-        </span>
-      ),
-    },
-    {
-      id: "actions",
-      header: "Actions",
-      enableSorting: false,
-      cell: ({ row }) => (
-        <RowActions
-          report={row.original}
-          onTrigger={onTrigger}
-          onDelete={onDelete}
-        />
-      ),
-    },
-  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -460,15 +525,17 @@ export function ScheduledReportsPage() {
   const reportsQuery = useQuery({
     queryKey: ["platform", "scheduled-reports"],
     queryFn: () =>
-      authorizedRequestJson<DataEnvelope<ScheduledReport[]>>("/scheduled-reports"),
+      authorizedRequestJson<DataEnvelope<ScheduledReport[]>>(
+        "/scheduled-reports",
+      ),
   });
 
   const createMutation = useMutation({
     mutationFn: (req: ScheduledReportCreate) =>
-      authorizedRequestJson<DataEnvelope<ScheduledReport>>("/scheduled-reports", {
-        method: "POST",
-        body: req,
-      }),
+      authorizedRequestJson<DataEnvelope<ScheduledReport>>(
+        "/scheduled-reports",
+        { method: "POST", body: req },
+      ),
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: ["platform", "scheduled-reports"],
@@ -505,167 +572,155 @@ export function ScheduledReportsPage() {
   });
 
   const reports = reportsQuery.data?.data ?? [];
-
   const activeCount = useMemo(
     () => reports.filter((r) => r.is_active).length,
     [reports],
   );
-
-  const columns = useMemo(
-    () =>
-      buildColumns(
-        (id) => triggerMutation.mutateAsync(id),
-        (id) => deleteMutation.mutateAsync(id),
-      ),
-    [triggerMutation, deleteMutation],
-  );
+  const pausedCount = reports.length - activeCount;
 
   return (
-    <div className="flex flex-col gap-6 p-4 lg:p-6">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <CreateReportDialog
-          onCreate={(req) => createMutation.mutateAsync(req)}
-          isPending={createMutation.isPending}
-        />
-      </div>
+    <div className="flex flex-col" style={{ gap: 16, padding: 20 }}>
+      <SectionHeader
+        icon={"\u25a0"}
+        title="Scheduled reports"
+        actions={
+          <div className="flex items-center" style={{ gap: 8 }}>
+            <button
+              type="button"
+              style={BTN_STYLE}
+              onClick={() => void reportsQuery.refetch()}
+              disabled={reportsQuery.isFetching}
+            >
+              REFRESH
+            </button>
+            <CreateReportDialog
+              onCreate={(req) => createMutation.mutateAsync(req)}
+              isPending={createMutation.isPending}
+            />
+          </div>
+        }
+      />
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Total Reports
-        </p>
-        <div className="mt-1 min-h-[2rem]">
-          {reportsQuery.isLoading ? (
-            <LoadingSkeleton size="md" width="third" aria-label="Loading reports" />
-          ) : (
-            <p className="font-mono text-2xl font-semibold text-text">{reports.length}</p>
-          )}
-        </div>
-        <p className="font-mono text-xs text-text-muted mt-0.5">All configured</p></AilaCard>
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Active
-        </p>
-        <div className="mt-1 min-h-[2rem]">
-          {reportsQuery.isLoading ? (
-            <LoadingSkeleton size="md" width="third" aria-label="Loading reports" />
-          ) : (
-            <p className="font-mono text-2xl font-semibold text-text">{activeCount}</p>
-          )}
-        </div>
-        <p className="font-mono text-xs text-text-muted mt-0.5">
-          Firing on schedule
-        </p></AilaCard>
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Paused
-        </p>
-        <div className="mt-1 min-h-[2rem]">
-          {reportsQuery.isLoading ? (
-            <LoadingSkeleton size="md" width="third" aria-label="Loading reports" />
-          ) : (
-            <p className="font-mono text-2xl font-semibold text-text">{reports.length - activeCount}</p>
-          )}
-        </div>
-        <p className="font-mono text-xs text-text-muted mt-0.5">
-          Won't fire automatically
-        </p></AilaCard>
+      <div
+        className="grid"
+        style={{
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          gap: 12,
+        }}
+      >
+        <WindowPanel title="total reports">
+          <BigStat value={reports.length} sub="all configured" />
+        </WindowPanel>
+        <WindowPanel title="active">
+          <BigStat value={activeCount} sub="firing on schedule" />
+        </WindowPanel>
+        <WindowPanel title="paused">
+          <BigStat value={pausedCount} sub={"won\u2019t auto-fire"} />
+        </WindowPanel>
       </div>
 
       {reportsQuery.isError && (
-        <div className="rounded-[4px] border border-destructive bg-destructive/10 px-4 py-3 font-mono text-sm text-destructive">
-          Failed to load scheduled reports: {(reportsQuery.error as Error).message}
-        </div>
+        <ErrorBox>
+          failed to load scheduled reports:{" "}
+          {(reportsQuery.error as Error).message}
+        </ErrorBox>
       )}
 
       {reportsQuery.isLoading && (
-        <AilaCard variant="default" padding="md"><LoadingSkeletonGroup lines={6} /></AilaCard>
+        <WindowPanel title="reports" status="LOADING" tone="muted">
+          <LoadingSkeletonGroup lines={6} />
+        </WindowPanel>
       )}
 
-      {!reportsQuery.isLoading &&
-        !reportsQuery.isError &&
-        reports.length === 0 && (
-          <EmptyState
-            icon={<Calendar className="h-10 w-10" />}
-            title="No scheduled reports"
-            description="Create a scheduled report to email summaries to stakeholders on a cron."
+      {!reportsQuery.isLoading && !reportsQuery.isError && (
+        <WindowPanel title="schedules" flush>
+          <DataGrid
+            columns={[
+              { label: "NAME", width: "1fr" },
+              { label: "TYPE", width: "160px" },
+              { label: "CADENCE", width: "160px" },
+              { label: "RECIPIENTS", width: "180px" },
+              { label: "OWNER", width: "150px" },
+              { label: "NEXT / LAST RUN", width: "170px" },
+              { label: "ACTIVE", width: "80px" },
+              { label: "ACTIONS", width: "160px", align: "right" },
+            ]}
+            rows={reports}
+            getKey={(r) => r.id}
+            empty={
+              <div
+                className="font-mono"
+                style={{
+                  padding: 34,
+                  textAlign: "center",
+                  fontSize: 12,
+                  color: "var(--text-muted)",
+                }}
+              >
+                no scheduled reports. create one to email summaries on a cron.
+              </div>
+            }
+            renderCells={(report) => {
+              const recipients = parseRecipients(report.recipient_emails_json);
+              return [
+                <span
+                  key="n"
+                  className="font-mono"
+                  style={{ fontSize: 11, color: "var(--text-primary)" }}
+                >
+                  {report.name}
+                </span>,
+                <MonoBadge key="t" tone="muted">
+                  {report.report_type}
+                </MonoBadge>,
+                <code
+                  key="c"
+                  className="font-mono"
+                  style={{ fontSize: 10.5, color: "var(--accent)" }}
+                >
+                  {report.cron_expression}
+                </code>,
+                <span
+                  key="r"
+                  className="font-mono truncate"
+                  title={recipients.join(", ")}
+                  style={{ fontSize: 10.5, color: "var(--text-muted)" }}
+                >
+                  {recipients.length === 0 ? "--" : recipients.join(", ")}
+                </span>,
+                <span
+                  key="o"
+                  className="font-mono truncate"
+                  style={{ fontSize: 10.5, color: "var(--text-muted)" }}
+                >
+                  {report.created_by}
+                </span>,
+                <span
+                  key="l"
+                  className="font-mono"
+                  style={{ fontSize: 10, color: "var(--text-faint)" }}
+                >
+                  {report.last_run_at
+                    ? new Date(report.last_run_at).toLocaleString()
+                    : "--"}
+                </span>,
+                <MonoBadge
+                  key="a"
+                  tone={report.is_active ? "ok" : "muted"}
+                >
+                  {report.is_active ? "ACTIVE" : "PAUSED"}
+                </MonoBadge>,
+                <RowActions
+                  key="x"
+                  report={report}
+                  onTrigger={(id) => triggerMutation.mutateAsync(id)}
+                  onDelete={(id) => deleteMutation.mutateAsync(id)}
+                />,
+              ];
+            }}
           />
-        )}
-
-      {!reportsQuery.isLoading && reports.length > 0 && (
-        <AilaTable
-          data={reports}
-          columns={columns}
-          pageSize={25}
-          enableSorting
-          enableFiltering={false}
-          exportFilename="aila-scheduled-reports"
-          peekLabel={(row) => `Scheduled report summary for ${row.name}`}
-          peekTitle={(row) => row.name}
-          peekDescription={(row) => `${row.report_type} · ${row.cron_expression}`}
-          renderRowPeek={(row) => <ReportRowPeek report={row} />}
-        >
-          <AilaTable.Header />
-          <AilaTable.Body emptyState="No scheduled reports." />
-          <AilaTable.Pagination pageSizeOptions={[10, 25, 50]} />
-        </AilaTable>
+        </WindowPanel>
       )}
-    </div>
-  );
-}
-
-/**
- * Row quick-peek body for a ScheduledReport row. Renders the fields the
- * summary table hides (recipient list, JSON config, timestamps) using data
- * the row already carries; no extra fetches.
- */
-function ReportRowPeek({ report }: { report: ScheduledReport }) {
-  const recipients = parseRecipients(report.recipient_emails_json);
-  let configPretty = report.config_json;
-  try {
-    configPretty = JSON.stringify(JSON.parse(report.config_json), null, 2);
-  } catch {
-    // leave raw
-  }
-  return (
-    <div className="flex flex-col gap-3 font-mono text-xs text-text">
-      <dl className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1.5">
-        <dt className="text-text-muted uppercase tracking-wider">ID</dt>
-        <dd className="break-all">{report.id}</dd>
-        <dt className="text-text-muted uppercase tracking-wider">Type</dt>
-        <dd>{report.report_type}</dd>
-        <dt className="text-text-muted uppercase tracking-wider">Cron</dt>
-        <dd>{report.cron_expression}</dd>
-        <dt className="text-text-muted uppercase tracking-wider">Status</dt>
-        <dd>
-          <AilaBadge severity={report.is_active ? "info" : "neutral"} size="sm">
-            {report.is_active ? "Active" : "Paused"}
-          </AilaBadge>
-        </dd>
-        <dt className="text-text-muted uppercase tracking-wider">Last run</dt>
-        <dd>{formatTimestamp(report.last_run_at)}</dd>
-        <dt className="text-text-muted uppercase tracking-wider">Created</dt>
-        <dd>{formatTimestamp(report.created_at)} by {report.created_by}</dd>
-        <dt className="text-text-muted uppercase tracking-wider">Updated</dt>
-        <dd>{formatTimestamp(report.updated_at)}</dd>
-      </dl>
-      <div className="border-t border-border pt-2">
-        <p className="text-text-muted uppercase tracking-wider mb-1">
-          Recipients ({recipients.length})
-        </p>
-        {recipients.length === 0 ? (
-          <p className="text-text-muted">--</p>
-        ) : (
-          <ul className="flex flex-col gap-0.5">
-            {recipients.map((email) => (
-              <li key={email} className="break-all">{email}</li>
-            ))}
-          </ul>
-        )}
-      </div>
-      <div className="border-t border-border pt-2">
-        <p className="text-text-muted uppercase tracking-wider mb-1">Config</p>
-        <pre className="whitespace-pre-wrap break-all rounded-[2px] border border-border bg-base p-2 text-[11px]">
-          {configPretty}
-        </pre>
-      </div>
     </div>
   );
 }

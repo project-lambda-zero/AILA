@@ -1,6 +1,6 @@
 {
   "name": "@aila/hello-world-frontend",
-  "version": "0.5.29",
+  "version": "0.5.30",
   "private": true,
   "type": "module",
   "main": "./spec.ts",

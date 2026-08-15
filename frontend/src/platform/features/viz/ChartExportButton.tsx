@@ -1,8 +1,5 @@
 /**
- * ChartExportButton -- VIZ-05.
- *
- * Small PNG/SVG export button pair for chart containers.
- * Accepts a ref to the chart's outer div element for html2canvas capture.
+ * ChartExportButton -- mock-styled PNG/SVG export pair.
  */
 import * as React from "react";
 
@@ -13,18 +10,31 @@ interface ChartExportButtonProps {
   filename?: string;
 }
 
-export function ChartExportButton({ chartRef, filename = "aila-chart" }: ChartExportButtonProps) {
+const BASE_BTN: React.CSSProperties = {
+  height: 26,
+  fontSize: 9.5,
+  letterSpacing: "0.08em",
+  padding: "0 11px",
+  border: "1px solid var(--border-soft)",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  borderRadius: 3,
+  cursor: "pointer",
+  fontFamily: "var(--font-mono, ui-monospace, monospace)",
+  textTransform: "uppercase",
+};
+
+export function ChartExportButton({
+  chartRef,
+  filename = "aila-chart",
+}: ChartExportButtonProps) {
   const { exportChart, isExporting } = useChartExport();
 
-  const buttonClass =
-    "text-[10px] font-mono text-muted-foreground px-2 py-0.5 rounded border border-border " +
-    "hover:bg-elevated hover:text-foreground disabled:opacity-40 transition-colors";
-
   return (
-    <div className="flex gap-1 shrink-0">
+    <div className="flex" style={{ gap: 6, flex: "0 0 auto" }}>
       <button
         type="button"
-        className={buttonClass}
+        style={{ ...BASE_BTN, opacity: isExporting ? 0.4 : 1 }}
         onClick={() => void exportChart(chartRef.current, filename, "png")}
         disabled={isExporting}
         title="Export as PNG"
@@ -33,7 +43,7 @@ export function ChartExportButton({ chartRef, filename = "aila-chart" }: ChartEx
       </button>
       <button
         type="button"
-        className={buttonClass}
+        style={{ ...BASE_BTN, opacity: isExporting ? 0.4 : 1 }}
         onClick={() => void exportChart(chartRef.current, filename, "svg")}
         disabled={isExporting}
         title="Export as SVG"

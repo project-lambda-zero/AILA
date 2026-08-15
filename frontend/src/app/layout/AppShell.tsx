@@ -20,20 +20,22 @@ interface AppShellProps {
 }
 
 /**
- * AppShell -- the AILA workbench OS-frame.
+ * AppShell -- the AILA workbench OS-frame, rebuilt from the design mock
+ * (`AILA Console.dc.html`).
  *
- * A fixed full-viewport frame drawn directly from the design system mockup:
- * a FaultyTerminal CRT hero behind everything, a 32px MenuBar on top, a left
- * module/investigation rail, the routed content in the center, and a 24px
- * status strip pinned to the bottom. The former shadcn SidebarProvider
- * dashboard is gone -- this is the mockup architecture, not a reskin.
+ * Fixed full-viewport frame: FaultyTerminal CRT digit-rain hero behind
+ * everything, a 32px MenuBar on top, a 216px module rail on the left, the
+ * routed content in the centre, and a 24px status strip pinned to the bottom.
+ * There is NO shadcn SidebarProvider anywhere in this tree -- this is the
+ * mock's OS-frame architecture, wired to the same routing, auth, and idle
+ * timers as before.
  */
 export function AppShell({ children, moduleSpecs }: AppShellProps) {
-  // Rail open/collapsed flows through PreferencesProvider so the operator's
-  // choice survives reloads and is settable from Settings.
+  // Rail open/collapsed persists through PreferencesProvider (survives reload,
+  // settable from Settings) -- same wiring as before, no shadcn context.
   const { sidebarCollapsed, setSidebarCollapsed } = usePreferences();
 
-  // #47 -- clear the session after 15 minutes of inactivity. The shell only
+  // #47 -- clear the session after 15 minutes of inactivity. AppShell only
   // renders behind ProtectedRoute, so logout() -> unauthenticated redirects
   // to /login. Any presence event resets the timer.
   const onIdle = useCallback(() => {
@@ -44,37 +46,58 @@ export function AppShell({ children, moduleSpecs }: AppShellProps) {
   return (
     <>
       {/*
-        AILA hero motif -- the FaultyTerminal CRT digit-rain behind the whole
-        workbench, screen-blended over the midnight page so it reads in the
-        content negative space while the opaque chrome (menubar, rail,
-        statusbar) and panels float on top. One instance, fixed, inert;
-        honors prefers-reduced-motion (single static frame).
+        Hero motif -- FaultyTerminal shader tinted by --accent, behind the
+        whole shell. z-0, screen-blended, inert; honours prefers-reduced-motion
+        (the shader renders a single static frame). Scanline field + radial
+        accent bloom mirror the mock's `terminalStyle` + `scanStyle` + top-
+        centre gradient trick.
       */}
       <div aria-hidden="true" className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
         <FaultyTerminal
-          style={{ position: "absolute", inset: 0, mixBlendMode: "screen", opacity: 0.55 }}
-          options={{ brightness: 0.32, scanline: 0.4, glitch: 1, flicker: 0.22, chroma: 1.2, curvature: 0.12 }}
+          style={{ position: "absolute", inset: 0, mixBlendMode: "screen", opacity: 0.32 }}
+          options={{ brightness: 0.55, scanline: 0.5, glitch: 1, chroma: 1.0, curvature: 0.05 }}
+        />
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            backgroundImage:
+              "repeating-linear-gradient(0deg, rgba(0,0,0,0.16) 0 1px, transparent 1px 3px)",
+            opacity: 0.4,
+          }}
         />
         <div
           style={{
             position: "absolute",
             left: "50%",
             top: "-12%",
-            width: "80%",
+            width: "78%",
             height: "60%",
             transform: "translateX(-50%)",
             background:
-              "radial-gradient(ellipse at center, color-mix(in srgb, var(--color-accent) 12%, transparent), transparent 68%)",
+              "radial-gradient(ellipse at center, color-mix(in srgb, var(--accent) 12%, transparent), transparent 68%)",
           }}
         />
       </div>
 
       {/* OS-frame: menubar / [rail | content] / statusbar. Transparent so the
-          hero shows through the content negative space; chrome tiers are opaque. */}
-      <div className="fixed inset-0 z-10 flex flex-col" style={{ fontFamily: "var(--font-mono)" }}>
+          hero shows through content negative space; chrome tiers are opaque. */}
+      <div
+        className="fixed inset-0 z-10 flex flex-col"
+        style={{
+          fontFamily: "var(--font-mono)",
+          color: "var(--text-primary)",
+          background: "transparent",
+        }}
+      >
         <a
           href="#main"
-          className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:rounded focus:border focus:border-border focus:bg-elevated focus:px-4 focus:py-2 focus:font-sans focus:text-sm focus:font-medium focus:text-text"
+          className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:rounded focus:px-4 focus:py-2 focus:font-sans focus:text-sm focus:font-medium"
+          style={{
+            background: "var(--surface-card)",
+            color: "var(--text-primary)",
+            border: "1px solid var(--border)",
+          }}
         >
           Skip to main content
         </a>
@@ -82,17 +105,18 @@ export function AppShell({ children, moduleSpecs }: AppShellProps) {
         <AppHeader onToggleRail={() => setSidebarCollapsed(!sidebarCollapsed)} />
         <OfflineBanner />
 
-        <div className="flex min-h-0 flex-1">
+        <div className="flex min-h-0 flex-1" style={{ position: "relative", zIndex: 10 }}>
           {!sidebarCollapsed && <AppSidebar moduleSpecs={moduleSpecs} />}
+          {/* No padding / max-width here -- pages own their layout so the
+              rebuilt mock surfaces (CONSOLE / VR X-RAY / VULN) render
+              flush against the OS-frame chrome, just like the mock. */}
           <main
             id="main"
             tabIndex={-1}
-            className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-3 focus:outline-none focus-visible:outline-none sm:p-4 lg:p-6"
+            className="min-w-0 flex-1 overflow-auto focus:outline-none focus-visible:outline-none"
+            style={{ position: "relative" }}
           >
-            {/* Workbench content measure -- centered, capped at content-max. */}
-            <div className="mx-auto w-full" style={{ maxWidth: "var(--content-max)" }}>
-              {children}
-            </div>
+            {children}
           </main>
         </div>
 
@@ -101,7 +125,6 @@ export function AppShell({ children, moduleSpecs }: AppShellProps) {
 
       {/* CommandPalette renders via portal -- outside layout flow. */}
       <CommandPalette />
-      {/* Platform-wide keyboard shortcut layer + cheatsheet (behind ProtectedRoute). */}
       <KeyboardShortcutsController />
       <ShortcutsCheatsheet />
     </>

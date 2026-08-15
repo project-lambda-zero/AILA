@@ -1,8 +1,13 @@
-import { type CSSProperties, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
-import { PixelIcon } from "@/components/aila/PixelIcon";
 import { WindowPanel } from "@/components/aila/WindowPanel";
+import {
+  DataGrid,
+  FilterChip,
+  MonoBadge,
+  toneColor,
+} from "@/components/aila/mock";
 
 import { useProjectEvidence } from "../queries";
 import type { EvidenceItem } from "../types";
@@ -10,13 +15,15 @@ import type { EvidenceItem } from "../types";
 type SortKey = "name" | "type" | "size" | "path";
 type SortDir = "asc" | "desc";
 
-const TYPE_TONE: Record<string, CSSProperties> = {
-  disk_image: { background: "color-mix(in srgb, var(--color-lavender) 15%, transparent)", color: "var(--color-lavender)" },
-  memory_dump: { background: "color-mix(in srgb, var(--color-medium) 15%, transparent)", color: "var(--color-medium)" },
-  pcap: { background: "color-mix(in srgb, var(--color-mint) 15%, transparent)", color: "var(--color-mint)" },
-  log_file: { background: "color-mix(in srgb, var(--color-amber) 15%, transparent)", color: "var(--color-amber)" },
-  extracted_dir: { background: "color-mix(in srgb, var(--color-peach) 15%, transparent)", color: "var(--color-peach)" },
-  unknown: { background: "var(--color-elevated)", color: "var(--color-text-muted)" },
+// Evidence type -> mock semantic tone. Same colour intent as the old shadcn
+// palette, remapped to the mock's tone tokens.
+const TYPE_TONE: Record<string, string> = {
+  disk_image: "info",
+  memory_dump: "medium",
+  pcap: "ok",
+  log_file: "warn",
+  extracted_dir: "signal",
+  unknown: "muted",
 };
 
 function formatBytes(bytes: number | null): string {
@@ -40,36 +47,52 @@ function dirname(path: string): string {
   return normalised.slice(0, idx);
 }
 
+// ---------------------------------------------------------------------------
+// SortHeader -- clickable mono uppercase label used inside the DataGrid
+// header row. Keyboard focus + Space/Enter fall out of the native <button>.
+// ---------------------------------------------------------------------------
 function SortHeader({
   label,
   columnKey,
   currentKey,
   dir,
-  onClick,
   align = "left",
-  width,
+  onClick,
 }: {
   label: string;
   columnKey: SortKey;
   currentKey: SortKey;
   dir: SortDir;
-  onClick: (k: SortKey) => void;
   align?: "left" | "right";
-  width?: string;
+  onClick: (k: SortKey) => void;
 }) {
   const active = currentKey === columnKey;
-  const arrow = active ? (dir === "asc" ? "▲" : "▼") : "";
+  const arrow = active ? (dir === "asc" ? "\u25b4" : "\u25be") : "";
   return (
-    <th
-      className={`px-3 py-2 text-${align} text-text-muted font-medium cursor-pointer select-none hover:text-foreground`}
-      style={width ? { width } : undefined}
+    <button
+      type="button"
       onClick={() => onClick(columnKey)}
+      aria-label={`Sort by ${label}`}
+      aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}
+      className="font-mono uppercase"
+      style={{
+        border: 0,
+        padding: 0,
+        background: "transparent",
+        color: active ? "var(--text-primary)" : "var(--text-faint)",
+        fontSize: 9,
+        letterSpacing: "0.14em",
+        cursor: "pointer",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        width: "100%",
+        justifyContent: align === "right" ? "flex-end" : "flex-start",
+      }}
     >
-      <span className="inline-flex items-center gap-1">
-        {label}
-        <span className="text-4xs opacity-70">{arrow}</span>
-      </span>
-    </th>
+      <span>{label}</span>
+      {arrow ? <span style={{ opacity: 0.7 }}>{arrow}</span> : null}
+    </button>
   );
 }
 
@@ -80,7 +103,7 @@ export function EvidenceTree({ projectId }: { projectId: string }) {
   const [sortKey, setSortKey] = useState<SortKey>("size");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
 
-  const items = evidence ?? [];
+  const items: EvidenceItem[] = evidence ?? [];
 
   const typeCounts = useMemo(() => {
     const out: Record<string, number> = {};
@@ -133,12 +156,18 @@ export function EvidenceTree({ projectId }: { projectId: string }) {
     }
   };
 
-  if (isLoading) return <LoadingSkeleton size="md" width="full" />;
+  if (isLoading) {
+    return (
+      <WindowPanel title="evidence" tone="accent" status="loading">
+        <LoadingSkeleton size="md" width="full" />
+      </WindowPanel>
+    );
+  }
 
   if (isError) {
     return (
       <WindowPanel title="evidence" tone="warn" status="forensics ; evidence unavailable">
-        <p className="text-sm text-critical">Failed to load evidence.</p>
+        <p style={{ color: "var(--accent)", fontSize: 12 }}>Failed to load evidence.</p>
       </WindowPanel>
     );
   }
@@ -146,170 +175,229 @@ export function EvidenceTree({ projectId }: { projectId: string }) {
   if (items.length === 0) {
     return (
       <WindowPanel title="evidence" tone="muted" status="forensics ; no evidence discovered">
-        <p className="text-sm text-text-muted text-center py-4">
+        <p
+          className="font-mono"
+          style={{
+            padding: "16px 0",
+            textAlign: "center",
+            fontSize: 11,
+            color: "var(--text-muted)",
+          }}
+        >
           No evidence files discovered yet. Run analysis to scan the evidence directory.
         </p>
       </WindowPanel>
     );
   }
 
-  return (
-    <div className="space-y-3">
-      {/* Header row: title + totals */}
-      <div className="flex items-baseline justify-between">
-        <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-          <PixelIcon name="folder" size={12} className="text-accent" />
-          Evidence
-          <span className="ml-2 text-xs font-normal text-text-muted">
-            {filtered.length === items.length
-              ? `${items.length} file${items.length === 1 ? "" : "s"} · ${formatBytes(totalSize)}`
-              : `${filtered.length} of ${items.length} · ${formatBytes(shownSize)} shown`}
-          </span>
-        </h3>
-      </div>
+  const statusLine = `${items.length} item${items.length === 1 ? "" : "s"}`;
 
-      {/* Controls: search + type chips */}
-      <div className="flex flex-wrap items-center gap-2">
+  return (
+    <WindowPanel title="evidence" tone="accent" status={statusLine} flush>
+      {/* Header summary row */}
+      <div
+        className="flex items-center justify-between"
+        style={{
+          padding: "8px 12px",
+          borderBottom: "1px solid var(--border-soft)",
+          background: "var(--surface-sunk)",
+          gap: 12,
+          flexWrap: "wrap",
+        }}
+      >
+        <div
+          className="flex items-center font-mono"
+          style={{ gap: 10, fontSize: 10, letterSpacing: "0.08em", color: "var(--text-muted)" }}
+        >
+          <span style={{ color: "var(--text-primary)" }}>
+            {filtered.length === items.length
+              ? `${items.length} FILE${items.length === 1 ? "" : "S"}`
+              : `${filtered.length} / ${items.length}`}
+          </span>
+          <span style={{ color: "var(--text-faint)" }}>|</span>
+          <span>
+            {filtered.length === items.length
+              ? formatBytes(totalSize)
+              : `${formatBytes(shownSize)} shown`}
+          </span>
+        </div>
         <input
           aria-label="Search evidence by path or sha256"
           type="text"
-          placeholder="Search path or sha256..."
+          placeholder="path or sha256..."
           value={filterText}
           onChange={(e) => setFilterText(e.target.value)}
-          className="w-full max-w-xs px-2.5 py-1.5 text-xs rounded border border-border bg-surface text-foreground placeholder:text-text-muted focus:outline-none focus:border-primary"
+          className="font-mono"
+          style={{
+            height: 26,
+            padding: "0 10px",
+            fontSize: 11,
+            background: "var(--surface-card)",
+            border: "1px solid var(--border-soft)",
+            color: "var(--text-primary)",
+            borderRadius: 3,
+            minWidth: 240,
+          }}
         />
-        <button
-          type="button"
+      </div>
+
+      {/* Type filter chips */}
+      <div
+        style={{
+          padding: "8px 12px",
+          borderBottom: "1px solid var(--border-soft)",
+          display: "flex",
+          gap: 6,
+          flexWrap: "wrap",
+        }}
+      >
+        <FilterChip
+          active={!typeFilter}
+          color={toneColor("info")}
           onClick={() => setTypeFilter(null)}
-          className={`px-2.5 py-1 text-3xs rounded-[3px] font-mono uppercase tracking-cyber-sm ${
-            !typeFilter
-              ? "bg-primary text-badge-text"
-              : "bg-elevated text-text-muted hover:text-foreground"
-          }`}
         >
-          All ({items.length})
-        </button>
+          ALL ({items.length})
+        </FilterChip>
         {Object.entries(typeCounts).map(([t, n]) => (
-          <button
+          <FilterChip
             key={t}
-            type="button"
+            active={typeFilter === t}
+            color={toneColor(TYPE_TONE[t] ?? "muted")}
             onClick={() => setTypeFilter(typeFilter === t ? null : t)}
-            className={`px-2.5 py-1 text-3xs rounded-[3px] font-mono uppercase tracking-cyber-sm ${
-              typeFilter === t ? "bg-primary text-badge-text" : ""
-            }`}
-            style={typeFilter === t ? undefined : TYPE_TONE[t] || TYPE_TONE.unknown}
           >
             {t.replace(/_/g, " ")} ({n})
-          </button>
+          </FilterChip>
         ))}
       </div>
 
-      {/* Table */}
-      {sorted.length === 0 ? (
-        <WindowPanel tone="muted" status="evidence ; filter matched nothing">
-          <p className="text-sm text-text-muted text-center py-4">
-            No evidence matches the current filter.
-          </p>
-        </WindowPanel>
-      ) : (
-        <div className="border border-border rounded-lg bg-surface text-foreground overflow-hidden">
-          <div className="overflow-y-auto" style={{ maxHeight: 620 }}>
-            <table className="w-full text-xs" aria-label="Evidence artifacts">
-              <caption className="sr-only">Evidence artifacts grouped by source with size, hash, and status.</caption>
-              <thead className="bg-elevated sticky top-0 z-10">
-                <tr>
-                  <SortHeader
-                    label="Name"
-                    columnKey="name"
-                    currentKey={sortKey}
-                    dir={sortDir}
-                    onClick={handleSort}
-                  />
-                  <SortHeader
-                    label="Type"
-                    columnKey="type"
-                    currentKey={sortKey}
-                    dir={sortDir}
-                    onClick={handleSort}
-                    width="120px"
-                  />
-                  <SortHeader
-                    label="Size"
-                    columnKey="size"
-                    currentKey={sortKey}
-                    dir={sortDir}
-                    onClick={handleSort}
-                    align="right"
-                    width="100px"
-                  />
-                  <SortHeader
-                    label="Path"
-                    columnKey="path"
-                    currentKey={sortKey}
-                    dir={sortDir}
-                    onClick={handleSort}
-                  />
-                  <th
-                    className="px-3 py-2 text-left text-text-muted font-medium"
-                    style={{ width: "160px" }}
+      {/* Body: sorted DataGrid */}
+      <div style={{ padding: 12 }}>
+        {sorted.length === 0 ? (
+          <WindowPanel tone="muted" flush status="evidence ; filter matched nothing">
+            <p
+              className="font-mono"
+              style={{
+                padding: "12px 0",
+                textAlign: "center",
+                fontSize: 11,
+                color: "var(--text-muted)",
+              }}
+            >
+              No evidence matches the current filter.
+            </p>
+          </WindowPanel>
+        ) : (
+          <div
+            aria-label="Evidence artifacts"
+            style={{ maxHeight: 620, overflow: "auto" }}
+          >
+            <DataGrid<EvidenceItem>
+              columns={[
+                {
+                  label: (
+                    <SortHeader
+                      label="Name"
+                      columnKey="name"
+                      currentKey={sortKey}
+                      dir={sortDir}
+                      onClick={handleSort}
+                    />
+                  ),
+                  width: "1fr",
+                },
+                {
+                  label: (
+                    <SortHeader
+                      label="Type"
+                      columnKey="type"
+                      currentKey={sortKey}
+                      dir={sortDir}
+                      onClick={handleSort}
+                    />
+                  ),
+                  width: "160px",
+                },
+                {
+                  label: (
+                    <SortHeader
+                      label="Size"
+                      columnKey="size"
+                      currentKey={sortKey}
+                      dir={sortDir}
+                      align="right"
+                      onClick={handleSort}
+                    />
+                  ),
+                  width: "110px",
+                  align: "right",
+                },
+                {
+                  label: (
+                    <SortHeader
+                      label="Path"
+                      columnKey="path"
+                      currentKey={sortKey}
+                      dir={sortDir}
+                      onClick={handleSort}
+                    />
+                  ),
+                  width: "2fr",
+                },
+              ]}
+              rows={sorted}
+              getKey={(f) => f.id}
+              renderCells={(f) => {
+                const type = f.evidence_type || "unknown";
+                const tone = TYPE_TONE[type] ?? "muted";
+                const name = basename(f.file_path);
+                const dir = dirname(f.file_path);
+                const sha = f.file_hash_sha256;
+                const pathTitle = sha
+                  ? `${f.file_path}  ·  sha256 ${sha}`
+                  : f.file_path;
+                return [
+                  <span
+                    title={name}
+                    style={{
+                      fontSize: 11,
+                      color: "var(--text-primary)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      display: "block",
+                    }}
                   >
-                    SHA-256
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.map((f) => {
-                  const type = f.evidence_type || "unknown";
-                  const tone = TYPE_TONE[type] || TYPE_TONE.unknown;
-                  const name = basename(f.file_path);
-                  const dir = dirname(f.file_path);
-                  const sha = f.file_hash_sha256;
-                  return (
-                    <tr
-                      key={f.id}
-                      className="border-t border-border hover:bg-elevated/30"
-                    >
-                      <td
-                        className="px-3 py-1.5 font-mono text-foreground truncate max-w-xs align-top"
-                        title={name}
-                      >
-                        {name}
-                      </td>
-                      <td className="px-3 py-1.5 align-top">
-                        <span
-                          className="px-1.5 py-0.5 rounded text-3xs font-medium whitespace-nowrap"
-                          style={tone}
-                        >
-                          {type.replace(/_/g, " ")}
-                        </span>
-                      </td>
-                      <td className="px-3 py-1.5 font-mono text-text-muted whitespace-nowrap text-right align-top">
-                        {formatBytes(f.size_bytes)}
-                      </td>
-                      <td
-                        className="px-3 py-1.5 font-mono text-text-muted truncate max-w-md align-top"
-                        title={f.file_path}
-                      >
-                        {dir}
-                      </td>
-                      <td
-                        className="px-3 py-1.5 font-mono text-text-muted whitespace-nowrap align-top"
-                        title={sha ?? "no hash computed"}
-                      >
-                        {sha ? (
-                          <span className="select-all">{sha.slice(0, 12)}…</span>
-                        ) : (
-                          <span className="text-text-muted/50">--</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                    {name}
+                  </span>,
+                  <MonoBadge tone={tone}>{type.replace(/_/g, " ")}</MonoBadge>,
+                  <span
+                    style={{
+                      fontSize: 11,
+                      color: "var(--text-muted)",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {formatBytes(f.size_bytes)}
+                  </span>,
+                  <span
+                    title={pathTitle}
+                    style={{
+                      fontSize: 10.5,
+                      color: "var(--text-faint)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      display: "block",
+                    }}
+                  >
+                    {dir || "\u00b7"}
+                  </span>,
+                ];
+              }}
+            />
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+    </WindowPanel>
   );
 }

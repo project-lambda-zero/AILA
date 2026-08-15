@@ -171,6 +171,26 @@
 
   /* --- Title-bar grip hatch --- */
   --hatch: repeating-linear-gradient(135deg, var(--color-border-bright) 0 1px, transparent 1px 3px);
+
+  /* --- Design-mock semantic aliases (verbatim mock token names so mockup
+     markup drops in unchanged: Console / VR X-Ray / Vulnerability). --- */
+  --surface-page: var(--color-base);
+  --surface-card: var(--color-surface);
+  --surface-chrome: var(--color-chrome);
+  --surface-hover: var(--color-hover);
+  --text-primary: var(--color-text);
+  --text-muted: var(--color-text-muted);
+  --text-faint: var(--color-text-faint);
+  --accent: var(--color-accent);
+  --accent-hover: var(--color-accent-hover);
+  --accent-active: var(--color-accent-deep);
+  --status-ok: var(--color-mint);
+  --status-info: var(--color-lavender);
+  --status-warn: var(--color-amber);
+  --status-signal: var(--color-peach);
+  --border: var(--color-border-bright);
+  --border-soft: var(--color-border);
+  --border-faint: #1f1f1f;
 }
 
 /* ==== kept globals L577-601 ==== */

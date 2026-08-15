@@ -1,26 +1,18 @@
 /**
- * TopologyDetailSheet.tsx -- right-side node inspector for the Topology
- * console. Uses the shared ui/sheet primitive so keyboard trap, ESC,
- * backdrop, and focus restoration behave like every other overlay.
+ * TopologyDetailSheet -- mock rebuild.
  *
- * Renders EVERY field the /topology payload exposes for the node:
- *   host, distro, subnet, group_tags, last_collected, is_stale
- *   ports[]     -> table (port/protocol/process/address)
- *   services[]  -> table (name/state/sub_state)
- *   severity_counts -> per-severity breakdown row
- *   metadata (SystemMetadata) -> gateway_ip, external_ip, os_name,
- *     kernel, cpu_cores, memory_mb, disk_gb, uptime (humanised)
+ * Right-side node inspector rendered as a fixed overlay (matching the
+ * Findings detail-panel pattern in the mock). Body is composed of
+ * stacked WindowPanels: severity distribution (StatBars), system
+ * metadata (KV grid), network, ports (DataGrid), services (DataGrid).
+ *
+ * Data props unchanged. Backdrop click / ESC closes via onOpenChange.
  */
 import * as React from "react";
+import { X as CloseIcon } from "@phosphor-icons/react/dist/csr/X";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+import { DataGrid, MonoBadge, StatBar } from "@/components/aila/mock";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { formatRelativeTime } from "@platform/features/systems/api";
 import type { PortInfo, ServiceInfo, TopologyNode } from "@platform/features/radar/types";
 import { humaniseUptime } from "./topologyGraph";
@@ -36,26 +28,109 @@ export function TopologyDetailSheet({
   open,
   onOpenChange,
 }: TopologyDetailSheetProps) {
+  React.useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onOpenChange(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onOpenChange]);
+
+  if (!open || !node) return null;
+
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        side="right"
-        className="w-full sm:max-w-[560px] border-l border-border bg-elevated font-mono"
+    <>
+      <div
+        onClick={() => onOpenChange(false)}
+        aria-hidden="true"
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 40,
+          background: "color-mix(in srgb, var(--surface-page) 70%, transparent)",
+        }}
+      />
+      <div
+        role="complementary"
+        aria-label={`System details: ${node.name}`}
+        style={{
+          position: "fixed",
+          top: 0,
+          right: 0,
+          bottom: 0,
+          width: 560,
+          maxWidth: "100vw",
+          zIndex: 50,
+          background: "var(--surface-page)",
+          borderLeft: "1px solid var(--border)",
+          display: "flex",
+          flexDirection: "column",
+          padding: 16,
+          gap: 12,
+          overflow: "hidden",
+        }}
       >
-        {node ? <SheetBody node={node} /> : <EmptySheetBody />}
-      </SheetContent>
-    </Sheet>
+        <SheetHeader node={node} onClose={() => onOpenChange(false)} />
+        <div className="flex flex-col" style={{ gap: 12, overflowY: "auto", flex: 1, minHeight: 0 }}>
+          <SheetBody node={node} />
+        </div>
+      </div>
+    </>
   );
 }
 
-function EmptySheetBody() {
+function SheetHeader({ node, onClose }: { node: TopologyNode; onClose: () => void }) {
   return (
-    <>
-      <SheetHeader>
-        <SheetTitle>No node selected</SheetTitle>
-        <SheetDescription>Click a node in the canvas to inspect it.</SheetDescription>
-      </SheetHeader>
-    </>
+    <div
+      className="flex items-start justify-between"
+      style={{
+        gap: 10,
+        padding: "10px 12px",
+        border: "1px solid var(--border)",
+        background: "var(--surface-card)",
+        borderRadius: 3,
+      }}
+    >
+      <div className="flex flex-col" style={{ gap: 6, minWidth: 0 }}>
+        <div className="flex items-center flex-wrap" style={{ gap: 8 }}>
+          <span
+            className="font-mono uppercase"
+            style={{ fontSize: 13, letterSpacing: "0.08em", color: "var(--text-primary)" }}
+          >
+            {node.name}
+          </span>
+          {node.is_stale && <MonoBadge tone="warn">STALE</MonoBadge>}
+        </div>
+        <div className="flex items-center flex-wrap font-mono" style={{ gap: 6, fontSize: 10, color: "var(--text-muted)" }}>
+          <span>{node.host}</span>
+          <span style={{ color: "var(--text-faint)" }}>|</span>
+          <span>{node.distro}</span>
+          <span style={{ color: "var(--text-faint)" }}>|</span>
+          <span>ID {node.id}</span>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close panel"
+        className="font-mono"
+        style={{
+          width: 24,
+          height: 24,
+          border: "1px solid var(--border-soft)",
+          background: "var(--surface-sunk)",
+          color: "var(--text-muted)",
+          borderRadius: 3,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+        }}
+      >
+        <CloseIcon size={14} />
+      </button>
+    </div>
   );
 }
 
@@ -68,79 +143,74 @@ function SheetBody({ node }: { node: TopologyNode }) {
 
   return (
     <>
-      <SheetHeader className="border-b border-border">
-        <SheetTitle className="flex items-center gap-2 font-mono">
-          <span className="truncate">{node.name}</span>
-          {node.is_stale && (
-            <AilaBadge severity="medium" size="sm">STALE</AilaBadge>
-          )}
-        </SheetTitle>
-        <SheetDescription className="font-mono text-xs">
-          {node.host} <span className="text-text-muted">|</span> {node.distro}
-          <span className="text-text-muted"> |</span> id {node.id}
-        </SheetDescription>
-      </SheetHeader>
-
-      <div className="flex-1 overflow-y-auto px-4 pb-6 flex flex-col gap-5 text-xs">
-        <Section title="Severity counts">
-          {counts ? (
-            <div className="grid grid-cols-5 gap-2">
-              <SeverityCell label="Critical" value={counts.critical} tone="critical" />
-              <SeverityCell label="High" value={counts.high} tone="high" />
-              <SeverityCell label="Medium" value={counts.medium} tone="medium" />
-              <SeverityCell label="Low" value={counts.low} tone="low" />
-              <SeverityCell label="Total" value={total} tone="neutral" />
+      <WindowPanel title="severity distribution">
+        {counts && total > 0 ? (
+          <div className="flex flex-col" style={{ gap: 6 }}>
+            <StatBar label="CRITICAL" color="var(--accent)" value={counts.critical} max={total} />
+            <StatBar label="HIGH" color="var(--status-warn)" value={counts.high} max={total} />
+            <StatBar label="MEDIUM" color="var(--status-info)" value={counts.medium} max={total} />
+            <StatBar label="LOW" color="var(--status-ok)" value={counts.low} max={total} />
+            <div
+              className="flex items-center justify-between font-mono uppercase"
+              style={{ fontSize: 9, letterSpacing: "0.14em", color: "var(--text-faint)", paddingTop: 4 }}
+            >
+              <span>TOTAL</span>
+              <span style={{ color: "var(--text-primary)" }}>{total}</span>
             </div>
-          ) : (
-            <MutedLine>No vulnerability data collected yet.</MutedLine>
-          )}
-        </Section>
+          </div>
+        ) : (
+          <MutedLine>No vulnerability data collected yet.</MutedLine>
+        )}
+      </WindowPanel>
 
-        <Section title="System metadata">
-          <KeyValueGrid
-            rows={[
-              ["Host", node.host],
-              ["Distro", node.distro],
-              ["OS name", meta?.os_pretty_name ?? meta?.os_name ?? "--"],
-              ["Kernel", meta?.kernel ?? "--"],
-              ["CPU cores", meta?.cpu_cores != null ? String(meta.cpu_cores) : "--"],
-              ["Memory", meta?.memory_mb != null ? `${meta.memory_mb} MB` : "--"],
-              ["Disk (/)", meta?.disk_gb != null ? `${meta.disk_gb} GB` : "--"],
-              ["Uptime", humaniseUptime(meta?.uptime_seconds ?? null)],
-            ]}
-          />
-        </Section>
+      <WindowPanel title="system metadata">
+        <KeyValueGrid
+          rows={[
+            ["Host", node.host],
+            ["Distro", node.distro],
+            ["OS name", meta?.os_pretty_name ?? meta?.os_name ?? "--"],
+            ["Kernel", meta?.kernel ?? "--"],
+            ["CPU cores", meta?.cpu_cores != null ? String(meta.cpu_cores) : "--"],
+            ["Memory", meta?.memory_mb != null ? `${meta.memory_mb} MB` : "--"],
+            ["Disk (/)", meta?.disk_gb != null ? `${meta.disk_gb} GB` : "--"],
+            ["Uptime", humaniseUptime(meta?.uptime_seconds ?? null)],
+          ]}
+        />
+      </WindowPanel>
 
-        <Section title="Network">
-          <KeyValueGrid
-            rows={[
-              ["Subnet", node.subnet ?? "unresolved"],
-              ["Gateway", meta?.gateway_ip ?? "--"],
-              ["Gateway iface", meta?.gateway_interface ?? "--"],
-              ["External IP", meta?.external_ip ?? "--"],
-              ["Group tags", node.group_tags.length > 0 ? node.group_tags.join(", ") : "none"],
-              ["Last collected", formatRelativeTime(node.last_collected)],
-              ["Metadata stale", meta?.is_stale ? "yes" : "no"],
-            ]}
-          />
-        </Section>
+      <WindowPanel title="network">
+        <KeyValueGrid
+          rows={[
+            ["Subnet", node.subnet ?? "unresolved"],
+            ["Gateway", meta?.gateway_ip ?? "--"],
+            ["Gateway iface", meta?.gateway_interface ?? "--"],
+            ["External IP", meta?.external_ip ?? "--"],
+            ["Group tags", node.group_tags.length > 0 ? node.group_tags.join(", ") : "none"],
+            ["Last collected", formatRelativeTime(node.last_collected)],
+            ["Metadata stale", meta?.is_stale ? "yes" : "no"],
+          ]}
+        />
+      </WindowPanel>
 
-        <Section title={`Open ports (${node.ports.length})`}>
-          {node.ports.length > 0 ? (
-            <PortsTable ports={node.ports} />
-          ) : (
+      <WindowPanel title={`open ports (${node.ports.length})`} flush>
+        {node.ports.length > 0 ? (
+          <PortsGrid ports={node.ports} />
+        ) : (
+          <div style={{ padding: 12 }}>
             <MutedLine>No open ports collected.</MutedLine>
-          )}
-        </Section>
+          </div>
+        )}
+      </WindowPanel>
 
-        <Section title={`Services (${node.services.length})`}>
-          {node.services.length > 0 ? (
-            <ServicesTable services={node.services} />
-          ) : (
+      <WindowPanel title={`services (${node.services.length})`} flush>
+        {node.services.length > 0 ? (
+          <ServicesGrid services={node.services} />
+        ) : (
+          <div style={{ padding: 12 }}>
             <MutedLine>No service data collected.</MutedLine>
-          )}
-        </Section>
-      </div>
+          </div>
+        )}
+      </WindowPanel>
     </>
   );
 }
@@ -149,117 +219,97 @@ function SheetBody({ node }: { node: TopologyNode }) {
 // Small stateless building blocks
 // ---------------------------------------------------------------------------
 
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex flex-col gap-2">
-      <p className="text-[10px] uppercase tracking-wider text-text-muted">
-        {title}
-      </p>
-      {children}
-    </div>
-  );
-}
-
 function MutedLine({ children }: { children: React.ReactNode }) {
   return (
-    <p className="text-[11px] text-text-muted border border-border rounded-[2px] p-2">
+    <p
+      className="font-mono"
+      style={{
+        fontSize: 11,
+        color: "var(--text-muted)",
+        border: "1px solid var(--border-faint)",
+        borderRadius: 3,
+        padding: 10,
+      }}
+    >
       {children}
     </p>
   );
 }
 
-function SeverityCell({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: number;
-  tone: "critical" | "high" | "medium" | "low" | "neutral";
-}) {
-  const color =
-    tone === "neutral"
-      ? "var(--color-text)"
-      : `var(--color-${tone})`;
-  return (
-    <div className="flex flex-col items-center border border-border rounded-[2px] py-1">
-      <span className="text-[9px] uppercase text-text-muted">{label}</span>
-      <span className="text-sm font-semibold" style={{ color }}>
-        {value}
-      </span>
-    </div>
-  );
-}
-
 function KeyValueGrid({ rows }: { rows: Array<[string, string]> }) {
   return (
-    <div className="grid grid-cols-[minmax(0,120px)_1fr] gap-y-1 gap-x-3 border border-border rounded-[2px] p-2">
-      {rows.map(([k, v]) => (
-        <React.Fragment key={k}>
-          <span className="text-[10px] uppercase text-text-muted self-center">
+    <div className="flex flex-col">
+      {rows.map(([k, v], i) => (
+        <div
+          key={k}
+          className="flex items-start justify-between font-mono"
+          style={{
+            gap: 10,
+            padding: "6px 0",
+            borderBottom: i === rows.length - 1 ? "none" : "1px solid var(--border-faint)",
+          }}
+        >
+          <span
+            className="uppercase"
+            style={{ fontSize: 9, letterSpacing: "0.14em", color: "var(--text-faint)" }}
+          >
             {k}
           </span>
-          <span className="text-[11px] break-all">{v}</span>
-        </React.Fragment>
+          <span
+            style={{
+              fontSize: 11,
+              color: "var(--text-primary)",
+              textAlign: "right",
+              wordBreak: "break-all",
+              maxWidth: "60%",
+            }}
+          >
+            {v}
+          </span>
+        </div>
       ))}
     </div>
   );
 }
 
-function PortsTable({ ports }: { ports: PortInfo[] }) {
+function PortsGrid({ ports }: { ports: PortInfo[] }) {
   return (
-    <div className="border border-border rounded-[2px] overflow-hidden">
-      <table aria-label="Node ports" className="w-full text-[11px]">
-        <thead>
-          <tr className="bg-surface text-text-muted uppercase text-[9px]">
-            <th className="text-left px-2 py-1">Port</th>
-            <th className="text-left px-2 py-1">Proto</th>
-            <th className="text-left px-2 py-1">Process</th>
-            <th className="text-left px-2 py-1">Address</th>
-          </tr>
-        </thead>
-        <tbody>
-          {ports.map((p, i) => (
-            <tr key={`${p.port}-${p.protocol}-${p.local_address}-${i}`} className="border-t border-border">
-              <td className="px-2 py-1 font-semibold">{p.port}</td>
-              <td className="px-2 py-1">{p.protocol}</td>
-              <td className="px-2 py-1">{p.process_name ?? "--"}</td>
-              <td className="px-2 py-1 text-text-muted">{p.local_address}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataGrid
+      columns={[
+        { label: "PORT", width: "60px" },
+        { label: "PROTO", width: "60px" },
+        { label: "PROCESS", width: "1fr" },
+        { label: "ADDRESS", width: "1.2fr" },
+      ]}
+      rows={ports}
+      getKey={(p, i) => `${p.port}-${p.protocol}-${p.local_address}-${i}`}
+      renderCells={(p) => [
+        <span style={{ color: "var(--accent)", fontWeight: 600 }}>{p.port}</span>,
+        <span style={{ color: "var(--text-primary)" }}>{p.protocol}</span>,
+        <span style={{ color: "var(--text-primary)" }}>{p.process_name ?? "--"}</span>,
+        <span style={{ color: "var(--text-muted)" }}>{p.local_address}</span>,
+      ]}
+    />
   );
 }
 
-function ServicesTable({ services }: { services: ServiceInfo[] }) {
+function ServicesGrid({ services }: { services: ServiceInfo[] }) {
   return (
-    <div className="border border-border rounded-[2px] overflow-hidden">
-      <table aria-label="Node vulnerabilities" className="w-full text-[11px]">
-        <thead>
-          <tr className="bg-surface text-text-muted uppercase text-[9px]">
-            <th className="text-left px-2 py-1">Service</th>
-            <th className="text-left px-2 py-1">State</th>
-            <th className="text-left px-2 py-1">Sub-state</th>
-          </tr>
-        </thead>
-        <tbody>
-          {services.map((s, i) => (
-            <tr key={`${s.service_name}-${i}`} className="border-t border-border">
-              <td className="px-2 py-1">{s.service_name}</td>
-              <td className="px-2 py-1">{s.state}</td>
-              <td className="px-2 py-1 text-text-muted">{s.sub_state}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataGrid
+      columns={[
+        { label: "SERVICE", width: "1fr" },
+        { label: "STATE", width: "90px" },
+        { label: "SUB-STATE", width: "110px" },
+      ]}
+      rows={services}
+      getKey={(s, i) => `${s.service_name}-${i}`}
+      renderCells={(s) => [
+        <span style={{ color: "var(--text-primary)" }}>{s.service_name}</span>,
+        <MonoBadge tone={s.state === "active" ? "ok" : s.state === "failed" ? "critical" : "muted"}>
+          {s.state}
+        </MonoBadge>,
+        <span style={{ color: "var(--text-muted)" }}>{s.sub_state}</span>,
+      ]}
+    />
   );
 }

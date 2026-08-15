@@ -1,40 +1,22 @@
 /**
- * WarRoomPage -- Ops War Room, a security-operations-center surface.
+ * WarRoomPage -- Ops War Room, security-operations-center surface.
  *
- * A command-bar masthead (live SSE indicator + wall clock) sits above a
- * three-panel command-center composition on wide viewports (panels stack
- * on narrow):
- *   1. Live event stream from the shared SSE fan-out (buffered by
- *      {@link ActivityFeedProvider}). Dense monospace log-stream, newest
- *      on top, severity-coloured left accents, absolute + relative
- *      timestamps, chip filters, freeze-on-hover so a clicking user does
- *      not race a fresh event that reorders the list under the pointer.
- *   2. Active runs board seeded from ``GET /tasks/queue-depth`` and any
- *      run ids observed in the activity buffer. Each row shows the status
- *      dot, module tag, last event, and elapsed time. Per-run drill-down
- *      streams are opt-in and stay out of this initial cut.
- *   3. Vitals rail as live gauges: queue depth (5s), dead-letter count
- *      (admin only, 30s), and SSE connection state from
- *      {@link useSSEContext} -- big numerals, hot-pink when non-zero /
- *      critical, muted when idle.
+ * Rebuilt to the AILA mock: SectionHeader top, a grid of WindowPanels for
+ * incidents / alert stream / active runs / system health. Every table is a
+ * DataGrid; every status/severity chip is a MonoBadge; every scope filter is
+ * a FilterChip. All data hooks (queue-depth, dead-letter, SSE, activity feed)
+ * are preserved verbatim.
  *
- * Renders bare content (no PageShell/PageFrame) -- ``protectPage`` in
- * the router owns the title bar.
+ * Renders bare content -- protectPage() in the router owns the title bar.
  */
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Broadcast } from "@phosphor-icons/react/dist/csr/Broadcast";
-import { CircleNotch } from "@phosphor-icons/react/dist/csr/CircleNotch";
-import { Clock } from "@phosphor-icons/react/dist/csr/Clock";
 import { Pulse } from "@phosphor-icons/react/dist/csr/Pulse";
-import { Queue } from "@phosphor-icons/react/dist/csr/Queue";
-import { Skull } from "@phosphor-icons/react/dist/csr/Skull";
 import { WarningOctagon } from "@phosphor-icons/react/dist/csr/WarningOctagon";
 
-import { AilaCard } from "@/components/aila/AilaCard";
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { EmptyState } from "@/components/aila/EmptyState";
-import { Button } from "@/components/ui/button";
+import { SectionHeader, MonoBadge, FilterChip, StatBar, BigStat, DataGrid, toneColor } from "@/components/aila/mock";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { FeatureBoundary } from "@app/FeatureBoundary";
 import { authorizedRequestJson } from "@platform/api/http";
 import { useAuthStore } from "@platform/auth/useAuthStore";
@@ -66,38 +48,24 @@ interface DeadLetterEntry {
 }
 
 // ---------------------------------------------------------------------------
-// Chip config
+// Chip config -- filter chips for the alert stream
 // ---------------------------------------------------------------------------
 
-interface ChipDef {
-  scope: ActivityScope;
-  label: string;
-}
+interface ChipDef { scope: ActivityScope; label: string; color: string }
 
 const CHIP_DEFS: readonly ChipDef[] = [
-  { scope: "scan", label: "SCAN" },
-  { scope: "investigation", label: "INVESTIGATION" },
-  { scope: "finding", label: "FINDING" },
-  { scope: "notification", label: "NOTIFICATION" },
-  { scope: "task", label: "TASK" },
-  { scope: "mcp", label: "MCP" },
-  { scope: "system", label: "SYSTEM" },
-  { scope: "other", label: "OTHER" },
+  { scope: "scan", label: "SCAN", color: "var(--status-info)" },
+  { scope: "investigation", label: "INVESTIGATION", color: "var(--status-info)" },
+  { scope: "finding", label: "FINDING", color: "var(--status-warn)" },
+  { scope: "notification", label: "NOTIFICATION", color: "var(--accent)" },
+  { scope: "task", label: "TASK", color: "var(--status-info)" },
+  { scope: "mcp", label: "MCP", color: "var(--status-ok)" },
+  { scope: "system", label: "SYSTEM", color: "var(--status-signal)" },
+  { scope: "other", label: "OTHER", color: "var(--text-faint)" },
 ];
 
-const SCOPE_TEXT_CLASS: Record<ActivityScope, string> = {
-  scan: "text-lavender",
-  investigation: "text-medium",
-  finding: "text-high",
-  notification: "text-accent",
-  task: "text-lavender",
-  mcp: "text-mint",
-  system: "text-medium",
-  other: "text-text-muted",
-};
-
 // ---------------------------------------------------------------------------
-// Helpers
+// Helpers -- pure display formatting; feed data is untouched.
 // ---------------------------------------------------------------------------
 
 function formatRelative(now: number, at: number): string {
@@ -109,9 +77,6 @@ function formatRelative(now: number, at: number): string {
   return `${Math.floor(delta / 86_400_000)}d`;
 }
 
-/** Absolute wall-clock timestamp for a log row -- fixed 24h HH:MM:SS so
- *  events correlate cleanly regardless of locale. Pure display formatting
- *  of the ingest time already carried on the event. */
 function formatClock(at: number): string {
   const d = new Date(at);
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -143,61 +108,39 @@ function severityForEvent(event: ActivityEvent): EventSeverity {
   return "neutral";
 }
 
-/** Severity affordances for the log stream + run board: a left accent bar
- *  (background token) and a matching text colour. Kept off the badge so an
- *  operator reads urgency from the rail colour at a glance. */
-const SEVERITY_STYLE: Record<EventSeverity, { bar: string; text: string }> = {
-  critical: { bar: "bg-critical", text: "text-critical" },
-  high: { bar: "bg-high", text: "text-high" },
-  medium: { bar: "bg-medium", text: "text-medium" },
-  low: { bar: "bg-low", text: "text-low" },
-  info: { bar: "bg-lavender", text: "text-lavender" },
-  neutral: { bar: "bg-border", text: "text-text-muted" },
+const SEVERITY_TONE: Record<EventSeverity, string> = {
+  critical: "critical",
+  high: "high",
+  medium: "medium",
+  low: "low",
+  info: "info",
+  neutral: "muted",
 };
 
 // ---------------------------------------------------------------------------
-// Shared presentational chrome
+// Wall-clock chip (self-contained 1Hz tick, decorative only)
 // ---------------------------------------------------------------------------
-
-/** Consistent panel masthead -- accent icon, mono small-caps label, and an
- *  optional right-aligned readout slot. Gives the three panels a single
- *  command-center header rhythm. */
-function PanelHeader({
-  icon,
-  label,
-  right,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  right?: React.ReactNode;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3 border-b border-border pb-2.5">
-      <div className="flex items-center gap-2 text-accent">
-        {icon}
-        <span className="font-mono text-2xs uppercase tracking-cyber text-text-muted">{label}</span>
-      </div>
-      {right}
-    </div>
-  );
-}
-
-/** Command-bar wall clock. Self-contained 1Hz tick -- purely decorative
- *  chrome, no bearing on the feed or queries. */
 function LiveClock() {
   const [now, setNow] = React.useState(() => Date.now());
   React.useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(id);
   }, []);
-  return <span className="font-mono text-xs tabular-nums text-text-muted">{formatClock(now)}</span>;
+  return (
+    <span
+      className="font-mono"
+      style={{ fontSize: 11, color: "var(--text-primary)", letterSpacing: "0.06em" }}
+    >
+      {formatClock(now)}
+    </span>
+  );
 }
 
 // ---------------------------------------------------------------------------
-// Live event stream column
+// Alerts stream -- WindowPanel with filter chips + severity-coloured rows.
+// Freezes on hover so a click never races an inbound event.
 // ---------------------------------------------------------------------------
-
-interface EventStreamProps {
+interface AlertsStreamProps {
   events: readonly ActivityEvent[];
   activeScopes: ReadonlySet<ActivityScope>;
   onToggleScope: (scope: ActivityScope) => void;
@@ -206,30 +149,25 @@ interface EventStreamProps {
   totalIngested: number;
 }
 
-function LiveEventStream({
+function AlertsStream({
   events,
   activeScopes,
   onToggleScope,
   onReset,
   scopeCounts,
   totalIngested,
-}: EventStreamProps) {
+}: AlertsStreamProps) {
   const [paused, setPaused] = React.useState(false);
   const pausedSnapshotRef = React.useRef<readonly ActivityEvent[] | null>(null);
   const [now, setNow] = React.useState(() => Date.now());
 
-  // 1Hz relative-time tick. Cheap: only re-renders this column.
   React.useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(id);
   }, []);
 
-  // Freeze the snapshot exactly at pause moment so hover-to-click never
-  // races an inbound event that reorders the list under the cursor.
   if (paused) {
-    if (pausedSnapshotRef.current === null) {
-      pausedSnapshotRef.current = events;
-    }
+    if (pausedSnapshotRef.current === null) pausedSnapshotRef.current = events;
   } else {
     pausedSnapshotRef.current = null;
   }
@@ -240,118 +178,130 @@ function LiveEventStream({
     : visibleAll.filter((event) => activeScopes.has(event.scope));
 
   return (
-    <AilaCard variant="elevated" padding="md" className="flex flex-col" style={{ minHeight: 640 }}>
-      <PanelHeader
-        icon={<Broadcast className="h-4 w-4" />}
-        label="Live Event Stream"
-        right={
-          <div className="flex items-center gap-3">
-            <span
-              className={`inline-flex items-center gap-1.5 font-mono text-3xs uppercase tracking-cyber-sm ${paused ? "text-text-muted" : "text-accent"}`}
-            >
-              <span
-                aria-hidden
-                className={`inline-block h-1.5 w-1.5 rounded-full ${paused ? "bg-text-muted" : "bg-accent"}`}
-              />
-              {paused ? "Paused" : "Live"}
-            </span>
-            <span className="font-mono text-3xs uppercase tracking-cyber-sm text-text-muted">
-              <span className="tabular-nums text-text-primary">{totalIngested}</span> total
-              <span aria-hidden className="px-1 text-border">/</span>
-              <span className="tabular-nums text-text-primary">{visible.length}</span> shown
-            </span>
-            {activeScopes.size > 0 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onReset}
-                className="h-6 px-2 font-mono text-3xs uppercase tracking-cyber-sm"
+    <WindowPanel
+      title="alert stream"
+      tone={paused ? "muted" : "accent"}
+      status={
+        <span style={{ color: "var(--text-faint)" }}>
+          {paused ? "PAUSED" : "LIVE"} {"\u00b7"} {totalIngested} total {"\u00b7"} {visible.length} shown
+        </span>
+      }
+      actions={activeScopes.size > 0 ? (
+        <button
+          type="button"
+          onClick={onReset}
+          className="font-mono uppercase"
+          style={{
+            height: 22, padding: "0 9px", fontSize: 9, letterSpacing: "0.08em",
+            border: "1px solid var(--border-soft)", background: "transparent",
+            color: "var(--text-muted)", borderRadius: 3, cursor: "pointer",
+          }}
+        >
+          CLEAR
+        </button>
+      ) : undefined}
+    >
+      <div className="flex flex-col" style={{ gap: 10 }}>
+        <div className="flex flex-wrap items-center" style={{ gap: 6 }}>
+          {CHIP_DEFS.map((chip) => {
+            const active = activeScopes.has(chip.scope);
+            const count = scopeCounts[chip.scope] ?? 0;
+            return (
+              <FilterChip
+                key={chip.scope}
+                active={active}
+                color={chip.color}
+                onClick={() => onToggleScope(chip.scope)}
               >
-                Clear filters
-              </Button>
-            )}
-          </div>
-        }
-      />
+                {chip.label}{count > 0 ? ` \u00b7 ${count}` : ""}
+              </FilterChip>
+            );
+          })}
+        </div>
 
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        {CHIP_DEFS.map((chip) => {
-          const active = activeScopes.has(chip.scope);
-          const count = scopeCounts[chip.scope] ?? 0;
-          return (
-            <button
-              key={chip.scope}
-              type="button"
-              onClick={() => onToggleScope(chip.scope)}
-              className={
-                "rounded-sharp border px-2 py-0.5 font-mono text-3xs uppercase tracking-cyber-sm transition-colors " +
-                (active
-                  ? "border-accent bg-accent-muted text-accent"
-                  : "border-border text-text-muted hover:border-accent/60 hover:text-text-primary")
-              }
+        <div
+          onMouseEnter={() => setPaused(true)}
+          onMouseLeave={() => setPaused(false)}
+          style={{
+            maxHeight: 520, overflowY: "auto",
+            border: "1px solid var(--border-soft)", borderRadius: 3,
+            background: "var(--surface-sunk)",
+          }}
+        >
+          {visible.length === 0 ? (
+            <div
+              className="font-mono uppercase"
+              style={{
+                padding: 34, textAlign: "center",
+                fontSize: 10, letterSpacing: "0.1em", color: "var(--text-faint)",
+              }}
             >
-              {chip.label} {count > 0 ? `[${count}]` : ""}
-            </button>
-          );
-        })}
+              {activeScopes.size > 0 ? "no matching events" : "waiting for events\u2026"}
+            </div>
+          ) : (
+            <ul className="flex flex-col" style={{ padding: 0, margin: 0, listStyle: "none" }}>
+              {visible.map((event) => (
+                <StreamRow key={event.id} event={event} now={now} />
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
-
-      <div
-        className="mt-3 flex-1 overflow-y-auto rounded-sharp border border-border bg-base/60 p-2 font-mono text-xs"
-        style={{ maxHeight: 560 }}
-        onMouseEnter={() => setPaused(true)}
-        onMouseLeave={() => setPaused(false)}
-      >
-        {paused && (
-          <div className="sticky top-0 z-10 mb-1 rounded-sharp border border-accent/40 bg-base/90 px-2 py-0.5 text-center text-3xs uppercase tracking-cyber-sm text-accent">
-            paused -- move cursor away to resume
-          </div>
-        )}
-        {visible.length === 0 ? (
-          <div className="flex h-full items-center justify-center font-mono text-3xs uppercase tracking-cyber-sm text-text-muted">
-            {activeScopes.size > 0 ? "no matching events" : "waiting for events…"}
-          </div>
-        ) : (
-          <ul className="flex flex-col">
-            {visible.map((event) => (
-              <StreamRow key={event.id} event={event} now={now} />
-            ))}
-          </ul>
-        )}
-      </div>
-    </AilaCard>
+    </WindowPanel>
   );
 }
 
 function StreamRow({ event, now }: { event: ActivityEvent; now: number }) {
-  const severity = severityForEvent(event);
-  const style = SEVERITY_STYLE[severity];
-  const scopeClass = SCOPE_TEXT_CLASS[event.scope];
+  const sev = severityForEvent(event);
+  const tone = SEVERITY_TONE[sev];
+  const barColor = toneColor(tone);
   return (
-    <li className="relative flex items-baseline gap-2.5 border-b border-border/20 py-1 pr-1 pl-3 transition-colors last:border-b-0 hover:bg-elevated/40 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:duration-200">
-      <span aria-hidden className={`pointer-events-none absolute inset-y-0 left-0 w-0.5 ${style.bar}`} />
-      <span className="shrink-0 tabular-nums text-3xs text-text-muted">{formatClock(event.at)}</span>
-      <span className={`w-24 shrink-0 truncate text-3xs uppercase tracking-cyber-sm ${scopeClass}`}>
+    <li
+      className="flex items-center font-mono"
+      style={{
+        position: "relative",
+        gap: 10,
+        padding: "6px 12px 6px 14px",
+        borderBottom: "1px solid var(--border-faint)",
+        fontSize: 11,
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          position: "absolute", left: 0, top: 0, bottom: 0, width: 2,
+          background: barColor,
+        }}
+      />
+      <span style={{ flex: "0 0 62px", color: "var(--text-faint)", fontSize: 10 }}>
+        {formatClock(event.at)}
+      </span>
+      <span style={{ flex: "0 0 96px", color: "var(--text-muted)", fontSize: 9.5, letterSpacing: "0.08em", textTransform: "uppercase" }}>
         {event.scope}
       </span>
-      <AilaBadge severity={severity} size="sm" className="shrink-0">
-        {event.type}
-      </AilaBadge>
-      <span className="min-w-0 flex-1 truncate text-text-primary">
+      <MonoBadge tone={tone}>{event.type}</MonoBadge>
+      <span
+        className="truncate"
+        style={{ flex: 1, minWidth: 0, color: "var(--text-primary)" }}
+      >
         {event.summary}
       </span>
-      <span className="flex shrink-0 items-baseline gap-2 text-3xs text-text-muted">
-        {event.resourceId && <span className="max-w-24 truncate">{event.resourceId.slice(0, 8)}</span>}
-        <span className="w-8 text-right tabular-nums">{formatRelative(now, event.at)}</span>
+      {event.resourceId && (
+        <span style={{ flex: "0 0 auto", color: "var(--text-faint)", fontSize: 10, maxWidth: 96, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {event.resourceId.slice(0, 10)}
+        </span>
+      )}
+      <span style={{ flex: "0 0 34px", textAlign: "right", color: "var(--text-muted)", fontSize: 10 }}>
+        {formatRelative(now, event.at)}
       </span>
     </li>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Active runs grid
+// Active runs -- DataGrid derived from the activity feed. A run is "active"
+// if it has produced events without a terminal marker.
 // ---------------------------------------------------------------------------
-
 interface ActiveRun {
   resourceId: string;
   scope: ActivityScope;
@@ -360,12 +310,6 @@ interface ActiveRun {
 }
 
 function deriveActiveRuns(events: readonly ActivityEvent[]): ActiveRun[] {
-  // A run is "active" if we've seen any event for it AND we have NOT
-  // seen a terminal marker (scan_complete with status done/failed/
-  // cancelled, task marked completed) since. Since events arrive
-  // newest-first we walk in reverse chronological order and record
-  // the first (=latest) event per resource, then filter out those
-  // whose latest event is terminal.
   const seen: Record<string, ActiveRun> = {};
   const terminated: Record<string, true> = {};
   for (const event of events) {
@@ -396,13 +340,15 @@ function deriveActiveRuns(events: readonly ActivityEvent[]): ActiveRun[] {
     .sort((a, b) => b.lastEvent.at - a.lastEvent.at);
 }
 
-interface ActiveRunsGridProps {
+function TeamActivity({
+  events,
+  queueDepth,
+  isLoading,
+}: {
   events: readonly ActivityEvent[];
   queueDepth: QueueDepthPayload | undefined;
   isLoading: boolean;
-}
-
-function ActiveRunsGrid({ events, queueDepth, isLoading }: ActiveRunsGridProps) {
+}) {
   const [now, setNow] = React.useState(() => Date.now());
   React.useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 2_000);
@@ -414,91 +360,66 @@ function ActiveRunsGrid({ events, queueDepth, isLoading }: ActiveRunsGridProps) 
   const queuedCount = queueDepth?.queued ?? 0;
 
   return (
-    <AilaCard variant="elevated" padding="md" className="flex flex-col" style={{ minHeight: 640 }}>
-      <PanelHeader
-        icon={<CircleNotch className="h-4 w-4" />}
-        label="Active Runs"
-        right={
-          <span className="font-mono text-3xs uppercase tracking-cyber-sm text-text-muted">
-            <span className="tabular-nums text-text-primary">{runs.length}</span> tracked
-            <span aria-hidden className="px-1 text-border">/</span>
-            <span className="tabular-nums text-text-primary">{runningCount}</span> running
-            <span aria-hidden className="px-1 text-border">/</span>
-            <span className="tabular-nums text-text-primary">{queuedCount}</span> queued
-          </span>
+    <WindowPanel
+      title="team activity"
+      status={
+        <span style={{ color: "var(--text-faint)" }}>
+          {runs.length} TRACKED {"\u00b7"} {runningCount} RUN {"\u00b7"} {queuedCount} Q
+        </span>
+      }
+      flush
+    >
+      <DataGrid
+        columns={[
+          { label: "SCOPE", width: "110px" },
+          { label: "RESOURCE", width: "1fr" },
+          { label: "LAST EVENT", width: "1.4fr" },
+          { label: "EVT", width: "44px", align: "right" },
+          { label: "AGE", width: "48px", align: "right" },
+        ]}
+        rows={runs}
+        getKey={(r) => r.resourceId}
+        renderCells={(run) => {
+          const sev = severityForEvent(run.lastEvent);
+          const tone = SEVERITY_TONE[sev];
+          return [
+            <MonoBadge tone={tone}>{run.scope}</MonoBadge>,
+            <span className="truncate" style={{ color: "var(--text-primary)", fontSize: 11 }}>
+              {run.resourceId}
+            </span>,
+            <span className="truncate" style={{ fontSize: 10, color: "var(--text-muted)" }}>
+              <span style={{ color: toneColor(tone) }}>{run.lastEvent.type}</span>
+              {" : "}
+              {run.lastEvent.summary}
+            </span>,
+            <span style={{ color: "var(--text-primary)", fontSize: 10 }}>{run.eventCount}</span>,
+            <span style={{ color: "var(--text-muted)", fontSize: 10 }}>{formatRelative(now, run.lastEvent.at)}</span>,
+          ];
+        }}
+        empty={
+          <div
+            className="font-mono uppercase"
+            style={{
+              padding: 30, textAlign: "center",
+              fontSize: 10, letterSpacing: "0.1em", color: "var(--text-faint)",
+            }}
+          >
+            {isLoading
+              ? "loading queue snapshot\u2026"
+              : runningCount > 0
+                ? `${runningCount} task${runningCount === 1 ? "" : "s"} running \u00b7 cards appear as events arrive`
+                : "no active runs \u2014 kick off a scan or investigation"}
+          </div>
         }
       />
-
-      <div className="mt-3 flex-1 overflow-y-auto pr-1" style={{ maxHeight: 560 }}>
-        {isLoading && runs.length === 0 ? (
-          <div className="grid gap-2">
-            {[0, 1, 2].map((n) => (
-              <div key={n} className="h-16 animate-pulse rounded-sharp border border-border bg-surface/40" />
-            ))}
-          </div>
-        ) : runs.length === 0 ? (
-          <EmptyState
-            icon={<CircleNotch className="h-8 w-8" />}
-            title="No active runs"
-            description={
-              runningCount > 0
-                ? `${runningCount} task${runningCount === 1 ? "" : "s"} running -- cards appear as their events arrive.`
-                : "Kick off a scan or investigation to see live progress here."
-            }
-          />
-        ) : (
-          <ul className="flex flex-col">
-            {runs.map((run) => (
-              <RunCard key={run.resourceId} run={run} now={now} />
-            ))}
-          </ul>
-        )}
-      </div>
-    </AilaCard>
-  );
-}
-
-function RunCard({ run, now }: { run: ActiveRun; now: number }) {
-  const severity = severityForEvent(run.lastEvent);
-  const style = SEVERITY_STYLE[severity];
-  return (
-    <li className="relative flex items-center gap-3 border-b border-border/20 py-2 pr-1 pl-3 transition-colors last:border-b-0 hover:bg-elevated/40">
-      <span aria-hidden className={`pointer-events-none absolute inset-y-0 left-0 w-0.5 ${style.bar}`} />
-      <span aria-hidden className={`inline-block h-2 w-2 shrink-0 rounded-full ${style.bar}`} />
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <div className="flex items-center gap-2">
-          <AilaBadge severity={severity} size="sm" className="shrink-0">{run.scope}</AilaBadge>
-          <span className="min-w-0 flex-1 truncate font-mono text-2xs text-text-primary">
-            {run.resourceId}
-          </span>
-        </div>
-        <div className="truncate font-mono text-3xs text-text-muted">
-          <span className={style.text}>{run.lastEvent.type}</span>: {run.lastEvent.summary}
-        </div>
-      </div>
-      <div className="flex shrink-0 flex-col items-end gap-0.5 font-mono text-3xs text-text-muted">
-        <span className="tabular-nums text-text-primary">{formatRelative(now, run.lastEvent.at)}</span>
-        <span className="tabular-nums">{run.eventCount} evt</span>
-      </div>
-    </li>
+    </WindowPanel>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Vitals rail
+// System health -- StatBars per queue status + BigStat for dead-letter.
 // ---------------------------------------------------------------------------
-
-interface VitalsRailProps {
-  queueDepth: QueueDepthPayload | undefined;
-  queueDepthError: unknown;
-  deadLetterCount: number | undefined;
-  deadLetterError: unknown;
-  isAdmin: boolean;
-  sseStatus: "connecting" | "connected" | "disconnected";
-  reducedMotion: boolean;
-}
-
-function VitalsRail({
+function SystemHealth({
   queueDepth,
   queueDepthError,
   deadLetterCount,
@@ -506,104 +427,137 @@ function VitalsRail({
   isAdmin,
   sseStatus,
   reducedMotion,
-}: VitalsRailProps) {
+}: {
+  queueDepth: QueueDepthPayload | undefined;
+  queueDepthError: unknown;
+  deadLetterCount: number | undefined;
+  deadLetterError: unknown;
+  isAdmin: boolean;
+  sseStatus: "connecting" | "connected" | "disconnected";
+  reducedMotion: boolean;
+}) {
   const queueRows = React.useMemo(() => {
-    if (!queueDepth) return [];
+    if (!queueDepth) return [] as [string, number][];
     return Object.entries(queueDepth)
       .filter(([, count]) => typeof count === "number")
       .sort((a, b) => b[1] - a[1]);
   }, [queueDepth]);
 
-  const sseDotClass = sseStatus === "connected"
-    ? "bg-mint"
-    : sseStatus === "connecting"
-      ? "bg-medium"
-      : "bg-critical";
-  const sseTextClass = sseStatus === "connected"
-    ? "text-mint"
-    : sseStatus === "connecting"
-      ? "text-medium"
-      : "text-critical";
+  const maxQ = queueRows.reduce((m, [, c]) => Math.max(m, c), 0);
+  const panelTone: "ok" | "info" | "warn" =
+    sseStatus === "connected" ? "ok" : sseStatus === "disconnected" ? "warn" : "info";
+  const dotColor =
+    sseStatus === "connected" ? toneColor("ok")
+    : sseStatus === "connecting" ? toneColor("medium")
+    : toneColor("critical");
+  const badgeTone = sseStatus === "connected" ? "ok" : sseStatus === "connecting" ? "medium" : "critical";
   const shouldPulse = sseStatus === "connected" && !reducedMotion;
 
   return (
-    <AilaCard variant="elevated" padding="md" className="flex flex-col" style={{ minHeight: 640 }}>
-      <PanelHeader icon={<Pulse className="h-4 w-4" />} label="Vitals" />
-
-      {/* SSE connection */}
-      <div className="mt-4">
-        <div className="font-mono text-2xs uppercase tracking-cyber text-text-muted">
-          SSE Stream
-        </div>
-        <div className="mt-1.5 flex items-center gap-2">
-          <span
-            className={`inline-block h-2.5 w-2.5 rounded-full ${sseDotClass} ${shouldPulse ? "animate-pulse" : ""}`}
-            aria-hidden
-          />
-          <span className={`font-mono text-base uppercase tracking-cyber-sm ${sseTextClass}`}>
-            {sseStatus}
-          </span>
-        </div>
-      </div>
-
-      {/* Queue depth */}
-      <div className="mt-4 border-t border-border/60 pt-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5 font-mono text-2xs uppercase tracking-cyber text-text-muted">
-            <Queue className="h-3 w-3" />
-            Queue Depth
+    <WindowPanel title="system health" tone={panelTone}>
+      <div className="flex flex-col" style={{ gap: 14 }}>
+        {/* SSE row */}
+        <div className="flex flex-col" style={{ gap: 6 }}>
+          <div
+            className="font-mono uppercase"
+            style={{ fontSize: 9, letterSpacing: "0.14em", color: "var(--text-faint)" }}
+          >
+            SSE STREAM
           </div>
-          <span className="font-mono text-3xs tabular-nums text-text-muted">5s</span>
-        </div>
-        {queueDepthError ? (
-          <div className="mt-1.5 rounded-sharp border border-destructive/50 bg-destructive/10 px-2 py-1 font-mono text-3xs uppercase tracking-cyber-sm text-destructive">
-            unavailable
+          <div className="flex items-center" style={{ gap: 8 }}>
+            <span
+              aria-hidden
+              className={shouldPulse ? "animate-pulse" : undefined}
+              style={{
+                width: 10, height: 10, borderRadius: 999, background: dotColor,
+                boxShadow: shouldPulse ? `0 0 6px ${dotColor}` : undefined,
+              }}
+            />
+            <MonoBadge tone={badgeTone}>{sseStatus}</MonoBadge>
           </div>
-        ) : queueRows.length === 0 ? (
-          <div className="mt-1.5 font-mono text-xl tabular-nums text-text-muted">--</div>
-        ) : (
-          <ul className="mt-1.5 space-y-1.5">
-            {queueRows.map(([status, count]) => (
-              <li key={status} className="flex items-baseline justify-between gap-2">
-                <span className="font-mono text-3xs uppercase tracking-cyber-sm text-text-muted">{status}</span>
-                <span className={`font-mono text-lg tabular-nums ${count > 0 ? "text-accent" : "text-text-muted"}`}>
-                  {count}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+        </div>
 
-      {/* Dead-letter (admin only) */}
-      {isAdmin && (
-        <div className="mt-4 border-t border-border/60 pt-4">
+        {/* Queue depth block */}
+        <div className="flex flex-col" style={{ gap: 8, paddingTop: 8, borderTop: "1px solid var(--border-faint)" }}>
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 font-mono text-2xs uppercase tracking-cyber text-text-muted">
-              <Skull className="h-3 w-3" />
-              Dead Letter
+            <div
+              className="font-mono uppercase"
+              style={{ fontSize: 9, letterSpacing: "0.14em", color: "var(--text-faint)" }}
+            >
+              QUEUE DEPTH
             </div>
-            <span className="font-mono text-3xs tabular-nums text-text-muted">30s</span>
+            <span className="font-mono" style={{ fontSize: 9, color: "var(--text-faint)" }}>5s</span>
           </div>
-          {deadLetterError ? (
-            <div className="mt-1.5 rounded-sharp border border-destructive/50 bg-destructive/10 px-2 py-1 font-mono text-3xs uppercase tracking-cyber-sm text-destructive">
+          {queueDepthError ? (
+            <div
+              className="font-mono"
+              style={{
+                border: "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+                background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+                color: "var(--status-warn)",
+                padding: "6px 10px", fontSize: 10, borderRadius: 3, letterSpacing: "0.08em",
+                textTransform: "uppercase",
+              }}
+            >
               unavailable
             </div>
+          ) : queueRows.length === 0 ? (
+            <div
+              className="font-mono"
+              style={{ fontSize: 18, color: "var(--text-faint)" }}
+            >
+              --
+            </div>
           ) : (
-            <div className="mt-1.5 flex items-baseline gap-2">
-              <span
-                className={`font-mono text-3xl tabular-nums ${deadLetterCount && deadLetterCount > 0 ? "text-critical" : "text-text-muted"}`}
-              >
-                {deadLetterCount ?? "--"}
-              </span>
-              <span className="font-mono text-3xs uppercase tracking-cyber-sm text-text-muted">
-                exhausted retries
-              </span>
+            <div className="flex flex-col" style={{ gap: 6 }}>
+              {queueRows.map(([status, count]) => (
+                <StatBar
+                  key={status}
+                  label={status}
+                  color={count > 0 ? "var(--accent)" : "var(--text-faint)"}
+                  value={count}
+                  max={Math.max(maxQ, 1)}
+                />
+              ))}
             </div>
           )}
         </div>
-      )}
-    </AilaCard>
+
+        {/* Dead-letter (admin only) -- BigStat */}
+        {isAdmin && (
+          <div className="flex flex-col" style={{ gap: 6, paddingTop: 8, borderTop: "1px solid var(--border-faint)" }}>
+            <div className="flex items-center justify-between">
+              <div
+                className="font-mono uppercase"
+                style={{ fontSize: 9, letterSpacing: "0.14em", color: "var(--text-faint)" }}
+              >
+                DEAD LETTER
+              </div>
+              <span className="font-mono" style={{ fontSize: 9, color: "var(--text-faint)" }}>30s</span>
+            </div>
+            {deadLetterError ? (
+              <div
+                className="font-mono"
+                style={{
+                  border: "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+                  background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+                  color: "var(--status-warn)",
+                  padding: "6px 10px", fontSize: 10, borderRadius: 3, letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                }}
+              >
+                unavailable
+              </div>
+            ) : (
+              <BigStat
+                value={deadLetterCount ?? "--"}
+                sub="exhausted retries"
+              />
+            )}
+          </div>
+        )}
+      </div>
+    </WindowPanel>
   );
 }
 
@@ -624,11 +578,8 @@ export function WarRoomPage() {
   const toggleScope = React.useCallback((scope: ActivityScope) => {
     setActiveScopes((prev) => {
       const next = new Set(prev);
-      if (next.has(scope)) {
-        next.delete(scope);
-      } else {
-        next.add(scope);
-      }
+      if (next.has(scope)) next.delete(scope);
+      else next.add(scope);
       return next;
     });
   }, []);
@@ -680,109 +631,138 @@ export function WarRoomPage() {
     return null;
   })();
 
+  const sseDotColor =
+    sseStatus === "connected" ? toneColor("ok")
+    : sseStatus === "connecting" ? toneColor("medium")
+    : toneColor("critical");
+
   return (
-    <div className="flex flex-col gap-4">
-      {/* Command bar -- persistent SSE indicator + wall clock */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-sharp-md border border-border bg-surface/60 px-4 py-2">
-        <div className="flex items-center gap-2.5">
-          <Broadcast className="h-4 w-4 text-accent" />
-          <span className="font-mono text-xs uppercase tracking-cyber text-text-primary">Ops War Room</span>
-          <span aria-hidden className="h-3 w-px bg-border" />
-          <span className="font-mono text-3xs uppercase tracking-cyber-sm text-text-muted">
-            real-time operations
-          </span>
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="inline-flex items-center gap-1.5">
+    <div className="flex flex-col" style={{ gap: 16, padding: 20 }}>
+      <SectionHeader
+        icon={"\u25ce"}
+        title="war room"
+        actions={
+          <div className="flex items-center" style={{ gap: 12 }}>
+            <span className="inline-flex items-center" style={{ gap: 6 }}>
+              <span
+                aria-hidden
+                className={sseStatus === "connected" && !reducedMotion ? "animate-pulse" : undefined}
+                style={{ width: 8, height: 8, borderRadius: 999, background: sseDotColor }}
+              />
+              <span
+                className="font-mono uppercase"
+                style={{ fontSize: 9.5, letterSpacing: "0.1em", color: "var(--text-muted)" }}
+              >
+                SSE {sseStatus}
+              </span>
+            </span>
             <span
               aria-hidden
-              className={`inline-block h-2 w-2 shrink-0 rounded-full ${sseStatus === "connected" ? "bg-mint" : sseStatus === "connecting" ? "bg-medium" : "bg-critical"} ${sseStatus === "connected" && !reducedMotion ? "animate-pulse" : ""}`}
+              style={{ width: 1, height: 14, background: "var(--border-soft)" }}
             />
-            <span
-              className={`font-mono text-3xs uppercase tracking-cyber-sm ${sseStatus === "connected" ? "text-mint" : sseStatus === "connecting" ? "text-medium" : "text-critical"}`}
-            >
-              SSE {sseStatus}
-            </span>
-          </span>
-          <span aria-hidden className="h-3 w-px bg-border" />
-          <span className="inline-flex items-center gap-1.5 text-text-muted">
-            <Clock className="h-3.5 w-3.5" />
             <LiveClock />
-          </span>
-        </div>
-      </div>
+          </div>
+        }
+      />
 
+      {/* Incident banner -- present iff SSE is faulted */}
       {sseBanner && (
-        <div
-          role="alert" aria-live="assertive"
-          className="relative flex items-start gap-3 overflow-hidden rounded-sharp-md border border-destructive/50 bg-destructive/10 py-3 pr-4 pl-4"
+        <WindowPanel
+          title="incident"
+          tone="warn"
+          status="LIVE"
+          {...({ role: "alert", "aria-live": "assertive" } as Record<string, unknown>)}
         >
-          <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-0.5 bg-destructive" />
-          <WarningOctagon className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
-          <div className="min-w-0">
-            <div className="font-mono text-sm uppercase tracking-cyber-sm text-destructive">
-              {sseBanner.title}
-            </div>
-            <div className="mt-0.5 font-mono text-xs text-text-muted">
-              {sseBanner.body}
+          <div className="flex items-start" style={{ gap: 10 }}>
+            <WarningOctagon
+              aria-hidden
+              size={18}
+              style={{ color: "var(--status-warn)", flex: "0 0 auto", marginTop: 2 }}
+            />
+            <div className="flex flex-col" style={{ gap: 4, minWidth: 0 }}>
+              <div
+                className="font-mono uppercase"
+                style={{ fontSize: 11, letterSpacing: "0.1em", color: "var(--status-warn)" }}
+              >
+                {sseBanner.title}
+              </div>
+              <div
+                className="font-mono"
+                style={{ fontSize: 11, lineHeight: 1.55, color: "var(--text-muted)" }}
+              >
+                {sseBanner.body}
+              </div>
             </div>
           </div>
-        </div>
+        </WindowPanel>
       )}
 
-      {/* Per-panel FeatureBoundary so a render fault in the live event
-          stream, active runs grid, or vitals rail collapses to a scoped
-          retry surface -- the other two panels stay live. */}
-      <div className="grid gap-4 lg:grid-cols-12">
-        <div className="lg:col-span-5">
-          <FeatureBoundary
-            label="Live event stream"
-            resetKeys={[activeScopes]}
+      {/* Main grid: alerts stream | system health */}
+      <div
+        className="grid"
+        style={{ gridTemplateColumns: "minmax(0, 1.5fr) minmax(0, 1fr)", gap: 16 }}
+      >
+        <FeatureBoundary
+          label="Alert stream"
+          resetKeys={[activeScopes]}
+          onReset={resetScopes}
+        >
+          <AlertsStream
+            events={feed.events}
+            activeScopes={activeScopes}
+            onToggleScope={toggleScope}
             onReset={resetScopes}
-          >
-            <LiveEventStream
-              events={feed.events}
-              activeScopes={activeScopes}
-              onToggleScope={toggleScope}
-              onReset={resetScopes}
-              scopeCounts={feed.scopeCounts}
-              totalIngested={feed.totalIngested}
-            />
-          </FeatureBoundary>
-        </div>
-        <div className="lg:col-span-4">
-          <FeatureBoundary
-            label="Active runs board"
-            resetKeys={[queueDepthQuery.dataUpdatedAt]}
-            onReset={() => void queueDepthQuery.refetch()}
-          >
-            <ActiveRunsGrid
-              events={feed.events}
-              queueDepth={queueDepth}
-              isLoading={queueDepthQuery.isLoading}
-            />
-          </FeatureBoundary>
-        </div>
-        <div className="lg:col-span-3">
-          <FeatureBoundary
-            label="Vitals rail"
-            resetKeys={[queueDepthQuery.dataUpdatedAt, deadLetterQuery.dataUpdatedAt]}
-            onReset={() => {
-              void queueDepthQuery.refetch();
-              if (isAdmin) void deadLetterQuery.refetch();
-            }}
-          >
-            <VitalsRail
-              queueDepth={queueDepth}
-              queueDepthError={queueDepthQuery.error}
-              deadLetterCount={deadLetterCount}
-              deadLetterError={deadLetterQuery.error}
-              isAdmin={isAdmin}
-              sseStatus={sseStatus}
-              reducedMotion={reducedMotion}
-            />
-          </FeatureBoundary>
-        </div>
+            scopeCounts={feed.scopeCounts}
+            totalIngested={feed.totalIngested}
+          />
+        </FeatureBoundary>
+        <FeatureBoundary
+          label="System health"
+          resetKeys={[queueDepthQuery.dataUpdatedAt, deadLetterQuery.dataUpdatedAt]}
+          onReset={() => {
+            void queueDepthQuery.refetch();
+            if (isAdmin) void deadLetterQuery.refetch();
+          }}
+        >
+          <SystemHealth
+            queueDepth={queueDepth}
+            queueDepthError={queueDepthQuery.error}
+            deadLetterCount={deadLetterCount}
+            deadLetterError={deadLetterQuery.error}
+            isAdmin={isAdmin}
+            sseStatus={sseStatus}
+            reducedMotion={reducedMotion}
+          />
+        </FeatureBoundary>
+      </div>
+
+      {/* Team activity (active runs) */}
+      <FeatureBoundary
+        label="Active runs board"
+        resetKeys={[queueDepthQuery.dataUpdatedAt]}
+        onReset={() => void queueDepthQuery.refetch()}
+      >
+        <TeamActivity
+          events={feed.events}
+          queueDepth={queueDepth}
+          isLoading={queueDepthQuery.isLoading}
+        />
+      </FeatureBoundary>
+
+      {/* Broadcast identifier row -- purely decorative footer */}
+      <div
+        className="flex items-center font-mono uppercase"
+        style={{
+          gap: 8, padding: "6px 12px", fontSize: 9, letterSpacing: "0.14em",
+          color: "var(--text-faint)",
+          border: "1px solid var(--border-faint)", borderRadius: 3,
+          background: "var(--surface-sunk)",
+        }}
+      >
+        <Broadcast size={12} aria-hidden style={{ color: "var(--accent)" }} />
+        <span>OPS WAR ROOM {"\u00b7"} REAL-TIME OPERATIONS</span>
+        <span style={{ flex: 1 }} />
+        <Pulse size={12} aria-hidden style={{ color: "var(--text-faint)" }} />
       </div>
     </div>
   );

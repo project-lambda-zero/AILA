@@ -9,18 +9,18 @@
  *   GET  /admin/tasks/dead-letter
  *   POST /admin/tasks/dead-letter/{task_id}/requeue
  */
-import { useMemo, useState } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type ColumnDef } from "@tanstack/react-table";
 import { Skull } from "@phosphor-icons/react/dist/csr/Skull";
-import { ArrowCounterClockwise } from "@phosphor-icons/react/dist/csr/ArrowCounterClockwise";
 
-import { AilaCard } from "@/components/aila/AilaCard";
-import { AilaTable } from "@/components/aila/AilaTable";
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
-import { EmptyState } from "@/components/aila/EmptyState";
-import { Button } from "@/components/ui/button";
+import {
+  SectionHeader,
+  DataGrid,
+  MonoBadge,
+  BigStat,
+} from "@/components/aila/mock";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { authorizedRequestJson } from "@platform/api/http";
 
 // ---------------------------------------------------------------------------
@@ -51,8 +51,31 @@ interface RequeueResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Mock-styled button + input primitives
 // ---------------------------------------------------------------------------
+
+const ACTION_BTN: CSSProperties = {
+  height: 24,
+  padding: "0 10px",
+  fontSize: 9.5,
+  letterSpacing: "0.08em",
+  borderRadius: 3,
+  cursor: "pointer",
+  color: "var(--text-primary)",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+};
+
+const INPUT_STYLE: CSSProperties = {
+  height: 28,
+  padding: "0 10px",
+  fontSize: 11,
+  color: "var(--text-primary)",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  outline: "none",
+};
 
 function formatTimestamp(value: string | null | undefined): string {
   if (!value) return "--";
@@ -60,22 +83,20 @@ function formatTimestamp(value: string | null | undefined): string {
 }
 
 // ---------------------------------------------------------------------------
-// Requeue button -- per-row action
+// Requeue button + per-row discard placeholder (mock action pair)
 // ---------------------------------------------------------------------------
 
-function RequeueButton({
-  taskId,
-  onRequeue,
-  isPending,
-}: {
+interface RowActionsProps {
   taskId: string;
   onRequeue: (taskId: string) => Promise<RequeueResponse>;
   isPending: boolean;
-}) {
+}
+
+function RowActions({ taskId, onRequeue, isPending }: RowActionsProps) {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  async function handleClick() {
+  async function handleRequeue() {
     setError(null);
     setSubmitting(true);
     try {
@@ -87,20 +108,49 @@ function RequeueButton({
     }
   }
 
+  const busy = submitting || isPending;
+
   return (
-    <div className="flex flex-col items-end gap-1">
-      <Button
-        size="sm"
-        variant="outline"
-        className="gap-1.5"
-        disabled={submitting || isPending}
-        onClick={handleClick}
-      >
-        <ArrowCounterClockwise className="h-3.5 w-3.5" />
-        {submitting ? "Requeueing…" : "Requeue"}
-      </Button>
+    <div className="flex flex-col items-end" style={{ gap: 4 }}>
+      <div className="flex items-center" style={{ gap: 6 }}>
+        <button
+          type="button"
+          className="font-mono uppercase"
+          onClick={handleRequeue}
+          disabled={busy}
+          style={{
+            ...ACTION_BTN,
+            opacity: busy ? 0.55 : 1,
+            cursor: busy ? "not-allowed" : "pointer",
+          }}
+        >
+          {submitting ? "requeueing" : "requeue"}
+        </button>
+        <button
+          type="button"
+          className="font-mono uppercase"
+          title="Discard is a placeholder mock action -- no backend endpoint yet."
+          style={{
+            ...ACTION_BTN,
+            color: "var(--text-faint)",
+            opacity: 0.6,
+            cursor: "not-allowed",
+          }}
+          disabled
+        >
+          discard
+        </button>
+      </div>
       {error && (
-        <span className="font-mono text-xs text-destructive max-w-[160px] text-right">
+        <span
+          className="font-mono"
+          style={{
+            color: "var(--status-warn)",
+            fontSize: 10,
+            maxWidth: 200,
+            textAlign: "right",
+          }}
+        >
           {error}
         </span>
       )}
@@ -109,99 +159,114 @@ function RequeueButton({
 }
 
 // ---------------------------------------------------------------------------
-// Columns
+// Expandable error panel
 // ---------------------------------------------------------------------------
 
-function buildColumns(
-  onRequeue: (taskId: string) => Promise<RequeueResponse>,
-  isPending: boolean,
-): ColumnDef<DeadLetterEntry>[] {
-  return [
-    {
-      id: "task_id",
-      header: "Task ID",
-      accessorKey: "task_id",
-      cell: ({ getValue }) => (
-        <code className="font-mono text-xs text-text-muted">
-          {String(getValue()).slice(0, 8)}…
-        </code>
-      ),
-    },
-    {
-      id: "track",
-      header: "Track",
-      accessorKey: "track",
-      cell: ({ getValue }) => (
-        <AilaBadge severity="neutral" size="sm">
-          {String(getValue())}
-        </AilaBadge>
-      ),
-    },
-    {
-      id: "fn_path",
-      header: "Function",
-      accessorKey: "fn_path",
-      cell: ({ getValue }) => (
-        <span className="font-mono text-xs text-text break-all">
-          {String(getValue()) || "--"}
-        </span>
-      ),
-    },
-    {
-      id: "exception_class",
-      header: "Exception",
-      accessorKey: "exception_class",
-      cell: ({ getValue }) => (
-        <AilaBadge severity="critical" size="sm">
-          {String(getValue()) || "Unknown"}
-        </AilaBadge>
-      ),
-    },
-    {
-      id: "error",
-      header: "Error",
-      accessorKey: "error",
-      enableSorting: false,
-      cell: ({ getValue }) => (
-        <span
-          className="font-mono text-xs text-text-muted line-clamp-2 max-w-[320px] break-all"
-          title={String(getValue())}
+function ErrorDetailPanel({
+  entry,
+  onClose,
+}: {
+  entry: DeadLetterEntry;
+  onClose: () => void;
+}) {
+  return (
+    <WindowPanel
+      title={`dead-letter · ${entry.task_id.slice(0, 8)}`}
+      tone="warn"
+      actions={
+        <button
+          type="button"
+          className="font-mono uppercase"
+          onClick={onClose}
+          style={ACTION_BTN}
         >
-          {String(getValue()) || "--"}
-        </span>
-      ),
-    },
-    {
-      id: "attempts",
-      header: "Attempts",
-      accessorKey: "attempts",
-      cell: ({ getValue }) => (
-        <span className="font-mono text-xs text-text">{String(getValue())}</span>
-      ),
-    },
-    {
-      id: "dead_lettered_at",
-      header: "Dead-Lettered",
-      accessorKey: "dead_lettered_at",
-      cell: ({ getValue }) => (
-        <span className="font-mono text-xs text-text-muted whitespace-nowrap">
-          {formatTimestamp(getValue() as string)}
-        </span>
-      ),
-    },
-    {
-      id: "actions",
-      header: "Actions",
-      enableSorting: false,
-      cell: ({ row }) => (
-        <RequeueButton
-          taskId={row.original.task_id}
-          onRequeue={onRequeue}
-          isPending={isPending}
-        />
-      ),
-    },
-  ];
+          close
+        </button>
+      }
+    >
+      <div className="flex flex-col" style={{ gap: 12 }}>
+        <div
+          className="grid font-mono"
+          style={{
+            gridTemplateColumns: "120px 1fr",
+            rowGap: 6,
+            columnGap: 12,
+            fontSize: 11,
+          }}
+        >
+          <span style={{ color: "var(--text-muted)" }}>TASK ID</span>
+          <span style={{ color: "var(--text-primary)", wordBreak: "break-all" }}>
+            {entry.task_id}
+          </span>
+          <span style={{ color: "var(--text-muted)" }}>TRACK</span>
+          <span>
+            <MonoBadge tone="muted">{entry.track}</MonoBadge>
+          </span>
+          <span style={{ color: "var(--text-muted)" }}>FUNCTION</span>
+          <span
+            style={{ color: "var(--text-primary)", wordBreak: "break-all" }}
+          >
+            {entry.fn_path || entry.fn_module || "--"}
+          </span>
+          <span style={{ color: "var(--text-muted)" }}>USER</span>
+          <span style={{ color: "var(--text-primary)" }}>
+            {entry.user_id || "--"}
+          </span>
+          <span style={{ color: "var(--text-muted)" }}>ATTEMPTS</span>
+          <span
+            className="tabular-nums"
+            style={{ color: "var(--text-primary)" }}
+          >
+            {entry.attempts}
+          </span>
+          <span style={{ color: "var(--text-muted)" }}>DEAD-LETTERED</span>
+          <span style={{ color: "var(--text-primary)" }}>
+            {formatTimestamp(entry.dead_lettered_at)}
+          </span>
+          <span style={{ color: "var(--text-muted)" }}>EXCEPTION</span>
+          <span>
+            <MonoBadge tone="critical">
+              {entry.exception_class || "Unknown"}
+            </MonoBadge>
+          </span>
+        </div>
+
+        <div className="flex flex-col" style={{ gap: 6 }}>
+          <span
+            className="font-mono uppercase"
+            style={{
+              fontSize: 9,
+              letterSpacing: "0.14em",
+              color: "var(--text-faint)",
+            }}
+          >
+            error
+          </span>
+          <pre
+            className="font-mono"
+            style={{
+              margin: 0,
+              padding: 10,
+              fontSize: 11,
+              lineHeight: 1.5,
+              color: "var(--status-warn)",
+              background:
+                "color-mix(in srgb, var(--status-warn) 8%, transparent)",
+              border:
+                "1px solid color-mix(in srgb, var(--status-warn) 32%, transparent)",
+              borderRadius: 3,
+              maxHeight: 320,
+              overflow: "auto",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+            }}
+          >
+            {entry.error || "(no error payload captured)"}
+          </pre>
+        </div>
+      </div>
+    </WindowPanel>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +276,7 @@ function buildColumns(
 export function DeadLetterPage() {
   const queryClient = useQueryClient();
   const [trackFilter, setTrackFilter] = useState("");
+  const [selected, setSelected] = useState<DeadLetterEntry | null>(null);
 
   const queryKey = ["platform", "admin-dead-letter", trackFilter] as const;
   const queryPath = trackFilter
@@ -243,102 +309,204 @@ export function DeadLetterPage() {
     return [...set].sort();
   }, [entries]);
 
-  const columns = useMemo(
-    () =>
-      buildColumns(
-        async (taskId: string) => {
-          const res = await requeueMutation.mutateAsync(taskId);
-          return res.data;
-        },
-        requeueMutation.isPending,
-      ),
-    [requeueMutation],
-  );
+  async function handleRequeue(taskId: string): Promise<RequeueResponse> {
+    const res = await requeueMutation.mutateAsync(taskId);
+    return res.data;
+  }
 
   return (
-    <div className="flex flex-col gap-6 p-4 lg:p-6">
-      {/* Header */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-      </div>
+    <div className="flex flex-col" style={{ gap: 16, padding: 20 }}>
+      <SectionHeader
+        icon={
+          <Skull
+            size={16}
+            weight="duotone"
+            style={{ color: "var(--text-on-accent)" }}
+            aria-hidden="true"
+          />
+        }
+        title="dead letter queue"
+        actions={
+          <button
+            type="button"
+            className="font-mono uppercase"
+            onClick={() => void entriesQuery.refetch()}
+            disabled={entriesQuery.isFetching}
+            style={{
+              ...ACTION_BTN,
+              opacity: entriesQuery.isFetching ? 0.6 : 1,
+            }}
+          >
+            {entriesQuery.isFetching ? "refreshing" : "refresh"}
+          </button>
+        }
+      />
 
-      {/* Metric cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Dead-Lettered Tasks
-        </p>
-        <div className="mt-1 min-h-[2rem]">
-          {entriesQuery.isLoading ? (
-            <LoadingSkeleton size="md" width="third" aria-label="Loading dead-letter count" />
-          ) : (
-            <p className="font-mono text-2xl font-semibold text-critical">{entries.length}</p>
-          )}
-        </div>
-        <p className="font-mono text-xs text-text-muted mt-0.5">
-          {trackFilter ? `Track: ${trackFilter}` : "All tracks"}
-        </p></AilaCard>
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Distinct Tracks
-        </p>
-        <div className="mt-1 min-h-[2rem]">
-          {entriesQuery.isLoading ? (
-            <LoadingSkeleton size="md" width="third" aria-label="Loading distinct track count" />
-          ) : (
-            <p className="font-mono text-2xl font-semibold text-text">{tracks.length}</p>
-          )}
-        </div>
-        <p className="font-mono text-xs text-text-muted mt-0.5">
-          With at least one dead-lettered task
-        </p></AilaCard>
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Track Filter
-        </p>
-        <input
-          aria-label="Track filter"
-          className="mt-2 w-full h-8 rounded-[2px] border border-border bg-base px-2.5 font-mono text-xs text-text outline-none focus:border-border-hover transition-colors"
-          type="text"
-          value={trackFilter}
-          onChange={(e) => setTrackFilter(e.target.value)}
-          placeholder="vulnerability"
-        />
-        <p className="font-mono text-xs text-text-muted mt-1">
-          Empty = scan all tracks
-        </p></AilaCard>
+      {/* Stat panels */}
+      <div
+        className="grid"
+        style={{
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          gap: 12,
+        }}
+      >
+        <WindowPanel title="dead-lettered" tone="warn">
+          <BigStat
+            value={entries.length}
+            sub={trackFilter ? `track: ${trackFilter}` : "all tracks"}
+          />
+        </WindowPanel>
+        <WindowPanel title="distinct tracks" tone="muted">
+          <BigStat value={tracks.length} sub="at least one failure" />
+        </WindowPanel>
+        <WindowPanel title="track filter" tone="muted">
+          <div className="flex flex-col" style={{ gap: 6 }}>
+            <input
+              aria-label="Track filter"
+              type="text"
+              value={trackFilter}
+              onChange={(e) => setTrackFilter(e.target.value)}
+              placeholder="vulnerability"
+              className="font-mono"
+              style={INPUT_STYLE}
+            />
+            <span
+              className="font-mono"
+              style={{ color: "var(--text-faint)", fontSize: 10 }}
+            >
+              empty scans all tracks
+            </span>
+          </div>
+        </WindowPanel>
       </div>
 
       {/* Error banner */}
       {entriesQuery.isError && (
-        <div className="rounded-[4px] border border-destructive bg-destructive/10 px-4 py-3 font-mono text-sm text-destructive">
-          Failed to load dead-letter entries: {(entriesQuery.error as Error).message}
+        <div
+          className="font-mono"
+          style={{
+            border:
+              "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+            background:
+              "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+            color: "var(--status-warn)",
+            padding: "8px 12px",
+            fontSize: 11,
+            borderRadius: 3,
+          }}
+        >
+          Failed to load dead-letter entries:{" "}
+          {(entriesQuery.error as Error).message}
         </div>
       )}
 
-      {/* Loading */}
-      {entriesQuery.isLoading && (
-        <AilaCard variant="default" padding="md"><LoadingSkeletonGroup lines={6} /></AilaCard>
-      )}
+      {/* Grid */}
+      <WindowPanel title="failed jobs" flush>
+        {entriesQuery.isLoading ? (
+          <div style={{ padding: 16 }}>
+            <LoadingSkeletonGroup lines={6} />
+          </div>
+        ) : (
+          <DataGrid<DeadLetterEntry>
+            columns={[
+              { label: "TASK", width: "120px" },
+              { label: "TRACK", width: "120px" },
+              { label: "FUNCTION", width: "1.4fr" },
+              { label: "EXCEPTION", width: "160px" },
+              { label: "ERROR", width: "2fr" },
+              { label: "ATTEMPTS", width: "70px", align: "right" },
+              { label: "DEAD-LETTERED", width: "160px" },
+              { label: "ACTIONS", width: "200px", align: "right" },
+            ]}
+            rows={entries}
+            getKey={(r) => r.task_id}
+            onRowClick={(r) => setSelected(r)}
+            empty={
+              <div
+                className="font-mono"
+                style={{
+                  padding: 34,
+                  textAlign: "center",
+                  fontSize: 12,
+                  color: "var(--text-muted)",
+                }}
+              >
+                no dead-lettered tasks. a clean queue is a healthy queue.
+              </div>
+            }
+            renderCells={(r) => [
+              <code
+                key="tid"
+                className="font-mono"
+                style={{ color: "var(--text-muted)", fontSize: 10 }}
+                title={r.task_id}
+              >
+                {r.task_id.slice(0, 8)}
+                {"\u2026"}
+              </code>,
+              <MonoBadge key="tr" tone="muted">
+                {r.track}
+              </MonoBadge>,
+              <span
+                key="fn"
+                className="font-mono truncate"
+                title={r.fn_path}
+                style={{ color: "var(--text-primary)", fontSize: 11 }}
+              >
+                {r.fn_path || r.fn_module || "--"}
+              </span>,
+              <MonoBadge key="ex" tone="critical">
+                {r.exception_class || "Unknown"}
+              </MonoBadge>,
+              <span
+                key="err"
+                className="font-mono truncate"
+                title={r.error}
+                style={{
+                  color: "var(--text-muted)",
+                  fontSize: 10.5,
+                  display: "block",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {r.error || "--"}
+              </span>,
+              <span
+                key="att"
+                className="font-mono tabular-nums"
+                style={{ color: "var(--text-primary)", fontSize: 11 }}
+              >
+                {r.attempts}
+              </span>,
+              <span
+                key="ts"
+                className="font-mono"
+                style={{
+                  color: "var(--text-muted)",
+                  fontSize: 10.5,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {formatTimestamp(r.dead_lettered_at)}
+              </span>,
+              <RowActions
+                key="act"
+                taskId={r.task_id}
+                onRequeue={handleRequeue}
+                isPending={requeueMutation.isPending}
+              />,
+            ]}
+          />
+        )}
+      </WindowPanel>
 
-      {/* Empty */}
-      {!entriesQuery.isLoading && !entriesQuery.isError && entries.length === 0 && (
-        <EmptyState
-          icon={<Skull className="h-10 w-10" />}
-          title="No dead-lettered tasks"
-          description="Tasks land here only after exhausting their retry budget. A clean queue is a healthy queue."
+      {selected && (
+        <ErrorDetailPanel
+          entry={selected}
+          onClose={() => setSelected(null)}
         />
-      )}
-
-      {/* Table */}
-      {!entriesQuery.isLoading && entries.length > 0 && (
-        <AilaTable
-          data={entries}
-          columns={columns}
-          pageSize={25}
-          enableSorting
-          enableFiltering={false}
-        >
-          <AilaTable.Header />
-          <AilaTable.Body emptyState="No dead-lettered tasks." />
-          <AilaTable.Pagination pageSizeOptions={[10, 25, 50]} />
-        </AilaTable>
       )}
     </div>
   );

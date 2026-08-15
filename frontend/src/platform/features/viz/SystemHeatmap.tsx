@@ -1,23 +1,17 @@
 /**
- * SystemHeatmap -- VIZ-03.
+ * SystemHeatmap -- VIZ-03 (mock rebuild).
  *
- * CSS grid heatmap showing severity density per system.
- * Rows = registered systems, Columns = severity levels (Critical/High/Medium/Low).
- * Cell background opacity scales with count (0=transparent, 10+=full color).
- *
- * Data source: useTopology() -- severity_counts per node.
- * No additional API call needed -- topology nodes already carry severity_counts.
+ * WindowPanel host + tokenized cells. Grid engine (density-scaled cells
+ * per severity per system) unchanged. Mono legend row below the grid.
  */
 import * as React from "react";
 
-import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { MonoBadge } from "@/components/aila/mock";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { useTopology } from "@platform/features/radar/useTopology";
+import { useThemeChartColors } from "./chartColors";
 import { ChartExportButton } from "./ChartExportButton";
-
-// ---------------------------------------------------------------------------
-// Color intensity helper
-// ---------------------------------------------------------------------------
 
 interface CellStyle {
   backgroundColor: string;
@@ -28,47 +22,37 @@ function intensityStyle(count: number, hexColor: string): CellStyle {
   if (count === 0) {
     return { backgroundColor: "transparent", opacity: 1 };
   }
-  // opacity range: 0.15 (count=1) to 0.9 (count=10+)
   const opacity = Math.min(count / 10, 1) * 0.75 + 0.15;
   return { backgroundColor: hexColor, opacity };
 }
-
-// Severity column definitions -- inline `background-color` CSS resolves
-// var() at runtime, so we route through the DS tokens rather than raw hex.
-const SEVERITY_COLS = [
-  { key: "critical" as const, label: "C", color: "var(--color-critical)" },
-  { key: "high" as const, label: "H", color: "var(--color-high)" },
-  { key: "medium" as const, label: "M", color: "var(--color-medium)" },
-  { key: "low" as const, label: "L", color: "var(--color-text-muted)" },
-];
-
-// ---------------------------------------------------------------------------
-// Props
-// ---------------------------------------------------------------------------
 
 interface SystemHeatmapProps {
   className?: string;
   exportRef?: React.RefObject<HTMLDivElement | null>;
 }
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
-
 export function SystemHeatmap({ className, exportRef }: SystemHeatmapProps) {
   const internalRef = React.useRef<HTMLDivElement>(null);
   const chartRef = exportRef ?? internalRef;
 
   const { data: topology, isLoading } = useTopology();
+  const colors = useThemeChartColors();
+
+  const SEVERITY_COLS = React.useMemo(
+    () => [
+      { key: "critical" as const, label: "C", color: colors.critical, tone: "critical" as const },
+      { key: "high" as const, label: "H", color: colors.high, tone: "high" as const },
+      { key: "medium" as const, label: "M", color: colors.medium, tone: "medium" as const },
+      { key: "low" as const, label: "L", color: colors.low, tone: "low" as const },
+    ],
+    [colors],
+  );
 
   if (isLoading) {
     return (
-      <AilaCard className={className}><div className="p-4 flex flex-col gap-2">
-        <p className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
-          System Risk Heatmap
-        </p>
+      <WindowPanel title="system risk heatmap" tone="muted" status="LOADING" className={className}>
         <LoadingSkeleton size="xl" width="full" />
-      </div></AilaCard>
+      </WindowPanel>
     );
   }
 
@@ -76,98 +60,147 @@ export function SystemHeatmap({ className, exportRef }: SystemHeatmapProps) {
   const allNullSeverity = nodes.every((n) => n.severity_counts === null);
 
   return (
-    <AilaCard className={className}><div ref={chartRef} className="p-4">
-      <div className="flex items-center justify-between mb-3">
-        <p className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
-          System Risk Heatmap
-        </p>
-        <ChartExportButton chartRef={chartRef} filename="system-heatmap" />
-      </div>
-    
-      {nodes.length === 0 ? (
-        <div className="py-6 text-center">
-          <p className="font-mono text-xs text-muted-foreground">
-            No network data collected yet. Add systems and run a discovery scan.
+    <WindowPanel
+      title="system risk heatmap"
+      className={className}
+      actions={<ChartExportButton chartRef={chartRef} filename="system-heatmap" />}
+    >
+      <div ref={chartRef} className="flex flex-col" style={{ gap: 10 }}>
+        {nodes.length === 0 ? (
+          <p
+            className="font-mono text-center"
+            style={{ padding: "18px 0", fontSize: 11, color: "var(--text-muted)" }}
+          >
+            no network data collected yet. add systems and run a discovery scan.
           </p>
-        </div>
-      ) : allNullSeverity ? (
-        <div className="py-6 text-center">
-          <p className="font-mono text-xs text-muted-foreground">
-            No vulnerability scan data yet. Run a vulnerability scan to populate severity data.
+        ) : allNullSeverity ? (
+          <p
+            className="font-mono text-center"
+            style={{ padding: "18px 0", fontSize: 11, color: "var(--text-muted)" }}
+          >
+            no vulnerability scan data yet. run a vulnerability scan to populate severity data.
           </p>
-          {/* Render the grid skeleton with no data to show the structure */}
-        </div>
-      ) : (
-        <div className="max-h-[400px] overflow-y-auto">
-          {/* Grid header */}
-          <div className="grid gap-1" style={{ gridTemplateColumns: "minmax(0,1fr) repeat(4, 64px)" }}>
-            <div className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider py-1">
-              System
-            </div>
-            {SEVERITY_COLS.map((col) => (
+        ) : (
+          <>
+            <div style={{ maxHeight: 400, overflowY: "auto", border: "1px solid var(--border-faint)", borderRadius: 3 }}>
               <div
-                key={col.key}
-                className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider py-1 text-center"
-                title={col.key}
+                className="grid font-mono uppercase"
+                style={{
+                  gridTemplateColumns: "minmax(0,1fr) repeat(4, 56px)",
+                  gap: 4,
+                  padding: "6px 8px",
+                  fontSize: 9,
+                  letterSpacing: "0.14em",
+                  color: "var(--text-faint)",
+                  background: "var(--surface-chrome)",
+                  borderBottom: "1px solid var(--border-faint)",
+                }}
               >
-                {col.label}
+                <div>SYSTEM</div>
+                {SEVERITY_COLS.map((col) => (
+                  <div key={col.key} style={{ textAlign: "center" }} title={col.key}>
+                    {col.label}
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-    
-          {/* Data rows */}
-          {nodes.map((node) => {
-            const counts = node.severity_counts;
-            return (
-              <div
-                key={node.id}
-                className="grid gap-1 hover:bg-elevated/50 rounded transition-colors"
-                style={{ gridTemplateColumns: "minmax(0,1fr) repeat(4, 64px)" }}
-              >
-                {/* System name */}
-                <div
-                  className="font-mono text-[11px] py-1 truncate flex items-center"
-                  title={`${node.name} (${node.host})`}
-                >
-                  {node.name}
-                  {node.is_stale && (
-                    <span className="ml-1 text-[9px] text-muted-foreground">[stale]</span>
-                  )}
-                </div>
-    
-                {/* Severity cells */}
-                {SEVERITY_COLS.map((col) => {
-                  const count = counts?.[col.key] ?? 0;
-                  const style = intensityStyle(count, col.color);
-                  return (
+
+              {nodes.map((node, ri) => {
+                const counts = node.severity_counts;
+                return (
+                  <div
+                    key={node.id}
+                    className="grid font-mono"
+                    style={{
+                      gridTemplateColumns: "minmax(0,1fr) repeat(4, 56px)",
+                      gap: 4,
+                      padding: "4px 8px",
+                      borderBottom:
+                        ri === nodes.length - 1 ? "none" : "1px solid var(--border-faint)",
+                    }}
+                  >
                     <div
-                      key={col.key}
-                      className="h-7 rounded flex items-center justify-center"
+                      className="flex items-center"
                       style={{
-                        backgroundColor: style.backgroundColor,
-                        opacity: style.opacity,
+                        gap: 6,
+                        fontSize: 11,
+                        color: "var(--text-primary)",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
                       }}
-                      title={`${col.key}: ${count}`}
+                      title={`${node.name} (${node.host})`}
                     >
-                      {count > 0 && (
+                      <span
+                        style={{
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {node.name}
+                      </span>
+                      {node.is_stale && (
                         <span
-                          className="font-mono text-[10px] font-medium"
+                          className="uppercase"
                           style={{
-                            color: "var(--text-on-accent)",
-                            opacity: 1 / style.opacity, // ensure text stays readable
+                            fontSize: 8,
+                            letterSpacing: "0.14em",
+                            color: "var(--status-warn)",
                           }}
                         >
-                          {count}
+                          [stale]
                         </span>
                       )}
                     </div>
-                  );
-                })}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div></AilaCard>
+
+                    {SEVERITY_COLS.map((col) => {
+                      const count = counts?.[col.key] ?? 0;
+                      const s = intensityStyle(count, col.color);
+                      return (
+                        <div
+                          key={col.key}
+                          className="flex items-center justify-center"
+                          style={{
+                            height: 24,
+                            borderRadius: 2,
+                            backgroundColor: s.backgroundColor,
+                            opacity: s.opacity,
+                            border: count > 0 ? `1px solid ${col.color}` : "1px solid var(--border-faint)",
+                          }}
+                          title={`${col.key}: ${count}`}
+                        >
+                          {count > 0 && (
+                            <span
+                              className="font-mono"
+                              style={{
+                                fontSize: 10,
+                                fontWeight: 700,
+                                color: "var(--text-on-accent)",
+                                opacity: 1 / s.opacity,
+                              }}
+                            >
+                              {count}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Legend row */}
+            <div className="flex items-center flex-wrap" style={{ gap: 6 }}>
+              {SEVERITY_COLS.map((col) => (
+                <MonoBadge key={col.key} tone={col.tone}>
+                  {col.key.toUpperCase()}
+                </MonoBadge>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </WindowPanel>
   );
 }

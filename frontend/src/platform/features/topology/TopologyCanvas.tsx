@@ -1,13 +1,9 @@
 /**
- * TopologyCanvas.tsx -- xyflow surface for the Topology console.
+ * TopologyCanvas -- xyflow surface for the Topology console.
  *
- * Wraps the ReactFlow instance in its provider (fitView + node lookups
- * require the provider context) and hoists the imperative focus API so
- * the parent page can zoom into a subnet on sidebar click.
- *
- * Reduced-motion: xyflow's own zoom/pan animations obey the caller's
- * `duration` argument, so we set duration=0 when the user prefers
- * reduced motion. The dot background is static either way.
+ * Graph engine + focusSubnet imperative API unchanged. Only the visual
+ * chrome (background, controls, minimap, node types) is retokenized so
+ * the canvas matches the mock's dense mono terminal aesthetic.
  */
 import "@xyflow/react/dist/style.css";
 
@@ -144,7 +140,7 @@ function TopologyCanvasInner(
       minZoom={0.1}
       maxZoom={2.5}
       proOptions={{ hideAttribution: true }}
-      style={{ background: "var(--color-base)" }}
+      style={{ background: "var(--surface-sunk)" }}
       nodesDraggable
       nodesConnectable={false}
     >
@@ -152,14 +148,15 @@ function TopologyCanvasInner(
         variant={BackgroundVariant.Dots}
         gap={22}
         size={1}
-        color="color-mix(in srgb, var(--color-border) 70%, transparent)"
+        color="color-mix(in srgb, var(--border) 70%, transparent)"
       />
       <Controls
         showInteractive={false}
         style={{
-          background: "var(--color-elevated)",
-          border: "1px solid var(--color-border)",
-          borderRadius: 4,
+          background: "var(--surface-card)",
+          border: "1px solid var(--border-soft)",
+          borderRadius: 3,
+          color: "var(--text-primary)",
         }}
       />
       <MiniMap
@@ -167,13 +164,13 @@ function TopologyCanvasInner(
         zoomable
         nodeColor={(n) => {
           const d = n.data as { fill?: string };
-          return d.fill ?? "var(--color-border)";
+          return d.fill ?? "var(--border)";
         }}
-        maskColor="color-mix(in srgb, var(--color-base) 80%, transparent)"
+        maskColor="color-mix(in srgb, var(--surface-page) 78%, transparent)"
         style={{
-          background: "var(--color-elevated)",
-          border: "1px solid var(--color-border)",
-          borderRadius: 4,
+          background: "var(--surface-card)",
+          border: "1px solid var(--border-soft)",
+          borderRadius: 3,
         }}
       />
     </ReactFlow>

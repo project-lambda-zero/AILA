@@ -7,6 +7,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.30] - 2026-08-14 -- Total frontend rebuild to the design-system mock
+
+### Changed
+
+- The entire frontend is rebuilt from scratch to the design-system mock
+  (Console / VR X-Ray / Vulnerability): a dense monospace terminal with OS-frame
+  chrome (32px MenuBar with module tabs, a module-scoped rail of MODULE / PAGES /
+  INVESTIGATIONS, 24px StatusBar), WindowPanels with hatched title bars in place
+  of every card, honest bordered grids in place of every table, section headers,
+  mono status/severity chips, pixel icons, and the FaultyTerminal hero. About 245
+  page and component files across the shell and all module frontends
+  (vulnerability, vr, forensics, malware) were rebuilt; no page retains the prior
+  shadcn / Tailwind-palette presentation.
+- Added a shared mock kit (SectionHeader, DataGrid, MonoBadge, FilterChip,
+  Segmented, StatBar, BigStat) at components/aila/mock, and aliased the
+  design-system semantic tokens (--accent, --surface-*, --text-*, --status-*,
+  --border-*) in globals.css so pages use the mock vocabulary directly.
+
+### Removed
+
+- Off-brand presentation across every rebuilt page: shadcn cards / tables / tabs /
+  badges / dialogs for content, raw hex colours, Tailwind palette classes,
+  text-white / bg-white fills, drop shadows, and pill radii on action buttons.
+
+All data hooks, mutations, routing, data-testid, and aria attributes are
+preserved -- only presentation was replaced. Workspace type-check (0 errors
+across all packages) and the shell production build pass. Verified live: the
+console, vulnerability findings, the VR investigations list (169 rows), and the
+VR investigation X-Ray workbench (12 panels, 451 turns) render the mock with real
+data and zero console errors.
+
+
 ## [0.5.29] - 2026-08-14 -- Console vitals rail
 
 ### Added

@@ -10,22 +10,23 @@ import {
 } from "@xyflow/react";
 import { useMemo, useState } from "react";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import { FilterChip, MonoBadge, Segmented } from "@/components/aila/mock";
 
 /** EvidenceGraph -- first-class evidence rendering surface from
  *  08_FRONTEND_UX.md §1.9 / §3.
  *
- *  Six node types, five edge types. Node tones come from AILA design
- *  tokens (passed via inline `style.background` because ReactFlow
- *  needs concrete colours and CSS vars don't resolve inside SVG fills
- *  on the edges layer -- same gotcha as Recharts, per CLAUDE.md
- *  mistake #4).
+ *  Ten node kinds, twelve edge kinds. Node fills/borders come from the
+ *  mock semantic tokens (`--accent`, `--status-*`, `--text-*`) passed
+ *  inline via `style.background`/`style.stroke` because ReactFlow needs
+ *  concrete colours -- CSS vars still resolve at render time inside the
+ *  DOM `style` attribute, but not inside SVG `fill` shorthand in older
+ *  chrome. Same gotcha as Recharts, per CLAUDE.md mistake #4.
  *
- *  Server-side layout is now authoritative: callers can pass
- *  `serverPositions` (from `useEvidenceGraph` → `EvidenceGraphSnapshot`)
- *  and the component will honour the server-computed x/y. The
- *  client-side concentric layout below kicks in only when the snapshot
- *  is unavailable (e.g. ephemeral cards built from local data). */
+ *  Server-side layout is authoritative: callers pass `serverPositions`
+ *  from `useEvidenceGraph` and the component honours the snapshot; the
+ *  client-side concentric/radial/grid algorithms kick in only when the
+ *  snapshot is unavailable (ephemeral cards built from local data). */
 
 export type GraphNodeKind =
   | "investigation"
@@ -68,38 +69,60 @@ export interface GraphEdgeInput {
   kind: GraphEdgeKind;
 }
 
-const NODE_TONE: Record<
-  GraphNodeKind,
-  { bg: string; border: string; tone: "info" | "low" | "medium" | "high" | "critical" }
-> = {
-  investigation: { bg: "color-mix(in srgb, var(--color-peach) 16%, var(--color-base))", border: "var(--color-peach)", tone: "info" },     // signal root
-  branch:     { bg: "color-mix(in srgb, var(--color-lavender) 16%, var(--color-base))", border: "var(--color-lavender)", tone: "info" },         // lavender persona-thread
-  hypothesis: { bg: "color-mix(in srgb, var(--color-medium) 16%, var(--color-base))", border: "var(--color-medium)", tone: "info" },         // medium -- thinking
-  evidence:   { bg: "color-mix(in srgb, var(--color-mint) 16%, var(--color-base))", border: "var(--color-mint)", tone: "low" },          // mint -- fact
-  crash:      { bg: "color-mix(in srgb, var(--color-accent) 16%, var(--color-base))", border: "var(--color-accent)", tone: "critical" },     // critical
-  exploit:    { bg: "color-mix(in srgb, var(--color-amber) 16%, var(--color-base))", border: "var(--color-amber)", tone: "high" },         // amber runtime proof
-  advisory:   { bg: "color-mix(in srgb, var(--color-lavender) 16%, var(--color-base))", border: "var(--color-lavender)", tone: "medium" },       // lavender doc
-  obligation: { bg: "color-mix(in srgb, var(--color-text-muted) 16%, var(--color-base))", border: "var(--color-text-muted)", tone: "info" },         // muted
-  outcome:    { bg: "color-mix(in srgb, var(--color-accent) 16%, var(--color-base))", border: "var(--color-accent)", tone: "medium" },       // accent terminal artifact
-  finding:    { bg: "color-mix(in srgb, var(--color-medium) 16%, var(--color-base))", border: "var(--color-medium)", tone: "medium" },       // medium dispatched finding
+// Mock-token hue per node kind. investigation=accent, branch=status-info,
+// hypothesis=status-signal, evidence=text-faint, crash=status-warn,
+// exploit=accent, advisory=text-muted, obligation=status-info,
+// outcome=status-ok, finding=accent.
+const NODE_HUE: Record<GraphNodeKind, string> = {
+  investigation: "var(--accent)",
+  branch: "var(--status-info)",
+  hypothesis: "var(--status-signal)",
+  evidence: "var(--text-faint)",
+  crash: "var(--status-warn)",
+  exploit: "var(--accent)",
+  advisory: "var(--text-muted)",
+  obligation: "var(--status-info)",
+  outcome: "var(--status-ok)",
+  finding: "var(--accent)",
 };
 
-const EDGE_STYLE: Record<
-  GraphEdgeKind,
-  { stroke: string; dashed?: boolean; label: string }
-> = {
-  supports:         { stroke: "var(--color-mint)", label: "supports" },
-  refutes:          { stroke: "var(--color-accent)", label: "refutes" },
-  found_by:         { stroke: "var(--color-text-muted)", label: "found_by" },
-  exploits:         { stroke: "var(--color-amber)", label: "exploits" },
-  derived_from:     { stroke: "var(--color-text-muted)", dashed: true, label: "derived_from" },
-  spawned:          { stroke: "var(--color-lavender)", label: "spawned" },
-  produced:         { stroke: "var(--color-amber)", label: "produced" },
-  raises:           { stroke: "var(--color-medium)", label: "raises" },
-  rejects:          { stroke: "var(--color-accent)", dashed: true, label: "rejects" },
-  resolves:         { stroke: "var(--color-mint)", dashed: true, label: "resolves" },
-  linked:           { stroke: "var(--color-medium)", dashed: true, label: "linked" },
-  produced_finding: { stroke: "var(--color-medium)", label: "produced_finding" },
+// Mock-token stroke per edge kind. supports=status-ok, refutes=accent,
+// everything else defaults to text-muted.
+const EDGE_STROKE: Record<GraphEdgeKind, string> = {
+  supports: "var(--status-ok)",
+  refutes: "var(--accent)",
+  found_by: "var(--text-muted)",
+  exploits: "var(--text-muted)",
+  derived_from: "var(--text-muted)",
+  spawned: "var(--text-muted)",
+  produced: "var(--text-muted)",
+  raises: "var(--text-muted)",
+  rejects: "var(--text-muted)",
+  resolves: "var(--text-muted)",
+  linked: "var(--text-muted)",
+  produced_finding: "var(--text-muted)",
+};
+
+const EDGE_DASHED: Partial<Record<GraphEdgeKind, boolean>> = {
+  derived_from: true,
+  rejects: true,
+  resolves: true,
+  linked: true,
+};
+
+const EDGE_LABEL: Record<GraphEdgeKind, string> = {
+  supports: "supports",
+  refutes: "refutes",
+  found_by: "found_by",
+  exploits: "exploits",
+  derived_from: "derived_from",
+  spawned: "spawned",
+  produced: "produced",
+  raises: "raises",
+  rejects: "rejects",
+  resolves: "resolves",
+  linked: "linked",
+  produced_finding: "produced_finding",
 };
 
 /** Lay out nodes in concentric tiers by kind. Cheap dagre alternative
@@ -140,7 +163,6 @@ function layout(nodes: GraphNodeInput[]): Map<string, { x: number; y: number }> 
     const items = tiers[ring.kind];
     if (items.length === 0) continue;
     if (ring.radius === 0) {
-      // Stack hypotheses in a column at the origin
       items.forEach((n, i) =>
         positions.set(n.id, { x: 0, y: i * 110 - ((items.length - 1) * 110) / 2 }),
       );
@@ -157,11 +179,9 @@ function layout(nodes: GraphNodeInput[]): Map<string, { x: number; y: number }> 
   return positions;
 }
 
-
 type LayoutAlgo = "concentric" | "radial" | "grid";
 
 function layoutGrid(nodes: GraphNodeInput[]): Map<string, { x: number; y: number }> {
-  // Group by kind, render each kind in a row with even spacing.
   const tiers: Record<GraphNodeKind, GraphNodeInput[]> = {
     investigation: [],
     branch: [],
@@ -189,7 +209,6 @@ function layoutGrid(nodes: GraphNodeInput[]): Map<string, { x: number; y: number
 }
 
 function layoutRadial(nodes: GraphNodeInput[]): Map<string, { x: number; y: number }> {
-  // Single concentric ring, all nodes equally spaced.
   const positions = new Map<string, { x: number; y: number }>();
   const r = Math.max(200, nodes.length * 15);
   nodes.forEach((n, i) => {
@@ -201,6 +220,7 @@ function layoutRadial(nodes: GraphNodeInput[]): Map<string, { x: number; y: numb
   });
   return positions;
 }
+
 type GraphFilter = "all" | "confirmed" | "rejected" | "unresolved" | "tainted";
 
 export function EvidenceGraph({
@@ -210,6 +230,7 @@ export function EvidenceGraph({
   onNodeClick,
   showLabels = true,
   serverPositions,
+  wrap = true,
 }: {
   nodes: GraphNodeInput[];
   edges: GraphEdgeInput[];
@@ -223,23 +244,22 @@ export function EvidenceGraph({
    *  layout picker is hidden when serverPositions is in effect since
    *  the server is the authority. */
   serverPositions?: Map<string, { x: number; y: number }>;
+  /** Wrap in a `<WindowPanel title="evidence graph" flush>`. Defaults on.
+   *  Pass `false` when the caller already provides an outer panel. */
+  wrap?: boolean;
 }) {
   const [filter, setFilter] = useState<GraphFilter>("all");
   const [searchText, setSearchText] = useState("");
   const [edgeLabels, setEdgeLabels] = useState(showLabels);
   const [layoutAlgo, setLayoutAlgo] = useState<LayoutAlgo>("concentric");
 
-  // Apply filter
   const { filteredNodes, filteredEdges } = useMemo(() => {
     const search = searchText.trim().toLowerCase();
     let nodes = rawNodes;
     if (search) {
       const matchIds = new Set(
-        nodes
-          .filter((n) => n.label.toLowerCase().includes(search))
-          .map((n) => n.id),
+        nodes.filter((n) => n.label.toLowerCase().includes(search)).map((n) => n.id),
       );
-      // include directly-connected neighbours
       for (const e of rawEdges) {
         if (matchIds.has(e.source)) matchIds.add(e.target);
         if (matchIds.has(e.target)) matchIds.add(e.source);
@@ -251,14 +271,17 @@ export function EvidenceGraph({
         nodes = nodes.filter(
           (n) =>
             (n.kind === "hypothesis" && n.state === "confirmed") ||
-            (n.kind === "evidence" && hasRelated(rawEdges, n.id, "hypothesis", rawNodes, "confirmed")),
+            (n.kind === "evidence" &&
+              hasRelated(rawEdges, n.id, "hypothesis", rawNodes, "confirmed")),
         );
         break;
       case "rejected":
         nodes = nodes.filter(
           (n) =>
-            (n.kind === "hypothesis" && (n.state === "refuted" || n.state === "tainted")) ||
-            (n.kind === "evidence" && hasRelated(rawEdges, n.id, "hypothesis", rawNodes, "refuted")),
+            (n.kind === "hypothesis" &&
+              (n.state === "refuted" || n.state === "tainted")) ||
+            (n.kind === "evidence" &&
+              hasRelated(rawEdges, n.id, "hypothesis", rawNodes, "refuted")),
         );
         break;
       case "unresolved":
@@ -269,7 +292,6 @@ export function EvidenceGraph({
         );
         break;
       case "tainted":
-        // Show nodes downstream of a tainted hypothesis
         nodes = nodes.filter(
           (n) =>
             n.state === "tainted" ||
@@ -286,21 +308,12 @@ export function EvidenceGraph({
   }, [rawNodes, rawEdges, filter, searchText]);
 
   const positions = useMemo(() => {
-    // Server-side authoritative layout takes precedence when
-    // supplied. Falls back to local algorithms when the snapshot
-    // is missing or empty (08_FRONTEND_UX.md §1.9).
     if (serverPositions && serverPositions.size > 0) {
-      // Server coords are id-keyed against the original rawNodes
-      // -- clip to the filtered subset to honour search/filter
-      // without re-running the layout client-side.
       const filtered = new Map<string, { x: number; y: number }>();
       for (const n of filteredNodes) {
         const p = serverPositions.get(n.id);
         if (p) filtered.set(n.id, p);
       }
-      // If the server snapshot doesn't cover every node (e.g. the
-      // client synthesised extra nodes the backend doesn't model),
-      // fall back to layout() for the orphans.
       if (filtered.size < filteredNodes.length) {
         const fallback = layout(filteredNodes);
         for (const n of filteredNodes) {
@@ -320,7 +333,7 @@ export function EvidenceGraph({
   const flowNodes: Node[] = useMemo(
     () =>
       filteredNodes.map((n) => {
-        const tone = NODE_TONE[n.kind];
+        const hue = NODE_HUE[n.kind];
         const p = positions.get(n.id) ?? { x: 0, y: 0 };
         return {
           id: n.id,
@@ -329,28 +342,58 @@ export function EvidenceGraph({
           data: {
             label: (
               <div
-                className="text-left"
-                style={{ color: "var(--color-text)" }}
+                className="font-mono"
+                style={{ textAlign: "left", color: "var(--text-primary)" }}
                 aria-label={`${n.kind} ${n.label}${n.state ? ` (${n.state})` : ""}`}
                 role="article"
               >
-                <div className="text-3xs uppercase opacity-70">{n.kind}</div>
-                <div className="text-xs font-mono truncate" style={{ maxWidth: 180 }}>
+                <div
+                  style={{
+                    fontSize: 9,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.1em",
+                    color: hue,
+                  }}
+                >
+                  {n.kind}
+                </div>
+                <div
+                  style={{
+                    fontSize: 11,
+                    marginTop: 2,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    maxWidth: 180,
+                    color: "var(--text-primary)",
+                  }}
+                >
                   {n.label}
                 </div>
                 {n.state && (
-                  <div className="text-3xs opacity-80 mt-1">{n.state}</div>
+                  <div
+                    style={{
+                      fontSize: 9,
+                      marginTop: 3,
+                      color: "var(--text-muted)",
+                      letterSpacing: "0.06em",
+                    }}
+                  >
+                    {n.state}
+                  </div>
                 )}
               </div>
             ),
           },
           style: {
-            background: tone.bg,
-            border: `2px ${n.kind === "obligation" && n.state === "open" ? "dashed" : "solid"} ${tone.border}`,
-            borderRadius: 4,
+            background: `color-mix(in srgb, ${hue} 12%, var(--surface-sunk))`,
+            border: `${
+              n.kind === "obligation" && n.state === "open" ? "1px dashed" : "1px solid"
+            } ${hue}`,
+            borderRadius: 3,
             padding: 6,
             width: 210,
-            color: "var(--color-text)",
+            color: "var(--text-primary)",
           },
         };
       }),
@@ -360,22 +403,27 @@ export function EvidenceGraph({
   const flowEdges: Edge[] = useMemo(
     () =>
       filteredEdges.map((e) => {
-        const s = EDGE_STYLE[e.kind];
+        const stroke = EDGE_STROKE[e.kind];
+        const dashed = EDGE_DASHED[e.kind];
         return {
           id: e.id,
           source: e.source,
           target: e.target,
-          label: edgeLabels ? s.label : undefined,
-          labelStyle: { fontSize: 10, fill: "var(--color-text-muted)" },
-          labelBgStyle: { fill: "var(--color-elevated)" },
+          label: edgeLabels ? EDGE_LABEL[e.kind] : undefined,
+          labelStyle: {
+            fontSize: 9,
+            fill: "var(--text-muted)",
+            fontFamily: "var(--font-mono)",
+          },
+          labelBgStyle: { fill: "var(--surface-chrome)" },
           style: {
-            stroke: s.stroke,
-            strokeWidth: 1.5,
-            strokeDasharray: s.dashed ? "4 4" : undefined,
+            stroke,
+            strokeWidth: 1.25,
+            strokeDasharray: dashed ? "4 4" : undefined,
           },
           markerEnd: {
             type: MarkerType.ArrowClosed,
-            color: s.stroke,
+            color: stroke,
             width: 12,
             height: 12,
           },
@@ -384,70 +432,99 @@ export function EvidenceGraph({
     [filteredEdges, edgeLabels],
   );
 
-  return (
-    <div className="space-y-2">
+  const filters: GraphFilter[] = ["all", "confirmed", "rejected", "unresolved", "tainted"];
+
+  const body = (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: wrap ? 8 : 0 }}>
       {/* Toolbar */}
-      <div className="flex items-center gap-2 flex-wrap text-xs">
-        <span className="text-text-muted">View:</span>
-        {(
-          [
-            "all",
-            "confirmed",
-            "rejected",
-            "unresolved",
-            "tainted",
-          ] as GraphFilter[]
-        ).map((f) => (
-          <button
-            key={f}
-            type="button"
-            onClick={() => setFilter(f)}
-            className={
-              "px-2 py-0.5 rounded font-mono " +
-              (filter === f
-                ? "bg-accent text-background"
-                : "bg-surface border border-border text-text-muted hover:bg-elevated")
-            }
-          >
+      <div className="flex items-center flex-wrap" style={{ gap: 6 }}>
+        <span
+          className="font-mono uppercase"
+          style={{ fontSize: 9, color: "var(--text-faint)", letterSpacing: "0.1em" }}
+        >
+          view
+        </span>
+        {filters.map((f) => (
+          <FilterChip key={f} active={filter === f} onClick={() => setFilter(f)}>
             {f}
-          </button>
+          </FilterChip>
         ))}
+        <span style={{ flex: 1 }} />
         <input
           type="text"
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
           placeholder="search labels…"
           aria-label="Search evidence graph"
-          className="ml-auto px-2 py-0.5 text-xs font-mono rounded bg-surface border border-border"
+          className="font-mono"
+          style={{
+            height: 26,
+            padding: "0 8px",
+            fontSize: 10,
+            width: 180,
+            background: "var(--surface-sunk)",
+            border: "1px solid var(--border-soft)",
+            color: "var(--text-primary)",
+            borderRadius: 2,
+            outline: "none",
+          }}
         />
         <button
           type="button"
           onClick={() => setEdgeLabels((v) => !v)}
-          className="px-2 py-0.5 text-xs font-mono rounded bg-surface border border-border hover:bg-elevated"
+          className="font-mono uppercase"
           title="Edge labels become unreadable past ~40 nodes"
+          style={{
+            height: 26,
+            padding: "0 10px",
+            fontSize: 9.5,
+            letterSpacing: "0.08em",
+            color: edgeLabels ? "var(--accent)" : "var(--text-faint)",
+            border: `1px solid ${edgeLabels ? "var(--accent)" : "var(--border-soft)"}`,
+            background: edgeLabels
+              ? "color-mix(in srgb, var(--accent) 11%, transparent)"
+              : "transparent",
+            borderRadius: 2,
+            cursor: "pointer",
+          }}
         >
-          {edgeLabels ? "Labels: on" : "Labels: off"}
+          labels {edgeLabels ? "on" : "off"}
         </button>
-        <select
-          value={layoutAlgo}
-          onChange={(e) => setLayoutAlgo(e.target.value as LayoutAlgo)}
-          className="px-2 py-0.5 text-xs font-mono rounded bg-surface border border-border"
-          aria-label="Layout algorithm"
-          title="Layout algorithm -- concentric tiers, single radial ring, or kind-grouped grid"
-        >
-          <option value="concentric">layout: concentric</option>
-          <option value="radial">layout: radial</option>
-          <option value="grid">layout: grid</option>
-        </select>
+        {!serverPositions && (
+          <Segmented<LayoutAlgo>
+            options={[
+              { value: "concentric", label: "CONCENTRIC" },
+              { value: "radial", label: "RADIAL" },
+              { value: "grid", label: "GRID" },
+            ]}
+            value={layoutAlgo}
+            onChange={setLayoutAlgo}
+          />
+        )}
       </div>
 
       <div
-        className="border border-border rounded-md overflow-hidden bg-surface/30"
-        style={{ height }}
+        style={{
+          border: "1px solid var(--border-soft)",
+          background: "var(--surface-sunk)",
+          overflow: "hidden",
+          height,
+        }}
       >
         {filteredNodes.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-xs text-text-muted">
-            No nodes match the current filter.
+          <div
+            className="font-mono"
+            style={{
+              height: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 10.5,
+              color: "var(--text-faint)",
+              letterSpacing: "0.06em",
+            }}
+          >
+            no nodes match the current filter
           </div>
         ) : (
           <ReactFlow
@@ -456,55 +533,76 @@ export function EvidenceGraph({
             fitView
             onNodeClick={(event, node) => {
               const raw = rawNodes.find((n) => n.id === node.id);
-              if (raw && onNodeClick) onNodeClick(raw, event as unknown as React.MouseEvent);
+              if (raw && onNodeClick)
+                onNodeClick(raw, event as unknown as React.MouseEvent);
             }}
             proOptions={{ hideAttribution: true }}
           >
-            <Background gap={20} color="var(--color-border)" />
+            <Background gap={20} color="var(--border-faint)" />
             <Controls position="bottom-right" showInteractive={false} />
           </ReactFlow>
         )}
       </div>
 
       {/* Legend */}
-      <div className="flex items-center gap-2 flex-wrap text-3xs text-text-muted">
-        <span>Legend:</span>
-        {(Object.keys(NODE_TONE) as GraphNodeKind[]).map((k) => {
-          const tone = NODE_TONE[k];
+      <div
+        className="flex items-center flex-wrap font-mono"
+        style={{
+          gap: 8,
+          fontSize: 9,
+          color: "var(--text-faint)",
+          letterSpacing: "0.06em",
+        }}
+      >
+        <span>legend</span>
+        {(Object.keys(NODE_HUE) as GraphNodeKind[]).map((k) => {
+          const hue = NODE_HUE[k];
           return (
-            <span key={k} className="inline-flex items-center gap-1">
+            <span key={k} className="inline-flex items-center" style={{ gap: 4 }}>
               <span
-                className="w-2 h-2 rounded-sm inline-block"
-                style={{ background: tone.bg, border: `1px solid ${tone.border}` }}
+                style={{
+                  width: 8,
+                  height: 8,
+                  display: "inline-block",
+                  background: `color-mix(in srgb, ${hue} 25%, var(--surface-sunk))`,
+                  border: `1px solid ${hue}`,
+                }}
               />
               {k}
             </span>
           );
         })}
-        <span className="ml-2">|</span>
-        {(Object.keys(EDGE_STYLE) as GraphEdgeKind[]).map((k) => {
-          const s = EDGE_STYLE[k];
+        <span style={{ opacity: 0.6 }}>|</span>
+        {(Object.keys(EDGE_STROKE) as GraphEdgeKind[]).map((k) => {
+          const stroke = EDGE_STROKE[k];
+          const dashed = EDGE_DASHED[k];
           return (
-            <span key={k} className="inline-flex items-center gap-1">
+            <span key={k} className="inline-flex items-center" style={{ gap: 4 }}>
               <span
-                className="inline-block w-3 h-0.5"
                 style={{
-                  background: s.stroke,
-                  borderTop: s.dashed ? `2px dashed ${s.stroke}` : undefined,
-                  height: s.dashed ? 0 : 2,
+                  display: "inline-block",
+                  width: 14,
+                  height: 0,
+                  borderTop: `${dashed ? "1.5px dashed" : "1.5px solid"} ${stroke}`,
                 }}
               />
-              {s.label}
+              {EDGE_LABEL[k]}
             </span>
           );
         })}
-        <span className="ml-auto text-text-muted">
-          <AilaBadge severity="info" size="sm">
-            {filteredNodes.length} / {rawNodes.length} nodes
-          </AilaBadge>
-        </span>
+        <span style={{ flex: 1 }} />
+        <MonoBadge tone="info">
+          {filteredNodes.length}/{rawNodes.length} nodes
+        </MonoBadge>
       </div>
     </div>
+  );
+
+  if (!wrap) return body;
+  return (
+    <WindowPanel title="evidence graph" tone="info" flush>
+      {body}
+    </WindowPanel>
   );
 }
 

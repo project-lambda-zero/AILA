@@ -1,15 +1,23 @@
-import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 /**
  * Content-shaped skeletons for the forensics module.
  *
  * These match the exact layout of the components they replace so the
- * transition from skeleton → loaded content produces no cumulative
+ * transition from skeleton -> loaded content produces no cumulative
  * layout shift. `LoadingSkeleton` respects `prefers-reduced-motion`
- * via the shared `.skeleton-aila` CSS in globals.css, so the amber
- * scan-line animation is gated for reduced-motion visitors.
+ * via the shared `.skeleton-aila` CSS in globals.css.
  */
+
+// Reused mock-surface wrapper (no WindowPanel chrome -- skeletons stay
+// visually quieter than the loaded content). Keeps the bordered mono
+// language while avoiding a shadcn card.
+const SKELETON_SURFACE: React.CSSProperties = {
+  border: "1px solid var(--border-soft)",
+  background: "var(--surface-card)",
+  borderRadius: 3,
+  padding: 12,
+};
 
 // ---------------------------------------------------------------------------
 // ProjectCardSkeleton -- mirrors ProjectCard on ProjectsPage.
@@ -17,7 +25,7 @@ import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 export function ProjectCardSkeleton() {
   return (
-    <AilaCard aria-hidden="true" techBorder glow>
+    <div aria-hidden="true" style={SKELETON_SURFACE}>
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-3">
           <LoadingSkeleton size="md" width="half" />
@@ -31,7 +39,7 @@ export function ProjectCardSkeleton() {
         </div>
         <LoadingSkeleton size="sm" width="third" />
       </div>
-    </AilaCard>
+    </div>
   );
 }
 
@@ -39,7 +47,7 @@ export function ProjectCardSkeletonGrid({ count = 6 }: { count?: number }) {
   return (
     <div
       aria-hidden="true"
-      className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+      className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3"
     >
       {Array.from({ length: count }, (_, i) => (
         // eslint-disable-next-line react/no-array-index-key
@@ -56,7 +64,7 @@ export function ProjectCardSkeletonGrid({ count = 6 }: { count?: number }) {
 
 export function InvestigationRowSkeleton() {
   return (
-    <AilaCard aria-hidden="true" techBorder glow>
+    <div aria-hidden="true" style={SKELETON_SURFACE}>
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-2">
           <LoadingSkeleton size="md" width="full" />
@@ -64,7 +72,7 @@ export function InvestigationRowSkeleton() {
         </div>
         <LoadingSkeleton size="sm" width="third" />
       </div>
-    </AilaCard>
+    </div>
   );
 }
 
@@ -88,7 +96,13 @@ export function FindingRowSkeleton() {
   return (
     <li
       aria-hidden="true"
-      className="rounded-md border border-critical/40 bg-critical/10 p-3 space-y-2"
+      className="space-y-2"
+      style={{
+        border: "1px solid color-mix(in srgb, var(--accent) 35%, transparent)",
+        background: "color-mix(in srgb, var(--accent) 8%, transparent)",
+        borderRadius: 3,
+        padding: 12,
+      }}
     >
       <div className="flex items-center justify-between gap-3">
         <LoadingSkeleton size="md" width="half" />
@@ -118,7 +132,13 @@ export function SnapshotRowSkeleton() {
   return (
     <div
       aria-hidden="true"
-      className="w-full px-2 py-1 rounded-md border border-border bg-surface"
+      className="w-full"
+      style={{
+        padding: "6px 10px",
+        border: "1px solid var(--border-soft)",
+        background: "var(--surface-card)",
+        borderRadius: 3,
+      }}
     >
       <LoadingSkeleton size="sm" width="full" />
     </div>
@@ -127,7 +147,7 @@ export function SnapshotRowSkeleton() {
 
 export function SnapshotListSkeleton({ count = 6 }: { count?: number }) {
   return (
-    <AilaCard aria-hidden="true" className="border-border" techBorder glow>
+    <div aria-hidden="true" style={SKELETON_SURFACE}>
       <div className="space-y-2">
         <LoadingSkeleton size="sm" width="third" />
         <div className="space-y-1">
@@ -137,7 +157,7 @@ export function SnapshotListSkeleton({ count = 6 }: { count?: number }) {
           ))}
         </div>
       </div>
-    </AilaCard>
+    </div>
   );
 }
 
@@ -172,7 +192,11 @@ export function TableRowSkeleton({ cells = 5 }: { cells?: number }) {
   return (
     <div
       aria-hidden="true"
-      className="flex items-center gap-3 px-3 py-2 border-b border-border"
+      className="flex items-center gap-3"
+      style={{
+        padding: "8px 12px",
+        borderBottom: "1px solid var(--border-faint)",
+      }}
     >
       {Array.from({ length: cells }, (_, i) => (
         <div key={i} className="flex-1">
@@ -191,13 +215,19 @@ export function TableSkeleton({
   cells?: number;
 }) {
   return (
-    <AilaCard aria-hidden="true" techBorder glow>
-      <div className="space-y-0">
-        {Array.from({ length: rows }, (_, i) => (
-          // eslint-disable-next-line react/no-array-index-key
-          <TableRowSkeleton key={i} cells={cells} />
-        ))}
-      </div>
-    </AilaCard>
+    <div
+      aria-hidden="true"
+      style={{
+        border: "1px solid var(--border-soft)",
+        background: "var(--surface-card)",
+        borderRadius: 3,
+        overflow: "hidden",
+      }}
+    >
+      {Array.from({ length: rows }, (_, i) => (
+        // eslint-disable-next-line react/no-array-index-key
+        <TableRowSkeleton key={i} cells={cells} />
+      ))}
+    </div>
   );
 }

@@ -1,9 +1,10 @@
 /**
- * SeverityDonutChart.view -- recharts-using inner JSX for the donut chart.
+ * SeverityDonutChart.view -- recharts donut. Lazy-loaded from the
+ * wrapper so recharts stays chunk-split.
  *
- * Loaded lazily from the wrapper so recharts stays out of the root entry.
- * Receives already-derived slices + colors as props; the data-fetch and
- * empty-state branches live in the wrapper.
+ * Fills are already resolved to hex/token strings upstream via
+ * useThemeChartColors (SVG cannot resolve `var(--*)` in presentation
+ * attributes). Chrome (tooltip/legend) uses tokens directly via CSS.
  */
 import * as React from "react";
 import {
@@ -11,17 +12,17 @@ import {
   Pie,
   Cell,
   Tooltip,
-  Legend,
   ResponsiveContainer,
 } from "recharts";
 
 const TOOLTIP_STYLE: React.CSSProperties = {
-  backgroundColor: "var(--color-elevated)",
-  border: "1px solid var(--color-border)",
-  borderRadius: "4px",
+  backgroundColor: "var(--surface-card)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
   fontFamily: "var(--font-mono, monospace)",
-  fontSize: "11px",
-  color: "var(--color-text)",
+  fontSize: 11,
+  color: "var(--text-primary)",
+  letterSpacing: "0.06em",
 };
 
 interface SeveritySlice {
@@ -44,8 +45,8 @@ export function SeverityDonutChartView({ slices }: SeverityDonutChartViewProps) 
           nameKey="name"
           cx="50%"
           cy="50%"
-          innerRadius="40%"
-          outerRadius="70%"
+          innerRadius="45%"
+          outerRadius="72%"
           strokeWidth={0}
         >
           {slices.map((slice) => (
@@ -53,12 +54,6 @@ export function SeverityDonutChartView({ slices }: SeverityDonutChartViewProps) 
           ))}
         </Pie>
         <Tooltip contentStyle={TOOLTIP_STYLE} />
-        <Legend
-          wrapperStyle={{
-            fontFamily: "var(--font-mono, monospace)",
-            fontSize: 11,
-          }}
-        />
       </PieChart>
     </ResponsiveContainer>
   );

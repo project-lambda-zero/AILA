@@ -1,20 +1,16 @@
 import { useMemo, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router";
-import { Crosshair } from "@phosphor-icons/react/dist/csr/Crosshair";
-import { Play } from "@phosphor-icons/react/dist/csr/Play";
 
-import { AilaCard } from "@/components/aila/AilaCard";
-import { WindowPanel } from "@/components/aila/WindowPanel";
-import { AilaBadge, type TaskStatus as BadgeTaskStatus } from "@/components/aila/AilaBadge";
-import { EmptyState } from "@/components/aila/EmptyState";
-import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
-import { HelpTip } from "@/components/aila/HelpTip";
 import {
-  ConnectedEntities,
-  type ConnectedEntity,
-} from "@/components/aila/ConnectedEntities";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+  SectionHeader,
+  DataGrid,
+  MonoBadge,
+  StatBar,
+  BigStat,
+  FilterChip,
+} from "@/components/aila/mock";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { ActivityTimeline } from "@platform/features/activity/ActivityTimeline";
 import { SavedViews } from "@platform/features/saved-views";
 
@@ -30,11 +26,92 @@ import {
 } from "./api";
 
 // ---------------------------------------------------------------------------
+// Constants + shared styles
+// ---------------------------------------------------------------------------
+
+const STATUS_FILTERS: TaskStatus[] = ["queued", "running", "done", "failed"];
+
+type StatusTone = "muted" | "info" | "low" | "critical" | "warn";
+
+const STATUS_TONE: Record<TaskStatus, StatusTone> = {
+  queued: "muted",
+  waiting: "muted",
+  running: "info",
+  paused: "warn",
+  done: "low",
+  failed: "critical",
+  cancelled: "muted",
+};
+
+const STATUS_COLOR: Record<StatusTone, string> = {
+  muted: "var(--text-muted)",
+  info: "var(--status-info)",
+  low: "var(--status-ok)",
+  critical: "var(--accent)",
+  warn: "var(--status-warn)",
+};
+
+const MONO_BTN: React.CSSProperties = {
+  height: 26,
+  fontSize: 9.5,
+  padding: "0 11px",
+  borderRadius: 3,
+  border: "1px solid var(--border-soft)",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  fontFamily: "var(--font-mono)",
+  textTransform: "uppercase",
+  letterSpacing: "0.08em",
+  cursor: "pointer",
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+};
+
+const MONO_BTN_ACCENT: React.CSSProperties = {
+  ...MONO_BTN,
+  background: "color-mix(in srgb, var(--accent) 20%, transparent)",
+  borderColor: "color-mix(in srgb, var(--accent) 45%, transparent)",
+  color: "var(--accent)",
+};
+
+const MONO_INPUT: React.CSSProperties = {
+  width: "100%",
+  fontFamily: "var(--font-mono)",
+  fontSize: 11,
+  padding: "8px 10px",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  color: "var(--text-primary)",
+  outline: "none",
+};
+
+const LABEL_STYLE: React.CSSProperties = {
+  fontFamily: "var(--font-mono)",
+  fontSize: 9,
+  letterSpacing: "0.14em",
+  textTransform: "uppercase",
+  color: "var(--text-muted)",
+};
+
+const KV_ROW: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "flex-start",
+  gap: 10,
+  padding: "6px 0",
+  borderBottom: "1px solid var(--border-faint)",
+  fontFamily: "var(--font-mono)",
+  fontSize: 11,
+};
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 function formatTimestamp(value: string | null) {
-  return value ? new Date(value).toLocaleString() : "--";
+  return value ? new Date(value).toLocaleString() : "\u2014";
 }
 
 function parseTargets(value: string) {
@@ -66,47 +143,21 @@ function updateSearchParams(
   return next;
 }
 
-type BadgeSeverity = "neutral" | "info" | "medium" | "critical" | "low";
-
-function statusSeverity(status: TaskStatus): BadgeSeverity {
-  switch (status) {
-    case "done": return "low";
-    case "running": return "info";
-    case "failed": return "critical";
-    case "cancelled": return "neutral";
-    case "paused": return "medium";
-    default: return "neutral";
-  }
-}
-
-function statusToken(status: TaskStatus): BadgeTaskStatus | undefined {
-  switch (status) {
-    case "done": return "completed";
-    case "running": return "running";
-    case "failed": return "failed";
-    case "queued": return "queued";
-    case "waiting": return "waiting";
-    case "paused": return "paused";
-    default: return undefined;
-  }
-}
-
-const STATUS_FILTERS: TaskStatus[] = ["queued", "running", "done", "failed"];
-
 // ---------------------------------------------------------------------------
 // Scan form
 // ---------------------------------------------------------------------------
 
-function ScanForm({ queryText, targetsText, onQueryChange, onTargetsChange, onClear }: {
+interface ScanFormProps {
   queryText: string;
   targetsText: string;
   onQueryChange: (v: string) => void;
   onTargetsChange: (v: string) => void;
   onClear: () => void;
-}) {
+}
+
+function ScanForm({ queryText, targetsText, onQueryChange, onTargetsChange, onClear }: ScanFormProps) {
   const submitScan = useSubmitScan();
-  const [, setSearchParams] = useSearchParams();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -121,65 +172,89 @@ function ScanForm({ queryText, targetsText, onQueryChange, onTargetsChange, onCl
   }
 
   return (
-    <WindowPanel
-      title="Launch a Scan"
-      tone="accent"
-      actions={
-        <HelpTip
-          title="Vulnerability Scan"
-          description="Scans the target system for installed packages with known CVEs using NVD and GHSA advisory databases."
-        />
-      }
-    >
-    <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-      <div className="flex flex-col gap-1">
-        <label className="font-mono text-xs text-text-muted" htmlFor="scan-query">
-          Scan query *
-        </label>
-        <Input
-          id="scan-query"
-          value={queryText}
-          onChange={(e) => onQueryChange(e.target.value)}
-          placeholder="give me a full vulnerability scan of arch-vm"
-          required
-        />
-      </div>
-    
-      <div className="flex flex-col gap-1">
-        <label className="font-mono text-xs text-text-muted" htmlFor="scan-targets">
-          Targets
-        </label>
-        <Input
-          id="scan-targets"
-          value={targetsText}
-          onChange={(e) => onTargetsChange(e.target.value)}
-          placeholder="arch-vm, ubuntu-vm"
-        />
-        <p className="font-mono text-xs text-text-muted">
-          Comma-separated hostnames or IPs. Leave blank for agent-resolved targets.
-        </p>
-      </div>
-    
-      {submitScan.isError && (
-        <div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-          {(submitScan.error as Error).message}
+    <WindowPanel title="launch scan" tone="accent">
+      <form onSubmit={handleSubmit} className="flex flex-col" style={{ gap: 10 }}>
+        <div className="flex flex-col" style={{ gap: 4 }}>
+          <label style={LABEL_STYLE} htmlFor="scan-query">
+            Scan query *
+          </label>
+          <input
+            id="scan-query"
+            value={queryText}
+            onChange={(e) => onQueryChange(e.target.value)}
+            placeholder="give me a full vulnerability scan of arch-vm"
+            required
+            style={MONO_INPUT}
+          />
         </div>
-      )}
-      {submitScan.data && (
-        <div className="rounded-[2px] border border-accent/30 bg-accent/10 px-3 py-2 font-mono text-xs text-accent">
-          Scan submitted -- run {submitScan.data.run_id}
+
+        <div className="flex flex-col" style={{ gap: 4 }}>
+          <label style={LABEL_STYLE} htmlFor="scan-targets">
+            Targets
+          </label>
+          <input
+            id="scan-targets"
+            value={targetsText}
+            onChange={(e) => onTargetsChange(e.target.value)}
+            placeholder="arch-vm, ubuntu-vm"
+            style={MONO_INPUT}
+          />
+          <p
+            className="font-mono"
+            style={{ fontSize: 10, color: "var(--text-muted)" }}
+          >
+            Comma-separated hostnames or IPs. Leave blank for agent-resolved targets.
+          </p>
         </div>
-      )}
-    
-      <div className="flex gap-2">
-        <Button type="submit" size="sm" disabled={submitScan.isPending || !queryText.trim()}>
-          {submitScan.isPending ? "Submitting..." : "Submit Scan"}
-        </Button>
-        <Button type="button" size="sm" variant="outline" onClick={onClear}>
-          Clear
-        </Button>
-      </div>
-    </form></WindowPanel>
+
+        {submitScan.isError && (
+          <div
+            className="font-mono"
+            style={{
+              border: "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+              background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+              color: "var(--status-warn)",
+              padding: "6px 10px",
+              fontSize: 11,
+              borderRadius: 3,
+            }}
+          >
+            {(submitScan.error as Error).message}
+          </div>
+        )}
+        {submitScan.data && (
+          <div
+            className="font-mono"
+            style={{
+              border: "1px solid color-mix(in srgb, var(--accent) 40%, transparent)",
+              background: "color-mix(in srgb, var(--accent) 10%, transparent)",
+              color: "var(--accent)",
+              padding: "6px 10px",
+              fontSize: 11,
+              borderRadius: 3,
+            }}
+          >
+            Scan submitted -- run {submitScan.data.run_id}
+          </div>
+        )}
+
+        <div className="flex" style={{ gap: 8 }}>
+          <button
+            type="submit"
+            disabled={submitScan.isPending || !queryText.trim()}
+            style={{
+              ...MONO_BTN_ACCENT,
+              opacity: submitScan.isPending || !queryText.trim() ? 0.5 : 1,
+            }}
+          >
+            {submitScan.isPending ? "SUBMITTING\u2026" : "SUBMIT SCAN"}
+          </button>
+          <button type="button" onClick={onClear} style={MONO_BTN}>
+            CLEAR
+          </button>
+        </div>
+      </form>
+    </WindowPanel>
   );
 }
 
@@ -188,7 +263,6 @@ function ScanForm({ queryText, targetsText, onQueryChange, onTargetsChange, onCl
 // ---------------------------------------------------------------------------
 
 function RunDetailPanel({ runId }: { runId: string }) {
-  const [searchParams, setSearchParams] = useSearchParams();
   const taskDetailQuery = useTaskDetail(runId);
   const scanStatusQuery = useScanStatus(runId);
   const scanEvents = useScanEventFeed(runId);
@@ -203,31 +277,6 @@ function RunDetailPanel({ runId }: { runId: string }) {
     [scanEvents.events],
   );
 
-  const connectedEntities = useMemo<ConnectedEntity[]>(() => {
-    if (!runId) return [];
-    const list: ConnectedEntity[] = [];
-    // The scan surface currently only exposes one cross-entity link: the
-    // vulnerability report generated when the run completes. When more IDs
-    // land on the scan contract (findings ids, system ids, ...), append here.
-    if (scanStatusQuery.data?.status === "done") {
-      list.push({
-        id: runId,
-        type: "Report",
-        title: "Vulnerability Report",
-        href: `/vulnerability/reports/${encodeURIComponent(runId)}`,
-        severity: "info",
-      });
-    }
-    list.push({
-      id: runId,
-      type: "Task",
-      title: `Task ${runId.slice(0, 8)}`,
-      href: `/tasks?task=${encodeURIComponent(runId)}`,
-      severity: "neutral",
-    });
-    return list;
-  }, [runId, scanStatusQuery.data?.status]);
-
   const isTaskLive =
     taskDetailQuery.data?.status === "running" ||
     taskDetailQuery.data?.status === "queued" ||
@@ -235,15 +284,24 @@ function RunDetailPanel({ runId }: { runId: string }) {
 
   if (!runId) {
     return (
-      <WindowPanel title="Run Detail" tone="muted"><p className="font-mono text-xs text-text-muted">
-        Select a run row to inspect its live state and progress stream.
-      </p></WindowPanel>
+      <WindowPanel title="run detail" tone="muted">
+        <p
+          className="font-mono"
+          style={{ fontSize: 11, color: "var(--text-muted)" }}
+        >
+          Select a run row to inspect its live state and progress stream.
+        </p>
+      </WindowPanel>
     );
   }
 
   const isLoading = taskDetailQuery.isLoading || scanStatusQuery.isLoading;
   if (isLoading) {
-    return <WindowPanel title="Run Detail" status="LOADING" tone="muted"><LoadingSkeletonGroup lines={5} /></WindowPanel>;
+    return (
+      <WindowPanel title="run detail" status="LOADING" tone="muted">
+        <LoadingSkeletonGroup lines={5} />
+      </WindowPanel>
+    );
   }
 
   const task = taskDetailQuery.data;
@@ -251,110 +309,258 @@ function RunDetailPanel({ runId }: { runId: string }) {
   const canResume = task?.status === "paused";
 
   return (
-    <div className="flex flex-col gap-4">
-      <WindowPanel title="Selected Run">
-      {task ? (
-        <div className="flex flex-col gap-2">
-          {[
-            { label: "Status", value: <AilaBadge severity={statusSeverity(task.status)} size="sm">{task.status}</AilaBadge> },
-            { label: "Track", value: task.track },
-            { label: "Created", value: formatTimestamp(task.created_at) },
-            { label: "Started", value: formatTimestamp(task.started_at) },
-            { label: "Completed", value: formatTimestamp(task.completed_at) },
-          ].map(({ label, value }) => (
-            <div key={label} className="flex items-start justify-between gap-2 border-b border-border pb-1.5 last:border-0">
-              <span className="font-mono text-xs text-text-muted shrink-0">{label}</span>
-              <span className="font-mono text-xs text-text text-right">{value}</span>
+    <div className="flex flex-col" style={{ gap: 14 }}>
+      <WindowPanel
+        title="selected run"
+        tone={task ? STATUS_TONE[task.status] === "critical" ? "warn" : "accent" : "muted"}
+      >
+        {task ? (
+          <div className="flex flex-col">
+            <div style={KV_ROW}>
+              <span style={{ color: "var(--text-muted)" }}>STATUS</span>
+              <MonoBadge tone={STATUS_TONE[task.status]}>
+                {task.status.toUpperCase()}
+              </MonoBadge>
             </div>
-          ))}
-      
-          {task.error && (
-            <div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-              {task.error}
+            <div style={KV_ROW}>
+              <span style={{ color: "var(--text-muted)" }}>TRACK</span>
+              <span style={{ color: "var(--text-primary)", textAlign: "right" }}>
+                {task.track}
+              </span>
             </div>
-          )}
-      
-          <div className="flex flex-wrap gap-2 pt-1">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!canCancel || cancelTask.isPending}
-              onClick={() => cancelTask.mutate()}
-            >
-              {cancelTask.isPending ? "Cancelling..." : "Cancel"}
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!canResume || resumeTask.isPending}
-              onClick={() => resumeTask.mutate()}
-            >
-              {resumeTask.isPending ? "Resuming..." : "Resume"}
-            </Button>
+            <div style={KV_ROW}>
+              <span style={{ color: "var(--text-muted)" }}>RUN ID</span>
+              <span
+                style={{
+                  color: "var(--accent)",
+                  textAlign: "right",
+                  wordBreak: "break-all",
+                }}
+              >
+                {task.task_id}
+              </span>
+            </div>
+            <div style={KV_ROW}>
+              <span style={{ color: "var(--text-muted)" }}>CREATED</span>
+              <span style={{ color: "var(--text-primary)", textAlign: "right" }}>
+                {formatTimestamp(task.created_at)}
+              </span>
+            </div>
+            <div style={KV_ROW}>
+              <span style={{ color: "var(--text-muted)" }}>STARTED</span>
+              <span style={{ color: "var(--text-primary)", textAlign: "right" }}>
+                {formatTimestamp(task.started_at)}
+              </span>
+            </div>
+            <div style={KV_ROW}>
+              <span style={{ color: "var(--text-muted)" }}>COMPLETED</span>
+              <span style={{ color: "var(--text-primary)", textAlign: "right" }}>
+                {formatTimestamp(task.completed_at)}
+              </span>
+            </div>
+
+            {task.error && (
+              <div
+                className="font-mono"
+                style={{
+                  marginTop: 10,
+                  border: "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+                  background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+                  color: "var(--status-warn)",
+                  padding: "6px 10px",
+                  fontSize: 11,
+                  borderRadius: 3,
+                }}
+              >
+                {task.error}
+              </div>
+            )}
+
+            <div className="flex flex-wrap" style={{ gap: 8, marginTop: 12 }}>
+              <button
+                type="button"
+                disabled={!canCancel || cancelTask.isPending}
+                onClick={() => cancelTask.mutate()}
+                style={{
+                  ...MONO_BTN,
+                  opacity: !canCancel || cancelTask.isPending ? 0.5 : 1,
+                  cursor: !canCancel ? "not-allowed" : "pointer",
+                }}
+              >
+                {cancelTask.isPending ? "CANCELLING\u2026" : "CANCEL"}
+              </button>
+              <button
+                type="button"
+                disabled={!canResume || resumeTask.isPending}
+                onClick={() => resumeTask.mutate()}
+                style={{
+                  ...MONO_BTN,
+                  opacity: !canResume || resumeTask.isPending ? 0.5 : 1,
+                  cursor: !canResume ? "not-allowed" : "pointer",
+                }}
+              >
+                {resumeTask.isPending ? "RESUMING\u2026" : "RESUME"}
+              </button>
+            </div>
           </div>
-        </div>
-      ) : (
-        <p className="font-mono text-xs text-text-muted">
-          Run detail not found. The run may have been deleted or never existed.
-        </p>
-      )}</WindowPanel>
+        ) : (
+          <p
+            className="font-mono"
+            style={{ fontSize: 11, color: "var(--text-muted)" }}
+          >
+            Run detail not found. The run may have been deleted or never existed.
+          </p>
+        )}
+      </WindowPanel>
 
       {/* Live event stream */}
-      <WindowPanel title="Live Progress" tone="ok">
-      {scanEvents.status === "connecting" && (
-        <p className="font-mono text-xs text-text-muted">Connecting to stream…</p>
-      )}
-      {scanEvents.status === "unavailable" && (
-        <p className="font-mono text-xs text-text-muted">
-          Redis streaming unavailable. Polling reflects run status.
-        </p>
-      )}
-      {scanEvents.status === "error" && (
-        <div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-          {scanEvents.error}
-        </div>
-      )}
-      {liveEvents.length === 0 && scanEvents.status === "closed" && (
-        <p className="font-mono text-xs text-text-muted">
-          Stream closed without delivering progress events.
-        </p>
-      )}
-      {liveEvents.length > 0 && (
-        <div className="flex flex-col gap-2 max-h-64 overflow-y-auto">
-          {liveEvents.map((event, index) => (
-            <div
-              key={`${event.timestamp ?? "event"}-${index}`}
-              className="border-l-2 border-accent/40 pl-3 py-0.5"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-mono text-xs font-semibold text-text">
-                  {event.stage ?? "event"}
-                </span>
-                <span className="font-mono text-xs text-text-muted">
-                  {typeof event.percent === "number" ? `${event.percent}%` : ""}
-                </span>
+      <WindowPanel title="live progress" tone="ok">
+        {scanEvents.status === "connecting" && (
+          <p
+            className="font-mono"
+            style={{ fontSize: 11, color: "var(--text-muted)" }}
+          >
+            Connecting to stream{"\u2026"}
+          </p>
+        )}
+        {scanEvents.status === "unavailable" && (
+          <p
+            className="font-mono"
+            style={{ fontSize: 11, color: "var(--text-muted)" }}
+          >
+            Redis streaming unavailable. Polling reflects run status.
+          </p>
+        )}
+        {scanEvents.status === "error" && (
+          <div
+            className="font-mono"
+            style={{
+              border: "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+              background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+              color: "var(--status-warn)",
+              padding: "6px 10px",
+              fontSize: 11,
+              borderRadius: 3,
+            }}
+          >
+            {scanEvents.error}
+          </div>
+        )}
+        {liveEvents.length === 0 && scanEvents.status === "closed" && (
+          <p
+            className="font-mono"
+            style={{ fontSize: 11, color: "var(--text-muted)" }}
+          >
+            Stream closed without delivering progress events.
+          </p>
+        )}
+        {liveEvents.length > 0 && (
+          <div
+            className="flex flex-col"
+            style={{ gap: 8, maxHeight: 256, overflowY: "auto" }}
+          >
+            {liveEvents.map((event, index) => (
+              <div
+                key={`${event.timestamp ?? "event"}-${index}`}
+                style={{
+                  borderLeft: "2px solid color-mix(in srgb, var(--accent) 45%, transparent)",
+                  paddingLeft: 10,
+                  paddingTop: 2,
+                  paddingBottom: 2,
+                }}
+              >
+                <div className="flex items-center justify-between" style={{ gap: 8 }}>
+                  <span
+                    className="font-mono uppercase"
+                    style={{
+                      fontSize: 10,
+                      letterSpacing: "0.1em",
+                      color: "var(--text-primary)",
+                      fontWeight: 600,
+                    }}
+                  >
+                    {event.stage ?? "event"}
+                  </span>
+                  <span
+                    className="font-mono"
+                    style={{ fontSize: 10, color: "var(--text-muted)" }}
+                  >
+                    {typeof event.percent === "number" ? `${event.percent}%` : ""}
+                  </span>
+                </div>
+                <p
+                  className="font-mono"
+                  style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}
+                >
+                  {event.message ?? "No message."}
+                </p>
               </div>
-              <p className="font-mono text-xs text-text-muted mt-0.5">
-                {event.message ?? "No message."}
-              </p>
-            </div>
-          ))}
-        </div>
-      )}</WindowPanel>
+            ))}
+          </div>
+        )}
+      </WindowPanel>
 
-      {connectedEntities.length > 0 && (
-        <AilaCard variant="default" padding="md">
-          <ConnectedEntities entities={connectedEntities} heading="Connected" />
-        </AilaCard>
-      )}
-
-      <AilaCard variant="default" padding="md">
+      <WindowPanel title="activity" tone="muted">
         <ActivityTimeline runId={runId} label="Scan Run" live={isTaskLive} />
-      </AilaCard>
+      </WindowPanel>
     </div>
   );
+}
 
-  void setSearchParams; // suppress unused warning
+// ---------------------------------------------------------------------------
+// Metric row -- 3 WindowPanels of StatBar / BigStat
+// ---------------------------------------------------------------------------
+
+interface MetricRowProps {
+  total: number;
+  counts: Record<TaskStatus, number>;
+}
+
+function MetricRow({ total, counts }: MetricRowProps) {
+  return (
+    <div
+      className="grid"
+      style={{ gridTemplateColumns: "1fr 220px 220px", gap: 12 }}
+    >
+      <WindowPanel title="status distribution">
+        <div className="flex flex-col" style={{ gap: 8 }}>
+          <StatBar
+            label="RUNNING"
+            color={STATUS_COLOR.info}
+            value={counts.running}
+            max={Math.max(total, 1)}
+          />
+          <StatBar
+            label="QUEUED"
+            color={STATUS_COLOR.muted}
+            value={counts.queued + counts.waiting}
+            max={Math.max(total, 1)}
+          />
+          <StatBar
+            label="DONE"
+            color={STATUS_COLOR.low}
+            value={counts.done}
+            max={Math.max(total, 1)}
+          />
+          <StatBar
+            label="FAILED"
+            color={STATUS_COLOR.critical}
+            value={counts.failed}
+            max={Math.max(total, 1)}
+          />
+        </div>
+      </WindowPanel>
+      <WindowPanel title="total scans" tone="info">
+        <BigStat value={total} sub="tracked runs" />
+      </WindowPanel>
+      <WindowPanel title="live" tone="accent">
+        <BigStat
+          value={counts.running}
+          sub={counts.running === 1 ? "run in flight" : "runs in flight"}
+        />
+      </WindowPanel>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -373,19 +579,37 @@ export function ScanCenterPage() {
 
   const tasks = tasksQuery.data?.tasks ?? [];
 
+  const counts = useMemo<Record<TaskStatus, number>>(() => {
+    const acc: Record<TaskStatus, number> = {
+      queued: 0, waiting: 0, running: 0, paused: 0, done: 0, failed: 0, cancelled: 0,
+    };
+    for (const t of tasks) acc[t.status] += 1;
+    return acc;
+  }, [tasks]);
+
   function focusScanForm() {
     scanFormRef.current?.scrollIntoView({ behavior: "smooth" });
   }
 
   return (
-    <div className="flex flex-col gap-4 p-3 sm:p-4 lg:p-6">
-      {/* Page header */}
+    <div className="flex flex-col" style={{ gap: 16, padding: 20 }}>
+      <SectionHeader
+        icon={"\u25ce"}
+        title="scan center"
+        actions={
+          <button type="button" onClick={focusScanForm} style={MONO_BTN_ACCENT}>
+            + NEW SCAN
+          </button>
+        }
+      />
 
-      {/* Main split layout */}
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+      <MetricRow total={tasks.length} counts={counts} />
 
-        {/* Left: form + task list */}
-        <div className="flex-1 min-w-0 flex flex-col gap-4">
+      <div
+        className="grid"
+        style={{ gridTemplateColumns: "minmax(0, 1fr) 380px", gap: 16 }}
+      >
+        <div className="flex flex-col" style={{ gap: 14 }}>
           <div ref={scanFormRef}>
             <ScanForm
               queryText={queryText}
@@ -402,49 +626,44 @@ export function ScanCenterPage() {
             />
           </div>
 
-          {/* Task list */}
-          <WindowPanel title="Recent Runs" tone="muted"><div className="flex flex-col gap-3">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-              <div className="flex flex-wrap gap-1.5">
-                {STATUS_FILTERS.map((status) => (
-                  <button
-                    key={status}
-                    type="button"
-                    onClick={() =>
-                      setSearchParams(
-                        updateSearchParams(searchParams, {
-                          status: statusFilter === status ? null : status,
-                        }),
-                      )
-                    }
-                    className="cursor-pointer"
-                  >
-                    <AilaBadge
-                      severity={statusFilter === status ? statusSeverity(status) : "neutral"}
-                      size="sm"
-                      solid={statusFilter === status}
-                    >
-                      {status}
-                    </AilaBadge>
-                  </button>
-                ))}
-                {statusFilter && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setSearchParams(updateSearchParams(searchParams, { status: null }))
-                    }
-                    className="font-mono text-xs text-text-muted hover:text-text transition-colors"
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-            </div>
-            {/* Saved views for the scan console (entity_type='scan').
-                Round-trips query text, targets, and the run-status filter
-                through /saved-filters so operators can bookmark recurring
-                scans. */}
+          {/* Filter chip row */}
+          <div className="flex items-center flex-wrap" style={{ gap: 8 }}>
+            {STATUS_FILTERS.map((status) => (
+              <FilterChip
+                key={status}
+                active={statusFilter === status}
+                color={STATUS_COLOR[STATUS_TONE[status]]}
+                onClick={() =>
+                  setSearchParams(
+                    updateSearchParams(searchParams, {
+                      status: statusFilter === status ? null : status,
+                    }),
+                  )
+                }
+              >
+                {status.toUpperCase()}
+              </FilterChip>
+            ))}
+            {statusFilter && (
+              <button
+                type="button"
+                onClick={() =>
+                  setSearchParams(updateSearchParams(searchParams, { status: null }))
+                }
+                className="font-mono uppercase"
+                style={{
+                  fontSize: 9,
+                  letterSpacing: "0.1em",
+                  color: "var(--text-muted)",
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                }}
+              >
+                CLEAR
+              </button>
+            )}
+            <div style={{ flex: 1 }} />
             <SavedViews<{
               query: string;
               targets: string;
@@ -467,99 +686,123 @@ export function ScanCenterPage() {
                 );
               }}
             />
-          
-            {tasksQuery.isLoading && <LoadingSkeletonGroup lines={4} />}
-          
+          </div>
+
+          {/* Scan list */}
+          <WindowPanel title="scan runs" flush>
+            {tasksQuery.isLoading && (
+              <div style={{ padding: 12 }}>
+                <LoadingSkeletonGroup lines={5} />
+              </div>
+            )}
             {tasksQuery.isError && (
-              <div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
+              <div
+                className="font-mono"
+                style={{
+                  margin: 12,
+                  border: "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+                  background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+                  color: "var(--status-warn)",
+                  padding: "6px 10px",
+                  fontSize: 11,
+                  borderRadius: 3,
+                }}
+              >
                 {(tasksQuery.error as Error).message}
               </div>
             )}
-          
-            {!tasksQuery.isLoading && tasks.length === 0 && (
-              <EmptyState
-                icon={<Play size={32} />}
-                title="No scans yet"
-                description="Submit a scan above to start discovering vulnerabilities."
-                action={{ label: "Submit a Scan", onClick: focusScanForm }}
+            {!tasksQuery.isLoading && !tasksQuery.isError && (
+              <DataGrid
+                columns={[
+                  { label: "ID", width: "110px" },
+                  { label: "TYPE", width: "120px" },
+                  { label: "TARGET", width: "1fr" },
+                  { label: "STATUS", width: "110px" },
+                  { label: "STARTED", width: "180px" },
+                  { label: "ACTIONS", width: "90px", align: "right" },
+                ]}
+                rows={tasks}
+                getKey={(t) => t.task_id}
+                onRowClick={(t) => {
+                  navigate(`/console/${encodeURIComponent(t.task_id)}`);
+                  setSearchParams(updateSearchParams(searchParams, { run: t.task_id }));
+                }}
+                empty={
+                  <div
+                    className="flex flex-col items-center justify-center"
+                    style={{ padding: 32, gap: 8 }}
+                  >
+                    <span style={{ fontSize: 22, color: "var(--text-faint)" }}>
+                      {"\u25c7"}
+                    </span>
+                    <p
+                      className="font-mono uppercase"
+                      style={{
+                        fontSize: 10,
+                        letterSpacing: "0.14em",
+                        color: "var(--text-muted)",
+                      }}
+                    >
+                      No scans yet
+                    </p>
+                    <button
+                      type="button"
+                      onClick={focusScanForm}
+                      style={MONO_BTN_ACCENT}
+                    >
+                      + SUBMIT SCAN
+                    </button>
+                  </div>
+                }
+                renderCells={(t) => [
+                  <span
+                    key="id"
+                    style={{ color: "var(--accent)", fontSize: 10 }}
+                    data-testid="scan-row"
+                    data-task-id={t.task_id}
+                  >
+                    {t.task_id.slice(0, 8)}
+                    {"\u2026"}
+                  </span>,
+                  <span key="type" style={{ color: "var(--text-muted)", fontSize: 10 }}>
+                    {t.track}
+                  </span>,
+                  <span
+                    key="target"
+                    className="truncate"
+                    style={{ color: "var(--text-primary)", fontSize: 10 }}
+                  >
+                    {t.fn_module || "\u2014"}
+                  </span>,
+                  <MonoBadge key="status" tone={STATUS_TONE[t.status]}>
+                    {t.status.toUpperCase()}
+                  </MonoBadge>,
+                  <span
+                    key="started"
+                    style={{ color: "var(--text-muted)", fontSize: 10 }}
+                  >
+                    {formatTimestamp(t.started_at ?? t.created_at)}
+                  </span>,
+                  <span
+                    key="actions"
+                    style={{
+                      display: "inline-flex",
+                      justifyContent: "flex-end",
+                      width: "100%",
+                    }}
+                  >
+                    <MonoBadge tone={t.task_id === selectedRunId ? "accent" : "muted"}>
+                      {t.task_id === selectedRunId ? "OPEN" : "VIEW"}
+                    </MonoBadge>
+                  </span>,
+                ]}
               />
             )}
-          
-            {tasks.length > 0 && (
-              <div className="overflow-x-auto">
-                <table aria-label="Scan runs" className="w-full border-collapse [&_th]:border [&_th]:border-border [&_td]:border [&_td]:border-border">
-                  <thead>
-                    <tr className="border-b border-border bg-elevated">
-                      <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted">Run ID</th>
-                      <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted">Status</th>
-                      <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted hidden sm:table-cell">Created</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {tasks.map((task) => {
-                      const activate = (event: React.SyntheticEvent) => {
-                        const target = event.target as HTMLElement | null;
-                        const row = event.currentTarget as HTMLElement;
-                        if (target) {
-                          const hit = target.closest(
-                            'button, a, input, select, textarea, [role="button"], .no-row-click',
-                          ) as HTMLElement | null;
-                          if (hit && hit !== row && row.contains(hit)) {
-                            return;
-                          }
-                        }
-                        // D-04 + D-14: navigate to /console/:runId, keep selection param for panel.
-                        navigate(`/console/${encodeURIComponent(task.task_id)}`);
-                        setSearchParams(updateSearchParams(searchParams, { run: task.task_id }));
-                      };
-                      const token = statusToken(task.status);
-                      return (
-                        <tr
-                          key={task.task_id}
-                          role="button"
-                          tabIndex={0}
-                          data-testid="scan-row"
-                          data-task-id={task.task_id}
-                          className={`border-b border-border font-mono text-xs transition-colors cursor-pointer hover:bg-elevated focus:outline focus:outline-2 focus:outline-accent ${
-                            task.task_id === selectedRunId ? "bg-accent/5" : ""
-                          }`}
-                          onClick={activate}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" || event.key === " ") {
-                              if (event.key === " ") event.preventDefault();
-                              activate(event);
-                            }
-                          }}
-                        >
-                          <td className="py-2 px-3 text-text-muted">
-                            {task.task_id.slice(0, 8)}…
-                          </td>
-                          <td className="py-2 px-3">
-                            {token ? (
-                              <AilaBadge status={token} size="sm">
-                                {task.status}
-                              </AilaBadge>
-                            ) : (
-                              <AilaBadge severity={statusSeverity(task.status)} size="sm">
-                                {task.status}
-                              </AilaBadge>
-                            )}
-                          </td>
-                          <td className="py-2 px-3 text-text-muted hidden sm:table-cell">
-                            {formatTimestamp(task.created_at)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div></WindowPanel>
+          </WindowPanel>
         </div>
 
-        {/* Right: run detail panel */}
-        <div className="w-full lg:w-80 xl:w-96 shrink-0">
+        {/* Right: run detail */}
+        <div style={{ minWidth: 0 }}>
           <RunDetailPanel runId={selectedRunId} />
         </div>
       </div>

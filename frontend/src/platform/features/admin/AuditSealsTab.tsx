@@ -1,15 +1,18 @@
 /**
  * AuditSealsTab -- cryptographic seal viewer for the AuditLogsPage.
  *
+ * Rebuilt to the AILA mock: SectionHeader top, WindowPanels for filter +
+ * verification + seal log (DataGrid). Every status chip is MonoBadge.
+ *
  * Wires:
  *   GET /audit/seals?run_id=&include_content=&page=&page_size=
  *   GET /audit/seals/export?since=&until=&include_content=
  *
  * Design notes:
- * - `/seals` requires run_id, so the table is empty until one is supplied.
+ * - `/seals` requires run_id, so the log is empty until one is supplied.
  * - `?run_id=` search-param seeds the input.
- * - Row expansion is only meaningful when include_content=true; the row shows
- *   prompt_content/response_content in <pre> blocks.
+ * - Row expansion is only meaningful when include_content=true; the row
+ *   shows prompt_content/response_content in <pre> blocks.
  * - "Check chain" is a LINKAGE integrity check, not HMAC verification. The
  *   HMAC key is server-side (SecretStore) and the client cannot recompute it.
  */
@@ -26,12 +29,9 @@ import { CaretDown } from "@phosphor-icons/react/dist/csr/CaretDown";
 import { CaretRight } from "@phosphor-icons/react/dist/csr/CaretRight";
 import { Shield } from "@phosphor-icons/react/dist/csr/Shield";
 
-import { AilaCard } from "@/components/aila/AilaCard";
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { EmptyState } from "@/components/aila/EmptyState";
+import { SectionHeader, MonoBadge, DataGrid, BigStat, StatBar, toneColor } from "@/components/aila/mock";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { toast } from "@/components/ui/sonner";
 import { saveBlobResponse } from "@platform/api/download";
 import { ApiHttpError } from "@platform/api/http";
@@ -45,14 +45,14 @@ import {
 } from "./audit-seals-api";
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Constants / helpers
 // ---------------------------------------------------------------------------
 
 const PAGE_SIZE = 50;
 
 function truncateHash(hash: string, keep = 10): string {
   if (!hash) return "--";
-  return hash.length > keep + 2 ? `${hash.slice(0, keep)}…` : hash;
+  return hash.length > keep + 2 ? `${hash.slice(0, keep)}\u2026` : hash;
 }
 
 function formatTimestamp(value: string | null): string {
@@ -64,188 +64,79 @@ function formatTimestamp(value: string | null): string {
   }
 }
 
+/** `datetime-local` shape used to seed the export inputs. */
+function toDatetimeLocal(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// ---------------------------------------------------------------------------
+// Shared inline element styles
+// ---------------------------------------------------------------------------
+
+const INPUT_STYLE: React.CSSProperties = {
+  height: 26, padding: "0 8px", fontSize: 11,
+  fontFamily: "var(--font-mono)",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  color: "var(--text-primary)",
+  borderRadius: 3,
+};
+
+const BUTTON_STYLE: React.CSSProperties = {
+  height: 26, padding: "0 11px", fontSize: 9.5,
+  fontFamily: "var(--font-mono)",
+  letterSpacing: "0.08em", textTransform: "uppercase",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  color: "var(--text-primary)",
+  borderRadius: 3, cursor: "pointer",
+};
+
+const PRIMARY_BUTTON_STYLE: React.CSSProperties = {
+  ...BUTTON_STYLE,
+  background: "var(--accent)",
+  border: "1px solid var(--accent)",
+  color: "var(--text-on-accent)",
+};
+
 function CopyHashButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <button
       type="button"
-      className="ml-1 shrink-0 opacity-50 hover:opacity-100 transition-opacity"
+      className="inline-flex items-center justify-center"
       title="Copy hash"
       aria-label="Copy hash"
+      style={{
+        width: 16, height: 16, marginLeft: 4,
+        background: "transparent", border: 0,
+        color: copied ? "var(--status-ok)" : "var(--text-faint)",
+        cursor: "pointer",
+      }}
       onClick={(e) => {
         e.stopPropagation();
         void navigator.clipboard.writeText(text).then(() => {
           setCopied(true);
-          setTimeout(() => setCopied(false), 1200);
+          window.setTimeout(() => setCopied(false), 1200);
         });
       }}
     >
-      {copied ? (
-        <Check className="h-3 w-3 text-[oklch(72%_0.18_150)]" />
-      ) : (
-        <Copy className="h-3 w-3" />
-      )}
+      {copied ? <Check size={11} /> : <Copy size={11} />}
     </button>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Row
-// ---------------------------------------------------------------------------
-
-interface SealRowProps {
-  seal: AuditSeal;
-  includeContent: boolean;
-  expanded: boolean;
-  onToggle: () => void;
-}
-
-function SealRow({ seal, includeContent, expanded, onToggle }: SealRowProps) {
-  const evidence = seal.evidence_validation_pass;
-  const evidenceBadge =
-    evidence === true ? (
-      <AilaBadge severity="info" size="sm">pass</AilaBadge>
-    ) : evidence === false ? (
-      <AilaBadge severity="critical" size="sm">fail</AilaBadge>
-    ) : (
-      <AilaBadge severity="neutral" size="sm">n/a</AilaBadge>
-    );
-
-  const canExpand = includeContent && (seal.prompt_content !== null || seal.response_content !== null);
-
+function HashCell({ value, keep = 10 }: { value: string; keep?: number }) {
   return (
-    <>
-      <tr
-        className={[
-          "border-b border-border last:border-0 transition-colors",
-          canExpand ? "cursor-pointer hover:bg-elevated" : "",
-        ].join(" ")}
-        onClick={canExpand ? onToggle : undefined}
-      >
-        <td className="px-2 py-1.5 whitespace-nowrap">
-          {canExpand ? (
-            <button
-              type="button"
-              className="text-text-muted hover:text-text"
-              aria-label={expanded ? "Collapse content" : "Expand content"}
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggle();
-              }}
-            >
-              {expanded ? (
-                <CaretDown className="h-3 w-3" />
-              ) : (
-                <CaretRight className="h-3 w-3" />
-              )}
-            </button>
-          ) : (
-            <span className="inline-block h-3 w-3" />
-          )}
-        </td>
-        <td className="px-2 py-1.5 whitespace-nowrap">
-          <div className="flex items-center gap-1 font-mono text-[11px] text-text">
-            <span title={seal.seal_hash}>{truncateHash(seal.seal_hash)}</span>
-            <CopyHashButton text={seal.seal_hash} />
-          </div>
-        </td>
-        <td className="px-2 py-1.5 whitespace-nowrap">
-          <div className="flex items-center gap-1 font-mono text-[11px] text-text-muted">
-            <span title={seal.input_hash}>{truncateHash(seal.input_hash, 8)}</span>
-            <CopyHashButton text={seal.input_hash} />
-          </div>
-        </td>
-        <td className="px-2 py-1.5 whitespace-nowrap">
-          <div className="flex items-center gap-1 font-mono text-[11px] text-text-muted">
-            <span title={seal.output_hash}>{truncateHash(seal.output_hash, 8)}</span>
-            <CopyHashButton text={seal.output_hash} />
-          </div>
-        </td>
-        <td className="px-2 py-1.5 font-mono text-[11px] text-text">
-          {seal.model_id}
-        </td>
-        <td className="px-2 py-1.5 font-mono text-[11px] text-text">
-          {seal.task_type}
-        </td>
-        <td className="px-2 py-1.5 whitespace-nowrap font-mono text-[11px] text-text-muted">
-          {formatTimestamp(seal.timestamp)}
-        </td>
-        <td className="px-2 py-1.5 font-mono text-[11px] text-text-muted">
-          {seal.classification ?? "--"}
-        </td>
-        <td className="px-2 py-1.5 font-mono text-[11px] text-text-muted">
-          {seal.confidence ?? "--"}
-        </td>
-        <td className="px-2 py-1.5">{evidenceBadge}</td>
-        <td className="px-2 py-1.5">
-          {seal.content_stored ? (
-            <AilaBadge severity="info" size="sm">stored</AilaBadge>
-          ) : (
-            <AilaBadge severity="neutral" size="sm">no</AilaBadge>
-          )}
-        </td>
-      </tr>
-      {expanded && canExpand && (
-        <tr className="bg-elevated/40">
-          <td colSpan={11} className="px-4 py-3">
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-              <div className="flex flex-col gap-1">
-                <p className="font-mono text-[10px] font-semibold uppercase tracking-wider text-text-muted">
-                  Prompt content
-                </p>
-                <pre className="max-h-72 overflow-auto rounded-[2px] border border-border bg-background/60 p-2 font-mono text-[10px] text-text whitespace-pre-wrap break-words">
-{seal.prompt_content ?? "(not stored)"}
-                </pre>
-              </div>
-              <div className="flex flex-col gap-1">
-                <p className="font-mono text-[10px] font-semibold uppercase tracking-wider text-text-muted">
-                  Response content
-                </p>
-                <pre className="max-h-72 overflow-auto rounded-[2px] border border-border bg-background/60 p-2 font-mono text-[10px] text-text whitespace-pre-wrap break-words">
-{seal.response_content ?? "(not stored)"}
-                </pre>
-              </div>
-            </div>
-          </td>
-        </tr>
-      )}
-    </>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Linkage result banner
-// ---------------------------------------------------------------------------
-
-function LinkageBanner({ result }: { result: SealLinkageResult }) {
-  const ok = result.ok;
-  return (
-    <div
-      className={[
-        "rounded-[4px] border px-3 py-2 font-mono text-[11px]",
-        ok
-          ? "border-[oklch(72%_0.18_150)]/40 bg-[oklch(72%_0.18_150)]/10 text-[oklch(72%_0.18_150)]"
-          : "border-destructive/50 bg-destructive/10 text-destructive",
-      ].join(" ")}
+    <span
+      className="inline-flex items-center font-mono"
+      style={{ fontSize: 10.5, color: "var(--text-primary)" }}
+      title={value}
     >
-      <div className="flex items-center gap-2">
-        <Shield className="h-3.5 w-3.5" />
-        <span className="font-semibold">
-          Linkage check {ok ? "passed" : "failed"}
-        </span>
-        <span className="opacity-70">
-          -- structural integrity only, not an HMAC recomputation
-        </span>
-      </div>
-      <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-0.5 pl-5 opacity-90 sm:grid-cols-3">
-        <span>rows: {result.total}</span>
-        <span>missing seal_hash: {result.missingSealHash}</span>
-        <span>missing input_hash: {result.missingInputHash}</span>
-        <span>missing output_hash: {result.missingOutputHash}</span>
-        <span>evidence fail: {result.evidenceFail}</span>
-        <span>evidence unknown: {result.evidenceUnknown}</span>
-      </div>
-    </div>
+      {truncateHash(value, keep)}
+      <CopyHashButton text={value} />
+    </span>
   );
 }
 
@@ -265,20 +156,17 @@ export function AuditSealsTab() {
   const [linkage, setLinkage] = useState<SealLinkageResult | null>(null);
   const [exporting, setExporting] = useState(false);
 
-  // Export date range (default: last 24h → now)
   const now = useMemo(() => new Date(), []);
   const yesterday = useMemo(() => new Date(now.getTime() - 24 * 3600_000), [now]);
   const [since, setSince] = useState<string>(toDatetimeLocal(yesterday));
   const [until, setUntil] = useState<string>(toDatetimeLocal(now));
   const [exportContent, setExportContent] = useState(false);
 
-  // Keep URL and inputs in sync when the seed changes externally.
   useEffect(() => {
     if (seededRunId && seededRunId !== activeRunId) {
       setRunIdInput(seededRunId);
       setActiveRunId(seededRunId);
     }
-    // Only react to seededRunId changes; ignore activeRunId in deps to avoid a loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seededRunId]);
 
@@ -304,7 +192,6 @@ export function AuditSealsTab() {
     setPage(1);
     setExpanded({});
     setLinkage(null);
-    // Mirror into URL so links are shareable.
     const nextParams = new URLSearchParams(searchParams);
     if (next) nextParams.set("run_id", next);
     else nextParams.delete("run_id");
@@ -368,20 +255,57 @@ export function AuditSealsTab() {
     }
   }, [since, until, exportContent]);
 
+  const totalHashes = linkage
+    ? Math.max(1, linkage.total)
+    : 1;
+
   return (
-    <div className="flex flex-col gap-4">
-      {/* Filter card */}
-      <AilaCard variant="elevated" padding="md">
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-col gap-2 lg:flex-row lg:items-end">
-            <div className="flex flex-1 flex-col gap-1">
+    <div className="flex flex-col" style={{ gap: 16, padding: 20 }}>
+      <SectionHeader
+        icon={"\u25c7"}
+        title="audit seals"
+        actions={
+          <div className="flex items-center" style={{ gap: 8 }}>
+            <button
+              type="button"
+              style={BUTTON_STYLE}
+              onClick={() => void sealsQuery.refetch()}
+              disabled={!activeRunId || sealsQuery.isFetching}
+            >
+              <ArrowClockwise
+                size={11}
+                aria-hidden
+                style={{ marginRight: 6, verticalAlign: "-1px", animation: sealsQuery.isFetching ? "spin 1s linear infinite" : undefined }}
+              />
+              REFRESH
+            </button>
+            <button
+              type="button"
+              style={BUTTON_STYLE}
+              onClick={runChainCheck}
+              disabled={items.length === 0}
+              title="Structural hash-linkage check. NOT an HMAC recomputation."
+            >
+              <ShieldCheck size={11} aria-hidden style={{ marginRight: 6, verticalAlign: "-1px" }} />
+              CHECK CHAIN
+            </button>
+          </div>
+        }
+      />
+
+      {/* Filter + export controls */}
+      <WindowPanel title="filters">
+        <div className="flex flex-col" style={{ gap: 12 }}>
+          <div className="flex flex-wrap items-end" style={{ gap: 10 }}>
+            <div className="flex flex-col" style={{ gap: 4, flex: "1 1 260px" }}>
               <label
                 htmlFor="seal-run-id"
-                className="font-mono text-[10px] uppercase tracking-wider text-text-muted"
+                className="font-mono uppercase"
+                style={{ fontSize: 9, letterSpacing: "0.14em", color: "var(--text-faint)" }}
               >
-                Run ID (required)
+                RUN ID (REQUIRED)
               </label>
-              <Input
+              <input
                 id="seal-run-id"
                 value={runIdInput}
                 onChange={(e) => setRunIdInput(e.target.value)}
@@ -391,12 +315,15 @@ export function AuditSealsTab() {
                     applyRunId();
                   }
                 }}
-                placeholder="50b5b278-1b3d-…"
-                className="font-mono text-xs"
+                placeholder="50b5b278-1b3d-\u2026"
+                style={INPUT_STYLE}
+                data-testid="seal-run-id"
               />
             </div>
-            {/* Single-toggle checkbox: WCAG 1.3.1 fieldset/legend applies to related-option groups, not to individual on/off toggles labelled via wrapping <label>. */}
-            <label className="flex items-center gap-2 font-mono text-[11px] text-text-muted">
+            <label
+              className="inline-flex items-center font-mono"
+              style={{ gap: 6, fontSize: 10.5, color: "var(--text-muted)", height: 26 }}
+            >
               <input
                 type="checkbox"
                 checked={includeContent}
@@ -404,209 +331,385 @@ export function AuditSealsTab() {
                   setIncludeContent(e.target.checked);
                   setExpanded({});
                 }}
+                style={{ width: 12, height: 12, accentColor: "var(--accent)" }}
               />
               include prompt/response content
             </label>
-            <div className="flex gap-2">
-              <Button size="sm" onClick={applyRunId} disabled={!runIdInput.trim()}>
-                Load
-              </Button>
-              <Button size="sm" variant="outline" onClick={clearRunId}>
-                Clear
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => sealsQuery.refetch()}
-                disabled={!activeRunId || sealsQuery.isFetching}
-                className="gap-1.5"
+            <div className="flex items-center" style={{ gap: 6 }}>
+              <button
+                type="button"
+                style={PRIMARY_BUTTON_STYLE}
+                onClick={applyRunId}
+                disabled={!runIdInput.trim()}
               >
-                <ArrowClockwise
-                  className={`h-3.5 w-3.5 ${sealsQuery.isFetching ? "animate-spin" : ""}`}
-                />
-                Refresh
-              </Button>
+                LOAD
+              </button>
+              <button
+                type="button"
+                style={BUTTON_STYLE}
+                onClick={clearRunId}
+              >
+                CLEAR
+              </button>
             </div>
           </div>
 
-          <div className="flex flex-col gap-2 border-t border-border pt-3 lg:flex-row lg:items-end">
-            <div className="flex flex-col gap-1">
+          <div
+            className="flex flex-wrap items-end"
+            style={{ gap: 10, paddingTop: 10, borderTop: "1px solid var(--border-faint)" }}
+          >
+            <div className="flex flex-col" style={{ gap: 4 }}>
               <label
                 htmlFor="seal-since"
-                className="font-mono text-[10px] uppercase tracking-wider text-text-muted"
+                className="font-mono uppercase"
+                style={{ fontSize: 9, letterSpacing: "0.14em", color: "var(--text-faint)" }}
               >
-                Export since
+                EXPORT SINCE
               </label>
-              <Input
+              <input
                 id="seal-since"
                 type="datetime-local"
                 value={since}
                 onChange={(e) => setSince(e.target.value)}
-                className="font-mono text-xs"
+                style={INPUT_STYLE}
               />
             </div>
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col" style={{ gap: 4 }}>
               <label
                 htmlFor="seal-until"
-                className="font-mono text-[10px] uppercase tracking-wider text-text-muted"
+                className="font-mono uppercase"
+                style={{ fontSize: 9, letterSpacing: "0.14em", color: "var(--text-faint)" }}
               >
-                Export until
+                EXPORT UNTIL
               </label>
-              <Input
+              <input
                 id="seal-until"
                 type="datetime-local"
                 value={until}
                 onChange={(e) => setUntil(e.target.value)}
-                className="font-mono text-xs"
+                style={INPUT_STYLE}
               />
             </div>
-            <label className="flex items-center gap-2 font-mono text-[11px] text-text-muted">
+            <label
+              className="inline-flex items-center font-mono"
+              style={{ gap: 6, fontSize: 10.5, color: "var(--text-muted)", height: 26 }}
+            >
               <input
                 type="checkbox"
                 checked={exportContent}
                 onChange={(e) => setExportContent(e.target.checked)}
+                style={{ width: 12, height: 12, accentColor: "var(--accent)" }}
               />
               export with content
             </label>
-            <Button
-              size="sm"
-              variant="outline"
-              className="gap-1.5"
+            <button
+              type="button"
+              style={BUTTON_STYLE}
               onClick={() => void runExport()}
               disabled={exporting}
             >
-              <Download className="h-3.5 w-3.5" />
-              {exporting ? "Exporting…" : "Export range"}
-            </Button>
+              <Download size={11} aria-hidden style={{ marginRight: 6, verticalAlign: "-1px" }} />
+              {exporting ? "EXPORTING\u2026" : "EXPORT RANGE"}
+            </button>
           </div>
         </div>
-      </AilaCard>
+      </WindowPanel>
 
-      {/* Chain check + counts */}
-      {activeRunId && (
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="font-mono text-[11px] text-text-muted">
-            {sealsQuery.data
-              ? `Loaded ${items.length} of ${total} seal(s) for run ${activeRunId.slice(0, 12)}…`
-              : "Loading…"}
-          </div>
-          <Button
-            size="sm"
-            variant="outline"
-            className="gap-1.5"
-            onClick={runChainCheck}
-            disabled={items.length === 0}
-            title="Structural hash-linkage check. NOT an HMAC recomputation -- the HMAC key is server-side."
+      {/* Verification */}
+      <WindowPanel
+        title="verification"
+        tone={linkage ? (linkage.ok ? "ok" : "warn") : "muted"}
+        status={
+          linkage
+            ? linkage.ok
+              ? "LINKAGE OK"
+              : "LINKAGE FAIL"
+            : "AWAITING CHECK"
+        }
+      >
+        {!linkage && (
+          <div
+            className="font-mono"
+            style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.55 }}
           >
-            <ShieldCheck className="h-3.5 w-3.5" />
-            Check chain
-          </Button>
-        </div>
-      )}
+            Structural hash-linkage check only -- the HMAC key is server-side and cannot
+            be recomputed by the client. Load a run, then press <span style={{ color: "var(--text-primary)" }}>CHECK CHAIN</span>
+            to score the loaded page.
+          </div>
+        )}
+        {linkage && (
+          <div className="flex flex-col" style={{ gap: 12 }}>
+            <div
+              className="grid"
+              style={{ gridTemplateColumns: "180px 1fr", gap: 16, alignItems: "start" }}
+            >
+              <BigStat
+                value={linkage.total}
+                sub="rows checked"
+              />
+              <div className="flex flex-col" style={{ gap: 6 }}>
+                <StatBar
+                  label="MISSING SEAL"
+                  color={linkage.missingSealHash > 0 ? "var(--status-warn)" : "var(--status-ok)"}
+                  value={linkage.missingSealHash}
+                  max={totalHashes}
+                />
+                <StatBar
+                  label="MISSING INPUT"
+                  color={linkage.missingInputHash > 0 ? "var(--status-warn)" : "var(--status-ok)"}
+                  value={linkage.missingInputHash}
+                  max={totalHashes}
+                />
+                <StatBar
+                  label="MISSING OUT"
+                  color={linkage.missingOutputHash > 0 ? "var(--status-warn)" : "var(--status-ok)"}
+                  value={linkage.missingOutputHash}
+                  max={totalHashes}
+                />
+                <StatBar
+                  label="EV FAIL"
+                  color={linkage.evidenceFail > 0 ? "var(--accent)" : "var(--status-ok)"}
+                  value={linkage.evidenceFail}
+                  max={totalHashes}
+                />
+                <StatBar
+                  label="EV UNK"
+                  color="var(--status-info)"
+                  value={linkage.evidenceUnknown}
+                  max={totalHashes}
+                />
+              </div>
+            </div>
+            <div className="inline-flex items-center" style={{ gap: 6 }}>
+              <Shield size={12} aria-hidden style={{ color: toneColor(linkage.ok ? "ok" : "warn") }} />
+              <span
+                className="font-mono uppercase"
+                style={{ fontSize: 10, letterSpacing: "0.1em", color: "var(--text-muted)" }}
+              >
+                STRUCTURAL INTEGRITY ONLY {"\u00b7"} NOT AN HMAC RECOMPUTATION
+              </span>
+            </div>
+          </div>
+        )}
+      </WindowPanel>
 
-      {linkage && <LinkageBanner result={linkage} />}
-
-      {/* Body */}
-      {!activeRunId && (
-        <EmptyState
-          icon={<Shield className="h-10 w-10" />}
-          title="Enter a run ID"
-          description="The /audit/seals endpoint scopes results to a single run. Paste a run_id above (or navigate here from the workflow inspector) to load the seal chain."
-        />
-      )}
-
-      {activeRunId && sealsQuery.isLoading && (
-        <AilaCard variant="default" padding="md">
-          <LoadingSkeletonGroup lines={6} />
-        </AilaCard>
-      )}
-
-      {activeRunId && sealsQuery.isError && (
-        <div className="rounded-[4px] border border-destructive bg-destructive/10 px-4 py-3 font-mono text-sm text-destructive">
-          Failed to load audit seals:{" "}
-          {(sealsQuery.error as Error).message}
-        </div>
-      )}
-
-      {activeRunId &&
-        !sealsQuery.isLoading &&
-        !sealsQuery.isError &&
-        items.length === 0 && (
-          <EmptyState
-            icon={<Shield className="h-10 w-10" />}
-            title="No seals for this run"
-            description="This run has no cryptographic seal records. Seals are written by the LLM pipeline after every model call."
+      {/* Seal log */}
+      <WindowPanel
+        title="seal log"
+        status={
+          activeRunId
+            ? sealsQuery.data
+              ? `${items.length} OF ${total} \u00b7 RUN ${activeRunId.slice(0, 12)}\u2026`
+              : "LOADING\u2026"
+            : "AWAITING RUN ID"
+        }
+        flush
+      >
+        {!activeRunId && (
+          <div
+            className="font-mono"
+            style={{ padding: 32, textAlign: "center", fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}
+          >
+            The /audit/seals endpoint scopes results to a single run.
+            <br />
+            Paste a run_id above (or navigate here from the workflow inspector) to load the seal chain.
+          </div>
+        )}
+        {activeRunId && sealsQuery.isLoading && (
+          <div style={{ padding: 14 }}>
+            <LoadingSkeletonGroup lines={6} />
+          </div>
+        )}
+        {activeRunId && sealsQuery.isError && (
+          <div
+            className="font-mono"
+            style={{
+              margin: 12,
+              padding: "8px 12px",
+              border: "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+              background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+              color: "var(--status-warn)",
+              fontSize: 11, borderRadius: 3,
+            }}
+          >
+            Failed to load audit seals: {(sealsQuery.error as Error).message}
+          </div>
+        )}
+        {activeRunId
+          && !sealsQuery.isLoading
+          && !sealsQuery.isError
+          && items.length === 0 && (
+          <div
+            className="font-mono"
+            style={{ padding: 32, textAlign: "center", fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}
+          >
+            No cryptographic seal records for this run.
+            <br />
+            Seals are written by the LLM pipeline after every model call.
+          </div>
+        )}
+        {activeRunId && items.length > 0 && (
+          <DataGrid<AuditSeal>
+            columns={[
+              { label: "", width: "24px" },
+              { label: "SEAL HASH", width: "150px" },
+              { label: "INPUT", width: "110px" },
+              { label: "OUTPUT", width: "110px" },
+              { label: "MODEL", width: "1fr" },
+              { label: "TASK", width: "1fr" },
+              { label: "TIMESTAMP", width: "150px" },
+              { label: "CLASS", width: "90px" },
+              { label: "CONF", width: "56px", align: "right" },
+              { label: "EVIDENCE", width: "76px" },
+              { label: "CONTENT", width: "76px" },
+            ]}
+            rows={items}
+            getKey={(s) => (s.id ?? s.seal_hash)}
+            onRowClick={(s) => {
+              const canExpand = includeContent && (s.prompt_content !== null || s.response_content !== null);
+              if (canExpand) toggleRow(s.id);
+            }}
+            renderCells={(seal) => {
+              const canExpand = includeContent && (seal.prompt_content !== null || seal.response_content !== null);
+              const isExpanded = seal.id !== null && Boolean(expanded[seal.id]);
+              const ev = seal.evidence_validation_pass;
+              const evBadge =
+                ev === true ? <MonoBadge tone="info">pass</MonoBadge>
+                : ev === false ? <MonoBadge tone="critical">fail</MonoBadge>
+                : <MonoBadge tone="muted">n/a</MonoBadge>;
+              return [
+                canExpand ? (
+                  <span
+                    aria-hidden
+                    style={{ color: "var(--text-muted)", cursor: "pointer" }}
+                  >
+                    {isExpanded ? <CaretDown size={11} /> : <CaretRight size={11} />}
+                  </span>
+                ) : (
+                  <span style={{ width: 11, display: "inline-block" }} />
+                ),
+                <HashCell value={seal.seal_hash} keep={10} />,
+                <HashCell value={seal.input_hash} keep={8} />,
+                <HashCell value={seal.output_hash} keep={8} />,
+                <span className="truncate font-mono" style={{ fontSize: 10.5, color: "var(--text-primary)" }}>
+                  {seal.model_id}
+                </span>,
+                <span className="truncate font-mono" style={{ fontSize: 10.5, color: "var(--text-primary)" }}>
+                  {seal.task_type}
+                </span>,
+                <span className="font-mono" style={{ fontSize: 10, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+                  {formatTimestamp(seal.timestamp)}
+                </span>,
+                <span className="font-mono" style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
+                  {seal.classification ?? "--"}
+                </span>,
+                <span className="font-mono" style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
+                  {seal.confidence ?? "--"}
+                </span>,
+                evBadge,
+                seal.content_stored ? <MonoBadge tone="info">stored</MonoBadge> : <MonoBadge tone="muted">no</MonoBadge>,
+              ];
+            }}
           />
         )}
 
-      {activeRunId && items.length > 0 && (
-        <div className="overflow-x-auto rounded-[4px] border border-border">
-          <table aria-label="Seal events" className="w-full font-mono text-xs border-collapse [&_th]:border [&_th]:border-border [&_th]:uppercase [&_th]:tracking-wider [&_td]:border [&_td]:border-border">
-            <thead>
-              <tr className="border-b border-border bg-elevated text-left">
-                <th className="w-6 px-2 py-2" />
-                <th className="px-2 py-2 text-text-muted font-semibold">seal_hash</th>
-                <th className="px-2 py-2 text-text-muted font-semibold">input_hash</th>
-                <th className="px-2 py-2 text-text-muted font-semibold">output_hash</th>
-                <th className="px-2 py-2 text-text-muted font-semibold">model</th>
-                <th className="px-2 py-2 text-text-muted font-semibold">task</th>
-                <th className="px-2 py-2 text-text-muted font-semibold">timestamp</th>
-                <th className="px-2 py-2 text-text-muted font-semibold">class</th>
-                <th className="px-2 py-2 text-text-muted font-semibold">conf.</th>
-                <th className="px-2 py-2 text-text-muted font-semibold">evidence</th>
-                <th className="px-2 py-2 text-text-muted font-semibold">content</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((seal) => (
-                <SealRow
-                  key={`${seal.id ?? seal.seal_hash}`}
-                  seal={seal}
-                  includeContent={includeContent}
-                  expanded={seal.id !== null ? Boolean(expanded[seal.id]) : false}
-                  onToggle={() => toggleRow(seal.id)}
-                />
+        {/* Expanded content rows (mock-styled below the grid) */}
+        {activeRunId && includeContent && items.some((s) => s.id !== null && expanded[s.id]) && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 12, borderTop: "1px solid var(--border-faint)" }}>
+            {items
+              .filter((s) => s.id !== null && expanded[s.id])
+              .map((seal) => (
+                <div
+                  key={`content-${seal.id}`}
+                  style={{
+                    border: "1px solid var(--border-faint)", borderRadius: 3,
+                    background: "var(--surface-sunk)", padding: 10,
+                  }}
+                >
+                  <div
+                    className="font-mono uppercase"
+                    style={{ fontSize: 9, letterSpacing: "0.14em", color: "var(--text-faint)", marginBottom: 6 }}
+                  >
+                    SEAL {truncateHash(seal.seal_hash, 12)}
+                  </div>
+                  <div
+                    className="grid"
+                    style={{ gridTemplateColumns: "1fr 1fr", gap: 10 }}
+                  >
+                    <div>
+                      <div
+                        className="font-mono uppercase"
+                        style={{ fontSize: 9, letterSpacing: "0.14em", color: "var(--text-faint)", marginBottom: 4 }}
+                      >
+                        PROMPT
+                      </div>
+                      <pre
+                        style={{
+                          maxHeight: 260, overflow: "auto",
+                          fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-primary)",
+                          padding: 8, background: "var(--surface-card)",
+                          border: "1px solid var(--border-faint)", borderRadius: 3,
+                          whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0,
+                        }}
+                      >
+                        {seal.prompt_content ?? "(not stored)"}
+                      </pre>
+                    </div>
+                    <div>
+                      <div
+                        className="font-mono uppercase"
+                        style={{ fontSize: 9, letterSpacing: "0.14em", color: "var(--text-faint)", marginBottom: 4 }}
+                      >
+                        RESPONSE
+                      </div>
+                      <pre
+                        style={{
+                          maxHeight: 260, overflow: "auto",
+                          fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-primary)",
+                          padding: 8, background: "var(--surface-card)",
+                          border: "1px solid var(--border-faint)", borderRadius: 3,
+                          whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0,
+                        }}
+                      >
+                        {seal.response_content ?? "(not stored)"}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
               ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+          </div>
+        )}
+      </WindowPanel>
 
+      {/* Pagination */}
       {activeRunId && pages > 1 && (
-        <div className="flex items-center justify-between font-mono text-[11px] text-text-muted">
+        <div
+          className="flex items-center justify-between font-mono"
+          style={{ fontSize: 10.5, color: "var(--text-muted)" }}
+        >
           <span>
-            Page {page} of {pages} · {total} total
+            page {page} of {pages} {"\u00b7"} {total} total
           </span>
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="outline"
+          <div className="flex" style={{ gap: 6 }}>
+            <button
+              type="button"
+              style={BUTTON_STYLE}
               disabled={page <= 1 || sealsQuery.isFetching}
               onClick={() => setPage((p) => Math.max(1, p - 1))}
             >
-              Prev
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
+              PREV
+            </button>
+            <button
+              type="button"
+              style={BUTTON_STYLE}
               disabled={page >= pages || sealsQuery.isFetching}
               onClick={() => setPage((p) => p + 1)}
             >
-              Next
-            </Button>
+              NEXT
+            </button>
           </div>
         </div>
       )}
     </div>
   );
-}
-
-// ---------------------------------------------------------------------------
-// Utilities
-// ---------------------------------------------------------------------------
-
-/** Format a Date as the `datetime-local` input's YYYY-MM-DDTHH:mm shape. */
-function toDatetimeLocal(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }

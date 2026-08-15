@@ -3,28 +3,13 @@
  * investigation. Renders a status pill, an attempts progress bar, a
  * client-side elapsed timer, an SSE-feed indicator and a short
  * recent-activity ticker sourced from the module's investigation
- * event stream.
- *
- *  Rules of the road:
- *   - PURELY ADDITIVE. The existing Live tab, StepCard timeline and
- *     header row keep working. This panel sits between the header
- *     and the sub-panels while ``isRunning`` is true and unmounts
- *     as soon as the investigation reaches a terminal status.
- *   - Reduced motion is respected: the streaming-feed indicator
- *     pulses only under ``motion-safe:``; the elapsed timer is a
- *     plain text update (not an animation) and continues to tick
- *     for users who opted out of motion because the value change
- *     is information, not decoration.
- *   - No new deps. The SSE data flows in via
- *     :func:`useForensicsInvestigationEvents` -- callers pass the
- *     already-fetched events / feed status / latest stage in as
- *     props to keep this component free of hook-order surprises
- *     and to avoid opening a second SSE connection.
+ * event stream. Rebuilt on the AILA mock kit (WindowPanel +
+ * MonoBadge + StatBar); presentation only, data hooks unchanged.
  */
 import { useEffect, useState } from "react";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
 import { WindowPanel } from "@/components/aila/WindowPanel";
+import { MonoBadge, StatBar } from "@/components/aila/mock";
 
 import type {
   InvestigationEvent,
@@ -64,12 +49,12 @@ interface FeedVisual {
 }
 
 const FEED_VISUAL: Record<InvestigationFeedStatus, FeedVisual> = {
-  idle: { label: "idle", color: "var(--color-text-muted)", pulse: false },
-  connecting: { label: "connecting", color: "var(--color-amber)", pulse: true },
-  live: { label: "streaming", color: "var(--color-mint)", pulse: false },
-  unavailable: { label: "no stream", color: "var(--color-text-muted)", pulse: false },
-  closed: { label: "closed", color: "var(--color-critical)", pulse: false },
-  error: { label: "error", color: "var(--color-critical)", pulse: false },
+  idle: { label: "idle", color: "var(--text-muted)", pulse: false },
+  connecting: { label: "connecting", color: "var(--status-warn)", pulse: true },
+  live: { label: "streaming", color: "var(--status-ok)", pulse: false },
+  unavailable: { label: "no stream", color: "var(--text-muted)", pulse: false },
+  closed: { label: "closed", color: "var(--accent)", pulse: false },
+  error: { label: "error", color: "var(--accent)", pulse: false },
 };
 
 const FALLBACK_STATUS_VISUAL: StatusVisual = {
@@ -98,18 +83,30 @@ function formatElapsed(ms: number): string {
 }
 
 function stageColor(stage: string): string {
-  if (stage.includes("error") || stage.includes("failed")) return "var(--color-critical)";
+  if (stage.includes("error") || stage.includes("failed")) return "var(--accent)";
   if (
     stage === "completed" ||
     stage.includes("done") ||
     stage.includes("detected")
   ) {
-    return "var(--color-mint)";
+    return "var(--status-ok)";
   }
-  if (stage.includes("start") || stage.includes("begin")) return "var(--color-amber)";
-  if (stage === "artifact_added") return "var(--color-lavender)";
-  return "var(--color-accent)";
+  if (stage.includes("start") || stage.includes("begin")) return "var(--status-warn)";
+  if (stage === "artifact_added") return "var(--status-info)";
+  return "var(--accent)";
 }
+
+/** BadgeSeverity -> MonoBadge tone. The two vocabularies overlap on 4 keys
+ *  and diverge on ``neutral -> muted`` so the mapping is one lookup, not a
+ *  passthrough. */
+const SEVERITY_TO_TONE: Record<BadgeSeverity, string> = {
+  critical: "critical",
+  high: "high",
+  medium: "medium",
+  low: "low",
+  info: "info",
+  neutral: "muted",
+};
 
 export interface LiveRunPanelProps {
   status: string;
@@ -149,10 +146,6 @@ export function LiveRunPanel({
     STATUS_VISUAL[status] ??
     { ...FALLBACK_STATUS_VISUAL, label: status || "unknown" };
   const feed = FEED_VISUAL[feedStatus];
-  const attemptsPct =
-    maxAttempts && maxAttempts > 0
-      ? Math.min(100, Math.round((attemptsUsed / maxAttempts) * 100))
-      : null;
 
   // Recent activity ticker: last N events, newest first, dropping the
   // no-signal heartbeat frames (the streaming dot in the header is
@@ -167,16 +160,14 @@ export function LiveRunPanel({
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
-            <AilaBadge
-              severity={badge.severity}
-              size="md"
-              dot={badge.liveDot}
-              aria-label={`investigation status: ${badge.label}`}
-            >
-              {badge.label}
-            </AilaBadge>
+            <span aria-label={`investigation status: ${badge.label}`}>
+              <MonoBadge tone={SEVERITY_TO_TONE[badge.severity]}>
+                {badge.label}
+              </MonoBadge>
+            </span>
             <span
-              className="inline-flex items-center gap-1.5 text-3xs font-mono uppercase tracking-wide"
+              className="inline-flex items-center gap-2 font-mono uppercase"
+              style={{ fontSize: 9, letterSpacing: "0.08em", color: "var(--text-muted)" }}
               aria-label={`stream ${feed.label}`}
             >
               <span
@@ -191,19 +182,32 @@ export function LiveRunPanel({
                   boxShadow: `0 0 4px color-mix(in srgb, ${feed.color} 50%, transparent)`,
                 }}
               />
-              <span className="text-text-muted">{feed.label}</span>
+              <span>
+                stream ;{" "}
+                <span style={{ color: "var(--text-primary)" }}>{feed.label}</span>
+              </span>
             </span>
             {latestStage && latestStage !== "heartbeat" && (
-              <span className="text-3xs font-mono uppercase tracking-wide text-text-muted">
-                stage: <span className="text-foreground">{latestStage}</span>
+              <span
+                className="inline-flex items-center font-mono uppercase"
+                style={{ fontSize: 9, letterSpacing: "0.08em", color: "var(--text-muted)" }}
+              >
+                stage ;
+                <span style={{ color: "var(--text-primary)", marginLeft: 4 }}>
+                  {latestStage}
+                </span>
               </span>
             )}
           </div>
-          <div className="flex items-center gap-4 text-xs font-mono text-text-muted">
+          <div
+            className="flex items-center font-mono uppercase"
+            style={{ fontSize: 9, letterSpacing: "0.08em", color: "var(--text-muted)" }}
+          >
             <span>
-              elapsed:{" "}
+              elapsed ;{" "}
               <span
-                className="text-foreground tabular-nums"
+                className="tabular-nums"
+                style={{ color: "var(--text-primary)" }}
                 aria-live="off"
               >
                 {formatElapsed(elapsedMs)}
@@ -212,61 +216,89 @@ export function LiveRunPanel({
           </div>
         </div>
 
-        {attemptsPct !== null && (
-          <div className="space-y-1">
-            <div className="flex justify-between text-3xs font-mono uppercase tracking-wide text-text-muted">
-              <span>attempts</span>
-              <span className="tabular-nums">
+        {maxAttempts !== null && maxAttempts > 0 && (
+          <div
+            className="space-y-1"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={maxAttempts}
+            aria-valuenow={attemptsUsed}
+            aria-label="investigation attempts used"
+          >
+            <StatBar
+              label="ATTEMPTS"
+              color="var(--accent)"
+              value={attemptsUsed}
+              max={maxAttempts}
+            />
+            <div
+              className="font-mono tabular-nums"
+              style={{ fontSize: 10, color: "var(--text-muted)", textAlign: "right" }}
+            >
+              <span>
                 {attemptsUsed}/{maxAttempts}
               </span>
-            </div>
-            <div
-              className="h-1.5 w-full overflow-hidden rounded-full bg-elevated"
-              role="progressbar"
-              aria-valuemin={0}
-              aria-valuemax={maxAttempts ?? undefined}
-              aria-valuenow={attemptsUsed}
-              aria-label="investigation attempts used"
-            >
-              <div
-                className="h-full bg-accent"
-                style={{ width: `${attemptsPct}%` }}
-              />
             </div>
           </div>
         )}
 
         <div className="space-y-1">
-          <div className="text-3xs font-mono uppercase tracking-wide text-text-muted">
-            recent activity
+          <div
+            className="font-mono uppercase"
+            style={{ fontSize: 9, letterSpacing: "0.1em", color: "var(--text-muted)" }}
+          >
+            RECENT ACTIVITY
           </div>
           {recent.length === 0 ? (
-            <p className="text-xs italic text-text-muted">
+            <p
+              className="font-mono italic"
+              style={{ fontSize: 11, color: "var(--text-muted)" }}
+            >
               Waiting for events{"\u2026"}
             </p>
           ) : (
-            <ul className="space-y-1 text-xs font-mono">
+            <ol
+              className="font-mono"
+              style={{ fontSize: 11, margin: 0, padding: 0, listStyle: "none" }}
+            >
               {recent.map((ev, i) => {
                 const stage = ev.stage ?? "--";
                 const color = stageColor(stage);
                 const pct = ev.percent;
                 return (
-                  <li key={i} className="flex items-baseline gap-2">
+                  <li
+                    key={i}
+                    className="flex items-baseline gap-2"
+                    style={{ padding: "2px 0" }}
+                  >
                     {pct !== null && pct !== undefined && pct > 0 && (
-                      <span className="w-9 shrink-0 text-right text-text-muted tabular-nums">
+                      <span
+                        className="shrink-0 tabular-nums"
+                        style={{
+                          width: 36,
+                          textAlign: "right",
+                          color: "var(--text-muted)",
+                        }}
+                      >
                         {pct}%
                       </span>
                     )}
-                    <span className="shrink-0 font-semibold" style={{ color }}>
+                    <span
+                      className="shrink-0"
+                      style={{ fontWeight: 600, color }}
+                    >
                       [{stage}]
                     </span>
-                    <span className="break-all text-foreground">
+                    <span
+                      className="break-all"
+                      style={{ color: "var(--text-primary)" }}
+                    >
                       {ev.message ?? ""}
                     </span>
                   </li>
                 );
               })}
-            </ul>
+            </ol>
           )}
         </div>
       </div>

@@ -1,20 +1,22 @@
 /**
- * StatusBar -- fixed 24px console strip pinned at the bottom of the
- * authenticated shell.
+ * StatusBar -- the 24px OS-frame footer, rebuilt from the design mock.
+ *
+ * Left mode chip (accent-filled), then a set of live status segments, then a
+ * flex spacer, then network state + build tag + live clock, and finally the
+ * `aila.sh` sig on the right. Mono uppercase 9.5px, tokens are the mock
+ * semantic names (--surface-chrome, --border, --status-*, --text-*).
  *
  * Segments (left -> right):
- *   1. Engine dot + label from GET /health (public endpoint)
- *   2. Queue depth from GET /tasks/queue-depth (admin-only; hidden on 4xx/5xx)
- *   3. Active module (first path segment; "" -> CHAT)
- *   4. ROI %% from GET /cost/roi (hidden on error/permission miss)
- *   5. flex spacer
- *   6. Online/offline (navigator.onLine + online/offline events)
- *   7. Build tag: v<version> <short-sha>
- *   8. HH:MM:SS live clock
- *
- * Motion: the queue-count pulse reuses the existing
- * `.animate-severity-pulse` utility which already opts out under
- * `prefers-reduced-motion: reduce` (see globals.css).
+ *   0. Mode chip -- fills the left cell with --accent (mock's modeChipStyle).
+ *   1. Engine dot + label from GET /health.
+ *   2. Queue depth from GET /tasks/queue-depth (admin-only; hidden on 4xx/5xx).
+ *   3. Context / active module (first path segment; "" -> CONSOLE).
+ *   4. ROI %% from GET /cost/roi (hidden on error/permission miss).
+ *   5. flex spacer.
+ *   6. Online / offline.
+ *   7. Build tag: v<version> <short-sha>.
+ *   8. HH:MM:SS live clock.
+ *   9. `aila.sh` sig cell.
  */
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router";
@@ -27,22 +29,15 @@ import { appVersion, buildSha } from "@platform/config/version";
 // Backend response shapes (mirrored inline; no new module boundary crossings).
 // ---------------------------------------------------------------------------
 
-/** Matches `aila.api.schemas.health.HealthCheckResponse.status`. */
 type HealthStatus = "healthy" | "degraded" | "unhealthy";
-
 interface HealthCheckResponse {
   status: HealthStatus;
   checks: Record<string, unknown>;
 }
-
 interface DataEnvelope<T> {
   data: T;
 }
-
-/** GET /tasks/queue-depth returns `{ data: { <status>: count, ... } }`. */
 type QueueDepthPayload = Record<string, number>;
-
-/** Matches `aila.api.schemas.cost.ROIResponse`. */
 interface ROIResponse {
   period_start: string;
   period_end: string;
@@ -67,57 +62,37 @@ function useEngineStatus(): EngineStatus {
     staleTime: 5_000,
     retry: 1,
   });
-
   if (query.isError) return "offline";
   const status = query.data?.status;
   if (status === "degraded") return "degraded";
   if (status === "unhealthy") return "offline";
-  // "healthy" or (loading -> optimistic ok, dot renders but with no known-bad state)
   return "ok";
 }
 
-/**
- * Sum every status bucket into a single visible queue count. The endpoint
- * returns e.g. `{ queued: 2, running: 1, waiting: 0 }`; UX-wise "queue" here
- * means "backlog of not-yet-terminal tasks", so we sum all buckets that the
- * server chose to report and don't filter -- if the server adds a new state
- * it lands in the total without a frontend change.
- *
- * On any error (non-admin 403, rate-limit 429, network) `null` is returned
- * and the caller hides the segment rather than pretending "0".
- */
+/** Sum every status bucket into a single visible queue count. Hide on error
+ *  (403 for non-admin, 429, network) so we never fake a "0". */
 function useQueueDepth(): number | null {
   const query = useQuery({
     queryKey: ["system-status", "queue"],
     queryFn: () =>
       authorizedRequestJson<DataEnvelope<QueueDepthPayload>>("/tasks/queue-depth"),
     refetchInterval: 10_000,
-    // Admin-only route: retrying a 403 wastes both requests against the
-    // 10/minute limiter. One shot per interval, hide on failure.
     retry: false,
   });
-
   if (query.isError || !query.data) return null;
   const depth = query.data.data ?? {};
   return Object.values(depth).reduce<number>((sum, n) => sum + (Number(n) || 0), 0);
 }
 
-/**
- * Fetch platform-wide LLM-vs-human ROI (defaults to trailing 3 months
- * server-side). Aggregated over months of cost records so a fast refetch
- * cadence buys nothing; slow polling is also friendlier to the 120/min
- * limiter on `/cost/roi`. On error/empty the caller hides the segment.
- */
+/** Trailing-3-month LLM-vs-human ROI. Hidden on error/permission miss. */
 function useROI(): ROIResponse | null {
   const query = useQuery({
     queryKey: ["system-status", "roi"],
-    queryFn: () =>
-      authorizedRequestJson<DataEnvelope<ROIResponse>>("/cost/roi"),
+    queryFn: () => authorizedRequestJson<DataEnvelope<ROIResponse>>("/cost/roi"),
     refetchInterval: 60_000,
     staleTime: 30_000,
     retry: false,
   });
-
   if (query.isError || !query.data?.data) return null;
   return query.data.data;
 }
@@ -151,12 +126,8 @@ function useClock(): string {
   return `${hh}:${mm}:${ss}`;
 }
 
-/**
- * Map the first URL segment to a compact console label. Root -> CHAT
- * (the shell's default landing surface); known modules get a short tag
- * (e.g. "vulnerability" -> "VULN") to keep the bar dense; anything else
- * is uppercased verbatim.
- */
+// Map the first URL segment to a compact console label. Root -> CONSOLE (the
+// mock's home surface); known modules get a short tag to keep the bar dense.
 const MODULE_LABELS: Record<string, string> = {
   vulnerability: "VULN",
   hello_world: "HELLO",
@@ -165,45 +136,53 @@ const MODULE_LABELS: Record<string, string> = {
 function useModuleLabel(): string {
   const location = useLocation();
   const seg = location.pathname.split("/").filter(Boolean)[0];
-  if (!seg) return "CHAT";
+  if (!seg) return "CONSOLE";
   const mapped = MODULE_LABELS[seg];
   if (mapped) return mapped;
   return seg.toUpperCase().replace(/[-_]/g, " ");
 }
 
 // ---------------------------------------------------------------------------
-// Palette -- these tokens are guaranteed to exist across every theme block
-// in globals.css (see midnight-cloud-8, synthwave, ps1, etc.).
+// Palette -- mock semantic tokens.
 // ---------------------------------------------------------------------------
 
 const ENGINE_COLOR: Record<EngineStatus, string> = {
-  ok: "var(--status-completed)",
-  degraded: "var(--status-running)",
-  offline: "var(--status-failed)",
+  ok: "var(--status-ok)",
+  degraded: "var(--status-warn)",
+  offline: "var(--accent)",
 };
 
 const ENGINE_LABEL: Record<EngineStatus, string> = {
-  ok: "ENGINE OK",
-  degraded: "DEGRADED",
-  offline: "OFFLINE",
+  ok: "engine ok",
+  degraded: "degraded",
+  offline: "offline",
 };
 
 // ---------------------------------------------------------------------------
 // Presentational bits
 // ---------------------------------------------------------------------------
 
-function Divider() {
+const CELL_BORDER: React.CSSProperties = {
+  borderLeft: "1px solid var(--border-soft)",
+};
+
+function Cell({
+  children,
+  style,
+  title,
+}: {
+  children: React.ReactNode;
+  style?: React.CSSProperties;
+  title?: string;
+}) {
   return (
-    <span
-      aria-hidden
-      style={{
-        width: 1,
-        alignSelf: "stretch",
-        marginBlock: 4,
-        background: "var(--color-border)",
-        opacity: 0.55,
-      }}
-    />
+    <div
+      className="flex items-center"
+      title={title}
+      style={{ gap: 6, padding: "0 11px", height: "100%", ...CELL_BORDER, ...style }}
+    >
+      {children}
+    </div>
   );
 }
 
@@ -219,8 +198,7 @@ export function StatusBar() {
   const clock = useClock();
   const moduleLabel = useModuleLabel();
 
-  const shortSha =
-    !buildSha || buildSha === "dev" ? "" : buildSha.slice(0, 7);
+  const shortSha = !buildSha || buildSha === "dev" ? "" : buildSha.slice(0, 7);
   const buildTag = shortSha ? `v${appVersion} ${shortSha}` : `v${appVersion}`;
 
   const engineColor = ENGINE_COLOR[engine];
@@ -228,33 +206,46 @@ export function StatusBar() {
 
   return (
     <footer
-      role="status" aria-live="off"
+      role="status"
+      aria-live="off"
       aria-label="System status"
       data-testid="app-status-bar"
       style={{
+        flex: "0 0 var(--statusbar-h, 24px)",
         height: "var(--statusbar-h, 24px)",
-        flex: "0 0 auto",
         display: "flex",
-        alignItems: "center",
-        gap: 10,
-        padding: "0 10px",
-        borderTop: "1px solid var(--color-border-bright)",
-        background: "var(--color-chrome)",
-        color: "var(--color-text-faint)",
+        alignItems: "stretch",
+        background: "var(--surface-chrome)",
+        borderTop: "2px solid var(--border)",
+        color: "var(--text-faint)",
         fontFamily: "var(--font-mono)",
-        fontSize: "10.5px",
+        fontSize: 9.5,
         letterSpacing: "0.1em",
         textTransform: "uppercase",
         userSelect: "none",
         overflow: "hidden",
         whiteSpace: "nowrap",
+        position: "relative",
+        zIndex: 20,
       }}
     >
-      {/* 1. Engine dot + label */}
-      <span
-        style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-        title={`Platform health: ${engineLabel.toLowerCase()}`}
+      {/* Mode chip -- fills the left cell with --accent, mirrors modeChipStyle. */}
+      <div
+        className="flex items-center"
+        style={{
+          padding: "0 11px",
+          background: "var(--accent)",
+          color: "var(--text-on-accent)",
+          fontWeight: 700,
+          letterSpacing: "0.14em",
+        }}
+        title="Composer mode"
       >
+        basic
+      </div>
+
+      {/* 1. Engine dot + label */}
+      <Cell style={{ color: "var(--text-muted)" }}>
         <span
           aria-hidden
           style={{
@@ -266,96 +257,78 @@ export function StatusBar() {
           }}
         />
         <span>{engineLabel}</span>
-      </span>
+      </Cell>
 
       {/* 2. Queue depth -- hidden on error so we never fake "0" */}
       {queue !== null && (
-        <>
-          <Divider />
+        <Cell title={`${queue} task${queue === 1 ? "" : "s"} in queue`}>
+          <span>queue</span>
           <span
-            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-            title={`${queue} task${queue === 1 ? "" : "s"} in queue`}
+            className={queue > 0 ? "animate-severity-pulse" : undefined}
+            style={{
+              color: queue > 0 ? "var(--accent)" : "var(--text-muted)",
+              fontVariantNumeric: "tabular-nums",
+            }}
           >
-            <span>QUEUE</span>
-            <span
-              className={queue > 0 ? "animate-severity-pulse" : undefined}
-              style={{
-                color:
-                  queue > 0
-                    ? "var(--color-accent)"
-                    : "var(--color-text-muted)",
-                fontVariantNumeric: "tabular-nums",
-              }}
-            >
-              {queue}
-            </span>
+            {queue}
           </span>
-        </>
+        </Cell>
       )}
 
       {/* 3. Active module / route */}
-      <Divider />
-      <span>CTX {moduleLabel}</span>
+      <Cell>ctx {moduleLabel.toLowerCase()}</Cell>
 
       {/* 4. ROI vs human-equivalent -- hidden on error/permission miss */}
       {roi !== null && (
-        <>
-          <Divider />
+        <Cell
+          title={
+            `ROI over ${roi.period_start} -> ${roi.period_end}: ` +
+            `LLM $${roi.llm_cost_usd.toFixed(2)} vs human ` +
+            `$${roi.human_equivalent_cost_usd.toFixed(2)} ` +
+            `(${roi.human_equivalent_hours.toFixed(1)}h across ${roi.run_count} run${roi.run_count === 1 ? "" : "s"})`
+          }
+        >
+          <span>roi</span>
           <span
-            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-            title={
-              `ROI over ${roi.period_start} -> ${roi.period_end}: ` +
-              `LLM $${roi.llm_cost_usd.toFixed(2)} vs human ` +
-              `$${roi.human_equivalent_cost_usd.toFixed(2)} ` +
-              `(${roi.human_equivalent_hours.toFixed(1)}h across ${roi.run_count} run${roi.run_count === 1 ? "" : "s"})`
-            }
+            style={{
+              color:
+                roi.roi_percentage > 0
+                  ? "var(--status-ok)"
+                  : roi.roi_percentage < 0
+                    ? "var(--accent)"
+                    : "var(--text-muted)",
+              fontVariantNumeric: "tabular-nums",
+            }}
           >
-            <span>ROI</span>
-            <span
-              style={{
-                color:
-                  roi.roi_percentage > 0
-                    ? "var(--status-completed)"
-                    : roi.roi_percentage < 0
-                      ? "var(--status-failed)"
-                      : "var(--color-text-muted)",
-                fontVariantNumeric: "tabular-nums",
-              }}
-            >
-              {`${roi.roi_percentage > 0 ? "+" : ""}${roi.roi_percentage.toFixed(0)}%`}
-            </span>
+            {`${roi.roi_percentage > 0 ? "+" : ""}${roi.roi_percentage.toFixed(0)}%`}
           </span>
-        </>
+        </Cell>
       )}
 
-      {/* 5. flex spacer */}
+      {/* flex spacer */}
       <span style={{ flex: 1 }} />
 
-      {/* 5. Online / offline */}
-      <span
+      {/* Online / offline */}
+      <Cell
         style={{
-          color: online
-            ? "var(--color-text-muted)"
-            : "var(--status-running)",
+          color: online ? "var(--text-muted)" : "var(--status-warn)",
         }}
       >
-        {online ? "ONLINE" : "OFFLINE"}
-      </span>
+        {online ? "online" : "offline"}
+      </Cell>
 
-      {/* 6. Build tag */}
-      <Divider />
-      <span title="Application version and git SHA">{buildTag}</span>
+      {/* Build tag */}
+      <Cell title="Application version and git SHA">{buildTag}</Cell>
 
-      {/* 7. Live clock */}
-      <Divider />
-      <span
-        style={{
-          color: "color-mix(in srgb, var(--color-text-muted) 60%, transparent)",
-          fontVariantNumeric: "tabular-nums",
-        }}
-      >
+      {/* Live clock */}
+      <Cell style={{ color: "var(--text-faint)", fontVariantNumeric: "tabular-nums" }}>
         {clock}
-      </span>
+      </Cell>
+
+      {/* Sig cell -- matches the mock's `aila.sh` right-most segment. */}
+      <Cell style={{ color: "var(--text-muted)", textTransform: "none", letterSpacing: "0.06em" }}>
+        aila.sh
+      </Cell>
     </footer>
   );
 }

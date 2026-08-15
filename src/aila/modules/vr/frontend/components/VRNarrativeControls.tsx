@@ -23,7 +23,7 @@ import { CaretRight } from "@phosphor-icons/react/dist/csr/CaretRight";
 import { X } from "@phosphor-icons/react/dist/csr/X";
 
 import { WindowPanel } from "@/components/aila/WindowPanel";
-import { AilaBadge } from "@/components/aila/AilaBadge";
+import { MonoBadge, Segmented } from "@/components/aila/mock";
 
 import {
   useGenerateVRNarrative,
@@ -51,11 +51,7 @@ interface Props {
   narrative: InvestigationNarrative | null;
 }
 
-const NARRATIVE_TONES: {
-  value: NarrativeTone;
-  label: string;
-  hint: string;
-}[] = [
+const NARRATIVE_TONES: { value: NarrativeTone; label: string; hint: string }[] = [
   { value: "blog", label: "Blog", hint: "Mid-friction tech blog voice (default)" },
   {
     value: "incident_report",
@@ -75,11 +71,7 @@ const NARRATIVE_TONES: {
   { value: "casual", label: "Casual", hint: "Discord / Mastodon thread voice" },
 ];
 
-const NARRATIVE_LENGTHS: {
-  value: NarrativeLength;
-  label: string;
-  hint: string;
-}[] = [
+const NARRATIVE_LENGTHS: { value: NarrativeLength; label: string; hint: string }[] = [
   { value: "short", label: "Short", hint: "~600-1200 words, 3-5 sections" },
   { value: "standard", label: "Standard", hint: "~1500-3000 words, 5-9 sections" },
   {
@@ -120,40 +112,75 @@ export function VRNarrativeControls({ investigationId, narrative }: Props) {
     setFormOpen(false);
   };
 
+  const currentToneHint = NARRATIVE_TONES.find((t) => t.value === tone)?.hint ?? "";
+  const currentLengthHint = NARRATIVE_LENGTHS.find((l) => l.value === length)?.hint ?? "";
+
   return (
     <WindowPanel
       title="narrative writeup"
-      tone="muted"
+      tone="info"
       actions={
-        <span className="text-3xs font-mono text-text-muted">
-          last narrative: {formatRelative(narrative?.generated_at ?? null)}
+        <span
+          className="font-mono"
+          style={{
+            fontSize: 9.5,
+            color: "var(--text-faint)",
+            letterSpacing: "0.06em",
+          }}
+        >
+          last: {formatRelative(narrative?.generated_at ?? null)}
         </span>
       }
     >
       <h2 className="sr-only">Narrative writeup</h2>
-      <div className="space-y-3">
-        <div className="flex items-center gap-2 flex-wrap">
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 10 }}>
+        <div className="flex items-center flex-wrap" style={{ gap: 8 }}>
           <button
             type="button"
             onClick={() => setFormOpen((v) => !v)}
-            className="inline-flex items-center gap-2 px-3 py-1.5 text-xs rounded-md border border-border bg-elevated/40 text-foreground hover:border-accent hover:bg-elevated/70 transition-colors"
+            className="font-mono uppercase inline-flex items-center"
+            style={{
+              height: 26,
+              padding: "0 12px",
+              gap: 6,
+              fontSize: 9.5,
+              letterSpacing: "0.08em",
+              color: "var(--text-muted)",
+              background: "var(--surface-sunk)",
+              border: "1px solid var(--border-soft)",
+              borderRadius: 2,
+              cursor: "pointer",
+            }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.color = "var(--text-primary)";
+              e.currentTarget.style.borderColor = "var(--accent)";
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.color = "var(--text-muted)";
+              e.currentTarget.style.borderColor = "var(--border-soft)";
+            }}
           >
             {formOpen ? (
-              <CaretDown weight="bold" size={12} />
+              <CaretDown weight="bold" size={11} />
             ) : (
-              <CaretRight weight="bold" size={12} />
+              <CaretRight weight="bold" size={11} />
             )}
             {narrative ? (
-              <ArrowsClockwise weight="regular" size={14} />
+              <ArrowsClockwise weight="regular" size={12} />
             ) : (
-              <BookOpen weight="regular" size={14} />
+              <BookOpen weight="regular" size={12} />
             )}
-            <span>
-              {narrative ? "Regenerate narrative" : "Generate narrative"}
-            </span>
+            <span>{narrative ? "regenerate narrative" : "generate narrative"}</span>
             {narrativeMut.isPending && (
-              <span className="ml-1 text-3xs font-mono uppercase tracking-wide text-text-muted">
-                queued{"\u2026"}
+              <span
+                style={{
+                  marginLeft: 3,
+                  fontSize: 9,
+                  color: "var(--text-faint)",
+                  letterSpacing: "0.08em",
+                }}
+              >
+                queued…
               </span>
             )}
           </button>
@@ -162,53 +189,96 @@ export function VRNarrativeControls({ investigationId, narrative }: Props) {
             <button
               type="button"
               onClick={() => setViewerOpen(true)}
-              className="inline-flex items-center gap-2 px-3 py-1.5 text-xs rounded-md border border-accent/60 bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
+              className="font-mono uppercase inline-flex items-center"
+              style={{
+                height: 26,
+                padding: "0 12px",
+                gap: 6,
+                fontSize: 9.5,
+                letterSpacing: "0.08em",
+                color: "var(--accent)",
+                background: "color-mix(in srgb, var(--accent) 12%, transparent)",
+                border: "1px solid var(--accent)",
+                borderRadius: 2,
+                cursor: "pointer",
+              }}
             >
-              <BookOpen weight="fill" size={14} />
-              <span>Open narrative</span>
-              <AilaBadge severity="info" size="sm">
-                {formatRelative(narrative.generated_at)}
-              </AilaBadge>
+              <BookOpen weight="fill" size={12} />
+              <span>open narrative</span>
+              <MonoBadge tone="info">{formatRelative(narrative.generated_at)}</MonoBadge>
             </button>
           )}
         </div>
 
         {formOpen && (
-          <div className="rounded-md border border-border/60 bg-elevated/30 p-3 space-y-3">
-            <DropdownRow
-              label="Tone"
-              value={tone}
-              options={NARRATIVE_TONES}
-              onChange={(v) => setTone(v as NarrativeTone)}
-            />
-            <DropdownRow
-              label="Length"
-              value={length}
-              options={NARRATIVE_LENGTHS}
-              onChange={(v) => setLength(v as NarrativeLength)}
-            />
+          <div
+            style={{
+              padding: 12,
+              background: "var(--surface-sunk)",
+              border: "1px solid var(--border-soft)",
+              borderRadius: 2,
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+            }}
+          >
+            <SegRow label="tone" hint={currentToneHint}>
+              <Segmented<NarrativeTone>
+                options={NARRATIVE_TONES.map((t) => ({ value: t.value, label: t.label }))}
+                value={tone}
+                onChange={setTone}
+              />
+            </SegRow>
+            <SegRow label="length" hint={currentLengthHint}>
+              <Segmented<NarrativeLength>
+                options={NARRATIVE_LENGTHS.map((l) => ({ value: l.value, label: l.label }))}
+                value={length}
+                onChange={setLength}
+              />
+            </SegRow>
             <FocusField
               value={focus}
               onChange={setFocus}
               placeholder="optional: lead with the taint-flow finding, frame around the patch-present verdict, etc."
             />
-            <div className="flex items-center gap-2">
+            <div className="flex items-center" style={{ gap: 6 }}>
               <button
                 type="button"
                 onClick={submitNarrative}
                 disabled={narrativeMut.isPending}
-                className="px-3 py-1.5 text-xs rounded-md border border-accent bg-accent/15 text-accent hover:bg-accent/25 transition-colors disabled:opacity-50"
+                className="font-mono uppercase"
+                style={{
+                  height: 26,
+                  padding: "0 12px",
+                  fontSize: 9.5,
+                  letterSpacing: "0.08em",
+                  color: "var(--text-on-accent)",
+                  background: "var(--accent)",
+                  border: "1px solid var(--accent)",
+                  borderRadius: 2,
+                  cursor: "pointer",
+                  opacity: narrativeMut.isPending ? 0.5 : 1,
+                }}
               >
-                {narrativeMut.isPending
-                  ? `Queueing${"\u2026"}`
-                  : "Generate narrative"}
+                {narrativeMut.isPending ? "queueing…" : "generate narrative"}
               </button>
               <button
                 type="button"
                 onClick={() => setFormOpen(false)}
-                className="px-3 py-1.5 text-xs rounded-md border border-border text-text-muted hover:text-foreground"
+                className="font-mono uppercase"
+                style={{
+                  height: 26,
+                  padding: "0 12px",
+                  fontSize: 9.5,
+                  letterSpacing: "0.08em",
+                  color: "var(--text-muted)",
+                  background: "transparent",
+                  border: "1px solid var(--border-soft)",
+                  borderRadius: 2,
+                  cursor: "pointer",
+                }}
               >
-                Cancel
+                cancel
               </button>
             </div>
           </div>
@@ -225,47 +295,45 @@ export function VRNarrativeControls({ investigationId, narrative }: Props) {
   );
 }
 
-interface DropdownOption {
-  value: string;
-  label: string;
-  hint: string;
-}
-
-function DropdownRow({
+function SegRow({
   label,
-  value,
-  options,
-  onChange,
+  hint,
+  children,
 }: {
   label: string;
-  value: string;
-  options: DropdownOption[];
-  onChange: (value: string) => void;
+  hint?: string;
+  children: React.ReactNode;
 }) {
-  const current = options.find((o) => o.value === value);
   return (
-    <div className="flex items-start gap-3">
-      <label className="text-2xs font-mono uppercase tracking-wide text-text-muted pt-1.5 w-16 flex-shrink-0">
-        {label}
-      </label>
-      <div className="flex-1 min-w-0">
-        <select
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className="w-full px-2 py-1 text-xs rounded-md border border-border bg-elevated text-foreground focus:border-accent focus:outline-none"
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <div className="flex items-center" style={{ gap: 10 }}>
+        <span
+          className="font-mono uppercase"
+          style={{
+            width: 60,
+            flex: "0 0 auto",
+            fontSize: 9,
+            letterSpacing: "0.1em",
+            color: "var(--text-faint)",
+          }}
         >
-          {options.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label} -- {o.hint}
-            </option>
-          ))}
-        </select>
-        {current && (
-          <p className="mt-1 text-3xs font-mono text-text-muted">
-            {current.hint}
-          </p>
-        )}
+          {label}
+        </span>
+        <div style={{ minWidth: 0 }}>{children}</div>
       </div>
+      {hint && (
+        <span
+          className="font-mono"
+          style={{
+            marginLeft: 70,
+            fontSize: 9.5,
+            color: "var(--text-faint)",
+            letterSpacing: "0.04em",
+          }}
+        >
+          {hint}
+        </span>
+      )}
     </div>
   );
 }
@@ -280,9 +348,19 @@ function FocusField({
   placeholder: string;
 }) {
   return (
-    <div className="flex items-start gap-3">
-      <label className="text-2xs font-mono uppercase tracking-wide text-text-muted pt-1.5 w-16 flex-shrink-0">
-        Focus
+    <div className="flex items-start" style={{ gap: 10 }}>
+      <label
+        className="font-mono uppercase"
+        style={{
+          width: 60,
+          flex: "0 0 auto",
+          paddingTop: 6,
+          fontSize: 9,
+          letterSpacing: "0.1em",
+          color: "var(--text-faint)",
+        }}
+      >
+        focus
       </label>
       <textarea
         value={value}
@@ -290,7 +368,19 @@ function FocusField({
         rows={2}
         maxLength={2000}
         placeholder={placeholder}
-        className="flex-1 px-2 py-1.5 text-xs font-mono rounded-md border border-border bg-elevated text-foreground focus:border-accent focus:outline-none resize-y"
+        className="font-mono"
+        style={{
+          flex: 1,
+          padding: "6px 8px",
+          fontSize: 11,
+          lineHeight: 1.45,
+          color: "var(--text-primary)",
+          background: "var(--surface-page)",
+          border: "1px solid var(--border-soft)",
+          borderRadius: 2,
+          outline: "none",
+          resize: "vertical",
+        }}
       />
     </div>
   );
@@ -309,44 +399,135 @@ function NarrativeViewer({
       : narrative.body.split(/\s+/).filter(Boolean).length;
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm p-4"
-      style={{ background: "color-mix(in srgb, var(--surface-sunk) 78%, transparent)" }}
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{
+        padding: 16,
+        background: "color-mix(in srgb, var(--surface-sunk) 78%, transparent)",
+        backdropFilter: "blur(6px)",
+      }}
       onClick={onClose}
       role="dialog"
       aria-modal="true"
     >
       <div
-        className="relative max-w-4xl w-full max-h-[90vh] overflow-hidden rounded-lg border border-accent bg-background shadow-cyber-lg flex flex-col"
+        style={{
+          position: "relative",
+          maxWidth: "56rem",
+          width: "100%",
+          maxHeight: "90vh",
+          overflow: "hidden",
+          background: "var(--surface-card)",
+          border: "1px solid var(--accent)",
+          borderRadius: 3,
+          boxShadow: "var(--bevel-raised)",
+          display: "flex",
+          flexDirection: "column",
+        }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3 bg-elevated/40">
-          <div className="min-w-0 flex-1">
-            <div className="text-3xs font-mono uppercase tracking-cyber-sm text-accent mb-1">
-              Investigation narrative {"\u00b7"} {narrative.tone_used}
+        <div
+          className="flex items-center justify-between"
+          style={{
+            gap: 12,
+            padding: "10px 16px",
+            background: "var(--surface-chrome)",
+            backgroundImage: "var(--hatch)",
+            borderBottom: "1px solid var(--border-soft)",
+          }}
+        >
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div
+              className="font-mono uppercase"
+              style={{
+                fontSize: 9,
+                marginBottom: 3,
+                letterSpacing: "0.14em",
+                color: "var(--accent)",
+              }}
+            >
+              investigation narrative · {narrative.tone_used}
             </div>
-            <h2 className="text-base font-semibold text-foreground truncate">
+            <h2
+              style={{
+                fontFamily: "var(--font-display)",
+                fontWeight: 300,
+                fontSize: 18,
+                letterSpacing: "-0.01em",
+                color: "var(--text-primary)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
               {narrative.title}
             </h2>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-md text-text-muted hover:text-foreground hover:bg-elevated/70 transition-colors"
+            className="inline-flex items-center justify-center"
+            style={{
+              width: 26,
+              height: 26,
+              color: "var(--text-muted)",
+              background: "transparent",
+              border: "1px solid var(--border-soft)",
+              borderRadius: 2,
+              cursor: "pointer",
+            }}
             aria-label="Close narrative"
           >
-            <X weight="bold" size={16} />
+            <X weight="bold" size={14} />
           </button>
         </div>
 
-        <div className="overflow-y-auto px-5 py-4 flex-1 min-h-0">
+        <div
+          style={{
+            overflowY: "auto",
+            padding: "14px 18px",
+            flex: 1,
+            minHeight: 0,
+          }}
+        >
           {narrative.chapter_outline.length > 0 && (
-            <details className="mb-4 rounded-md border border-border/60 bg-elevated/30 px-3 py-2">
-              <summary className="cursor-pointer text-2xs font-mono uppercase tracking-wide text-text-muted">
-                Table of contents ({narrative.chapter_outline.length})
+            <details
+              style={{
+                marginBottom: 14,
+                padding: "8px 10px",
+                background: "var(--surface-sunk)",
+                border: "1px solid var(--border-soft)",
+                borderRadius: 2,
+              }}
+            >
+              <summary
+                className="font-mono uppercase"
+                style={{
+                  cursor: "pointer",
+                  fontSize: 9,
+                  letterSpacing: "0.1em",
+                  color: "var(--text-faint)",
+                }}
+              >
+                table of contents ({narrative.chapter_outline.length})
               </summary>
-              <ul className="mt-2 space-y-1">
+              <ul
+                style={{
+                  marginTop: 6,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 3,
+                }}
+              >
                 {narrative.chapter_outline.map((chapter, i) => (
-                  <li key={i} className="text-xs text-text-muted font-mono">
+                  <li
+                    key={i}
+                    className="font-mono"
+                    style={{
+                      fontSize: 10.5,
+                      color: "var(--text-muted)",
+                      letterSpacing: "0.04em",
+                    }}
+                  >
                     {i + 1}. {chapter}
                   </li>
                 ))}
@@ -354,20 +535,60 @@ function NarrativeViewer({
             </details>
           )}
 
-          <article className="prose prose-invert prose-sm max-w-none whitespace-pre-wrap break-words text-foreground/90 leading-relaxed">
+          <article
+            style={{
+              fontFamily: "var(--font-sans)",
+              fontSize: 13,
+              lineHeight: 1.65,
+              color: "var(--text-primary)",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              maxWidth: "none",
+            }}
+          >
             {narrative.body}
           </article>
         </div>
 
-        <div className="flex items-center justify-between gap-3 border-t border-border px-5 py-2 bg-elevated/40 text-3xs font-mono text-text-muted">
+        <div
+          className="flex items-center justify-between font-mono"
+          style={{
+            gap: 12,
+            padding: "8px 16px",
+            fontSize: 9.5,
+            color: "var(--text-faint)",
+            letterSpacing: "0.06em",
+            background: "var(--surface-chrome)",
+            borderTop: "1px solid var(--border-soft)",
+          }}
+        >
           <span>{wordCount} words</span>
           <span>generated {formatRelative(narrative.generated_at)}</span>
           <button
             type="button"
             onClick={() => navigator.clipboard.writeText(narrative.body)}
-            className="px-2 py-1 rounded border border-border hover:border-accent hover:text-foreground transition-colors"
+            className="font-mono uppercase"
+            style={{
+              height: 24,
+              padding: "0 10px",
+              fontSize: 9.5,
+              letterSpacing: "0.08em",
+              color: "var(--text-muted)",
+              background: "transparent",
+              border: "1px solid var(--border-soft)",
+              borderRadius: 2,
+              cursor: "pointer",
+            }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.color = "var(--accent)";
+              e.currentTarget.style.borderColor = "var(--accent)";
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.color = "var(--text-muted)";
+              e.currentTarget.style.borderColor = "var(--border-soft)";
+            }}
           >
-            Copy markdown
+            copy markdown
           </button>
         </div>
       </div>

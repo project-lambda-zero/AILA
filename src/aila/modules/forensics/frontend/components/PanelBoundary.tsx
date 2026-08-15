@@ -1,6 +1,5 @@
 import { AppErrorBoundary } from "@app/ErrorBoundary";
 import { WindowPanel } from "@/components/aila/WindowPanel";
-import { Button } from "@/components/ui/button";
 
 interface PanelBoundaryProps {
   /** Short label used to describe the panel in the fallback message. */
@@ -11,6 +10,18 @@ interface PanelBoundaryProps {
   onRetry?: () => void;
   children: React.ReactNode;
 }
+
+const RETRY_BTN: React.CSSProperties = {
+  height: 26,
+  padding: "0 12px",
+  fontSize: 9.5,
+  letterSpacing: "0.08em",
+  color: "var(--text-muted)",
+  background: "transparent",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  cursor: "pointer",
+};
 
 /**
  * Panel-level error boundary for the forensics module.
@@ -44,17 +55,34 @@ export function PanelBoundary({ label, onRetry, children }: PanelBoundaryProps) 
             data-testid="forensics-panel-boundary-fallback"
           >
             <div className="space-y-2">
-              <p className="text-sm font-semibold text-critical">
+              <p
+                className="font-mono"
+                style={{ fontSize: 11, color: "var(--accent)" }}
+              >
                 {label} could not render.
               </p>
-              <p className="text-xs text-text-muted break-words">{message}</p>
-              <p className="text-3xs text-text-muted font-mono">
-                {traceId ? <>trace_id: <code>{traceId}</code></> : <>ts: <code>{timestamp}</code></>}
+              <p
+                className="font-mono break-words"
+                style={{ fontSize: 10.5, color: "var(--text-muted)" }}
+              >
+                {message}
               </p>
-              <Button
+              <p
+                className="font-mono"
+                style={{ fontSize: 9.5, color: "var(--text-faint)" }}
+              >
+                {traceId ? (
+                  <>
+                    trace_id: <code>{traceId}</code>
+                  </>
+                ) : (
+                  <>
+                    ts: <code>{timestamp}</code>
+                  </>
+                )}
+              </p>
+              <button
                 type="button"
-                size="sm"
-                variant="outline"
                 onClick={() => {
                   if (onRetry) {
                     try {
@@ -65,9 +93,11 @@ export function PanelBoundary({ label, onRetry, children }: PanelBoundaryProps) 
                   }
                   reset();
                 }}
+                className="font-mono uppercase"
+                style={RETRY_BTN}
               >
-                Retry
-              </Button>
+                retry
+              </button>
             </div>
           </WindowPanel>
         );

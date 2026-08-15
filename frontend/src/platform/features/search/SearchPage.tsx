@@ -9,19 +9,17 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
-import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
-import { X } from "@phosphor-icons/react/dist/csr/X";
-import { CaretLeft } from "@phosphor-icons/react/dist/csr/CaretLeft";
-import { CaretRight } from "@phosphor-icons/react/dist/csr/CaretRight";
 
-import { AilaCard } from "@/components/aila/AilaCard";
 import { WindowPanel } from "@/components/aila/WindowPanel";
-import { AilaBadge } from "@/components/aila/AilaBadge";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
+import {
+  SectionHeader,
+  DataGrid,
+  MonoBadge,
+  FilterChip,
+  toneColor,
+} from "@/components/aila/mock";
 import { ApiHttpError } from "@platform/api/http";
 
 import {
@@ -51,6 +49,37 @@ const KNOWN_FACETS: readonly string[] = [
 const PAGE_SIZE = 25;
 
 // ---------------------------------------------------------------------------
+// Style tokens
+// ---------------------------------------------------------------------------
+
+const ACTION_BUTTON_STYLE: React.CSSProperties = {
+  height: 26,
+  fontSize: 9.5,
+  padding: "0 11px",
+  textTransform: "uppercase",
+  letterSpacing: "0.1em",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  cursor: "pointer",
+  fontFamily: "var(--font-mono)",
+};
+
+const SEARCH_INPUT_STYLE: React.CSSProperties = {
+  height: 32,
+  fontSize: 12,
+  padding: "0 12px",
+  minWidth: 380,
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  outline: "none",
+  fontFamily: "var(--font-mono)",
+};
+
+// ---------------------------------------------------------------------------
 // URL <-> state helpers
 // ---------------------------------------------------------------------------
 
@@ -60,92 +89,6 @@ function parseFacetParam(raw: string | null): string[] {
     .split(",")
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
-}
-
-// ---------------------------------------------------------------------------
-// Facet chip
-// ---------------------------------------------------------------------------
-
-function FacetChip({
-  label,
-  active,
-  onToggle,
-}: {
-  label: string;
-  active: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      className={cn(
-        "inline-flex items-center gap-1.5 rounded-[2px] border px-2 py-1 font-mono text-[11px] uppercase tracking-wider transition-colors",
-        active
-          ? "border-accent bg-accent/10 text-accent"
-          : "border-border bg-surface text-text-muted hover:border-accent/50 hover:text-text",
-      )}
-      aria-pressed={active}
-    >
-      <span>{entityTypeLabel(label)}</span>
-      {active && <X size={11} weight="bold" />}
-    </button>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Result card
-// ---------------------------------------------------------------------------
-
-function ResultCard({
-  result,
-  onSelect,
-}: {
-  result: SearchResult;
-  onSelect: (result: SearchResult) => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={() => onSelect(result)}
-      className="group w-full text-left"
-    >
-      <AilaCard
-        variant="default"
-        padding="md"
-        className="transition-colors group-hover:border-accent/60"
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <AilaBadge severity={entityTypeSeverity(result.entity_type)} size="sm">
-                {entityTypeLabel(result.entity_type)}
-              </AilaBadge>
-              {result.module_id && (
-                <AilaBadge severity="neutral" size="sm">
-                  {result.module_id}
-                </AilaBadge>
-              )}
-              <span className="font-mono text-[10px] uppercase tracking-wider text-text-muted">
-                score {result.score.toFixed(2)}
-              </span>
-            </div>
-            <h3 className="mt-2 truncate font-mono text-sm font-semibold text-text">
-              {result.title || result.entity_id}
-            </h3>
-            {result.snippet && (
-              <p className="mt-1 line-clamp-2 font-mono text-xs text-text-muted">
-                {result.snippet}
-              </p>
-            )}
-            <p className="mt-1 font-mono text-[10px] uppercase tracking-wider text-text-muted">
-              id {result.entity_id}
-            </p>
-          </div>
-        </div>
-      </AilaCard>
-    </button>
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -256,6 +199,17 @@ export function SearchPage() {
     return Array.from(set);
   }, [results, activeFacets]);
 
+  // Bucket results per entity_type so each scope renders in its own panel.
+  const resultsByScope = useMemo(() => {
+    const buckets = new Map<string, SearchResult[]>();
+    for (const r of results) {
+      const list = buckets.get(r.entity_type);
+      if (list) list.push(r);
+      else buckets.set(r.entity_type, [r]);
+    }
+    return Array.from(buckets.entries());
+  }, [results]);
+
   const pageStart = results.length === 0 ? 0 : offset + 1;
   const pageEnd = offset + results.length;
   const canPrev = offset > 0;
@@ -271,113 +225,224 @@ export function SearchPage() {
   }, [searchQuery.error]);
 
   return (
-    <div className="flex flex-col gap-6">
-      {/* Query input */}
-      <WindowPanel title="Search" tone="muted">
-        <div className="flex flex-col gap-3">
-          <div className="relative">
-            <MagnifyingGlass
-              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
-              aria-hidden="true"
-            />
-            <Input
-              type="search"
-              value={inputValue}
-              onChange={(event) => setInputValue(event.target.value)}
-              placeholder="Search systems, findings, sessions, module entities…"
-              className="pl-9 font-mono"
-              autoFocus
-              aria-label="Global search query"
-            />
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-[10px] uppercase tracking-wider text-text-muted">
-              Facets
-            </span>
-            {facetList.map((facet) => (
-              <FacetChip
-                key={facet}
-                label={facet}
-                active={activeFacets.includes(facet)}
-                onToggle={() => toggleFacet(facet)}
-              />
-            ))}
-            {activeFacets.length > 0 && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={clearFacets}
-                className="h-6 px-2 font-mono text-[10px] uppercase tracking-wider"
-              >
-                Clear
-              </Button>
+    <div className="flex flex-col" style={{ gap: 16, padding: 20 }}>
+      <SectionHeader
+        icon={"\u25ce"}
+        title="global search"
+        actions={
+          <input
+            type="search"
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            placeholder="search systems, findings, sessions, module entities..."
+            className="font-mono"
+            autoFocus
+            aria-label="Global search query"
+            style={SEARCH_INPUT_STYLE}
+          />
+        }
+      />
+
+      {/* Facet chip row */}
+      <div className="flex items-center flex-wrap" style={{ gap: 8 }}>
+        <span
+          className="font-mono"
+          style={{
+            fontSize: 10,
+            color: "var(--text-muted)",
+            textTransform: "uppercase",
+            letterSpacing: "0.14em",
+            marginRight: 4,
+          }}
+        >
+          facets
+        </span>
+        {facetList.map((facet) => (
+          <FilterChip
+            key={facet}
+            active={activeFacets.includes(facet)}
+            color={toneColor(
+              entityTypeSeverity(facet) === "neutral"
+                ? "muted"
+                : entityTypeSeverity(facet),
             )}
-          </div>
-        </div>
-      </WindowPanel>
+            onClick={() => toggleFacet(facet)}
+          >
+            {entityTypeLabel(facet)}
+          </FilterChip>
+        ))}
+        {activeFacets.length > 0 && (
+          <button
+            type="button"
+            onClick={clearFacets}
+            style={ACTION_BUTTON_STYLE}
+          >
+            clear
+          </button>
+        )}
+      </div>
 
       {/* Results */}
       {!hasQuery ? (
-        <EmptyState
-          icon={<MagnifyingGlass className="h-10 w-10" />}
-          title="Type to search across the platform"
-          description="Systems, findings, sessions, and any module-contributed entities are searched in a single pass. Facet chips narrow by entity type."
-        />
+        <WindowPanel title="global search" tone="muted">
+          <EmptyState
+            title="Type to search across the platform"
+            description="Systems, findings, sessions, and any module-contributed entities are searched in a single pass. Facet chips narrow by entity type."
+          />
+        </WindowPanel>
       ) : isLoading ? (
-        <LoadingSkeletonGroup lines={5} />
+        <WindowPanel title="results" status="LOADING" tone="muted">
+          <LoadingSkeletonGroup lines={5} />
+        </WindowPanel>
       ) : errorMessage ? (
-        <EmptyState
-          icon={<X className="h-10 w-10" />}
-          title="Search failed"
-          description={errorMessage}
-        />
+        <WindowPanel title="results" tone="warn">
+          <div
+            className="font-mono"
+            style={{
+              color: "var(--status-warn)",
+              fontSize: 12,
+              padding: "6px 2px",
+            }}
+          >
+            search failed: {errorMessage}
+          </div>
+        </WindowPanel>
       ) : results.length === 0 ? (
-        <EmptyState
-          icon={<MagnifyingGlass className="h-10 w-10" />}
-          title={`No results for "${urlQuery}"`}
-          description="Try a shorter query, remove active facets, or check spelling."
-        />
+        <WindowPanel title="results" tone="muted">
+          <EmptyState
+            title={`No results for "${urlQuery}"`}
+            description="Try a shorter query, remove active facets, or check spelling."
+          />
+        </WindowPanel>
       ) : (
         <>
-          <div className="flex items-center justify-between font-mono text-[11px] text-text-muted">
+          {/* Pager row */}
+          <div
+            className="flex items-center justify-between font-mono"
+            style={{
+              fontSize: 11,
+              color: "var(--text-muted)",
+            }}
+          >
             <span>
-              Showing {pageStart}--{pageEnd} of {total}
-              {isFetching && !searchQuery.isLoading ? " (refreshing…)" : ""}
+              showing {pageStart}--{pageEnd} of {total}
+              {isFetching && !searchQuery.isLoading
+                ? " (refreshing...)"
+                : ""}
             </span>
-            <div className="flex items-center gap-1">
-              <Button
+            <div className="flex items-center" style={{ gap: 6 }}>
+              <button
                 type="button"
-                variant="ghost"
-                size="sm"
                 disabled={!canPrev}
-                onClick={() => changeOffset(Math.max(0, offset - PAGE_SIZE))}
+                onClick={() =>
+                  changeOffset(Math.max(0, offset - PAGE_SIZE))
+                }
+                style={{
+                  ...ACTION_BUTTON_STYLE,
+                  opacity: canPrev ? 1 : 0.35,
+                  cursor: canPrev ? "pointer" : "not-allowed",
+                }}
               >
-                <CaretLeft className="h-3.5 w-3.5" />
-                Prev
-              </Button>
-              <Button
+                {"\u2039"} prev
+              </button>
+              <button
                 type="button"
-                variant="ghost"
-                size="sm"
                 disabled={!canNext}
                 onClick={() => changeOffset(offset + PAGE_SIZE)}
+                style={{
+                  ...ACTION_BUTTON_STYLE,
+                  opacity: canNext ? 1 : 0.35,
+                  cursor: canNext ? "pointer" : "not-allowed",
+                }}
               >
-                Next
-                <CaretRight className="h-3.5 w-3.5" />
-              </Button>
+                next {"\u203a"}
+              </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-            {results.map((result) => (
-              <ResultCard
-                key={`${result.entity_type}:${result.module_id ?? "-"}:${result.entity_id}`}
-                result={result}
-                onSelect={handleResultClick}
+          {/* Per-scope result panels */}
+          {resultsByScope.map(([scope, rows]) => (
+            <WindowPanel
+              key={scope}
+              title={entityTypeLabel(scope).toLowerCase()}
+              status={`${rows.length} HIT${rows.length === 1 ? "" : "S"}`}
+              tone="muted"
+              flush
+            >
+              <DataGrid<SearchResult>
+                columns={[
+                  { label: "TYPE", width: "120px" },
+                  { label: "TITLE / ID", width: "minmax(200px, 1fr)" },
+                  { label: "MODULE", width: "130px" },
+                  { label: "SCORE", width: "80px", align: "right" },
+                ]}
+                rows={rows}
+                getKey={(r) =>
+                  `${r.entity_type}:${r.module_id ?? "-"}:${r.entity_id}`
+                }
+                onRowClick={handleResultClick}
+                renderCells={(r) => [
+                  <MonoBadge
+                    tone={
+                      entityTypeSeverity(r.entity_type) === "neutral"
+                        ? "muted"
+                        : entityTypeSeverity(r.entity_type)
+                    }
+                  >
+                    {entityTypeLabel(r.entity_type)}
+                  </MonoBadge>,
+                  <div
+                    className="flex flex-col"
+                    style={{ gap: 2, minWidth: 0 }}
+                  >
+                    <span
+                      className="font-mono truncate"
+                      style={{
+                        color: "var(--text-primary)",
+                        fontSize: 12,
+                      }}
+                    >
+                      {r.title || r.entity_id}
+                    </span>
+                    {r.snippet && (
+                      <span
+                        className="font-mono truncate"
+                        style={{
+                          color: "var(--text-muted)",
+                          fontSize: 10,
+                        }}
+                      >
+                        {r.snippet}
+                      </span>
+                    )}
+                    <span
+                      className="font-mono truncate"
+                      style={{
+                        color: "var(--text-faint)",
+                        fontSize: 9.5,
+                        textTransform: "uppercase",
+                        letterSpacing: "0.1em",
+                      }}
+                    >
+                      id {r.entity_id}
+                    </span>
+                  </div>,
+                  <span
+                    className="font-mono"
+                    style={{ color: "var(--text-muted)", fontSize: 11 }}
+                  >
+                    {r.module_id ?? "\u2014"}
+                  </span>,
+                  <span
+                    className="font-mono tabular-nums"
+                    style={{ color: "var(--accent)", fontSize: 11 }}
+                  >
+                    {r.score.toFixed(2)}
+                  </span>,
+                ]}
               />
-            ))}
-          </div>
+            </WindowPanel>
+          ))}
         </>
       )}
     </div>

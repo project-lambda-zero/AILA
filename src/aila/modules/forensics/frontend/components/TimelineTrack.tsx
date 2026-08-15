@@ -35,10 +35,10 @@ function parseTs(raw: string): number {
 }
 
 /**
- * Layout the entries left→right along [min, max] and stack near-neighbors
+ * Layout the entries left->right along [min, max] and stack near-neighbors
  * into rows so dots don't overlap. Two entries share a row only if their
  * pixel-normalized positions are >= MIN_SEP apart. The naive per-row
- * scan is O(n·rows) but rows stays small in practice.
+ * scan is O(n*rows) but rows stays small in practice.
  */
 function layoutEntries(
   entries: readonly TimelineEntry[],
@@ -100,6 +100,13 @@ function formatIsoShort(ms: number): string {
   return `${iso.slice(0, 10)} ${iso.slice(11, 16)}Z`;
 }
 
+const PANEL_STYLE: React.CSSProperties = {
+  border: "1px solid var(--border-soft)",
+  background: "var(--surface-card)",
+  borderRadius: 3,
+  padding: 10,
+};
+
 /**
  * Visual, time-positioned track for TimelineEntry[]. Dots plot along a
  * shared horizontal time axis, color-coded by source, and click to
@@ -132,7 +139,15 @@ export function TimelineTrack({
       map.set(src, palette[i % palette.length]);
     });
     return (source: string) => map.get(source) ?? theme.textMuted;
-  }, [entries, theme.accent, theme.critical, theme.high, theme.medium, theme.low, theme.textMuted]);
+  }, [
+    entries,
+    theme.accent,
+    theme.critical,
+    theme.high,
+    theme.medium,
+    theme.low,
+    theme.textMuted,
+  ]);
 
   const VIEW_W = 1000; // logical viewBox width; SVG scales to container
   const layout = useMemo(
@@ -147,8 +162,17 @@ export function TimelineTrack({
 
   if (layout.rows.length === 0) {
     return (
-      <div className="border border-dashed border-border rounded p-3 bg-surface/40">
-        <p className="text-xs text-text-muted">
+      <div
+        style={{
+          ...PANEL_STYLE,
+          borderStyle: "dashed",
+          background: "var(--surface-sunk)",
+        }}
+      >
+        <p
+          className="font-mono"
+          style={{ fontSize: 10.5, color: "var(--text-muted)" }}
+        >
           No parseable timestamps -- visual track is empty. Check the list
           below for rows whose timestamp field the backend could not parse.
         </p>
@@ -168,14 +192,13 @@ export function TimelineTrack({
     return { t, ms };
   });
 
-  const selectedEntry = selected !== null
-    ? entries.find((_, i) => i === selected)
-    : null;
+  const selectedEntry =
+    selected !== null ? entries.find((_, i) => i === selected) : null;
 
   return (
     <div className="space-y-2">
       <div
-        className="border border-border rounded-lg bg-surface p-2"
+        style={PANEL_STYLE}
         role="group"
         aria-label="Visual timeline track"
       >
@@ -225,7 +248,9 @@ export function TimelineTrack({
                 fill={theme.textMuted}
                 fontSize={10}
                 fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace"
-                textAnchor={tk.t === 0 ? "start" : tk.t === 1 ? "end" : "middle"}
+                textAnchor={
+                  tk.t === 0 ? "start" : tk.t === 1 ? "end" : "middle"
+                }
               >
                 {formatIsoShort(tk.ms)}
               </text>
@@ -235,17 +260,19 @@ export function TimelineTrack({
           {layout.rows.flat().map((p) => {
             const cx = p.x * VIEW_W;
             const cy = TOP_PAD + p.row * ROW_H + ROW_H / 2;
-            const emphasized =
-              !activeSource || activeSource === p.entry.source;
+            const emphasized = !activeSource || activeSource === p.entry.source;
             const isSel = selected === p.idx;
             return (
               <g
                 key={`dot-${p.idx}`}
                 style={{ cursor: "pointer" }}
-                onClick={() => setSelected((cur) => (cur === p.idx ? null : p.idx))}
+                onClick={() =>
+                  setSelected((cur) => (cur === p.idx ? null : p.idx))
+                }
               >
                 <title>
-                  {formatIsoShort(p.ms)} · {p.entry.source} · {p.entry.event_type}
+                  {formatIsoShort(p.ms)} {"\u00b7"} {p.entry.source} {"\u00b7"}{" "}
+                  {p.entry.event_type}
                   {"\n"}
                   {p.entry.description}
                 </title>
@@ -263,29 +290,44 @@ export function TimelineTrack({
           })}
         </svg>
         {/* Legend */}
-        <div className="mt-2 flex flex-wrap gap-1.5">
+        <div
+          className="flex flex-wrap"
+          style={{ marginTop: 8, gap: 6 }}
+        >
           {uniqueSources.map((src) => {
             const isActive = activeSource === src;
+            const chipColor = sourceColor(src);
             return (
               <button
                 key={`legend-${src}`}
                 type="button"
                 onClick={() => onSourceClick?.(src)}
-                className={
-                  "flex items-center gap-1 px-2 py-0.5 rounded-[3px] text-3xs font-mono uppercase tracking-cyber-sm border transition-colors " +
-                  (isActive
-                    ? "border-primary bg-primary/20 text-foreground"
-                    : "border-border bg-elevated/60 text-text-muted hover:text-foreground")
-                }
                 aria-pressed={isActive}
+                className="font-mono uppercase inline-flex items-center"
+                style={{
+                  gap: 5,
+                  padding: "2px 8px",
+                  fontSize: 9,
+                  letterSpacing: "0.08em",
+                  borderRadius: 3,
+                  color: isActive ? chipColor : "var(--text-faint)",
+                  background: isActive
+                    ? `color-mix(in srgb, ${chipColor} 12%, transparent)`
+                    : "var(--surface-sunk)",
+                  border: `1px solid ${
+                    isActive ? chipColor : "var(--border-soft)"
+                  }`,
+                  cursor: "pointer",
+                }}
               >
                 <span
-                  aria-hidden
-                  className="inline-block rounded-full"
+                  aria-hidden="true"
+                  className="inline-block"
                   style={{
                     width: 8,
                     height: 8,
-                    backgroundColor: sourceColor(src),
+                    borderRadius: 2,
+                    backgroundColor: chipColor,
                   }}
                 />
                 {src}
@@ -296,36 +338,69 @@ export function TimelineTrack({
       </div>
       {selectedEntry && (
         <div
-          className="border border-border rounded-md bg-elevated/40 p-3 text-xs"
+          style={PANEL_STYLE}
           role="region"
           aria-label="Selected timeline entry"
         >
-          <div className="flex items-baseline justify-between gap-3">
-            <div className="font-mono text-text-muted">
+          <div className="flex items-baseline justify-between" style={{ gap: 12 }}>
+            <div
+              className="font-mono"
+              style={{ fontSize: 10.5, color: "var(--text-muted)" }}
+            >
               {selectedEntry.timestamp}
-              <span className="mx-2 text-border">·</span>
               <span
-                className="inline-block rounded-full align-middle"
+                style={{
+                  margin: "0 8px",
+                  color: "var(--border)",
+                }}
+              >
+                {"\u00b7"}
+              </span>
+              <span
+                className="inline-block align-middle"
                 style={{
                   width: 8,
                   height: 8,
+                  borderRadius: 2,
                   backgroundColor: sourceColor(selectedEntry.source),
                 }}
               />
-              <span className="ml-1">{selectedEntry.source}</span>
-              <span className="mx-2 text-border">·</span>
+              <span style={{ marginLeft: 4 }}>{selectedEntry.source}</span>
+              <span
+                style={{ margin: "0 8px", color: "var(--border)" }}
+              >
+                {"\u00b7"}
+              </span>
               <span>{selectedEntry.event_type}</span>
             </div>
             <button
               type="button"
               onClick={() => setSelected(null)}
-              className="text-3xs text-text-muted hover:text-foreground underline decoration-dotted"
+              className="font-mono uppercase"
               aria-label="Close selected entry"
+              style={{
+                padding: "2px 6px",
+                fontSize: 9,
+                letterSpacing: "0.08em",
+                color: "var(--text-faint)",
+                background: "transparent",
+                border: 0,
+                cursor: "pointer",
+                textDecoration: "underline dotted",
+              }}
             >
               close
             </button>
           </div>
-          <p className="mt-2 text-foreground break-words">
+          <p
+            className="font-mono break-words"
+            style={{
+              marginTop: 8,
+              fontSize: 11,
+              color: "var(--text-primary)",
+              lineHeight: 1.55,
+            }}
+          >
             {selectedEntry.description}
           </p>
         </div>
@@ -333,8 +408,7 @@ export function TimelineTrack({
       {/* SR-only mirror -- keeps a11y parity with the visual track. */}
       <table className="sr-only">
         <caption>
-          Timeline entries plotted on the visual track ({entries.length}
-          total).
+          Timeline entries plotted on the visual track ({entries.length} total).
         </caption>
         <thead>
           <tr>
@@ -346,6 +420,7 @@ export function TimelineTrack({
         </thead>
         <tbody>
           {entries.map((e, i) => (
+            // eslint-disable-next-line react/no-array-index-key
             <tr key={`sr-${i}`}>
               <td>{e.timestamp}</td>
               <td>{e.source}</td>

@@ -1,16 +1,102 @@
 /**
- * SchemaField -- recursive JSON Schema → form field renderer.
+ * SchemaField -- recursive JSON Schema -> form field renderer.
  *
- * Handles: string, integer, number, boolean, object, array.
- * Uses existing shadcn UI primitives: Input, Textarea.
- * No external form library required.
+ * Rebuilt to the AILA mock language: raw `<input> / <select> / <textarea> /
+ * <button>` toggles styled inline with the mock tokens, no shadcn primitives.
+ * Handles: string, integer, number, boolean, object, array. Preserves the
+ * schema-driven props API (name/type/value/onChange/label/description/required).
  */
+import { useState, type CSSProperties } from "react";
 
-import { useState } from "react";
-
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import type { JSONSchema } from "./tools-types";
+
+// ---------------------------------------------------------------------------
+// Shared mock-styled input primitives
+// ---------------------------------------------------------------------------
+
+const INPUT_STYLE: CSSProperties = {
+  height: 28,
+  padding: "0 10px",
+  fontSize: 11,
+  color: "var(--text-primary)",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  outline: "none",
+};
+
+const TEXTAREA_STYLE: CSSProperties = {
+  minHeight: 96,
+  padding: "8px 10px",
+  fontSize: 11,
+  lineHeight: 1.5,
+  color: "var(--text-primary)",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  outline: "none",
+  resize: "vertical",
+};
+
+function FieldLabel({
+  htmlFor,
+  name,
+  required,
+  description,
+  type,
+}: {
+  htmlFor?: string;
+  name: string;
+  required: boolean;
+  description?: string;
+  type?: string;
+}) {
+  return (
+    <label
+      htmlFor={htmlFor}
+      className="font-mono flex items-baseline flex-wrap"
+      style={{
+        gap: 6,
+        fontSize: 10,
+        letterSpacing: "0.1em",
+        color: "var(--text-muted)",
+      }}
+    >
+      <span style={{ color: "var(--text-primary)", textTransform: "uppercase" }}>
+        {name}
+      </span>
+      {required && (
+        <span aria-hidden="true" style={{ color: "var(--accent)" }}>
+          *
+        </span>
+      )}
+      {type && (
+        <span
+          className="uppercase"
+          style={{
+            fontSize: 8.5,
+            letterSpacing: "0.14em",
+            color: "var(--text-faint)",
+          }}
+        >
+          ({type})
+        </span>
+      )}
+      {description && (
+        <span
+          style={{
+            color: "var(--text-faint)",
+            fontSize: 10,
+            letterSpacing: "0.02em",
+            textTransform: "none",
+          }}
+        >
+          {description}
+        </span>
+      )}
+    </label>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Sub-component: JSON textarea for object/array types (isolated useState)
@@ -50,29 +136,36 @@ function JsonTextareaField({
   const fieldId = `schema-field-${name}`;
 
   return (
-    <div className="flex flex-col gap-1">
-      <label htmlFor={fieldId} className="font-mono text-xs text-foreground">
-        {name}
-        {required && <span className="text-destructive ml-0.5">*</span>}
-        {schema.description && (
-          <span className="font-mono text-xs text-muted-foreground ml-1.5">
-            {schema.description}
-          </span>
-        )}
-        <span className="font-mono text-[10px] text-muted-foreground ml-1.5 uppercase tracking-wider">
-          ({schema.type})
-        </span>
-      </label>
-      <Textarea
+    <div className="flex flex-col" style={{ gap: 5 }}>
+      <FieldLabel
+        htmlFor={fieldId}
+        name={name}
+        required={required}
+        description={schema.description}
+        type={schema.type}
+      />
+      <textarea
         id={fieldId}
         value={text}
         onChange={(e) => handleTextChange(e.target.value)}
         aria-invalid={parseError !== null}
-        className="font-mono text-xs min-h-[80px]"
         spellCheck={false}
+        className="font-mono"
+        style={{
+          ...TEXTAREA_STYLE,
+          borderColor:
+            parseError !== null
+              ? "color-mix(in srgb, var(--status-warn) 50%, transparent)"
+              : "var(--border-soft)",
+        }}
       />
       {parseError !== null && (
-        <p className="font-mono text-xs text-destructive">{parseError}</p>
+        <p
+          className="font-mono"
+          style={{ color: "var(--status-warn)", fontSize: 10 }}
+        >
+          {parseError}
+        </p>
       )}
     </div>
   );
@@ -91,13 +184,13 @@ export interface SchemaFieldProps {
 }
 
 /**
- * Renders a single JSON Schema property as a form field.
+ * Renders a single JSON Schema property as a mock-styled form field.
  *
- * - string  -> Input[type=text]
- * - integer | number -> Input[type=number]
- * - boolean -> native checkbox
- * - object | array -> JSON Textarea with live parse validation
- * - unknown type -> fallback Input[type=text]
+ * - string  -> <input type=text>
+ * - integer | number -> <input type=number>
+ * - boolean -> <button role=switch> toggle
+ * - object | array -> JSON textarea with live parse validation
+ * - unknown type -> fallback <input type=text>
  */
 export function SchemaField({
   name,
@@ -110,22 +203,20 @@ export function SchemaField({
 
   if (schema.type === "string") {
     return (
-      <div className="flex flex-col gap-1">
-        <label htmlFor={fieldId} className="font-mono text-xs text-foreground">
-          {name}
-          {required && <span className="text-destructive ml-0.5">*</span>}
-          {schema.description && (
-            <span className="font-mono text-xs text-muted-foreground ml-1.5">
-              {schema.description}
-            </span>
-          )}
-        </label>
-        <Input
+      <div className="flex flex-col" style={{ gap: 5 }}>
+        <FieldLabel
+          htmlFor={fieldId}
+          name={name}
+          required={required}
+          description={schema.description}
+        />
+        <input
           id={fieldId}
           type="text"
           value={typeof value === "string" ? value : ""}
           onChange={(e) => onChange(name, e.target.value)}
-          className="font-mono text-xs"
+          className="font-mono"
+          style={INPUT_STYLE}
         />
       </div>
     );
@@ -133,17 +224,14 @@ export function SchemaField({
 
   if (schema.type === "integer" || schema.type === "number") {
     return (
-      <div className="flex flex-col gap-1">
-        <label htmlFor={fieldId} className="font-mono text-xs text-foreground">
-          {name}
-          {required && <span className="text-destructive ml-0.5">*</span>}
-          {schema.description && (
-            <span className="font-mono text-xs text-muted-foreground ml-1.5">
-              {schema.description}
-            </span>
-          )}
-        </label>
-        <Input
+      <div className="flex flex-col" style={{ gap: 5 }}>
+        <FieldLabel
+          htmlFor={fieldId}
+          name={name}
+          required={required}
+          description={schema.description}
+        />
+        <input
           id={fieldId}
           type="number"
           value={typeof value === "number" && !Number.isNaN(value) ? value : ""}
@@ -151,7 +239,8 @@ export function SchemaField({
             const parsed = e.target.valueAsNumber;
             onChange(name, Number.isNaN(parsed) ? "" : parsed);
           }}
-          className="font-mono text-xs"
+          className="font-mono"
+          style={INPUT_STYLE}
         />
       </div>
     );
@@ -159,27 +248,37 @@ export function SchemaField({
 
   if (schema.type === "boolean") {
     const checked = Boolean(value);
-    // Single-toggle checkbox: WCAG 1.3.1 fieldset/legend applies to
-    // related-option groups, not to a single JSON-schema boolean field
-    // that already has an explicit <label htmlFor>.
     return (
-      <div className="flex items-center gap-2">
-        <input
+      <div className="flex items-center" style={{ gap: 10 }}>
+        <button
           id={fieldId}
-          type="checkbox"
-          checked={checked}
-          onChange={(e) => onChange(name, e.target.checked)}
-          className="h-4 w-4 rounded border-input accent-accent"
+          type="button"
+          role="switch"
+          aria-checked={checked}
+          onClick={() => onChange(name, !checked)}
+          className="font-mono uppercase"
+          style={{
+            height: 26,
+            padding: "0 12px",
+            fontSize: 9.5,
+            letterSpacing: "0.1em",
+            borderRadius: 3,
+            cursor: "pointer",
+            color: checked ? "var(--text-on-accent)" : "var(--text-muted)",
+            background: checked ? "var(--accent)" : "var(--surface-sunk)",
+            border: `1px solid ${
+              checked ? "var(--accent)" : "var(--border-soft)"
+            }`,
+          }}
+        >
+          {checked ? "on" : "off"}
+        </button>
+        <FieldLabel
+          htmlFor={fieldId}
+          name={name}
+          required={required}
+          description={schema.description}
         />
-        <label htmlFor={fieldId} className="font-mono text-xs text-foreground cursor-pointer">
-          {name}
-          {required && <span className="text-destructive ml-0.5">*</span>}
-          {schema.description && (
-            <span className="font-mono text-xs text-muted-foreground ml-1.5">
-              {schema.description}
-            </span>
-          )}
-        </label>
       </div>
     );
   }
@@ -198,25 +297,21 @@ export function SchemaField({
 
   // Fallback for unknown/unsupported types
   return (
-    <div className="flex flex-col gap-1">
-      <label htmlFor={fieldId} className="font-mono text-xs text-foreground">
-        {name}
-        {required && <span className="text-destructive ml-0.5">*</span>}
-        {schema.description && (
-          <span className="font-mono text-xs text-muted-foreground ml-1.5">
-            {schema.description}
-          </span>
-        )}
-        <span className="font-mono text-[10px] text-muted-foreground ml-1.5 uppercase tracking-wider">
-          ({schema.type})
-        </span>
-      </label>
-      <Input
+    <div className="flex flex-col" style={{ gap: 5 }}>
+      <FieldLabel
+        htmlFor={fieldId}
+        name={name}
+        required={required}
+        description={schema.description}
+        type={schema.type ?? "unknown"}
+      />
+      <input
         id={fieldId}
         type="text"
         value={String(value ?? "")}
         onChange={(e) => onChange(name, e.target.value)}
-        className="font-mono text-xs"
+        className="font-mono"
+        style={INPUT_STYLE}
       />
     </div>
   );

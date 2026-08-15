@@ -1,11 +1,11 @@
 import { useMemo, useState } from "react";
+import { Link } from "react-router";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
+import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { PixelIcon } from "@/components/aila/PixelIcon";
 import { WindowPanel } from "@/components/aila/WindowPanel";
-import { Button } from "@/components/ui/button";
+import { MonoBadge } from "@/components/aila/mock";
 
 import { useProjectInvestigations, useProjectWriteups } from "../queries";
 import {
@@ -40,6 +40,55 @@ const slug = (s: string, max = 48): string =>
     .replace(/^-+|-+$/g, "")
     .slice(0, max) || "writeup";
 
+const shortId = (id: string | null | undefined): string =>
+  (id ?? "").slice(0, 8);
+
+// --- shared inline styles for the raw mono buttons -------------------------
+
+const BTN_PRIMARY: React.CSSProperties = {
+  height: 26,
+  padding: "0 11px",
+  fontSize: 10,
+  letterSpacing: "0.08em",
+  color: "var(--text-on-accent)",
+  background: "var(--accent)",
+  border: "1px solid var(--accent)",
+  borderRadius: 3,
+  cursor: "pointer",
+};
+
+const BTN_MUTED: React.CSSProperties = {
+  height: 26,
+  padding: "0 11px",
+  fontSize: 10,
+  letterSpacing: "0.08em",
+  color: "var(--text-muted)",
+  background: "transparent",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  cursor: "pointer",
+};
+
+const BTN_TITLEBAR: React.CSSProperties = {
+  height: 20,
+  padding: "0 8px",
+  fontSize: 9,
+  letterSpacing: "0.08em",
+  color: "var(--text-muted)",
+  background: "transparent",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 2,
+  cursor: "pointer",
+};
+
+const BTN_TITLEBAR_DANGER: React.CSSProperties = {
+  ...BTN_TITLEBAR,
+  color: "var(--accent)",
+  border: "1px solid color-mix(in srgb, var(--accent) 45%, transparent)",
+};
+
+// --- top-level viewer ------------------------------------------------------
+
 export function WriteUpViewer({ projectId }: { projectId: string }) {
   const { data: writeups, isLoading } = useProjectWriteups(projectId);
   const { data: investigations } = useProjectInvestigations(projectId);
@@ -48,7 +97,6 @@ export function WriteUpViewer({ projectId }: { projectId: string }) {
   const deleteWriteup = useDeleteWriteup(projectId);
 
   const [expanded, setExpanded] = useState<ExpandState>({});
-  const [filter, setFilter] = useState("");
 
   const invById = useMemo(() => {
     const m = new Map<string, InvestigationSummary>();
@@ -56,28 +104,6 @@ export function WriteUpViewer({ projectId }: { projectId: string }) {
     return m;
   }, [investigations]);
 
-  const items = useMemo(() => {
-    const arr = writeups ?? [];
-    if (!filter.trim()) return arr;
-    const q = filter.trim().toLowerCase();
-    return arr.filter((w) => {
-      const inv = w.investigation_id ? invById.get(w.investigation_id) : null;
-      return (
-        w.title.toLowerCase().includes(q) ||
-        (w.methodology || "").toLowerCase().includes(q) ||
-        (w.content_markdown || "").toLowerCase().includes(q) ||
-        (inv?.question || "").toLowerCase().includes(q)
-      );
-    });
-  }, [writeups, filter, invById]);
-
-  const allExpanded = items.length > 0 && items.every((w) => expanded[w.id]);
-  const expandAll = () => {
-    const next: ExpandState = {};
-    for (const w of items) next[w.id] = true;
-    setExpanded(next);
-  };
-  const collapseAll = () => setExpanded({});
   const toggle = (id: string) =>
     setExpanded((s) => ({ ...s, [id]: !s[id] }));
 
@@ -85,88 +111,78 @@ export function WriteUpViewer({ projectId }: { projectId: string }) {
 
   if (!writeups || writeups.length === 0) {
     return (
-      <WindowPanel title="write-ups" tone="muted" status="forensics ; no reports generated"><p className="text-sm text-text-muted text-center py-8">
-        No write-ups generated yet. Complete an investigation to generate a
-        professional report.
-      </p></WindowPanel>
+      <WindowPanel title="write-ups" tone="muted" status="forensics ; no reports generated">
+        <EmptyState
+          title="No write-ups yet"
+          description="Complete an investigation to generate a professional report."
+        />
+      </WindowPanel>
     );
   }
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2 justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-text-muted">
-            {items.length} of {writeups.length} write-up
-            {writeups.length === 1 ? "" : "s"}
-          </span>
-          <input
-            aria-label="Filter write-ups"
-            type="search"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="Filter by title, question, methodology, content…"
-            className="h-8 w-72 max-w-full rounded border border-border bg-background px-2 text-xs"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={allExpanded ? collapseAll : expandAll}
-            disabled={items.length === 0}
-          >
-            {allExpanded ? "Collapse all" : "Expand all"}
-          </Button>
-          <Button
-            size="sm"
-            onClick={() => downloadBundle.mutate()}
-            disabled={downloadBundle.isPending || writeups.length === 0}
-          >
-            {downloadBundle.isPending ? "Exporting…" : "Download all (.md)"}
-          </Button>
-        </div>
+      <div className="flex items-center justify-between" style={{ gap: 12 }}>
+        <span
+          className="font-mono uppercase"
+          style={{
+            fontSize: 12,
+            letterSpacing: "0.14em",
+            color: "var(--text-primary)",
+          }}
+        >
+          WRITEUPS ({writeups.length})
+        </span>
+        <button
+          type="button"
+          className="font-mono uppercase"
+          onClick={() => downloadBundle.mutate()}
+          disabled={downloadBundle.isPending || writeups.length === 0}
+          style={{
+            ...BTN_PRIMARY,
+            opacity: downloadBundle.isPending || writeups.length === 0 ? 0.55 : 1,
+          }}
+          aria-label="Download all write-ups as a bundle"
+        >
+          {downloadBundle.isPending ? "EXPORTING…" : "DOWNLOAD ALL (BUNDLE)"}
+        </button>
       </div>
 
-      {items.length === 0 ? (
-        <WindowPanel tone="muted" status="write-ups ; filter matched nothing"><p className="text-xs text-text-muted text-center py-6">
-          No write-ups match the current filter.
-        </p></WindowPanel>
-      ) : (
-        <div className="space-y-3">
-          {items.map((w) => {
-            const inv = w.investigation_id
-              ? invById.get(w.investigation_id)
-              : null;
-            const isOpen = !!expanded[w.id];
-            return (
-              <WriteUpCard
-                key={w.id}
-                writeup={w}
-                investigation={inv}
-                open={isOpen}
-                onToggle={() => toggle(w.id)}
-                onDownload={() =>
-                  downloadOne.mutate({
-                    writeupId: w.id,
-                    titleSlug: slug(w.title),
-                  })
-                }
-                downloading={downloadOne.isPending}
-                onDelete={() => deleteWriteup.mutate(w.id)}
-                deleting={
-                  deleteWriteup.isPending && deleteWriteup.variables === w.id
-                }
-              />
-            );
-          })}
-        </div>
-      )}
+      <div className="space-y-2">
+        {writeups.map((w) => {
+          const inv = w.investigation_id ? invById.get(w.investigation_id) : null;
+          const isOpen = !!expanded[w.id];
+          return (
+            <WriteUpCard
+              key={w.id}
+              projectId={projectId}
+              writeup={w}
+              investigation={inv}
+              open={isOpen}
+              onToggle={() => toggle(w.id)}
+              onDownload={() =>
+                downloadOne.mutate({
+                  writeupId: w.id,
+                  titleSlug: slug(w.title),
+                })
+              }
+              downloading={downloadOne.isPending}
+              onDelete={() => deleteWriteup.mutate(w.id)}
+              deleting={
+                deleteWriteup.isPending && deleteWriteup.variables === w.id
+              }
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }
 
+// --- per-writeup card ------------------------------------------------------
+
 function WriteUpCard({
+  projectId,
   writeup,
   investigation,
   open,
@@ -176,6 +192,7 @@ function WriteUpCard({
   onDelete,
   deleting,
 }: {
+  projectId: string;
   writeup: WriteUpItem;
   investigation: InvestigationSummary | null | undefined;
   open: boolean;
@@ -185,175 +202,237 @@ function WriteUpCard({
   onDelete: () => void;
   deleting: boolean;
 }) {
-  const [confirmDelete, setConfirmDelete] = useState(false);
   const preview = useMemo(() => {
     const stripped = (writeup.content_markdown || "")
       .replace(/^#{1,6}\s+/gm, "")
       .replace(/[*_`>]/g, "")
-      .replace(/\n{2,}/g, " · ")
+      .replace(/\n{2,}/g, " \u00b7 ")
       .replace(/\s+/g, " ")
       .trim();
     return truncate(stripped, 220);
   }, [writeup.content_markdown]);
 
+  const invShort = shortId(writeup.investigation_id);
+  const cardShort = shortId(writeup.id);
+  const title = writeup.title || `writeup ${cardShort}`;
+  const stampStr = stamp(writeup.created_at);
+  const status = `${stampStr}${stampStr && writeup.investigation_id ? " ; " : ""}${writeup.investigation_id ? `investigation ${invShort}` : ""}`;
+
+  const handleDelete = () => {
+    if (deleting) return;
+    if (window.confirm(`Delete write-up "${title}"?`)) {
+      onDelete();
+    }
+  };
+
   return (
-    <AilaCard  techBorder glow><div className="space-y-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1 min-w-0">
+    <WindowPanel
+      title={title}
+      tone="info"
+      status={status || undefined}
+      actions={
+        <div className="flex items-center" style={{ gap: 6 }}>
+          <button
+            type="button"
+            className="font-mono uppercase"
+            onClick={onDownload}
+            disabled={downloading}
+            style={{ ...BTN_TITLEBAR, opacity: downloading ? 0.55 : 1 }}
+            title="Download markdown"
+            aria-label="Download write-up as markdown"
+          >
+            {downloading ? "…" : "DOWNLOAD.MD"}
+          </button>
+          <button
+            type="button"
+            className="font-mono uppercase"
+            onClick={handleDelete}
+            disabled={deleting}
+            style={{ ...BTN_TITLEBAR_DANGER, opacity: deleting ? 0.55 : 1 }}
+            title={`Delete "${title}"`}
+            aria-label="Delete write-up"
+          >
+            {deleting ? "…" : "DELETE"}
+          </button>
+        </div>
+      }
+    >
+      <div className="space-y-2">
+        <div className="flex items-start justify-between" style={{ gap: 10 }}>
+          <div className="min-w-0 flex-1">
+            {investigation && writeup.investigation_id ? (
+              <div
+                className="flex items-center flex-wrap"
+                style={{ gap: 8, fontSize: 10 }}
+              >
+                <MonoBadge tone="info">INV</MonoBadge>
+                <Link
+                  to={`/forensics/projects/${projectId}/investigations/${writeup.investigation_id}`}
+                  className="font-mono"
+                  style={{
+                    color: "var(--accent)",
+                    textDecoration: "underline",
+                    textUnderlineOffset: 2,
+                    textDecorationStyle: "dotted",
+                  }}
+                  title={investigation.question}
+                >
+                  {truncate(investigation.question, 90)}
+                </Link>
+                <span
+                  className="font-mono"
+                  style={{ color: "var(--text-faint)" }}
+                >
+                  {invShort}
+                </span>
+              </div>
+            ) : writeup.investigation_id ? (
+              <div
+                className="flex items-center flex-wrap"
+                style={{ gap: 8, fontSize: 10 }}
+              >
+                <MonoBadge tone="info">INV</MonoBadge>
+                <Link
+                  to={`/forensics/projects/${projectId}/investigations/${writeup.investigation_id}`}
+                  className="font-mono"
+                  style={{
+                    color: "var(--accent)",
+                    textDecoration: "underline",
+                    textUnderlineOffset: 2,
+                    textDecorationStyle: "dotted",
+                  }}
+                >
+                  {invShort}
+                </Link>
+                <span
+                  className="font-mono"
+                  style={{ color: "var(--text-faint)", fontStyle: "italic" }}
+                >
+                  (investigation not on record)
+                </span>
+              </div>
+            ) : (
+              <span
+                className="font-mono"
+                style={{ fontSize: 10, color: "var(--text-faint)", fontStyle: "italic" }}
+              >
+                project-wide write-up (no single investigation)
+              </span>
+            )}
+            {writeup.artifacts_referenced.length > 0 && (
+              <div
+                className="font-mono"
+                style={{ marginTop: 4, fontSize: 10, color: "var(--text-muted)" }}
+              >
+                {writeup.artifacts_referenced.length} artifact ref
+                {writeup.artifacts_referenced.length === 1 ? "" : "s"}
+              </div>
+            )}
+          </div>
           <button
             type="button"
             onClick={onToggle}
-            className="group flex items-start gap-2 text-left w-full"
             aria-expanded={open}
+            className="font-mono uppercase inline-flex items-center shrink-0"
+            style={{ ...BTN_TITLEBAR, gap: 6 }}
           >
-            <span
-              className={`mt-1 text-text-muted transition-transform ${
-                open ? "rotate-90" : ""
-              }`}
-              aria-hidden
-            >
-              ▶
-            </span>
-            <div className="flex-1 min-w-0">
-              <h3 className="text-sm font-semibold text-foreground group-hover:underline decoration-dotted underline-offset-2">
-                {writeup.title}
-              </h3>
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1">
-                {investigation ? (
-                  <span className="inline-flex items-center gap-1.5 text-2xs text-text-muted">
-                    <AilaBadge severity="info" size="sm">
-                      I
-                    </AilaBadge>
-                    <span className="truncate" title={investigation.question}>
-                      {truncate(investigation.question, 90)}
-                    </span>
-                    <span className="font-mono opacity-70">
-                      {investigation.id.slice(0, 8)}
-                    </span>
-                  </span>
-                ) : writeup.investigation_id ? (
-                  <span className="inline-flex items-center gap-1 text-2xs text-text-muted">
-                    <AilaBadge severity="info" size="sm">
-                      I
-                    </AilaBadge>
-                    <span className="font-mono">
-                      {writeup.investigation_id.slice(0, 8)}
-                    </span>
-                    <span className="italic opacity-70">
-                      (investigation not on record)
-                    </span>
-                  </span>
-                ) : (
-                  <span className="text-2xs text-text-muted italic">
-                    Project-wide write-up (no single investigation)
-                  </span>
-                )}
-                {writeup.created_at && (
-                  <span className="text-2xs text-text-muted">
-                    {stamp(writeup.created_at)}
-                  </span>
-                )}
-                {writeup.artifacts_referenced.length > 0 && (
-                  <span className="text-2xs text-text-muted">
-                    {writeup.artifacts_referenced.length} artifact ref
-                    {writeup.artifacts_referenced.length === 1 ? "" : "s"}
-                  </span>
-                )}
-              </div>
-              {!open && preview && (
-                <p className="text-xs text-text-muted mt-1.5 line-clamp-2">
-                  {preview}
-                </p>
-              )}
-            </div>
+            <PixelIcon name={open ? "down" : "arrow"} size={10} />
+            {open ? "collapse" : "expand"}
           </button>
         </div>
-        <div className="flex shrink-0 items-center gap-2 relative">
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={onDownload}
-            disabled={downloading}
-          >
-            {downloading ? "…" : ".md"}
-          </Button>
-          {confirmDelete ? (
-            <div className="flex items-center gap-1">
-              <span className="text-2xs text-text-muted">Delete?</span>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => setConfirmDelete(false)}
-                disabled={deleting}
-              >
-                No
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => {
-                  setConfirmDelete(false);
-                  onDelete();
+
+        {open ? (
+          <>
+            {writeup.methodology && (
+              <div
+                style={{
+                  padding: "8px 10px",
+                  background: "var(--surface-sunk)",
+                  border: "1px solid var(--border-faint)",
+                  borderRadius: 3,
                 }}
-                disabled={deleting}
-                className="bg-critical text-badge-text hover:brightness-110"
               >
-                {deleting ? "…" : "Yes"}
-              </Button>
-            </div>
-          ) : (
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => setConfirmDelete(true)}
-              disabled={deleting}
-              title={`Delete "${writeup.title}"`}
-              aria-label="Delete write-up"
-            >
-              {deleting ? "…" : <PixelIcon name="close" size={12} />}
-            </Button>
-          )}
-        </div>
-      </div>
-    
-      {open && (
-        <div className="space-y-3 pl-5 border-l-2 border-border/60">
-          {writeup.methodology && (
-            <div className="rounded-md bg-elevated px-3 py-2">
-              <h4 className="text-2xs font-medium text-text-muted uppercase tracking-wide mb-1">
-                Methodology
-              </h4>
-              <p className="text-xs text-foreground whitespace-pre-wrap">
-                {writeup.methodology}
-              </p>
-            </div>
-          )}
-    
-          <div
-            className="prose prose-sm max-w-none text-sm text-foreground writeup-md [&_h1]:text-foreground [&_h2]:text-foreground [&_h3]:text-foreground [&_h4]:text-foreground [&_strong]:text-foreground [&_code]:text-foreground [&_a]:text-accent"
-            dangerouslySetInnerHTML={{
-              __html: renderMarkdown(writeup.content_markdown || ""),
-            }}
-          />
-    
-          {writeup.artifacts_referenced.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1 pt-2 border-t border-border/60">
-              <span className="text-2xs text-text-muted mr-1">
-                Referenced artifacts:
-              </span>
-              {writeup.artifacts_referenced.map((id) => (
-                <span
-                  key={id}
-                  className="px-1.5 py-0.5 text-2xs bg-elevated rounded font-mono text-text-muted"
-                  title={id}
+                <div
+                  className="font-mono uppercase"
+                  style={{
+                    fontSize: 9,
+                    letterSpacing: "0.12em",
+                    color: "var(--text-faint)",
+                    marginBottom: 3,
+                  }}
                 >
-                  {id.slice(0, 8)}
+                  Methodology
+                </div>
+                <p
+                  className="whitespace-pre-wrap"
+                  style={{ fontSize: 12, color: "var(--text-primary)" }}
+                >
+                  {writeup.methodology}
+                </p>
+              </div>
+            )}
+
+            <div
+              className="prose-mock font-mono"
+              style={{
+                fontSize: 12,
+                lineHeight: 1.6,
+                color: "var(--text-primary)",
+              }}
+              dangerouslySetInnerHTML={{
+                __html: renderMarkdown(writeup.content_markdown || ""),
+              }}
+            />
+
+            {writeup.artifacts_referenced.length > 0 && (
+              <div
+                className="flex items-center flex-wrap"
+                style={{
+                  gap: 6,
+                  paddingTop: 8,
+                  borderTop: "1px solid var(--border-faint)",
+                }}
+              >
+                <span
+                  className="font-mono uppercase"
+                  style={{
+                    fontSize: 9,
+                    letterSpacing: "0.12em",
+                    color: "var(--text-faint)",
+                  }}
+                >
+                  referenced artifacts:
                 </span>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-    </div></AilaCard>
+                {writeup.artifacts_referenced.map((id) => (
+                  <span
+                    key={id}
+                    className="font-mono"
+                    style={{
+                      padding: "1px 6px",
+                      fontSize: 10,
+                      color: "var(--text-muted)",
+                      background: "var(--surface-sunk)",
+                      border: "1px solid var(--border-faint)",
+                      borderRadius: 2,
+                    }}
+                    title={id}
+                  >
+                    {shortId(id)}
+                  </span>
+                ))}
+              </div>
+            )}
+          </>
+        ) : preview ? (
+          <p
+            className="font-mono line-clamp-2"
+            style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.5 }}
+          >
+            {preview}
+          </p>
+        ) : null}
+      </div>
+    </WindowPanel>
   );
 }
 
@@ -378,7 +457,7 @@ function renderMarkdown(md: string): string {
     (_, _lang, body) => {
       const idx = codeBlocks.length;
       codeBlocks.push(
-        `<pre class="px-3 py-2 bg-elevated rounded-md overflow-x-auto text-xs font-mono my-2"><code>${body}</code></pre>`,
+        `<pre style="padding:8px 10px;background:var(--surface-sunk);border:1px solid var(--border-faint);border-radius:3px;overflow-x:auto;font-size:11px;font-family:var(--font-mono);margin:8px 0;"><code>${body}</code></pre>`,
       );
       return `\u0000CODEBLOCK_${idx}\u0000`;
     },
@@ -398,11 +477,13 @@ function renderMarkdown(md: string): string {
       const level = heading[1].length;
       const size =
         level === 1
-          ? "text-xl font-bold mt-5 mb-2"
+          ? "font-size:18px;font-weight:600;margin:14px 0 6px;"
           : level === 2
-            ? "text-lg font-semibold mt-4 mb-2"
-            : "text-base font-semibold mt-3 mb-1";
-      rendered.push(`<h${level} class="${size}">${inline(heading[2])}</h${level}>`);
+            ? "font-size:15px;font-weight:600;margin:12px 0 5px;"
+            : "font-size:13px;font-weight:600;margin:10px 0 4px;";
+      rendered.push(
+        `<h${level} style="${size}color:var(--text-primary);">${inline(heading[2])}</h${level}>`,
+      );
       continue;
     }
 
@@ -413,7 +494,7 @@ function renderMarkdown(md: string): string {
         .map((l) => `<li>${inline(l.replace(/^[-*]\s+/, ""))}</li>`)
         .join("");
       rendered.push(
-        `<ul class="list-disc ml-5 space-y-0.5 my-2">${items}</ul>`,
+        `<ul style="list-style:disc;margin:6px 0 6px 20px;">${items}</ul>`,
       );
       continue;
     }
@@ -424,7 +505,7 @@ function renderMarkdown(md: string): string {
         .map((l) => `<li>${inline(l.replace(/^\d+\.\s+/, ""))}</li>`)
         .join("");
       rendered.push(
-        `<ol class="list-decimal ml-5 space-y-0.5 my-2">${items}</ol>`,
+        `<ol style="list-style:decimal;margin:6px 0 6px 20px;">${items}</ol>`,
       );
       continue;
     }
@@ -435,20 +516,24 @@ function renderMarkdown(md: string): string {
         .map((l) => inline(l.replace(/^&gt;\s?/, "")))
         .join("<br />");
       rendered.push(
-        `<blockquote class="border-l-4 border-border pl-3 text-text-muted italic my-2">${inner}</blockquote>`,
+        `<blockquote style="border-left:3px solid var(--border-soft);padding-left:10px;color:var(--text-muted);font-style:italic;margin:8px 0;">${inner}</blockquote>`,
       );
       continue;
     }
 
     // Horizontal rule
     if (/^---+$/.test(block.trim())) {
-      rendered.push(`<hr class="my-3 border-border" />`);
+      rendered.push(
+        `<hr style="margin:12px 0;border:0;border-top:1px solid var(--border-faint);" />`,
+      );
       continue;
     }
 
     // Paragraph -- keep internal single newlines as <br />
     const paragraph = block.split("\n").map(inline).join("<br />");
-    rendered.push(`<p class="my-1.5 leading-relaxed">${paragraph}</p>`);
+    rendered.push(
+      `<p style="margin:6px 0;line-height:1.6;">${paragraph}</p>`,
+    );
   }
 
   let html = rendered.join("\n");
@@ -479,13 +564,13 @@ function inline(text: string): string {
   return text
     .replace(
       /`([^`]+)`/g,
-      '<code class="px-1 py-0.5 bg-elevated rounded text-2xs font-mono">$1</code>',
+      '<code style="padding:1px 5px;background:var(--surface-sunk);border:1px solid var(--border-faint);border-radius:2px;font-size:10px;font-family:var(--font-mono);">$1</code>',
     )
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>")
     .replace(
       /\[([^\]]+)\]\(([^)]+)\)/g,
       (_m, label, url) =>
-        `<a href="${safeHref(url)}" class="underline decoration-dotted" target="_blank" rel="noopener noreferrer">${label}</a>`,
+        `<a href="${safeHref(url)}" style="color:var(--accent);text-decoration:underline;text-underline-offset:2px;text-decoration-style:dotted;" target="_blank" rel="noopener noreferrer">${label}</a>`,
     );
 }

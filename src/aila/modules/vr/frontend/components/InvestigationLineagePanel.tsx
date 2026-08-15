@@ -24,8 +24,8 @@ import {
 import "@xyflow/react/dist/style.css";
 import { ArrowsOutLineVertical } from "@phosphor-icons/react/dist/csr/ArrowsOutLineVertical";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
 import { WindowPanel } from "@/components/aila/WindowPanel";
+import { MonoBadge } from "@/components/aila/mock";
 
 import { useInvestigation, useInvestigations } from "../queries";
 import type {
@@ -35,25 +35,36 @@ import type {
 } from "../types";
 
 // ─── Palette ────────────────────────────────────────────────────────────
-// Match InvestigationDetailPage's STATUS_META intent -- lifecycle hue,
-// not danger ramp -- but keep the local subset small (parent/self/child).
+// Match the mock-token status meta from vr-persona-contract.md: lifecycle
+// hue, not a danger ramp. running→status-info, completed→status-ok,
+// paused→status-warn, failed→accent, abandoned→text-faint,
+// stalled→status-info, created→text-muted.
 const STATUS_FILL: Record<string, string> = {
-  running: "var(--color-medium)",
-  completed: "var(--color-mint)",
-  paused: "var(--color-amber)",
-  failed: "var(--color-accent)",
-  abandoned: "var(--color-text-faint)",
-  stalled: "var(--color-lavender)",
-  created: "var(--color-text-muted)",
+  running: "var(--status-info)",
+  completed: "var(--status-ok)",
+  paused: "var(--status-warn)",
+  failed: "var(--accent)",
+  abandoned: "var(--text-faint)",
+  stalled: "var(--status-info)",
+  created: "var(--text-muted)",
 };
 const STATUS_BORDER: Record<string, string> = {
-  running: "color-mix(in srgb, var(--color-medium) 68%, var(--surface-sunk))",
-  completed: "color-mix(in srgb, var(--color-mint) 68%, var(--surface-sunk))",
-  paused: "color-mix(in srgb, var(--color-amber) 68%, var(--surface-sunk))",
-  failed: "var(--color-accent-deep)",
-  abandoned: "color-mix(in srgb, var(--color-text-faint) 78%, var(--surface-sunk))",
-  stalled: "color-mix(in srgb, var(--color-lavender) 68%, var(--surface-sunk))",
-  created: "color-mix(in srgb, var(--color-text-muted) 60%, var(--surface-sunk))",
+  running: "var(--status-info)",
+  completed: "var(--status-ok)",
+  paused: "var(--status-warn)",
+  failed: "var(--accent)",
+  abandoned: "var(--text-faint)",
+  stalled: "var(--status-info)",
+  created: "var(--text-muted)",
+};
+const STATUS_TEXT: Record<string, string> = {
+  running: "var(--text-on-accent)",
+  completed: "var(--text-on-accent)",
+  paused: "var(--text-on-accent)",
+  failed: "var(--text-on-accent)",
+  abandoned: "var(--text-primary)",
+  stalled: "var(--text-on-accent)",
+  created: "var(--text-primary)",
 };
 
 const KIND_LABEL: Record<InvestigationKind, string> = {
@@ -77,14 +88,18 @@ interface NodeInput {
 
 function nodeStyle(role: "parent" | "self" | "child", status?: string | null) {
   const hasStatus = Boolean(status && STATUS_FILL[status]);
-  const fill = hasStatus ? STATUS_FILL[status as string] : "var(--color-elevated)";
-  const border = hasStatus ? STATUS_BORDER[status as string] : "var(--color-border-bright)";
-  const text = hasStatus ? "var(--text-on-accent)" : "var(--color-text)";
+  const fill = hasStatus
+    ? `color-mix(in srgb, ${STATUS_FILL[status as string]} 22%, var(--surface-sunk))`
+    : "var(--surface-sunk)";
+  const border = hasStatus ? STATUS_BORDER[status as string] : "var(--border-soft)";
+  const text = hasStatus ? STATUS_TEXT[status as string] : "var(--text-primary)";
   return {
     background: fill,
     color: text,
-    border: `${role === "self" ? 3 : 2}px solid ${role === "self" ? "var(--color-accent)" : border}`,
-    borderRadius: 4,
+    border: `${role === "self" ? 2 : 1}px solid ${
+      role === "self" ? "var(--accent)" : border
+    }`,
+    borderRadius: 3,
     width: 260,
     padding: 8,
   };
@@ -110,8 +125,6 @@ function buildLineageGraph(
     });
   });
 
-  // Vertically centre parent relative to the child column so a single
-  // parent doesn't stick to the top.
   const childCount = children.length;
   const centerY = childCount > 1 ? ((childCount - 1) * ROW_Y_GAP) / 2 : 0;
 
@@ -127,15 +140,26 @@ function buildLineageGraph(
         label: (
           <Link
             to={`/vr/investigations/${c.inv.id}`}
-            className="no-theme-link block text-left no-underline focus:outline focus:outline-2"
-            style={{ color: "inherit" }}
+            className="no-theme-link"
+            style={{
+              display: "block",
+              textAlign: "left",
+              textDecoration: "none",
+              color: "inherit",
+            }}
             aria-label={`Open ${c.role === "self" ? "current" : c.role} investigation: ${full.title ?? c.inv.id}`}
-            // Prevent xyflow from swallowing the click when the label
-            // sits inside a "default" node.
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ fontSize: 11, opacity: 0.85, fontFamily: "monospace" }}>
-              {c.role.toUpperCase()}
+            <div
+              style={{
+                fontSize: 9,
+                textTransform: "uppercase",
+                letterSpacing: "0.12em",
+                fontFamily: "var(--font-mono)",
+                opacity: 0.85,
+              }}
+            >
+              {c.role}
               {full.kind ? ` · ${KIND_LABEL[full.kind]}` : ""}
             </div>
             <div
@@ -146,11 +170,20 @@ function buildLineageGraph(
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
+                fontFamily: "var(--font-mono)",
               }}
             >
               {full.title ?? c.inv.id}
             </div>
-            <div style={{ fontSize: 10, opacity: 0.8, marginTop: 2 }}>
+            <div
+              style={{
+                fontSize: 9.5,
+                opacity: 0.85,
+                marginTop: 3,
+                fontFamily: "var(--font-mono)",
+                letterSpacing: "0.06em",
+              }}
+            >
               {full.status ?? "unknown"}
               {typeof full.branch_count === "number"
                 ? ` · ${full.branch_count} br`
@@ -176,8 +209,12 @@ function buildLineageGraph(
       target: self.id,
       type: "smoothstep",
       label: "spawned",
-      labelStyle: { fontSize: 10, fill: "var(--color-text-muted)" },
-      style: { stroke: "var(--color-border-bright)", strokeWidth: 1.5 },
+      labelStyle: {
+        fontSize: 9,
+        fill: "var(--text-muted)",
+        fontFamily: "var(--font-mono)",
+      },
+      style: { stroke: "var(--border-soft)", strokeWidth: 1.25 },
     });
   }
   for (const c of children) {
@@ -187,8 +224,12 @@ function buildLineageGraph(
       target: c.id,
       type: "smoothstep",
       label: c.kind === "variant_hunt" ? "variant hunt" : "spawned",
-      labelStyle: { fontSize: 10, fill: "var(--color-text-muted)" },
-      style: { stroke: "var(--color-border-bright)", strokeWidth: 1.5 },
+      labelStyle: {
+        fontSize: 9,
+        fill: "var(--text-muted)",
+        fontFamily: "var(--font-mono)",
+      },
+      style: { stroke: "var(--border-soft)", strokeWidth: 1.25 },
     });
   }
   return { nodes, edges };
@@ -237,50 +278,69 @@ export function InvestigationLineagePanel({
   return (
     <WindowPanel
       title="lineage"
-      tone="info"
+      tone="muted"
       actions={
-        <div className="flex items-center gap-2">
-          {hasParent && (
-            <AilaBadge severity="info" size="sm">
-              parent
-            </AilaBadge>
-          )}
+        <div className="flex items-center" style={{ gap: 6 }}>
+          {hasParent && <MonoBadge tone="info">parent</MonoBadge>}
           {hasChildren && (
-            <AilaBadge severity="low" size="sm">
+            <MonoBadge tone="ok">
               {children.length} child{children.length === 1 ? "" : "ren"}
-            </AilaBadge>
+            </MonoBadge>
           )}
-          <span className="inline-flex items-center gap-1 text-3xs font-mono text-text-muted">
-            <ArrowsOutLineVertical weight="regular" size={11} />
+          <span
+            className="inline-flex items-center font-mono"
+            style={{
+              gap: 4,
+              fontSize: 9,
+              color: "var(--text-faint)",
+              letterSpacing: "0.06em",
+            }}
+          >
+            <ArrowsOutLineVertical weight="regular" size={10} />
             click any node to open
           </span>
         </div>
       }
     >
       <h2 className="sr-only">Lineage</h2>
-      <p className="text-3xs text-text-muted mb-2 font-mono">
-        Derived from parent_investigation_id + reverse lookup. Each node
-        deep-links to that investigation's detail page.
-        {parentLoading ? " Resolving parent…" : ""}
-      </p>
-      <div
-        style={{ width: "100%", height: Math.max(260, children.length * 96 + 120) }}
-      >
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          fitView
-          fitViewOptions={{ padding: 0.2 }}
-          nodesDraggable={false}
-          nodesConnectable={false}
-          elementsSelectable
-          panOnDrag
-          proOptions={{ hideAttribution: true }}
-          aria-label="Investigation lineage graph"
+      <div style={{ padding: 10 }}>
+        <p
+          className="font-mono"
+          style={{
+            marginBottom: 8,
+            fontSize: 9.5,
+            color: "var(--text-faint)",
+            letterSpacing: "0.05em",
+          }}
         >
-          <Background gap={20} size={1} color="var(--color-border)" />
-          <Controls showInteractive={false} />
-        </ReactFlow>
+          derived from parent_investigation_id + reverse lookup. each node
+          deep-links to that investigation's detail page.
+          {parentLoading ? " resolving parent…" : ""}
+        </p>
+        <div
+          style={{
+            width: "100%",
+            height: Math.max(260, children.length * 96 + 120),
+            border: "1px solid var(--border-soft)",
+            background: "var(--surface-sunk)",
+          }}
+        >
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            fitView
+            fitViewOptions={{ padding: 0.2 }}
+            nodesDraggable={false}
+            nodesConnectable={false}
+            elementsSelectable
+            panOnDrag
+            proOptions={{ hideAttribution: true }}
+            aria-label="Investigation lineage graph"
+          >
+            <Background gap={20} size={1} color="var(--border-faint)" />
+            <Controls showInteractive={false} />
+          </ReactFlow>
+        </div>
       </div>
       {/* Flat text fallback for screen readers -- xyflow nodes aren't in
           the natural tab order, so we expose the same relationships as a

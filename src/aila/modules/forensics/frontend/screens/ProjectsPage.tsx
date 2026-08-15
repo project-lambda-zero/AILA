@@ -4,10 +4,10 @@ import { useNavigate } from "react-router";
 import { Folder } from "@phosphor-icons/react/dist/csr/Folder";
 import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { WindowPanel } from "@/components/aila/WindowPanel";
+import { PixelIcon } from "@/components/aila/PixelIcon";
+import { SectionHeader, MonoBadge } from "@/components/aila/mock";
 
 import { ProjectCardSkeletonGrid } from "../components/skeletons";
 import { useForensicsProjects } from "../queries";
@@ -18,6 +18,13 @@ import { useForensicsListLive } from "../useLiveInvalidation";
 import { SavedViews } from "../components/SavedViews";
 
 const PROJECTS_LIST_KEY = ["forensics", "projects"] as const;
+
+// Sort keys align with ProjectSummary fields the operator can reasonably rank
+// by from the grid. Server currently exposes only page + page_size (no `query`
+// / `sort` params), so ordering and free-text filtering are applied client-side
+// over the currently loaded page. When the backend grows a search param, wire
+// it into the query hook and this dropdown stays in place.
+type ProjectSortKey = "name" | "status" | "evidence_count" | "investigation_count" | "created_at";
 
 // Serialized shape stored in SavedFilterRecord.filter_json for the
 // projects grid. Additive only -- when new controls appear, extend
@@ -37,13 +44,6 @@ const PROJECT_SORT_KEYS: readonly ProjectSortKey[] = [
   "created_at",
 ];
 
-// Sort keys align with ProjectSummary fields the operator can reasonably rank
-// by from the grid. Server currently exposes only page + page_size (no `query`
-// / `sort` params), so ordering and free-text filtering are applied client-side
-// over the currently loaded page. When the backend grows a search param, wire
-// it into the query hook and this dropdown stays in place.
-type ProjectSortKey = "name" | "status" | "evidence_count" | "investigation_count" | "created_at";
-
 const PROJECT_SORT_OPTIONS: readonly { key: ProjectSortKey; label: string }[] = [
   { key: "name", label: "Name" },
   { key: "status", label: "Status" },
@@ -52,13 +52,101 @@ const PROJECT_SORT_OPTIONS: readonly { key: ProjectSortKey; label: string }[] = 
   { key: "created_at", label: "Created" },
 ];
 
-const statusColor: Record<string, "info" | "low" | "medium" | "high" | "critical"> = {
-  created: "info",
-  ready: "low",
-  analyzing: "medium",
-  completed: "low",
-  failed: "critical",
+// Status tone -> mock badge tone. Keeps the earlier statusColor semantics but
+// speaks the mock's semantic vocabulary (info/low/medium/critical/warn).
+function statusTone(status: string): "info" | "low" | "medium" | "high" | "critical" | "muted" {
+  switch (status) {
+    case "created":
+    case "queued":
+    case "pending":
+      return "info";
+    case "ready":
+    case "completed":
+      return "low";
+    case "analyzing":
+    case "running":
+      return "medium";
+    case "exhausted":
+    case "cancelled":
+      return "high";
+    case "failed":
+      return "critical";
+    default:
+      return "muted";
+  }
+}
+
+// Reusable inline styles for the raw controls -- mock language, not shadcn.
+const INPUT_STYLE: React.CSSProperties = {
+  height: 28,
+  padding: "0 10px",
+  fontSize: 11,
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  color: "var(--text-primary)",
+  borderRadius: 3,
+  minWidth: 220,
 };
+
+const SELECT_STYLE: React.CSSProperties = {
+  height: 28,
+  padding: "0 8px",
+  fontSize: 10,
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  color: "var(--text-primary)",
+  borderRadius: 3,
+};
+
+const DIR_BUTTON_STYLE: React.CSSProperties = {
+  height: 28,
+  padding: "0 10px",
+  fontSize: 10,
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  color: "var(--text-muted)",
+  borderRadius: 3,
+  cursor: "pointer",
+  letterSpacing: "0.08em",
+};
+
+const ACCENT_BUTTON_STYLE: React.CSSProperties = {
+  height: 28,
+  padding: "0 12px",
+  fontSize: 10,
+  letterSpacing: "0.08em",
+  color: "var(--text-on-accent)",
+  background: "var(--accent)",
+  border: "1px solid var(--accent)",
+  borderRadius: 3,
+  cursor: "pointer",
+  boxShadow: "var(--bevel-key)",
+};
+
+const MUTED_BUTTON_STYLE: React.CSSProperties = {
+  height: 28,
+  padding: "0 12px",
+  fontSize: 10,
+  letterSpacing: "0.08em",
+  color: "var(--text-muted)",
+  background: "transparent",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  cursor: "pointer",
+};
+
+function NewProjectButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="font-mono uppercase"
+      style={ACCENT_BUTTON_STYLE}
+    >
+      + new project
+    </button>
+  );
+}
 
 function ProjectCard({
   project,
@@ -69,8 +157,13 @@ function ProjectCard({
   onClick: () => void;
   onDelete: (e: React.MouseEvent) => void;
 }) {
+  const [hover, setHover] = useState(false);
+  const [focus, setFocus] = useState(false);
   return (
-    <AilaCard
+    <WindowPanel
+      title={project.name.toLowerCase()}
+      tone={statusTone(project.status) === "critical" ? "warn" : "accent"}
+      status={`machine ; ${project.system_name ?? "unknown"}`}
       onClick={onClick}
       onKeyDown={(e: React.KeyboardEvent<HTMLDivElement>) => {
         if (e.defaultPrevented) return;
@@ -84,51 +177,82 @@ function ProjectCard({
           onClick();
         }
       }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      onFocus={() => setFocus(true)}
+      onBlur={() => setFocus(false)}
       role="button"
       tabIndex={0}
       aria-label={`Open forensics project ${project.name}`}
       data-power-row="project"
-      className="cursor-pointer hover:ring-1 hover:ring-accent transition-shadow relative group focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2"
-      techBorder
-      glow
-    ><div className="space-y-2">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="text-base font-semibold font-mono text-foreground truncate">{project.name}</h2>
-        <div className="flex items-center gap-2">
-          <AilaBadge severity={statusColor[project.status] ?? "info"} size="sm">
-            {project.status}
-          </AilaBadge>
+      className="cursor-pointer"
+      style={{
+        boxShadow: hover ? "0 0 0 1px var(--accent)" : undefined,
+        outline: focus ? "2px solid var(--accent)" : undefined,
+        outlineOffset: focus ? -2 : undefined,
+      }}
+    >
+      <div className="space-y-2 relative">
+        <div className="flex items-center justify-between gap-2">
+          <MonoBadge tone={statusTone(project.status)}>{project.status}</MonoBadge>
+        </div>
+        {project.description && (
+          <p
+            className="font-mono line-clamp-2"
+            style={{ fontSize: 11, color: "var(--text-muted)" }}
+          >
+            {project.description}
+          </p>
+        )}
+        <div
+          className="font-mono"
+          style={{ fontSize: 10, color: "var(--text-muted)", lineHeight: 1.6 }}
+        >
+          <div>
+            evidence <span style={{ color: "var(--text-primary)" }}>{project.evidence_count}</span>
+          </div>
+          <div>
+            artifacts <span style={{ color: "var(--text-primary)" }}>{project.artifact_count}</span>
+          </div>
+          <div>
+            leads <span style={{ color: "var(--text-primary)" }}>{project.lead_count}</span>
+          </div>
+          <div>
+            investigations{" "}
+            <span style={{ color: "var(--text-primary)" }}>{project.investigation_count}</span>
+          </div>
+        </div>
+        <div
+          className="font-mono flex items-center justify-between"
+          style={{ fontSize: 9.5, color: "var(--text-faint)", letterSpacing: "0.06em" }}
+        >
+          <span>
+            {project.created_at
+              ? new Date(project.created_at).toLocaleDateString()
+              : "\u2014"}
+          </span>
           <button
             type="button"
             onClick={onDelete}
             title="Delete project"
-            className="p-1 rounded-[2px] text-muted-foreground hover:text-critical hover:bg-critical/15 transition-colors"
+            aria-label={`Delete project ${project.name}`}
+            className="font-mono uppercase"
+            style={{
+              padding: "2px 6px",
+              fontSize: 9,
+              letterSpacing: "0.08em",
+              color: "var(--text-faint)",
+              background: "transparent",
+              border: "1px solid var(--border-faint)",
+              borderRadius: 2,
+              cursor: "pointer",
+            }}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="3 6 5 6 21 6" />
-              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-              <path d="M10 11v6M14 11v6" />
-              <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-            </svg>
+            del
           </button>
         </div>
       </div>
-      {project.description && (
-        <p className="text-sm text-text-muted line-clamp-2">{project.description}</p>
-      )}
-      <div className="flex flex-wrap gap-x-3 gap-y-1 font-mono text-xs text-text-muted">
-        <span><span className="text-foreground">{project.evidence_count}</span> evidence</span>
-        <span><span className="text-foreground">{project.artifact_count}</span> artifacts</span>
-        <span><span className="text-foreground">{project.lead_count}</span> leads</span>
-        <span><span className="text-foreground">{project.investigation_count}</span> investigations</span>
-      </div>
-      <div className="flex items-center justify-between font-mono text-xs" style={{ color: "var(--color-text-faint)" }}>
-        {project.system_name && <span>machine ; {project.system_name}</span>}
-        {project.created_at && (
-          <span>{new Date(project.created_at).toLocaleDateString()}</span>
-        )}
-      </div>
-    </div></AilaCard>
+    </WindowPanel>
   );
 }
 
@@ -144,7 +268,7 @@ function ConfirmDeleteDialog({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: "color-mix(in srgb, var(--surface-sunk) 60%, transparent)" }}
+      style={{ background: "color-mix(in srgb, var(--surface-sunk) 65%, transparent)" }}
       role="button"
       tabIndex={0}
       aria-label="Close delete confirmation"
@@ -163,23 +287,31 @@ function ConfirmDeleteDialog({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="space-y-4">
-          <p className="text-sm text-text-muted">
-            Delete <span className="text-foreground font-medium">"{projectName}"</span>? This will permanently remove all evidence records, artifacts, leads, investigations, and write-ups.
+          <p
+            className="font-mono"
+            style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.55 }}
+          >
+            delete{" "}
+            <span style={{ color: "var(--text-primary)" }}>&quot;{projectName}&quot;</span>? this
+            will permanently remove all evidence records, artifacts, leads, investigations, and
+            write-ups.
           </p>
           <div className="flex justify-end gap-3">
             <button
               type="button"
               onClick={onCancel}
-              className="px-3 py-1.5 font-mono text-xs uppercase tracking-wider rounded-[3px] border border-border text-text-muted hover:text-foreground hover:border-border-hover transition-colors"
+              className="font-mono uppercase"
+              style={MUTED_BUTTON_STYLE}
             >
-              Cancel
+              cancel
             </button>
             <button
               type="button"
               onClick={onConfirm}
-              className="px-3 py-1.5 font-mono text-xs uppercase tracking-wider rounded-[3px] bg-critical text-badge-text hover:brightness-110 transition-[filter]"
+              className="font-mono uppercase"
+              style={ACCENT_BUTTON_STYLE}
             >
-              Delete
+              delete
             </button>
           </div>
         </div>
@@ -279,62 +411,68 @@ export function ProjectsPage() {
         />
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search projects..."
-            aria-label="Search projects by name, description, or machine"
-            data-testid="forensics-projects-search"
-            className="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-foreground placeholder:text-text-muted focus:outline-none focus:border-accent min-w-[220px]"
-          />
-          <label className="flex items-center gap-1.5 text-xs text-text-muted">
-            <span className="font-mono uppercase tracking-wider">Sort</span>
-            <select
-              value={sortKey}
-              onChange={(e) => setSortKey(e.target.value as ProjectSortKey)}
-              aria-label="Sort projects by"
-              data-testid="forensics-projects-sort-key"
-              className="px-2 py-1 text-xs rounded-md border border-border bg-surface text-foreground focus:outline-none focus:border-accent"
-            >
-              {PROJECT_SORT_OPTIONS.map((opt) => (
-                <option key={opt.key} value={opt.key}>{opt.label}</option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
-              aria-label={`Sort direction, currently ${sortDir === "asc" ? "ascending" : "descending"}`}
-              data-testid="forensics-projects-sort-dir"
-              className="px-2 py-1 text-xs rounded-md border border-border bg-surface text-foreground hover:border-accent focus:outline-none focus:border-accent"
-            >
-              {sortDir === "asc" ? "↑" : "↓"}
-            </button>
-          </label>
-          <SavedViews<ProjectsViewState>
-            entityType="forensics_project"
-            currentState={savedViewState}
-            onApply={applySavedView}
-            testIdPrefix="forensics-projects-views"
-          />
-        </div>
+      <SectionHeader
+        icon={<PixelIcon name="folder" />}
+        title="forensics projects"
+        actions={<NewProjectButton onClick={() => navigate("/forensics/projects/new")} />}
+      />
+
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="search projects..."
+          aria-label="Search projects by name, description, or machine"
+          data-testid="forensics-projects-search"
+          className="font-mono"
+          style={INPUT_STYLE}
+        />
+        <span
+          className="font-mono uppercase"
+          style={{ fontSize: 9.5, color: "var(--text-faint)", letterSpacing: "0.1em" }}
+        >
+          sort
+        </span>
+        <select
+          value={sortKey}
+          onChange={(e) => setSortKey(e.target.value as ProjectSortKey)}
+          aria-label="Sort projects by"
+          data-testid="forensics-projects-sort-key"
+          className="font-mono uppercase"
+          style={SELECT_STYLE}
+        >
+          {PROJECT_SORT_OPTIONS.map((opt) => (
+            <option key={opt.key} value={opt.key}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
         <button
           type="button"
-          onClick={() => navigate("/forensics/projects/new")}
-          className="px-4 py-2 font-mono text-xs uppercase tracking-wider rounded-[3px] bg-accent text-badge-text hover:brightness-110 transition-[filter]"
-          style={{ boxShadow: "var(--bevel-key)" }}
+          onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+          aria-label={`Sort direction, currently ${sortDir === "asc" ? "ascending" : "descending"}`}
+          data-testid="forensics-projects-sort-dir"
+          className="font-mono uppercase"
+          style={DIR_BUTTON_STYLE}
         >
-          New Project
+          {sortDir === "asc" ? "\u2191" : "\u2193"}
         </button>
+        <SavedViews<ProjectsViewState>
+          entityType="forensics_project"
+          currentState={savedViewState}
+          onApply={applySavedView}
+          testIdPrefix="forensics-projects-views"
+        />
       </div>
 
       {isLoading && <ProjectCardSkeletonGrid count={6} />}
 
       {isError && (
         <WindowPanel title="load error" tone="warn" status="forensics ; projects unavailable">
-          <p className="text-sm text-critical">Failed to load forensics projects.</p>
+          <p className="font-mono" style={{ fontSize: 11, color: "var(--accent)" }}>
+            failed to load forensics projects.
+          </p>
         </WindowPanel>
       )}
 
@@ -342,7 +480,7 @@ export function ProjectsPage() {
         debouncedSearch ? (
           <EmptyState
             icon={<MagnifyingGlass className="h-10 w-10" />}
-            title={`No projects match “${search}”.`}
+            title={`No projects match \u201c${search}\u201d.`}
             description="Clear the search to see every forensics project on this workspace."
             action={{ label: "Clear search", onClick: () => setSearch("") }}
             secondaryAction={{ label: "New project", onClick: () => navigate("/forensics/projects/new") }}
@@ -357,19 +495,21 @@ export function ProjectsPage() {
         )
       )}
 
-      <div
-        ref={gridRef}
-        className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
-      >
-        {projects.map((project) => (
-          <ProjectCard
-            key={project.id}
-            project={project}
-            onClick={() => navigate(`/forensics/projects/${project.id}`)}
-            onDelete={(e) => handleDeleteClick(e, project)}
-          />
-        ))}
-      </div>
+      {!isLoading && !isError && projects.length > 0 && (
+        <div
+          ref={gridRef}
+          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3"
+        >
+          {projects.map((project) => (
+            <ProjectCard
+              key={project.id}
+              project={project}
+              onClick={() => navigate(`/forensics/projects/${project.id}`)}
+              onDelete={(e) => handleDeleteClick(e, project)}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

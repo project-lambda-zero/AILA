@@ -1,22 +1,18 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import { ArrowsClockwise } from "@phosphor-icons/react/dist/csr/ArrowsClockwise";
 import { DeviceMobile } from "@phosphor-icons/react/dist/csr/DeviceMobile";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
-import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
-import { Target as TargetIcon } from "@phosphor-icons/react/dist/csr/Target";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import {
+  DataGrid,
+  FilterChip,
+  MonoBadge,
+  SectionHeader,
+} from "@/components/aila/mock";
 
 import { DeleteButton } from "../components/DeleteButton";
-import {
-  SortHeader,
-  useSortableRows,
-  useTableRowNav,
-  type SortDir,
-  type SortValue,
-} from "../components/tableHelpers";
 import { SavedViews } from "../components/SavedViews";
 import {
   useCreateTarget,
@@ -27,36 +23,32 @@ import {
 } from "../mutations";
 import { useTargets, useWorkspaces } from "../queries";
 import { useVRListInvalidation } from "../hooks/useVRListInvalidation";
-import type { AnalysisState, TargetKind, TargetStatus, VRTargetSummary } from "../types";
+import type {
+  AnalysisState,
+  TargetKind,
+  TargetStatus,
+  VRTargetSummary,
+} from "../types";
 
-// Per-kind input-field schema. Each field becomes a labeled input
-// in the create form; values get assembled into the descriptor JSON
-// the backend expects. android_apk has no fields here -- it uses the
-// multipart upload-apk endpoint with a file picker, handled separately.
-// Per-kind input-field schema. Each field is either a labeled text
-// field (type="text") or a file picker (type="file"). The submit
-// handler assembles text fields into the descriptor JSON; file fields
-// are POSTed via a follow-up call to the matching upload endpoint
-// (android_apk -> /targets/upload-apk in one shot, every other binary
-// kind -> create-then-upload via POST /targets + POST /targets/{id}/upload).
+// ─────────────────────────────────────────────────────────────────────
+// Descriptor schema (unchanged from prior file). Each kind lists the
+// text / file inputs its create form needs. android_apk goes through
+// the dedicated /vr/targets/upload-apk multipart endpoint; every
+// other binary kind chains POST /vr/targets → POST /vr/targets/{id}/upload.
+// ─────────────────────────────────────────────────────────────────────
 interface DescriptorField {
   key: string;
   label: string;
   placeholder?: string;
   required?: boolean;
   type: "text" | "file";
-  accept?: string;  // for type=file: HTML accept attribute
+  accept?: string;
 }
 
 const DESCRIPTOR_SCHEMA: Record<TargetKind, DescriptorField[]> = {
-  // Binary kinds: file picker is the primary input. No more
-  // server-side path text boxes -- the operator never knew what
-  // paths exist on the backend filesystem.
   native_binary: [
     { key: "file", label: "Binary file", type: "file", required: true },
   ],
-  // android_apk: file picker only; routed through the dedicated
-  // /targets/upload-apk endpoint that fires the 5-stage pipeline.
   android_apk: [
     { key: "file", label: "APK file", type: "file", required: true,
       accept: ".apk,application/vnd.android.package-archive" },
@@ -96,7 +88,6 @@ const DESCRIPTOR_SCHEMA: Record<TargetKind, DescriptorField[]> = {
   crash_input: [
     { key: "file", label: "Crash input file", type: "file", required: true },
   ],
-  // URL-based kinds: text only.
   source_repo: [
     { key: "repo_url", label: "Repo URL", placeholder: "https://github.com/owner/repo", type: "text", required: true },
     { key: "ref", label: "Ref", placeholder: "main", type: "text" },
@@ -111,8 +102,6 @@ const DESCRIPTOR_SCHEMA: Record<TargetKind, DescriptorField[]> = {
   ],
 };
 
-// Helper: file-required kinds (use 2-step create-then-upload OR
-// dedicated upload-apk endpoint).
 function kindRequiresFile(kind: TargetKind): boolean {
   return DESCRIPTOR_SCHEMA[kind].some((f) => f.type === "file");
 }
@@ -133,33 +122,37 @@ const TARGET_KINDS: TargetKind[] = [
   "hypervisor_image",
 ];
 
-const statusColor: Record<
-  TargetStatus,
-  "info" | "low" | "medium" | "high" | "critical"
-> = {
-  active: "low",
+const STATUS_ORDER: TargetStatus[] = ["active", "archived", "quarantined"];
+const ANALYSIS_ORDER: AnalysisState[] = [
+  "pending",
+  "ingesting",
+  "ready",
+  "failed",
+];
+
+// MonoBadge tone map. Translation of the prior severity-key palette
+// into mock tone keys: low → ok, everything else identity.
+const statusTone: Record<TargetStatus, string> = {
+  active: "ok",
   archived: "info",
   quarantined: "high",
 };
 
-const analysisColor: Record<
-  AnalysisState,
-  "info" | "low" | "medium" | "high" | "critical"
-> = {
+const analysisTone: Record<AnalysisState, string> = {
   pending: "info",
   ingesting: "medium",
-  ready: "low",
+  ready: "ok",
   failed: "critical",
 };
 
 function analysisLabel(state: AnalysisState): string {
   return state === "pending"
-    ? "Queued"
+    ? "queued"
     : state === "ingesting"
-      ? "Analyzing…"
+      ? "analyzing"
       : state === "ready"
-        ? "Ready"
-        : "Failed";
+        ? "ready"
+        : "failed";
 }
 
 function formatDate(value?: string | null): string {
@@ -171,36 +164,51 @@ function formatDate(value?: string | null): string {
   }
 }
 
-// Per-kind icon glyph. Empty for kinds without a curated icon -- keeps
-// the column compact rather than padding every row with a default
-// shape. `android_apk` is the first kind with its own icon; future
-// kinds can extend this map without growing the row signature.
+// Per-kind icon glyph. android_apk shows the phone icon; every other
+// kind returns null so the column stays compact.
 function KindIcon({ kind }: { kind: TargetKind }) {
   if (kind === "android_apk") {
     return (
       <DeviceMobile
-        className="inline-block h-3.5 w-3.5 mr-1.5 text-text-muted"
-        style={{ verticalAlign: -2 }}
-        weight="duotone"
         aria-label="Android APK"
+        weight="duotone"
+        style={{
+          width: 12,
+          height: 12,
+          marginRight: 6,
+          verticalAlign: -1,
+          color: "var(--text-muted)",
+        }}
       />
     );
   }
   return null;
 }
 
-// Row label resolver. For `android_apk` targets, once STATIC_SUMMARY
-// completes the discovered package name is the most useful
-// identifier (`com.examplecorp.selfservis` beats whatever the operator
-// typed for `display_name`). Falls back to `display_name` for every
-// other kind, and for `android_apk` rows whose static summary hasn't
-// landed yet.
+// Row label: android_apk targets display their discovered package
+// name once STATIC_SUMMARY has landed; falls back to display_name
+// otherwise.
 function targetRowLabel(t: VRTargetSummary): string {
   if (t.kind === "android_apk" && t.android_package_name) {
     return t.android_package_name;
   }
   return t.display_name;
 }
+
+// Mock chrome for raw <input>/<select> controls -- keeps the filter
+// shelf visually coherent with FilterChip / Segmented.
+const CTRL: React.CSSProperties = {
+  height: 26,
+  padding: "0 8px",
+  fontSize: 10.5,
+  letterSpacing: "0.06em",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  fontFamily: "var(--font-mono)",
+  outline: "none",
+};
 
 export function TargetsPage() {
   const navigate = useNavigate();
@@ -221,9 +229,8 @@ export function TargetsPage() {
   const [formWorkspaceId, setFormWorkspaceId] = useState("");
   const [formDisplayName, setFormDisplayName] = useState("");
   const [formKind, setFormKind] = useState<TargetKind>("source_repo");
-  // Per-text-field descriptor values, keyed by the field's `key`.
-  // Reset on kind change. The submit handler assembles them into the
-  // descriptor object that the backend expects.
+  // Per-text-field descriptor values keyed by field.key. Reset on kind
+  // change. Submit handler assembles them into the descriptor object.
   const [descriptorValues, setDescriptorValues] = useState<Record<string, string>>({});
   // Single shared file-picker state (each kind has at most one file
   // field; kind change resets it).
@@ -231,11 +238,6 @@ export function TargetsPage() {
   // Chained-upload progress message when create→upload runs.
   const [chainMessage, setChainMessage] = useState<string | null>(null);
 
-  // Helper: assemble the descriptor object from per-TEXT-field values,
-  // dropping empty strings so the backend's strict descriptor shape
-  // doesn't reject them as "unexpected empty string". File fields are
-  // NOT included here -- they're posted to the matching upload endpoint
-  // in the submit handler.
   function assembleDescriptor(): Record<string, unknown> {
     const out: Record<string, unknown> = {};
     for (const field of DESCRIPTOR_SCHEMA[formKind]) {
@@ -246,8 +248,6 @@ export function TargetsPage() {
     return out;
   }
 
-  // Validation: all required fields filled? Required file fields require
-  // pickedFile; required text fields require a non-empty trimmed value.
   function descriptorValid(): boolean {
     return DESCRIPTOR_SCHEMA[formKind]
       .filter((f) => f.required)
@@ -271,52 +271,49 @@ export function TargetsPage() {
   // /vr/targets has no `q` server-side param -- quick-filter runs
   // client-side over display_name / kind / language / android package.
   const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"" | TargetStatus>("");
+  const [analysisFilter, setAnalysisFilter] = useState<"" | AnalysisState>("");
+  const [androidOnly, setAndroidOnly] = useState(false);
+  const [readyOnly, setReadyOnly] = useState(false);
+
+  const workspaceMap = useMemo(
+    () => new Map(workspaces.map((w) => [w.id, w])),
+    [workspaces],
+  );
 
   const filteredTargets = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return targets;
-    return targets.filter((t) => {
-      return (
-        (t.display_name ?? "").toLowerCase().includes(needle) ||
-        t.kind.toLowerCase().includes(needle) ||
-        (t.primary_language ?? "").toLowerCase().includes(needle) ||
-        (t.android_package_name ?? "").toLowerCase().includes(needle) ||
-        t.status.toLowerCase().includes(needle) ||
-        t.analysis_state.toLowerCase().includes(needle) ||
-        targetRowLabel(t).toLowerCase().includes(needle)
+    let rows: VRTargetSummary[] = targets;
+    if (needle) {
+      rows = rows.filter(
+        (t) =>
+          (t.display_name ?? "").toLowerCase().includes(needle) ||
+          t.kind.toLowerCase().includes(needle) ||
+          (t.primary_language ?? "").toLowerCase().includes(needle) ||
+          (t.android_package_name ?? "").toLowerCase().includes(needle) ||
+          t.status.toLowerCase().includes(needle) ||
+          t.analysis_state.toLowerCase().includes(needle) ||
+          targetRowLabel(t).toLowerCase().includes(needle),
       );
-    });
-  }, [targets, query]);
+    }
+    if (statusFilter) rows = rows.filter((t) => t.status === statusFilter);
+    if (analysisFilter)
+      rows = rows.filter((t) => t.analysis_state === analysisFilter);
+    if (androidOnly) rows = rows.filter((t) => t.kind === "android_apk");
+    if (readyOnly) rows = rows.filter((t) => t.analysis_state === "ready");
+    return rows;
+  }, [targets, query, statusFilter, analysisFilter, androidOnly, readyOnly]);
 
-  const accessors = useMemo<
-    Record<string, (t: VRTargetSummary) => SortValue>
-  >(
-    () => ({
-      name: (t) => targetRowLabel(t),
-      kind: (t) => t.kind,
-      primary_language: (t) => t.primary_language ?? null,
-      status: (t) => t.status,
-      analysis_state: (t) => t.analysis_state,
-      analysis_completed_at: (t) =>
-        t.analysis_completed_at ? new Date(t.analysis_completed_at) : null,
-      created_at: (t) => (t.created_at ? new Date(t.created_at) : null),
-    }),
-    [],
-  );
-  const { sortedRows, sortKey, sortDir, cycleSort, setSort } = useSortableRows(
-    filteredTargets,
-    accessors,
-  );
-
-  // Saved-view state serialization. Stable key order so a saved
-  // view produced by a keystroke earlier compares equal against
-  // aria-pressed on the same state a second later.
+  // Saved-view round-trip. Stable key order so a saved view compares
+  // equal against aria-pressed on the same state a second later.
   const currentViewJson = JSON.stringify({
     v: 1,
     q: query,
     workspace: workspaceFilter,
-    sortKey,
-    sortDir,
+    status: statusFilter,
+    analysis: analysisFilter,
+    androidOnly,
+    readyOnly,
   });
 
   function applyView(filterJson: string) {
@@ -324,414 +321,674 @@ export function TargetsPage() {
       const p = JSON.parse(filterJson) as {
         q?: unknown;
         workspace?: unknown;
-        sortKey?: unknown;
-        sortDir?: unknown;
+        status?: unknown;
+        analysis?: unknown;
+        androidOnly?: unknown;
+        readyOnly?: unknown;
       };
       setQuery(typeof p.q === "string" ? p.q : "");
       setWorkspaceFilter(typeof p.workspace === "string" ? p.workspace : "");
-      const nextDir: SortDir =
-        p.sortDir === "asc" || p.sortDir === "desc" ? p.sortDir : null;
-      setSort(typeof p.sortKey === "string" ? p.sortKey : "", nextDir);
+      setStatusFilter(
+        typeof p.status === "string" &&
+          (STATUS_ORDER as string[]).includes(p.status)
+          ? (p.status as TargetStatus)
+          : "",
+      );
+      setAnalysisFilter(
+        typeof p.analysis === "string" &&
+          (ANALYSIS_ORDER as string[]).includes(p.analysis)
+          ? (p.analysis as AnalysisState)
+          : "",
+      );
+      setAndroidOnly(p.androidOnly === true);
+      setReadyOnly(p.readyOnly === true);
     } catch {
       // Malformed view -- ignore rather than blank the operator's screen.
     }
   }
 
-  const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
-  const { tbodyProps, getRowProps } = useTableRowNav(
-    sortedRows,
-    (t) => navigate(`/vr/targets/${t.id}`),
-    tbodyRef,
-  );
+  const hasActiveFilters =
+    !!query ||
+    !!workspaceFilter ||
+    !!statusFilter ||
+    !!analysisFilter ||
+    androidOnly ||
+    readyOnly;
 
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <button
-          type="button"
-          onClick={() => setShowForm((v) => !v)}
-          disabled={workspaces.length === 0}
-          title={workspaces.length === 0 ? "Create a workspace first" : ""}
-          className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-background hover:bg-accent/90 transition-colors disabled:opacity-50"
-        >
-          {showForm ? "Cancel" : "New Target"}
-        </button>
-      </div>
-
-      {showForm && workspaces.length > 0 && (
-        <AilaCard techBorder glow>
-          <h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
-            Create target
-          </h2>
-          <p className="text-xs text-text-muted mb-3">
-            Fill the kind-specific fields below. Backend handles all
-            MCP-internal IDs transparently. Analysis runs automatically
-            after create.
-          </p>
-          <div className="space-y-2">
-            <select
-              value={formWorkspaceId}
-              onChange={(e) => setFormWorkspaceId(e.target.value)}
-              aria-label="Workspace"
-              className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border"
-            >
-              <option value="">-- select workspace --</option>
-              {workspaces.map((ws) => (
-                <option key={ws.id} value={ws.id}>
-                  {ws.name} ({ws.slug})
-                </option>
-              ))}
-            </select>
-            <input
-              type="text"
-              value={formDisplayName}
-              onChange={(e) => setFormDisplayName(e.target.value)}
-              placeholder="Display name"
-              aria-label="Display name"
-              className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
-            />
-            <select
-              value={formKind}
-              onChange={(e) => {
-                const newKind = e.target.value as TargetKind;
-                setFormKind(newKind);
-                setDescriptorValues({});
-                setPickedFile(null);
-              }}
-              aria-label="Target kind"
-              className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border"
-            >
-              {TARGET_KINDS.map((k) => (
-                <option key={k} value={k}>
-                  {k}
-                </option>
-              ))}
-            </select>
-
-            {/* Schema-driven field rendering: file picker for type=file,
-                text input for type=text. Per-kind labels and accept
-                hints come from DESCRIPTOR_SCHEMA. No raw paths anywhere. */}
-            <div className="grid grid-cols-1 gap-2">
-              {DESCRIPTOR_SCHEMA[formKind].map((field) => {
-                const labelText = (
-                  <label
-                    htmlFor={`descriptor-${field.key}`}
-                    className="block text-xs text-text-muted"
-                  >
-                    {field.label}
-                    {field.required && <span className="text-critical"> *</span>}
-                  </label>
-                );
-                if (field.type === "file") {
-                  return (
-                    <div key={field.key} className="space-y-1">
-                      {labelText}
-                      <input
-                        id={`descriptor-${field.key}`}
-                        type="file"
-                        accept={field.accept}
-                        onChange={(e) => {
-                          const f = e.target.files?.[0] ?? null;
-                          setPickedFile(f);
-                          // Auto-route: a .apk picked into any binary-kind
-                          // slot is almost always a misclick. Force-switch
-                          // to android_apk so the 5-stage pipeline fires
-                          // instead of IDA grinding through a ZIP and
-                          // returning "no parser-sink callsites".
-                          if (
-                            f &&
-                            formKind !== "android_apk" &&
-                            f.name.toLowerCase().endsWith(".apk")
-                          ) {
-                            setFormKind("android_apk");
-                            setDescriptorValues({});
-                          }
-                        }}
-                        aria-label={field.label}
-                        className="w-full text-xs text-text-muted file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-sm file:bg-accent file:text-background hover:file:bg-accent/90 file:cursor-pointer"
-                      />
-                      {pickedFile && (
-                        <p className="text-xs text-text-muted">
-                          {pickedFile.name} (
-                          {(pickedFile.size / (1024 * 1024)).toFixed(1)} MB)
-                        </p>
-                      )}
-                    </div>
-                  );
-                }
-                return (
-                  <div key={field.key} className="space-y-1">
-                    {labelText}
-                    <input
-                      id={`descriptor-${field.key}`}
-                      type="text"
-                      value={descriptorValues[field.key] ?? ""}
-                      onChange={(e) =>
-                        setDescriptorValues((prev) => ({
-                          ...prev,
-                          [field.key]: e.target.value,
-                        }))
-                      }
-                      placeholder={field.placeholder}
-                      aria-label={field.label}
-                      className="w-full px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
-                    />
-                  </div>
-                );
-              })}
-            </div>
-
-            {formKind === "android_apk" && (
-              <p className="text-xs text-text-muted">
-                Backend pipeline: APK_DECODE → JADX_DECOMPILE →
-                INDEX_DECOMPILED → STATIC_SUMMARY.
-              </p>
-            )}
-
-            {chainMessage && (
-              <p className="text-xs text-accent">{chainMessage}</p>
-            )}
-
-            <div className="flex gap-2">
-              <button
-                type="button"
-                disabled={
-                  !formWorkspaceId ||
-                  !formDisplayName.trim() ||
-                  !descriptorValid() ||
-                  createMut.isPending ||
-                  uploadApkMut.isPending ||
-                  uploadArtifactMut.isPending
-                }
-                onClick={async () => {
-                  // android_apk: dedicated single-shot multipart endpoint.
-                  if (formKind === "android_apk") {
-                    if (!pickedFile) return;
-                    uploadApkMut.mutate(
-                      {
-                        workspace_id: formWorkspaceId,
-                        display_name: formDisplayName.trim(),
-                        file: pickedFile,
-                      },
-                      {
-                        onSuccess: (result) => {
-                          resetForm();
-                          navigate(`/vr/targets/${result.data.id}`);
-                        },
-                      },
-                    );
-                    return;
-                  }
-
-                  // URL-only kinds (source_repo / cve / patch_diff): single
-                  // POST /vr/targets with descriptor.
-                  if (!kindRequiresFile(formKind)) {
-                    createMut.mutate(
-                      {
-                        workspace_id: formWorkspaceId,
-                        display_name: formDisplayName.trim(),
-                        kind: formKind,
-                        descriptor: assembleDescriptor(),
-                      },
-                      {
-                        onSuccess: (result) => {
-                          resetForm();
-                          navigate(`/vr/targets/${result.data.id}`);
-                        },
-                      },
-                    );
-                    return;
-                  }
-
-                  // Binary kinds with file: create-then-upload chain.
-                  if (!pickedFile) return;
-                  setChainMessage("Creating target…");
-                  try {
-                    const createResult = await createMut.mutateAsync({
-                      workspace_id: formWorkspaceId,
-                      display_name: formDisplayName.trim(),
-                      kind: formKind,
-                      descriptor: assembleDescriptor(),
-                    });
-                    const targetId = createResult.data.id;
-                    setChainMessage(
-                      `Uploading ${pickedFile.name} (${(pickedFile.size / (1024 * 1024)).toFixed(1)} MB)…`,
-                    );
-                    await uploadArtifactMut.mutateAsync({
-                      target_id: targetId,
-                      file: pickedFile,
-                    });
-                    resetForm();
-                    navigate(`/vr/targets/${targetId}`);
-                  } catch (err) {
-                    setChainMessage(
-                      `Failed: ${err instanceof Error ? err.message : String(err)}`,
-                    );
-                  }
-                }}
-                className="ml-auto px-4 py-2 text-sm font-medium rounded-md bg-accent text-background hover:bg-accent/90 transition-colors disabled:opacity-50"
-              >
-                {uploadApkMut.isPending
-                  ? "Uploading APK…"
-                  : uploadArtifactMut.isPending
-                    ? "Uploading…"
-                    : createMut.isPending
-                      ? "Creating…"
-                      : formKind === "android_apk"
-                        ? "Upload APK"
-                        : kindRequiresFile(formKind)
-                          ? "Create + upload"
-                          : "Create target"}
-              </button>
-            </div>
-          </div>
-        </AilaCard>
-      )}
-
-      <SavedViews
-        entityType="vr_target"
-        entityLabel="targets"
-        currentFilterJson={currentViewJson}
-        onApply={applyView}
-      />
-
-      <AilaCard  techBorder glow><div className="flex items-center gap-2 flex-wrap">
-        <input
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Filter targets (name / kind / language)…"
-          aria-label="Filter targets"
-          className="flex-1 min-w-[220px] max-w-md px-3 py-1.5 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
-        />
-        <label htmlFor="target-workspace-filter" className="text-sm text-text-muted">Filter workspace:</label>
-        <select
-          id="target-workspace-filter"
-          value={workspaceFilter}
-          onChange={(e) => setWorkspaceFilter(e.target.value)}
-          className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border"
-        >
-          <option value="">-- all --</option>
-          {workspaces.map((ws) => (
+  // ─── Header actions: workspace select + create toggle ───
+  const headerActions = (
+    <div className="flex items-center" style={{ gap: 8 }}>
+      <select
+        value={workspaceFilter}
+        onChange={(e) => setWorkspaceFilter(e.target.value)}
+        aria-label="Filter workspace"
+        title="Filter by workspace"
+        className="font-mono uppercase"
+        style={CTRL}
+      >
+        <option value="">all workspaces</option>
+        {workspaces
+          .slice()
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((ws) => (
             <option key={ws.id} value={ws.id}>
               {ws.name}
             </option>
           ))}
-        </select>
-        <span className="text-xs text-text-muted ml-auto">
-          {query.trim()
-            ? `${sortedRows.length} of ${targets.length} target${targets.length === 1 ? "" : "s"}`
-            : `${targets.length} target${targets.length === 1 ? "" : "s"}`}
-        </span>
-      </div></AilaCard>
+      </select>
+      <button
+        type="button"
+        onClick={() => setShowForm((v) => !v)}
+        disabled={workspaces.length === 0}
+        title={workspaces.length === 0 ? "Create a workspace first" : ""}
+        className="font-mono uppercase"
+        style={{
+          height: 28,
+          padding: "0 12px",
+          fontSize: 10,
+          letterSpacing: "0.08em",
+          background: showForm ? "var(--surface-sunk)" : "var(--accent)",
+          border:
+            "1px solid " +
+            (showForm ? "var(--border-soft)" : "var(--accent)"),
+          color: showForm
+            ? "var(--text-primary)"
+            : "var(--text-on-accent)",
+          borderRadius: 3,
+          cursor: workspaces.length === 0 ? "not-allowed" : "pointer",
+          opacity: workspaces.length === 0 ? 0.5 : 1,
+        }}
+      >
+        {showForm ? "cancel" : "+ new target"}
+      </button>
+    </div>
+  );
 
-      {isLoading && <LoadingSkeleton size="lg" width="full" />}
+  // ─── Create form (mock language) ───
+  const createFormPanel =
+    showForm && workspaces.length > 0 ? (
+      <WindowPanel title="create target" tone="accent">
+        <div className="flex flex-col" style={{ gap: 10 }}>
+          <div
+            className="font-mono"
+            style={{
+              fontSize: 10.5,
+              color: "var(--text-muted)",
+              letterSpacing: "0.04em",
+            }}
+          >
+            fill the kind-specific fields below. backend handles all
+            MCP-internal IDs transparently. analysis runs automatically
+            after create.
+          </div>
 
-      {isError && (
-        <AilaCard className="border-critical" techBorder glow><p className="text-sm text-critical">Failed to load targets.</p></AilaCard>
-      )}
+          <select
+            value={formWorkspaceId}
+            onChange={(e) => setFormWorkspaceId(e.target.value)}
+            aria-label="Workspace"
+            className="font-mono uppercase"
+            style={{ ...CTRL, height: 30, fontSize: 11 }}
+          >
+            <option value="">-- select workspace --</option>
+            {workspaces.map((ws) => (
+              <option key={ws.id} value={ws.id}>
+                {ws.name} ({ws.slug})
+              </option>
+            ))}
+          </select>
 
-      {!isLoading && !isError && targets.length === 0 && (
-        <EmptyState
-          icon={<TargetIcon className="h-7 w-7" weight="duotone" />}
-          title="No targets yet"
-          description={
-            workspaces.length === 0
-              ? "A workspace is the precondition for a target. Create one first, then upload or register a binary/source repo here."
-              : "Register a source repo or upload a binary (APK, ELF, PE, macho) to make it investigable."
-          }
-          action={
-            workspaces.length === 0
-              ? undefined
-              : {
-                  label: showForm ? "Cancel" : "New Target",
-                  onClick: () => setShowForm((v) => !v),
-                }
-          }
-        />
-      )}
+          <input
+            type="text"
+            value={formDisplayName}
+            onChange={(e) => setFormDisplayName(e.target.value)}
+            placeholder="display name"
+            aria-label="Display name"
+            className="font-mono"
+            style={{ ...CTRL, height: 30, fontSize: 11 }}
+          />
 
-      {!isLoading && !isError && targets.length > 0 && (
-        <AilaCard className="overflow-x-auto p-0" techBorder glow><table className="w-full text-sm">
-          <caption className="sr-only">Targets in the selected workspace</caption>
-          <thead>
-            <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-muted">
-              <SortHeader columnKey="name" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Name</SortHeader>
-              <SortHeader columnKey="kind" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Kind</SortHeader>
-              <SortHeader columnKey="primary_language" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Language</SortHeader>
-              <SortHeader columnKey="status" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Status</SortHeader>
-              <SortHeader columnKey="analysis_state" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Analysis</SortHeader>
-              <SortHeader columnKey="analysis_completed_at" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Analyzed at</SortHeader>
-              <SortHeader columnKey="created_at" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Created</SortHeader>
-              <th className="px-2 py-2"></th>
-            </tr>
-          </thead>
-          <tbody ref={tbodyRef} className="scroll-virtual-row" {...tbodyProps}>
-            {sortedRows.map((t, idx) => {
-              const rowProps = getRowProps(idx);
-              return (
-              <tr
-                key={t.id}
-                {...rowProps}
-                onClick={() => navigate(`/vr/targets/${t.id}`)}
-                className={
-                  "border-b border-border last:border-b-0 cursor-pointer hover:bg-surface transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset " +
-                  (rowProps["data-row-active"] ? "bg-elevated" : "")
-                }
-              >
-                <td className="px-4 py-2 font-semibold text-foreground">
-                  {targetRowLabel(t)}
-                </td>
-                <td className="px-4 py-2 font-mono text-xs text-text-muted">
-                  <KindIcon kind={t.kind} />
-                  {t.kind}
-                </td>
-                <td className="px-4 py-2 font-mono text-xs text-text-muted">
-                  {t.primary_language ?? "--"}
-                </td>
-                <td className="px-4 py-2">
-                  <AilaBadge
-                    severity={statusColor[t.status] ?? "info"}
-                    size="sm"
+          <select
+            value={formKind}
+            onChange={(e) => {
+              const newKind = e.target.value as TargetKind;
+              setFormKind(newKind);
+              setDescriptorValues({});
+              setPickedFile(null);
+            }}
+            aria-label="Target kind"
+            className="font-mono uppercase"
+            style={{ ...CTRL, height: 30, fontSize: 11 }}
+          >
+            {TARGET_KINDS.map((k) => (
+              <option key={k} value={k}>
+                {k}
+              </option>
+            ))}
+          </select>
+
+          {/* Schema-driven field rendering: file picker for type=file,
+              text input for type=text. Per-kind labels + accept hints
+              come from DESCRIPTOR_SCHEMA. No raw paths anywhere. */}
+          <div className="flex flex-col" style={{ gap: 8 }}>
+            {DESCRIPTOR_SCHEMA[formKind].map((field) => {
+              const labelText = (
+                <label
+                  htmlFor={`descriptor-${field.key}`}
+                  className="font-mono uppercase"
+                  style={{
+                    display: "block",
+                    fontSize: 9.5,
+                    letterSpacing: "0.1em",
+                    color: "var(--text-muted)",
+                  }}
+                >
+                  {field.label}
+                  {field.required ? (
+                    <span style={{ color: "var(--accent)" }}> *</span>
+                  ) : null}
+                </label>
+              );
+              if (field.type === "file") {
+                return (
+                  <div
+                    key={field.key}
+                    className="flex flex-col"
+                    style={{ gap: 4 }}
                   >
-                    {t.status}
-                  </AilaBadge>
-                </td>
-                <td className="px-4 py-2">
-                  <AilaBadge
-                    severity={analysisColor[t.analysis_state] ?? "info"}
-                    size="sm"
-                  >
-                    {analysisLabel(t.analysis_state)}
-                  </AilaBadge>
-                </td>
-                <td className="px-4 py-2 font-mono text-xs text-text-muted">
-                  {formatDate(t.analysis_completed_at)}
-                </td>
-                <td className="px-4 py-2 font-mono text-xs text-text-muted">
-                  {formatDate(t.created_at)}
-                </td>
-                <td className="px-2 py-2 text-right">
-                  <div className="flex items-center justify-end gap-1">
-                    <RefreshSourceButton
-                      targetId={t.id}
-                      kind={t.kind}
-                      analysisState={t.analysis_state}
+                    {labelText}
+                    <input
+                      id={`descriptor-${field.key}`}
+                      type="file"
+                      accept={field.accept}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0] ?? null;
+                        setPickedFile(f);
+                        // Auto-route: an .apk picked into any binary-kind
+                        // slot is almost always a misclick. Force-switch
+                        // to android_apk so the 5-stage pipeline fires
+                        // instead of IDA grinding through a ZIP.
+                        if (
+                          f &&
+                          formKind !== "android_apk" &&
+                          f.name.toLowerCase().endsWith(".apk")
+                        ) {
+                          setFormKind("android_apk");
+                          setDescriptorValues({});
+                        }
+                      }}
+                      aria-label={field.label}
+                      className="font-mono"
+                      style={{
+                        fontSize: 10.5,
+                        color: "var(--text-muted)",
+                        padding: 4,
+                        background: "var(--surface-sunk)",
+                        border: "1px solid var(--border-soft)",
+                        borderRadius: 3,
+                      }}
                     />
-                    <DeleteButton
-                      id={t.id}
-                      label={`target "${t.display_name}"`}
-                      mutation={deleteMut}
-                      compact
-                    />
+                    {pickedFile ? (
+                      <div
+                        className="font-mono"
+                        style={{
+                          fontSize: 10,
+                          color: "var(--text-muted)",
+                          letterSpacing: "0.04em",
+                        }}
+                      >
+                        {pickedFile.name} (
+                        {(pickedFile.size / (1024 * 1024)).toFixed(1)} MB)
+                      </div>
+                    ) : null}
                   </div>
-                </td>
-              </tr>
+                );
+              }
+              return (
+                <div
+                  key={field.key}
+                  className="flex flex-col"
+                  style={{ gap: 4 }}
+                >
+                  {labelText}
+                  <input
+                    id={`descriptor-${field.key}`}
+                    type="text"
+                    value={descriptorValues[field.key] ?? ""}
+                    onChange={(e) =>
+                      setDescriptorValues((prev) => ({
+                        ...prev,
+                        [field.key]: e.target.value,
+                      }))
+                    }
+                    placeholder={field.placeholder}
+                    aria-label={field.label}
+                    className="font-mono"
+                    style={{ ...CTRL, height: 28, fontSize: 11 }}
+                  />
+                </div>
               );
             })}
-          </tbody>
-        </table></AilaCard>
-      )}
+          </div>
+
+          {formKind === "android_apk" ? (
+            <div
+              className="font-mono"
+              style={{
+                fontSize: 10,
+                color: "var(--text-faint)",
+                letterSpacing: "0.06em",
+              }}
+            >
+              backend pipeline: APK_DECODE → JADX_DECOMPILE →
+              INDEX_DECOMPILED → STATIC_SUMMARY.
+            </div>
+          ) : null}
+
+          {chainMessage ? (
+            <div
+              className="font-mono"
+              style={{
+                fontSize: 10.5,
+                color: "var(--accent)",
+                letterSpacing: "0.04em",
+              }}
+            >
+              {chainMessage}
+            </div>
+          ) : null}
+
+          <div className="flex items-center" style={{ gap: 8 }}>
+            <button
+              type="button"
+              disabled={
+                !formWorkspaceId ||
+                !formDisplayName.trim() ||
+                !descriptorValid() ||
+                createMut.isPending ||
+                uploadApkMut.isPending ||
+                uploadArtifactMut.isPending
+              }
+              onClick={async () => {
+                // android_apk: dedicated single-shot multipart endpoint.
+                if (formKind === "android_apk") {
+                  if (!pickedFile) return;
+                  uploadApkMut.mutate(
+                    {
+                      workspace_id: formWorkspaceId,
+                      display_name: formDisplayName.trim(),
+                      file: pickedFile,
+                    },
+                    {
+                      onSuccess: (r) => {
+                        resetForm();
+                        navigate(`/vr/targets/${r.data.id}`);
+                      },
+                    },
+                  );
+                  return;
+                }
+
+                // URL-only kinds (source_repo / cve / patch_diff):
+                // single POST /vr/targets with descriptor.
+                if (!kindRequiresFile(formKind)) {
+                  createMut.mutate(
+                    {
+                      workspace_id: formWorkspaceId,
+                      display_name: formDisplayName.trim(),
+                      kind: formKind,
+                      descriptor: assembleDescriptor(),
+                    },
+                    {
+                      onSuccess: (r) => {
+                        resetForm();
+                        navigate(`/vr/targets/${r.data.id}`);
+                      },
+                    },
+                  );
+                  return;
+                }
+
+                // Binary kinds with file: create-then-upload chain.
+                if (!pickedFile) return;
+                setChainMessage("creating target…");
+                try {
+                  const createResult = await createMut.mutateAsync({
+                    workspace_id: formWorkspaceId,
+                    display_name: formDisplayName.trim(),
+                    kind: formKind,
+                    descriptor: assembleDescriptor(),
+                  });
+                  const targetId = createResult.data.id;
+                  setChainMessage(
+                    `uploading ${pickedFile.name} (${(pickedFile.size / (1024 * 1024)).toFixed(1)} MB)…`,
+                  );
+                  await uploadArtifactMut.mutateAsync({
+                    target_id: targetId,
+                    file: pickedFile,
+                  });
+                  resetForm();
+                  navigate(`/vr/targets/${targetId}`);
+                } catch (err) {
+                  setChainMessage(
+                    `failed: ${err instanceof Error ? err.message : String(err)}`,
+                  );
+                }
+              }}
+              className="font-mono uppercase"
+              style={{
+                marginLeft: "auto",
+                height: 28,
+                padding: "0 14px",
+                fontSize: 10,
+                letterSpacing: "0.08em",
+                background: "var(--accent)",
+                border: "1px solid var(--accent)",
+                color: "var(--text-on-accent)",
+                borderRadius: 3,
+                cursor:
+                  createMut.isPending ||
+                  uploadApkMut.isPending ||
+                  uploadArtifactMut.isPending
+                    ? "wait"
+                    : "pointer",
+                opacity:
+                  createMut.isPending ||
+                  uploadApkMut.isPending ||
+                  uploadArtifactMut.isPending
+                    ? 0.7
+                    : 1,
+              }}
+            >
+              {uploadApkMut.isPending
+                ? "uploading apk…"
+                : uploadArtifactMut.isPending
+                  ? "uploading…"
+                  : createMut.isPending
+                    ? "creating…"
+                    : formKind === "android_apk"
+                      ? "upload apk"
+                      : kindRequiresFile(formKind)
+                        ? "create + upload"
+                        : "create target"}
+            </button>
+          </div>
+        </div>
+      </WindowPanel>
+    ) : null;
+
+  // ─── Filter shelf ───
+  const filterPanel = (
+    <WindowPanel title="filters" tone="muted">
+      <div className="flex flex-col" style={{ gap: 10 }}>
+        <div className="flex flex-wrap items-center" style={{ gap: 8 }}>
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="search (name / kind / language / package)…"
+            aria-label="Filter targets"
+            className="font-mono"
+            style={{ ...CTRL, width: 280 }}
+          />
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as "" | TargetStatus)}
+            aria-label="Filter by status"
+            className="font-mono uppercase"
+            style={CTRL}
+          >
+            <option value="">all status</option>
+            {STATUS_ORDER.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+          <select
+            value={analysisFilter}
+            onChange={(e) =>
+              setAnalysisFilter(e.target.value as "" | AnalysisState)
+            }
+            aria-label="Filter by analysis state"
+            className="font-mono uppercase"
+            style={CTRL}
+          >
+            <option value="">all analysis</option>
+            {ANALYSIS_ORDER.map((s) => (
+              <option key={s} value={s}>
+                {analysisLabel(s)}
+              </option>
+            ))}
+          </select>
+          <FilterChip
+            active={androidOnly}
+            color="var(--status-ok)"
+            onClick={() => setAndroidOnly((v) => !v)}
+          >
+            android only
+          </FilterChip>
+          <FilterChip
+            active={readyOnly}
+            color="var(--status-info)"
+            onClick={() => setReadyOnly((v) => !v)}
+          >
+            ready only
+          </FilterChip>
+          {hasActiveFilters ? (
+            <FilterChip
+              active={false}
+              onClick={() => {
+                setQuery("");
+                setStatusFilter("");
+                setAnalysisFilter("");
+                setAndroidOnly(false);
+                setReadyOnly(false);
+              }}
+            >
+              ✕ clear
+            </FilterChip>
+          ) : null}
+        </div>
+        <div style={{ minHeight: 26 }}>
+          <SavedViews
+            entityType="vr_target"
+            entityLabel="targets"
+            currentFilterJson={currentViewJson}
+            onApply={applyView}
+          />
+        </div>
+      </div>
+    </WindowPanel>
+  );
+
+  // ─── Table cells ───
+  const columns = [
+    { label: "name", width: "1.6fr" },
+    { label: "workspace", width: "140px" },
+    { label: "kind", width: "130px" },
+    { label: "status", width: "100px" },
+    { label: "analysis", width: "110px" },
+    { label: "analyzed at", width: "160px", align: "right" as const },
+    { label: "surface", width: "110px" },
+    { label: "", width: "72px", align: "right" as const },
+  ];
+
+  function renderCells(t: VRTargetSummary): React.ReactNode[] {
+    const ws = workspaceMap.get(t.workspace_id);
+    const wsName = ws?.name ?? "--";
+    return [
+      <span
+        className="font-mono"
+        title={t.display_name}
+        style={{
+          fontSize: 11.5,
+          color: "var(--text-primary)",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          display: "block",
+        }}
+      >
+        <KindIcon kind={t.kind} />
+        {targetRowLabel(t)}
+      </span>,
+      <span
+        className="font-mono"
+        title={wsName}
+        style={{
+          fontSize: 10.5,
+          color: "var(--text-muted)",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          display: "block",
+        }}
+      >
+        {wsName}
+      </span>,
+      <MonoBadge tone="muted">{t.kind}</MonoBadge>,
+      <MonoBadge tone={statusTone[t.status] ?? "muted"}>{t.status}</MonoBadge>,
+      <MonoBadge tone={analysisTone[t.analysis_state] ?? "muted"}>
+        {analysisLabel(t.analysis_state)}
+      </MonoBadge>,
+      <span
+        className="font-mono"
+        style={{
+          fontSize: 10,
+          color: "var(--text-faint)",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {formatDate(t.analysis_completed_at)}
+      </span>,
+      <span
+        className="font-mono"
+        title={t.primary_language ?? ""}
+        style={{
+          fontSize: 10.5,
+          color: "var(--text-muted)",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          display: "block",
+        }}
+      >
+        {t.primary_language ?? "--"}
+      </span>,
+      <span
+        onClick={(e) => e.stopPropagation()}
+        className="inline-flex items-center"
+        style={{ gap: 4, justifyContent: "flex-end" }}
+      >
+        <RefreshSourceButton
+          targetId={t.id}
+          kind={t.kind}
+          analysisState={t.analysis_state}
+        />
+        <DeleteButton
+          id={t.id}
+          label={`target "${t.display_name}"`}
+          mutation={deleteMut}
+          compact
+        />
+      </span>,
+    ];
+  }
+
+  const tableActions = (
+    <span
+      className="font-mono"
+      style={{
+        fontSize: 10,
+        letterSpacing: "0.06em",
+        color: "var(--text-faint)",
+      }}
+    >
+      {filteredTargets.length}
+      {filteredTargets.length !== targets.length ? (
+        <span style={{ opacity: 0.5 }}> / {targets.length}</span>
+      ) : null}
+    </span>
+  );
+
+  let tableBody: React.ReactNode;
+  if (isLoading) {
+    tableBody = (
+      <div style={{ padding: 12 }}>
+        <LoadingSkeleton size="lg" width="full" />
+      </div>
+    );
+  } else if (isError) {
+    tableBody = (
+      <div
+        className="font-mono"
+        style={{
+          padding: 24,
+          textAlign: "center",
+          color: "var(--accent)",
+          fontSize: 11,
+          letterSpacing: "0.06em",
+        }}
+      >
+        failed to load targets.
+      </div>
+    );
+  } else if (targets.length === 0) {
+    tableBody = (
+      <div
+        className="font-mono"
+        style={{
+          padding: 34,
+          textAlign: "center",
+          fontSize: 11.5,
+          color: "var(--text-muted)",
+          letterSpacing: "0.04em",
+        }}
+      >
+        {workspaces.length === 0
+          ? "a workspace is the precondition for a target -- create one first."
+          : "no targets yet -- register a source repo or upload a binary from the header."}
+      </div>
+    );
+  } else {
+    tableBody = (
+      <DataGrid<VRTargetSummary>
+        columns={columns}
+        rows={filteredTargets}
+        renderCells={renderCells}
+        getKey={(t) => t.id}
+        onRowClick={(t) => navigate(`/vr/targets/${t.id}`)}
+        empty={
+          <div
+            className="font-mono"
+            style={{
+              padding: 34,
+              textAlign: "center",
+              fontSize: 11.5,
+              color: "var(--text-muted)",
+              letterSpacing: "0.04em",
+            }}
+          >
+            no targets match the current filters.
+          </div>
+        }
+      />
+    );
+  }
+
+  return (
+    <div className="flex flex-col" style={{ gap: 14 }}>
+      <SectionHeader icon="◈" title="Targets" actions={headerActions} />
+      {createFormPanel}
+      {filterPanel}
+      <WindowPanel
+        title="targets"
+        tone="accent"
+        actions={tableActions}
+        flush
+      >
+        {tableBody}
+      </WindowPanel>
     </div>
   );
 }
@@ -739,32 +996,25 @@ export function TargetsPage() {
 // ─── RefreshSourceButton ────────────────────────────────────────────
 //
 // Per-row action: re-run a target's ingestion. For git-backed kinds
-// (source_repo / patch_diff / cve) this hits audit-mcp's refresh_index
-// -- idempotent when upstream did not move. For android_apk targets
-// it resets the apktool / jadx / index-decompiled / static-summary
-// stages back to PENDING and re-enqueues the staged-analysis
-// worker. Only enabled when analysis_state == "ready". Backend
-// returns HTTP 409 if a git-backed target lacks an
+// (source_repo / patch_diff / cve) this hits audit-mcp's
+// refresh_index -- idempotent when upstream did not move. For
+// android_apk targets it resets apktool / jadx / index-decompiled /
+// static-summary stages back to PENDING and re-enqueues the staged-
+// analysis worker. Only enabled when analysis_state == "ready".
+// Backend returns HTTP 409 if a git-backed target lacks an
 // audit_mcp_index_id; the toast surfaces that message verbatim.
 //
-// Shift-click forces a full rebuild even when the SHA didn't change
+// Shift-click forces a full rebuild even when the SHA did not change
 // (use after a trailmark/semble upgrade where the on-disk format
 // shifted). For android_apk the force flag is informational only --
 // the staged-analysis worker always re-runs every reset stage.
 
-const GIT_BACKED_KINDS: ReadonlySet<TargetKind> = new Set([
-  "source_repo",
-  "patch_diff",
-  "cve",
-]);
-
-// Union with android_apk so the refresh button is enabled for APK
-// targets too, with a different action path (stage reset + analyze
-// re-enqueue) wired in the backend's refresh-source endpoint.
-const REFRESHABLE_KINDS: ReadonlySet<TargetKind> = new Set<TargetKind>([
-  ...GIT_BACKED_KINDS,
-  "android_apk",
-]);
+const REFRESHABLE_KINDS: Partial<Record<TargetKind, true>> = {
+  source_repo: true,
+  patch_diff: true,
+  cve: true,
+  android_apk: true,
+};
 
 interface RefreshSourceButtonProps {
   targetId: string;
@@ -778,25 +1028,17 @@ function RefreshSourceButton({
   analysisState,
 }: RefreshSourceButtonProps) {
   const refreshMut = useRefreshTargetSource(targetId);
-  const eligible =
-    REFRESHABLE_KINDS.has(kind) && analysisState === "ready";
+  const refreshable = REFRESHABLE_KINDS[kind] === true;
+  const eligible = refreshable && analysisState === "ready";
   const isPending = refreshMut.isPending;
 
   const title = !eligible
-    ? kind === "native_binary" ||
-      kind === "ipa" ||
-      kind === "jar" ||
-      kind === "dotnet_assembly" ||
-      kind === "kernel_image" ||
-      kind === "kernel_module" ||
-      kind === "hypervisor_image" ||
-      kind === "protocol_capture" ||
-      kind === "crash_input"
-      ? `Refresh unavailable: ${kind} has no refresh path`
-      : `Refresh unavailable: analysis_state=${analysisState}`
+    ? refreshable
+      ? `refresh unavailable: analysis_state=${analysisState}`
+      : `refresh unavailable: ${kind} has no refresh path`
     : kind === "android_apk"
-      ? "Re-run apktool / jadx / static-summary"
-      : "Refresh source from upstream git (shift-click = force rebuild)";
+      ? "re-run apktool / jadx / static-summary"
+      : "refresh source from upstream git (shift-click = force rebuild)";
 
   return (
     <button
@@ -809,18 +1051,24 @@ function RefreshSourceButton({
         const force = e.shiftKey;
         refreshMut.mutate({ force });
       }}
-      className={[
-        "inline-flex items-center justify-center",
-        "h-6 w-6 rounded border border-border",
-        "text-text-muted transition-colors",
-        eligible
-          ? "hover:border-accent hover:text-accent cursor-pointer"
-          : "opacity-40 cursor-not-allowed",
-        isPending ? "border-accent text-accent" : "",
-      ].join(" ")}
+      className="inline-flex items-center justify-center"
+      style={{
+        width: 22,
+        height: 22,
+        borderRadius: 3,
+        background: "transparent",
+        border: `1px solid ${isPending ? "var(--accent)" : "var(--border-soft)"}`,
+        color: isPending ? "var(--accent)" : "var(--text-muted)",
+        cursor: eligible && !isPending ? "pointer" : "not-allowed",
+        opacity: eligible ? 1 : 0.4,
+      }}
     >
       <ArrowsClockwise
-        className={`h-3.5 w-3.5 ${isPending ? "animate-spin" : ""}`}
+        style={{
+          width: 12,
+          height: 12,
+          animation: isPending ? "spin 1s linear infinite" : undefined,
+        }}
       />
     </button>
   );

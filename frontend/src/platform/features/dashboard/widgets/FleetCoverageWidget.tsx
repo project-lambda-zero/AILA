@@ -1,10 +1,18 @@
 import * as React from "react";
 
+import { StatBar, BigStat } from "@/components/aila/mock";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { useDashboardData } from "../hooks/useDashboardData";
 
+const CENTER_STYLE: React.CSSProperties = {
+  height: "100%",
+  padding: 16,
+  fontFamily: "var(--font-mono)",
+  fontSize: 11,
+};
+
 /**
- * FleetCoverageWidget -- shows online/total system count with coverage percentage.
+ * FleetCoverageWidget -- online/total system count with coverage percentage.
  *
  * Data from GET /dashboard via useDashboardData().
  */
@@ -23,18 +31,22 @@ export function FleetCoverageWidget() {
 
   if (isError) {
     return (
-      <div className="h-full w-full p-4 flex items-center justify-center">
-        <p className="text-sm text-destructive font-mono">
-          {error instanceof Error ? error.message : "Failed to load fleet data"}
-        </p>
+      <div
+        className="flex items-center justify-center"
+        style={{ ...CENTER_STYLE, color: "var(--status-warn)" }}
+      >
+        {error instanceof Error ? error.message : "Failed to load fleet data"}
       </div>
     );
   }
 
   if (!data) {
     return (
-      <div className="h-full w-full p-4 flex items-center justify-center">
-        <p className="text-sm text-text-muted font-mono">No data available</p>
+      <div
+        className="flex items-center justify-center"
+        style={{ ...CENTER_STYLE, color: "var(--text-muted)" }}
+      >
+        No data available
       </div>
     );
   }
@@ -43,8 +55,11 @@ export function FleetCoverageWidget() {
 
   if (total_systems === 0) {
     return (
-      <div className="h-full w-full p-4 flex flex-col justify-center gap-1">
-        <p className="text-xs font-mono text-text-muted">No systems registered</p>
+      <div
+        className="flex items-center justify-center"
+        style={{ ...CENTER_STYLE, color: "var(--text-muted)" }}
+      >
+        No systems registered
       </div>
     );
   }
@@ -52,24 +67,32 @@ export function FleetCoverageWidget() {
   const pct = Math.round((online_systems / total_systems) * 100);
 
   return (
-    <div className="h-full w-full p-4 flex flex-col justify-center gap-3">
-      <p className="text-3xl font-mono font-bold text-text">{pct}%</p>
-
-      {/* Progress bar */}
-      <div className="w-full h-2 bg-elevated rounded-[4px] overflow-hidden border border-border">
-        <div
-          className="h-full bg-accent rounded-[4px] transition-all duration-500"
-          style={{ width: `${pct}%` }}
-          role="progressbar"
-          aria-valuenow={pct}
-          aria-valuemin={0}
-          aria-valuemax={100}
-        />
-      </div>
-
-      <p className="text-xs font-mono text-text-muted">
+    <div
+      className="h-full w-full flex flex-col justify-center"
+      style={{ padding: 16, gap: 12 }}
+    >
+      <BigStat value={`${pct}%`} sub="fleet coverage" />
+      <StatBar
+        label="ONLINE"
+        color="var(--status-ok)"
+        value={online_systems}
+        max={total_systems}
+      />
+      <div
+        className="font-mono"
+        style={{
+          fontSize: 10,
+          color: "var(--text-muted)",
+          letterSpacing: "0.1em",
+          textTransform: "uppercase",
+        }}
+        role="progressbar"
+        aria-valuenow={pct}
+        aria-valuemin={0}
+        aria-valuemax={100}
+      >
         {online_systems} / {total_systems} systems online
-      </p>
+      </div>
     </div>
   );
 }

@@ -1,40 +1,29 @@
 /**
- * RadarInspectPanel.tsx -- Slide-over inspect panel for network topology nodes (Phase 144).
+ * RadarInspectPanel -- mock rebuild.
  *
- * Opens when a node is clicked in the RadarGraph. Displays:
- * - System name, host, distro header
- * - Stale warning badge when is_stale=true
- * - Severity distribution pie chart (AilaChart) when severity_counts exists
- * - Running services list
- * - Open ports list
- * - Network metadata (subnet, group tags, last collected)
- *
- * Follows the same fixed-panel pattern as FindingDetailPanel (Phase 143).
+ * Fixed right-side inspector composed of stacked WindowPanels:
+ *  - HEADER card: name / host / distro / STALE badge
+ *  - RISK SUMMARY: StatBar distribution + optional pie chart (lazy)
+ *  - SERVICES: mono lines with state chip
+ *  - PORTS: mono lines
+ *  - NETWORK METADATA: KV block
+ *  - SYSTEM INFO: KV block (when metadata present)
  */
 import * as React from "react";
 import { X as CloseIcon } from "@phosphor-icons/react/dist/csr/X";
 
-import { AilaCard } from "@/components/aila/AilaCard";
-import { AilaBadge } from "@/components/aila/AilaBadge";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { MonoBadge, StatBar } from "@/components/aila/mock";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import { useThemeChartColors } from "@platform/features/viz/chartColors";
 import { formatRelativeTime } from "@platform/features/systems/api";
 import type { TopologyNode } from "./types";
 
-/**
- * The severity pie chart lives in a separate module so recharts can be
- * chunk-split out of the root entry (C17). RadarInspectPanel is itself
- * imported synchronously by RadarPage; deferring the pie keeps recharts
- * out of the eager dependency graph until a node is actually inspected.
- */
 const RadarSeverityPieView = React.lazy(() =>
   import("./RadarSeverityPie.view").then((m) => ({
     default: m.RadarSeverityPieView,
   })),
 );
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 interface RadarInspectPanelProps {
   node: TopologyNode | null;
@@ -42,235 +31,281 @@ interface RadarInspectPanelProps {
   onClose: () => void;
 }
 
-// ---------------------------------------------------------------------------
-// Severity pie chart data
-// ---------------------------------------------------------------------------
-
 interface SeveritySlice {
   name: string;
   value: number;
   fill: string;
 }
 
-function buildSeveritySlices(counts: TopologyNode["severity_counts"]): SeveritySlice[] {
+function buildSeveritySlices(
+  counts: TopologyNode["severity_counts"],
+  colors: { critical: string; high: string; medium: string; low: string },
+): SeveritySlice[] {
   if (!counts) return [];
   return [
-    { name: "Critical", value: counts.critical, fill: "var(--color-critical)" },
-    { name: "High", value: counts.high, fill: "var(--color-high)" },
-    { name: "Medium", value: counts.medium, fill: "var(--color-medium)" },
-    { name: "Low", value: counts.low, fill: "var(--color-low)" },
+    { name: "Critical", value: counts.critical, fill: colors.critical },
+    { name: "High", value: counts.high, fill: colors.high },
+    { name: "Medium", value: counts.medium, fill: colors.medium },
+    { name: "Low", value: counts.low, fill: colors.low },
   ].filter((s) => s.value > 0);
 }
 
-// ---------------------------------------------------------------------------
-// Section heading
-// ---------------------------------------------------------------------------
-
-function SectionHeading({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider mb-2">
-      {children}
-    </p>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Main panel
-// ---------------------------------------------------------------------------
-
 export function RadarInspectPanel({ node, open, onClose }: RadarInspectPanelProps) {
+  React.useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  const colors = useThemeChartColors();
+
   if (!open || !node) return null;
 
-  const severitySlices = buildSeveritySlices(node.severity_counts);
-  const hasSeverityData = severitySlices.length > 0;
-  const hasSeverityCounts = node.severity_counts !== null;
-
-  const totalFindings = hasSeverityCounts && node.severity_counts
-    ? node.severity_counts.critical + node.severity_counts.high + node.severity_counts.medium + node.severity_counts.low
+  const counts = node.severity_counts;
+  const total = counts
+    ? counts.critical + counts.high + counts.medium + counts.low
     : 0;
+  const slices = buildSeveritySlices(counts, colors);
+  const hasSeverityData = slices.length > 0;
 
   return (
     <>
-      {/* Overlay */}
       <div
-        className="fixed inset-0 z-40 bg-black/20"
         onClick={onClose}
         aria-hidden="true"
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 40,
+          background: "color-mix(in srgb, var(--surface-page) 70%, transparent)",
+        }}
       />
-
-      {/* Panel */}
       <div
-        className="fixed inset-y-0 right-0 z-50 w-[480px] bg-elevated border-l border-border flex flex-col overflow-hidden"
         role="complementary"
         aria-label={`System details: ${node.name}`}
+        style={{
+          position: "fixed",
+          top: 0,
+          right: 0,
+          bottom: 0,
+          width: 480,
+          maxWidth: "100vw",
+          zIndex: 50,
+          background: "var(--surface-page)",
+          borderLeft: "1px solid var(--border)",
+          display: "flex",
+          flexDirection: "column",
+          padding: 16,
+          gap: 12,
+          overflow: "hidden",
+        }}
       >
         {/* Header */}
-        <div className="flex items-start justify-between p-5 border-b border-border shrink-0">
-          <div className="flex flex-col gap-2 min-w-0">
-            <span className="font-mono text-base font-semibold truncate">{node.name}</span>
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-mono text-xs text-muted-foreground">{node.host}</span>
-              <span className="text-muted-foreground text-xs">·</span>
-              <span className="font-mono text-xs text-muted-foreground">{node.distro}</span>
+        <div
+          className="flex items-start justify-between"
+          style={{
+            gap: 10,
+            padding: "10px 12px",
+            border: "1px solid var(--border)",
+            background: "var(--surface-card)",
+            borderRadius: 3,
+          }}
+        >
+          <div className="flex flex-col" style={{ gap: 6, minWidth: 0 }}>
+            <span
+              className="font-mono uppercase"
+              style={{ fontSize: 13, letterSpacing: "0.08em", color: "var(--text-primary)" }}
+            >
+              {node.name}
+            </span>
+            <div
+              className="flex items-center flex-wrap font-mono"
+              style={{ gap: 6, fontSize: 10, color: "var(--text-muted)" }}
+            >
+              <span>{node.host}</span>
+              <span style={{ color: "var(--text-faint)" }}>{"\u00B7"}</span>
+              <span>{node.distro}</span>
             </div>
             {node.is_stale && (
-              <div className="mt-1">
-                <AilaBadge severity="critical" size="sm">
-                  STALE -- data may be outdated
-                </AilaBadge>
+              <div style={{ marginTop: 2 }}>
+                <MonoBadge tone="warn">STALE -- data may be outdated</MonoBadge>
               </div>
             )}
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="text-muted-foreground hover:text-foreground transition-colors ml-3 shrink-0"
             aria-label="Close panel"
+            style={{
+              width: 24,
+              height: 24,
+              border: "1px solid var(--border-soft)",
+              background: "var(--surface-sunk)",
+              color: "var(--text-muted)",
+              borderRadius: 3,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+            }}
           >
-            <CloseIcon size={18} />
+            <CloseIcon size={14} />
           </button>
         </div>
 
         {/* Scrollable body */}
-        <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-4">
+        <div className="flex flex-col" style={{ gap: 12, overflowY: "auto", flex: 1, minHeight: 0 }}>
+          <WindowPanel title="risk summary">
+            {counts ? (
+              hasSeverityData ? (
+                <div className="flex flex-col" style={{ gap: 10 }}>
+                  <div className="flex flex-col" style={{ gap: 6 }}>
+                    <StatBar label="CRITICAL" color={colors.critical} value={counts.critical} max={total} />
+                    <StatBar label="HIGH" color={colors.high} value={counts.high} max={total} />
+                    <StatBar label="MEDIUM" color={colors.medium} value={counts.medium} max={total} />
+                    <StatBar label="LOW" color={colors.low} value={counts.low} max={total} />
+                  </div>
+                  <div style={{ height: 140 }}>
+                    <React.Suspense
+                      fallback={<LoadingSkeleton size="full" width="full" className="h-full" />}
+                    >
+                      <RadarSeverityPieView slices={slices} />
+                    </React.Suspense>
+                  </div>
+                  <div className="flex items-center justify-center flex-wrap font-mono" style={{ gap: 10, fontSize: 10 }}>
+                    <LegendChip label={`C:${counts.critical}`} color={colors.critical} />
+                    <LegendChip label={`H:${counts.high}`} color={colors.high} />
+                    <LegendChip label={`M:${counts.medium}`} color={colors.medium} />
+                    <LegendChip label={`L:${counts.low}`} color={colors.low} />
+                    <span style={{ color: "var(--text-faint)" }}>TOTAL: {total}</span>
+                  </div>
+                </div>
+              ) : (
+                <MutedLine>No vulnerabilities detected.</MutedLine>
+              )
+            ) : (
+              <MutedLine>No vulnerability scan data yet. Run a vulnerability scan to populate severity data.</MutedLine>
+            )}
+          </WindowPanel>
 
-          {/* Severity Risk Summary */}
-          <div>
-            <SectionHeading>Risk Summary</SectionHeading>
-            {hasSeverityCounts ? (
-              <AilaCard ><div className="p-3">
-                {hasSeverityData ? (
-                  <>
-                    <div className="h-40">
-                      <React.Suspense
-                        fallback={
-                          <LoadingSkeleton
-                            size="full"
-                            width="full"
-                            className="h-full"
-                          />
-                        }
-                      >
-                        <RadarSeverityPieView slices={severitySlices} />
-                      </React.Suspense>
-                    </div>
-                    <div className="flex justify-center gap-3 mt-2 font-mono text-[10px]">
-                      <span style={{ color: "var(--color-critical)" }}>
-                        C:{node.severity_counts!.critical}
-                      </span>
-                      <span style={{ color: "var(--color-high)" }}>
-                        H:{node.severity_counts!.high}
-                      </span>
-                      <span style={{ color: "var(--color-medium)" }}>
-                        M:{node.severity_counts!.medium}
-                      </span>
-                      <span style={{ color: "var(--color-low)" }}>
-                        L:{node.severity_counts!.low}
-                      </span>
-                      <span className="text-muted-foreground">
-                        Total:{totalFindings}
-                      </span>
-                    </div>
-                  </>
-                ) : (
-                  <p className="font-mono text-xs text-muted-foreground text-center py-4">
-                    No vulnerabilities detected.
+          <WindowPanel title={`running services (${node.services.length})`}>
+            {node.services.length > 0 ? (
+              <div className="flex flex-col" style={{ gap: 4 }}>
+                {node.services.slice(0, 10).map((svc, i) => (
+                  <div
+                    key={i}
+                    className="flex items-center justify-between font-mono"
+                    style={{
+                      gap: 8,
+                      padding: "4px 0",
+                      borderBottom:
+                        i === Math.min(node.services.length, 10) - 1
+                          ? "none"
+                          : "1px solid var(--border-faint)",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 11,
+                        color: "var(--text-primary)",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        flex: 1,
+                      }}
+                    >
+                      {svc.service_name}
+                    </span>
+                    <span
+                      className="uppercase"
+                      style={{ fontSize: 9, letterSpacing: "0.12em", color: "var(--text-muted)" }}
+                    >
+                      {svc.state}/{svc.sub_state}
+                    </span>
+                  </div>
+                ))}
+                {node.services.length > 10 && (
+                  <p
+                    className="font-mono"
+                    style={{ fontSize: 10, color: "var(--text-faint)", marginTop: 4 }}
+                  >
+                    and {node.services.length - 10} more...
                   </p>
                 )}
-              </div></AilaCard>
+              </div>
             ) : (
-              <AilaCard ><div className="p-3">
-                <p className="font-mono text-xs text-muted-foreground">
-                  No vulnerability scan data yet. Run a vulnerability scan to populate severity data.
-                </p>
-              </div></AilaCard>
+              <MutedLine>No service data collected.</MutedLine>
             )}
-          </div>
+          </WindowPanel>
 
-          {/* Running Services */}
-          <div>
-            <SectionHeading>Running Services ({node.services.length})</SectionHeading>
-            <AilaCard ><div className="p-3">
-              {node.services.length > 0 ? (
-                <div className="flex flex-col gap-1">
-                  {node.services.slice(0, 10).map((svc, i) => (
-                    <div key={i} className="flex items-center justify-between gap-2">
-                      <span className="font-mono text-xs truncate flex-1">{svc.service_name}</span>
-                      <span className="font-mono text-[10px] text-muted-foreground shrink-0">
-                        {svc.state}/{svc.sub_state}
-                      </span>
-                    </div>
-                  ))}
-                  {node.services.length > 10 && (
-                    <p className="font-mono text-[10px] text-muted-foreground mt-1">
-                      and {node.services.length - 10} more...
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <p className="font-mono text-xs text-muted-foreground">
-                  No service data collected.
-                </p>
-              )}
-            </div></AilaCard>
-          </div>
-
-          {/* Open Ports */}
-          <div>
-            <SectionHeading>Open Ports ({node.ports.length})</SectionHeading>
-            <AilaCard ><div className="p-3">
-              {node.ports.length > 0 ? (
-                <div className="flex flex-col gap-1">
-                  {node.ports.slice(0, 10).map((port, i) => (
-                    <div key={i} className="flex items-center gap-3">
-                      <span className="font-mono text-xs font-medium w-16 shrink-0">
-                        {port.port}/{port.protocol}
-                      </span>
-                      <span className="font-mono text-[10px] text-muted-foreground truncate">
-                        {port.process_name ?? "--"} ({port.local_address})
-                      </span>
-                    </div>
-                  ))}
-                  {node.ports.length > 10 && (
-                    <p className="font-mono text-[10px] text-muted-foreground mt-1">
-                      and {node.ports.length - 10} more...
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <p className="font-mono text-xs text-muted-foreground">
-                  No port data collected.
-                </p>
-              )}
-            </div></AilaCard>
-          </div>
-
-          {/* Network Metadata */}
-          <div>
-            <SectionHeading>Network Metadata</SectionHeading>
-            <AilaCard ><div className="p-3 flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-[10px] text-muted-foreground uppercase">Subnet</span>
-                <span className="font-mono text-xs">{node.subnet ?? "unresolved"}</span>
+          <WindowPanel title={`open ports (${node.ports.length})`}>
+            {node.ports.length > 0 ? (
+              <div className="flex flex-col" style={{ gap: 4 }}>
+                {node.ports.slice(0, 10).map((port, i) => (
+                  <div
+                    key={i}
+                    className="flex items-center font-mono"
+                    style={{
+                      gap: 10,
+                      padding: "4px 0",
+                      borderBottom:
+                        i === Math.min(node.ports.length, 10) - 1
+                          ? "none"
+                          : "1px solid var(--border-faint)",
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 11,
+                        color: "var(--accent)",
+                        fontWeight: 600,
+                        width: 68,
+                        flex: "0 0 auto",
+                      }}
+                    >
+                      {port.port}/{port.protocol}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        color: "var(--text-muted)",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {port.process_name ?? "--"} ({port.local_address})
+                    </span>
+                  </div>
+                ))}
+                {node.ports.length > 10 && (
+                  <p
+                    className="font-mono"
+                    style={{ fontSize: 10, color: "var(--text-faint)", marginTop: 4 }}
+                  >
+                    and {node.ports.length - 10} more...
+                  </p>
+                )}
               </div>
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-[10px] text-muted-foreground uppercase">Groups</span>
-                <span className="font-mono text-xs">
-                  {node.group_tags.length > 0 ? node.group_tags.join(", ") : "none"}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-[10px] text-muted-foreground uppercase">Last collected</span>
-                <span className="font-mono text-xs">
-                  {formatRelativeTime(node.last_collected)}
-                </span>
-              </div>
-            </div></AilaCard>
-          </div>
+            ) : (
+              <MutedLine>No port data collected.</MutedLine>
+            )}
+          </WindowPanel>
 
-          {/* Phase 176d: system info (gateway / external IP / neofetch-like) */}
+          <WindowPanel title="network metadata">
+            <KeyValueGrid
+              rows={[
+                ["Subnet", node.subnet ?? "unresolved"],
+                ["Groups", node.group_tags.length > 0 ? node.group_tags.join(", ") : "none"],
+                ["Last collected", formatRelativeTime(node.last_collected)],
+              ]}
+            />
+          </WindowPanel>
+
           {node.metadata && <SystemInfoSection metadata={node.metadata} />}
-
         </div>
       </div>
     </>
@@ -278,7 +313,7 @@ export function RadarInspectPanel({ node, open, onClose }: RadarInspectPanelProp
 }
 
 // ---------------------------------------------------------------------------
-// Phase 176d: System info section
+// System info section (Phase 176d)
 // ---------------------------------------------------------------------------
 
 function SystemInfoSection({
@@ -286,81 +321,103 @@ function SystemInfoSection({
 }: {
   metadata: NonNullable<TopologyNode["metadata"]>;
 }) {
-  const hasNetwork =
-    metadata.gateway_ip || metadata.gateway_interface || metadata.external_ip;
-  const hasSystem =
-    metadata.os_pretty_name ||
-    metadata.os_name ||
-    metadata.kernel ||
-    metadata.cpu_cores != null ||
-    metadata.memory_mb != null ||
-    metadata.disk_gb != null ||
-    metadata.uptime_seconds != null;
+  const rows: Array<[string, string]> = [];
+  if (metadata.gateway_ip) {
+    rows.push([
+      "Gateway",
+      metadata.gateway_interface
+        ? `${metadata.gateway_ip} via ${metadata.gateway_interface}`
+        : metadata.gateway_ip,
+    ]);
+  }
+  if (metadata.external_ip) rows.push(["External IP", metadata.external_ip]);
+  if (metadata.os_pretty_name) rows.push(["OS", metadata.os_pretty_name]);
+  if (metadata.kernel) rows.push(["Kernel", metadata.kernel]);
+  if (metadata.cpu_cores != null) rows.push(["CPU cores", String(metadata.cpu_cores)]);
+  if (metadata.memory_mb != null) rows.push(["Memory", `${metadata.memory_mb} MB`]);
+  if (metadata.disk_gb != null) rows.push(["Disk (/)", `${metadata.disk_gb} GB`]);
+  if (metadata.uptime_seconds != null) rows.push(["Uptime", formatUptime(metadata.uptime_seconds)]);
 
-  if (!hasNetwork && !hasSystem) return null;
+  if (rows.length === 0 && !metadata.is_stale) return null;
 
   return (
-    <div>
-      <SectionHeading>System Info</SectionHeading>
-      <AilaCard ><div className="p-3 flex flex-col gap-2">
-        {hasNetwork && (
-          <>
-            {metadata.gateway_ip && (
-              <InfoRow
-                label="Gateway"
-                value={
-                  metadata.gateway_interface
-                    ? `${metadata.gateway_ip} via ${metadata.gateway_interface}`
-                    : metadata.gateway_ip
-                }
-              />
-            )}
-            {metadata.external_ip && (
-              <InfoRow label="External IP" value={metadata.external_ip} />
-            )}
-          </>
-        )}
-        {metadata.os_pretty_name && (
-          <InfoRow label="OS" value={metadata.os_pretty_name} />
-        )}
-        {metadata.kernel && <InfoRow label="Kernel" value={metadata.kernel} />}
-        {metadata.cpu_cores != null && (
-          <InfoRow label="CPU cores" value={String(metadata.cpu_cores)} />
-        )}
-        {metadata.memory_mb != null && (
-          <InfoRow label="Memory" value={`${metadata.memory_mb} MB`} />
-        )}
-        {metadata.disk_gb != null && (
-          <InfoRow label="Disk (/)" value={`${metadata.disk_gb} GB`} />
-        )}
-        {metadata.uptime_seconds != null && (
-          <InfoRow
-            label="Uptime"
-            value={formatUptime(metadata.uptime_seconds)}
-          />
-        )}
-        {metadata.is_stale && (
-          <div className="mt-1">
-            <AilaBadge severity="medium" size="sm">
-              stale -- last scan did not refresh this data
-            </AilaBadge>
-          </div>
-        )}
-      </div></AilaCard>
+    <WindowPanel title="system info">
+      {rows.length > 0 && <KeyValueGrid rows={rows} />}
+      {metadata.is_stale && (
+        <div style={{ marginTop: rows.length > 0 ? 8 : 0 }}>
+          <MonoBadge tone="warn">stale -- last scan did not refresh this data</MonoBadge>
+        </div>
+      )}
+    </WindowPanel>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shared building blocks
+// ---------------------------------------------------------------------------
+
+function KeyValueGrid({ rows }: { rows: Array<[string, string]> }) {
+  return (
+    <div className="flex flex-col">
+      {rows.map(([k, v], i) => (
+        <div
+          key={k}
+          className="flex items-start justify-between font-mono"
+          style={{
+            gap: 10,
+            padding: "6px 0",
+            borderBottom: i === rows.length - 1 ? "none" : "1px solid var(--border-faint)",
+          }}
+        >
+          <span
+            className="uppercase"
+            style={{ fontSize: 9, letterSpacing: "0.14em", color: "var(--text-faint)" }}
+          >
+            {k}
+          </span>
+          <span
+            style={{
+              fontSize: 11,
+              color: "var(--text-primary)",
+              textAlign: "right",
+              wordBreak: "break-all",
+              maxWidth: "60%",
+            }}
+          >
+            {v}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }
 
-function InfoRow({ label, value }: { label: string; value: string }) {
+function MutedLine({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="font-mono text-[10px] text-muted-foreground uppercase">
-        {label}
-      </span>
-      <span className="font-mono text-xs truncate max-w-[60%] text-right">
-        {value}
-      </span>
-    </div>
+    <p
+      className="font-mono"
+      style={{
+        fontSize: 11,
+        color: "var(--text-muted)",
+        border: "1px solid var(--border-faint)",
+        borderRadius: 3,
+        padding: 10,
+      }}
+    >
+      {children}
+    </p>
+  );
+}
+
+function LegendChip({ label, color }: { label: string; color: string }) {
+  return (
+    <span className="flex items-center" style={{ gap: 4 }}>
+      <span
+        aria-hidden="true"
+        style={{ width: 8, height: 8, background: color, borderRadius: 1 }}
+      />
+      <span style={{ color: "var(--text-primary)" }}>{label}</span>
+    </span>
   );
 }
 

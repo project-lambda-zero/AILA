@@ -1,6 +1,6 @@
 /**
  * OutcomePolarityBadge -- renders an outcome's polarity (finding /
- * no_finding / inconclusive) as a clearly-colored pill.
+ * no_finding / inconclusive) as a MonoBadge chip.
  *
  * Distinct from OutcomeKindBadge, which answers "what KIND of outcome
  * is this" (Assessment Report vs Audit Memo vs ...). Polarity answers
@@ -21,7 +21,7 @@ import { CheckCircle } from "@phosphor-icons/react/dist/csr/CheckCircle";
 import { Warning } from "@phosphor-icons/react/dist/csr/Warning";
 import { WarningCircle } from "@phosphor-icons/react/dist/csr/WarningCircle";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
+import { MonoBadge } from "@/components/aila/mock";
 
 export type OutcomePolarity = "finding" | "no_finding" | "inconclusive";
 
@@ -62,63 +62,44 @@ export function outcomePolarity(
 interface PolarityMeta {
   icon: ComponentType<IconProps>;
   label: string;
+  tone: string;
 }
 
+// Polarity -> MonoBadge tone (see wave-2 brief):
+//   finding      -> critical (accent red)
+//   no_finding   -> ok       (status-ok green -- "audited clean")
+//   inconclusive -> medium   (status-info -- "insufficient info")
 const POLARITY_META: Record<OutcomePolarity, PolarityMeta> = {
-  finding: { icon: Warning, label: "Finding" },
-  no_finding: { icon: CheckCircle, label: "No Finding" },
-  inconclusive: { icon: WarningCircle, label: "Inconclusive" },
+  finding: { icon: Warning, label: "Finding", tone: "critical" },
+  no_finding: { icon: CheckCircle, label: "No Finding", tone: "ok" },
+  inconclusive: { icon: WarningCircle, label: "Inconclusive", tone: "medium" },
 };
 
 interface OutcomePolarityBadgeProps {
   polarity: OutcomePolarity;
   /** Show the label text next to the icon. Default true. */
   showLabel?: boolean;
-  /** AilaBadge size passthrough. Default `sm` matches the surrounding pills. */
+  /** Size passthrough (mock chip has one size; accepted for caller parity). */
   size?: "sm" | "md" | "lg";
   className?: string;
   title?: string;
 }
 
-/**
- * Colored polarity pill built on top of AilaBadge. Reuses the existing
- * AilaBadge vocabulary so the pill lands on WCAG-tuned theme tokens:
- *
- *   - `finding`      -> severity `critical` (red, matches MASVS finding)
- *   - `no_finding`   -> status   `completed` (bright green, "audited clean")
- *   - `inconclusive` -> severity `medium`   (amber, "insufficient info")
- *
- * `no_finding` intentionally rides the status-* token namespace instead
- * of severity `low` (which the shared severity ramp maps to muted gray)
- * so the "audited clean" signal actually reads as success at a glance.
- */
 export function OutcomePolarityBadge({
   polarity,
   showLabel = true,
-  size = "sm",
-  className = "",
+  size: _size = "sm",
+  className: _className = "",
   title,
 }: OutcomePolarityBadgeProps) {
   const meta = POLARITY_META[polarity];
   const Icon = meta.icon;
-
-  const badgeProps =
-    polarity === "no_finding"
-      ? ({ status: "completed" } as const)
-      : polarity === "finding"
-        ? ({ severity: "critical" } as const)
-        : ({ severity: "medium" } as const);
-
   return (
-    <AilaBadge
-      {...badgeProps}
-      size={size}
-      className={`gap-1 ${className}`.trim()}
-      title={title ?? meta.label}
-    >
-      <Icon size={11} weight="fill" aria-hidden />
-      {showLabel && <span>{meta.label}</span>}
-    </AilaBadge>
+    <MonoBadge tone={meta.tone} title={title ?? meta.label}>
+      <span className="inline-flex items-center" style={{ gap: 4 }}>
+        <Icon size={11} weight="fill" aria-hidden />
+        {showLabel ? <span>{meta.label}</span> : null}
+      </span>
+    </MonoBadge>
   );
 }
-

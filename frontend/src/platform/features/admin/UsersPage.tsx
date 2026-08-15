@@ -2,31 +2,21 @@
  * UsersPage -- admin user management with invite and deactivate.
  *
  * ADM-03: Lists all user accounts. Admins can:
- * - Invite a new user (username, password, email, role) via Dialog.
- * - Deactivate an active user via confirmation Dialog.
+ * - Invite a new user (username, password, email, role) via a WindowPanel modal.
+ * - Deactivate an active user via confirmation.
  *
  * Uses real backend: GET/POST/PATCH /users.
- * No mock data -- is_active determines user status.
+ * Presentation rebuilt to the AILA mock language (SectionHeader + WindowPanel
+ * + DataGrid + MonoBadge + FilterChip). Data hooks, mutations, testids, and
+ * handler wiring are unchanged.
  */
+import * as React from "react";
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { type ColumnDef } from "@tanstack/react-table";
-import { Users } from "@phosphor-icons/react/dist/csr/Users";
-import { UserPlus } from "@phosphor-icons/react/dist/csr/UserPlus";
 
-import { AilaCard } from "@/components/aila/AilaCard";
-import { AilaTable } from "@/components/aila/AilaTable";
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
-import { EmptyState } from "@/components/aila/EmptyState";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { SectionHeader, DataGrid, MonoBadge, FilterChip, StatBar } from "@/components/aila/mock";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { authorizedRequestJson } from "@platform/api/http";
 
 // ---------------------------------------------------------------------------
@@ -66,13 +56,144 @@ interface UserUpdateEnvelope {
 }
 
 // ---------------------------------------------------------------------------
+// Mock-language style primitives (local; kit is compose-only).
+// ---------------------------------------------------------------------------
+
+const btnBase: React.CSSProperties = {
+  height: 26,
+  fontSize: 9.5,
+  letterSpacing: "0.08em",
+  padding: "0 11px",
+  borderRadius: 3,
+  border: "1px solid var(--border-soft)",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  cursor: "pointer",
+  textTransform: "uppercase",
+  fontFamily: "var(--font-mono)",
+};
+
+const primaryBtn: React.CSSProperties = {
+  ...btnBase,
+  background: "var(--accent)",
+  color: "var(--text-on-accent)",
+  borderColor: "var(--accent)",
+};
+
+const dangerBtn: React.CSSProperties = {
+  ...btnBase,
+  color: "var(--status-warn)",
+  borderColor: "color-mix(in srgb, var(--status-warn) 40%, transparent)",
+};
+
+const inputStyle: React.CSSProperties = {
+  height: 28,
+  padding: "0 8px",
+  fontSize: 11,
+  fontFamily: "var(--font-mono)",
+  color: "var(--text-primary)",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  outline: "none",
+  width: "100%",
+};
+
+const labelStyle: React.CSSProperties = {
+  fontFamily: "var(--font-mono)",
+  fontSize: 9,
+  letterSpacing: "0.12em",
+  textTransform: "uppercase",
+  color: "var(--text-faint)",
+};
+
+function ErrorLine({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="font-mono"
+      style={{
+        border: "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+        background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+        color: "var(--status-warn)",
+        padding: "8px 12px",
+        fontSize: 11,
+        borderRadius: 3,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function ModalFrame({
+  open,
+  onClose,
+  title,
+  children,
+  width = 460,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  children: React.ReactNode;
+  width?: number;
+}) {
+  if (!open) return null;
+  return (
+    <div
+      className="flex items-center justify-center"
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 60,
+        background: "color-mix(in srgb, var(--surface-page) 80%, transparent)",
+      }}
+      onClick={onClose}
+      role="presentation"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ width, maxWidth: "94vw" }}
+      >
+        <WindowPanel
+          title={title}
+          tone="accent"
+          actions={
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={onClose}
+              className="font-mono"
+              style={{
+                width: 20,
+                height: 20,
+                border: 0,
+                background: "transparent",
+                color: "var(--text-muted)",
+                cursor: "pointer",
+                fontSize: 13,
+                lineHeight: 1,
+              }}
+            >
+              {"\u2715"}
+            </button>
+          }
+        >
+          {children}
+        </WindowPanel>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
 
-function roleSeverity(role: string): "critical" | "medium" | "neutral" {
+function roleTone(role: string): string {
   if (role === "admin") return "critical";
   if (role === "operator") return "medium";
-  return "neutral";
+  return "muted";
 }
 
 function formatTimestamp(value: string | null | undefined): string {
@@ -81,7 +202,7 @@ function formatTimestamp(value: string | null | undefined): string {
 }
 
 // ---------------------------------------------------------------------------
-// Invite user dialog
+// Invite user modal
 // ---------------------------------------------------------------------------
 
 const DEFAULT_INVITE_FORM: UserCreateRequest = {
@@ -91,7 +212,7 @@ const DEFAULT_INVITE_FORM: UserCreateRequest = {
   role: "operator",
 };
 
-function InviteUserDialog({
+function InviteUserButton({
   onInvite,
   isPending,
 }: {
@@ -113,7 +234,6 @@ function InviteUserDialog({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-
     if (form.username.length < 3) {
       setError("Username must be at least 3 characters.");
       return;
@@ -122,7 +242,6 @@ function InviteUserDialog({
       setError("Password must be at least 8 characters (NIST 800-63B).");
       return;
     }
-
     try {
       await onInvite(form);
       handleClose();
@@ -133,118 +252,93 @@ function InviteUserDialog({
 
   return (
     <>
-      <Button size="sm" className="gap-1.5" onClick={() => setOpen(true)}>
-        <UserPlus className="h-4 w-4" />
-        Invite User
-      </Button>
+      <button type="button" style={primaryBtn} onClick={() => setOpen(true)}>
+        {"\u002b"} Invite User
+      </button>
 
-      <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="font-mono text-text">
-              Invite User
-            </DialogTitle>
-          </DialogHeader>
+      <ModalFrame open={open} onClose={handleClose} title="new user">
+        <form className="flex flex-col" style={{ gap: 12 }} onSubmit={handleSubmit}>
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={labelStyle} htmlFor="iu-username">username</label>
+            <input
+              id="iu-username"
+              style={inputStyle}
+              value={form.username}
+              onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
+              placeholder="jane.doe"
+              autoComplete="off"
+            />
+          </div>
 
-          <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
-            <div className="flex flex-col gap-1">
-              <label className="font-mono text-xs text-text-muted" htmlFor="iu-username">
-                Username
-              </label>
-              <Input
-                id="iu-username"
-                value={form.username}
-                onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
-                placeholder="jane.doe"
-                className="font-mono text-sm"
-                autoComplete="off"
-              />
-            </div>
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={labelStyle} htmlFor="iu-email">email</label>
+            <input
+              id="iu-email"
+              type="email"
+              style={inputStyle}
+              value={form.email}
+              onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+              placeholder="jane@example.com"
+            />
+          </div>
 
-            <div className="flex flex-col gap-1">
-              <label className="font-mono text-xs text-text-muted" htmlFor="iu-email">
-                Email
-              </label>
-              <Input
-                id="iu-email"
-                type="email"
-                value={form.email}
-                onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                placeholder="jane@example.com"
-                className="font-mono text-sm"
-              />
-            </div>
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={labelStyle} htmlFor="iu-password">password</label>
+            <input
+              id="iu-password"
+              type="password"
+              style={inputStyle}
+              value={form.password}
+              onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+              placeholder="min 8 chars"
+              autoComplete="new-password"
+            />
+            <p className="font-mono" style={{ fontSize: 9.5, color: "var(--text-faint)" }}>
+              NIST 800-63B: min 8 chars, breach-checked.
+            </p>
+          </div>
 
-            <div className="flex flex-col gap-1">
-              <label className="font-mono text-xs text-text-muted" htmlFor="iu-password">
-                Password
-              </label>
-              <Input
-                id="iu-password"
-                type="password"
-                value={form.password}
-                onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-                placeholder="Min 8 characters"
-                className="font-mono text-sm"
-                autoComplete="new-password"
-              />
-              <p className="font-mono text-[10px] text-text-muted">
-                NIST 800-63B: min 8 chars, checked against breach databases.
-              </p>
-            </div>
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={labelStyle} htmlFor="iu-role">role</label>
+            <select
+              id="iu-role"
+              style={inputStyle}
+              value={form.role}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, role: e.target.value as UserCreateRequest["role"] }))
+              }
+            >
+              <option value="reader">reader</option>
+              <option value="operator">operator</option>
+              <option value="admin">admin</option>
+            </select>
+          </div>
 
-            <div className="flex flex-col gap-1">
-              <label className="font-mono text-xs text-text-muted" htmlFor="iu-role">
-                Role
-              </label>
-              <select
-                id="iu-role"
-                value={form.role}
-                onChange={(e) =>
-                  setForm((f) => ({
-                    ...f,
-                    role: e.target.value as UserCreateRequest["role"],
-                  }))
-                }
-                className="rounded-[2px] border border-border bg-base font-mono text-sm text-text px-2.5 py-1.5 outline-none focus:border-border-hover transition-colors duration-100"
-              >
-                <option value="reader">reader</option>
-                <option value="operator">operator</option>
-                <option value="admin">admin</option>
-              </select>
-            </div>
+          {error && <ErrorLine>{error}</ErrorLine>}
 
-            {error && (
-              <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-                {error}
-              </div>
-            )}
-
-            <div className="flex gap-2">
-              <Button type="submit" size="sm" disabled={isPending} className="flex-1">
-                {isPending ? "Creating..." : "Create Account"}
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={handleClose}
-              >
-                Cancel
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
+          <div className="flex" style={{ gap: 8, marginTop: 4 }}>
+            <button
+              type="submit"
+              style={{ ...primaryBtn, flex: 1 }}
+              disabled={isPending}
+            >
+              {isPending ? "Creating..." : "Create Account"}
+            </button>
+            <button type="button" style={btnBase} onClick={handleClose}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      </ModalFrame>
     </>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Deactivate confirmation dialog
+// Deactivate confirmation
 // ---------------------------------------------------------------------------
 
-function DeactivateUserDialog({
+function DeactivateButton({
   user,
   onDeactivate,
   isPending,
@@ -268,171 +362,72 @@ function DeactivateUserDialog({
 
   return (
     <>
-      <Button
-        size="sm"
-        variant="outline"
-        className="text-destructive border-destructive/40 hover:bg-destructive/10 hover:border-destructive"
+      <button
+        type="button"
+        style={dangerBtn}
         disabled={!user.is_active}
         onClick={() => setOpen(true)}
       >
         Deactivate
-      </Button>
+      </button>
 
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle className="font-mono text-text">Deactivate User</DialogTitle>
-          </DialogHeader>
+      <ModalFrame
+        open={open}
+        onClose={() => setOpen(false)}
+        title="deactivate user"
+        width={420}
+      >
+        <div className="flex flex-col" style={{ gap: 12 }}>
+          <p className="font-mono" style={{ fontSize: 11, color: "var(--text-primary)" }}>
+            User{" "}
+            <span style={{ color: "var(--accent)" }}>{user.username}</span> will no
+            longer be able to log in. The account can be reactivated later.
+          </p>
 
-          <div className="flex flex-col gap-4">
-            <div className="rounded-[4px] border border-destructive/40 bg-destructive/10 px-4 py-3">
-              <p className="font-mono text-xs text-destructive font-semibold mb-1">
-                This will soft-delete the user account.
-              </p>
-              <p className="font-mono text-xs text-text-muted">
-                User <span className="text-text font-semibold">{user.username}</span>
-                {" "}will no longer be able to log in. The account can be reactivated later.
-              </p>
+          <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <div className="flex flex-col" style={{ gap: 3 }}>
+              <span style={labelStyle}>role</span>
+              <MonoBadge tone={roleTone(user.role)}>{user.role}</MonoBadge>
             </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <div className="flex flex-col gap-0.5">
-                <p className="font-mono text-xs text-text-muted">Username</p>
-                <p className="font-mono text-xs text-text">{user.username}</p>
-              </div>
-              <div className="flex flex-col gap-0.5">
-                <p className="font-mono text-xs text-text-muted">Role</p>
-                <AilaBadge severity={roleSeverity(user.role)} size="sm">
-                  {user.role}
-                </AilaBadge>
-              </div>
-              <div className="flex flex-col gap-0.5">
-                <p className="font-mono text-xs text-text-muted">Email</p>
-                <p className="font-mono text-xs text-text">{user.email || "--"}</p>
-              </div>
-            </div>
-
-            {error && (
-              <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-                {error}
-              </div>
-            )}
-
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                size="sm"
-                className="flex-1 bg-destructive text-[color:var(--text-on-accent)] hover:bg-destructive/90"
-                onClick={handleConfirm}
-                disabled={isPending}
-              >
-                {isPending ? "Deactivating..." : "Confirm Deactivate"}
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => setOpen(false)}
-              >
-                Cancel
-              </Button>
+            <div className="flex flex-col" style={{ gap: 3 }}>
+              <span style={labelStyle}>email</span>
+              <span className="font-mono" style={{ fontSize: 11, color: "var(--text-primary)" }}>
+                {user.email || "--"}
+              </span>
             </div>
           </div>
-        </DialogContent>
-      </Dialog>
+
+          {error && <ErrorLine>{error}</ErrorLine>}
+
+          <div className="flex" style={{ gap: 8 }}>
+            <button
+              type="button"
+              style={{
+                ...primaryBtn,
+                flex: 1,
+                background: "var(--status-warn)",
+                borderColor: "var(--status-warn)",
+              }}
+              onClick={handleConfirm}
+              disabled={isPending}
+            >
+              {isPending ? "Deactivating..." : "Confirm Deactivate"}
+            </button>
+            <button type="button" style={btnBase} onClick={() => setOpen(false)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      </ModalFrame>
     </>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Column definitions
-// ---------------------------------------------------------------------------
-
-function buildColumns(
-  onDeactivate: (userId: string) => Promise<UserUpdateEnvelope>,
-  isDeactivatePending: boolean,
-): ColumnDef<UserListItem>[] {
-  return [
-    {
-      id: "username",
-      header: "Username",
-      accessorKey: "username",
-      cell: ({ getValue }) => (
-        <span className="font-mono text-xs font-medium text-text">{String(getValue())}</span>
-      ),
-    },
-    {
-      id: "email",
-      header: "Email",
-      accessorKey: "email",
-      cell: ({ getValue }) => (
-        <span className="font-mono text-xs text-text-muted">{String(getValue() ?? "--")}</span>
-      ),
-    },
-    {
-      id: "role",
-      header: "Role",
-      accessorKey: "role",
-      cell: ({ getValue }) => {
-        const r = String(getValue());
-        return (
-          <AilaBadge severity={roleSeverity(r)} size="sm">
-            {r}
-          </AilaBadge>
-        );
-      },
-    },
-    {
-      id: "status",
-      header: "Status",
-      accessorKey: "is_active",
-      cell: ({ getValue }) => {
-        const active = getValue() as boolean;
-        return active ? (
-          <AilaBadge severity="info" size="sm">Active</AilaBadge>
-        ) : (
-          <AilaBadge severity="neutral" size="sm">Inactive</AilaBadge>
-        );
-      },
-    },
-    {
-      id: "created_at",
-      header: "Created",
-      accessorKey: "created_at",
-      cell: ({ getValue }) => (
-        <span className="font-mono text-xs text-text-muted whitespace-nowrap">
-          {formatTimestamp(getValue() as string)}
-        </span>
-      ),
-    },
-    {
-      id: "last_login_at",
-      header: "Last Login",
-      accessorKey: "last_login_at",
-      cell: ({ getValue }) => (
-        <span className="font-mono text-xs text-text-muted whitespace-nowrap">
-          {formatTimestamp(getValue() as string | null)}
-        </span>
-      ),
-    },
-    {
-      id: "actions",
-      header: "Actions",
-      enableSorting: false,
-      cell: ({ row }) => (
-        <DeactivateUserDialog
-          user={row.original}
-          onDeactivate={onDeactivate}
-          isPending={isDeactivatePending}
-        />
-      ),
-    },
-  ];
-}
-
-// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
+
+type RoleFilter = "all" | "admin" | "operator" | "reader";
 
 export function UsersPage() {
   const queryClient = useQueryClient();
@@ -445,10 +440,7 @@ export function UsersPage() {
 
   const createMutation = useMutation({
     mutationFn: (req: UserCreateRequest) =>
-      authorizedRequestJson<UserCreateEnvelope>("/users", {
-        method: "POST",
-        body: req,
-      }),
+      authorizedRequestJson<UserCreateEnvelope>("/users", { method: "POST", body: req }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["platform", "users"] });
     },
@@ -467,105 +459,201 @@ export function UsersPage() {
 
   const users = usersQuery.data?.data ?? [];
 
-  const { totalUsers, activeUsers, inactiveUsers } = useMemo(() => {
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
+  const [activeOnly, setActiveOnly] = useState(false);
+
+  const { totalUsers, activeUsers, inactiveUsers, byRole } = useMemo(() => {
     const total = users.length;
     const inactive = users.filter((u) => !u.is_active).length;
-    return { totalUsers: total, activeUsers: total - inactive, inactiveUsers: inactive };
+    const r = { admin: 0, operator: 0, reader: 0 } as Record<string, number>;
+    for (const u of users) r[u.role] = (r[u.role] ?? 0) + 1;
+    return {
+      totalUsers: total,
+      activeUsers: total - inactive,
+      inactiveUsers: inactive,
+      byRole: r,
+    };
   }, [users]);
 
-  const columns = buildColumns(
-    (userId) => deactivateMutation.mutateAsync(userId),
-    deactivateMutation.isPending,
-  );
+  const filtered = useMemo(() => {
+    return users.filter((u) => {
+      if (activeOnly && !u.is_active) return false;
+      if (roleFilter !== "all" && u.role !== roleFilter) return false;
+      return true;
+    });
+  }, [users, roleFilter, activeOnly]);
+
+  const roleMax = Math.max(1, byRole.admin ?? 0, byRole.operator ?? 0, byRole.reader ?? 0);
 
   return (
-    <div className="flex flex-col gap-6 p-4 lg:p-6">
-      {/* Page header */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col" style={{ gap: 16, padding: 20 }}>
+      <SectionHeader
+        icon={"\u25ce"}
+        title="user directory"
+        actions={
+          <InviteUserButton
+            onInvite={(req) => createMutation.mutateAsync(req)}
+            isPending={createMutation.isPending}
+          />
+        }
+      />
 
-        <InviteUserDialog
-          onInvite={(req) => createMutation.mutateAsync(req)}
-          isPending={createMutation.isPending}
-        />
+      {/* Metric strip */}
+      <div className="grid" style={{ gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+        <WindowPanel title="totals">
+          <div className="flex items-baseline" style={{ gap: 8 }}>
+            <span className="font-mono" style={{ fontSize: 26, color: "var(--accent)" }}>
+              {totalUsers}
+            </span>
+            <span className="font-mono" style={{ fontSize: 10, color: "var(--text-faint)", letterSpacing: "0.1em", textTransform: "uppercase" }}>
+              accounts
+            </span>
+          </div>
+        </WindowPanel>
+        <WindowPanel title="active">
+          <div className="flex items-baseline" style={{ gap: 8 }}>
+            <span className="font-mono" style={{ fontSize: 26, color: "var(--status-ok)" }}>
+              {activeUsers}
+            </span>
+            <span className="font-mono" style={{ fontSize: 10, color: "var(--text-faint)", letterSpacing: "0.1em", textTransform: "uppercase" }}>
+              can sign in
+            </span>
+          </div>
+        </WindowPanel>
+        <WindowPanel title="role distribution">
+          <div className="flex flex-col" style={{ gap: 6 }}>
+            <StatBar label="ADMIN" color="var(--accent)" value={byRole.admin ?? 0} max={roleMax} />
+            <StatBar label="OPERATOR" color="var(--status-info)" value={byRole.operator ?? 0} max={roleMax} />
+            <StatBar label="READER" color="var(--status-ok)" value={byRole.reader ?? 0} max={roleMax} />
+          </div>
+        </WindowPanel>
       </div>
 
-      {/* Metric cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Total Users
-        </p>
-        <div className="mt-1 min-h-[2rem]">
-          {usersQuery.isLoading ? (
-            <LoadingSkeleton size="md" width="third" aria-label="Loading total user count" />
-          ) : (
-            <p className="font-mono text-2xl font-semibold text-text">{totalUsers}</p>
-          )}
-        </div>
-        <p className="font-mono text-xs text-text-muted mt-0.5">All accounts</p></AilaCard>
-
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Active Users
-        </p>
-        <div className="mt-1 min-h-[2rem]">
-          {usersQuery.isLoading ? (
-            <LoadingSkeleton size="md" width="third" aria-label="Loading active user count" />
-          ) : (
-            <p className="font-mono text-2xl font-semibold text-text">{activeUsers}</p>
-          )}
-        </div>
-        <p className="font-mono text-xs text-text-muted mt-0.5">
-          Can log in
-        </p></AilaCard>
-
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Inactive Users
-        </p>
-        <div className="mt-1 min-h-[2rem]">
-          {usersQuery.isLoading ? (
-            <LoadingSkeleton size="md" width="third" aria-label="Loading inactive user count" />
-          ) : (
-            <p className="font-mono text-2xl font-semibold text-text">{inactiveUsers}</p>
-          )}
-        </div>
-        <p className="font-mono text-xs text-text-muted mt-0.5">
-          Deactivated
-        </p></AilaCard>
-      </div>
-
-      {/* Error banner */}
-      {usersQuery.isError && (
-        <div className="rounded-[4px] border border-destructive bg-destructive/10 px-4 py-3 font-mono text-sm text-destructive">
-          Failed to load users: {(usersQuery.error as Error).message}
-        </div>
-      )}
-
-      {/* Loading skeleton */}
-      {usersQuery.isLoading && (
-        <AilaCard variant="default" padding="md"><LoadingSkeletonGroup lines={6} /></AilaCard>
-      )}
-
-      {/* Empty state */}
-      {!usersQuery.isLoading && !usersQuery.isError && users.length === 0 && (
-        <EmptyState
-          icon={<Users className="h-10 w-10" />}
-          title="No users"
-          description="Invite a user to get started with the platform."
-        />
-      )}
-
-      {/* Users table */}
-      {!usersQuery.isLoading && users.length > 0 && (
-        <AilaTable
-          data={users}
-          columns={columns}
-          pageSize={25}
-          enableSorting
-          enableFiltering={false}
+      {/* Filter row */}
+      <div className="flex items-center flex-wrap" style={{ gap: 8 }}>
+        <FilterChip active={roleFilter === "all"} onClick={() => setRoleFilter("all")}>
+          ALL ({totalUsers})
+        </FilterChip>
+        <FilterChip
+          active={roleFilter === "admin"}
+          color="var(--accent)"
+          onClick={() => setRoleFilter("admin")}
         >
-          <AilaTable.Header />
-          <AilaTable.Body emptyState="No users found." />
-          <AilaTable.Pagination pageSizeOptions={[10, 25, 50]} />
-        </AilaTable>
+          ADMIN ({byRole.admin ?? 0})
+        </FilterChip>
+        <FilterChip
+          active={roleFilter === "operator"}
+          color="var(--status-info)"
+          onClick={() => setRoleFilter("operator")}
+        >
+          OPERATOR ({byRole.operator ?? 0})
+        </FilterChip>
+        <FilterChip
+          active={roleFilter === "reader"}
+          color="var(--status-ok)"
+          onClick={() => setRoleFilter("reader")}
+        >
+          READER ({byRole.reader ?? 0})
+        </FilterChip>
+        <span style={{ flex: 1 }} />
+        <FilterChip
+          active={activeOnly}
+          color="var(--status-ok)"
+          onClick={() => setActiveOnly((v) => !v)}
+        >
+          ACTIVE ONLY
+        </FilterChip>
+        <span
+          className="font-mono uppercase"
+          style={{ fontSize: 9, letterSpacing: "0.12em", color: "var(--text-faint)" }}
+        >
+          {filtered.length} shown / {inactiveUsers} inactive
+        </span>
+      </div>
+
+      {usersQuery.isError && (
+        <ErrorLine>
+          Failed to load users: {(usersQuery.error as Error).message}
+        </ErrorLine>
+      )}
+
+      {usersQuery.isLoading ? (
+        <WindowPanel title="users" status="LOADING" tone="muted">
+          <LoadingSkeletonGroup lines={6} />
+        </WindowPanel>
+      ) : (
+        <WindowPanel title="users" flush>
+          <DataGrid
+            columns={[
+              { label: "USERNAME", width: "1fr" },
+              { label: "EMAIL", width: "1.4fr" },
+              { label: "ROLE", width: "100px" },
+              { label: "STATUS", width: "90px" },
+              { label: "CREATED", width: "160px" },
+              { label: "LAST LOGIN", width: "160px" },
+              { label: "ACTIONS", width: "130px", align: "right" },
+            ]}
+            rows={filtered}
+            getKey={(u) => u.id}
+            empty={
+              <div
+                className="font-mono"
+                style={{
+                  padding: 34,
+                  textAlign: "center",
+                  fontSize: 12,
+                  color: "var(--text-muted)",
+                }}
+              >
+                {users.length === 0
+                  ? "no users. invite a user to get started."
+                  : "no users match the current filters."}
+              </div>
+            }
+            renderCells={(u) => [
+              <span
+                key="user"
+                className="font-mono"
+                style={{ fontSize: 11.5, color: "var(--text-primary)" }}
+              >
+                {u.username}
+              </span>,
+              <span
+                key="email"
+                className="font-mono truncate"
+                style={{ fontSize: 10.5, color: "var(--text-muted)" }}
+              >
+                {u.email ?? "--"}
+              </span>,
+              <MonoBadge key="role" tone={roleTone(u.role)}>{u.role}</MonoBadge>,
+              u.is_active ? (
+                <MonoBadge key="s" tone="ok">Active</MonoBadge>
+              ) : (
+                <MonoBadge key="s" tone="muted">Inactive</MonoBadge>
+              ),
+              <span
+                key="c"
+                className="font-mono"
+                style={{ fontSize: 10, color: "var(--text-faint)", whiteSpace: "nowrap" }}
+              >
+                {formatTimestamp(u.created_at)}
+              </span>,
+              <span
+                key="l"
+                className="font-mono"
+                style={{ fontSize: 10, color: "var(--text-faint)", whiteSpace: "nowrap" }}
+              >
+                {formatTimestamp(u.last_login_at)}
+              </span>,
+              <DeactivateButton
+                key="a"
+                user={u}
+                onDeactivate={(id) => deactivateMutation.mutateAsync(id)}
+                isPending={deactivateMutation.isPending}
+              />,
+            ]}
+          />
+        </WindowPanel>
       )}
     </div>
   );

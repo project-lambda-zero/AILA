@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode } from "react";
 
 import { AppErrorBoundary } from "@app/ErrorBoundary";
-import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 /**
  * PanelBoundary -- scoped error boundary for a single heavy async panel
@@ -16,8 +16,9 @@ import { AilaCard } from "@/components/aila/AilaCard";
  *    ReactFlow branch tree, LiveRunPanel). A render error thrown inside
  *    ONE panel should not blank sibling panels. Wrapping each panel in
  *    its own AppErrorBoundary contains the blast radius to that panel.
- * -- The fallback renders a compact "Failed to load" surface with a
- *    Retry button. Retry does two things:
+ * -- The fallback renders a WindowPanel(title="error", tone="accent")
+ *    with role=alert mono text (message, trace_id / timestamp) and a
+ *    Retry action in the title bar. Retry does two things:
  *      1. Resets the boundary state so children re-mount cleanly.
  *      2. Optionally invalidates a query-key prefix so the panel's
  *         fetches re-run (this covers the common case where the render
@@ -49,40 +50,86 @@ export function PanelBoundary({
   const queryClient = useQueryClient();
   return (
     <AppErrorBoundary
-      fallback={({ error, traceId, timestamp, reset }) => (
-        <AilaCard className="border-critical" techBorder glow>
-          <div
-            role="alert"
-            aria-live="polite"
-            className="space-y-2 p-1"
-            data-testid={`vr-panel-boundary-${label.toLowerCase().replace(/\s+/g, "-")}`}
-          >
-            <p className="text-xs uppercase tracking-wide text-text-muted font-mono">
-              {label} failed to render
-            </p>
-            <p className="text-sm text-critical break-words">
-              {error.message || "Unexpected panel error."}
-            </p>
-            <p className="text-3xs text-text-muted font-mono">
-              {traceId ? <>trace_id: <code>{traceId}</code></> : <>timestamp: <code>{timestamp}</code></>}
-            </p>
-            <div className="flex gap-2 pt-1">
+      fallback={({ error, traceId, timestamp, reset }) => {
+        const testId = `vr-panel-boundary-${label.toLowerCase().replace(/\s+/g, "-")}`;
+        const onRetry = () => {
+          if (invalidateKeyPrefix) {
+            queryClient.invalidateQueries({ queryKey: invalidateKeyPrefix });
+          }
+          reset();
+        };
+        return (
+          <WindowPanel
+            title="error"
+            tone="accent"
+            actions={
               <button
                 type="button"
-                onClick={() => {
-                  if (invalidateKeyPrefix) {
-                    queryClient.invalidateQueries({ queryKey: invalidateKeyPrefix });
-                  }
-                  reset();
+                onClick={onRetry}
+                className="font-mono uppercase"
+                style={{
+                  height: 22,
+                  padding: "0 10px",
+                  fontSize: 9.5,
+                  letterSpacing: "0.08em",
+                  background: "var(--accent)",
+                  border: "1px solid var(--accent)",
+                  color: "var(--text-on-accent)",
+                  borderRadius: 3,
+                  cursor: "pointer",
                 }}
-                className="rounded-[2px] border border-border bg-surface px-3 py-1 font-mono text-xs text-text hover:border-border-hover"
               >
-                Retry
+                retry
               </button>
+            }
+          >
+            <div
+              role="alert"
+              aria-live="polite"
+              data-testid={testId}
+              className="font-mono flex flex-col"
+              style={{ gap: 8, fontSize: 11, lineHeight: 1.5 }}
+            >
+              <div
+                style={{
+                  fontSize: 9.5,
+                  letterSpacing: "0.08em",
+                  color: "var(--text-muted)",
+                  textTransform: "uppercase",
+                }}
+              >
+                {label} failed to render
+              </div>
+              <div
+                style={{
+                  color: "var(--accent)",
+                  fontSize: 12,
+                  wordBreak: "break-word",
+                }}
+              >
+                {error.message || "Unexpected panel error."}
+              </div>
+              <div
+                style={{
+                  fontSize: 9.5,
+                  letterSpacing: "0.06em",
+                  color: "var(--text-faint)",
+                }}
+              >
+                {traceId ? (
+                  <>
+                    trace_id: <code>{traceId}</code>
+                  </>
+                ) : (
+                  <>
+                    timestamp: <code>{timestamp}</code>
+                  </>
+                )}
+              </div>
             </div>
-          </div>
-        </AilaCard>
-      )}
+          </WindowPanel>
+        );
+      }}
     >
       {children}
     </AppErrorBoundary>

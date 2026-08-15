@@ -1,9 +1,8 @@
 import { Clock } from "@phosphor-icons/react/dist/csr/Clock";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { WindowPanel } from "@/components/aila/WindowPanel";
+import { MonoBadge } from "@/components/aila/mock";
 
 import { useAuditEvents, type AuditEvent } from "../hooks/useAuditEvents";
 
@@ -14,13 +13,12 @@ interface ActivityPanelProps {
   runId: string | null | undefined;
 }
 
-const STATUS_SEVERITY: Record<
-  string,
-  Parameters<typeof AilaBadge>[0]["severity"]
-> = {
-  completed: "low",
-  ok: "low",
-  success: "low",
+// Status -> mock semantic tone. Preserves the earlier STATUS_SEVERITY
+// mapping but speaks the mock tone vocabulary (info/ok/medium/critical).
+const STATUS_TONE: Record<string, string> = {
+  completed: "ok",
+  ok: "ok",
+  success: "ok",
   started: "info",
   running: "medium",
   warning: "medium",
@@ -35,27 +33,48 @@ function formatTimestamp(value: string | null): string {
 }
 
 function ActivityRow({ event }: { event: AuditEvent }) {
-  const severity = STATUS_SEVERITY[event.status] ?? "neutral";
+  const tone = STATUS_TONE[event.status] ?? "muted";
   return (
-    <li className="flex flex-col gap-1 border-b border-border last:border-0 py-2">
-      <div className="flex items-center gap-2 flex-wrap">
-        <AilaBadge severity={severity} size="sm">
-          {event.status || "--"}
-        </AilaBadge>
-        <span className="text-xs font-mono text-foreground break-all">
+    <li
+      className="flex flex-col"
+      style={{
+        gap: 4,
+        borderBottom: "1px solid var(--border-faint)",
+        padding: "8px 0",
+      }}
+    >
+      <div className="flex items-center flex-wrap" style={{ gap: 8 }}>
+        <MonoBadge tone={tone}>{event.status || "--"}</MonoBadge>
+        <span
+          className="font-mono break-all"
+          style={{ fontSize: 11, color: "var(--text-primary)" }}
+        >
           {event.action}
         </span>
         {event.stage && (
-          <span className="text-3xs font-mono uppercase tracking-wider text-text-muted">
+          <span
+            className="font-mono uppercase"
+            style={{
+              fontSize: 9,
+              letterSpacing: "0.1em",
+              color: "var(--text-faint)",
+            }}
+          >
             {event.stage}
           </span>
         )}
-        <span className="ml-auto text-3xs font-mono text-text-muted">
+        <span
+          className="font-mono ml-auto"
+          style={{ fontSize: 9.5, color: "var(--text-faint)" }}
+        >
           {formatTimestamp(event.created_at)}
         </span>
       </div>
       {(event.target || event.user_id) && (
-        <div className="flex gap-3 text-3xs font-mono text-text-muted flex-wrap">
+        <div
+          className="flex flex-wrap font-mono"
+          style={{ gap: 12, fontSize: 9.5, color: "var(--text-faint)" }}
+        >
           {event.target && <span>target: {event.target}</span>}
           {event.user_id && <span>by: {event.user_id}</span>}
         </div>
@@ -76,44 +95,77 @@ export function ActivityPanel({ runId }: ActivityPanelProps) {
   return (
     <WindowPanel
       title="activity"
-      status={data && data.total > 0 ? `audit ; ${data.items.length} of ${data.total} events` : "forensics ; audit trail"}
+      status={
+        data && data.total > 0
+          ? `audit ; ${data.items.length} of ${data.total} events`
+          : "forensics ; audit trail"
+      }
     >
       <div className="space-y-3">
-      {!enabled && (
-        <p className="font-mono text-xs text-text-muted">
-          No run id bound to this investigation yet -- audit trail unavailable.
-        </p>
-      )}
-      {enabled && isLoading && (
-        <div className="space-y-2">
-          <LoadingSkeleton size="sm" width="full" />
-          <LoadingSkeleton size="sm" width="full" />
-          <LoadingSkeleton size="sm" width="third" />
-        </div>
-      )}
-      {enabled && isError && (
-        <p className="font-mono text-xs text-text-muted">
-          Audit trail temporarily unavailable.
-        </p>
-      )}
-      {enabled && !isLoading && !isError && data && data.items.length === 0 && (
-        <EmptyState
-          icon={<Clock className="h-10 w-10" />}
-          title="No audit events recorded for this run."
-          description="Workflow events, LLM calls, and stage transitions appear here once the audit router logs them for this run."
-        />
-      )}
-      {enabled && !isLoading && data && data.items.length > 0 && (
-        <ul className="text-sm">
-          {data.items.map((ev, i) => (
-            <ActivityRow
-              // eslint-disable-next-line react/no-array-index-key
-              key={ev.id ?? `${ev.created_at ?? ""}-${ev.action}-${i}`}
-              event={ev}
-            />
-          ))}
-        </ul>
-      )}
+        {!enabled && (
+          <p
+            className="font-mono"
+            style={{ fontSize: 11, color: "var(--text-muted)" }}
+          >
+            No run id bound to this investigation yet -- audit trail unavailable.
+          </p>
+        )}
+        {enabled && isLoading && (
+          <div className="space-y-2">
+            <LoadingSkeleton size="sm" width="full" />
+            <LoadingSkeleton size="sm" width="full" />
+            <LoadingSkeleton size="sm" width="third" />
+          </div>
+        )}
+        {enabled && isError && (
+          <p
+            className="font-mono"
+            style={{ fontSize: 11, color: "var(--text-muted)" }}
+          >
+            Audit trail temporarily unavailable.
+          </p>
+        )}
+        {enabled &&
+          !isLoading &&
+          !isError &&
+          data &&
+          data.items.length === 0 && (
+            <div
+              className="flex flex-col items-center justify-center"
+              style={{ gap: 10, padding: "32px 0" }}
+            >
+              <Clock
+                aria-hidden="true"
+                className="h-8 w-8"
+                style={{ color: "var(--text-faint)" }}
+              />
+              <p
+                className="font-mono"
+                style={{
+                  fontSize: 11,
+                  color: "var(--text-muted)",
+                  textAlign: "center",
+                  maxWidth: 420,
+                  lineHeight: 1.55,
+                }}
+              >
+                No audit events recorded for this run. Workflow events, LLM
+                calls, and stage transitions appear here once the audit router
+                logs them.
+              </p>
+            </div>
+          )}
+        {enabled && !isLoading && data && data.items.length > 0 && (
+          <ul>
+            {data.items.map((ev, i) => (
+              <ActivityRow
+                // eslint-disable-next-line react/no-array-index-key
+                key={ev.id ?? `${ev.created_at ?? ""}-${ev.action}-${i}`}
+                event={ev}
+              />
+            ))}
+          </ul>
+        )}
       </div>
     </WindowPanel>
   );

@@ -1,73 +1,78 @@
-import { Shield } from "@phosphor-icons/react/dist/csr/Shield";
 import { ArrowSquareOut } from "@phosphor-icons/react/dist/csr/ArrowSquareOut";
-import { Warning } from "@phosphor-icons/react/dist/csr/Warning";
-import { CheckCircle } from "@phosphor-icons/react/dist/csr/CheckCircle";
-import { Lightbulb } from "@phosphor-icons/react/dist/csr/Lightbulb";
-import { Wrench } from "@phosphor-icons/react/dist/csr/Wrench";
-import { Question } from "@phosphor-icons/react/dist/csr/Question";
-import { Tag } from "@phosphor-icons/react/dist/csr/Tag";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
+import { MonoBadge } from "@/components/aila/mock";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription,
-} from "@/components/ui/sheet";
 import { WorkflowActions } from "./WorkflowActions";
+import { EvidenceChainSheet } from "./EvidenceChainSheet";
 import { useFindingDetail, useCveIntel } from "./api";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function severityVariant(sev: string | null): "critical" | "high" | "medium" | "low" | "neutral" {
+function severityTone(sev: string | null | undefined) {
   const s = (sev ?? "").toLowerCase();
   if (s === "critical") return "critical";
   if (s === "high") return "high";
   if (s === "medium") return "medium";
   if (s === "low") return "low";
-  return "neutral";
+  return "muted";
 }
 
 function weightColor(weight: "high" | "medium" | "low"): string {
-  if (weight === "high") return "text-severity-critical";
-  if (weight === "medium") return "text-severity-high";
-  return "text-text-muted";
-}
-
-function scoreBar(score: number): string {
-  // score is 0.0–1.0
-  const pct = Math.round(Math.min(Math.max(score, 0), 1) * 100);
-  return `${pct}%`;
+  if (weight === "high") return "var(--accent)";
+  if (weight === "medium") return "var(--status-warn)";
+  return "var(--text-muted)";
 }
 
 function scoreColor(score: number): string {
-  if (score >= 0.8) return "bg-severity-critical";
-  if (score >= 0.6) return "bg-severity-high";
-  if (score >= 0.4) return "bg-severity-medium";
-  return "bg-severity-low";
+  if (score >= 0.8) return "var(--accent)";
+  if (score >= 0.6) return "var(--status-warn)";
+  if (score >= 0.4) return "var(--status-info)";
+  return "var(--status-ok)";
 }
 
 // ---------------------------------------------------------------------------
-// Sub-components
+// Shared styles
 // ---------------------------------------------------------------------------
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <h3 className="font-mono text-[10px] uppercase tracking-widest text-text-muted mb-2">
-      {children}
-    </h3>
-  );
-}
+const MONO_BTN: React.CSSProperties = {
+  height: 26,
+  fontSize: 9.5,
+  padding: "0 11px",
+  borderRadius: 3,
+  border: "1px solid var(--border-soft)",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  fontFamily: "var(--font-mono)",
+  textTransform: "uppercase",
+  letterSpacing: "0.08em",
+  cursor: "pointer",
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+};
 
-function TextBlock({ text }: { text: string | undefined }) {
-  if (!text) return <p className="font-mono text-xs text-text-muted italic">--</p>;
-  return <p className="font-mono text-xs text-text leading-relaxed">{text}</p>;
-}
+const SECTION_LABEL: React.CSSProperties = {
+  fontFamily: "var(--font-mono)",
+  fontSize: 9,
+  letterSpacing: "0.14em",
+  textTransform: "uppercase",
+  color: "var(--text-muted)",
+  marginBottom: 8,
+};
+
+const KEY_VALUE_ROW: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "flex-start",
+  gap: 10,
+  padding: "6px 0",
+  borderBottom: "1px solid var(--border-faint)",
+  fontFamily: "var(--font-mono)",
+  fontSize: 11,
+};
 
 // ---------------------------------------------------------------------------
 // Props
@@ -100,275 +105,488 @@ export function FindingDetailSheet({ findingId, open, onOpenChange }: FindingDet
   const intelQuery = useCveIntel(isCve ? cveId : null);
   const intel = intelQuery.data?.data;
 
+  if (!open) return null;
+
+  const title = finding
+    ? `finding ${finding.cve_id.toLowerCase()}`
+    : "finding detail";
+  const subtitle = finding
+    ? `${finding.package} on ${finding.host}`
+    : "Loading\u2026";
+
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto">
-        {/* Header */}
-        <SheetHeader className="mb-4">
-          <SheetTitle className="font-mono text-sm flex items-center gap-2">
-            <Shield size={16} weight="duotone" className="text-accent" />
-            {finding ? finding.cve_id : "Finding Detail"}
-          </SheetTitle>
-          <SheetDescription className="font-mono text-xs text-text-muted">
-            {finding
-              ? `${finding.package} on ${finding.host}`
-              : "Loading…"}
-          </SheetDescription>
-        </SheetHeader>
+    <div
+      className="fixed"
+      style={{ inset: 0, zIndex: 70, pointerEvents: "none" }}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Finding detail"
+    >
+      {/* backdrop */}
+      <div
+        role="button"
+        tabIndex={-1}
+        aria-label="Close finding detail"
+        onClick={() => onOpenChange(false)}
+        onKeyDown={(e) => { if (e.key === "Escape") onOpenChange(false); }}
+        style={{
+          position: "absolute",
+          inset: 0,
+          background: "color-mix(in srgb, black 40%, transparent)",
+          pointerEvents: "auto",
+        }}
+      />
 
-        {/* Loading */}
-        {detailQuery.isLoading && (
-          <div className="flex flex-col gap-4">
+      {/* sheet -- right-anchored WindowPanel */}
+      <div
+        style={{
+          position: "fixed",
+          top: 0,
+          right: 0,
+          bottom: 0,
+          width: "min(560px, 92vw)",
+          overflowY: "auto",
+          background: "var(--surface-page)",
+          borderLeft: "1px solid var(--border)",
+          pointerEvents: "auto",
+        }}
+      >
+        <WindowPanel
+          title={title}
+          tone={finding ? severityTone(finding.severity) === "critical" ? "accent" : "info" : "muted"}
+          actions={
+            <button
+              type="button"
+              onClick={() => onOpenChange(false)}
+              aria-label="Close"
+              style={{ ...MONO_BTN, height: 20, fontSize: 9, padding: "0 8px" }}
+            >
+              {"\u2715"} CLOSE
+            </button>
+          }
+          status={subtitle}
+        >
+          {detailQuery.isLoading && (
             <LoadingSkeletonGroup lines={8} />
-          </div>
-        )}
+          )}
 
-        {/* Error */}
-        {detailQuery.isError && (
-          <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-            {(detailQuery.error as Error).message}
-          </div>
-        )}
-
-        {/* Content */}
-        {finding && (
-          <div className="flex flex-col gap-5">
-
-            {/* Identity row */}
-            <div className="flex flex-wrap items-center gap-2">
-              <AilaBadge severity={severityVariant(finding.severity)} size="sm">
-                {finding.severity?.toUpperCase() ?? "UNKNOWN"}
-              </AilaBadge>
-              {finding.is_kev && (
-                <AilaBadge severity="critical" size="sm">
-                  <Warning size={10} weight="fill" className="inline mr-0.5" />
-                  KEV
-                </AilaBadge>
-              )}
-              <span className="font-mono text-xs text-text-muted">
-                Score:{" "}
-                <span className="text-text font-semibold">
-                  {finding.score.toFixed(3)}
-                </span>
-              </span>
-              <span className="font-mono text-xs text-text-muted">
-                Status:{" "}
-                <span className="text-text">{finding.status}</span>
-              </span>
-              <span className="font-mono text-xs text-text-muted">
-                State:{" "}
-                <span className="text-text">{finding.workflow_state}</span>
-              </span>
+          {detailQuery.isError && (
+            <div
+              className="font-mono"
+              style={{
+                border: "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+                background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+                color: "var(--status-warn)",
+                padding: "8px 12px",
+                fontSize: 11,
+                borderRadius: 3,
+              }}
+            >
+              {(detailQuery.error as Error).message}
             </div>
+          )}
 
-            {/* Score bar */}
-            <div className="flex items-center gap-2">
-              <div className="h-1.5 flex-1 rounded-full bg-surface-2 overflow-hidden">
+          {finding && (
+            <div className="flex flex-col" style={{ gap: 18 }}>
+
+              {/* Severity / KEV / status row */}
+              <div className="flex items-center flex-wrap" style={{ gap: 8 }}>
+                <MonoBadge tone={severityTone(finding.severity)}>
+                  {(finding.severity ?? "unknown").toUpperCase()}
+                </MonoBadge>
+                {finding.is_kev && (
+                  <MonoBadge tone="critical" title="Known Exploited">
+                    KEV
+                  </MonoBadge>
+                )}
+                <MonoBadge tone="muted">
+                  SCORE {finding.score.toFixed(3)}
+                </MonoBadge>
+                <MonoBadge tone="muted">
+                  STATUS {finding.status.toUpperCase()}
+                </MonoBadge>
+              </div>
+
+              {/* Score bar */}
+              <div className="flex items-center" style={{ gap: 8 }}>
                 <div
-                  className={`h-full rounded-full transition-all ${scoreColor(finding.score)}`}
-                  style={{ width: scoreBar(finding.score) }}
+                  style={{
+                    flex: 1,
+                    height: 4,
+                    background: "var(--surface-sunk)",
+                    border: "1px solid var(--border-faint)",
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      height: "100%",
+                      width: `${Math.round(Math.min(Math.max(finding.score, 0), 1) * 100)}%`,
+                      background: scoreColor(finding.score),
+                    }}
+                  />
+                </div>
+                <span
+                  className="font-mono"
+                  style={{ fontSize: 9, color: "var(--text-muted)", width: 34, textAlign: "right" }}
+                >
+                  {Math.round(finding.score * 100)}%
+                </span>
+              </div>
+
+              {/* Workflow / triage */}
+              <WorkflowActions
+                findingId={finding.id}
+                fallbackState={finding.workflow_state}
+              />
+
+              {/* Evidence chain link */}
+              <div>
+                <div style={SECTION_LABEL}>Evidence Chain</div>
+                <EvidenceChainSheet
+                  findingId={finding.id}
+                  findingLabel={`${finding.cve_id} on ${finding.host}`}
                 />
               </div>
-              <span className="font-mono text-[10px] text-text-muted w-8 text-right">
-                {Math.round(finding.score * 100)}%
-              </span>
-            </div>
 
-            {/* Triage workflow actions */}
-            <AilaCard variant="default" padding="sm"><WorkflowActions
-              findingId={finding.id}
-              fallbackState={finding.workflow_state}
-            /></AilaCard>
-
-            {/* CVE description */}
-            <AilaCard variant="default" padding="sm"><SectionLabel>CVE Description</SectionLabel>
-            {intelQuery.isLoading && <LoadingSkeletonGroup lines={3} />}
-            {!intelQuery.isLoading && (
-              <TextBlock text={intel?.description || (isCve ? undefined : "Advisory-only finding -- no CVE description available.")} />
-            )}
-            {intel?.nvd_url && (
-              <a
-                href={intel.nvd_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-2 inline-flex items-center gap-1 font-mono text-[10px] text-accent hover:underline"
-              >
-                NVD <ArrowSquareOut size={10} />
-              </a>
-            )}</AilaCard>
-
-            {/* CVSS breakdown */}
-            {intel?.cvss_breakdown && intel.cvss_breakdown.length > 0 && (
-              <AilaCard variant="default" padding="sm"><SectionLabel>
-                CVSS {intel.cvss_score !== null ? intel.cvss_score?.toFixed(1) : "--"} · {intel.base_severity ?? "--"}
-              </SectionLabel>
-              {intel.cvss_vector && (
-                <p className="font-mono text-[10px] text-text-muted mb-2 break-all">{intel.cvss_vector}</p>
-              )}
-              <div className="grid grid-cols-1 gap-1.5">
-                {intel.cvss_breakdown.map((m) => (
-                  <div key={m.code} className="flex gap-2 items-start">
-                    <span className={`font-mono text-[10px] w-5 shrink-0 mt-0.5 ${weightColor(m.weight)}`}>
-                      {m.weight === "high" ? "▲" : m.weight === "medium" ? "◆" : "▽"}
-                    </span>
-                    <div>
-                      <span className="font-mono text-xs text-text-muted">{m.metric}: </span>
-                      <span className="font-mono text-xs text-text font-medium">{m.value}</span>
-                      <p className="font-mono text-[10px] text-text-muted">{m.explanation}</p>
-                    </div>
-                  </div>
-                ))}
+              {/* CVE description */}
+              <div>
+                <div style={SECTION_LABEL}>CVE Description</div>
+                {intelQuery.isLoading && <LoadingSkeletonGroup lines={3} />}
+                {!intelQuery.isLoading && (
+                  <p
+                    className="font-mono"
+                    style={{ fontSize: 11, color: "var(--text-primary)", lineHeight: 1.55 }}
+                  >
+                    {intel?.description ||
+                      (isCve
+                        ? "\u2014"
+                        : "Advisory-only finding -- no CVE description available.")}
+                  </p>
+                )}
+                {intel?.nvd_url && (
+                  <a
+                    href={intel.nvd_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-mono uppercase"
+                    style={{
+                      marginTop: 8,
+                      fontSize: 9,
+                      letterSpacing: "0.1em",
+                      color: "var(--accent)",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                    }}
+                  >
+                    NVD <ArrowSquareOut size={10} />
+                  </a>
+                )}
               </div>
-              {(intel.epss_score !== null || intel.kev_listed) && (
-                <div className="mt-2 pt-2 border-t border-border flex flex-wrap gap-3">
-                  {intel.epss_score !== null && (
-                    <span className="font-mono text-[10px] text-text-muted">
-                      EPSS: <span className="text-text">{(intel.epss_score * 100).toFixed(2)}%</span>
-                      {intel.epss_percentile !== null && (
-                        <span className="text-text-muted"> (p{Math.round(intel.epss_percentile * 100)})</span>
+
+              {/* CVSS breakdown */}
+              {intel?.cvss_breakdown && intel.cvss_breakdown.length > 0 && (
+                <div>
+                  <div style={SECTION_LABEL}>
+                    CVSS {intel.cvss_score !== null ? intel.cvss_score?.toFixed(1) : "--"}{" \u00b7 "}
+                    {intel.base_severity ?? "--"}
+                  </div>
+                  {intel.cvss_vector && (
+                    <p
+                      className="font-mono"
+                      style={{
+                        fontSize: 9,
+                        color: "var(--text-muted)",
+                        marginBottom: 8,
+                        wordBreak: "break-all",
+                      }}
+                    >
+                      {intel.cvss_vector}
+                    </p>
+                  )}
+                  <div className="flex flex-col" style={{ gap: 6 }}>
+                    {intel.cvss_breakdown.map((m) => (
+                      <div key={m.code} className="flex" style={{ gap: 8, alignItems: "flex-start" }}>
+                        <span
+                          className="font-mono"
+                          style={{
+                            fontSize: 10,
+                            width: 14,
+                            color: weightColor(m.weight),
+                            marginTop: 2,
+                          }}
+                        >
+                          {m.weight === "high" ? "\u25b2" : m.weight === "medium" ? "\u25c6" : "\u25bd"}
+                        </span>
+                        <div>
+                          <span
+                            className="font-mono"
+                            style={{ fontSize: 11, color: "var(--text-muted)" }}
+                          >
+                            {m.metric}:{" "}
+                          </span>
+                          <span
+                            className="font-mono"
+                            style={{ fontSize: 11, color: "var(--text-primary)", fontWeight: 500 }}
+                          >
+                            {m.value}
+                          </span>
+                          <p
+                            className="font-mono"
+                            style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}
+                          >
+                            {m.explanation}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {(intel.epss_score !== null || intel.kev_listed) && (
+                    <div
+                      className="flex flex-wrap"
+                      style={{
+                        gap: 12,
+                        marginTop: 10,
+                        paddingTop: 10,
+                        borderTop: "1px solid var(--border-faint)",
+                      }}
+                    >
+                      {intel.epss_score !== null && (
+                        <span
+                          className="font-mono"
+                          style={{ fontSize: 10, color: "var(--text-muted)" }}
+                        >
+                          EPSS:{" "}
+                          <span style={{ color: "var(--text-primary)" }}>
+                            {(intel.epss_score * 100).toFixed(2)}%
+                          </span>
+                          {intel.epss_percentile !== null && (
+                            <span style={{ color: "var(--text-faint)" }}>
+                              {" "}(p{Math.round(intel.epss_percentile * 100)})
+                            </span>
+                          )}
+                        </span>
                       )}
-                    </span>
-                  )}
-                  {intel.kev_listed && (
-                    <span className="font-mono text-[10px] text-severity-critical">
-                      In CISA KEV{intel.kev_date_added ? ` since ${intel.kev_date_added}` : ""}
-                    </span>
-                  )}
-                  {intel.published_at && (
-                    <span className="font-mono text-[10px] text-text-muted">
-                      Published: {intel.published_at.slice(0, 10)}
-                    </span>
+                      {intel.kev_listed && (
+                        <span
+                          className="font-mono"
+                          style={{ fontSize: 10, color: "var(--accent)" }}
+                        >
+                          In CISA KEV
+                          {intel.kev_date_added ? ` since ${intel.kev_date_added}` : ""}
+                        </span>
+                      )}
+                      {intel.published_at && (
+                        <span
+                          className="font-mono"
+                          style={{ fontSize: 10, color: "var(--text-muted)" }}
+                        >
+                          Published: {intel.published_at.slice(0, 10)}
+                        </span>
+                      )}
+                    </div>
                   )}
                 </div>
-              )}</AilaCard>
-            )}
-
-            {/* Package + version */}
-            <AilaCard variant="default" padding="sm"><SectionLabel>Package</SectionLabel>
-            <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 font-mono text-xs">
-              <dt className="text-text-muted">Package</dt>
-              <dd className="text-text">{finding.package}</dd>
-              <dt className="text-text-muted">Installed</dt>
-              <dd className="text-text">{finding.details.installed_version ?? "--"}</dd>
-              <dt className="text-text-muted">Fix available</dt>
-              <dd className={finding.fixed_version ? "text-severity-low font-medium" : "text-text-muted"}>
-                {finding.fixed_version ?? "None published"}
-              </dd>
-              {finding.details.distribution && (
-                <>
-                  <dt className="text-text-muted">Distribution</dt>
-                  <dd className="text-text">{finding.details.distribution}</dd>
-                </>
               )}
-            </dl></AilaCard>
 
-            {/* Rationale */}
-            <AilaCard variant="default" padding="sm"><SectionLabel>
-              <CheckCircle size={11} className="inline mr-1" weight="fill" />
-              Rationale
-            </SectionLabel>
-            <TextBlock text={finding.rationale} /></AilaCard>
+              {/* Package */}
+              <div>
+                <div style={SECTION_LABEL}>Package</div>
+                <div className="flex flex-col">
+                  <div style={KEY_VALUE_ROW}>
+                    <span style={{ color: "var(--text-muted)" }}>PACKAGE</span>
+                    <span style={{ color: "var(--text-primary)", textAlign: "right" }}>
+                      {finding.package}
+                    </span>
+                  </div>
+                  <div style={KEY_VALUE_ROW}>
+                    <span style={{ color: "var(--text-muted)" }}>INSTALLED</span>
+                    <span style={{ color: "var(--text-primary)", textAlign: "right" }}>
+                      {finding.details.installed_version ?? "\u2014"}
+                    </span>
+                  </div>
+                  <div style={KEY_VALUE_ROW}>
+                    <span style={{ color: "var(--text-muted)" }}>FIX AVAILABLE</span>
+                    <span
+                      style={{
+                        color: finding.fixed_version ? "var(--status-ok)" : "var(--text-faint)",
+                        textAlign: "right",
+                      }}
+                    >
+                      {finding.fixed_version ?? "None published"}
+                    </span>
+                  </div>
+                  {finding.details.distribution && (
+                    <div style={KEY_VALUE_ROW}>
+                      <span style={{ color: "var(--text-muted)" }}>DISTRIBUTION</span>
+                      <span style={{ color: "var(--text-primary)", textAlign: "right" }}>
+                        {finding.details.distribution}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
 
-            {/* Facts */}
-            {finding.details.facts && (
-              <AilaCard variant="default" padding="sm"><SectionLabel>
-                <Tag size={11} className="inline mr-1" />
-                Facts
-              </SectionLabel>
-              <TextBlock text={finding.details.facts} /></AilaCard>
-            )}
-
-            {/* Inference */}
-            {finding.details.inference && (
-              <AilaCard variant="default" padding="sm"><SectionLabel>
-                <Lightbulb size={11} className="inline mr-1" />
-                Inference
-              </SectionLabel>
-              <TextBlock text={finding.details.inference} /></AilaCard>
-            )}
-
-            {/* Recommended action */}
-            {finding.details.recommended_action && (
-              <AilaCard variant="elevated" padding="sm"><SectionLabel>
-                <Wrench size={11} className="inline mr-1" />
-                Recommended Action
-              </SectionLabel>
-              <TextBlock text={finding.details.recommended_action} /></AilaCard>
-            )}
-
-            {/* Uncertainty */}
-            {finding.details.uncertainty && (
-              <AilaCard variant="default" padding="sm"><SectionLabel>
-                <Question size={11} className="inline mr-1" />
-                Uncertainty
-              </SectionLabel>
-              <TextBlock text={finding.details.uncertainty} /></AilaCard>
-            )}
-
-            {/* Vendor info */}
-            {(finding.details.vendor_statuses?.length ||
-              finding.details.vendor_urgencies?.length ||
-              finding.details.vendor_fix_states?.length) ? (
-              <AilaCard variant="default" padding="sm"><SectionLabel>Vendor Signals</SectionLabel>
-              <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 font-mono text-xs">
-                {!!finding.details.vendor_statuses?.length && (
-                  <>
-                    <dt className="text-text-muted">Status</dt>
-                    <dd className="text-text">{finding.details.vendor_statuses.join(", ")}</dd>
-                  </>
-                )}
-                {!!finding.details.vendor_urgencies?.length && (
-                  <>
-                    <dt className="text-text-muted">Urgency</dt>
-                    <dd className="text-text">{finding.details.vendor_urgencies.join(", ")}</dd>
-                  </>
-                )}
-                {!!finding.details.vendor_fix_states?.length && (
-                  <>
-                    <dt className="text-text-muted">Fix state</dt>
-                    <dd className="text-text">{finding.details.vendor_fix_states.join(", ")}</dd>
-                  </>
-                )}
-              </dl></AilaCard>
-            ) : null}
-
-            {/* Compliance tags */}
-            {finding.compliance_tags.length > 0 && (
-              <AilaCard variant="default" padding="sm"><SectionLabel>Compliance Tags</SectionLabel>
-              <div className="flex flex-wrap gap-1.5">
-                {finding.compliance_tags.map((tag) => (
-                  <span
-                    key={tag}
-                    className="font-mono text-[10px] px-1.5 py-0.5 rounded-[2px] bg-surface-2 text-text-muted border border-border"
+              {/* Rationale */}
+              {finding.rationale && (
+                <div>
+                  <div style={SECTION_LABEL}>Rationale</div>
+                  <p
+                    className="font-mono"
+                    style={{ fontSize: 11, color: "var(--text-primary)", lineHeight: 1.55 }}
                   >
-                    {tag}
-                  </span>
-                ))}
-              </div></AilaCard>
-            )}
-
-            {/* Metadata footer */}
-            <div className="flex flex-wrap gap-4 pt-2 border-t border-border">
-              {finding.last_scanned_at && (
-                <span className="font-mono text-[10px] text-text-muted">
-                  Last scanned: {new Date(finding.last_scanned_at).toLocaleString()}
-                </span>
+                    {finding.rationale}
+                  </p>
+                </div>
               )}
-              {finding.nvd_url && (
-                <a
-                  href={finding.nvd_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 font-mono text-[10px] text-accent hover:underline"
+
+              {finding.details.facts && (
+                <div>
+                  <div style={SECTION_LABEL}>Facts</div>
+                  <p
+                    className="font-mono"
+                    style={{ fontSize: 11, color: "var(--text-primary)", lineHeight: 1.55 }}
+                  >
+                    {finding.details.facts}
+                  </p>
+                </div>
+              )}
+
+              {finding.details.inference && (
+                <div>
+                  <div style={SECTION_LABEL}>Inference</div>
+                  <p
+                    className="font-mono"
+                    style={{ fontSize: 11, color: "var(--text-primary)", lineHeight: 1.55 }}
+                  >
+                    {finding.details.inference}
+                  </p>
+                </div>
+              )}
+
+              {finding.details.recommended_action && (
+                <div
+                  style={{
+                    border: "1px solid color-mix(in srgb, var(--accent) 30%, transparent)",
+                    background: "color-mix(in srgb, var(--accent) 6%, transparent)",
+                    padding: 12,
+                    borderRadius: 3,
+                  }}
                 >
-                  NVD <ArrowSquareOut size={10} />
-                </a>
+                  <div style={{ ...SECTION_LABEL, color: "var(--accent)" }}>
+                    Recommended Action
+                  </div>
+                  <p
+                    className="font-mono"
+                    style={{ fontSize: 11, color: "var(--text-primary)", lineHeight: 1.55 }}
+                  >
+                    {finding.details.recommended_action}
+                  </p>
+                </div>
               )}
-            </div>
 
-          </div>
-        )}
-      </SheetContent>
-    </Sheet>
+              {finding.details.uncertainty && (
+                <div>
+                  <div style={SECTION_LABEL}>Uncertainty</div>
+                  <p
+                    className="font-mono"
+                    style={{ fontSize: 11, color: "var(--text-primary)", lineHeight: 1.55 }}
+                  >
+                    {finding.details.uncertainty}
+                  </p>
+                </div>
+              )}
+
+              {/* Vendor signals */}
+              {(finding.details.vendor_statuses?.length ||
+                finding.details.vendor_urgencies?.length ||
+                finding.details.vendor_fix_states?.length) ? (
+                <div>
+                  <div style={SECTION_LABEL}>Vendor Signals</div>
+                  <div className="flex flex-col">
+                    {!!finding.details.vendor_statuses?.length && (
+                      <div style={KEY_VALUE_ROW}>
+                        <span style={{ color: "var(--text-muted)" }}>STATUS</span>
+                        <span style={{ color: "var(--text-primary)", textAlign: "right" }}>
+                          {finding.details.vendor_statuses.join(", ")}
+                        </span>
+                      </div>
+                    )}
+                    {!!finding.details.vendor_urgencies?.length && (
+                      <div style={KEY_VALUE_ROW}>
+                        <span style={{ color: "var(--text-muted)" }}>URGENCY</span>
+                        <span style={{ color: "var(--text-primary)", textAlign: "right" }}>
+                          {finding.details.vendor_urgencies.join(", ")}
+                        </span>
+                      </div>
+                    )}
+                    {!!finding.details.vendor_fix_states?.length && (
+                      <div style={KEY_VALUE_ROW}>
+                        <span style={{ color: "var(--text-muted)" }}>FIX STATE</span>
+                        <span style={{ color: "var(--text-primary)", textAlign: "right" }}>
+                          {finding.details.vendor_fix_states.join(", ")}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Compliance tags */}
+              {finding.compliance_tags.length > 0 && (
+                <div>
+                  <div style={SECTION_LABEL}>Compliance Tags</div>
+                  <div className="flex flex-wrap" style={{ gap: 6 }}>
+                    {finding.compliance_tags.map((tag) => (
+                      <MonoBadge key={tag} tone="muted">
+                        {tag}
+                      </MonoBadge>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Timestamps footer */}
+              <div
+                className="flex flex-wrap"
+                style={{
+                  gap: 14,
+                  paddingTop: 12,
+                  borderTop: "1px solid var(--border-faint)",
+                }}
+              >
+                {finding.last_scanned_at && (
+                  <span
+                    className="font-mono"
+                    style={{ fontSize: 9, color: "var(--text-muted)" }}
+                  >
+                    LAST SCANNED: {new Date(finding.last_scanned_at).toLocaleString()}
+                  </span>
+                )}
+                {finding.nvd_url && (
+                  <a
+                    href={finding.nvd_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-mono uppercase"
+                    style={{
+                      fontSize: 9,
+                      letterSpacing: "0.1em",
+                      color: "var(--accent)",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                    }}
+                  >
+                    NVD <ArrowSquareOut size={10} />
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
+        </WindowPanel>
+      </div>
+    </div>
   );
 }

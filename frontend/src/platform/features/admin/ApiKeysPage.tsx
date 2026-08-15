@@ -2,33 +2,20 @@
  * ApiKeysPage -- admin API key management with create and revoke.
  *
  * ADM-02: Lists all API keys (including revoked history). Admins can:
- * - Create a new key (label + role) via Dialog -- raw key shown once.
- * - Revoke an active key via confirmation Dialog.
+ *  - Create a new key (label + role) -- raw key revealed once in a modal.
+ *  - Revoke an active key via confirmation modal.
  *
  * Uses real backend: GET/POST/DELETE /auth/keys.
- * No mock data -- revoked_at presence determines key status.
+ * Presentation rebuilt to the AILA mock language. Data hooks, mutations,
+ * and testids preserved.
  */
+import * as React from "react";
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { type ColumnDef } from "@tanstack/react-table";
-import { Key } from "@phosphor-icons/react/dist/csr/Key";
-import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
-import { Copy } from "@phosphor-icons/react/dist/csr/Copy";
-import { Check } from "@phosphor-icons/react/dist/csr/Check";
 
-import { AilaCard } from "@/components/aila/AilaCard";
-import { AilaTable } from "@/components/aila/AilaTable";
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
-import { EmptyState } from "@/components/aila/EmptyState";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { SectionHeader, DataGrid, MonoBadge, FilterChip } from "@/components/aila/mock";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { authorizedRequestJson } from "@platform/api/http";
 
 // ---------------------------------------------------------------------------
@@ -69,15 +56,141 @@ interface ApiKeyRevokeResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Local mock styles
+// ---------------------------------------------------------------------------
+
+const btnBase: React.CSSProperties = {
+  height: 26,
+  fontSize: 9.5,
+  letterSpacing: "0.08em",
+  padding: "0 11px",
+  borderRadius: 3,
+  border: "1px solid var(--border-soft)",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  cursor: "pointer",
+  textTransform: "uppercase",
+  fontFamily: "var(--font-mono)",
+};
+
+const primaryBtn: React.CSSProperties = {
+  ...btnBase,
+  background: "var(--accent)",
+  color: "var(--text-on-accent)",
+  borderColor: "var(--accent)",
+};
+
+const dangerBtn: React.CSSProperties = {
+  ...btnBase,
+  color: "var(--status-warn)",
+  borderColor: "color-mix(in srgb, var(--status-warn) 40%, transparent)",
+};
+
+const inputStyle: React.CSSProperties = {
+  height: 28,
+  padding: "0 8px",
+  fontSize: 11,
+  fontFamily: "var(--font-mono)",
+  color: "var(--text-primary)",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  outline: "none",
+  width: "100%",
+};
+
+const labelStyle: React.CSSProperties = {
+  fontFamily: "var(--font-mono)",
+  fontSize: 9,
+  letterSpacing: "0.12em",
+  textTransform: "uppercase",
+  color: "var(--text-faint)",
+};
+
+function ErrorLine({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="font-mono"
+      style={{
+        border: "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+        background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+        color: "var(--status-warn)",
+        padding: "8px 12px",
+        fontSize: 11,
+        borderRadius: 3,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function ModalFrame({
+  open,
+  onClose,
+  title,
+  children,
+  width = 460,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  children: React.ReactNode;
+  width?: number;
+}) {
+  if (!open) return null;
+  return (
+    <div
+      className="flex items-center justify-center"
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 60,
+        background: "color-mix(in srgb, var(--surface-page) 80%, transparent)",
+      }}
+      onClick={onClose}
+      role="presentation"
+    >
+      <div onClick={(e) => e.stopPropagation()} style={{ width, maxWidth: "94vw" }}>
+        <WindowPanel
+          title={title}
+          tone="accent"
+          actions={
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={onClose}
+              className="font-mono"
+              style={{
+                width: 20,
+                height: 20,
+                border: 0,
+                background: "transparent",
+                color: "var(--text-muted)",
+                cursor: "pointer",
+                fontSize: 13,
+                lineHeight: 1,
+              }}
+            >
+              {"\u2715"}
+            </button>
+          }
+        >
+          {children}
+        </WindowPanel>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
 
-function roleSeverity(
-  role: string,
-): "critical" | "medium" | "neutral" {
+function roleTone(role: string): string {
   if (role === "admin") return "critical";
   if (role === "operator") return "medium";
-  return "neutral";
+  return "muted";
 }
 
 function formatTimestamp(value: string | null | undefined): string {
@@ -86,43 +199,31 @@ function formatTimestamp(value: string | null | undefined): string {
 }
 
 // ---------------------------------------------------------------------------
-// Copy button for raw key
+// Copy button
 // ---------------------------------------------------------------------------
 
 function CopyButton({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
 
   async function handleCopy() {
-    await navigator.clipboard.writeText(value);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // clipboard may be unavailable; swallow.
+    }
   }
 
   return (
-    <Button
-      type="button"
-      size="sm"
-      variant="outline"
-      className="gap-1.5"
-      onClick={handleCopy}
-    >
-      {copied ? (
-        <>
-          <Check className="h-3.5 w-3.5 text-mint" />
-          Copied
-        </>
-      ) : (
-        <>
-          <Copy className="h-3.5 w-3.5" />
-          Copy
-        </>
-      )}
-    </Button>
+    <button type="button" style={btnBase} onClick={handleCopy}>
+      {copied ? "Copied" : "Copy"}
+    </button>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Create key dialog
+// Create key modal
 // ---------------------------------------------------------------------------
 
 const DEFAULT_CREATE_FORM: ApiKeyCreateRequest = {
@@ -130,7 +231,7 @@ const DEFAULT_CREATE_FORM: ApiKeyCreateRequest = {
   label: "",
 };
 
-function CreateKeyDialog({
+function CreateKeyButton({
   onCreate,
   isPending,
 }: {
@@ -144,7 +245,6 @@ function CreateKeyDialog({
 
   function handleClose() {
     setOpen(false);
-    // Reset after close animation
     setTimeout(() => {
       setForm(DEFAULT_CREATE_FORM);
       setCreatedKey(null);
@@ -165,131 +265,138 @@ function CreateKeyDialog({
 
   return (
     <>
-      <Button size="sm" className="gap-1.5" onClick={() => setOpen(true)}>
-        <Plus className="h-4 w-4" />
-        Create API Key
-      </Button>
+      <button type="button" style={primaryBtn} onClick={() => setOpen(true)}>
+        {"\u002b"} Create API Key
+      </button>
 
-      <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="font-mono text-text">
-            {createdKey ? "Key Created" : "Create API Key"}
-          </DialogTitle>
-        </DialogHeader>
-
+      <ModalFrame
+        open={open}
+        onClose={handleClose}
+        title={createdKey ? "reveal key (one time)" : "new api key"}
+      >
         {createdKey ? (
-          // Success view -- show raw key once
-          <div className="flex flex-col gap-4">
-            <div className="rounded-[4px] border border-accent/40 bg-accent/10 px-4 py-3">
-              <p className="font-mono text-xs text-accent font-semibold mb-1">
-                Copy this key now -- it will not be shown again.
-              </p>
-              <p className="font-mono text-xs text-text-muted">
-                Store it securely. Once dismissed, the raw key cannot be recovered.
-              </p>
+          <div className="flex flex-col" style={{ gap: 12 }}>
+            <div
+              className="font-mono"
+              style={{
+                border: "1px solid color-mix(in srgb, var(--accent) 45%, transparent)",
+                background: "color-mix(in srgb, var(--accent) 10%, transparent)",
+                color: "var(--accent)",
+                padding: "8px 12px",
+                fontSize: 11,
+                borderRadius: 3,
+              }}
+            >
+              copy this key now -- it will not be shown again.
             </div>
 
-            <div className="flex flex-col gap-2">
-              <label className="font-mono text-xs text-text-muted">Raw API Key</label>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 rounded-[2px] border border-border bg-base px-2.5 py-1.5 font-mono text-xs text-text break-all">
+            <div className="flex flex-col" style={{ gap: 4 }}>
+              <span style={labelStyle}>raw api key</span>
+              <div className="flex items-center" style={{ gap: 8 }}>
+                <code
+                  className="font-mono"
+                  style={{
+                    flex: 1,
+                    padding: "6px 8px",
+                    fontSize: 11,
+                    color: "var(--text-primary)",
+                    background: "var(--surface-sunk)",
+                    border: "1px solid var(--border-soft)",
+                    borderRadius: 3,
+                    wordBreak: "break-all",
+                  }}
+                >
                   {createdKey.raw_key}
                 </code>
                 <CopyButton value={createdKey.raw_key} />
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="flex flex-col gap-0.5">
-                <p className="font-mono text-xs text-text-muted">Prefix</p>
-                <p className="font-mono text-xs text-text">{createdKey.key_prefix}</p>
+            <div className="grid" style={{ gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+              <div className="flex flex-col" style={{ gap: 3 }}>
+                <span style={labelStyle}>prefix</span>
+                <span
+                  className="font-mono"
+                  style={{ fontSize: 11, color: "var(--text-primary)" }}
+                >
+                  {createdKey.key_prefix}
+                </span>
               </div>
-              <div className="flex flex-col gap-0.5">
-                <p className="font-mono text-xs text-text-muted">Role</p>
-                <AilaBadge severity={roleSeverity(createdKey.role)} size="sm">
-                  {createdKey.role}
-                </AilaBadge>
+              <div className="flex flex-col" style={{ gap: 3 }}>
+                <span style={labelStyle}>role</span>
+                <MonoBadge tone={roleTone(createdKey.role)}>{createdKey.role}</MonoBadge>
               </div>
-              <div className="flex flex-col gap-0.5">
-                <p className="font-mono text-xs text-text-muted">Label</p>
-                <p className="font-mono text-xs text-text">{createdKey.label || "--"}</p>
+              <div className="flex flex-col" style={{ gap: 3 }}>
+                <span style={labelStyle}>label</span>
+                <span
+                  className="font-mono"
+                  style={{ fontSize: 11, color: "var(--text-primary)" }}
+                >
+                  {createdKey.label || "--"}
+                </span>
               </div>
             </div>
 
-            <Button type="button" onClick={handleClose} className="w-full">
+            <button
+              type="button"
+              style={{ ...primaryBtn, width: "100%" }}
+              onClick={handleClose}
+            >
               Done
-            </Button>
+            </button>
           </div>
         ) : (
-          // Create form
-          <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
-            <div className="flex flex-col gap-1">
-              <label className="font-mono text-xs text-text-muted" htmlFor="ck-label">
-                Label
-              </label>
-              <Input
+          <form className="flex flex-col" style={{ gap: 12 }} onSubmit={handleSubmit}>
+            <div className="flex flex-col" style={{ gap: 4 }}>
+              <label style={labelStyle} htmlFor="ck-label">label</label>
+              <input
                 id="ck-label"
+                style={inputStyle}
                 value={form.label}
                 onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
                 placeholder="CI deploy key"
-                className="font-mono text-sm"
               />
             </div>
-
-            <div className="flex flex-col gap-1">
-              <label className="font-mono text-xs text-text-muted" htmlFor="ck-role">
-                Role
-              </label>
+            <div className="flex flex-col" style={{ gap: 4 }}>
+              <label style={labelStyle} htmlFor="ck-role">role</label>
               <select
                 id="ck-role"
+                style={inputStyle}
                 value={form.role}
                 onChange={(e) =>
-                  setForm((f) => ({
-                    ...f,
-                    role: e.target.value as ApiKeyCreateRequest["role"],
-                  }))
+                  setForm((f) => ({ ...f, role: e.target.value as ApiKeyCreateRequest["role"] }))
                 }
-                className="rounded-[2px] border border-border bg-base font-mono text-sm text-text px-2.5 py-1.5 outline-none focus:border-border-hover transition-colors duration-100"
               >
                 <option value="reader">reader</option>
                 <option value="operator">operator</option>
                 <option value="admin">admin</option>
               </select>
             </div>
-
-            {error && (
-              <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-                {error}
-              </div>
-            )}
-
-            <div className="flex gap-2">
-              <Button type="submit" size="sm" disabled={isPending} className="flex-1">
-                {isPending ? "Creating…" : "Create Key"}
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={handleClose}
+            {error && <ErrorLine>{error}</ErrorLine>}
+            <div className="flex" style={{ gap: 8, marginTop: 4 }}>
+              <button
+                type="submit"
+                style={{ ...primaryBtn, flex: 1 }}
+                disabled={isPending}
               >
+                {isPending ? "Creating..." : "Create Key"}
+              </button>
+              <button type="button" style={btnBase} onClick={handleClose}>
                 Cancel
-              </Button>
+              </button>
             </div>
           </form>
         )}
-      </DialogContent>
-      </Dialog>
+      </ModalFrame>
     </>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Revoke confirmation dialog
+// Revoke modal
 // ---------------------------------------------------------------------------
 
-function RevokeKeyDialog({
+function RevokeKeyButton({
   keyItem,
   onRevoke,
   isPending,
@@ -313,169 +420,84 @@ function RevokeKeyDialog({
 
   return (
     <>
-      <Button
-        size="sm"
-        variant="outline"
-        className="text-destructive border-destructive/40 hover:bg-destructive/10 hover:border-destructive"
+      <button
+        type="button"
+        style={dangerBtn}
         disabled={keyItem.revoked_at !== null}
         onClick={() => setOpen(true)}
       >
         Revoke
-      </Button>
+      </button>
 
-      <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle className="font-mono text-text">Revoke API Key</DialogTitle>
-        </DialogHeader>
+      <ModalFrame
+        open={open}
+        onClose={() => setOpen(false)}
+        title="revoke api key"
+        width={420}
+      >
+        <div className="flex flex-col" style={{ gap: 12 }}>
+          <p className="font-mono" style={{ fontSize: 11, color: "var(--text-primary)" }}>
+            Revoking key{" "}
+            <span style={{ color: "var(--accent)" }}>{keyItem.key_prefix}</span>{" "}
+            will immediately invalidate all JWTs issued for this key.
+          </p>
 
-        <div className="flex flex-col gap-4">
-          <div className="rounded-[4px] border border-destructive/40 bg-destructive/10 px-4 py-3">
-            <p className="font-mono text-xs text-destructive font-semibold mb-1">
-              This action is irreversible.
-            </p>
-            <p className="font-mono text-xs text-text-muted">
-              Revoking key <span className="text-text font-semibold">{keyItem.key_prefix}</span>
-              {" "}will immediately invalidate all JWTs issued for this key.
-            </p>
+          <div className="grid" style={{ gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+            <div className="flex flex-col" style={{ gap: 3 }}>
+              <span style={labelStyle}>prefix</span>
+              <span
+                className="font-mono"
+                style={{ fontSize: 11, color: "var(--text-primary)" }}
+              >
+                {keyItem.key_prefix}
+              </span>
+            </div>
+            <div className="flex flex-col" style={{ gap: 3 }}>
+              <span style={labelStyle}>role</span>
+              <MonoBadge tone={roleTone(keyItem.role)}>{keyItem.role}</MonoBadge>
+            </div>
+            <div className="flex flex-col" style={{ gap: 3 }}>
+              <span style={labelStyle}>label</span>
+              <span
+                className="font-mono"
+                style={{ fontSize: 11, color: "var(--text-primary)" }}
+              >
+                {keyItem.label || "--"}
+              </span>
+            </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
-            <div className="flex flex-col gap-0.5">
-              <p className="font-mono text-xs text-text-muted">Prefix</p>
-              <p className="font-mono text-xs text-text">{keyItem.key_prefix}</p>
-            </div>
-            <div className="flex flex-col gap-0.5">
-              <p className="font-mono text-xs text-text-muted">Role</p>
-              <AilaBadge severity={roleSeverity(keyItem.role)} size="sm">
-                {keyItem.role}
-              </AilaBadge>
-            </div>
-            <div className="flex flex-col gap-0.5">
-              <p className="font-mono text-xs text-text-muted">Label</p>
-              <p className="font-mono text-xs text-text">{keyItem.label || "--"}</p>
-            </div>
-          </div>
+          {error && <ErrorLine>{error}</ErrorLine>}
 
-          {error && (
-            <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-              {error}
-            </div>
-          )}
-
-          <div className="flex gap-2">
-            <Button
+          <div className="flex" style={{ gap: 8 }}>
+            <button
               type="button"
-              size="sm"
-              className="flex-1 bg-destructive text-[color:var(--text-on-accent)] hover:bg-destructive/90"
+              style={{
+                ...primaryBtn,
+                flex: 1,
+                background: "var(--status-warn)",
+                borderColor: "var(--status-warn)",
+              }}
               onClick={handleConfirm}
               disabled={isPending}
             >
-              {isPending ? "Revoking…" : "Confirm Revoke"}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => setOpen(false)}
-            >
+              {isPending ? "Revoking..." : "Confirm Revoke"}
+            </button>
+            <button type="button" style={btnBase} onClick={() => setOpen(false)}>
               Cancel
-            </Button>
+            </button>
           </div>
         </div>
-      </DialogContent>
-      </Dialog>
+      </ModalFrame>
     </>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Column definitions (declared at module level to avoid re-creation)
-// ---------------------------------------------------------------------------
-
-function buildColumns(
-  onRevoke: (keyId: string) => Promise<ApiKeyRevokeResponse>,
-  isRevokePending: boolean,
-): ColumnDef<ApiKeyListItem>[] {
-  return [
-    {
-      id: "key_prefix",
-      header: "Prefix",
-      accessorKey: "key_prefix",
-      cell: ({ getValue }) => (
-        <code className="font-mono text-xs text-text">{String(getValue())}</code>
-      ),
-    },
-    {
-      id: "role",
-      header: "Role",
-      accessorKey: "role",
-      cell: ({ getValue }) => {
-        const r = String(getValue());
-        return (
-          <AilaBadge severity={roleSeverity(r)} size="sm">
-            {r}
-          </AilaBadge>
-        );
-      },
-    },
-    {
-      id: "label",
-      header: "Label",
-      accessorKey: "label",
-      cell: ({ getValue }) => (
-        <span className="font-mono text-xs text-text">{String(getValue()) || "--"}</span>
-      ),
-    },
-    {
-      id: "created_by",
-      header: "Created By",
-      accessorKey: "created_by",
-      cell: ({ getValue }) => (
-        <span className="font-mono text-xs text-text-muted">{String(getValue())}</span>
-      ),
-    },
-    {
-      id: "created_at",
-      header: "Created",
-      accessorKey: "created_at",
-      cell: ({ getValue }) => (
-        <span className="font-mono text-xs text-text-muted whitespace-nowrap">
-          {formatTimestamp(getValue() as string)}
-        </span>
-      ),
-    },
-    {
-      id: "status",
-      header: "Status",
-      accessorKey: "revoked_at",
-      cell: ({ getValue }) => {
-        const revokedAt = getValue() as string | null;
-        return revokedAt ? (
-          <AilaBadge severity="neutral" size="sm">Revoked</AilaBadge>
-        ) : (
-          <AilaBadge severity="info" size="sm">Active</AilaBadge>
-        );
-      },
-    },
-    {
-      id: "actions",
-      header: "Actions",
-      enableSorting: false,
-      cell: ({ row }) => (
-        <RevokeKeyDialog
-          keyItem={row.original}
-          onRevoke={onRevoke}
-          isPending={isRevokePending}
-        />
-      ),
-    },
-  ];
-}
-
-// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
+
+type StatusFilter = "all" | "active" | "revoked";
 
 export function ApiKeysPage() {
   const queryClient = useQueryClient();
@@ -509,105 +531,164 @@ export function ApiKeysPage() {
 
   const keys = keysQuery.data?.keys ?? [];
 
+  const [status, setStatus] = useState<StatusFilter>("all");
+
   const { totalKeys, activeKeys, revokedKeys } = useMemo(() => {
     const total = keys.length;
     const revoked = keys.filter((k) => k.revoked_at !== null).length;
     return { totalKeys: total, activeKeys: total - revoked, revokedKeys: revoked };
   }, [keys]);
 
-  const columns = buildColumns(
-    (keyId) => revokeMutation.mutateAsync(keyId),
-    revokeMutation.isPending,
-  );
+  const filtered = useMemo(() => {
+    return keys.filter((k) => {
+      const isRevoked = k.revoked_at !== null;
+      if (status === "active" && isRevoked) return false;
+      if (status === "revoked" && !isRevoked) return false;
+      return true;
+    });
+  }, [keys, status]);
 
   return (
-    <div className="flex flex-col gap-6 p-4 lg:p-6">
-      {/* Page header */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col" style={{ gap: 16, padding: 20 }}>
+      <SectionHeader
+        icon={"\u25ce"}
+        title="api keys"
+        actions={
+          <CreateKeyButton
+            onCreate={(req) => createMutation.mutateAsync(req)}
+            isPending={createMutation.isPending}
+          />
+        }
+      />
 
-        <CreateKeyDialog
-          onCreate={(req) => createMutation.mutateAsync(req)}
-          isPending={createMutation.isPending}
-        />
+      {/* Metric strip */}
+      <div className="grid" style={{ gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+        <WindowPanel title="total keys">
+          <span className="font-mono" style={{ fontSize: 26, color: "var(--accent)" }}>
+            {totalKeys}
+          </span>
+        </WindowPanel>
+        <WindowPanel title="active">
+          <span className="font-mono" style={{ fontSize: 26, color: "var(--status-ok)" }}>
+            {activeKeys}
+          </span>
+        </WindowPanel>
+        <WindowPanel title="revoked">
+          <span className="font-mono" style={{ fontSize: 26, color: "var(--text-faint)" }}>
+            {revokedKeys}
+          </span>
+        </WindowPanel>
       </div>
 
-      {/* Metric cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Total Keys
-        </p>
-        <div className="mt-1 min-h-[2rem]">
-          {keysQuery.isLoading ? (
-            <LoadingSkeleton size="md" width="third" aria-label="Loading keys" />
-          ) : (
-            <p className="font-mono text-2xl font-semibold text-text">{totalKeys}</p>
-          )}
-        </div>
-        <p className="font-mono text-xs text-text-muted mt-0.5">All time</p></AilaCard>
-
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Active Keys
-        </p>
-        <div className="mt-1 min-h-[2rem]">
-          {keysQuery.isLoading ? (
-            <LoadingSkeleton size="md" width="third" aria-label="Loading keys" />
-          ) : (
-            <p className="font-mono text-2xl font-semibold text-text">{activeKeys}</p>
-          )}
-        </div>
-        <p className="font-mono text-xs text-text-muted mt-0.5">
-          Not revoked
-        </p></AilaCard>
-
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Revoked Keys
-        </p>
-        <div className="mt-1 min-h-[2rem]">
-          {keysQuery.isLoading ? (
-            <LoadingSkeleton size="md" width="third" aria-label="Loading keys" />
-          ) : (
-            <p className="font-mono text-2xl font-semibold text-text">{revokedKeys}</p>
-          )}
-        </div>
-        <p className="font-mono text-xs text-text-muted mt-0.5">
-          Invalidated
-        </p></AilaCard>
-      </div>
-
-      {/* Error banner */}
-      {keysQuery.isError && (
-        <div className="rounded-[4px] border border-destructive bg-destructive/10 px-4 py-3 font-mono text-sm text-destructive">
-          Failed to load API keys: {(keysQuery.error as Error).message}
-        </div>
-      )}
-
-      {/* Loading skeleton */}
-      {keysQuery.isLoading && (
-        <AilaCard variant="default" padding="md"><LoadingSkeletonGroup lines={6} /></AilaCard>
-      )}
-
-      {/* Empty state */}
-      {!keysQuery.isLoading && !keysQuery.isError && keys.length === 0 && (
-        <EmptyState
-          icon={<Key className="h-10 w-10" />}
-          title="No API keys"
-          description="Create an API key to allow programmatic access to the platform."
-        />
-      )}
-
-      {/* Keys table */}
-      {!keysQuery.isLoading && keys.length > 0 && (
-        <AilaTable
-          data={keys}
-          columns={columns}
-          pageSize={25}
-          enableSorting
-          enableFiltering={false}
+      {/* Filter row */}
+      <div className="flex items-center flex-wrap" style={{ gap: 8 }}>
+        <FilterChip active={status === "all"} onClick={() => setStatus("all")}>
+          ALL ({totalKeys})
+        </FilterChip>
+        <FilterChip
+          active={status === "active"}
+          color="var(--status-ok)"
+          onClick={() => setStatus("active")}
         >
-          <AilaTable.Header />
-          <AilaTable.Body emptyState="No keys found." />
-          <AilaTable.Pagination pageSizeOptions={[10, 25, 50]} />
-        </AilaTable>
+          ACTIVE ({activeKeys})
+        </FilterChip>
+        <FilterChip
+          active={status === "revoked"}
+          color="var(--text-faint)"
+          onClick={() => setStatus("revoked")}
+        >
+          REVOKED ({revokedKeys})
+        </FilterChip>
+      </div>
+
+      {keysQuery.isError && (
+        <ErrorLine>
+          Failed to load API keys: {(keysQuery.error as Error).message}
+        </ErrorLine>
+      )}
+
+      {keysQuery.isLoading ? (
+        <WindowPanel title="keys" status="LOADING" tone="muted">
+          <LoadingSkeletonGroup lines={6} />
+        </WindowPanel>
+      ) : keys.length === 0 ? (
+        <WindowPanel title="keys" tone="muted">
+          <div
+            className="flex flex-col items-center"
+            style={{ padding: "42px 12px", gap: 10 }}
+          >
+            <span
+              className="font-mono"
+              style={{ fontSize: 15, color: "var(--text-primary)", letterSpacing: "0.04em" }}
+            >
+              No API keys
+            </span>
+            <span
+              className="font-mono"
+              style={{ fontSize: 11, color: "var(--text-muted)", textAlign: "center", maxWidth: 420 }}
+            >
+              Create an API key to allow programmatic access to the platform.
+            </span>
+          </div>
+        </WindowPanel>
+      ) : (
+        <WindowPanel title="keys" flush>
+          <DataGrid
+            columns={[
+              { label: "LABEL", width: "1fr" },
+              { label: "PREFIX", width: "140px" },
+              { label: "OWNER", width: "160px" },
+              { label: "ROLE", width: "100px" },
+              { label: "CREATED", width: "170px" },
+              { label: "STATUS", width: "110px" },
+              { label: "ACTIONS", width: "110px", align: "right" },
+            ]}
+            rows={filtered}
+            getKey={(k) => k.key_id}
+            renderCells={(k) => [
+              <span
+                key="l"
+                className="font-mono"
+                style={{ fontSize: 11.5, color: "var(--text-primary)" }}
+              >
+                {k.label || "--"}
+              </span>,
+              <code
+                key="p"
+                className="font-mono"
+                style={{ fontSize: 10.5, color: "var(--accent)" }}
+              >
+                {k.key_prefix}
+              </code>,
+              <span
+                key="o"
+                className="font-mono truncate"
+                style={{ fontSize: 10, color: "var(--text-muted)" }}
+              >
+                {k.created_by}
+              </span>,
+              <MonoBadge key="r" tone={roleTone(k.role)}>{k.role}</MonoBadge>,
+              <span
+                key="c"
+                className="font-mono"
+                style={{ fontSize: 10, color: "var(--text-faint)", whiteSpace: "nowrap" }}
+              >
+                {formatTimestamp(k.created_at)}
+              </span>,
+              k.revoked_at ? (
+                <MonoBadge key="s" tone="muted">Revoked</MonoBadge>
+              ) : (
+                <MonoBadge key="s" tone="ok">Active</MonoBadge>
+              ),
+              <RevokeKeyButton
+                key="a"
+                keyItem={k}
+                onRevoke={(id) => revokeMutation.mutateAsync(id)}
+                isPending={revokeMutation.isPending}
+              />,
+            ]}
+          />
+        </WindowPanel>
       )}
     </div>
   );

@@ -1,34 +1,38 @@
 import { useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router";
-import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
-import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
-import { ArrowRight } from "@phosphor-icons/react/dist/csr/ArrowRight";
-import { ShieldWarning } from "@phosphor-icons/react/dist/csr/ShieldWarning";
-import { Pulse } from "@phosphor-icons/react/dist/csr/Pulse";
-import { Folder } from "@phosphor-icons/react/dist/csr/Folder";
-import { PaperPlaneTilt } from "@phosphor-icons/react/dist/csr/PaperPlaneTilt";
-import { Warning } from "@phosphor-icons/react/dist/csr/Warning";
-import { CheckCircle } from "@phosphor-icons/react/dist/csr/CheckCircle";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
-import { SeverityPulse } from "@/components/aila/SeverityPulse";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
-import { KpiTile } from "@/components/aila/KpiTile";
+import {
+  SectionHeader,
+  DataGrid,
+  MonoBadge,
+  BigStat,
+  StatBar,
+  toneColor,
+  type GridColumn,
+} from "@/components/aila/mock";
 
 import { DeleteButton } from "../components/DeleteButton";
+import { OperatorAvatar } from "../components/OperatorAvatar";
 import { useDeleteProject } from "../mutations";
 import { useProjectCompleteNotifier } from "../hooks/useProjectCompleteNotifier";
-import { useTargetMap, useVRProjects } from "../queries";
+import {
+  useInvestigations,
+  useTargetMap,
+  useVRProjects,
+  useWorkspaces,
+} from "../queries";
 import type { VRProjectStatus, VRProjectSummary } from "../types";
-import { OperatorAvatar } from "../components/OperatorAvatar";
 
-const statusColor: Record<VRProjectStatus, "info" | "low" | "medium" | "high" | "critical"> = {
+// Mock-tone mapping for project status. Kept close to the mock's tone
+// keys so MonoBadge renders the correct terminal-hue.
+const statusTone: Record<VRProjectStatus, "info" | "warn" | "ok" | "critical" | "muted"> = {
   created: "info",
-  analyzing: "medium",
-  completed: "low",
+  analyzing: "warn",
+  completed: "ok",
   failed: "critical",
-  stalled: "high",
+  stalled: "muted",
 };
 
 function relativeTime(value?: string | null): string {
@@ -46,215 +50,35 @@ function relativeTime(value?: string | null): string {
   return `${d}d ago`;
 }
 
-function formatDate(value?: string | null): string {
-  if (!value) return "--";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "--";
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-}
+const COLUMNS: GridColumn[] = [
+  { label: "status", width: "88px" },
+  { label: "name", width: "minmax(0, 1.6fr)" },
+  { label: "target", width: "minmax(0, 1fr)" },
+  { label: "findings", width: "78px", align: "right" },
+  { label: "investigations", width: "116px", align: "right" },
+  { label: "operator", width: "96px" },
+  { label: "updated", width: "108px" },
+  { label: "\u00d7", width: "34px", align: "center" },
+];
 
-
-// ─────────────────────────────────────────────────────────────────────
-// Project card -- replaces the table row. Visual hierarchy emphasises
-// project name + status + severity, with a metric row underneath and a
-// hover-revealed delete affordance.
-// ─────────────────────────────────────────────────────────────────────
-function ProjectCard({
-  project,
-  targetName,
-  onOpen,
-  deleteMut,
-}: {
-  project: VRProjectSummary;
-  targetName: string;
-  onOpen: () => void;
-  deleteMut: ReturnType<typeof useDeleteProject>;
-}) {
-  const sev = statusColor[project.status] ?? "info";
-  const isLive = project.status === "analyzing";
-  const isFailed = project.status === "failed";
-
-  // Tone the card top edge by status severity.
-  const topEdgeColor: Record<typeof sev, string> = {
-    info: "var(--color-text-muted)",
-    low: "var(--color-mint)",
-    medium: "var(--color-peach)",
-    high: "var(--color-accent)",
-    critical: "var(--color-accent)",
-  };
-
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="group relative flex flex-col text-left rounded-md border border-border bg-surface overflow-hidden transition-all duration-200 hover:border-accent/40 hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-      style={{
-        boxShadow:
-          "inset 0 1px 0 0 color-mix(in srgb, var(--color-text) 5%, transparent)",
-      }}
-    >
-      {/* Top edge -- 2px severity-tinted bar */}
-      <span
-        aria-hidden
-        className="absolute inset-x-0 top-0"
-        style={{
-          height: 2,
-          background: `linear-gradient(90deg, transparent, ${topEdgeColor[sev]}, transparent)`,
-        }}
-      />
-      {/* Subtle accent glow on hover */}
-      <span
-        aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-        style={{
-          background:
-            "radial-gradient(80% 60% at 50% 0%, color-mix(in srgb, var(--color-accent) 8%, transparent), transparent 70%)",
-        }}
-      />
-
-      {/* Header -- status pulse + cve chip + operator avatar */}
-      <div className="relative flex items-start justify-between gap-2 px-5 pt-4 pb-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <SeverityPulse active={isLive || isFailed}>
-            <AilaBadge severity={sev} size="sm">
-              {project.status}
-            </AilaBadge>
-          </SeverityPulse>
-          {project.cve_id && (
-            <span
-              className="inline-flex items-center px-2 py-0.5 rounded text-3xs font-mono tracking-wider"
-              style={{
-                color: "var(--color-accent)",
-                background: "color-mix(in srgb, var(--color-accent) 10%, transparent)",
-                border: "1px solid color-mix(in srgb, var(--color-accent) 25%, transparent)",
-              }}
-            >
-              {project.cve_id}
-            </span>
-          )}
-        </div>
-        <div className="flex-shrink-0">
-          <OperatorAvatar operatorId={project.operator_id} />
-        </div>
-      </div>
-
-      {/* Title */}
-      <div className="relative px-5 pb-3">
-        <h2 className="font-display text-lg font-semibold text-foreground leading-tight truncate">
-          {project.name}
-        </h2>
-        <p className="mt-0.5 text-xs font-mono text-text-muted truncate">
-          {project.target_id ? targetName : "no target"}
-        </p>
-      </div>
-
-      {/* Metric row */}
-      <div
-        className="relative grid grid-cols-3 gap-px mt-auto border-t border-border bg-border"
-        aria-hidden={false}
-      >
-        <div className="bg-surface px-4 py-3">
-          <p className="text-4xs font-mono uppercase tracking-cyber-sm text-text-muted">
-            findings
-          </p>
-          <p className="mt-0.5 font-display text-xl font-semibold text-foreground leading-none">
-            {project.finding_count}
-          </p>
-        </div>
-        <div className="bg-surface px-4 py-3">
-          <p className="text-4xs font-mono uppercase tracking-cyber-sm text-text-muted">
-            disclosures
-          </p>
-          <p
-            className="mt-0.5 font-display text-xl font-semibold leading-none"
-            style={{
-              color:
-                project.latest_disclosure_status === "patched"
-                  ? "var(--color-mint)"
-                  : project.latest_disclosure_status
-                    ? "var(--color-accent)"
-                    : "var(--color-text-muted)",
-            }}
-          >
-            {project.disclosure_submission_count ?? 0}
-          </p>
-        </div>
-        <div className="bg-surface px-4 py-3">
-          <p className="text-4xs font-mono uppercase tracking-cyber-sm text-text-muted">
-            activity
-          </p>
-          <p className="mt-0.5 text-xs font-mono text-foreground truncate leading-none pt-1">
-            {relativeTime(project.created_at)}
-          </p>
-        </div>
-      </div>
-
-      {/* Footer -- disclosure status pill + open arrow + delete (hover) */}
-      <div className="relative flex items-center justify-between gap-2 px-5 py-2.5 border-t border-border bg-base/40">
-        <div className="min-w-0 flex-1">
-          {project.latest_disclosure_status ? (
-            <span className="inline-flex items-center gap-1.5 text-3xs font-mono uppercase tracking-wider text-text-muted">
-              <PaperPlaneTilt className="h-3 w-3" />
-              {project.latest_disclosure_status}
-              {(project.disclosure_submission_count ?? 0) > 1 && (
-                <span className="text-text-muted/60">
-                  · ×{project.disclosure_submission_count}
-                </span>
-              )}
-            </span>
-          ) : (
-            <span className="text-3xs font-mono text-text-muted/60">
-              created {formatDate(project.created_at)}
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-1">
-          <div
-            className="opacity-0 group-hover:opacity-100 transition-opacity"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <DeleteButton
-              id={project.id}
-              label={`project "${project.name}"`}
-              mutation={deleteMut}
-              compact
-            />
-          </div>
-          <span
-            aria-hidden
-            className="inline-flex items-center text-text-muted group-hover:text-accent group-hover:translate-x-0.5 transition-all"
-          >
-            <ArrowRight className="h-4 w-4" />
-          </span>
-        </div>
-      </div>
-    </button>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// ProjectsPage -- Vuln Research Projects landing.
-//
-// Layout (new design):
-//   ┌─ KPI hero strip (4 tiles)
-//   ├─ Action bar (search + status filter + sort + New Project CTA)
-//   └─ Card grid (3 cols xl / 2 lg / 1 sm)
-//
-// Old design (dense 10-column table) was replaced because table density
-// hid status + severity signals operator needs to scan for "what's
-// running, what's failing, what's getting close to a disclosure".
-// ─────────────────────────────────────────────────────────────────────
+/** VR Projects landing page.
+ *
+ *  Rebuilt to the AILA mock language (dense mono, WindowPanels + honest
+ *  DataGrid). Filter shelf drives URL search params for shareable views.
+ *  Row navigation opens the ProjectDetailPage. */
 export function ProjectsPage() {
   const navigate = useNavigate();
   const { data: result, isLoading, isError } = useVRProjects();
   const targetMap = useTargetMap();
+  const { data: workspacesResult } = useWorkspaces();
+  const { data: invsResult } = useInvestigations();
   useProjectCompleteNotifier();
   const deleteMut = useDeleteProject();
 
   const [searchParams, setSearchParams] = useSearchParams();
   const searchText = searchParams.get("q") ?? "";
   const statusFilter = searchParams.get("status") ?? "";
-  const sortField = searchParams.get("sort") ?? "updated";
+  const workspaceFilter = searchParams.get("workspace") ?? "";
 
   function updateFilter(key: string, value: string) {
     const next = new URLSearchParams(searchParams);
@@ -264,22 +88,26 @@ export function ProjectsPage() {
   }
 
   const projects = result?.data ?? [];
+  const workspaces = workspacesResult?.data ?? [];
 
-  const kpis = useMemo(() => {
+  const investigationCountByTarget = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const inv of invsResult?.data ?? []) {
+      m.set(inv.target_id, (m.get(inv.target_id) ?? 0) + 1);
+    }
+    return m;
+  }, [invsResult]);
+
+  const stats = useMemo(() => {
     const total = projects.length;
-    const active = projects.filter((p) => p.status === "analyzing").length;
-    const stalled = projects.filter(
-      (p) => p.status === "stalled" || p.status === "failed",
-    ).length;
-    const findings = projects.reduce((sum, p) => sum + (p.finding_count ?? 0), 0);
-    const disclosures = projects.reduce(
-      (sum, p) => sum + (p.disclosure_submission_count ?? 0),
-      0,
-    );
-    return { total, active, stalled, findings, disclosures };
+    const analyzing = projects.filter((p) => p.status === "analyzing").length;
+    const completed = projects.filter((p) => p.status === "completed").length;
+    const failed = projects.filter((p) => p.status === "failed").length;
+    const stalled = projects.filter((p) => p.status === "stalled").length;
+    return { total, analyzing, completed, failed, stalled };
   }, [projects]);
 
-  const filteredProjects = (() => {
+  const filteredProjects = useMemo(() => {
     const q = searchText.trim().toLowerCase();
     let out = projects;
     if (q) {
@@ -289,90 +117,113 @@ export function ProjectsPage() {
           (p.cve_id ?? "").toLowerCase().includes(q),
       );
     }
-    if (statusFilter) {
-      out = out.filter((p) => p.status === statusFilter);
-    }
-    const sorted = [...out];
-    if (sortField === "name") {
-      sorted.sort((a, b) => a.name.localeCompare(b.name));
-    } else if (sortField === "findings") {
-      sorted.sort((a, b) => b.finding_count - a.finding_count);
-    } else {
-      sorted.sort(
-        (a, b) =>
-          new Date(b.created_at ?? 0).getTime() -
-          new Date(a.created_at ?? 0).getTime(),
-      );
-    }
-    return sorted;
-  })();
+    if (statusFilter) out = out.filter((p) => p.status === statusFilter);
+    if (workspaceFilter) out = out.filter((p) => p.workspace_id === workspaceFilter);
+    return [...out].sort(
+      (a, b) =>
+        new Date(b.created_at ?? 0).getTime() -
+        new Date(a.created_at ?? 0).getTime(),
+    );
+  }, [projects, searchText, statusFilter, workspaceFilter]);
+
+  const inputStyle = {
+    background: "var(--surface-sunk)",
+    border: "1px solid var(--border-soft)",
+    color: "var(--text-primary)",
+    fontFamily: "var(--font-mono)",
+    fontSize: 10.5,
+    padding: "0 8px",
+    height: 26,
+    borderRadius: 3,
+    outline: "none",
+  } as const;
+
+  const newProjectButton = (
+    <button
+      type="button"
+      onClick={() => navigate("/vr/projects/new")}
+      className="font-mono uppercase"
+      style={{
+        height: 28,
+        padding: "0 14px",
+        fontSize: 10,
+        letterSpacing: "0.09em",
+        background: "var(--accent)",
+        color: "var(--text-on-accent)",
+        border: "1px solid var(--accent)",
+        borderRadius: 3,
+        cursor: "pointer",
+      }}
+      data-testid="vr-new-project"
+    >
+      + new project
+    </button>
+  );
 
   return (
-    <div className="flex flex-col gap-6">
-      {/* sr-only section heading bridges PageShell h1 → ProjectCard h3s for screen readers. */}
+    <div className="flex flex-col" style={{ gap: 18 }}>
       <h2 className="sr-only">Projects list</h2>
-      {/* ── KPI hero strip ───────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        <KpiTile
-          label="Active projects"
-          value={kpis.total}
-          hint={kpis.active ? `${kpis.active} analyzing` : "none running"}
-          icon={<Folder weight="duotone" />}
-          tone="accent"
-        />
-        <KpiTile
-          label="Investigations live"
-          value={kpis.active}
-          hint={
-            kpis.active === 0
-              ? "all idle"
-              : kpis.active === 1
-                ? "1 in progress"
-                : `${kpis.active} in progress`
-          }
-          icon={<Pulse weight="duotone" />}
-          tone={kpis.active > 0 ? "warn" : "neutral"}
-        />
-        <KpiTile
-          label="Open findings"
-          value={kpis.findings}
-          hint={kpis.findings ? "across all projects" : "no findings yet"}
-          icon={<ShieldWarning weight="duotone" />}
-          tone={kpis.findings > 0 ? "crit" : "neutral"}
-        />
-        <KpiTile
-          label="Disclosures sent"
-          value={kpis.disclosures}
-          hint={
-            kpis.stalled
-              ? `${kpis.stalled} stalled/failed`
-              : "pipeline healthy"
-          }
-          icon={kpis.stalled > 0 ? <Warning weight="duotone" /> : <CheckCircle weight="duotone" />}
-          tone={kpis.stalled > 0 ? "warn" : "ok"}
-        />
+      <SectionHeader title="Projects" actions={newProjectButton} />
+
+      {/* stats row -- three WindowPanels: total / analyzing / completed */}
+      <div className="grid" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
+        <WindowPanel title="total" tone="accent">
+          <BigStat value={stats.total} sub="projects tracked" />
+          <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 6 }}>
+            <StatBar
+              label="failed"
+              color={toneColor("critical")}
+              value={stats.failed}
+              max={Math.max(stats.total, 1)}
+            />
+            <StatBar
+              label="stalled"
+              color={toneColor("muted")}
+              value={stats.stalled}
+              max={Math.max(stats.total, 1)}
+            />
+          </div>
+        </WindowPanel>
+        <WindowPanel title="analyzing" tone="warn">
+          <BigStat value={stats.analyzing} sub="in progress" />
+          <div style={{ marginTop: 14 }}>
+            <StatBar
+              label="running"
+              color={toneColor("warn")}
+              value={stats.analyzing}
+              max={Math.max(stats.total, 1)}
+            />
+          </div>
+        </WindowPanel>
+        <WindowPanel title="completed" tone="ok">
+          <BigStat value={stats.completed} sub="shipped" />
+          <div style={{ marginTop: 14 }}>
+            <StatBar
+              label="done"
+              color={toneColor("ok")}
+              value={stats.completed}
+              max={Math.max(stats.total, 1)}
+            />
+          </div>
+        </WindowPanel>
       </div>
 
-      {/* ── Action bar ──────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 max-w-md" style={{ minWidth: 220 }}>
-          <MagnifyingGlass
-            className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted pointer-events-none"
-          />
-          <input
-            type="text"
-            placeholder="Search by name or CVE…"
-            value={searchText}
-            onChange={(e) => updateFilter("q", e.target.value)}
-            aria-label="Search projects by name or CVE"
-            className="w-full pl-9 pr-3 py-2 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none transition-colors"
-          />
-        </div>
+      {/* filter shelf */}
+      <div className="flex flex-wrap items-center" style={{ gap: 8 }}>
+        <input
+          type="search"
+          placeholder="search by name or cve..."
+          value={searchText}
+          onChange={(e) => updateFilter("q", e.target.value)}
+          aria-label="Search projects by name or CVE"
+          style={{ ...inputStyle, flex: "1 1 260px", minWidth: 220 }}
+        />
         <select
           value={statusFilter}
           onChange={(e) => updateFilter("status", e.target.value)}
-          className="px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border focus:border-accent focus:outline-none uppercase tracking-wider"
           aria-label="Filter by status"
+          className="uppercase"
+          style={{ ...inputStyle, minWidth: 140 }}
         >
           <option value="">all statuses</option>
           <option value="created">created</option>
@@ -382,116 +233,142 @@ export function ProjectsPage() {
           <option value="stalled">stalled</option>
         </select>
         <select
-          value={sortField}
-          onChange={(e) => updateFilter("sort", e.target.value)}
-          className="px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border focus:border-accent focus:outline-none uppercase tracking-wider"
-          aria-label="Sort field"
+          value={workspaceFilter}
+          onChange={(e) => updateFilter("workspace", e.target.value)}
+          aria-label="Filter by workspace"
+          style={{ ...inputStyle, minWidth: 200 }}
         >
-          <option value="updated">last activity</option>
-          <option value="created">created</option>
-          <option value="name">name</option>
-          <option value="findings">findings</option>
+          <option value="">all workspaces</option>
+          {workspaces.map((w) => (
+            <option key={w.id} value={w.id}>
+              {w.name}
+            </option>
+          ))}
         </select>
-        <span className="text-2xs font-mono text-text-muted ml-auto">
-          {filteredProjects.length}
-          <span className="text-text-muted/50"> / {projects.length}</span>
-        </span>
-        <button
-          type="button"
-          onClick={() => navigate("/vr/projects/new")}
-          className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-md text-base transition-all hover:-translate-y-px"
-          style={{
-            background: "var(--color-accent)",
-            boxShadow:
-              "0 0 0 1px color-mix(in srgb, var(--color-accent) 50%, transparent), 0 0 16px color-mix(in srgb, var(--color-accent) 28%, transparent)",
-          }}
+        <span
+          className="font-mono uppercase"
+          style={{ marginLeft: "auto", fontSize: 10, letterSpacing: "0.1em", color: "var(--text-faint)" }}
         >
-          <Plus className="h-4 w-4" weight="bold" />
-          New project
-        </button>
+          {filteredProjects.length}
+          <span style={{ color: "var(--text-faint)" }}> / {projects.length}</span>
+        </span>
       </div>
 
-      {/* ── Loading / error / empty ─────────────────────────────────── */}
-      {isLoading && <LoadingSkeleton size="lg" width="full" />}
+      {/* main grid / loading / error */}
+      {isLoading && (
+        <WindowPanel title="projects" tone="muted">
+          <LoadingSkeleton size="lg" width="full" />
+        </WindowPanel>
+      )}
 
       {isError && (
-        <AilaCard className="border-critical" techBorder glow>
-          <p className="text-sm text-critical">Failed to load VR projects.</p>
-        </AilaCard>
-      )}
-
-      {!isLoading && !isError && projects.length === 0 && (
-        <div
-          className="rounded-md border border-dashed border-border px-8 py-16 text-center"
-          style={{
-            background: "color-mix(in srgb, var(--color-accent) 3%, transparent)",
-          }}
-        >
-          <div
-            className="inline-flex h-14 w-14 items-center justify-center rounded-[6px] mb-4"
-            style={{
-              background: "color-mix(in srgb, var(--color-accent) 12%, transparent)",
-              color: "var(--color-accent)",
-            }}
-          >
-            <Folder className="h-7 w-7" weight="duotone" />
-          </div>
-          <p className="font-display text-lg font-semibold text-foreground">
-            No VR projects yet
+        <WindowPanel title="projects" tone="accent">
+          <p className="font-mono" style={{ fontSize: 11, color: "var(--accent)" }}>
+            failed to load vr projects.
           </p>
-          <p className="mt-1 text-sm text-text-muted">
-            Spin up your first investigation against a target binary or service.
-          </p>
-          <button
-            type="button"
-            onClick={() => navigate("/vr/projects/new")}
-            className="mt-5 inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-md text-base transition-all hover:-translate-y-px"
-            style={{
-              background: "var(--color-accent)",
-              boxShadow: "0 0 16px color-mix(in srgb, var(--color-accent) 28%, transparent)",
-            }}
-          >
-            <Plus className="h-4 w-4" weight="bold" />
-            Create your first project
-          </button>
-        </div>
+        </WindowPanel>
       )}
 
-      {/* ── Card grid ───────────────────────────────────────────────── */}
-      {!isLoading && !isError && filteredProjects.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-          {filteredProjects.map((project) => (
-            <ProjectCard
-              key={project.id}
-              project={project}
-              targetName={
-                project.target_id
-                  ? targetMap.get(project.target_id)?.display_name ?? "loading…"
-                  : "--"
-              }
-              onOpen={() => navigate(`/vr/projects/${project.id}`)}
-              deleteMut={deleteMut}
-            />
-          ))}
-        </div>
-      )}
-
-      {!isLoading && !isError && projects.length > 0 && filteredProjects.length === 0 && (
-        <div className="rounded-md border border-dashed border-border px-6 py-10 text-center">
-          <p className="text-sm text-text-muted">No projects match the current filter.</p>
-          <button
-            type="button"
-            onClick={() => {
-              const next = new URLSearchParams(searchParams);
-              next.delete("q");
-              next.delete("status");
-              setSearchParams(next, { replace: true });
+      {!isLoading && !isError && (
+        <WindowPanel title="projects" tone="accent" flush>
+          <DataGrid<VRProjectSummary>
+            columns={COLUMNS}
+            rows={filteredProjects}
+            getKey={(p) => p.id}
+            onRowClick={(p) => navigate(`/vr/projects/${p.id}`)}
+            empty={
+              <div
+                className="font-mono"
+                style={{ padding: 34, textAlign: "center", fontSize: 12, color: "var(--text-muted)" }}
+              >
+                {projects.length === 0
+                  ? "no vr projects yet -- spin up your first investigation via + new project."
+                  : "no projects match the current filters."}
+              </div>
+            }
+            renderCells={(p) => {
+              const targetName = p.target_id
+                ? targetMap.get(p.target_id)?.display_name ?? "loading..."
+                : "--";
+              const investigationCount = p.target_id
+                ? investigationCountByTarget.get(p.target_id) ?? 0
+                : 0;
+              return [
+                <MonoBadge tone={statusTone[p.status] ?? "muted"}>{p.status}</MonoBadge>,
+                <span style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+                  <span
+                    style={{
+                      color: "var(--text-primary)",
+                      fontSize: 12,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {p.name}
+                  </span>
+                  {p.cve_id ? (
+                    <span
+                      style={{
+                        color: "var(--accent)",
+                        fontSize: 9.5,
+                        letterSpacing: "0.08em",
+                      }}
+                    >
+                      {p.cve_id}
+                    </span>
+                  ) : null}
+                </span>,
+                <span
+                  style={{
+                    color: "var(--text-muted)",
+                    fontSize: 11,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    display: "block",
+                  }}
+                >
+                  {targetName}
+                </span>,
+                <span style={{ fontSize: 12, color: "var(--text-primary)" }}>
+                  {p.finding_count}
+                </span>,
+                <span style={{ fontSize: 12, color: "var(--text-primary)" }}>
+                  {investigationCount}
+                </span>,
+                <span className="flex items-center" style={{ gap: 6 }}>
+                  <OperatorAvatar operatorId={p.operator_id} size={22} />
+                  <span
+                    style={{
+                      fontSize: 10,
+                      color: "var(--text-muted)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {p.operator_id ?? "--"}
+                  </span>
+                </span>,
+                <span style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
+                  {relativeTime(p.created_at)}
+                </span>,
+                <span
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ display: "inline-flex", justifyContent: "center" }}
+                >
+                  <DeleteButton
+                    id={p.id}
+                    label={`project "${p.name}"`}
+                    mutation={deleteMut}
+                    compact
+                  />
+                </span>,
+              ];
             }}
-            className="mt-3 text-sm text-accent hover:underline"
-          >
-            Clear filters
-          </button>
-        </div>
+          />
+        </WindowPanel>
       )}
     </div>
   );

@@ -1,10 +1,6 @@
 /**
  * AutomationPage -- manage cron-driven automation schedules.
  *
- * AUTO-04 / AUTO-05: team-scoped CRUD over the platform AutomationRegistry.
- * Operators pick a registered action, give it a target system + cron, and the
- * worker fires it on the schedule.
- *
  * Endpoints:
  *   GET    /automation/schedules
  *   POST   /automation/schedules
@@ -12,30 +8,21 @@
  *   DELETE /automation/schedules/{id}
  *   GET    /automation/actions
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type ColumnDef } from "@tanstack/react-table";
-import { Robot } from "@phosphor-icons/react/dist/csr/Robot";
-import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
-import { Trash } from "@phosphor-icons/react/dist/csr/Trash";
 
-import { AilaCard } from "@/components/aila/AilaCard";
-import { AilaTable } from "@/components/aila/AilaTable";
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
-import { EmptyState } from "@/components/aila/EmptyState";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  SectionHeader,
+  DataGrid,
+  MonoBadge,
+  BigStat,
+} from "@/components/aila/mock";
 import { authorizedRequestJson } from "@platform/api/http";
 
 // ---------------------------------------------------------------------------
-// Types -- mirror src/aila/api/schemas/automation.py
+// Types
 // ---------------------------------------------------------------------------
 
 interface AutomationSchedule {
@@ -79,21 +66,167 @@ interface DataEnvelope<T> {
   meta: Record<string, unknown>;
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function formatTimestamp(value: string | null | undefined): string {
-  if (!value) return "--";
-  return new Date(value).toLocaleString();
-}
-
 const DEFAULT_CREATE: AutomationScheduleCreate = {
   action_id: "",
   target_name: "",
   cron_expression: "0 9 * * MON",
   enabled: true,
 };
+
+// ---------------------------------------------------------------------------
+// Mock chrome
+// ---------------------------------------------------------------------------
+
+const BTN_STYLE: React.CSSProperties = {
+  height: 26,
+  fontSize: 9.5,
+  padding: "0 11px",
+  letterSpacing: "0.08em",
+  borderRadius: 3,
+  border: "1px solid var(--border-soft)",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  cursor: "pointer",
+  fontFamily: "var(--font-mono)",
+  textTransform: "uppercase",
+};
+
+const BTN_ACCENT_STYLE: React.CSSProperties = {
+  ...BTN_STYLE,
+  border: "1px solid var(--accent)",
+  background: "color-mix(in srgb, var(--accent) 14%, transparent)",
+  color: "var(--accent)",
+};
+
+const BTN_DANGER_STYLE: React.CSSProperties = {
+  ...BTN_STYLE,
+  border: "1px solid color-mix(in srgb, var(--status-warn) 55%, transparent)",
+  background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+  color: "var(--status-warn)",
+};
+
+const SMALL_BTN: React.CSSProperties = {
+  ...BTN_STYLE,
+  height: 22,
+  fontSize: 9,
+  padding: "0 9px",
+};
+const SMALL_DANGER: React.CSSProperties = {
+  ...BTN_DANGER_STYLE,
+  height: 22,
+  fontSize: 9,
+  padding: "0 9px",
+};
+
+const INPUT_STYLE: React.CSSProperties = {
+  height: 28,
+  fontSize: 11,
+  padding: "0 10px",
+  borderRadius: 3,
+  border: "1px solid var(--border-soft)",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  outline: "none",
+  fontFamily: "var(--font-mono)",
+  width: "100%",
+};
+
+const LABEL_STYLE: React.CSSProperties = {
+  fontSize: 9,
+  letterSpacing: "0.1em",
+  color: "var(--text-faint)",
+  fontFamily: "var(--font-mono)",
+  textTransform: "uppercase",
+};
+
+function ErrorBox({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="font-mono"
+      style={{
+        border:
+          "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+        background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+        color: "var(--status-warn)",
+        padding: "8px 12px",
+        fontSize: 11,
+        borderRadius: 3,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function ModalShell({
+  open,
+  title,
+  onClose,
+  width = 480,
+  children,
+}: {
+  open: boolean;
+  title: React.ReactNode;
+  onClose: () => void;
+  width?: number;
+  children: React.ReactNode;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [open, onClose]);
+  if (!open) return null;
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "color-mix(in srgb, var(--surface-page) 78%, transparent)",
+        backdropFilter: "blur(2px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 20,
+        zIndex: 60,
+      }}
+    >
+      <div onClick={(e) => e.stopPropagation()} style={{ width, maxWidth: "100%" }}>
+        <WindowPanel
+          title={title}
+          actions={
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={onClose}
+              style={{
+                width: 22,
+                height: 22,
+                border: "1px solid var(--border-soft)",
+                background: "var(--surface-sunk)",
+                color: "var(--text-primary)",
+                fontSize: 10,
+                cursor: "pointer",
+                borderRadius: 2,
+                fontFamily: "var(--font-mono)",
+              }}
+            >
+              {"\u2715"}
+            </button>
+          }
+        >
+          {children}
+        </WindowPanel>
+      </div>
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Create dialog
@@ -139,111 +272,133 @@ function CreateScheduleDialog({
     }
   }
 
+  const activeAction = actions.find((a) => a.action_id === form.action_id);
+
   return (
     <>
-      <Button
-        size="sm"
-        className="gap-1.5"
+      <button
+        type="button"
+        style={BTN_ACCENT_STYLE}
         onClick={() => setOpen(true)}
         disabled={actions.length === 0}
       >
-        <Plus className="h-4 w-4" />
-        New schedule
-      </Button>
-      <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="font-mono text-text">
-              New automation schedule
-            </DialogTitle>
-          </DialogHeader>
-          <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
-            <div className="flex flex-col gap-1">
-              <label className="font-mono text-xs text-text-muted" htmlFor="ns-action">
-                Action *
-              </label>
-              <select
-                id="ns-action"
-                value={form.action_id}
-                onChange={(e) => setForm((f) => ({ ...f, action_id: e.target.value }))}
-                className="rounded-[2px] border border-border bg-base font-mono text-sm text-text px-2.5 py-1.5 outline-none focus:border-border-hover transition-colors duration-100"
-              >
-                <option value="">-- select an action --</option>
-                {actions.map((a) => (
-                  <option key={a.action_id} value={a.action_id}>
-                    {a.action_id} ({a.module_id})
-                  </option>
-                ))}
-              </select>
-              {form.action_id && (
-                <span className="font-mono text-xs text-text-muted">
-                  {actions.find((a) => a.action_id === form.action_id)?.description ?? ""}
-                </span>
-              )}
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <label className="font-mono text-xs text-text-muted" htmlFor="ns-target">
-                Target system *
-              </label>
-              <Input
-                id="ns-target"
-                value={form.target_name}
-                onChange={(e) => setForm((f) => ({ ...f, target_name: e.target.value }))}
-                placeholder="prod-vm-01"
-                className="font-mono text-sm"
-              />
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <label className="font-mono text-xs text-text-muted" htmlFor="ns-cron">
-                Cron expression *
-              </label>
-              <Input
-                id="ns-cron"
-                value={form.cron_expression}
-                onChange={(e) => setForm((f) => ({ ...f, cron_expression: e.target.value }))}
-                placeholder="0 9 * * MON"
-                className="font-mono text-sm"
-              />
-              <span className="font-mono text-xs text-text-muted">
-                e.g. <code>0 9 * * MON</code> = every Monday at 09:00 UTC
-              </span>
-            </div>
-
-            {/* Single-toggle checkbox: WCAG 1.3.1 fieldset/legend applies to related-option groups, not to individual on/off toggles labelled via wrapping <label>. */}
-            <label className="flex items-center gap-2 font-mono text-xs text-text-muted">
-              <input
-                type="checkbox"
-                checked={form.enabled}
-                onChange={(e) => setForm((f) => ({ ...f, enabled: e.target.checked }))}
-              />
-              Enabled
+        + NEW SCHEDULE
+      </button>
+      <ModalShell
+        open={open}
+        title="new automation schedule"
+        onClose={handleClose}
+      >
+        <form
+          className="flex flex-col"
+          style={{ gap: 12 }}
+          onSubmit={handleSubmit}
+        >
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE} htmlFor="ns-action">
+              action *
             </label>
-
-            {error && (
-              <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-                {error}
-              </div>
+            <select
+              id="ns-action"
+              value={form.action_id}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, action_id: e.target.value }))
+              }
+              style={INPUT_STYLE}
+            >
+              <option value="">-- select an action --</option>
+              {actions.map((a) => (
+                <option key={a.action_id} value={a.action_id}>
+                  {a.action_id} ({a.module_id})
+                </option>
+              ))}
+            </select>
+            {activeAction && (
+              <span
+                className="font-mono"
+                style={{ fontSize: 10.5, color: "var(--text-faint)" }}
+              >
+                {activeAction.description}
+              </span>
             )}
-
-            <div className="flex gap-2">
-              <Button type="submit" size="sm" disabled={isPending} className="flex-1">
-                {isPending ? "Creating…" : "Create"}
-              </Button>
-              <Button type="button" size="sm" variant="outline" onClick={handleClose}>
-                Cancel
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
+          </div>
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE} htmlFor="ns-target">
+              target system *
+            </label>
+            <input
+              id="ns-target"
+              value={form.target_name}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, target_name: e.target.value }))
+              }
+              placeholder="prod-vm-01"
+              style={INPUT_STYLE}
+            />
+          </div>
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE} htmlFor="ns-cron">
+              cron expression *
+            </label>
+            <input
+              id="ns-cron"
+              value={form.cron_expression}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, cron_expression: e.target.value }))
+              }
+              placeholder="0 9 * * MON"
+              style={INPUT_STYLE}
+            />
+            <span
+              className="font-mono"
+              style={{ fontSize: 10, color: "var(--text-faint)" }}
+            >
+              {"e.g. "}<code>0 9 * * MON</code>{" \u2192 every Monday 09:00 UTC"}
+            </span>
+          </div>
+          <label
+            className="flex items-center font-mono"
+            style={{
+              gap: 6,
+              fontSize: 10.5,
+              color: "var(--text-primary)",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={form.enabled}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, enabled: e.target.checked }))
+              }
+            />
+            <span
+              className="uppercase"
+              style={{ letterSpacing: "0.08em", fontSize: 10 }}
+            >
+              enabled
+            </span>
+          </label>
+          {error && <ErrorBox>{error}</ErrorBox>}
+          <div className="flex" style={{ gap: 8 }}>
+            <button
+              type="submit"
+              style={{ ...BTN_ACCENT_STYLE, flex: 1 }}
+              disabled={isPending}
+            >
+              {isPending ? "CREATING\u2026" : "CREATE"}
+            </button>
+            <button type="button" style={BTN_STYLE} onClick={handleClose}>
+              CANCEL
+            </button>
+          </div>
+        </form>
+      </ModalShell>
     </>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Row actions -- toggle enabled + delete
+// Row actions
 // ---------------------------------------------------------------------------
 
 function RowActions({
@@ -282,119 +437,35 @@ function RowActions({
   }
 
   return (
-    <div className="flex flex-col items-end gap-1">
-      <div className="flex gap-2">
-        <Button
-          size="sm"
-          variant="outline"
+    <div className="flex flex-col items-end" style={{ gap: 3 }}>
+      <div className="flex" style={{ gap: 5 }}>
+        <button
+          type="button"
+          style={SMALL_BTN}
           disabled={busy}
           onClick={handleToggle}
         >
-          {schedule.enabled ? "Disable" : "Enable"}
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          className="text-destructive border-destructive/40 hover:bg-destructive/10 hover:border-destructive gap-1.5"
+          {schedule.enabled ? "DISABLE" : "ENABLE"}
+        </button>
+        <button
+          type="button"
+          style={SMALL_DANGER}
           disabled={busy}
           onClick={handleDelete}
         >
-          <Trash className="h-3.5 w-3.5" />
-          Delete
-        </Button>
+          DELETE
+        </button>
       </div>
       {error && (
-        <span className="font-mono text-xs text-destructive">{error}</span>
+        <span
+          className="font-mono"
+          style={{ fontSize: 9.5, color: "var(--status-warn)" }}
+        >
+          {error}
+        </span>
       )}
     </div>
   );
-}
-
-// ---------------------------------------------------------------------------
-// Columns
-// ---------------------------------------------------------------------------
-
-function buildColumns(
-  onToggle: (id: string, enabled: boolean) => Promise<unknown>,
-  onDelete: (id: string) => Promise<unknown>,
-): ColumnDef<AutomationSchedule>[] {
-  return [
-    {
-      id: "action_id",
-      header: "Action",
-      accessorKey: "action_id",
-      cell: ({ getValue }) => (
-        <span className="font-mono text-sm text-text">{String(getValue())}</span>
-      ),
-    },
-    {
-      id: "target_name",
-      header: "Target",
-      accessorKey: "target_name",
-      cell: ({ getValue }) => (
-        <span className="font-mono text-xs text-text-muted">{String(getValue())}</span>
-      ),
-    },
-    {
-      id: "cron_expression",
-      header: "Cron",
-      accessorKey: "cron_expression",
-      cell: ({ getValue }) => (
-        <code className="font-mono text-xs text-text">{String(getValue())}</code>
-      ),
-    },
-    {
-      id: "enabled",
-      header: "Status",
-      accessorKey: "enabled",
-      cell: ({ getValue }) =>
-        getValue() ? (
-          <AilaBadge severity="info" size="sm">Enabled</AilaBadge>
-        ) : (
-          <AilaBadge severity="neutral" size="sm">Disabled</AilaBadge>
-        ),
-    },
-    {
-      id: "last_run_at",
-      header: "Last run",
-      accessorKey: "last_run_at",
-      cell: ({ getValue }) => (
-        <span className="font-mono text-xs text-text-muted whitespace-nowrap">
-          {formatTimestamp(getValue() as string | null)}
-        </span>
-      ),
-    },
-    {
-      id: "last_run_result",
-      header: "Result",
-      accessorKey: "last_run_result",
-      enableSorting: false,
-      cell: ({ getValue }) => {
-        const v = getValue() as string | null;
-        if (!v) return <span className="font-mono text-xs text-text-muted">--</span>;
-        return (
-          <span
-            className="font-mono text-xs text-text-muted line-clamp-1 max-w-[180px]"
-            title={v}
-          >
-            {v}
-          </span>
-        );
-      },
-    },
-    {
-      id: "actions",
-      header: "Actions",
-      enableSorting: false,
-      cell: ({ row }) => (
-        <RowActions
-          schedule={row.original}
-          onToggle={onToggle}
-          onDelete={onDelete}
-        />
-      ),
-    },
-  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -467,115 +538,156 @@ export function AutomationPage() {
 
   const schedules = schedulesQuery.data?.data ?? [];
   const actions = actionsQuery.data?.data ?? [];
-
   const enabledCount = useMemo(
     () => schedules.filter((s) => s.enabled).length,
     [schedules],
   );
 
-  const columns = useMemo(
-    () =>
-      buildColumns(
-        (id, enabled) => updateMutation.mutateAsync({ id, patch: { enabled } }),
-        (id) => deleteMutation.mutateAsync(id),
-      ),
-    [updateMutation, deleteMutation],
-  );
-
   return (
-    <div className="flex flex-col gap-6 p-4 lg:p-6">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <CreateScheduleDialog
-          actions={actions}
-          onCreate={(req) => createMutation.mutateAsync(req)}
-          isPending={createMutation.isPending}
-        />
-      </div>
+    <div className="flex flex-col" style={{ gap: 16, padding: 20 }}>
+      <SectionHeader
+        icon={"\u25c6"}
+        title="Automation"
+        actions={
+          <div className="flex items-center" style={{ gap: 8 }}>
+            <button
+              type="button"
+              style={BTN_STYLE}
+              onClick={() => void schedulesQuery.refetch()}
+              disabled={schedulesQuery.isFetching}
+            >
+              REFRESH
+            </button>
+            <CreateScheduleDialog
+              actions={actions}
+              onCreate={(req) => createMutation.mutateAsync(req)}
+              isPending={createMutation.isPending}
+            />
+          </div>
+        }
+      />
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Total Schedules
-        </p>
-        <div className="mt-1 min-h-[2rem]">
-          {schedulesQuery.isLoading ? (
-            <LoadingSkeleton size="md" width="third" aria-label="Loading total schedules" />
-          ) : (
-            <p className="font-mono text-2xl font-semibold text-text">{schedules.length}</p>
-          )}
-        </div>
-        <p className="font-mono text-xs text-text-muted mt-0.5">
-          Across your team
-        </p></AilaCard>
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Enabled
-        </p>
-        <div className="mt-1 min-h-[2rem]">
-          {schedulesQuery.isLoading ? (
-            <LoadingSkeleton size="md" width="third" aria-label="Loading enabled schedule count" />
-          ) : (
-            <p className="font-mono text-2xl font-semibold text-text">{enabledCount}</p>
-          )}
-        </div>
-        <p className="font-mono text-xs text-text-muted mt-0.5">
-          Currently firing on cron
-        </p></AilaCard>
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Available Actions
-        </p>
-        <div className="mt-1 min-h-[2rem]">
-          {actionsQuery.isLoading ? (
-            <LoadingSkeleton size="md" width="third" aria-label="Loading action count" />
-          ) : (
-            <p className="font-mono text-2xl font-semibold text-text">{actions.length}</p>
-          )}
-        </div>
-        <p className="font-mono text-xs text-text-muted mt-0.5">
-          Registered by modules
-        </p></AilaCard>
+      <div
+        className="grid"
+        style={{
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          gap: 12,
+        }}
+      >
+        <WindowPanel title="total schedules">
+          <BigStat value={schedules.length} sub="across your team" />
+        </WindowPanel>
+        <WindowPanel title="enabled">
+          <BigStat value={enabledCount} sub="firing on cron" />
+        </WindowPanel>
+        <WindowPanel title="available actions">
+          <BigStat value={actions.length} sub="registered by modules" />
+        </WindowPanel>
       </div>
 
       {schedulesQuery.isError && (
-        <div className="rounded-[4px] border border-destructive bg-destructive/10 px-4 py-3 font-mono text-sm text-destructive">
-          Failed to load schedules: {(schedulesQuery.error as Error).message}
-        </div>
+        <ErrorBox>
+          failed to load schedules:{" "}
+          {(schedulesQuery.error as Error).message}
+        </ErrorBox>
       )}
-
       {actionsQuery.isError && (
-        <div className="rounded-[4px] border border-destructive bg-destructive/10 px-4 py-3 font-mono text-sm text-destructive">
-          Failed to load actions: {(actionsQuery.error as Error).message}
-        </div>
+        <ErrorBox>
+          failed to load actions: {(actionsQuery.error as Error).message}
+        </ErrorBox>
       )}
 
       {schedulesQuery.isLoading && (
-        <AilaCard variant="default" padding="md"><LoadingSkeletonGroup lines={6} /></AilaCard>
+        <WindowPanel title="schedules" status="LOADING" tone="muted">
+          <LoadingSkeletonGroup lines={6} />
+        </WindowPanel>
       )}
 
-      {!schedulesQuery.isLoading &&
-        !schedulesQuery.isError &&
-        schedules.length === 0 && (
-          <EmptyState
-            icon={<Robot className="h-10 w-10" />}
-            title="No automation schedules"
-            description={
-              actions.length > 0
-                ? "Create a schedule to run a registered action on a cron."
-                : "No automation actions are registered. Modules contribute actions at startup."
+      {!schedulesQuery.isLoading && !schedulesQuery.isError && (
+        <WindowPanel title="automations" flush>
+          <DataGrid
+            columns={[
+              { label: "ACTION", width: "1fr" },
+              { label: "TRIGGER (CRON)", width: "170px" },
+              { label: "TARGET", width: "180px" },
+              { label: "LAST RUN", width: "170px" },
+              { label: "RESULT", width: "180px" },
+              { label: "ACTIVE", width: "100px" },
+              { label: "ACTIONS", width: "170px", align: "right" },
+            ]}
+            rows={schedules}
+            getKey={(s) => s.id}
+            empty={
+              <div
+                className="font-mono"
+                style={{
+                  padding: 34,
+                  textAlign: "center",
+                  fontSize: 12,
+                  color: "var(--text-muted)",
+                }}
+              >
+                {actions.length > 0
+                  ? "no automation schedules. create one to run a registered action on a cron."
+                  : "no automation actions are registered. modules contribute actions at startup."}
+              </div>
             }
+            renderCells={(schedule) => [
+              <span
+                key="a"
+                className="font-mono"
+                style={{ fontSize: 11, color: "var(--text-primary)" }}
+              >
+                {schedule.action_id}
+              </span>,
+              <code
+                key="c"
+                className="font-mono"
+                style={{ fontSize: 10.5, color: "var(--accent)" }}
+              >
+                {schedule.cron_expression}
+              </code>,
+              <span
+                key="t"
+                className="font-mono truncate"
+                style={{ fontSize: 10.5, color: "var(--text-muted)" }}
+              >
+                {schedule.target_name}
+              </span>,
+              <span
+                key="l"
+                className="font-mono"
+                style={{ fontSize: 10, color: "var(--text-faint)" }}
+              >
+                {schedule.last_run_at
+                  ? new Date(schedule.last_run_at).toLocaleString()
+                  : "--"}
+              </span>,
+              <span
+                key="r"
+                className="font-mono truncate"
+                title={schedule.last_run_result ?? undefined}
+                style={{ fontSize: 10.5, color: "var(--text-muted)" }}
+              >
+                {schedule.last_run_result ?? "--"}
+              </span>,
+              <MonoBadge
+                key="e"
+                tone={schedule.enabled ? "ok" : "muted"}
+              >
+                {schedule.enabled ? "ENABLED" : "DISABLED"}
+              </MonoBadge>,
+              <RowActions
+                key="x"
+                schedule={schedule}
+                onToggle={(id, enabled) =>
+                  updateMutation.mutateAsync({ id, patch: { enabled } })
+                }
+                onDelete={(id) => deleteMutation.mutateAsync(id)}
+              />,
+            ]}
           />
-        )}
-
-      {!schedulesQuery.isLoading && schedules.length > 0 && (
-        <AilaTable
-          data={schedules}
-          columns={columns}
-          pageSize={25}
-          enableSorting
-          enableFiltering={false}
-        >
-          <AilaTable.Header />
-          <AilaTable.Body emptyState="No schedules found." />
-          <AilaTable.Pagination pageSizeOptions={[10, 25, 50]} />
-        </AilaTable>
+        </WindowPanel>
       )}
     </div>
   );

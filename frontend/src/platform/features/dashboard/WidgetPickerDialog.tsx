@@ -1,18 +1,15 @@
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { AilaCard } from "@/components/aila/AilaCard";
+import * as React from "react";
+
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import { MonoBadge } from "@/components/aila/mock";
 import { getAllWidgets } from "./widgetRegistry";
 import type { WidgetCategory } from "./types";
 
 const CATEGORY_LABELS: Record<WidgetCategory, string> = {
-  platform: "Platform",
-  vulnerability: "Vulnerability",
-  vr: "Vulnerability Research",
-  malware: "Malware Analysis",
+  platform: "platform",
+  vulnerability: "vulnerability",
+  vr: "vulnerability research",
+  malware: "malware analysis",
 };
 
 const CATEGORY_ORDER: WidgetCategory[] = ["platform", "vulnerability", "vr", "malware"];
@@ -24,12 +21,46 @@ export interface WidgetPickerDialogProps {
   onAddWidget: (widgetId: string) => void;
 }
 
+const BACKDROP_STYLE: React.CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  background: "color-mix(in srgb, var(--surface-page) 78%, transparent)",
+  backdropFilter: "blur(2px)",
+  zIndex: 60,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 24,
+};
+
+const DIALOG_WRAP_STYLE: React.CSSProperties = {
+  width: "100%",
+  maxWidth: 720,
+  maxHeight: "80vh",
+  display: "flex",
+  flexDirection: "column",
+};
+
+const CLOSE_BUTTON_STYLE: React.CSSProperties = {
+  height: 22,
+  padding: "0 10px",
+  borderRadius: 3,
+  fontFamily: "var(--font-mono)",
+  fontSize: 10,
+  letterSpacing: "0.1em",
+  textTransform: "uppercase",
+  border: "1px solid var(--border-soft)",
+  background: "var(--surface-sunk)",
+  color: "var(--text-muted)",
+  cursor: "pointer",
+};
+
 /**
- * WidgetPickerDialog -- categorized widget card grid for adding widgets (D-03).
+ * WidgetPickerDialog -- categorized widget list for adding widgets (D-03).
  *
- * Opens as a Dialog, lists all registered widgets grouped by category.
- * Cards are disabled for widgets already on the dashboard.
- * Clicking a card adds it to the grid and closes the dialog.
+ * Mono modal: fixed backdrop + centered WindowPanel titled "add widget".
+ * Each widget is a mono row; already-added widgets are marked ADDED via
+ * MonoBadge and disabled.
  */
 export function WidgetPickerDialog({
   open,
@@ -38,6 +69,18 @@ export function WidgetPickerDialog({
   onAddWidget,
 }: WidgetPickerDialogProps) {
   const allWidgets = getAllWidgets();
+
+  // ESC to close (matches shadcn Dialog UX).
+  React.useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onOpenChange(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onOpenChange]);
+
+  if (!open) return null;
 
   function handleAdd(widgetId: string) {
     onAddWidget(widgetId);
@@ -50,69 +93,154 @@ export function WidgetPickerDialog({
     widgets: allWidgets.filter((w) => w.category === category),
   })).filter((group) => group.widgets.length > 0);
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Add Widget</DialogTitle>
-        </DialogHeader>
+  const closeAction = (
+    <button
+      type="button"
+      onClick={() => onOpenChange(false)}
+      style={CLOSE_BUTTON_STYLE}
+      aria-label="Close widget picker"
+      data-testid="dashboard-picker-close"
+    >
+      close
+    </button>
+  );
 
-        {widgetsByCategory.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-4 text-center">
-            No widgets are registered yet. Widgets will appear here once modules are loaded.
-          </p>
-        ) : (
-          <div className="space-y-6 mt-2">
-            {widgetsByCategory.map(({ category, label, widgets }) => (
-              <section key={category}>
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-                  {label}
-                </h3>
-                <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                  {widgets.map((widget) => {
-                    const isActive = activeWidgetIds.includes(widget.id);
-                    return (
-                      <AilaCard key={widget.id}
-                      variant={isActive ? "default" : "interactive"}
-                      padding="sm"
-                      className={isActive ? "opacity-50 cursor-not-allowed" : ""}
-                      onClick={isActive ? undefined : () => handleAdd(widget.id)}
-                      role={isActive ? undefined : "button"}
-                      tabIndex={isActive ? -1 : 0}
-                      onKeyDown={
-                        isActive
-                          ? undefined
-                          : (e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                handleAdd(widget.id);
-                              }
-                            }
-                      }
-                      aria-disabled={isActive}
-                      aria-label={isActive ? `${widget.name} -- already added` : `Add ${widget.name}`}><div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-foreground truncate">
-                            {widget.name}
-                          </p>
-                          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
-                            {widget.description}
-                          </p>
+  return (
+    <div
+      role="presentation"
+      style={BACKDROP_STYLE}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onOpenChange(false);
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Add Widget"
+        style={DIALOG_WRAP_STYLE}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <WindowPanel
+          title="add widget"
+          actions={closeAction}
+          className="flex flex-col overflow-hidden"
+        >
+          <div
+            className="flex flex-col overflow-auto"
+            style={{ gap: 20, maxHeight: "68vh" }}
+          >
+            {widgetsByCategory.length === 0 ? (
+              <div
+                className="font-mono"
+                style={{
+                  fontSize: 11,
+                  color: "var(--text-muted)",
+                  padding: "24px 0",
+                  textAlign: "center",
+                }}
+              >
+                No widgets are registered yet. Widgets will appear here once modules are loaded.
+              </div>
+            ) : (
+              widgetsByCategory.map(({ category, label, widgets }) => (
+                <section key={category} className="flex flex-col" style={{ gap: 6 }}>
+                  <h3
+                    className="font-mono uppercase"
+                    style={{
+                      fontSize: 10,
+                      letterSpacing: "0.16em",
+                      color: "var(--text-faint)",
+                      borderBottom: "1px solid var(--border-faint)",
+                      paddingBottom: 4,
+                      margin: 0,
+                    }}
+                  >
+                    {label}
+                  </h3>
+                  <div className="flex flex-col" style={{ gap: 4 }}>
+                    {widgets.map((widget) => {
+                      const isActive = activeWidgetIds.includes(widget.id);
+                      const row = (
+                        <div
+                          className="flex items-start justify-between"
+                          style={{ gap: 12, minWidth: 0 }}
+                        >
+                          <div className="min-w-0" style={{ flex: 1 }}>
+                            <div
+                              className="font-mono truncate"
+                              style={{
+                                fontSize: 12,
+                                color: isActive
+                                  ? "var(--text-muted)"
+                                  : "var(--text-primary)",
+                                letterSpacing: "0.02em",
+                              }}
+                            >
+                              {widget.name}
+                            </div>
+                            <div
+                              className="font-mono"
+                              style={{
+                                fontSize: 10.5,
+                                color: "var(--text-faint)",
+                                marginTop: 2,
+                                lineHeight: 1.4,
+                              }}
+                            >
+                              {widget.description}
+                            </div>
+                          </div>
+                          {isActive && (
+                            <MonoBadge tone="muted">added</MonoBadge>
+                          )}
                         </div>
-                        {isActive && (
-                          <span className="shrink-0 text-xs text-muted-foreground border border-border rounded px-1.5 py-0.5 mt-0.5">
-                            Added
-                          </span>
-                        )}
-                      </div></AilaCard>
-                    );
-                  })}
-                </div>
-              </section>
-            ))}
+                      );
+
+                      const rowStyle: React.CSSProperties = {
+                        padding: "8px 10px",
+                        borderRadius: 3,
+                        border: "1px solid var(--border-faint)",
+                        background: "var(--surface-sunk)",
+                        opacity: isActive ? 0.55 : 1,
+                        cursor: isActive ? "not-allowed" : "pointer",
+                        textAlign: "left",
+                        width: "100%",
+                        color: "inherit",
+                      };
+
+                      if (isActive) {
+                        return (
+                          <div
+                            key={widget.id}
+                            style={rowStyle}
+                            aria-disabled="true"
+                            aria-label={`${widget.name} -- already added`}
+                          >
+                            {row}
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <button
+                          key={widget.id}
+                          type="button"
+                          style={rowStyle}
+                          onClick={() => handleAdd(widget.id)}
+                          aria-label={`Add ${widget.name}`}
+                          data-testid={`dashboard-picker-widget-${widget.id}`}
+                        >
+                          {row}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+              ))
+            )}
           </div>
-        )}
-      </DialogContent>
-    </Dialog>
+        </WindowPanel>
+      </div>
+    </div>
   );
 }

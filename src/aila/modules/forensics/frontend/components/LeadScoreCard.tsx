@@ -1,15 +1,13 @@
 import { useMemo, useState } from "react";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { WindowPanel } from "@/components/aila/WindowPanel";
+import { MonoBadge } from "@/components/aila/mock";
 
 import { useProjectLeads } from "../queries";
 import type { PromotedLead } from "../types";
 
-type Severity = "critical" | "high" | "medium" | "low" | "info";
-
-function scoreSeverity(score: number): Severity {
+function scoreTone(score: number): string {
   if (score >= 80) return "critical";
   if (score >= 60) return "high";
   if (score >= 40) return "medium";
@@ -62,7 +60,7 @@ function parseReason(reason: string): ParsedReason {
     } else if (headline === parts[0] && !headline.includes("(score")) {
       // If the first clause wasn't a "(score N)" header, treat this as part
       // of the headline by merging.
-      headline = `${headline} · ${clause}`;
+      headline = `${headline} \u00b7 ${clause}`;
     } else {
       meta.push(clause);
     }
@@ -70,6 +68,22 @@ function parseReason(reason: string): ParsedReason {
 
   return { headline, meta, question, answer, iocSummaries };
 }
+
+const SECTION_LABEL: React.CSSProperties = {
+  fontSize: 9,
+  letterSpacing: "0.14em",
+  color: "var(--text-faint)",
+  marginBottom: 3,
+};
+
+const META_CHIP: React.CSSProperties = {
+  padding: "2px 6px",
+  fontSize: 9.5,
+  borderRadius: 2,
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-faint)",
+  color: "var(--text-faint)",
+};
 
 function LeadRow({ lead }: { lead: PromotedLead }) {
   const [open, setOpen] = useState(false);
@@ -86,42 +100,65 @@ function LeadRow({ lead }: { lead: PromotedLead }) {
     parsed.iocSummaries.length > 0 ||
     (lead.related_artifact_ids?.length ?? 0) > 0;
 
-  const severity = scoreSeverity(lead.score);
+  const tone = scoreTone(lead.score);
 
   return (
-    <div className="border border-border rounded-md bg-surface text-xs overflow-hidden">
-      <div className="px-3 py-2.5 space-y-1.5">
-        {/* Header row: score · bucket · type */}
-        <div className="flex items-center gap-2">
-          <AilaBadge severity={severity} size="sm">
-            {lead.score.toFixed(0)}
-          </AilaBadge>
-          <span className="text-3xs text-text-muted font-medium uppercase tracking-wide">
+    <div
+      style={{
+        border: "1px solid var(--border-soft)",
+        background: "var(--surface-card)",
+        borderRadius: 3,
+        overflow: "hidden",
+      }}
+    >
+      <div style={{ padding: "10px 12px" }} className="space-y-1.5">
+        {/* Header row: score - bucket - type */}
+        <div className="flex items-center" style={{ gap: 8 }}>
+          <MonoBadge tone={tone}>{lead.score.toFixed(0)}</MonoBadge>
+          <span
+            className="font-mono uppercase"
+            style={{
+              fontSize: 9,
+              letterSpacing: "0.1em",
+              color: "var(--text-muted)",
+            }}
+          >
             {scoreBucket(lead.score)}
           </span>
-          <span className="text-text-muted font-mono text-2xs ml-auto shrink-0">
+          <span
+            className="font-mono ml-auto shrink-0"
+            style={{ fontSize: 9.5, color: "var(--text-faint)" }}
+          >
             {typeLabel}
           </span>
           {lead.source_tool && (
-            <span className="text-text-muted text-3xs shrink-0">
+            <span
+              className="font-mono shrink-0"
+              style={{ fontSize: 9, color: "var(--text-faint)" }}
+            >
               via {lead.source_tool}
             </span>
           )}
         </div>
 
         {/* Full multi-line headline -- NOT truncated. */}
-        <div className="text-foreground leading-relaxed whitespace-pre-wrap">
+        <div
+          className="font-mono whitespace-pre-wrap"
+          style={{
+            fontSize: 11,
+            color: "var(--text-primary)",
+            lineHeight: 1.55,
+          }}
+        >
           {parsed.headline}
         </div>
 
         {/* Meta chips */}
         {parsed.meta.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 pt-0.5">
+          <div className="flex flex-wrap" style={{ gap: 4, paddingTop: 2 }}>
             {parsed.meta.map((m, i) => (
-              <span
-                key={i}
-                className="px-1.5 py-0.5 text-3xs rounded bg-elevated text-text-muted font-mono"
-              >
+              // eslint-disable-next-line react/no-array-index-key
+              <span key={i} className="font-mono" style={META_CHIP}>
                 {m}
               </span>
             ))}
@@ -132,54 +169,110 @@ function LeadRow({ lead }: { lead: PromotedLead }) {
           <button
             type="button"
             onClick={() => setOpen((p) => !p)}
-            className="text-2xs text-primary hover:underline pt-0.5"
+            className="font-mono uppercase"
             aria-expanded={open}
+            style={{
+              padding: "2px 0",
+              fontSize: 9.5,
+              letterSpacing: "0.08em",
+              color: "var(--accent)",
+              background: "transparent",
+              border: 0,
+              cursor: "pointer",
+              textAlign: "left",
+            }}
           >
-            {open ? "Hide details ▾" : "Show details ▸"}
+            {open ? "hide details \u25be" : "show details \u25b8"}
           </button>
         )}
       </div>
 
       {open && expandable && (
-        <div className="border-t border-border bg-elevated px-3 py-2.5 space-y-2">
+        <div
+          className="space-y-2"
+          style={{
+            borderTop: "1px solid var(--border-faint)",
+            background: "var(--surface-sunk)",
+            padding: "10px 12px",
+          }}
+        >
           {parsed.question && (
             <div>
-              <div className="text-3xs font-mono text-text-muted uppercase tracking-wide mb-0.5">
+              <div className="font-mono uppercase" style={SECTION_LABEL}>
                 Question
               </div>
-              <div className="text-foreground leading-relaxed whitespace-pre-wrap">
+              <div
+                className="font-mono whitespace-pre-wrap"
+                style={{
+                  fontSize: 11,
+                  color: "var(--text-primary)",
+                  lineHeight: 1.55,
+                }}
+              >
                 {parsed.question}
               </div>
             </div>
           )}
           {parsed.answer && (
             <div>
-              <div className="text-3xs font-mono text-text-muted uppercase tracking-wide mb-0.5">
+              <div className="font-mono uppercase" style={SECTION_LABEL}>
                 Answer
               </div>
-              <div className="text-foreground leading-relaxed whitespace-pre-wrap">
+              <div
+                className="font-mono whitespace-pre-wrap"
+                style={{
+                  fontSize: 11,
+                  color: "var(--text-primary)",
+                  lineHeight: 1.55,
+                }}
+              >
                 {parsed.answer}
               </div>
             </div>
           )}
           {evidence.length > 0 && (
             <div>
-              <div className="text-3xs font-mono text-text-muted uppercase tracking-wide mb-1">
+              <div className="font-mono uppercase" style={SECTION_LABEL}>
                 Evidence ({evidence.length})
               </div>
               <ul className="space-y-1.5">
                 {evidence.map((e, i) => (
                   <li
+                    // eslint-disable-next-line react/no-array-index-key
                     key={i}
-                    className="font-mono text-2xs leading-relaxed border-l-2 border-border-muted pl-2"
+                    className="font-mono"
+                    style={{
+                      fontSize: 9.5,
+                      borderLeft: "2px solid var(--border-faint)",
+                      paddingLeft: 8,
+                      lineHeight: 1.55,
+                    }}
                   >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="px-1.5 py-0.5 rounded bg-elevated text-foreground text-3xs shrink-0">
+                    <div
+                      className="flex flex-wrap items-center"
+                      style={{ gap: 6 }}
+                    >
+                      <span
+                        className="font-mono shrink-0"
+                        style={{
+                          ...META_CHIP,
+                          color: "var(--text-primary)",
+                        }}
+                      >
                         {e.keyword}
                       </span>
-                      <span className="text-text-muted">{e.path}</span>
+                      <span style={{ color: "var(--text-faint)" }}>
+                        {e.path}
+                      </span>
                     </div>
-                    <div className="text-foreground break-all whitespace-pre-wrap pl-1 mt-0.5">
+                    <div
+                      className="break-all whitespace-pre-wrap"
+                      style={{
+                        color: "var(--text-primary)",
+                        paddingLeft: 4,
+                        marginTop: 3,
+                      }}
+                    >
                       &ldquo;{e.excerpt}&rdquo;
                     </div>
                   </li>
@@ -189,35 +282,45 @@ function LeadRow({ lead }: { lead: PromotedLead }) {
           )}
           {parsed.iocSummaries.length > 0 && (
             <div>
-              <div className="text-3xs font-mono text-text-muted uppercase tracking-wide mb-0.5">
+              <div className="font-mono uppercase" style={SECTION_LABEL}>
                 IOC rollups
               </div>
-              <ul className="space-y-0.5 text-foreground">
+              <ul
+                className="font-mono space-y-0.5"
+                style={{
+                  fontSize: 10.5,
+                  color: "var(--text-primary)",
+                  lineHeight: 1.55,
+                }}
+              >
                 {parsed.iocSummaries.map((c, i) => (
-                  <li key={i} className="leading-relaxed">
-                    · {c}
-                  </li>
+                  // eslint-disable-next-line react/no-array-index-key
+                  <li key={i}>{"\u00b7"} {c}</li>
                 ))}
               </ul>
             </div>
           )}
           {(lead.related_artifact_ids?.length ?? 0) > 0 && (
             <div>
-              <div className="text-3xs font-mono text-text-muted uppercase tracking-wide mb-0.5">
+              <div className="font-mono uppercase" style={SECTION_LABEL}>
                 Related artefacts
               </div>
-              <div className="flex flex-wrap gap-1">
+              <div className="flex flex-wrap" style={{ gap: 4 }}>
                 {(lead.related_artifact_ids ?? []).slice(0, 8).map((id) => (
                   <span
                     key={id}
-                    className="px-1.5 py-0.5 text-3xs rounded bg-elevated text-text-muted font-mono"
+                    className="font-mono"
+                    style={META_CHIP}
                     title={id}
                   >
                     {id.slice(0, 8)}
                   </span>
                 ))}
                 {(lead.related_artifact_ids?.length ?? 0) > 8 && (
-                  <span className="text-text-muted text-3xs">
+                  <span
+                    className="font-mono"
+                    style={{ fontSize: 9.5, color: "var(--text-faint)" }}
+                  >
                     +{(lead.related_artifact_ids?.length ?? 0) - 8} more
                   </span>
                 )}
@@ -244,19 +347,41 @@ export function LeadScoreCard({ projectId }: { projectId: string }) {
 
   return (
     <div className="space-y-2">
-      <div className="flex items-baseline gap-2">
-        <h3 className="text-sm font-semibold text-foreground">Top Leads</h3>
-        <span className="text-xs text-text-muted">
+      <div className="flex items-baseline" style={{ gap: 8 }}>
+        <h3
+          className="font-mono uppercase"
+          style={{
+            fontSize: 10,
+            letterSpacing: "0.14em",
+            color: "var(--text-primary)",
+          }}
+        >
+          top leads
+        </h3>
+        <span
+          className="font-mono"
+          style={{ fontSize: 10, color: "var(--text-faint)" }}
+        >
           {items.length === 0
             ? "none"
             : `${visible.length} of ${items.length}`}
         </span>
       </div>
       {items.length === 0 ? (
-        <WindowPanel tone="muted" status="forensics ; no leads promoted"><p className="text-sm text-text-muted text-center py-4">
-          No leads promoted yet. Leads are the investigator&apos;s own
-          conclusions -- run an investigation turn to populate this panel.
-        </p></WindowPanel>
+        <WindowPanel tone="muted" status="forensics ; no leads promoted">
+          <p
+            className="font-mono"
+            style={{
+              fontSize: 11,
+              color: "var(--text-muted)",
+              textAlign: "center",
+              padding: "16px 0",
+            }}
+          >
+            No leads promoted yet. Leads are the investigator&apos;s own
+            conclusions -- run an investigation turn to populate this panel.
+          </p>
+        </WindowPanel>
       ) : (
         <>
           <div className="space-y-1.5">
@@ -268,18 +393,37 @@ export function LeadScoreCard({ projectId }: { projectId: string }) {
             <button
               type="button"
               onClick={() => setShowAll(true)}
-              className="w-full text-xs text-primary hover:underline py-2 border border-dashed border-border rounded-md"
+              className="w-full font-mono uppercase"
+              style={{
+                padding: "8px 0",
+                fontSize: 10,
+                letterSpacing: "0.08em",
+                color: "var(--accent)",
+                background: "transparent",
+                border: "1px dashed var(--border-soft)",
+                borderRadius: 3,
+                cursor: "pointer",
+              }}
             >
-              Show {remaining} more lead{remaining === 1 ? "" : "s"}
+              show {remaining} more lead{remaining === 1 ? "" : "s"}
             </button>
           )}
           {showAll && items.length > INITIAL_CAP && (
             <button
               type="button"
               onClick={() => setShowAll(false)}
-              className="w-full text-xs text-text-muted hover:underline py-1"
+              className="w-full font-mono uppercase"
+              style={{
+                padding: "4px 0",
+                fontSize: 9.5,
+                letterSpacing: "0.08em",
+                color: "var(--text-muted)",
+                background: "transparent",
+                border: 0,
+                cursor: "pointer",
+              }}
             >
-              Collapse to top {INITIAL_CAP}
+              collapse to top {INITIAL_CAP}
             </button>
           )}
         </>

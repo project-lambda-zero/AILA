@@ -32,10 +32,19 @@ function bucketBy(
     const k = keyFn(e) || "(unknown)";
     counts.set(k, (counts.get(k) ?? 0) + 1);
   }
-  const out: Bucket[] = Array.from(counts, ([name, count]) => ({ name, count }));
+  const out: Bucket[] = Array.from(counts, ([name, count]) => ({
+    name,
+    count,
+  }));
   out.sort((a, b) => b.count - a.count);
   return typeof limit === "number" ? out.slice(0, limit) : out;
 }
+
+const CAPTION_STYLE: React.CSSProperties = {
+  marginTop: 6,
+  fontSize: 9.5,
+  color: "var(--text-faint)",
+};
 
 /**
  * Additive analytics for the forensics timeline. Renders two AilaChart
@@ -51,7 +60,7 @@ export function TimelineDistribution({
   const theme = useThemeChartColors();
 
   // Palette shared with TimelineTrack -- accent-first, then severity ramp.
-  // Recharts consumes hex strings; CSS `var(--…)` does not resolve inside
+  // Recharts consumes hex strings; CSS `var(--...)` does not resolve inside
   // SVG presentation attributes (see chartColors.ts docstring).
   const palette = useMemo(
     () => [theme.accent, theme.critical, theme.high, theme.medium, theme.low],
@@ -69,7 +78,10 @@ export function TimelineDistribution({
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-      <WindowPanel title="events by source">
+      <WindowPanel
+        title="events by source"
+        status="timeline ; source distribution"
+      >
         {hasSources ? (
           <>
             <AilaChart
@@ -81,13 +93,23 @@ export function TimelineDistribution({
               size="sm"
               ariaLabel="Timeline events grouped by source tool"
             />
-            <p className="mt-1 text-3xs text-text-muted font-mono">
-              {bySource.length} source{bySource.length === 1 ? "" : "s"} ·{" "}
-              {entries.length} event{entries.length === 1 ? "" : "s"}
+            <p className="font-mono" style={CAPTION_STYLE}>
+              {bySource.length} source{bySource.length === 1 ? "" : "s"}{" "}
+              {"\u00b7"} {entries.length} event
+              {entries.length === 1 ? "" : "s"}
             </p>
           </>
         ) : (
-          <p className="text-xs text-text-muted py-2">No source data.</p>
+          <p
+            className="font-mono"
+            style={{
+              fontSize: 11,
+              color: "var(--text-muted)",
+              padding: "8px 0",
+            }}
+          >
+            No source data.
+          </p>
         )}
         <table className="sr-only">
           <caption>Timeline event counts grouped by source.</caption>
@@ -108,7 +130,10 @@ export function TimelineDistribution({
         </table>
       </WindowPanel>
 
-      <WindowPanel title="top event types">
+      <WindowPanel
+        title="top event types"
+        status="timeline ; type distribution"
+      >
         {hasTypes ? (
           <>
             <AilaChart
@@ -120,12 +145,22 @@ export function TimelineDistribution({
               size="sm"
               ariaLabel="Top timeline event types by count"
             />
-            <p className="mt-1 text-3xs text-text-muted font-mono">
-              top {byType.length} of {new Set(entries.map((e) => e.event_type)).size}
+            <p className="font-mono" style={CAPTION_STYLE}>
+              top {byType.length} of{" "}
+              {new Set(entries.map((e) => e.event_type)).size}
             </p>
           </>
         ) : (
-          <p className="text-xs text-text-muted py-2">No event-type data.</p>
+          <p
+            className="font-mono"
+            style={{
+              fontSize: 11,
+              color: "var(--text-muted)",
+              padding: "8px 0",
+            }}
+          >
+            No event-type data.
+          </p>
         )}
         <table className="sr-only">
           <caption>Top timeline event types by count.</caption>

@@ -1,8 +1,10 @@
+import type { CSSProperties } from "react";
 import { Link, useParams } from "react-router";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import { MonoBadge, SectionHeader } from "@/components/aila/mock";
+import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
 import { NdayStageView, type StageData } from "../components/NdayStageView";
 import {
@@ -10,7 +12,6 @@ import {
   useVRFindings,
   useVRProject,
 } from "../queries";
-import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
 /** N-day Task View (08_FRONTEND_UX.md §1.11).
  *
@@ -21,10 +22,64 @@ import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
  *  Backend: derived from project + findings data. Each stage's status is
  *  inferred from what exists on the finding:
  *
- *    Patch acquired   → project.cve_id present + project.patched_target_id present
- *    Root cause       → finding.root_cause present
- *    Trigger          → finding.poc?.code present
- *    Exploit          → finding.poc.crashes_vulnerable >= 4 */
+ *    Patch acquired   : project.cve_id present + project.patched_target_id present
+ *    Root cause       : finding.root_cause present
+ *    Trigger          : finding.poc?.code present
+ *    Exploit          : finding.poc.crashes_vulnerable >= 4
+ */
+
+const BACK_LINK: CSSProperties = {
+  height: 28,
+  padding: "0 12px",
+  fontSize: 10,
+  letterSpacing: "0.08em",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  color: "var(--text-primary)",
+  borderRadius: 3,
+  cursor: "pointer",
+  fontFamily: "var(--font-mono)",
+  textTransform: "uppercase",
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  textDecoration: "none",
+};
+
+const DL: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "auto 1fr",
+  columnGap: 12,
+  rowGap: 3,
+  margin: 0,
+  fontFamily: "var(--font-mono)",
+  fontSize: 10.5,
+};
+
+const DT: CSSProperties = {
+  fontSize: 9,
+  letterSpacing: "0.14em",
+  color: "var(--text-faint)",
+  textTransform: "uppercase",
+  alignSelf: "center",
+};
+
+const DD: CSSProperties = {
+  color: "var(--text-primary)",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  margin: 0,
+};
+
+const EVIDENCE_LINK: CSSProperties = {
+  color: "var(--accent)",
+  fontFamily: "var(--font-mono)",
+  fontSize: 10.5,
+  textDecoration: "none",
+  letterSpacing: "0.04em",
+};
+
 export function NdayPage() {
   const { projectId = "" } = useParams<{
     projectId: string;
@@ -36,12 +91,18 @@ export function NdayPage() {
   const patchedName = useTargetName(project?.patched_target_id);
 
   useUpdatePageHeader({
-    title: 'N-day reproduction',
-    subtitle: project ? (project.cve_id ? `${project.name} · ${project.cve_id}` : project.name) : undefined,
+    title: "N-day reproduction",
+    subtitle: project
+      ? project.cve_id
+        ? `${project.name} \u00b7 ${project.cve_id}`
+        : project.name
+      : undefined,
     status: null,
   });
 
-  if (isLoading || !project) return <LoadingSkeleton size="lg" width="full" />;
+  if (isLoading || !project) {
+    return <LoadingSkeleton size="lg" width="full" />;
+  }
 
   const findings = findingsResult?.data ?? [];
   const primaryFinding = findings[0] ?? null;
@@ -59,14 +120,14 @@ export function NdayPage() {
             ? "in_progress"
             : "pending",
       evidence: (
-        <dl className="text-xs grid grid-cols-2 gap-1 font-mono">
-          <dt className="text-text-muted">CVE</dt>
-          <dd className="text-foreground">{project.cve_id ?? "--"}</dd>
-          <dt className="text-text-muted">Vulnerable target</dt>
-          <dd className="text-foreground truncate">{targetName}</dd>
-          <dt className="text-text-muted">Patched target</dt>
-          <dd className="text-foreground truncate">
-            {project.patched_target_id ? patchedName : "--"}
+        <dl style={DL}>
+          <dt style={DT}>cve</dt>
+          <dd style={DD}>{project.cve_id ?? "\u2014"}</dd>
+          <dt style={DT}>vulnerable</dt>
+          <dd style={DD}>{targetName}</dd>
+          <dt style={DT}>patched</dt>
+          <dd style={DD}>
+            {project.patched_target_id ? patchedName : "\u2014"}
           </dd>
         </dl>
       ),
@@ -83,12 +144,33 @@ export function NdayPage() {
           : "pending",
       evidence: primaryFinding?.root_cause ? (
         <div>
-          <p className="text-xs text-foreground whitespace-pre-wrap line-clamp-6">
+          <p
+            className="font-mono"
+            style={{
+              fontSize: 11,
+              lineHeight: 1.5,
+              color: "var(--text-primary)",
+              whiteSpace: "pre-wrap",
+              display: "-webkit-box",
+              WebkitLineClamp: 6,
+              WebkitBoxOrient: "vertical",
+              overflow: "hidden",
+              margin: 0,
+            }}
+          >
             {primaryFinding.root_cause}
           </p>
           {primaryFinding.vulnerable_function && (
-            <p className="text-3xs text-text-muted mt-1 font-mono">
-              Function: {primaryFinding.vulnerable_function}
+            <p
+              className="font-mono"
+              style={{
+                marginTop: 6,
+                fontSize: 9.5,
+                letterSpacing: "0.04em",
+                color: "var(--text-muted)",
+              }}
+            >
+              function: {primaryFinding.vulnerable_function}
             </p>
           )}
         </div>
@@ -105,24 +187,34 @@ export function NdayPage() {
           : "in_progress"
         : "pending",
       evidence: primaryFinding?.poc ? (
-        <div className="text-xs space-y-1 font-mono">
-          <p>
-            <span className="text-text-muted">language:</span>{" "}
-            <span className="text-foreground">{primaryFinding.poc.language}</span>
-          </p>
-          <p>
-            <span className="text-text-muted">repro:</span>{" "}
-            <span className="text-foreground">
+        <div
+          className="font-mono"
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            fontSize: 10.5,
+          }}
+        >
+          <div>
+            <span style={{ color: "var(--text-faint)" }}>language: </span>
+            <span style={{ color: "var(--text-primary)" }}>
+              {primaryFinding.poc.language}
+            </span>
+          </div>
+          <div>
+            <span style={{ color: "var(--text-faint)" }}>repro: </span>
+            <span style={{ color: "var(--text-primary)" }}>
               {primaryFinding.poc.crashes_vulnerable}/5 vulnerable,{" "}
               {primaryFinding.poc.crashes_patched}/1 patched
             </span>
-          </p>
+          </div>
           {primaryFinding.id && (
             <Link
               to={`/vr/projects/${projectId}/findings/${primaryFinding.id}`}
-              className="text-accent hover:underline"
+              style={EVIDENCE_LINK}
             >
-              View full PoC →
+              {"view full poc \u2192"}
             </Link>
           )}
         </div>
@@ -144,33 +236,47 @@ export function NdayPage() {
       evidence: primaryFinding?.advisory_id ? (
         <Link
           to={`/vr/disclosures/${primaryFinding.advisory_id}`}
-          className="text-xs text-accent hover:underline"
+          style={EVIDENCE_LINK}
         >
-          View advisory →
+          {"view advisory \u2192"}
         </Link>
       ) : null,
     },
   ];
 
-  return (
-    <div className="space-y-4">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <Link
-          to={`/vr/projects/${projectId}`}
-          className="text-xs px-3 py-1.5 rounded bg-surface border border-border hover:bg-elevated"
-        >
-          ← project dashboard
-        </Link>
-      </div>
+  const headerActions = (
+    <Link to={`/vr/projects/${projectId}`} style={BACK_LINK}>
+      {"\u2190 project dashboard"}
+    </Link>
+  );
 
-      <AilaCard className="border-dashed" techBorder glow><AilaBadge severity="info" size="sm">
-        synthesised view
-      </AilaBadge>
-      <p className="text-3xs text-text-muted mt-1">
-        Per §1.11: each stage state is inferred from project + finding data.
-        Real stage tracking (rewind / per-stage operator notes / BinDiff
-        score / commit hash) is backend pending.
-      </p></AilaCard>
+  return (
+    <div className="flex flex-col" style={{ gap: 14 }}>
+      <SectionHeader
+        icon="\u25c8"
+        title="n-day reproduction"
+        actions={headerActions}
+      />
+
+      <WindowPanel title="scope" tone="muted">
+        <div className="flex items-start" style={{ gap: 10 }}>
+          <MonoBadge tone="info">synthesised view</MonoBadge>
+          <p
+            className="font-mono"
+            style={{
+              fontSize: 10.5,
+              lineHeight: 1.5,
+              color: "var(--text-muted)",
+              letterSpacing: "0.02em",
+              margin: 0,
+            }}
+          >
+            per §1.11: each stage state is inferred from project + finding
+            data. real stage tracking (rewind / per-stage operator notes /
+            bindiff score / commit hash) is backend pending.
+          </p>
+        </div>
+      </WindowPanel>
 
       <NdayStageView stages={stages} />
     </div>

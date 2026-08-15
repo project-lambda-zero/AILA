@@ -1,11 +1,19 @@
 import { useNavigate, useSearchParams } from "react-router";
-import { ClipboardText } from "@phosphor-icons/react/dist/csr/ClipboardText";
 
 import { WindowPanel } from "@/components/aila/WindowPanel";
-import { AilaBadge, type TaskStatus as BadgeTaskStatus } from "@/components/aila/AilaBadge";
+import {
+  SectionHeader,
+  DataGrid,
+  MonoBadge,
+} from "@/components/aila/mock";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { EmptyState } from "@/components/aila/EmptyState";
-import { useTaskDetail, useTasks, type TaskStatus, type TaskSummary } from "@platform/features/scans/api";
+import {
+  useTaskDetail,
+  useTasks,
+  type TaskStatus,
+  type TaskSummary,
+} from "@platform/features/scans/api";
 import { useTransitions } from "./useTransitions";
 import { TransitionTimeline } from "./TransitionTimeline";
 import { ActivityTimeline } from "@platform/features/activity/ActivityTimeline";
@@ -16,21 +24,30 @@ import { usePreferences } from "@/providers/PreferencesProvider";
 // Helpers
 // ---------------------------------------------------------------------------
 
-function formatTimestamp(value: string | null) {
+const ALLOWED_STATUSES: readonly TaskStatus[] = [
+  "queued",
+  "waiting",
+  "running",
+  "paused",
+  "done",
+  "failed",
+  "cancelled",
+];
+
+function formatTimestamp(value: string | null): string {
   return value ? new Date(value).toLocaleString() : "--";
 }
 
 function normalizeTaskStatus(value: string | null): TaskStatus | undefined {
-  const allowed: TaskStatus[] = [
-    "queued", "waiting", "running", "paused", "done", "failed", "cancelled",
-  ];
-  return allowed.includes(value as TaskStatus) ? (value as TaskStatus) : undefined;
+  return ALLOWED_STATUSES.includes(value as TaskStatus)
+    ? (value as TaskStatus)
+    : undefined;
 }
 
 function updateSearchParams(
   searchParams: URLSearchParams,
   patches: Record<string, string | null | undefined>,
-) {
+): URLSearchParams {
   const next = new URLSearchParams(searchParams);
   for (const [key, value] of Object.entries(patches)) {
     if (value === null || value === undefined || value === "") {
@@ -42,36 +59,48 @@ function updateSearchParams(
   return next;
 }
 
-type BadgeSeverity = "neutral" | "info" | "medium" | "critical" | "low";
-
-function statusSeverity(status: TaskStatus): BadgeSeverity {
+/** Mono tone for a task status chip. */
+function statusTone(status: TaskStatus): string {
   switch (status) {
-    case "done": return "low";
-    case "running": return "info";
-    case "failed": return "critical";
-    case "cancelled": return "neutral";
-    case "paused": return "medium";
-    default: return "neutral";
+    case "done":
+      return "ok";
+    case "running":
+      return "info";
+    case "failed":
+      return "critical";
+    case "cancelled":
+      return "muted";
+    case "paused":
+      return "warn";
+    case "queued":
+    case "waiting":
+    default:
+      return "muted";
   }
 }
 
-/**
- * Map internal TaskStatus (from backend) to the AilaBadge status namespace
- * (D-05 / D-21 / D-22). Returns undefined for statuses we don't have a
- * dedicated colour for yet (e.g. "cancelled") so callers fall back to the
- * severity-based rendering.
- */
-function statusToken(status: TaskStatus): BadgeTaskStatus | undefined {
-  switch (status) {
-    case "done": return "completed";
-    case "running": return "running";
-    case "failed": return "failed";
-    case "queued": return "queued";
-    case "waiting": return "waiting";
-    case "paused": return "paused";
-    default: return undefined;
-  }
-}
+// ---------------------------------------------------------------------------
+// Shared inline chrome
+// ---------------------------------------------------------------------------
+
+const INPUT_STYLE: React.CSSProperties = {
+  height: 32,
+  fontSize: 12,
+  padding: "0 10px",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  outline: "none",
+  minWidth: 140,
+};
+
+const FIELD_LABEL_STYLE: React.CSSProperties = {
+  fontSize: 9.5,
+  color: "var(--text-muted)",
+  textTransform: "uppercase",
+  letterSpacing: "0.12em",
+};
 
 // ---------------------------------------------------------------------------
 // Task detail panel
@@ -83,137 +112,146 @@ function TaskDetailPanel({ taskId }: { taskId: string }) {
 
   if (!taskId) {
     return (
-      <WindowPanel title="Task Detail" tone="muted"><p className="font-mono text-xs text-text-muted">
-        Select a task row to inspect its lifecycle details.
-      </p></WindowPanel>
+      <WindowPanel title="task detail" tone="muted">
+        <p
+          className="font-mono"
+          style={{ fontSize: 11, color: "var(--text-muted)" }}
+        >
+          select a task row to inspect its lifecycle details.
+        </p>
+      </WindowPanel>
     );
   }
 
   if (taskDetailQuery.isLoading) {
     return (
-      <WindowPanel title="Task Detail" status="LOADING" tone="muted"><LoadingSkeletonGroup lines={6} /></WindowPanel>
+      <WindowPanel title="task detail" status="LOADING" tone="muted">
+        <LoadingSkeletonGroup lines={6} />
+      </WindowPanel>
     );
   }
 
   if (taskDetailQuery.isError) {
     return (
-      <WindowPanel title="Task Detail" tone="warn"><div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-        {(taskDetailQuery.error as Error).message}
-      </div></WindowPanel>
+      <WindowPanel title="task detail" tone="warn">
+        <div
+          className="font-mono"
+          style={{
+            border:
+              "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+            background:
+              "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+            color: "var(--status-warn)",
+            padding: "8px 12px",
+            fontSize: 11,
+            borderRadius: 3,
+          }}
+        >
+          {(taskDetailQuery.error as Error).message}
+        </div>
+      </WindowPanel>
     );
   }
 
   const task = taskDetailQuery.data;
   if (!task) return null;
 
+  const rows: { label: string; value: React.ReactNode }[] = [
+    {
+      label: "status",
+      value: <MonoBadge tone={statusTone(task.status)}>{task.status}</MonoBadge>,
+    },
+    { label: "track", value: task.track },
+    { label: "module", value: task.fn_module },
+    { label: "function", value: task.fn_path },
+    { label: "created", value: formatTimestamp(task.created_at) },
+    { label: "started", value: formatTimestamp(task.started_at) },
+    { label: "completed", value: formatTimestamp(task.completed_at) },
+    { label: "heartbeat", value: formatTimestamp(task.heartbeat_at) },
+    {
+      label: "checkpoint",
+      value: task.has_checkpoint ? "available" : "none",
+    },
+  ];
+
   return (
-    <WindowPanel title="Task Detail">
-    <div className="flex flex-col gap-2">
-      {[
-        { label: "Status", value: <AilaBadge severity={statusSeverity(task.status)} size="sm">{task.status}</AilaBadge> },
-        { label: "Track", value: task.track },
-        { label: "Module", value: task.fn_module },
-        { label: "Function", value: task.fn_path },
-        { label: "Created", value: formatTimestamp(task.created_at) },
-        { label: "Started", value: formatTimestamp(task.started_at) },
-        { label: "Completed", value: formatTimestamp(task.completed_at) },
-        { label: "Heartbeat", value: formatTimestamp(task.heartbeat_at) },
-        { label: "Checkpoint", value: task.has_checkpoint ? "Available" : "None" },
-      ].map(({ label, value }) => (
-        <div key={label} className="flex items-start justify-between gap-2 border-b border-border pb-1.5 last:border-0">
-          <span className="font-mono text-xs text-text-muted shrink-0">{label}</span>
-          <span className="font-mono text-xs text-text text-right break-all">{value}</span>
+    <div className="flex flex-col" style={{ gap: 12 }}>
+      <WindowPanel title="task detail">
+        <div className="flex flex-col">
+          {rows.map(({ label, value }) => (
+            <div
+              key={label}
+              className="flex items-start justify-between"
+              style={{
+                gap: 10,
+                padding: "6px 0",
+                borderBottom: "1px solid var(--border-faint)",
+              }}
+            >
+              <span
+                className="font-mono shrink-0"
+                style={{
+                  fontSize: 10,
+                  color: "var(--text-muted)",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.12em",
+                }}
+              >
+                {label}
+              </span>
+              <span
+                className="font-mono text-right"
+                style={{
+                  fontSize: 11,
+                  color: "var(--text-primary)",
+                  wordBreak: "break-all",
+                }}
+              >
+                {value}
+              </span>
+            </div>
+          ))}
+          {task.error && (
+            <div
+              className="font-mono"
+              style={{
+                marginTop: 8,
+                border:
+                  "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+                background:
+                  "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+                color: "var(--status-warn)",
+                padding: "8px 12px",
+                fontSize: 11,
+                borderRadius: 3,
+              }}
+            >
+              {task.error}
+            </div>
+          )}
         </div>
-      ))}
-      {task.error && (
-        <div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-          {task.error}
-        </div>
-      )}
-    </div>
-    <TransitionTimeline
-      rows={transitionsQuery.data ?? []}
-      isLoading={transitionsQuery.isLoading}
-      isError={transitionsQuery.isError}
-    />
-    <div className="mt-4 border-t border-border pt-4">
-      <ActivityTimeline
-        runId={taskId}
-        label="Task"
-        live={task.status === "running" || task.status === "queued" || task.status === "waiting"}
+      </WindowPanel>
+
+      <TransitionTimeline
+        rows={transitionsQuery.data ?? []}
+        isLoading={transitionsQuery.isLoading}
+        isError={transitionsQuery.isError}
       />
-    </div></WindowPanel>
-  );
-}
 
-// ---------------------------------------------------------------------------
-// Task row
-// ---------------------------------------------------------------------------
-
-function TaskRow({
-  task,
-  isSelected,
-  onSelect,
-}: {
-  task: TaskSummary;
-  isSelected: boolean;
-  onSelect: () => void;
-}) {
-  const token = statusToken(task.status);
-  const activate = (event: React.SyntheticEvent) => {
-    // Preserve D-32 escape hatch: inline interactive elements stop propagation.
-    // Guard must exclude the row itself (which has role="button"), else every click short-circuits.
-    const target = event.target as HTMLElement | null;
-    const row = event.currentTarget as HTMLElement;
-    if (target) {
-      const hit = target.closest(
-        'button, a, input, select, textarea, [role="button"], .no-row-click',
-      ) as HTMLElement | null;
-      if (hit && hit !== row && row.contains(hit)) {
-        return;
-      }
-    }
-    onSelect();
-  };
-  return (
-    <tr
-      className={`border-b border-border font-mono text-xs transition-colors cursor-pointer hover:bg-elevated focus:outline focus:outline-2 focus:outline-accent ${
-        isSelected ? "bg-accent/5" : ""
-      }`}
-      role="button"
-      tabIndex={0}
-      data-testid="task-row"
-      data-task-id={task.task_id}
-      onClick={activate}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          if (event.key === " ") event.preventDefault();
-          activate(event);
-        }
-      }}
-    >
-      <td className="py-2 px-3 text-text-muted max-w-[120px] truncate">
-        {task.task_id.slice(0, 8)}…
-      </td>
-      <td className="py-2 px-3 text-text">{task.track}</td>
-      <td className="py-2 px-3">
-        {token ? (
-          <AilaBadge status={token} size="sm">
-            {task.status}
-          </AilaBadge>
-        ) : (
-          <AilaBadge severity={statusSeverity(task.status)} size="sm">
-            {task.status}
-          </AilaBadge>
-        )}
-      </td>
-      <td className="py-2 px-3 text-text-muted hidden sm:table-cell">
-        {task.fn_module}
-      </td>
-      <td className="py-2 px-3 text-text-muted hidden lg:table-cell">
-        {formatTimestamp(task.created_at)}
-      </td>
-    </tr>
+      <WindowPanel title="activity" flush>
+        <div style={{ padding: 10 }}>
+          <ActivityTimeline
+            runId={taskId}
+            label="Task"
+            live={
+              task.status === "running" ||
+              task.status === "queued" ||
+              task.status === "waiting"
+            }
+          />
+        </div>
+      </WindowPanel>
+    </div>
   );
 }
 
@@ -227,146 +265,199 @@ export function TasksPage() {
   const trackFilter = searchParams.get("track") ?? "";
   const statusFilter = normalizeTaskStatus(searchParams.get("status"));
   const selectedTaskId = searchParams.get("task") ?? "";
-  const { defaultPageSize, setDefaultPageSize, allowedPageSizes } = usePreferences();
+  const { defaultPageSize, setDefaultPageSize, allowedPageSizes } =
+    usePreferences();
 
   const tasksQuery = useTasks(trackFilter || undefined, statusFilter);
   const tasks = tasksQuery.data?.tasks ?? [];
 
+  const savedViews = (
+    <SavedViews<{
+      track: string;
+      status: TaskStatus | "";
+      pageSize: number;
+    }>
+      entityType="task"
+      entityLabel="Task queue"
+      currentState={{
+        track: trackFilter,
+        status: statusFilter ?? "",
+        pageSize: defaultPageSize,
+      }}
+      onApply={(state) => {
+        setSearchParams(
+          updateSearchParams(searchParams, {
+            track: state.track || null,
+            status: state.status || null,
+          }),
+        );
+        if (
+          typeof state.pageSize === "number" &&
+          allowedPageSizes.includes(state.pageSize) &&
+          state.pageSize !== defaultPageSize
+        ) {
+          setDefaultPageSize(state.pageSize);
+        }
+      }}
+    />
+  );
+
   return (
-    <div className="flex flex-col gap-4 p-3 sm:p-4 lg:p-6">
-      {/* Page header */}
+    <div className="flex flex-col" style={{ gap: 16, padding: 20 }}>
+      <SectionHeader
+        icon={"\u25a0"}
+        title="task queue"
+        actions={
+          <div className="flex items-center" style={{ gap: 10 }}>
+            <div className="flex flex-col" style={{ gap: 3 }}>
+              <label htmlFor="task-track" style={FIELD_LABEL_STYLE}>
+                track
+              </label>
+              <input
+                id="task-track"
+                type="text"
+                value={trackFilter}
+                onChange={(e) =>
+                  setSearchParams(
+                    updateSearchParams(searchParams, { track: e.target.value }),
+                  )
+                }
+                placeholder="vulnerability"
+                className="font-mono"
+                style={INPUT_STYLE}
+              />
+            </div>
+            <div className="flex flex-col" style={{ gap: 3 }}>
+              <label htmlFor="task-status" style={FIELD_LABEL_STYLE}>
+                status
+              </label>
+              <select
+                id="task-status"
+                value={statusFilter ?? ""}
+                onChange={(e) =>
+                  setSearchParams(
+                    updateSearchParams(searchParams, {
+                      status: e.target.value || null,
+                    }),
+                  )
+                }
+                className="font-mono"
+                style={{ ...INPUT_STYLE, minWidth: 120 }}
+              >
+                <option value="">all</option>
+                {ALLOWED_STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div style={{ alignSelf: "flex-end" }}>{savedViews}</div>
+          </div>
+        }
+      />
 
-      {/* Filters */}
-      <WindowPanel title="Filters" tone="muted"><div className="flex flex-wrap items-center gap-3">
-        <div className="flex flex-col gap-1 min-w-[140px]">
-          <label className="font-mono text-xs text-text-muted" htmlFor="task-track">Track</label>
-          <input
-            id="task-track"
-            className="touch-target h-8 rounded-[2px] border border-border bg-base px-2.5 font-mono text-xs text-text outline-none focus:border-border-hover transition-colors min-w-[120px]"
-            type="text"
-            value={trackFilter}
-            onChange={(e) =>
-              setSearchParams(updateSearchParams(searchParams, { track: e.target.value }))
-            }
-            placeholder="vulnerability"
-          />
-        </div>
-        <div className="flex flex-col gap-1 min-w-[120px]">
-          <label className="font-mono text-xs text-text-muted" htmlFor="task-status">Status</label>
-          <select
-            id="task-status"
-            className="touch-target h-8 rounded-[2px] border border-border bg-base px-2 font-mono text-xs text-text outline-none focus:border-border-hover transition-colors"
-            value={statusFilter ?? ""}
-            onChange={(e) =>
-              setSearchParams(updateSearchParams(searchParams, { status: e.target.value || null }))
-            }
-          >
-            <option value="">all</option>
-            <option value="queued">queued</option>
-            <option value="waiting">waiting</option>
-            <option value="running">running</option>
-            <option value="paused">paused</option>
-            <option value="done">done</option>
-            <option value="failed">failed</option>
-            <option value="cancelled">cancelled</option>
-          </select>
-        </div>
-        {/* Saved views for the task queue (entity_type='task'). Round-trips
-            the URL-persisted filter shape (track + status + default page
-            size) through /saved-filters. */}
-        <div className="ml-auto self-end">
-          <SavedViews<{
-            track: string;
-            status: TaskStatus | "";
-            pageSize: number;
-          }>
-            entityType="task"
-            entityLabel="Task queue"
-            currentState={{
-              track: trackFilter,
-              status: statusFilter ?? "",
-              pageSize: defaultPageSize,
-            }}
-            onApply={(state) => {
-              setSearchParams(
-                updateSearchParams(searchParams, {
-                  track: state.track || null,
-                  status: state.status || null,
-                }),
-              );
-              if (
-                typeof state.pageSize === "number" &&
-                allowedPageSizes.includes(state.pageSize) &&
-                state.pageSize !== defaultPageSize
-              ) {
-                setDefaultPageSize(state.pageSize);
-              }
-            }}
-          />
-        </div>
-      </div></WindowPanel>
-
-      {/* Error */}
       {tasksQuery.isError && (
-        <div className="rounded-[2px] border border-destructive bg-destructive/10 px-4 py-3 font-mono text-sm text-destructive">
+        <div
+          className="font-mono"
+          style={{
+            border:
+              "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+            background:
+              "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+            color: "var(--status-warn)",
+            padding: "10px 14px",
+            fontSize: 12,
+            borderRadius: 3,
+          }}
+        >
           {(tasksQuery.error as Error).message}
         </div>
       )}
 
-      {/* Loading */}
-      {tasksQuery.isLoading && (
-        <WindowPanel title="Task Queue" status="LOADING" tone="muted"><LoadingSkeletonGroup lines={6} /></WindowPanel>
-      )}
-
-      {/* Split layout: table + detail */}
-      {!tasksQuery.isLoading && (
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-          {/* Task table -- takes remaining width */}
-          <div className="flex-1 min-w-0">
+      {tasksQuery.isLoading ? (
+        <WindowPanel title="task queue" status="LOADING" tone="muted">
+          <LoadingSkeletonGroup lines={6} />
+        </WindowPanel>
+      ) : (
+        <div
+          className="grid"
+          style={{
+            gridTemplateColumns: "minmax(0, 1fr) 380px",
+            gap: 16,
+            alignItems: "start",
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
             {tasks.length === 0 ? (
               <EmptyState
-                icon={<ClipboardText size={40} />}
                 title="No tasks"
                 description="Tasks appear here when scans are running. Submit a scan to get started."
                 action={{ label: "Go to Console", href: "/console" }}
               />
             ) : (
-              <WindowPanel title="Task Queue" status={`${tasks.length} TASK${tasks.length === 1 ? "" : "S"}`} tone="muted" flush><div className="overflow-x-auto">
-                <table aria-label="Task queue" className="w-full border-collapse [&_th]:border [&_th]:border-border [&_td]:border [&_td]:border-border">
-                  <thead>
-                    <tr className="border-b border-border bg-elevated">
-                      <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted">Task ID</th>
-                      <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted">Track</th>
-                      <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted">Status</th>
-                      <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted hidden sm:table-cell">Module</th>
-                      <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted hidden lg:table-cell">Created</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {tasks.map((task) => (
-                      <TaskRow
-                        key={task.task_id}
-                        task={task}
-                        isSelected={task.task_id === selectedTaskId}
-                        onSelect={() => {
-                          // D-04 + D-14: navigate to /tasks/:taskId detail route.
-                          // The detail route currently reuses TasksPage; the
-                          // ?task= param keeps the side-panel selection in sync.
-                          navigate(`/tasks/${encodeURIComponent(task.task_id)}`);
-                          setSearchParams(
-                            updateSearchParams(searchParams, { task: task.task_id }),
-                          );
-                        }}
-                      />
-                    ))}
-                  </tbody>
-                </table>
-              </div></WindowPanel>
+              <WindowPanel
+                title="task queue"
+                status={`${tasks.length} TASK${tasks.length === 1 ? "" : "S"}`}
+                tone="muted"
+                flush
+              >
+                <DataGrid<TaskSummary>
+                  columns={[
+                    { label: "TASK ID", width: "180px" },
+                    { label: "TRACK", width: "140px" },
+                    { label: "STATUS", width: "110px" },
+                    { label: "MODULE", width: "minmax(120px, 1fr)" },
+                    { label: "CREATED", width: "180px", align: "right" },
+                  ]}
+                  rows={tasks}
+                  getKey={(t) => t.task_id}
+                  onRowClick={(t) => {
+                    // D-04 + D-14: navigate to /tasks/:taskId detail route.
+                    // The detail route currently reuses TasksPage; the
+                    // ?task= param keeps the side-panel selection in sync.
+                    navigate(`/tasks/${encodeURIComponent(t.task_id)}`);
+                    setSearchParams(
+                      updateSearchParams(searchParams, { task: t.task_id }),
+                    );
+                  }}
+                  renderCells={(t) => [
+                    <span
+                      data-testid="task-row"
+                      data-task-id={t.task_id}
+                      className="truncate"
+                      style={{ color: "var(--accent)", fontSize: 11 }}
+                    >
+                      {t.task_id.slice(0, 8)}
+                      {"\u2026"}
+                    </span>,
+                    <span
+                      style={{ color: "var(--text-primary)", fontSize: 11 }}
+                    >
+                      {t.track}
+                    </span>,
+                    <MonoBadge tone={statusTone(t.status)}>
+                      {t.status}
+                    </MonoBadge>,
+                    <span
+                      className="truncate"
+                      style={{ color: "var(--text-muted)", fontSize: 11 }}
+                    >
+                      {t.fn_module}
+                    </span>,
+                    <span
+                      className="tabular-nums"
+                      style={{ color: "var(--text-muted)", fontSize: 10 }}
+                    >
+                      {formatTimestamp(t.created_at)}
+                    </span>,
+                  ]}
+                />
+              </WindowPanel>
             )}
           </div>
 
-          {/* Detail panel -- fixed width on desktop */}
-          <div className="w-full lg:w-80 xl:w-96 shrink-0">
+          <div style={{ width: 380 }}>
             <TaskDetailPanel taskId={selectedTaskId} />
           </div>
         </div>

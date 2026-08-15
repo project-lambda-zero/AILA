@@ -11,10 +11,8 @@ import {
 
 import "@xyflow/react/dist/style.css";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
 import { WindowPanel } from "@/components/aila/WindowPanel";
-import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { SectionHeader, MonoBadge } from "@/components/aila/mock";
 
 import {
   useAbandonBranch,
@@ -31,33 +29,41 @@ import {
 import type { BranchStatus, PersonaVoice, VRBranchSummary } from "../types";
 import { formatBranchDisplayName } from "../branchDisplay";
 import { PanelBoundary } from "../components/PanelBoundary";
-import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
+import { personaMeta } from "../components/personaMeta";
 
-/** Persona-voice values operators can attach to a spawn / fork.
- *  Mirrors PersonaVoice in contracts/enums.py (core roles only —
- *  specialists are on-demand and belong on a dedicated spawn UI). */
+/** Persona-voice values operators can attach to a spawn / fork. Mirrors
+ *  PersonaVoice in contracts/enums.py (core roles only -- specialists are
+ *  on-demand and belong on a dedicated spawn UI). */
 const PERSONA_VOICES: readonly PersonaVoice[] = [
   "halvar", "maddie", "yuki", "renzo", "noor", "wei",
 ];
 
-// Colour-code branches by status. Aligns with the AilaBadge palette so
-// the tree + list views look consistent.
+// Branch node fill per status -- mock tokens.
 const STATUS_COLORS: Record<BranchStatus, string> = {
-  active: "var(--color-medium)",        // running
-  paused: "var(--color-amber)",        // amber -- paused
-  merged: "var(--color-lavender)",        // lavender -- merged in
-  promoted: "var(--color-mint)",      // mint -- promoted to outcome
-  completed: "var(--color-mint)",     // mint -- completed
-  abandoned: "var(--color-text-faint)",     // faint -- abandoned
+  active: "var(--status-ok)",
+  paused: "var(--status-warn)",
+  merged: "var(--status-info)",
+  promoted: "var(--status-ok)",
+  completed: "var(--status-info)",
+  abandoned: "var(--text-faint)",
 };
 
 const STATUS_BORDER: Record<BranchStatus, string> = {
-  active: "color-mix(in srgb, var(--color-medium) 68%, var(--surface-sunk))",
-  paused: "color-mix(in srgb, var(--color-amber) 68%, var(--surface-sunk))",
-  merged: "color-mix(in srgb, var(--color-lavender) 68%, var(--surface-sunk))",
-  promoted: "color-mix(in srgb, var(--color-mint) 68%, var(--surface-sunk))",
-  completed: "color-mix(in srgb, var(--color-mint) 68%, var(--surface-sunk))",
-  abandoned: "color-mix(in srgb, var(--color-text-faint) 78%, var(--surface-sunk))",
+  active: "color-mix(in srgb, var(--status-ok) 68%, var(--surface-sunk))",
+  paused: "color-mix(in srgb, var(--status-warn) 68%, var(--surface-sunk))",
+  merged: "color-mix(in srgb, var(--status-info) 68%, var(--surface-sunk))",
+  promoted: "color-mix(in srgb, var(--status-ok) 68%, var(--surface-sunk))",
+  completed: "color-mix(in srgb, var(--status-info) 68%, var(--surface-sunk))",
+  abandoned: "color-mix(in srgb, var(--text-faint) 78%, var(--surface-sunk))",
+};
+
+const BRANCH_STATUS_TONE: Record<BranchStatus, string> = {
+  active: "ok",
+  paused: "warn",
+  merged: "info",
+  promoted: "ok",
+  completed: "info",
+  abandoned: "muted",
 };
 
 // Spacing between strategy-family clusters + within a cluster.
@@ -87,7 +93,6 @@ function layoutNodes(clustered: ClusteredBranch[]): Node[] {
     columns.set(b.cluster, col);
   }
   const orderedClusters = Array.from(columns.keys()).sort((a, b) => {
-    // legacy bucket goes first so it sits on the left
     if (a === "__no_strategy__") return -1;
     if (b === "__no_strategy__") return 1;
     return a.localeCompare(b);
@@ -99,7 +104,6 @@ function layoutNodes(clustered: ClusteredBranch[]): Node[] {
     const x = colIdx * STRATEGY_X_GAP;
     const branches = columns.get(cluster) ?? [];
 
-    // Cluster header (label node, non-interactive)
     nodes.push({
       id: `__cluster__:${cluster}`,
       type: "default",
@@ -110,9 +114,9 @@ function layoutNodes(clustered: ClusteredBranch[]): Node[] {
       style: {
         background: "transparent",
         border: "none",
-        color: "var(--color-text-muted)",
+        color: "var(--text-faint)",
         fontSize: 11,
-        fontFamily: "monospace",
+        fontFamily: "var(--font-mono)",
         width: 240,
       },
       draggable: false,
@@ -120,23 +124,32 @@ function layoutNodes(clustered: ClusteredBranch[]): Node[] {
     });
 
     branches.forEach((b, rowIdx) => {
-      const colour = STATUS_COLORS[b.status] ?? "var(--color-text-muted)";
-      const border = STATUS_BORDER[b.status] ?? "color-mix(in srgb, var(--color-text-muted) 60%, var(--surface-sunk))";
+      const colour = STATUS_COLORS[b.status] ?? "var(--text-faint)";
+      const border =
+        STATUS_BORDER[b.status] ??
+        "color-mix(in srgb, var(--text-faint) 60%, var(--surface-sunk))";
       nodes.push({
         id: b.id,
         type: "default",
         position: { x, y: rowIdx * BRANCH_Y_GAP },
         data: {
           label: (
-            <div style={{ textAlign: "left", color: "var(--text-on-accent)", fontSize: 11 }}>
+            <div
+              style={{
+                textAlign: "left",
+                color: "var(--text-on-accent)",
+                fontSize: 11,
+                fontFamily: "var(--font-mono)",
+              }}
+            >
               <div style={{ fontWeight: 600 }}>
                 {formatBranchDisplayName(b)}
                 {b.fork_at_turn != null ? ` @t${b.fork_at_turn}` : ""}
               </div>
-              <div style={{ opacity: 0.8 }}>
+              <div style={{ opacity: 0.85 }}>
                 {b.status} · turns:{b.turn_count}
               </div>
-              <div style={{ opacity: 0.65, fontSize: 10 }}>
+              <div style={{ opacity: 0.7, fontSize: 10 }}>
                 ${b.branch_cost_usd.toFixed(2)}
               </div>
             </div>
@@ -146,7 +159,7 @@ function layoutNodes(clustered: ClusteredBranch[]): Node[] {
           background: colour,
           color: "var(--text-on-accent)",
           border: `2px solid ${border}`,
-          borderRadius: 6,
+          borderRadius: 4,
           width: 240,
           padding: 8,
         },
@@ -170,8 +183,8 @@ function buildEdges(branches: VRBranchSummary[]): Edge[] {
         target: b.id,
         type: "smoothstep",
         label: "fork",
-        labelStyle: { fontSize: 10, fill: "var(--color-text-muted)" },
-        style: { stroke: "var(--color-border-bright)", strokeWidth: 1.5 },
+        labelStyle: { fontSize: 10, fill: "var(--text-faint)" },
+        style: { stroke: "var(--border)", strokeWidth: 1.5 },
       });
     }
     if (b.merged_into_branch_id && ids.has(b.merged_into_branch_id)) {
@@ -182,8 +195,8 @@ function buildEdges(branches: VRBranchSummary[]): Edge[] {
         type: "smoothstep",
         animated: true,
         label: "merge",
-        labelStyle: { fontSize: 10, fill: "var(--color-lavender)" },
-        style: { stroke: "var(--color-lavender)", strokeDasharray: "4 4" },
+        labelStyle: { fontSize: 10, fill: "var(--status-info)" },
+        style: { stroke: "var(--status-info)", strokeDasharray: "4 4" },
       });
     }
   }
@@ -200,11 +213,8 @@ export function BranchTreePage() {
     useInvestigationBranches(invId);
   const branches = branchesData?.data ?? [];
 
-  useUpdatePageHeader({
-    title: inv ? `Branch tree: ${inv.title}` : undefined,
-    subtitle: branches.length ? `${branches.length} branch${branches.length === 1 ? '' : 'es'} across ${new Set(branches.map((b) => b.strategy_family ?? '__no_strategy__')).size} strategy famil${new Set(branches.map((b) => b.strategy_family ?? '__no_strategy__')).size === 1 ? 'y' : 'ies'}` : undefined,
-    status: null,
-  });
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [showSpawn, setShowSpawn] = useState(false);
 
   const { nodes, edges } = useMemo(() => {
     const clustered = clusterBranches(branches);
@@ -214,111 +224,411 @@ export function BranchTreePage() {
     };
   }, [branches]);
 
+  const selected = useMemo(
+    () => branches.find((b) => b.id === selectedId) ?? branches[0],
+    [branches, selectedId],
+  );
+
   if (invLoading || branchesLoading) {
-    return <LoadingSkeleton size="lg" width="full" />;
+    return (
+      <div className="flex flex-col" style={{ gap: 14 }}>
+        <SectionHeader icon="⌥" title="Branch Tree" />
+        <WindowPanel title="loading" tone="muted">
+          <p
+            className="font-mono"
+            style={{ fontSize: 11, color: "var(--text-muted)" }}
+          >
+            loading branches…
+          </p>
+        </WindowPanel>
+      </div>
+    );
   }
 
   if (!inv) {
     return (
-      <AilaCard className="border-critical" techBorder glow><p className="text-sm text-critical">
-        Investigation {invId} not found.
-      </p></AilaCard>
+      <div className="flex flex-col" style={{ gap: 14 }}>
+        <SectionHeader icon="⌥" title="Branch Tree" />
+        <WindowPanel title="not found" tone="warn">
+          <p
+            className="font-mono"
+            style={{ fontSize: 11, color: "var(--accent)" }}
+          >
+            investigation {invId} not found.
+          </p>
+        </WindowPanel>
+      </div>
     );
   }
 
-  // Count by status for the header summary
   const statusCounts = branches.reduce<Record<string, number>>((acc, b) => {
     acc[b.status] = (acc[b.status] ?? 0) + 1;
     return acc;
   }, {});
-  const strategyCount = new Set(
-    branches.map((b) => b.strategy_family ?? "__no_strategy__"),
-  ).size;
 
   return (
-    <div className="space-y-4">
-
-      <WindowPanel title="branch states" tone="info">
-        <div className="flex flex-wrap gap-2">
-        {(
-          ["active", "paused", "merged", "promoted", "abandoned"] as BranchStatus[]
-        ).map((s) => {
-          const n = statusCounts[s] ?? 0;
-          return (
-            <AilaBadge
-              key={s}
-              severity={
-                s === "active"
-                  ? "low"
-                  : s === "paused"
-                    ? "medium"
-                    : s === "abandoned"
-                      ? "high"
-                      : "info"
-              }
-              size="sm"
+    <div className="flex flex-col" style={{ gap: 14 }}>
+      <SectionHeader
+        icon="⌥"
+        title="Branch Tree"
+        actions={
+          <div className="flex items-center" style={{ gap: 8 }}>
+            <span
+              className="font-mono uppercase"
+              style={{
+                fontSize: 9,
+                letterSpacing: "0.12em",
+                color: "var(--text-faint)",
+              }}
+              title={inv.title}
             >
-              {s}:{n}
-            </AilaBadge>
-          );
-        })}
+              {inv.title.length > 42 ? inv.title.slice(0, 40) + "…" : inv.title}
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowSpawn((v) => !v)}
+              className="font-mono uppercase"
+              style={{
+                height: 26,
+                padding: "0 11px",
+                fontSize: 9.5,
+                letterSpacing: "0.08em",
+                borderRadius: 3,
+                border: `1px solid ${showSpawn ? "var(--accent)" : "var(--border-soft)"}`,
+                background: showSpawn
+                  ? "color-mix(in srgb, var(--accent) 11%, transparent)"
+                  : "transparent",
+                color: showSpawn ? "var(--accent)" : "var(--text-primary)",
+                cursor: "pointer",
+              }}
+            >
+              spawn strategy branch
+            </button>
+          </div>
+        }
+      />
+
+      {/* status counts strip */}
+      <WindowPanel title="branch states" tone="info">
+        <div className="flex flex-wrap items-center" style={{ gap: 8 }}>
+          {(
+            [
+              "active",
+              "paused",
+              "merged",
+              "promoted",
+              "completed",
+              "abandoned",
+            ] as BranchStatus[]
+          ).map((s) => (
+            <MonoBadge key={s} tone={BRANCH_STATUS_TONE[s]}>
+              {s}: {statusCounts[s] ?? 0}
+            </MonoBadge>
+          ))}
+          <span style={{ flex: 1 }} />
+          <span
+            className="font-mono"
+            style={{ fontSize: 10, color: "var(--text-muted)" }}
+          >
+            {branches.length} branch{branches.length === 1 ? "" : "es"}
+          </span>
         </div>
       </WindowPanel>
 
-      <PanelBoundary
-        label="Branch tree"
-        invalidateKeyPrefix={["vr", "investigation-branches", invId]}
-      >
-        <WindowPanel title="branch tree" tone="info" flush className="overflow-hidden"><div style={{ width: "100%", height: 600 }}>
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            fitView
-            nodesDraggable
-            nodesConnectable={false}
-            elementsSelectable
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background gap={20} size={1} color="var(--color-border)" />
-            <Controls showInteractive={false} />
-          </ReactFlow>
-        </div></WindowPanel>
-      </PanelBoundary>
-
-      {branches.length === 0 && (
-        <AilaCard  techBorder glow><p className="text-sm text-text-muted text-center py-4">
-          No branches yet. Create the primary branch via the investigation
-          workflow, or spawn one below.
-        </p></AilaCard>
-      )}
-
-      <WindowPanel title="spawn strategy branch" tone="muted">
-        <h2 className="sr-only">Spawn strategy branch</h2>
-        <p className="text-3xs text-text-muted mb-3">
-          POST /vr/investigations/{`{id}`}/strategy-branches — creates a new
-          branch tagged with a strategy_family. Leave parent empty for a
-          genuinely-parallel strategy; pick a parent to inherit its
-          case_state.
-        </p>
-        <StrategyBranchSpawnForm invId={invId} branches={branches} />
-      </WindowPanel>
-
-      {branches.length > 0 && (
-        <WindowPanel title="branch operations" tone="muted">
-          <h2 className="sr-only">Branch operations</h2>
-          <p className="text-3xs text-text-muted mb-3">
-            Per-branch fork / promote / abandon / pause / resume. Merge (two
-            branches into a new one) is not surfaced here — pick a merge
-            target from the dedicated merge dialog when available.
-          </p>
-          <BranchOpsTable invId={invId} branches={branches} />
+      {showSpawn && (
+        <WindowPanel title="spawn strategy branch" tone="muted">
+          <StrategyBranchSpawnForm invId={invId} branches={branches} />
         </WindowPanel>
       )}
+
+      {/* main tree + right rail */}
+      <div
+        className="grid"
+        style={{ gridTemplateColumns: "1fr 340px", gap: 14 }}
+      >
+        <PanelBoundary
+          label="Branch tree"
+          invalidateKeyPrefix={["vr", "investigation-branches", invId]}
+        >
+          <WindowPanel
+            title="tree"
+            tone="accent"
+            flush
+            status={
+              branches.length === 0
+                ? "no branches yet -- spawn one via the strategy form"
+                : undefined
+            }
+          >
+            <div style={{ width: "100%", height: 600 }}>
+              <ReactFlow
+                nodes={nodes}
+                edges={edges}
+                fitView
+                nodesDraggable
+                nodesConnectable={false}
+                elementsSelectable
+                proOptions={{ hideAttribution: true }}
+                onNodeClick={(_, n) => {
+                  if (!n.id.startsWith("__cluster__:")) setSelectedId(n.id);
+                }}
+              >
+                <Background gap={20} size={1} color="var(--border)" />
+                <Controls showInteractive={false} />
+              </ReactFlow>
+            </div>
+          </WindowPanel>
+        </PanelBoundary>
+
+        <SelectedBranchRail invId={invId} branch={selected} />
+      </div>
+
+      {/* legend */}
+      <WindowPanel title="legend" tone="muted">
+        <div
+          className="grid"
+          style={{
+            gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
+            gap: 12,
+          }}
+        >
+          {(
+            [
+              "active",
+              "paused",
+              "merged",
+              "promoted",
+              "completed",
+              "abandoned",
+            ] as BranchStatus[]
+          ).map((s) => (
+            <div key={s} className="flex items-center" style={{ gap: 8 }}>
+              <span
+                aria-hidden
+                style={{
+                  width: 12,
+                  height: 12,
+                  background: STATUS_COLORS[s],
+                  border: `1px solid ${STATUS_BORDER[s]}`,
+                  borderRadius: 2,
+                  flex: "0 0 auto",
+                }}
+              />
+              <span
+                className="font-mono uppercase"
+                style={{
+                  fontSize: 9,
+                  letterSpacing: "0.1em",
+                  color: "var(--text-muted)",
+                }}
+              >
+                {s}
+              </span>
+            </div>
+          ))}
+        </div>
+      </WindowPanel>
     </div>
   );
 }
 
-// ─── Strategy branch spawn form ─────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Selected branch rail -- persona tile + brief rows + op buttons.
+// ---------------------------------------------------------------------------
+function SelectedBranchRail({
+  invId,
+  branch,
+}: {
+  invId: string;
+  branch: VRBranchSummary | undefined;
+}) {
+  const forkMut = useForkBranch(invId);
+  const promoteMut = usePromoteBranch(invId);
+  const abandonMut = useAbandonBranch(invId);
+  const pauseMut = usePauseBranch(invId);
+  const resumeMut = useResumeBranch(invId);
+
+  if (!branch) {
+    return (
+      <WindowPanel title="selected branch" tone="muted">
+        <p
+          className="font-mono"
+          style={{ fontSize: 11, color: "var(--text-muted)" }}
+        >
+          no branch selected. click a node in the tree.
+        </p>
+      </WindowPanel>
+    );
+  }
+
+  const pm = personaMeta(branch.persona_voice);
+  const active = branch.status === "active";
+  const paused = branch.status === "paused";
+
+  const opsPending =
+    forkMut.isPending ||
+    promoteMut.isPending ||
+    abandonMut.isPending ||
+    pauseMut.isPending ||
+    resumeMut.isPending;
+
+  return (
+    <WindowPanel title="selected branch" tone="info">
+      <div className="flex flex-col" style={{ gap: 12 }}>
+        <div className="flex items-center" style={{ gap: 10 }}>
+          <span
+            aria-hidden
+            className="flex items-center justify-center font-mono uppercase"
+            style={{
+              width: 22,
+              height: 22,
+              flex: "0 0 auto",
+              fontSize: 11,
+              color: pm.hue,
+              background: `color-mix(in srgb, ${pm.hue} 18%, transparent)`,
+              border: `1px solid color-mix(in srgb, ${pm.hue} 40%, transparent)`,
+              borderRadius: 3,
+            }}
+          >
+            {pm.initial}
+          </span>
+          <div className="flex flex-col" style={{ minWidth: 0, gap: 2 }}>
+            <span
+              className="font-mono"
+              style={{
+                fontSize: 12,
+                color: "var(--text-primary)",
+                fontWeight: 600,
+                lineHeight: 1.2,
+              }}
+              title={formatBranchDisplayName(branch)}
+            >
+              {formatBranchDisplayName(branch)}
+            </span>
+            <span
+              className="font-mono uppercase"
+              style={{
+                fontSize: 8.5,
+                letterSpacing: "0.1em",
+                color: "var(--text-faint)",
+              }}
+            >
+              {branch.strategy_family ?? "(no strategy)"}
+            </span>
+          </div>
+        </div>
+
+        <BriefRows
+          rows={[
+            {
+              label: "status",
+              value: (
+                <MonoBadge tone={BRANCH_STATUS_TONE[branch.status]}>
+                  {branch.status}
+                </MonoBadge>
+              ),
+            },
+            {
+              label: "fork at",
+              value:
+                branch.fork_at_turn != null ? (
+                  <span>t{branch.fork_at_turn}</span>
+                ) : (
+                  <span style={{ color: "var(--text-faint)" }}>root</span>
+                ),
+            },
+            { label: "turns", value: <span>{branch.turn_count}</span> },
+            {
+              label: "cost",
+              value: <span>${branch.branch_cost_usd.toFixed(2)}</span>,
+            },
+            {
+              label: "persona",
+              value: (
+                <span style={{ color: pm.hue }}>
+                  {branch.persona_voice ?? "\u2014"}
+                </span>
+              ),
+            },
+          ]}
+        />
+
+        <div className="flex flex-wrap" style={{ gap: 6 }}>
+          <OpButton
+            label="fork"
+            disabled={opsPending || !active}
+            onClick={() => {
+              const reason = window.prompt(
+                `Fork reason for branch ${formatBranchDisplayName(branch)}?`,
+                "",
+              );
+              if (reason == null) return;
+              forkMut.mutate({ branchId: branch.id, body: { reason } });
+            }}
+          />
+          {paused ? (
+            <OpButton
+              label="resume"
+              disabled={opsPending}
+              onClick={() => {
+                const reason =
+                  window.prompt("Resume reason (optional)?", "") ?? "";
+                resumeMut.mutate({ branchId: branch.id, body: { reason } });
+              }}
+            />
+          ) : (
+            <OpButton
+              label="pause"
+              disabled={opsPending || !active}
+              onClick={() => {
+                const reason =
+                  window.prompt("Pause reason (optional)?", "") ?? "";
+                pauseMut.mutate({ branchId: branch.id, body: { reason } });
+              }}
+            />
+          )}
+          <OpButton
+            label="promote"
+            variant="accent"
+            disabled={opsPending || !active}
+            onClick={() => {
+              if (
+                !window.confirm(
+                  `Promote branch ${formatBranchDisplayName(branch)}?\n\n` +
+                    `Sibling ACTIVE branches will be ABANDONED.`,
+                )
+              )
+                return;
+              const reason =
+                window.prompt("Promotion reason (optional)?", "") ?? "";
+              promoteMut.mutate({ branchId: branch.id, body: { reason } });
+            }}
+          />
+          <OpButton
+            label="abandon"
+            variant="danger"
+            disabled={opsPending || (!active && !paused)}
+            onClick={() => {
+              if (
+                !window.confirm(
+                  `Abandon branch ${formatBranchDisplayName(branch)}?`,
+                )
+              )
+                return;
+              const reason =
+                window.prompt("Abandon reason (optional)?", "") ?? "";
+              abandonMut.mutate({ branchId: branch.id, body: { reason } });
+            }}
+          />
+        </div>
+      </div>
+    </WindowPanel>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Strategy branch spawn form -- mono inputs, mock button.
+// ---------------------------------------------------------------------------
 function StrategyBranchSpawnForm({
   invId,
   branches,
@@ -336,7 +646,6 @@ function StrategyBranchSpawnForm({
 
   return (
     <form
-      className="space-y-2"
       onSubmit={(e) => {
         e.preventDefault();
         if (disabled) return;
@@ -355,44 +664,52 @@ function StrategyBranchSpawnForm({
           },
         );
       }}
+      className="flex flex-col"
+      style={{ gap: 10 }}
     >
-      <div className="grid gap-2 md:grid-cols-3">
-        <label className="text-xs">
-          <span className="block text-3xs text-text-muted uppercase tracking-wide mb-0.5">
-            Strategy family (required)
-          </span>
-          <input
+      <p
+        className="font-mono"
+        style={{ fontSize: 10, color: "var(--text-muted)", lineHeight: 1.5 }}
+      >
+        POST /vr/investigations/{"{id}"}/strategy-branches — leave parent empty
+        for a genuinely parallel strategy; pick a parent to inherit its
+        case_state.
+      </p>
+      <div
+        className="grid"
+        style={{
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+          gap: 10,
+        }}
+      >
+        <FormField label="strategy family (required)">
+          <MonoInput
             type="text"
             value={strategyFamily}
             onChange={(e) => setStrategyFamily(e.target.value)}
             placeholder="e.g. taint-first, memory-corruption"
             maxLength={128}
-            className="w-full text-xs font-mono px-2 py-1 rounded bg-surface border border-border focus:border-accent focus:outline-none"
           />
-        </label>
-        <label className="text-xs">
-          <span className="block text-3xs text-text-muted uppercase tracking-wide mb-0.5">
-            Persona voice
-          </span>
-          <select
+        </FormField>
+        <FormField label="persona voice">
+          <MonoSelect
             value={personaVoice}
-            onChange={(e) => setPersonaVoice(e.target.value as PersonaVoice | "")}
-            className="w-full text-xs px-2 py-1 rounded bg-surface border border-border"
+            onChange={(e) =>
+              setPersonaVoice(e.target.value as PersonaVoice | "")
+            }
           >
             <option value="">(none)</option>
             {PERSONA_VOICES.map((v) => (
-              <option key={v} value={v}>{v}</option>
+              <option key={v} value={v}>
+                {v}
+              </option>
             ))}
-          </select>
-        </label>
-        <label className="text-xs">
-          <span className="block text-3xs text-text-muted uppercase tracking-wide mb-0.5">
-            Parent branch (optional — inherits case_state)
-          </span>
-          <select
+          </MonoSelect>
+        </FormField>
+        <FormField label="parent branch (optional -- inherits case_state)">
+          <MonoSelect
             value={parentBranchId}
             onChange={(e) => setParentBranchId(e.target.value)}
-            className="w-full text-xs font-mono px-2 py-1 rounded bg-surface border border-border"
           >
             <option value="">(fresh — no parent)</option>
             {branches.map((b) => (
@@ -400,202 +717,226 @@ function StrategyBranchSpawnForm({
                 {formatBranchDisplayName(b)} · {b.status}
               </option>
             ))}
-          </select>
-        </label>
+          </MonoSelect>
+        </FormField>
       </div>
-      <textarea
-        value={rationale}
-        onChange={(e) => setRationale(e.target.value)}
-        placeholder="Rationale (optional) — why this strategy is worth exploring"
-        rows={2}
-        maxLength={2048}
-        className="w-full text-xs font-mono p-2 rounded bg-surface border border-border focus:border-accent focus:outline-none"
-      />
+      <FormField label="rationale (optional)">
+        <textarea
+          value={rationale}
+          onChange={(e) => setRationale(e.target.value)}
+          placeholder="why this strategy is worth exploring"
+          rows={2}
+          maxLength={2048}
+          className="font-mono"
+          style={{
+            width: "100%",
+            padding: "6px 8px",
+            fontSize: 11,
+            color: "var(--text-primary)",
+            background: "var(--surface-sunk)",
+            border: "1px solid var(--border-soft)",
+            borderRadius: 2,
+            outline: "none",
+            resize: "vertical",
+          }}
+        />
+      </FormField>
       <div className="flex justify-end">
         <button
           type="submit"
           disabled={disabled}
-          className="text-xs px-3 py-1 rounded bg-accent text-background disabled:opacity-50 disabled:cursor-not-allowed"
+          className="font-mono uppercase"
+          style={{
+            height: 26,
+            padding: "0 12px",
+            fontSize: 9.5,
+            letterSpacing: "0.08em",
+            borderRadius: 3,
+            border: "1px solid var(--accent)",
+            background: disabled ? "transparent" : "var(--accent)",
+            color: disabled ? "var(--text-faint)" : "var(--text-on-accent)",
+            cursor: disabled ? "not-allowed" : "pointer",
+          }}
         >
-          {spawnMut.isPending ? "Spawning…" : "Spawn branch"}
+          {spawnMut.isPending ? "spawning…" : "spawn branch"}
         </button>
       </div>
     </form>
   );
 }
 
-// ─── Per-branch ops table ───────────────────────────────────────────────
-function BranchOpsTable({
-  invId,
-  branches,
+// ---------------------------------------------------------------------------
+// Shared mock primitives (kept local so this screen doesn't force a
+// public re-export from the mock kit).
+// ---------------------------------------------------------------------------
+function BriefRows({
+  rows,
 }: {
-  invId: string;
-  branches: VRBranchSummary[];
+  rows: { label: string; value: React.ReactNode }[];
 }) {
-  const forkMut = useForkBranch(invId);
-  const promoteMut = usePromoteBranch(invId);
-  const abandonMut = useAbandonBranch(invId);
-  const pauseMut = usePauseBranch(invId);
-  const resumeMut = useResumeBranch(invId);
-
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs">
-        <caption className="sr-only">Investigation branches with status and actions</caption>
-        <thead>
-          <tr className="border-b border-border text-left text-text-muted">
-            <th className="px-2 py-1 font-semibold">Branch</th>
-            <th className="px-2 py-1 font-semibold">Status</th>
-            <th className="px-2 py-1 font-semibold">Turns</th>
-            <th className="px-2 py-1 font-semibold text-right">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {branches.map((b) => {
-            const active = b.status === "active";
-            const paused = b.status === "paused";
-            return (
-              <tr
-                key={b.id}
-                className="border-b border-border last:border-b-0 align-top"
-              >
-                <td className="px-2 py-2 font-mono">
-                  <div className="text-foreground">{formatBranchDisplayName(b)}</div>
-                  <div className="text-3xs text-text-muted">
-                    {b.strategy_family ?? "(no strategy)"}
-                    {b.persona_voice ? ` · ${b.persona_voice}` : ""}
-                  </div>
-                </td>
-                <td className="px-2 py-2">
-                  <AilaBadge
-                    severity={
-                      active
-                        ? "low"
-                        : paused
-                          ? "medium"
-                          : b.status === "abandoned"
-                            ? "high"
-                            : "info"
-                    }
-                    size="sm"
-                  >
-                    {b.status}
-                  </AilaBadge>
-                </td>
-                <td className="px-2 py-2 font-mono">{b.turn_count}</td>
-                <td className="px-2 py-2">
-                  <div className="flex gap-1 flex-wrap justify-end">
-                    <BranchOpButton
-                      label="Fork"
-                      title="Fork this branch into a new child (prompts for a fork reason)"
-                      disabled={forkMut.isPending || !active}
-                      onClick={() => {
-                        const reason = window.prompt(
-                          `Fork reason for branch ${formatBranchDisplayName(b)}?`,
-                          "",
-                        );
-                        if (reason == null) return;
-                        forkMut.mutate({
-                          branchId: b.id,
-                          body: { reason },
-                        });
-                      }}
-                    />
-                    <BranchOpButton
-                      label="Promote"
-                      title="Promote to authoritative — sibling ACTIVE branches → ABANDONED"
-                      variant="accent"
-                      disabled={promoteMut.isPending || !active}
-                      onClick={() => {
-                        if (!window.confirm(
-                          `Promote branch ${formatBranchDisplayName(b)} to authoritative?\n\n` +
-                          `Sibling ACTIVE branches will be ABANDONED.`,
-                        )) return;
-                        const reason = window.prompt(
-                          "Promotion reason (optional)?",
-                          "",
-                        ) ?? "";
-                        promoteMut.mutate({ branchId: b.id, body: { reason } });
-                      }}
-                    />
-                    {paused ? (
-                      <BranchOpButton
-                        label="Resume"
-                        title="Resume a PAUSED branch (status PAUSED → ACTIVE)"
-                        disabled={resumeMut.isPending}
-                        onClick={() => {
-                          const reason = window.prompt("Resume reason (optional)?", "") ?? "";
-                          resumeMut.mutate({ branchId: b.id, body: { reason } });
-                        }}
-                      />
-                    ) : (
-                      <BranchOpButton
-                        label="Pause"
-                        title="Pause an ACTIVE branch (status ACTIVE → PAUSED)"
-                        disabled={pauseMut.isPending || !active}
-                        onClick={() => {
-                          const reason = window.prompt("Pause reason (optional)?", "") ?? "";
-                          pauseMut.mutate({ branchId: b.id, body: { reason } });
-                        }}
-                      />
-                    )}
-                    <BranchOpButton
-                      label="Abandon"
-                      title="Close a branch without promotion"
-                      variant="danger"
-                      disabled={abandonMut.isPending || (!active && !paused)}
-                      onClick={() => {
-                        if (!window.confirm(
-                          `Abandon branch ${formatBranchDisplayName(b)}?`,
-                        )) return;
-                        const reason = window.prompt(
-                          "Abandon reason (optional)?",
-                          "",
-                        ) ?? "";
-                        abandonMut.mutate({ branchId: b.id, body: { reason } });
-                      }}
-                    />
-                  </div>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+    <div className="flex flex-col">
+      {rows.map((r, i) => (
+        <div
+          key={r.label}
+          className="grid items-center"
+          style={{
+            gridTemplateColumns: "76px 1fr",
+            gap: 10,
+            padding: "5px 0",
+            borderTop: i === 0 ? "none" : "1px solid var(--border-faint)",
+          }}
+        >
+          <span
+            className="font-mono uppercase"
+            style={{
+              fontSize: 9,
+              letterSpacing: "0.12em",
+              color: "var(--text-faint)",
+            }}
+          >
+            {r.label}
+          </span>
+          <span
+            className="font-mono"
+            style={{
+              fontSize: 11,
+              color: "var(--text-primary)",
+              minWidth: 0,
+            }}
+          >
+            {r.value}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }
 
-function BranchOpButton({
+function OpButton({
   label,
-  title,
   onClick,
   disabled,
   variant,
 }: {
   label: string;
-  title: string;
   onClick: () => void;
   disabled?: boolean;
   variant?: "accent" | "danger";
 }) {
-  const base =
-    "text-3xs font-mono px-2 py-0.5 rounded border transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
-  const style =
-    variant === "accent"
-      ? "bg-accent text-background border-accent hover:bg-accent/90"
-      : variant === "danger"
-        ? "bg-surface border-critical text-critical hover:bg-elevated"
-        : "bg-surface border-border hover:bg-elevated";
+  const accent = variant === "accent";
+  const danger = variant === "danger";
   return (
     <button
       type="button"
-      title={title}
       disabled={disabled}
       onClick={onClick}
-      className={`${base} ${style}`}
+      className="font-mono uppercase"
+      style={{
+        height: 22,
+        padding: "0 9px",
+        fontSize: 9,
+        letterSpacing: "0.1em",
+        borderRadius: 2,
+        border: `1px solid ${
+          disabled
+            ? "var(--border-soft)"
+            : accent
+              ? "var(--accent)"
+              : danger
+                ? "var(--accent)"
+                : "var(--border-soft)"
+        }`,
+        background: disabled
+          ? "transparent"
+          : accent
+            ? "var(--accent)"
+            : "transparent",
+        color: disabled
+          ? "var(--text-faint)"
+          : accent
+            ? "var(--text-on-accent)"
+            : danger
+              ? "var(--accent)"
+              : "var(--text-primary)",
+        cursor: disabled ? "not-allowed" : "pointer",
+      }}
     >
       {label}
     </button>
+  );
+}
+
+function FormField({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="flex flex-col" style={{ gap: 4 }}>
+      <span
+        className="font-mono uppercase"
+        style={{
+          fontSize: 9,
+          letterSpacing: "0.12em",
+          color: "var(--text-faint)",
+        }}
+      >
+        {label}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+function MonoInput(
+  props: React.InputHTMLAttributes<HTMLInputElement>,
+) {
+  const { style, className, ...rest } = props;
+  return (
+    <input
+      {...rest}
+      className={`font-mono ${className ?? ""}`}
+      style={{
+        width: "100%",
+        padding: "5px 8px",
+        fontSize: 11,
+        color: "var(--text-primary)",
+        background: "var(--surface-sunk)",
+        border: "1px solid var(--border-soft)",
+        borderRadius: 2,
+        outline: "none",
+        ...style,
+      }}
+    />
+  );
+}
+
+function MonoSelect(
+  props: React.SelectHTMLAttributes<HTMLSelectElement> & {
+    children: React.ReactNode;
+  },
+) {
+  const { style, className, children, ...rest } = props;
+  return (
+    <select
+      {...rest}
+      className={`font-mono ${className ?? ""}`}
+      style={{
+        width: "100%",
+        padding: "5px 8px",
+        fontSize: 11,
+        color: "var(--text-primary)",
+        background: "var(--surface-sunk)",
+        border: "1px solid var(--border-soft)",
+        borderRadius: 2,
+        outline: "none",
+        ...style,
+      }}
+    >
+      {children}
+    </select>
   );
 }

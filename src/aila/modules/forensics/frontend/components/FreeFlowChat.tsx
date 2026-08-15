@@ -1,17 +1,20 @@
-import { type CSSProperties, useState } from "react";
+import { useState } from "react";
 
 import { WindowPanel } from "@/components/aila/WindowPanel";
+import { DataGrid, MonoBadge } from "@/components/aila/mock";
 
 import { useStartInvestigation } from "../mutations";
 import { useProjectInvestigations } from "../queries";
 import type { InvestigationSummary } from "../types";
 
-const statusColors: Record<string, CSSProperties> = {
-  pending: { color: "var(--color-text-muted)" },
-  running: { color: "var(--color-accent)" },
-  completed: { color: "var(--color-mint)" },
-  exhausted: { color: "var(--color-amber)" },
-  failed: { color: "var(--color-critical)" },
+// Status -> MonoBadge tone. Mirrors the module-wide status severity table
+// (pending=muted, running=medium, completed=ok, exhausted=warn, failed=critical).
+const STATUS_TONE: Record<string, string> = {
+  pending: "muted",
+  running: "medium",
+  completed: "ok",
+  exhausted: "warn",
+  failed: "critical",
 };
 
 export function FreeFlowChat({ projectId }: { projectId: string }) {
@@ -30,70 +33,190 @@ export function FreeFlowChat({ projectId }: { projectId: string }) {
     setQuestion("");
   }
 
-  return (
-    <div className="space-y-4">
-      <WindowPanel title="free-flow investigator"><div className="space-y-3">
-        <textarea
-          aria-label="Question for the investigator"
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          placeholder="Ask a question about the evidence..."
-          rows={3}
-          className="w-full px-3 py-2 text-sm rounded-md border border-border bg-surface text-foreground resize-none"
-        />
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-text-muted" htmlFor="ffchat-max-attempts">Max attempts:</label>
-            <input
-              id="ffchat-max-attempts"
-              type="number"
-              min={1}
-              max={50}
-              value={maxAttempts}
-              onChange={(e) => setMaxAttempts(Number(e.target.value))}
-              className="w-16 px-2 py-1 text-xs rounded border border-border bg-surface text-foreground"
-            />
-          </div>
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={!question.trim() || startInvestigation.isPending}
-            className="px-4 py-2 font-mono text-xs uppercase tracking-cyber-sm rounded-[3px] bg-accent text-badge-text hover:brightness-110 transition-[filter] disabled:opacity-50"
-            style={{ boxShadow: "var(--bevel-key)" }}
-          >
-            {startInvestigation.isPending ? "Starting..." : "Investigate"}
-          </button>
-        </div>
-      </div></WindowPanel>
+  const rows: InvestigationSummary[] = investigations ?? [];
+  const disabled = !question.trim() || startInvestigation.isPending;
 
-      <div className="space-y-2">
-        <h4 className="font-mono text-2xs uppercase tracking-cyber-sm text-muted-foreground">
-          Investigations ({investigations?.length ?? 0})
-        </h4>
-        {isLoading && <p className="text-xs text-text-muted">Loading...</p>}
-        {(investigations ?? []).map((inv: InvestigationSummary) => (
+  return (
+    <div className="space-y-3">
+      <WindowPanel title="free-flow investigator" tone="accent">
+        <div className="space-y-3">
+          <textarea
+            aria-label="Question for the investigator"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            placeholder="Ask a question about the evidence..."
+            rows={3}
+            className="w-full font-mono"
+            style={{
+              padding: "8px 10px",
+              fontSize: 12,
+              lineHeight: 1.5,
+              background: "var(--surface-sunk)",
+              border: "1px solid var(--border-soft)",
+              color: "var(--text-primary)",
+              borderRadius: 3,
+              resize: "vertical",
+              minHeight: 72,
+            }}
+          />
+          <div className="flex items-center justify-between" style={{ gap: 12 }}>
+            <div className="flex items-center" style={{ gap: 8 }}>
+              <label
+                htmlFor="ffchat-max-attempts"
+                className="font-mono uppercase"
+                style={{
+                  fontSize: 9,
+                  letterSpacing: "0.12em",
+                  color: "var(--text-faint)",
+                }}
+              >
+                Max attempts
+              </label>
+              <input
+                id="ffchat-max-attempts"
+                type="number"
+                min={1}
+                max={50}
+                value={maxAttempts}
+                onChange={(e) => setMaxAttempts(Number(e.target.value))}
+                className="font-mono"
+                style={{
+                  width: 64,
+                  height: 26,
+                  padding: "0 8px",
+                  fontSize: 11,
+                  background: "var(--surface-sunk)",
+                  border: "1px solid var(--border-soft)",
+                  color: "var(--text-primary)",
+                  borderRadius: 3,
+                }}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={disabled}
+              className="font-mono uppercase"
+              style={{
+                height: 28,
+                padding: "0 14px",
+                fontSize: 10,
+                letterSpacing: "0.1em",
+                color: "var(--text-on-accent)",
+                background: "var(--accent)",
+                border: "1px solid var(--accent)",
+                borderRadius: 3,
+                cursor: disabled ? "not-allowed" : "pointer",
+                opacity: disabled ? 0.5 : 1,
+                boxShadow: "var(--bevel-key)",
+              }}
+            >
+              {startInvestigation.isPending ? "Starting\u2026" : "Investigate"}
+            </button>
+          </div>
+        </div>
+      </WindowPanel>
+
+      <WindowPanel
+        title={`investigations (${investigations?.length ?? 0})`}
+        flush
+      >
+        {isLoading ? (
           <div
-            key={inv.id}
-            className="px-3 py-2 border border-border rounded-md bg-surface text-sm"
+            className="font-mono"
+            style={{
+              padding: 12,
+              fontSize: 12,
+              color: "var(--text-muted)",
+            }}
           >
-            <div className="flex items-center justify-between">
-              <p className="text-foreground font-medium truncate mr-2">{inv.question}</p>
-              <span className="text-xs font-mono" style={statusColors[inv.status] ?? { color: "var(--color-text-muted)" }}>
-                {inv.status}
-              </span>
-            </div>
-            <div className="flex gap-4 mt-1 text-xs text-text-muted">
-              <span>Attempts: {inv.attempts_used}</span>
-              {inv.confidence && <span>Confidence: {inv.confidence}</span>}
-            </div>
-            {inv.final_answer && (
-              <div className="mt-2 px-2 py-1 bg-mint/10 border border-mint/30 rounded text-xs text-mint font-mono">
-                {inv.final_answer}
+            Loading...
+          </div>
+        ) : (
+          <div>
+            <DataGrid<InvestigationSummary>
+              columns={[
+                { label: "STATUS", width: "110px" },
+                { label: "QUESTION", width: "1fr" },
+                { label: "ATTEMPTS", width: "90px", align: "right" },
+                { label: "CONFIDENCE", width: "110px" },
+              ]}
+              rows={rows}
+              getKey={(inv) => inv.id}
+              renderCells={(inv) => [
+                <MonoBadge key="st" tone={STATUS_TONE[inv.status] ?? "muted"}>
+                  {inv.status}
+                </MonoBadge>,
+                <span
+                  key="q"
+                  title={inv.question}
+                  className="truncate"
+                  style={{
+                    fontSize: 11,
+                    color: "var(--text-primary)",
+                    display: "block",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {inv.question}
+                </span>,
+                <span
+                  key="att"
+                  style={{ fontSize: 11, color: "var(--text-muted)" }}
+                >
+                  {inv.attempts_used}
+                </span>,
+                <span
+                  key="c"
+                  style={{ fontSize: 11, color: "var(--text-muted)" }}
+                >
+                  {inv.confidence ?? "-"}
+                </span>,
+              ]}
+            />
+            {rows.some((inv) => inv.final_answer) && (
+              <div
+                className="space-y-1"
+                style={{
+                  padding: 12,
+                  borderTop: "1px solid var(--border-soft)",
+                  background: "var(--surface-card)",
+                }}
+              >
+                {rows
+                  .filter((inv) => inv.final_answer)
+                  .map((inv) => (
+                    <div
+                      key={inv.id}
+                      className="flex items-start"
+                      style={{ gap: 8 }}
+                    >
+                      <MonoBadge tone="ok">final answer</MonoBadge>
+                      <span
+                        className="font-mono"
+                        title={inv.final_answer ?? undefined}
+                        style={{
+                          fontSize: 11,
+                          color: "var(--status-ok)",
+                          lineHeight: 1.5,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          display: "-webkit-box",
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: "vertical",
+                        }}
+                      >
+                        {inv.final_answer}
+                      </span>
+                    </div>
+                  ))}
               </div>
             )}
           </div>
-        ))}
-      </div>
+        )}
+      </WindowPanel>
     </div>
   );
 }

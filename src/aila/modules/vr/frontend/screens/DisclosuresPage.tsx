@@ -1,19 +1,15 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
-import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
-import { EnvelopeSimple } from "@phosphor-icons/react/dist/csr/EnvelopeSimple";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import {
+  DataGrid,
+  MonoBadge,
+  SectionHeader,
+} from "@/components/aila/mock";
 
 import { DeleteButton } from "../components/DeleteButton";
-import {
-  SortHeader,
-  useSortableRows,
-  useTableRowNav,
-  type SortValue,
-} from "../components/tableHelpers";
 import { useCreateDisclosure, useDeleteDisclosure } from "../mutations";
 import {
   useDisclosures,
@@ -28,32 +24,54 @@ import type {
   VRDisclosureSubmissionSummary,
 } from "../types";
 
-const STATUS_COLOR: Record<
-  DisclosureSubmissionStatus,
-  "info" | "low" | "medium" | "high" | "critical"
-> = {
+// Status -> MonoBadge tone. Preserves the prior status vocabulary
+// (drafted/submitted/... rejected/withdrawn) but expressed in the mock
+// tone keys (info/medium/ok/high).
+const STATUS_TONE: Record<DisclosureSubmissionStatus, string> = {
   drafted: "info",
   submitted: "medium",
   acknowledged: "medium",
   triaging: "medium",
-  accepted: "low",
+  accepted: "ok",
   rejected: "high",
-  patched: "low",
-  published: "low",
+  patched: "ok",
+  published: "ok",
   closed: "info",
   withdrawn: "high",
 };
 
 const STATUSES: DisclosureSubmissionStatus[] = [
-  "drafted", "submitted", "acknowledged", "triaging", "accepted",
-  "rejected", "patched", "published", "closed", "withdrawn",
+  "drafted",
+  "submitted",
+  "acknowledged",
+  "triaging",
+  "accepted",
+  "rejected",
+  "patched",
+  "published",
+  "closed",
+  "withdrawn",
 ];
 
 const POC_TIERS: { value: ArtifactTier; label: string }[] = [
-  { value: "working_poc",   label: "Working PoC" },
+  { value: "working_poc", label: "Working PoC" },
   { value: "sanitized_poc", label: "Sanitized PoC" },
-  { value: "no_poc",        label: "No PoC" },
+  { value: "no_poc", label: "No PoC" },
 ];
+
+// Mock chrome for raw form controls -- matches sibling filter shelves.
+const CTRL: React.CSSProperties = {
+  height: 26,
+  fontSize: 10.5,
+  padding: "0 8px",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  color: "var(--text-primary)",
+  borderRadius: 3,
+  letterSpacing: "0.04em",
+  outline: "none",
+  fontFamily: "var(--font-mono)",
+};
 
 export function DisclosuresPage() {
   const navigate = useNavigate();
@@ -70,7 +88,9 @@ export function DisclosuresPage() {
   const deleteMut = useDeleteDisclosure();
 
   const [trackFilter, setTrackFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState<DisclosureSubmissionStatus | "">("");
+  const [statusFilter, setStatusFilter] = useState<
+    DisclosureSubmissionStatus | ""
+  >("");
 
   // ── Create-form state ────────────────────────────────────────────
   // Anchor is now an investigation, not a raw finding UUID. The
@@ -80,12 +100,12 @@ export function DisclosuresPage() {
   // detail page and disambiguates there.
   const [showForm, setShowForm] = useState(false);
   const [formInvestigationId, setFormInvestigationId] = useState("");
-  const [formTrackId, setFormTrackId]         = useState("");
+  const [formTrackId, setFormTrackId] = useState("");
   const [formWorkspaceId, setFormWorkspaceId] = useState("");
-  const [formPocTier, setFormPocTier]         = useState<ArtifactTier | "">("");
-  const [formSeverity, setFormSeverity]       = useState("");
-  const [formEmbargo, setFormEmbargo]         = useState("");
-  const [formNotes, setFormNotes]             = useState("");
+  const [formPocTier, setFormPocTier] = useState<ArtifactTier | "">("");
+  const [formSeverity, setFormSeverity] = useState("");
+  const [formEmbargo, setFormEmbargo] = useState("");
+  const [formNotes, setFormNotes] = useState("");
 
   const selectedInvestigation = useMemo(
     () => investigations.find((i) => i.id === formInvestigationId) || null,
@@ -101,14 +121,14 @@ export function DisclosuresPage() {
     if (n === 1) {
       return {
         tone: "ok" as const,
-        text: "Will bind to the investigation's single linked finding.",
+        text: "will bind to the investigation's single linked finding.",
       };
     }
     if (n === 0) {
       return {
         tone: "warn" as const,
         text:
-          "Investigation has no linked finding yet. The service will " +
+          "investigation has no linked finding yet. the service will " +
           "auto-create a stub finding so the disclosure has something " +
           "to bind to; enrich it later in FindingDetailPage.",
       };
@@ -116,15 +136,16 @@ export function DisclosuresPage() {
     return {
       tone: "danger" as const,
       text:
-        `Investigation has ${n} linked findings. The service can't pick ` +
+        `investigation has ${n} linked findings. the service can't pick ` +
         `one for you; open the finding detail page and create the ` +
         `disclosure from there.`,
     };
   }, [selectedInvestigation]);
 
-  const trackIdValid     = formTrackId.trim().length > 0;
-  const workspaceIdSet   = formWorkspaceId.trim().length > 0;
-  const investigationOk  = !!selectedInvestigation &&
+  const trackIdValid = formTrackId.trim().length > 0;
+  const workspaceIdSet = formWorkspaceId.trim().length > 0;
+  const investigationOk =
+    !!selectedInvestigation &&
     (selectedInvestigation.linked_finding_ids?.length ?? 0) <= 1;
   const canSubmit =
     investigationOk && trackIdValid && workspaceIdSet && !createMut.isPending;
@@ -146,13 +167,13 @@ export function DisclosuresPage() {
     createMut.mutate(
       {
         investigation_id: formInvestigationId,
-        track_id:         formTrackId.trim(),
-        workspace_id:     formWorkspaceId.trim(),
-        poc_tier:         formPocTier || undefined,
-        severity_rating:
-          formSeverity.trim() ? formSeverity.trim() : undefined,
-        embargo_days_override:
-          Number.isFinite(embargoNum) ? embargoNum : undefined,
+        track_id: formTrackId.trim(),
+        workspace_id: formWorkspaceId.trim(),
+        poc_tier: formPocTier || undefined,
+        severity_rating: formSeverity.trim() ? formSeverity.trim() : undefined,
+        embargo_days_override: Number.isFinite(embargoNum)
+          ? embargoNum
+          : undefined,
         notes: formNotes.trim() ? formNotes.trim() : undefined,
       },
       {
@@ -201,311 +222,429 @@ export function DisclosuresPage() {
     });
   }, [rows, query]);
 
-  const accessors = useMemo<
-    Record<string, (r: VRDisclosureSubmissionSummary) => SortValue>
-  >(
-    () => ({
-      track: (r) => r.track_info?.display_name ?? r.track_id,
-      status: (r) => r.status,
-      poc_tier: (r) => r.poc_tier,
-      severity_rating: (r) => r.severity_rating ?? null,
-      embargo_until: (r) =>
-        r.embargo_until ? new Date(r.embargo_until) : null,
-      vendor_reference: (r) => r.vendor_reference ?? null,
-      bounty_awarded_usd: (r) => r.bounty_awarded_usd ?? null,
-    }),
-    [],
-  );
-  const { sortedRows, sortKey, sortDir, cycleSort } = useSortableRows(
-    filteredRows,
-    accessors,
-  );
-
-  const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
-  const { tbodyProps, getRowProps } = useTableRowNav(
-    sortedRows,
-    (r) => navigate(`/vr/disclosures/${r.id}`),
-    tbodyRef,
+  // ─── Header actions: + new disclosure ───
+  const headerActions = (
+    <button
+      type="button"
+      onClick={() => setShowForm((v) => !v)}
+      className="font-mono uppercase"
+      style={{
+        height: 28,
+        padding: "0 12px",
+        fontSize: 10,
+        letterSpacing: "0.08em",
+        background: showForm ? "var(--surface-sunk)" : "var(--accent)",
+        border:
+          "1px solid " +
+          (showForm ? "var(--border-soft)" : "var(--accent)"),
+        color: showForm ? "var(--text-primary)" : "var(--text-on-accent)",
+        borderRadius: 3,
+        cursor: "pointer",
+      }}
+    >
+      {showForm ? "cancel" : "+ new disclosure"}
+    </button>
   );
 
-  return (
-    <div className="space-y-4">
-      {/* CTA bar -- toggles the inline create form below. */}
-      <div className="flex items-center justify-between">
-        <button
-          type="button"
-          onClick={() => setShowForm((v) => !v)}
-          className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-background hover:bg-accent/90 transition-colors"
+  // ─── Create form ───
+  const hintColor =
+    findingHint?.tone === "danger"
+      ? "var(--accent)"
+      : findingHint?.tone === "warn"
+        ? "var(--status-warn)"
+        : "var(--text-muted)";
+
+  const createFormPanel = showForm ? (
+    <WindowPanel title="new disclosure" tone="accent">
+      <div className="flex flex-col" style={{ gap: 10 }}>
+        <p
+          className="font-mono"
+          style={{
+            fontSize: 10.5,
+            color: "var(--text-muted)",
+            letterSpacing: "0.02em",
+            lineHeight: 1.5,
+          }}
         >
-          {showForm ? "Cancel" : "New Disclosure"}
-        </button>
-      </div>
-
-      {showForm && (
-        <AilaCard techBorder glow>
-          <h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
-            Create disclosure submission
-          </h2>
-          <p className="text-xs text-text-muted mb-3">
-            Pick the investigation whose finding you want to disclose. The
-            service resolves the investigation's single linked finding,
-            or auto-creates a stub if none exists. Pick the disclosure
-            track and a workspace; optional fields refine the embargo,
-            severity, and PoC tier the track will use during submission.
+          pick the investigation whose finding you want to disclose. the
+          service resolves the investigation's single linked finding, or
+          auto-creates a stub if none exists. pick the disclosure track and
+          a workspace; optional fields refine the embargo, severity, and
+          PoC tier the track will use during submission.
+        </p>
+        <select
+          value={formInvestigationId}
+          onChange={(e) => pickInvestigation(e.target.value)}
+          aria-label="Investigation"
+          className="font-mono w-full"
+          style={{ ...CTRL, height: 30, fontSize: 11 }}
+        >
+          <option value="">-- pick an investigation --</option>
+          {investigations.map((inv) => {
+            const linkCount = inv.linked_finding_ids?.length ?? 0;
+            const linkSuffix =
+              linkCount === 1
+                ? " · 1 finding"
+                : linkCount > 1
+                  ? ` · ${linkCount} findings`
+                  : " · no finding yet";
+            return (
+              <option key={inv.id} value={inv.id}>
+                {inv.title} ({inv.kind} · {inv.status}){linkSuffix}
+              </option>
+            );
+          })}
+        </select>
+        {findingHint && (
+          <p
+            className="font-mono"
+            style={{
+              fontSize: 10.5,
+              color: hintColor,
+              letterSpacing: "0.02em",
+            }}
+          >
+            {findingHint.text}
           </p>
-          <div className="space-y-2">
-            <select
-              value={formInvestigationId}
-              onChange={(e) => pickInvestigation(e.target.value)}
-              aria-label="Investigation"
-              className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
-            >
-              <option value="">-- pick an investigation --</option>
-              {investigations.map((inv) => {
-                const linkCount = inv.linked_finding_ids?.length ?? 0;
-                const linkSuffix =
-                  linkCount === 1
-                    ? " · 1 finding"
-                    : linkCount > 1
-                      ? ` · ${linkCount} findings`
-                      : " · no finding yet";
-                return (
-                  <option key={inv.id} value={inv.id}>
-                    {inv.title} ({inv.kind} · {inv.status}){linkSuffix}
-                  </option>
-                );
-              })}
-            </select>
-            {findingHint && (
-              <p
-                className={
-                  findingHint.tone === "danger"
-                    ? "text-xs text-critical"
-                    : findingHint.tone === "warn"
-                      ? "text-xs text-text-warning"
-                      : "text-xs text-text-muted"
-                }
-              >
-                {findingHint.text}
-              </p>
-            )}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <select
-                value={formTrackId}
-                onChange={(e) => setFormTrackId(e.target.value)}
-                aria-label="Disclosure track"
-                className="px-3 py-2 text-sm rounded-md bg-surface border border-border"
-              >
-                <option value="">-- pick a track --</option>
-                {tracks.map((t) => (
-                  <option key={t.track_id} value={t.track_id}>
-                    {t.display_name} ({t.kind})
-                  </option>
-                ))}
-              </select>
-              <select
-                value={formWorkspaceId}
-                onChange={(e) => setFormWorkspaceId(e.target.value)}
-                aria-label="Workspace"
-                className="px-3 py-2 text-sm rounded-md bg-surface border border-border"
-              >
-                <option value="">-- pick a workspace --</option>
-                {workspaces.map((w) => (
-                  <option key={w.id} value={w.id}>
-                    {w.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <select
-                value={formPocTier}
-                onChange={(e) =>
-                  setFormPocTier(e.target.value as ArtifactTier | "")
-                }
-                aria-label="Proof-of-concept tier"
-                className="px-3 py-2 text-sm rounded-md bg-surface border border-border"
-              >
-                <option value="">-- PoC tier (auto) --</option>
-                {POC_TIERS.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="text"
-                value={formSeverity}
-                onChange={(e) => setFormSeverity(e.target.value)}
-                placeholder="Severity rating (e.g. CVSS 8.1)"
-                aria-label="Severity rating"
-                className="px-3 py-2 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
-              />
-              <input
-                type="number"
-                min={0}
-                value={formEmbargo}
-                onChange={(e) => setFormEmbargo(e.target.value)}
-                placeholder="Embargo days override"
-                aria-label="Embargo days override"
-                className="px-3 py-2 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
-              />
-            </div>
-            <textarea
-              value={formNotes}
-              onChange={(e) => setFormNotes(e.target.value)}
-              placeholder="Notes (optional)"
-              rows={2}
-              aria-label="Notes"
-              className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
-            />
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                disabled={!canSubmit}
-                onClick={submitCreate}
-                className="ml-auto px-4 py-2 text-sm font-medium rounded-md bg-accent text-background hover:bg-accent/90 transition-colors disabled:opacity-50"
-              >
-                {createMut.isPending ? "Creating…" : "Create"}
-              </button>
-            </div>
-          </div>
-        </AilaCard>
-      )}
+        )}
+        <div
+          className="grid"
+          style={{ gridTemplateColumns: "1fr 1fr", gap: 8 }}
+        >
+          <select
+            value={formTrackId}
+            onChange={(e) => setFormTrackId(e.target.value)}
+            aria-label="Disclosure track"
+            className="font-mono uppercase"
+            style={{ ...CTRL, height: 30, fontSize: 11 }}
+          >
+            <option value="">-- pick a track --</option>
+            {tracks.map((t) => (
+              <option key={t.track_id} value={t.track_id}>
+                {t.display_name} ({t.kind})
+              </option>
+            ))}
+          </select>
+          <select
+            value={formWorkspaceId}
+            onChange={(e) => setFormWorkspaceId(e.target.value)}
+            aria-label="Workspace"
+            className="font-mono uppercase"
+            style={{ ...CTRL, height: 30, fontSize: 11 }}
+          >
+            <option value="">-- pick a workspace --</option>
+            {workspaces.map((w) => (
+              <option key={w.id} value={w.id}>
+                {w.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div
+          className="grid"
+          style={{ gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}
+        >
+          <select
+            value={formPocTier}
+            onChange={(e) =>
+              setFormPocTier(e.target.value as ArtifactTier | "")
+            }
+            aria-label="Proof-of-concept tier"
+            className="font-mono uppercase"
+            style={{ ...CTRL, height: 30, fontSize: 11 }}
+          >
+            <option value="">-- PoC tier (auto) --</option>
+            {POC_TIERS.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+          <input
+            type="text"
+            value={formSeverity}
+            onChange={(e) => setFormSeverity(e.target.value)}
+            placeholder="severity rating (e.g. CVSS 8.1)"
+            aria-label="Severity rating"
+            className="font-mono"
+            style={{ ...CTRL, height: 30, fontSize: 11 }}
+          />
+          <input
+            type="number"
+            min={0}
+            value={formEmbargo}
+            onChange={(e) => setFormEmbargo(e.target.value)}
+            placeholder="embargo days override"
+            aria-label="Embargo days override"
+            className="font-mono"
+            style={{ ...CTRL, height: 30, fontSize: 11 }}
+          />
+        </div>
+        <textarea
+          value={formNotes}
+          onChange={(e) => setFormNotes(e.target.value)}
+          placeholder="notes (optional)"
+          rows={2}
+          aria-label="Notes"
+          className="font-mono w-full"
+          style={{
+            ...CTRL,
+            height: "auto",
+            padding: "8px 10px",
+            fontSize: 11,
+            resize: "vertical",
+          }}
+        />
+        <div className="flex items-center" style={{ gap: 8 }}>
+          <button
+            type="button"
+            disabled={!canSubmit}
+            onClick={submitCreate}
+            className="font-mono uppercase"
+            style={{
+              marginLeft: "auto",
+              height: 28,
+              padding: "0 14px",
+              fontSize: 10,
+              letterSpacing: "0.08em",
+              background: "var(--accent)",
+              border: "1px solid var(--accent)",
+              color: "var(--text-on-accent)",
+              borderRadius: 3,
+              cursor: canSubmit ? "pointer" : "not-allowed",
+              opacity: canSubmit ? 1 : 0.5,
+            }}
+          >
+            {createMut.isPending ? "creating…" : "create"}
+          </button>
+        </div>
+      </div>
+    </WindowPanel>
+  ) : null;
 
-      <AilaCard  techBorder glow><div className="flex items-center gap-2 flex-wrap">
+  // ─── Filter shelf ───
+  const filterShelf = (
+    <WindowPanel title="filters" tone="muted">
+      <div className="flex flex-wrap items-center" style={{ gap: 8 }}>
         <input
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Filter disclosures (track / vendor / severity)…"
+          placeholder="filter (track / vendor / severity)…"
           aria-label="Filter disclosures"
-          className="flex-1 min-w-[220px] max-w-md px-3 py-1.5 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
+          className="font-mono"
+          style={{ ...CTRL, width: 260 }}
         />
-        <label className="text-sm text-text-muted">Track:</label>
         <select
           value={trackFilter}
           onChange={(e) => setTrackFilter(e.target.value)}
           aria-label="Filter by track"
-          className="px-3 py-1.5 text-sm font-mono rounded-md bg-surface border border-border"
+          className="font-mono uppercase"
+          style={CTRL}
         >
-          <option value="">-- all --</option>
+          <option value="">all tracks</option>
           {tracks.map((t) => (
             <option key={t.track_id} value={t.track_id}>
               {t.display_name} ({t.kind})
             </option>
           ))}
         </select>
-      
-        <label className="text-sm text-text-muted ml-2">Status:</label>
         <select
           value={statusFilter}
           onChange={(e) =>
-            setStatusFilter(e.target.value as DisclosureSubmissionStatus | "")
+            setStatusFilter(
+              e.target.value as DisclosureSubmissionStatus | "",
+            )
           }
           aria-label="Filter by status"
-          className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border"
+          className="font-mono uppercase"
+          style={CTRL}
         >
-          <option value="">-- all --</option>
+          <option value="">all status</option>
           {STATUSES.map((s) => (
             <option key={s} value={s}>
               {s}
             </option>
           ))}
         </select>
-      
-        <span className="text-xs text-text-muted ml-auto">
-          {query.trim()
-            ? `${sortedRows.length} of ${rows.length} submission${rows.length === 1 ? "" : "s"}`
-            : `${rows.length} submission${rows.length === 1 ? "" : "s"}`}
-        </span>
-      </div></AilaCard>
-
-      {isLoading && <LoadingSkeleton size="lg" width="full" />}
-
-      {isError && (
-        <AilaCard className="border-critical" techBorder glow><p className="text-sm text-critical">Failed to load disclosures.</p></AilaCard>
-      )}
-
-      {!isLoading && !isError && rows.length === 0 && (
-        <EmptyState
-          icon={<EnvelopeSimple className="h-7 w-7" weight="duotone" />}
-          title="No disclosure submissions yet"
-          description="File a disclosure against a promoted finding. Each submission tracks status, communications, and vendor-response timelines."
-          action={{
-            label: showForm ? "Cancel" : "New Disclosure",
-            onClick: () => setShowForm((v) => !v),
+        <span style={{ flex: 1 }} />
+        <span
+          className="font-mono"
+          style={{
+            fontSize: 10,
+            color: "var(--text-faint)",
+            letterSpacing: "0.06em",
           }}
-        />
-      )}
+        >
+          {query.trim()
+            ? `${filteredRows.length} of ${rows.length}`
+            : `${rows.length}`}
+          {" "}submission{rows.length === 1 ? "" : "s"}
+        </span>
+      </div>
+    </WindowPanel>
+  );
 
-      {!isLoading && !isError && rows.length > 0 && (
-        <AilaCard className="overflow-x-auto p-0" techBorder glow><table className="w-full text-sm">
-          <caption className="sr-only">Disclosure submissions</caption>
-          <thead>
-            <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-muted">
-              <SortHeader columnKey="track" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Track</SortHeader>
-              <SortHeader columnKey="status" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Status</SortHeader>
-              <SortHeader columnKey="poc_tier" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>PoC tier</SortHeader>
-              <SortHeader columnKey="severity_rating" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Severity</SortHeader>
-              <SortHeader columnKey="embargo_until" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Embargo until</SortHeader>
-              <SortHeader columnKey="vendor_reference" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Vendor ref</SortHeader>
-              <SortHeader columnKey="bounty_awarded_usd" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort} align="right">Bounty</SortHeader>
-              <th className="px-2 py-2"></th>
-            </tr>
-          </thead>
-          <tbody ref={tbodyRef} {...tbodyProps}>
-            {sortedRows.map((r, idx) => {
-              const rowProps = getRowProps(idx);
-              return (
-              <tr
-                key={r.id}
-                {...rowProps}
-                onClick={() => navigate(`/vr/disclosures/${r.id}`)}
-                className={
-                  "border-b border-border last:border-b-0 cursor-pointer hover:bg-surface transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset " +
-                  (rowProps["data-row-active"] ? "bg-elevated" : "")
-                }
-              >
-                <td className="px-4 py-2 font-mono text-xs text-foreground">
-                  {r.track_info?.display_name ?? r.track_id}
-                </td>
-                <td className="px-4 py-2">
-                  <AilaBadge severity={STATUS_COLOR[r.status]} size="sm">
-                    {r.status}
-                  </AilaBadge>
-                </td>
-                <td className="px-4 py-2 font-mono text-xs">{r.poc_tier}</td>
-                <td className="px-4 py-2 text-xs">
-                  {r.severity_rating ?? "--"}
-                </td>
-                <td className="px-4 py-2 font-mono text-xs text-text-muted">
-                  {r.embargo_until
-                    ? new Date(r.embargo_until).toLocaleDateString()
-                    : "--"}
-                </td>
-                <td className="px-4 py-2 font-mono text-xs">
-                  {r.vendor_reference ?? "--"}
-                </td>
-                <td className="px-4 py-2 font-mono text-xs text-right">
-                  {r.bounty_awarded_usd != null
-                    ? `$${r.bounty_awarded_usd.toLocaleString()}`
-                    : "--"}
-                </td>
-                <td className="px-2 py-2 text-right">
-                  <DeleteButton
-                    id={r.id}
-                    label={`disclosure to ${r.track_id}`}
-                    mutation={deleteMut}
-                    compact
-                  />
-                </td>
-              </tr>
-              );
-            })}
-          </tbody>
-        </table></AilaCard>
-      )}
+  // ─── Table ───
+  const columns: {
+    label: string;
+    width: string;
+    align?: "left" | "right" | "center";
+  }[] = [
+    { label: "track", width: "1fr" },
+    { label: "status", width: "110px" },
+    { label: "poc tier", width: "120px" },
+    { label: "severity", width: "110px" },
+    { label: "embargo until", width: "130px" },
+    { label: "vendor ref", width: "130px" },
+    { label: "bounty", width: "90px", align: "right" },
+    { label: "", width: "40px", align: "center" },
+  ];
+
+  function renderCells(r: VRDisclosureSubmissionSummary): React.ReactNode[] {
+    const trackLabel = r.track_info?.display_name ?? r.track_id;
+    return [
+      <span
+        className="font-mono"
+        title={trackLabel}
+        style={{
+          fontSize: 11.5,
+          color: "var(--text-primary)",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          display: "block",
+        }}
+      >
+        {trackLabel}
+      </span>,
+      <MonoBadge tone={STATUS_TONE[r.status]}>{r.status}</MonoBadge>,
+      <span
+        className="font-mono"
+        style={{ fontSize: 10.5, color: "var(--text-muted)" }}
+      >
+        {r.poc_tier}
+      </span>,
+      <span
+        className="font-mono"
+        style={{ fontSize: 10.5, color: "var(--text-primary)" }}
+      >
+        {r.severity_rating ?? "--"}
+      </span>,
+      <span
+        className="font-mono"
+        style={{ fontSize: 10, color: "var(--text-faint)" }}
+      >
+        {r.embargo_until
+          ? new Date(r.embargo_until).toLocaleDateString()
+          : "--"}
+      </span>,
+      <span
+        className="font-mono"
+        style={{ fontSize: 10.5, color: "var(--text-muted)" }}
+      >
+        {r.vendor_reference ?? "--"}
+      </span>,
+      <span
+        className="font-mono"
+        style={{ fontSize: 11, color: "var(--text-primary)" }}
+      >
+        {r.bounty_awarded_usd != null
+          ? `$${r.bounty_awarded_usd.toLocaleString()}`
+          : "--"}
+      </span>,
+      <span onClick={(e) => e.stopPropagation()}>
+        <DeleteButton
+          id={r.id}
+          label={`disclosure to ${r.track_id}`}
+          mutation={deleteMut}
+          compact
+        />
+      </span>,
+    ];
+  }
+
+  const tableActions = (
+    <span
+      className="font-mono"
+      style={{
+        fontSize: 10,
+        letterSpacing: "0.06em",
+        color: "var(--text-faint)",
+      }}
+    >
+      {filteredRows.length}
+      <span style={{ opacity: 0.5 }}> / {rows.length}</span>
+    </span>
+  );
+
+  let tableBody: React.ReactNode;
+  if (isLoading) {
+    tableBody = (
+      <div style={{ padding: 12 }}>
+        <LoadingSkeleton size="lg" width="full" />
+      </div>
+    );
+  } else if (isError) {
+    tableBody = (
+      <div
+        className="font-mono"
+        style={{
+          padding: 24,
+          textAlign: "center",
+          color: "var(--accent)",
+          fontSize: 11,
+          letterSpacing: "0.06em",
+        }}
+      >
+        failed to load disclosures.
+      </div>
+    );
+  } else {
+    tableBody = (
+      <DataGrid
+        columns={columns}
+        rows={filteredRows}
+        renderCells={renderCells}
+        getKey={(r) => r.id}
+        onRowClick={(r) => navigate(`/vr/disclosures/${r.id}`)}
+        empty={
+          <div
+            className="font-mono"
+            style={{
+              padding: 34,
+              textAlign: "center",
+              fontSize: 11.5,
+              color: "var(--text-muted)",
+              letterSpacing: "0.04em",
+            }}
+          >
+            {query.trim() || trackFilter || statusFilter
+              ? "no submissions match the current filters."
+              : "no disclosure submissions yet -- file one from the header."}
+          </div>
+        }
+      />
+    );
+  }
+
+  return (
+    <div className="flex flex-col" style={{ gap: 14 }}>
+      <SectionHeader
+        icon="◈"
+        title="Disclosures"
+        actions={headerActions}
+      />
+      {createFormPanel}
+      {filterShelf}
+      <WindowPanel
+        title="results"
+        tone="accent"
+        actions={tableActions}
+        flush
+      >
+        {tableBody}
+      </WindowPanel>
     </div>
   );
 }

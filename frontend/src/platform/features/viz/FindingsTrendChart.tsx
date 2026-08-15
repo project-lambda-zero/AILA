@@ -1,16 +1,14 @@
 /**
- * FindingsTrendChart -- VIZ-02.
+ * FindingsTrendChart -- VIZ-02 wrapper (mock rebuild).
  *
- * Area chart showing findings count over time from real dashboard trend data.
- * The recharts-using JSX lives in ./FindingsTrendChart.view and is loaded
- * lazily (C17) so the recharts vendor chunk stays out of the root entry.
- * Falls back to empty state when no trend data exists, and to a skeleton
- * while data is in flight.
+ * WindowPanel host with mono legend row. Data fetch + suspense/lazy
+ * loading unchanged.
  */
 import * as React from "react";
 
-import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { MonoBadge } from "@/components/aila/mock";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 import { useDashboardTrend } from "./useDashboardTrend";
 import { ChartExportButton } from "./ChartExportButton";
@@ -36,39 +34,47 @@ export function FindingsTrendChart({ className, exportRef }: FindingsTrendChartP
 
   if (isLoading) {
     return (
-      <AilaCard className={className}><div className="p-4 flex flex-col gap-2">
-        <p className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
-          Findings Trend
-        </p>
+      <WindowPanel title="findings trend" tone="muted" status="LOADING" className={className}>
         <LoadingSkeleton size="xl" width="full" />
-      </div></AilaCard>
+      </WindowPanel>
     );
   }
 
   const hasData = trendData && trendData.length > 0;
 
   return (
-    <AilaCard className={className}><div ref={chartRef} className="p-4">
-      <div className="flex items-center justify-between mb-3">
-        <p className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
-          Findings Trend
-        </p>
-        <ChartExportButton chartRef={chartRef} filename="findings-trend" />
+    <WindowPanel
+      title="findings trend"
+      className={className}
+      actions={<ChartExportButton chartRef={chartRef} filename="findings-trend" />}
+    >
+      <div ref={chartRef} className="flex flex-col" style={{ gap: 10 }}>
+        {!hasData ? (
+          <div
+            className="flex items-center justify-center font-mono"
+            style={{
+              height: 192,
+              fontSize: 11,
+              color: "var(--text-muted)",
+              textAlign: "center",
+              padding: "0 16px",
+            }}
+          >
+            no trend data available. run vulnerability scans to populate this chart.
+          </div>
+        ) : (
+          <>
+            <div style={{ height: 192 }}>
+              <React.Suspense fallback={<LoadingSkeleton size="full" width="full" className="h-full" />}>
+                <FindingsTrendChartView data={trendData} colors={colors} />
+              </React.Suspense>
+            </div>
+            <div className="flex items-center justify-center" style={{ gap: 8 }}>
+              <MonoBadge tone="accent">FINDINGS</MonoBadge>
+            </div>
+          </>
+        )}
       </div>
-    
-      {!hasData ? (
-        <div className="h-48 flex items-center justify-center">
-          <p className="font-mono text-xs text-muted-foreground">
-            No trend data available. Run vulnerability scans to populate this chart.
-          </p>
-        </div>
-      ) : (
-        <div className="h-48">
-          <React.Suspense fallback={<LoadingSkeleton size="full" width="full" className="h-full" />}>
-            <FindingsTrendChartView data={trendData} colors={colors} />
-          </React.Suspense>
-        </div>
-      )}
-    </div></AilaCard>
+    </WindowPanel>
   );
 }

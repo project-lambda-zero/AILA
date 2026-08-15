@@ -1,11 +1,10 @@
 /** Horizontal stepper for VR workflow states.
  *
  *  Renders the 5 states from VR_NDAY_V1 (or 3 from VR_INVESTIGATE_V1) as
- *  reasoning-state markers with active highlight + completed checkmarks.
- *  The current state is outlined in accent and carries its phase glyph
- *  (spawn / cycle / merge / emit); completed states get a mint check;
- *  pending states stay muted with their ordinal. This is the "live
- *  progress" widget from 08_FRONTEND_UX.md §Topic 6.
+ *  inline bordered mono step boxes. Each box carries a MonoBadge whose
+ *  tone reflects its state (pending -> muted, current -> accent, done ->
+ *  ok, failed -> accent), a phase pixel-glyph, and the phase label.
+ *  This is the "live progress" widget from 08_FRONTEND_UX.md §Topic 6.
  *
  *  Use:
  *    <WorkflowStepper
@@ -16,22 +15,28 @@
  */
 import type { CSSProperties } from "react";
 
+import { MonoBadge } from "@/components/aila/mock";
 import { PixelIcon, type PixelIconName } from "@/components/aila/PixelIcon";
 
 export type WorkflowFlow = "nday" | "investigate";
 
-const FLOWS: Record<WorkflowFlow, ReadonlyArray<{ id: string; label: string }>> = {
+interface StepDef {
+  id: string;
+  label: string;
+}
+
+const FLOWS: Record<WorkflowFlow, ReadonlyArray<StepDef>> = {
   nday: [
-    { id: "setup",           label: "Setup" },
-    { id: "research",        label: "Research" },
-    { id: "poc_development", label: "PoC" },
-    { id: "advisory",        label: "Advisory" },
-    { id: "response_emit",   label: "Emit" },
+    { id: "setup",           label: "setup" },
+    { id: "research",        label: "research" },
+    { id: "poc_development", label: "poc" },
+    { id: "advisory",        label: "advisory" },
+    { id: "response_emit",   label: "emit" },
   ],
   investigate: [
-    { id: "investigation_setup", label: "Setup" },
-    { id: "investigation_loop",  label: "Investigate" },
-    { id: "investigation_emit",  label: "Emit" },
+    { id: "investigation_setup", label: "setup" },
+    { id: "investigation_loop",  label: "investigate" },
+    { id: "investigation_emit",  label: "emit" },
   ],
 };
 
@@ -44,6 +49,63 @@ function phaseGlyph(id: string): PixelIconName {
   if (id.includes("setup")) return "spawn";
   if (id.includes("advisory") || id.includes("merge")) return "merge";
   return "status";
+}
+
+type StepState = "pending" | "current" | "done" | "failed";
+type BadgeTone = "muted" | "accent" | "ok";
+
+interface StateStyle {
+  badgeTone: BadgeTone;
+  badgeText: string;
+  borderColor: string;
+  labelColor: string;
+  glyphColor: string;
+  opacity: number;
+}
+
+function styleFor(state: StepState, ordinal: number): StateStyle {
+  switch (state) {
+    case "current":
+      return {
+        badgeTone: "accent",
+        badgeText: "current",
+        borderColor: "var(--accent)",
+        labelColor: "var(--text-primary)",
+        glyphColor: "var(--accent)",
+        opacity: 1,
+      };
+    case "done":
+      return {
+        badgeTone: "ok",
+        badgeText: "done",
+        borderColor: "var(--status-ok)",
+        labelColor: "var(--text-muted)",
+        glyphColor: "var(--status-ok)",
+        opacity: 1,
+      };
+    case "failed":
+      // Failed states re-use the accent tone (critical). MonoBadge does
+      // not accept a "failed" tone key -- accent is the mock language's
+      // critical/error signal.
+      return {
+        badgeTone: "accent",
+        badgeText: "failed",
+        borderColor: "var(--accent)",
+        labelColor: "var(--accent)",
+        glyphColor: "var(--accent)",
+        opacity: 1,
+      };
+    case "pending":
+    default:
+      return {
+        badgeTone: "muted",
+        badgeText: String(ordinal).padStart(2, "0"),
+        borderColor: "var(--border-soft)",
+        labelColor: "var(--text-faint)",
+        glyphColor: "var(--text-faint)",
+        opacity: 0.7,
+      };
+  }
 }
 
 export function WorkflowStepper({
@@ -65,55 +127,59 @@ export function WorkflowStepper({
   const isDone = currentState === "succeeded" || currentState === "done";
 
   return (
-    <ol className="flex items-center gap-0 w-full font-mono text-xs select-none">
+    <ol
+      className="flex items-stretch w-full select-none font-mono"
+      style={{ gap: 6, flexWrap: "wrap" }}
+    >
       {steps.map((step, i) => {
-        const isCurrent = i === currentIdx && !isDone;
-        const isFailed = i === failedIdx;
-        const isComplete = isDone || (currentIdx >= 0 && i < currentIdx);
-        const isPending = !isComplete && !isCurrent && !isFailed;
+        let state: StepState;
+        if (i === failedIdx) state = "failed";
+        else if (isDone) state = "done";
+        else if (currentIdx >= 0 && i < currentIdx) state = "done";
+        else if (i === currentIdx) state = "current";
+        else state = "pending";
 
-        let circleClasses =
-          "w-6 h-6 rounded-[2px] flex items-center justify-center text-3xs font-bold border ";
-        let labelClasses = "text-2xs uppercase tracking-cyber-sm ";
-        const connectorClasses =
-          "h-px flex-1 " + (isComplete ? "bg-mint/40" : "bg-border");
-
-        let circleStyle: CSSProperties = {};
-        let marker: React.ReactNode;
-
-        if (isFailed) {
-          circleClasses += "bg-surface";
-          circleStyle = { borderColor: "var(--color-critical)", color: "var(--color-critical)" };
-          labelClasses += "text-critical font-semibold";
-          marker = <PixelIcon name="close" size={12} />;
-        } else if (isCurrent) {
-          circleClasses += "bg-surface ring-2 ring-accent/30";
-          circleStyle = { borderColor: "var(--color-accent)", color: "var(--color-accent)" };
-          labelClasses += "text-foreground font-semibold";
-          marker = <PixelIcon name={phaseGlyph(step.id)} size={12} />;
-        } else if (isComplete) {
-          circleClasses += "bg-surface";
-          circleStyle = { borderColor: "var(--color-mint)", color: "var(--color-mint)" };
-          labelClasses += "text-text-muted";
-          marker = <PixelIcon name="ok" size={12} />;
-        } else {
-          circleClasses += "bg-surface opacity-60";
-          circleStyle = { borderColor: "var(--color-border-bright)", color: "var(--color-text-faint)" };
-          labelClasses += "text-text-muted opacity-60";
-          marker = <span>{i + 1}</span>;
-        }
-
-        void isPending;
+        const s = styleFor(state, i + 1);
+        const boxStyle: CSSProperties = {
+          border: `1px solid ${s.borderColor}`,
+          background: "var(--surface-sunk)",
+          padding: "6px 10px",
+          borderRadius: 3,
+          minWidth: 0,
+          flex: "1 1 140px",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          opacity: s.opacity,
+        };
 
         return (
-          <li key={step.id} className="flex items-center flex-1 last:flex-initial gap-2">
-            <div className="flex items-center gap-2">
-              <span className={circleClasses} style={circleStyle}>
-                {marker}
-              </span>
-              <span className={labelClasses}>{step.label}</span>
-            </div>
-            {i < steps.length - 1 && <div className={connectorClasses} />}
+          <li key={step.id} style={boxStyle}>
+            <MonoBadge tone={s.badgeTone}>{s.badgeText}</MonoBadge>
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                color: s.glyphColor,
+              }}
+            >
+              <PixelIcon
+                name={state === "failed" ? "close" : phaseGlyph(step.id)}
+                size={12}
+              />
+            </span>
+            <span
+              className="uppercase truncate"
+              style={{
+                fontSize: 10,
+                letterSpacing: "0.08em",
+                color: s.labelColor,
+                minWidth: 0,
+                fontWeight: state === "current" || state === "failed" ? 600 : 500,
+              }}
+            >
+              {step.label}
+            </span>
           </li>
         );
       })}

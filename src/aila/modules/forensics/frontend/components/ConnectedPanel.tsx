@@ -3,29 +3,31 @@ import { Link } from "react-router";
 import { FolderOpen } from "@phosphor-icons/react/dist/csr/FolderOpen";
 import { CaretRight } from "@phosphor-icons/react/dist/csr/CaretRight";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
 import { WindowPanel } from "@/components/aila/WindowPanel";
+import { MonoBadge } from "@/components/aila/mock";
 
 import {
   useForensicsProject,
   useProjectInvestigations,
 } from "../queries";
-import type { AgentStep, InvestigationDetail, InvestigationSummary } from "../types";
+import type {
+  AgentStep,
+  InvestigationDetail,
+  InvestigationSummary,
+} from "../types";
 
 interface ConnectedPanelProps {
   projectId: string;
   investigation: InvestigationDetail;
 }
 
-const STATUS_SEVERITY: Record<
-  string,
-  Parameters<typeof AilaBadge>[0]["severity"]
-> = {
+// Status -> mock semantic tone (info/medium/ok/critical/high).
+const STATUS_TONE: Record<string, string> = {
   created: "info",
   queued: "info",
   running: "medium",
   analyzing: "medium",
-  completed: "low",
+  completed: "ok",
   failed: "critical",
   exhausted: "high",
   cancelled: "high",
@@ -92,41 +94,47 @@ interface LineageRowProps {
 }
 
 function LineageRow({ projectId, inv, depth, self }: LineageRowProps) {
-  const severity = STATUS_SEVERITY[inv.status] ?? "neutral";
-  const label = inv.question.length > 90
-    ? `${inv.question.slice(0, 88)}\u2026`
-    : inv.question;
+  const tone = STATUS_TONE[inv.status] ?? "muted";
+  const label =
+    inv.question.length > 90 ? `${inv.question.slice(0, 88)}\u2026` : inv.question;
   const inner = (
-    <div className="flex items-center gap-2 min-w-0">
-      <AilaBadge severity={severity} size="sm">
-        {inv.status}
-      </AilaBadge>
-      <span className="text-xs font-mono text-text-muted shrink-0">
+    <div className="flex items-center min-w-0" style={{ gap: 8 }}>
+      <MonoBadge tone={tone}>{inv.status}</MonoBadge>
+      <span
+        className="font-mono shrink-0"
+        style={{ fontSize: 10.5, color: "var(--text-faint)" }}
+      >
         {inv.id.slice(0, 8)}
       </span>
       <span
-        className={`text-xs truncate ${self ? "text-foreground font-medium" : "text-foreground"}`}
+        className="font-mono truncate"
+        style={{
+          fontSize: 11,
+          color: "var(--text-primary)",
+          fontWeight: self ? 500 : 400,
+        }}
         title={inv.question}
       >
         {label}
       </span>
-      {self && (
-        <AilaBadge severity="info" size="sm">
-          this
-        </AilaBadge>
-      )}
+      {self && <MonoBadge tone="info">this</MonoBadge>}
     </div>
   );
 
   return (
     <li
-      className="flex items-center gap-1"
-      style={{ paddingLeft: `${depth * 1.25}rem` }}
+      className="flex items-center"
+      style={{ gap: 4, paddingLeft: depth * 20 }}
     >
       {depth > 0 && (
         <CaretRight
-          className="h-3 w-3 text-text-muted shrink-0"
+          className="shrink-0"
           aria-hidden="true"
+          style={{
+            width: 12,
+            height: 12,
+            color: "var(--text-faint)",
+          }}
         />
       )}
       {self ? (
@@ -134,7 +142,12 @@ function LineageRow({ projectId, inv, depth, self }: LineageRowProps) {
       ) : (
         <Link
           to={`/forensics/projects/${projectId}/investigations/${inv.id}`}
-          className="flex-1 min-w-0 py-0.5 px-1 rounded hover:bg-elevated focus:outline focus:outline-2 focus:outline-accent"
+          className="flex-1 min-w-0"
+          style={{
+            padding: "3px 4px",
+            borderRadius: 3,
+            textDecoration: "none",
+          }}
         >
           {inner}
         </Link>
@@ -157,7 +170,10 @@ function LineageRow({ projectId, inv, depth, self }: LineageRowProps) {
  * When the investigation has no parent + no children, the lineage section
  * shows a neutral "single attempt" note (no fabricated relationships).
  */
-export function ConnectedPanel({ projectId, investigation }: ConnectedPanelProps) {
+export function ConnectedPanel({
+  projectId,
+  investigation,
+}: ConnectedPanelProps) {
   const { data: project } = useForensicsProject(projectId);
   const { data: siblings } = useProjectInvestigations(projectId);
 
@@ -167,7 +183,8 @@ export function ConnectedPanel({ projectId, investigation }: ConnectedPanelProps
     for (const inv of list) idx.set(inv.id, inv);
     const anc = computeAncestors(investigation, idx);
     const kids = list.filter(
-      (i) => i.parent_investigation_id === investigation.id && i.id !== investigation.id,
+      (i) =>
+        i.parent_investigation_id === investigation.id && i.id !== investigation.id,
     );
     return { ancestors: anc, children: kids, byId: idx };
   }, [investigation, siblings]);
@@ -186,141 +203,200 @@ export function ConnectedPanel({ projectId, investigation }: ConnectedPanelProps
 
   const hasLineage = ancestors.length > 0 || children.length > 0;
 
+  const sectionLabelStyle: React.CSSProperties = {
+    fontSize: 9,
+    letterSpacing: "0.14em",
+    color: "var(--text-faint)",
+  };
+
   return (
-    <WindowPanel title="connected"><div className="space-y-4">
-      {/* Project link */}
-      <div className="flex items-start gap-3">
-        <FolderOpen
-          className="h-4 w-4 text-text-muted mt-0.5"
-          aria-hidden="true"
-        />
-        <div className="min-w-0 flex-1">
-          <p className="text-xs text-text-muted">Project</p>
-          <Link
-            to={`/forensics/projects/${projectId}`}
-            className="text-sm font-medium text-accent hover:underline focus:outline focus:outline-2 focus:outline-accent"
-          >
-            {project?.name ?? projectId}
-          </Link>
-          {project && (
-            <p className="text-3xs font-mono text-text-muted">
-              {project.investigation_count} investigation(s) {"\u00b7"}{" "}
-              {project.evidence_count} evidence {"\u00b7"}{" "}
-              {project.artifact_count} artifact(s)
+    <WindowPanel title="connected" status="forensics ; cross-references">
+      <div className="space-y-4">
+        {/* Project link */}
+        <div className="flex items-start" style={{ gap: 10 }}>
+          <FolderOpen
+            aria-hidden="true"
+            style={{
+              width: 16,
+              height: 16,
+              marginTop: 2,
+              color: "var(--text-faint)",
+              flex: "0 0 auto",
+            }}
+          />
+          <div className="min-w-0 flex-1">
+            <p className="font-mono uppercase" style={sectionLabelStyle}>
+              Project
             </p>
+            <Link
+              to={`/forensics/projects/${projectId}`}
+              className="font-mono"
+              style={{
+                fontSize: 12,
+                color: "var(--accent)",
+                textDecoration: "none",
+              }}
+            >
+              {project?.name ?? projectId}
+            </Link>
+            {project && (
+              <p
+                className="font-mono"
+                style={{
+                  fontSize: 9.5,
+                  color: "var(--text-faint)",
+                  marginTop: 2,
+                }}
+              >
+                {project.investigation_count} investigation(s) {"\u00b7"}{" "}
+                {project.evidence_count} evidence {"\u00b7"}{" "}
+                {project.artifact_count} artifact(s)
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Lineage tree */}
+        <div className="space-y-2">
+          <div className="flex items-baseline" style={{ gap: 8 }}>
+            <h3 className="font-mono uppercase" style={sectionLabelStyle}>
+              Lineage
+            </h3>
+            <span
+              className="font-mono"
+              style={{ fontSize: 9.5, color: "var(--text-faint)" }}
+            >
+              {ancestors.length} ancestor(s) {"\u00b7"} {children.length} rerun(s)
+            </span>
+          </div>
+          {!hasLineage ? (
+            <p
+              className="font-mono"
+              style={{ fontSize: 11, color: "var(--text-muted)" }}
+            >
+              Single attempt {"\u2014"} no parent or rerun chain recorded.
+            </p>
+          ) : (
+            <ul className="space-y-0.5">
+              {ancestors.map((inv, i) => (
+                <LineageRow
+                  key={inv.id}
+                  projectId={projectId}
+                  inv={inv}
+                  depth={i}
+                  self={false}
+                />
+              ))}
+              <LineageRow
+                projectId={projectId}
+                inv={investigation}
+                depth={ancestors.length}
+                self
+              />
+              {children.map((inv) => (
+                <LineageRow
+                  key={inv.id}
+                  projectId={projectId}
+                  inv={inv}
+                  depth={ancestors.length + 1}
+                  self={false}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {/* Related investigations surfaced by step observables */}
+        {relatedInvestigations.length > 0 && (
+          <div className="space-y-2">
+            <h3 className="font-mono uppercase" style={sectionLabelStyle}>
+              Referenced investigations
+            </h3>
+            <ul className="flex flex-wrap" style={{ gap: 6 }}>
+              {relatedInvestigations.map((inv) => (
+                <li key={inv.id}>
+                  <Link
+                    to={`/forensics/projects/${projectId}/investigations/${inv.id}`}
+                    className="inline-flex items-center"
+                    title={inv.question}
+                    style={{
+                      gap: 6,
+                      padding: "3px 8px",
+                      border: "1px solid var(--border-soft)",
+                      background: "var(--surface-card)",
+                      borderRadius: 3,
+                      textDecoration: "none",
+                    }}
+                  >
+                    <MonoBadge tone={STATUS_TONE[inv.status] ?? "muted"}>
+                      {inv.status}
+                    </MonoBadge>
+                    <span
+                      className="font-mono"
+                      style={{ fontSize: 10.5, color: "var(--accent)" }}
+                    >
+                      {inv.id.slice(0, 8)}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Referenced artifacts (id-only; the project's artifact explorer
+            resolves each id when the operator jumps into the project). */}
+        <div className="space-y-2">
+          <div className="flex items-baseline" style={{ gap: 8 }}>
+            <h3 className="font-mono uppercase" style={sectionLabelStyle}>
+              Referenced artifacts
+            </h3>
+            <span
+              className="font-mono"
+              style={{ fontSize: 9.5, color: "var(--text-faint)" }}
+            >
+              {artifactIds.length} id(s)
+            </span>
+          </div>
+          {artifactIds.length === 0 ? (
+            <p
+              className="font-mono"
+              style={{ fontSize: 11, color: "var(--text-muted)" }}
+            >
+              No artifact ids surfaced by the reasoning provenance yet.
+            </p>
+          ) : (
+            <ul className="flex flex-wrap" style={{ gap: 4 }}>
+              {artifactIds.slice(0, 24).map((id) => (
+                <li key={id}>
+                  <span
+                    className="inline-block font-mono"
+                    style={{
+                      padding: "2px 6px",
+                      border: "1px solid var(--border-faint)",
+                      background: "var(--surface-card)",
+                      borderRadius: 2,
+                      fontSize: 9.5,
+                      color: "var(--text-faint)",
+                    }}
+                    title={id}
+                  >
+                    {id.slice(0, 10)}
+                  </span>
+                </li>
+              ))}
+              {artifactIds.length > 24 && (
+                <li
+                  className="font-mono self-center"
+                  style={{ fontSize: 9.5, color: "var(--text-faint)" }}
+                >
+                  {"\u2026"} {artifactIds.length - 24} more
+                </li>
+              )}
+            </ul>
           )}
         </div>
       </div>
-
-      {/* Lineage tree */}
-      <div className="space-y-2">
-        <div className="flex items-baseline gap-2">
-          <h3 className="text-xs font-mono uppercase tracking-wider text-text-muted">
-            Lineage
-          </h3>
-          <span className="text-3xs font-mono text-text-muted">
-            {ancestors.length} ancestor(s) {"\u00b7"} {children.length} rerun(s)
-          </span>
-        </div>
-        {!hasLineage ? (
-          <p className="font-mono text-xs text-text-muted">
-            Single attempt {"\u2014"} no parent or rerun chain recorded.
-          </p>
-        ) : (
-          <ul className="space-y-0.5">
-            {ancestors.map((inv, i) => (
-              <LineageRow
-                key={inv.id}
-                projectId={projectId}
-                inv={inv}
-                depth={i}
-                self={false}
-              />
-            ))}
-            <LineageRow
-              projectId={projectId}
-              inv={investigation}
-              depth={ancestors.length}
-              self
-            />
-            {children.map((inv) => (
-              <LineageRow
-                key={inv.id}
-                projectId={projectId}
-                inv={inv}
-                depth={ancestors.length + 1}
-                self={false}
-              />
-            ))}
-          </ul>
-        )}
-      </div>
-
-      {/* Related investigations surfaced by step observables */}
-      {relatedInvestigations.length > 0 && (
-        <div className="space-y-2">
-          <h3 className="text-xs font-mono uppercase tracking-wider text-text-muted">
-            Referenced investigations
-          </h3>
-          <ul className="flex flex-wrap gap-1.5">
-            {relatedInvestigations.map((inv) => (
-              <li key={inv.id}>
-                <Link
-                  to={`/forensics/projects/${projectId}/investigations/${inv.id}`}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border bg-surface hover:bg-elevated transition-colors focus:outline focus:outline-2 focus:outline-accent"
-                  title={inv.question}
-                >
-                  <AilaBadge
-                    severity={STATUS_SEVERITY[inv.status] ?? "neutral"}
-                    size="sm"
-                  >
-                    {inv.status}
-                  </AilaBadge>
-                  <span className="text-xs font-mono text-accent">
-                    {inv.id.slice(0, 8)}
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Referenced artifacts (id-only; the project's artifact explorer
-          resolves each id when the operator jumps into the project). */}
-      <div className="space-y-2">
-        <div className="flex items-baseline gap-2">
-          <h3 className="text-xs font-mono uppercase tracking-wider text-text-muted">
-            Referenced artifacts
-          </h3>
-          <span className="text-3xs font-mono text-text-muted">
-            {artifactIds.length} id(s)
-          </span>
-        </div>
-        {artifactIds.length === 0 ? (
-          <p className="font-mono text-xs text-text-muted">
-            No artifact ids surfaced by the reasoning provenance yet.
-          </p>
-        ) : (
-          <ul className="flex flex-wrap gap-1">
-            {artifactIds.slice(0, 24).map((id) => (
-              <li key={id}>
-                <span
-                  className="inline-block px-1.5 py-0.5 rounded border border-border bg-surface text-3xs font-mono text-text-muted"
-                  title={id}
-                >
-                  {id.slice(0, 10)}
-                </span>
-              </li>
-            ))}
-            {artifactIds.length > 24 && (
-              <li className="text-3xs font-mono text-text-muted self-center">
-                {"\u2026"} {artifactIds.length - 24} more
-              </li>
-            )}
-          </ul>
-        )}
-      </div>
-    </div></WindowPanel>
+    </WindowPanel>
   );
 }

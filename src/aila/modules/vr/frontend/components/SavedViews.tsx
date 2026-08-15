@@ -22,8 +22,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
+import { MonoBadge } from "@/components/aila/mock";
 import { useReducedMotion } from "@/hooks/useReducedMotion";
 import { useAuthStore } from "@platform/auth/useAuthStore";
 import { BookmarkSimple } from "@phosphor-icons/react/dist/csr/BookmarkSimple";
@@ -61,6 +60,46 @@ export interface SavedViewsProps {
   hidden?: boolean;
 }
 
+// ─── Mock chip style tokens ────────────────────────────────────────────
+const CHIP_H = 26;
+const CHIP_FS = 9.5;
+const CHIP_LS = "0.08em";
+
+function chipBaseStyle(active: boolean, transition: string): React.CSSProperties {
+  return {
+    height: CHIP_H,
+    padding: "0 10px",
+    fontSize: CHIP_FS,
+    letterSpacing: CHIP_LS,
+    border: `1px solid ${active ? "var(--accent)" : "var(--border-soft)"}`,
+    background: active
+      ? "color-mix(in srgb, var(--accent) 12%, transparent)"
+      : "var(--surface-sunk)",
+    color: active ? "var(--accent)" : "var(--text-muted)",
+    borderRadius: 2,
+    cursor: "pointer",
+    transition,
+  };
+}
+
+function kebabStyle(active: boolean, owned: boolean, transition: string): React.CSSProperties {
+  return {
+    height: CHIP_H,
+    width: 22,
+    fontSize: CHIP_FS,
+    border: `1px solid ${active ? "var(--accent)" : "var(--border-soft)"}`,
+    borderLeft: 0,
+    background: active
+      ? "color-mix(in srgb, var(--accent) 12%, transparent)"
+      : "var(--surface-sunk)",
+    color: active ? "var(--accent)" : "var(--text-muted)",
+    borderRadius: 2,
+    cursor: owned ? "pointer" : "not-allowed",
+    opacity: owned ? 1 : 0.5,
+    transition,
+  };
+}
+
 export function SavedViews({
   entityType,
   currentFilterJson,
@@ -89,8 +128,6 @@ export function SavedViews({
   const [menuOpenFor, setMenuOpenFor] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
-  // Close the kebab menu on outside click or Escape so a stale menu
-  // does not linger over the table after the operator has moved on.
   useEffect(() => {
     if (menuOpenFor === null && !saveOpen) return;
     function onDocClick(e: MouseEvent) {
@@ -113,9 +150,6 @@ export function SavedViews({
     };
   }, [menuOpenFor, saveOpen]);
 
-  // Sort: pinned first (stable within each half), then most-recently
-  // updated. Matches operator expectation that a fresh save lands
-  // near the top of the row.
   const sortedViews = useMemo(() => {
     return [...views].sort((a, b) => {
       if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1;
@@ -127,17 +161,21 @@ export function SavedViews({
 
   if (hidden) return null;
 
-  // Loading / error surfaces: keep small so the chip row never
-  // dominates the page during boot.
   if (isLoading) {
     return (
       <div
         ref={rootRef}
-        className="flex items-center gap-2 text-xs text-text-muted"
+        className="flex items-center font-mono"
+        style={{
+          gap: 6,
+          fontSize: 10,
+          color: "var(--text-faint)",
+          letterSpacing: "0.06em",
+        }}
         aria-busy="true"
       >
-        <BookmarkSimple className="h-3.5 w-3.5" weight="regular" aria-hidden />
-        <span>Loading saved views…</span>
+        <BookmarkSimple className="h-3 w-3" weight="regular" aria-hidden />
+        <span>loading saved views…</span>
       </div>
     );
   }
@@ -145,32 +183,57 @@ export function SavedViews({
     return (
       <div
         ref={rootRef}
-        className="flex items-center gap-2 text-xs text-critical"
+        className="flex items-center font-mono"
+        style={{
+          gap: 6,
+          fontSize: 10,
+          color: "var(--accent)",
+          letterSpacing: "0.06em",
+        }}
         role="alert"
       >
-        <BookmarkSimple className="h-3.5 w-3.5" weight="regular" aria-hidden />
-        <span>Failed to load saved views.</span>
+        <BookmarkSimple className="h-3 w-3" weight="regular" aria-hidden />
+        <span>failed to load saved views</span>
       </div>
     );
   }
 
-  const transition = reducedMotion ? "none" : "border-color 120ms, background-color 120ms";
+  const transition = reducedMotion
+    ? "none"
+    : "border-color 120ms, background-color 120ms, color 120ms";
 
   return (
     <div
       ref={rootRef}
-      className="flex flex-wrap items-center gap-2"
+      className="flex flex-wrap items-center"
+      style={{ gap: 6 }}
       aria-label={`Saved views for ${entityLabel ?? entityType}`}
       role="toolbar"
     >
-      <span className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wider text-text-muted font-mono">
-        <BookmarkSimple className="h-3.5 w-3.5" weight="duotone" aria-hidden />
-        Views
+      <span
+        className="inline-flex items-center font-mono uppercase"
+        style={{
+          gap: 5,
+          fontSize: 9,
+          letterSpacing: "0.12em",
+          color: "var(--text-faint)",
+        }}
+      >
+        <BookmarkSimple className="h-3 w-3" weight="duotone" aria-hidden />
+        views
       </span>
 
       {sortedViews.length === 0 && (
-        <span className="text-xs text-text-muted italic">
-          No saved views yet.
+        <span
+          className="font-mono"
+          style={{
+            fontSize: 10,
+            color: "var(--text-faint)",
+            fontStyle: "italic",
+            letterSpacing: "0.05em",
+          }}
+        >
+          no saved views yet
         </span>
       )}
 
@@ -186,27 +249,33 @@ export function SavedViews({
               aria-pressed={active}
               aria-label={`Apply saved view '${view.name}'${view.is_pinned ? " (pinned)" : ""}${view.shared_with_team ? " (shared with team)" : ""}`}
               title={view.name}
-              className={
-                "touch-target inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-mono rounded-l-md border uppercase tracking-wider focus:outline-none focus-visible:ring-2 focus-visible:ring-accent " +
-                (active
-                  ? "border-accent bg-elevated text-foreground"
-                  : "border-border bg-surface text-text-muted hover:text-foreground")
-              }
-              style={{ transition }}
+              className="font-mono uppercase inline-flex items-center focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              style={{
+                ...chipBaseStyle(active, transition),
+                gap: 5,
+                borderTopRightRadius: 0,
+                borderBottomRightRadius: 0,
+              }}
             >
               {view.is_pinned && (
                 <PushPin
-                  className="h-3 w-3 shrink-0 text-accent"
+                  className="h-3 w-3 shrink-0"
                   weight="fill"
                   aria-hidden
+                  style={{ color: "var(--accent)" }}
                 />
               )}
-              <span className="max-w-[16rem] truncate">{view.name}</span>
-              {view.shared_with_team && (
-                <AilaBadge severity="info" size="sm" className="ml-1">
-                  team
-                </AilaBadge>
-              )}
+              <span
+                style={{
+                  maxWidth: "16rem",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {view.name}
+              </span>
+              {view.shared_with_team && <MonoBadge tone="info">team</MonoBadge>}
             </button>
             <button
               type="button"
@@ -216,16 +285,14 @@ export function SavedViews({
               aria-expanded={menuOpen}
               disabled={!owned}
               title={owned ? "View options" : "Read-only (shared by another user)"}
-              className={
-                "inline-flex items-center px-1.5 py-1.5 text-xs rounded-r-md border border-l-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent " +
-                (active
-                  ? "border-accent bg-elevated text-foreground"
-                  : "border-border bg-surface text-text-muted hover:text-foreground") +
-                (owned ? "" : " opacity-50 cursor-not-allowed")
-              }
-              style={{ transition }}
+              className="inline-flex items-center justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              style={{
+                ...kebabStyle(active, owned, transition),
+                borderTopLeftRadius: 0,
+                borderBottomLeftRadius: 0,
+              }}
             >
-              <DotsThreeVertical className="h-3.5 w-3.5" aria-hidden />
+              <DotsThreeVertical className="h-3 w-3" aria-hidden />
             </button>
             {menuOpen && owned && (
               <ViewMenu
@@ -265,11 +332,19 @@ export function SavedViews({
         aria-label="Save current filters as a new view"
         aria-expanded={saveOpen}
         aria-haspopup="dialog"
-        className="touch-target inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-mono uppercase tracking-wider rounded-md border border-dashed border-border bg-transparent text-text-muted hover:text-foreground hover:border-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-        style={{ transition }}
+        className="font-mono uppercase inline-flex items-center focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        style={{
+          ...chipBaseStyle(saveOpen, transition),
+          gap: 5,
+          color: saveOpen ? "var(--accent)" : "var(--accent)",
+          borderColor: "var(--accent)",
+          background: saveOpen
+            ? "color-mix(in srgb, var(--accent) 18%, transparent)"
+            : "color-mix(in srgb, var(--accent) 8%, transparent)",
+        }}
       >
-        <FloppyDisk className="h-3.5 w-3.5" weight="regular" aria-hidden />
-        Save current
+        <FloppyDisk className="h-3 w-3" weight="regular" aria-hidden />
+        save current
       </button>
 
       {saveOpen && (
@@ -317,9 +392,25 @@ export function SavedViews({
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Kebab menu -- absolutely positioned dropdown from each chip.
+// Kebab menu -- absolutely positioned mock overlay dropdown.
 // Owner-only: caller has already gated visibility on `owned`.
 // ─────────────────────────────────────────────────────────────────────
+
+function menuItemStyle(danger?: boolean): React.CSSProperties {
+  return {
+    display: "flex",
+    width: "100%",
+    alignItems: "center",
+    gap: 8,
+    padding: "6px 10px",
+    fontSize: 10,
+    letterSpacing: "0.08em",
+    color: danger ? "var(--accent)" : "var(--text-muted)",
+    background: "transparent",
+    border: 0,
+    cursor: "pointer",
+  };
+}
 
 function ViewMenu({
   view,
@@ -343,32 +434,46 @@ function ViewMenu({
     <div
       role="menu"
       aria-label={`Options for '${view.name}'`}
-      className="absolute z-20 top-full left-0 mt-1 min-w-[15rem] rounded-md border bg-elevated p-1"
-      style={{ borderColor: "var(--color-border-bright)", boxShadow: "var(--bevel-raised)" }}
+      className="absolute z-20 font-mono uppercase"
+      style={{
+        top: "100%",
+        left: 0,
+        marginTop: 4,
+        minWidth: 220,
+        background: "var(--surface-card)",
+        border: "1px solid var(--border-soft)",
+        borderRadius: 3,
+        boxShadow: "var(--bevel-raised)",
+        padding: 3,
+      }}
     >
       <button
         type="button"
         role="menuitem"
         onClick={onTogglePin}
         disabled={busy}
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-xs rounded hover:bg-surface focus:outline-none focus-visible:bg-surface disabled:opacity-50"
+        style={{ ...menuItemStyle(), opacity: busy ? 0.5 : 1 }}
+        onMouseOver={(e) => (e.currentTarget.style.background = "var(--surface-hover)")}
+        onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
       >
         {view.is_pinned ? (
-          <PushPinSlash className="h-3.5 w-3.5" weight="regular" aria-hidden />
+          <PushPinSlash className="h-3 w-3" weight="regular" aria-hidden />
         ) : (
-          <PushPin className="h-3.5 w-3.5" weight="regular" aria-hidden />
+          <PushPin className="h-3 w-3" weight="regular" aria-hidden />
         )}
-        {view.is_pinned ? "Unpin" : "Pin"}
+        {view.is_pinned ? "unpin" : "pin"}
       </button>
       <button
         type="button"
         role="menuitem"
         onClick={onToggleShare}
         disabled={busy}
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-xs rounded hover:bg-surface focus:outline-none focus-visible:bg-surface disabled:opacity-50"
+        style={{ ...menuItemStyle(), opacity: busy ? 0.5 : 1 }}
+        onMouseOver={(e) => (e.currentTarget.style.background = "var(--surface-hover)")}
+        onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
       >
-        <UsersThree className="h-3.5 w-3.5" weight="regular" aria-hidden />
-        {view.shared_with_team ? "Unshare with team" : "Share with team"}
+        <UsersThree className="h-3 w-3" weight="regular" aria-hidden />
+        {view.shared_with_team ? "unshare with team" : "share with team"}
       </button>
       <button
         type="button"
@@ -376,67 +481,107 @@ function ViewMenu({
         onClick={onOverwrite}
         disabled={busy}
         title="Replace this view's stored filters with the current selection"
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-xs rounded hover:bg-surface focus:outline-none focus-visible:bg-surface disabled:opacity-50"
+        style={{ ...menuItemStyle(), opacity: busy ? 0.5 : 1 }}
+        onMouseOver={(e) => (e.currentTarget.style.background = "var(--surface-hover)")}
+        onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
       >
-        <FloppyDisk className="h-3.5 w-3.5" weight="regular" aria-hidden />
-        Overwrite with current
+        <FloppyDisk className="h-3 w-3" weight="regular" aria-hidden />
+        overwrite with current
       </button>
-      <div className="h-px bg-border my-1" role="separator" />
+      <div
+        role="separator"
+        style={{ height: 1, background: "var(--border-faint)", margin: "3px 0" }}
+      />
       {!confirmDelete ? (
         <button
           type="button"
           role="menuitem"
           onClick={() => setConfirmDelete(true)}
           disabled={busy}
-          className="flex w-full items-center gap-2 px-3 py-1.5 text-xs rounded hover:bg-surface text-critical focus:outline-none focus-visible:bg-surface disabled:opacity-50"
+          style={{ ...menuItemStyle(true), opacity: busy ? 0.5 : 1 }}
+          onMouseOver={(e) =>
+            (e.currentTarget.style.background =
+              "color-mix(in srgb, var(--accent) 10%, transparent)")
+          }
+          onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
         >
-          <Trash className="h-3.5 w-3.5" weight="regular" aria-hidden />
-          Delete
+          <Trash className="h-3 w-3" weight="regular" aria-hidden />
+          delete
         </button>
       ) : (
-        <div className="flex flex-col gap-1 px-3 py-2">
-          <span className="text-xs text-critical">
-            Delete '{view.name}'?
+        <div style={{ padding: "6px 10px", display: "flex", flexDirection: "column", gap: 6 }}>
+          <span
+            className="font-mono uppercase"
+            style={{ fontSize: 10, color: "var(--accent)", letterSpacing: "0.08em" }}
+          >
+            delete '{view.name}'?
           </span>
-          <div className="flex gap-1">
+          <div className="flex" style={{ gap: 4 }}>
             <button
               type="button"
               role="menuitem"
               onClick={onDelete}
               disabled={busy}
-              className="flex-1 px-2 py-1 text-xs rounded bg-critical/20 text-critical border border-critical/40 hover:bg-critical/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-critical disabled:opacity-50"
+              className="font-mono uppercase focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              style={{
+                flex: 1,
+                height: 24,
+                fontSize: 9.5,
+                letterSpacing: "0.08em",
+                color: "var(--accent)",
+                background: "color-mix(in srgb, var(--accent) 18%, transparent)",
+                border: "1px solid var(--accent)",
+                borderRadius: 2,
+                cursor: "pointer",
+                opacity: busy ? 0.5 : 1,
+              }}
             >
-              Delete
+              delete
             </button>
             <button
               type="button"
               onClick={() => setConfirmDelete(false)}
               disabled={busy}
-              className="flex-1 px-2 py-1 text-xs rounded border border-border text-text-muted hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
+              className="font-mono uppercase focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              style={{
+                flex: 1,
+                height: 24,
+                fontSize: 9.5,
+                letterSpacing: "0.08em",
+                color: "var(--text-muted)",
+                background: "transparent",
+                border: "1px solid var(--border-soft)",
+                borderRadius: 2,
+                cursor: "pointer",
+                opacity: busy ? 0.5 : 1,
+              }}
             >
-              Cancel
+              cancel
             </button>
           </div>
         </div>
       )}
-      <div className="h-px bg-border my-1" role="separator" />
+      <div
+        role="separator"
+        style={{ height: 1, background: "var(--border-faint)", margin: "3px 0" }}
+      />
       <button
         type="button"
         role="menuitem"
         onClick={onClose}
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-xs rounded hover:bg-surface text-text-muted focus:outline-none focus-visible:bg-surface"
+        style={menuItemStyle()}
+        onMouseOver={(e) => (e.currentTarget.style.background = "var(--surface-hover)")}
+        onMouseOut={(e) => (e.currentTarget.style.background = "transparent")}
       >
-        <X className="h-3.5 w-3.5" weight="regular" aria-hidden />
-        Close
+        <X className="h-3 w-3" weight="regular" aria-hidden />
+        close
       </button>
     </div>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Save dialog -- inline popover under the "Save current" chip.
-// Uses AilaCard so it inherits the same techBorder chrome as the
-// surrounding filter card without pulling in a modal primitive.
+// Save dialog -- inline mock overlay popover under the "Save current" chip.
 // ─────────────────────────────────────────────────────────────────────
 
 function SaveDialog({
@@ -471,72 +616,149 @@ function SaveDialog({
       role="dialog"
       aria-label="Save current filters as a view"
       className="absolute z-20"
-      style={{ top: "100%", right: 0, marginTop: 6 }}
+      style={{
+        top: "100%",
+        right: 0,
+        marginTop: 6,
+        minWidth: 320,
+        padding: 12,
+        background: "var(--surface-card)",
+        border: "1px solid var(--border-soft)",
+        borderRadius: 3,
+        boxShadow: "var(--bevel-raised)",
+      }}
     >
-      <AilaCard techBorder padding="sm" className="min-w-[20rem]">
-        <div className="space-y-2">
-          <label className="block text-xs text-text-muted">
-            View name
-            <input
-              ref={inputRef}
-              type="text"
-              value={name}
-              onChange={(e) => onNameChange(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  onSubmit();
-                }
-              }}
-              placeholder="e.g. Running variant hunts"
-              aria-label="View name"
-              maxLength={128}
-              className="mt-1 w-full px-3 py-1.5 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
-            />
-          </label>
-          <label className="flex items-center gap-2 text-xs text-text-muted cursor-pointer">
-            <input
-              type="checkbox"
-              className="accent-accent"
-              checked={pinned}
-              onChange={(e) => onPinnedChange(e.target.checked)}
-            />
-            Pin to front of the chip row
-          </label>
-          <label className="flex items-center gap-2 text-xs text-text-muted cursor-pointer">
-            <input
-              type="checkbox"
-              className="accent-accent"
-              checked={shared}
-              onChange={(e) => onSharedChange(e.target.checked)}
-            />
-            Share with my team
-          </label>
-          {error && (
-            <p className="text-xs text-critical" role="alert">
-              {error}
-            </p>
-          )}
-          <div className="flex justify-end gap-2 pt-1">
-            <button
-              type="button"
-              onClick={onCancel}
-              disabled={busy}
-              className="px-3 py-1 text-xs rounded border border-border text-text-muted hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={onSubmit}
-              disabled={busy || name.trim().length === 0}
-              className="px-3 py-1 text-xs rounded bg-accent text-background hover:bg-accent/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
-            >
-              {busy ? "Saving…" : "Save view"}
-            </button>
-          </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <label
+          className="font-mono uppercase"
+          style={{
+            display: "block",
+            fontSize: 9,
+            letterSpacing: "0.1em",
+            color: "var(--text-faint)",
+          }}
+        >
+          view name
+          <input
+            ref={inputRef}
+            type="text"
+            value={name}
+            onChange={(e) => onNameChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                onSubmit();
+              }
+            }}
+            placeholder="e.g. Running variant hunts"
+            aria-label="View name"
+            maxLength={128}
+            className="font-mono"
+            style={{
+              display: "block",
+              marginTop: 5,
+              width: "100%",
+              height: 28,
+              padding: "0 8px",
+              fontSize: 11,
+              letterSpacing: 0,
+              textTransform: "none",
+              color: "var(--text-primary)",
+              background: "var(--surface-sunk)",
+              border: "1px solid var(--border-soft)",
+              borderRadius: 2,
+              outline: "none",
+            }}
+          />
+        </label>
+        <label
+          className="flex items-center font-mono"
+          style={{
+            gap: 6,
+            fontSize: 10,
+            color: "var(--text-muted)",
+            letterSpacing: "0.05em",
+            cursor: "pointer",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={pinned}
+            onChange={(e) => onPinnedChange(e.target.checked)}
+            style={{ accentColor: "var(--accent)" }}
+          />
+          pin to front of the chip row
+        </label>
+        <label
+          className="flex items-center font-mono"
+          style={{
+            gap: 6,
+            fontSize: 10,
+            color: "var(--text-muted)",
+            letterSpacing: "0.05em",
+            cursor: "pointer",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={shared}
+            onChange={(e) => onSharedChange(e.target.checked)}
+            style={{ accentColor: "var(--accent)" }}
+          />
+          share with my team
+        </label>
+        {error && (
+          <p
+            className="font-mono"
+            role="alert"
+            style={{ fontSize: 10, color: "var(--accent)", letterSpacing: "0.05em" }}
+          >
+            {error}
+          </p>
+        )}
+        <div className="flex items-center justify-end" style={{ gap: 6, paddingTop: 2 }}>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="font-mono uppercase focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            style={{
+              height: 26,
+              padding: "0 12px",
+              fontSize: 9.5,
+              letterSpacing: "0.08em",
+              color: "var(--text-muted)",
+              background: "transparent",
+              border: "1px solid var(--border-soft)",
+              borderRadius: 2,
+              cursor: "pointer",
+              opacity: busy ? 0.5 : 1,
+            }}
+          >
+            cancel
+          </button>
+          <button
+            type="button"
+            onClick={onSubmit}
+            disabled={busy || name.trim().length === 0}
+            className="font-mono uppercase focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            style={{
+              height: 26,
+              padding: "0 12px",
+              fontSize: 9.5,
+              letterSpacing: "0.08em",
+              color: "var(--text-on-accent)",
+              background: "var(--accent)",
+              border: "1px solid var(--accent)",
+              borderRadius: 2,
+              cursor: "pointer",
+              opacity: busy || name.trim().length === 0 ? 0.5 : 1,
+            }}
+          >
+            {busy ? "saving…" : "save view"}
+          </button>
         </div>
-      </AilaCard>
+      </div>
     </div>
   );
 }

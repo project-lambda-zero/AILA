@@ -1,29 +1,36 @@
 import * as React from "react";
 
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
-import { AilaBadge } from "@/components/aila/AilaBadge";
+import { MonoBadge } from "@/components/aila/mock";
 import { useHealthData } from "../hooks/useDashboardData";
 
-function statusBadgeSeverity(
-  status: string,
-): "neutral" | "info" | "medium" | "high" | "critical" {
+type OverallTone = "ok" | "warn" | "critical";
+
+function overallTone(status: string): OverallTone {
   const s = status.toLowerCase();
-  if (s === "healthy") return "info";
-  if (s === "degraded") return "medium";
+  if (s === "healthy") return "ok";
+  if (s === "degraded") return "warn";
   return "critical";
 }
 
 function checkDotColor(status: string): string {
   const s = status.toLowerCase();
-  if (s === "up" || s === "healthy") return "bg-mint";
-  return "bg-critical";
+  if (s === "up" || s === "healthy") return "var(--status-ok)";
+  return "var(--accent)";
 }
+
+const CENTER_STYLE: React.CSSProperties = {
+  height: "100%",
+  padding: 16,
+  fontFamily: "var(--font-mono)",
+  fontSize: 11,
+};
 
 /**
  * HealthStatusWidget -- platform health overview with per-check status.
  *
- * Shows overall health badge (healthy / degraded / unhealthy) plus
- * individual service checks with status dots and latency.
+ * Shows overall health chip (healthy / degraded / unhealthy) plus a mono
+ * row per service check with a status dot and latency.
  *
  * Data from GET /health via useHealthData().
  */
@@ -42,18 +49,22 @@ export function HealthStatusWidget() {
 
   if (isError) {
     return (
-      <div className="h-full w-full p-4 flex items-center justify-center">
-        <p className="text-sm text-destructive font-mono">
-          {error instanceof Error ? error.message : "Failed to load health data"}
-        </p>
+      <div
+        className="flex items-center justify-center"
+        style={{ ...CENTER_STYLE, color: "var(--status-warn)" }}
+      >
+        {error instanceof Error ? error.message : "Failed to load health data"}
       </div>
     );
   }
 
   if (!data) {
     return (
-      <div className="h-full w-full p-4 flex items-center justify-center">
-        <p className="text-sm text-text-muted font-mono">No health data available</p>
+      <div
+        className="flex items-center justify-center"
+        style={{ ...CENTER_STYLE, color: "var(--text-muted)" }}
+      >
+        No health data available
       </div>
     );
   }
@@ -63,31 +74,85 @@ export function HealthStatusWidget() {
   const checkEntries = Object.entries(checks);
 
   return (
-    <div className="h-full w-full p-4 flex flex-col gap-3">
-      <div className="flex items-center justify-end">
-        <AilaBadge severity={statusBadgeSeverity(overallStatus)} size="sm">
+    <div
+      className="h-full w-full flex flex-col"
+      style={{ padding: 14, gap: 10 }}
+    >
+      <div className="flex items-center justify-between">
+        <span
+          className="font-mono uppercase"
+          style={{
+            fontSize: 9.5,
+            letterSpacing: "0.14em",
+            color: "var(--text-muted)",
+          }}
+        >
+          overall
+        </span>
+        <MonoBadge tone={overallTone(overallStatus)}>
           {overallStatus.toUpperCase()}
-        </AilaBadge>
+        </MonoBadge>
       </div>
 
       {checkEntries.length === 0 ? (
-        <p className="text-xs font-mono text-text-muted">No checks available</p>
+        <div
+          className="font-mono"
+          style={{ fontSize: 11, color: "var(--text-muted)" }}
+        >
+          No checks available
+        </div>
       ) : (
-        <ul className="flex flex-col gap-1.5" role="list">
+        <ul
+          role="list"
+          className="flex flex-col"
+          style={{
+            gap: 0,
+            margin: 0,
+            padding: 0,
+            listStyle: "none",
+            borderTop: "1px solid var(--border-faint)",
+          }}
+        >
           {checkEntries.map(([name, check]) => (
             <li
               key={name}
-              className="flex items-center justify-between gap-2 text-xs font-mono"
+              className="flex items-center justify-between font-mono"
+              style={{
+                fontSize: 10.5,
+                padding: "6px 0",
+                borderBottom: "1px solid var(--border-faint)",
+                gap: 8,
+              }}
             >
-              <div className="flex items-center gap-1.5 min-w-0">
+              <div
+                className="flex items-center min-w-0"
+                style={{ gap: 8 }}
+              >
                 <span
-                  className={`inline-block h-2 w-2 rounded-full shrink-0 ${checkDotColor(check.status)}`}
                   aria-hidden="true"
+                  style={{
+                    display: "inline-block",
+                    height: 6,
+                    width: 6,
+                    borderRadius: "50%",
+                    background: checkDotColor(check.status),
+                    flexShrink: 0,
+                  }}
                 />
-                <span className="text-text truncate capitalize">{name}</span>
+                <span
+                  className="truncate capitalize"
+                  style={{ color: "var(--text-primary)" }}
+                >
+                  {name}
+                </span>
               </div>
-              <span className="text-text-muted shrink-0">
-                {check.latency_ms != null ? `${check.latency_ms.toFixed(1)}ms` : check.status}
+              <span
+                className="shrink-0"
+                style={{ color: "var(--text-muted)" }}
+              >
+                {check.latency_ms != null
+                  ? `${check.latency_ms.toFixed(1)}ms`
+                  : check.status}
               </span>
             </li>
           ))}

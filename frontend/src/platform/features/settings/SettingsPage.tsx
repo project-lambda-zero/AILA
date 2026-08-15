@@ -1,56 +1,127 @@
 import { Link } from "react-router";
-import { User } from "@phosphor-icons/react/dist/csr/User";
-import { Monitor } from "@phosphor-icons/react/dist/csr/Monitor";
-import { Info } from "@phosphor-icons/react/dist/csr/Info";
 import { ArrowRight } from "@phosphor-icons/react/dist/csr/ArrowRight";
-import { Palette } from "@phosphor-icons/react/dist/csr/Palette";
-
-import { SlidersHorizontal } from "@phosphor-icons/react/dist/csr/SlidersHorizontal";
 
 import { useAuthStore } from "@platform/auth/useAuthStore";
 import { usePreferences, type Density } from "@/providers/PreferencesProvider";
 import { appEnv } from "@platform/config/env";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { WindowPanel } from "@/components/aila/WindowPanel";
+import { SectionHeader, MonoBadge } from "@/components/aila/mock";
 
 // ---------------------------------------------------------------------------
-// Section card wrapper
+// Style tokens
 // ---------------------------------------------------------------------------
 
-function Section({
-  icon,
-  title,
-  children,
+const CONTROL_STYLE: React.CSSProperties = {
+  height: 30,
+  fontSize: 12,
+  padding: "0 10px",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  outline: "none",
+  fontFamily: "var(--font-mono)",
+};
+
+const ACTION_BUTTON_STYLE: React.CSSProperties = {
+  height: 28,
+  fontSize: 10,
+  padding: "0 12px",
+  textTransform: "uppercase",
+  letterSpacing: "0.12em",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  cursor: "pointer",
+  fontFamily: "var(--font-mono)",
+};
+
+const LABEL_STYLE: React.CSSProperties = {
+  fontSize: 11,
+  color: "var(--text-primary)",
+  fontFamily: "var(--font-mono)",
+};
+
+const SUBLABEL_STYLE: React.CSSProperties = {
+  fontSize: 10,
+  color: "var(--text-muted)",
+  marginTop: 2,
+  fontFamily: "var(--font-mono)",
+};
+
+// ---------------------------------------------------------------------------
+// Small row primitives
+// ---------------------------------------------------------------------------
+
+function KVRow({
+  label,
+  value,
 }: {
-  icon: React.ReactNode;
-  title: string;
-  children: React.ReactNode;
+  label: string;
+  value: React.ReactNode;
 }) {
   return (
-    <WindowPanel
-      title={title}
-      tone="accent"
-      actions={<span className="inline-flex items-center text-text-muted">{icon}</span>}
-      className="w-full"
+    <div
+      className="flex items-start justify-between"
+      style={{
+        gap: 12,
+        padding: "8px 0",
+        borderBottom: "1px solid var(--border-faint)",
+      }}
     >
-      <div className="space-y-4">{children}</div>
-    </WindowPanel>
+      <span
+        className="font-mono"
+        style={{
+          fontSize: 10,
+          color: "var(--text-muted)",
+          textTransform: "uppercase",
+          letterSpacing: "0.12em",
+        }}
+      >
+        {label}
+      </span>
+      <span
+        className="font-mono text-right"
+        style={{
+          fontSize: 11,
+          color: "var(--text-primary)",
+          wordBreak: "break-all",
+        }}
+      >
+        {value}
+      </span>
+    </div>
   );
 }
 
-function ProfileRow({ label, value }: { label: string; value: React.ReactNode }) {
+function ControlRow({
+  htmlFor,
+  label,
+  help,
+  control,
+}: {
+  htmlFor?: string;
+  label: string;
+  help?: string;
+  control: React.ReactNode;
+}) {
   return (
-    <div className="flex items-center justify-between py-2 border-b border-border last:border-0">
-      <span className="text-sm text-text-muted">{label}</span>
-      <span className="text-sm font-medium text-foreground">{value}</span>
+    <div
+      className="flex items-center justify-between"
+      style={{
+        gap: 16,
+        padding: "10px 0",
+        borderBottom: "1px solid var(--border-faint)",
+      }}
+    >
+      <div className="min-w-0 flex flex-col">
+        <label htmlFor={htmlFor} style={LABEL_STYLE}>
+          {label}
+        </label>
+        {help && <p style={SUBLABEL_STYLE}>{help}</p>}
+      </div>
+      <div>{control}</div>
     </div>
   );
 }
@@ -71,178 +142,183 @@ export function SettingsPage() {
   } = usePreferences();
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div
+      className="flex flex-col"
+      style={{ gap: 16, padding: 20, maxWidth: 880 }}
+    >
+      <SectionHeader icon={"\u25c7"} title="settings" />
 
       {/* Profile */}
-      <Section icon={<User size={18} />} title="Profile">
-        <div>
-          <ProfileRow label="Username" value={username ?? "\u2014"} />
-          <ProfileRow
-            label="Role"
+      <WindowPanel title="profile" tone="muted">
+        <div className="flex flex-col">
+          <KVRow label="username" value={username ?? "\u2014"} />
+          <KVRow
+            label="role"
             value={
-              <Badge variant="outline" className="capitalize text-xs font-mono">
-                {role ?? "\u2014"}
-              </Badge>
+              <MonoBadge tone="info">{role ?? "\u2014"}</MonoBadge>
             }
           />
-          <ProfileRow
-            label="User ID"
+          <KVRow
+            label="user id"
             value={
-              <span className="font-mono text-xs text-text-muted">
+              <span
+                className="font-mono"
+                style={{
+                  fontSize: 10.5,
+                  color: "var(--text-muted)",
+                }}
+              >
                 {userId ?? "\u2014"}
               </span>
             }
           />
         </div>
-        <p className="text-xs text-text-muted">
-          Contact your administrator to change your role or username.
+        <p
+          className="font-mono"
+          style={{
+            marginTop: 10,
+            fontSize: 10,
+            color: "var(--text-muted)",
+          }}
+        >
+          contact your administrator to change your role or username.
         </p>
-      </Section>
+      </WindowPanel>
 
       {/* Sessions */}
-      <Section icon={<Monitor size={18} />} title="Sessions">
-        <p className="text-sm text-text-muted">
-          Review and revoke active login sessions across all your devices.
+      <WindowPanel title="sessions" tone="muted">
+        <p
+          className="font-mono"
+          style={{ fontSize: 11, color: "var(--text-muted)" }}
+        >
+          review and revoke active login sessions across all your devices.
         </p>
         <Link
           to="/settings/sessions"
-          className="touch-target inline-flex items-center gap-2 text-sm text-accent hover:text-accent/80 font-medium transition-colors"
+          className="font-mono inline-flex items-center"
+          style={{
+            marginTop: 10,
+            gap: 6,
+            fontSize: 11,
+            color: "var(--accent)",
+            textTransform: "uppercase",
+            letterSpacing: "0.12em",
+          }}
         >
-          Manage active sessions
-          <ArrowRight size={14} />
+          manage active sessions
+          <ArrowRight size={12} />
         </Link>
-      </Section>
+      </WindowPanel>
 
       {/* Appearance */}
-      <Section icon={<Palette size={18} />} title="Appearance">
+      <WindowPanel title="appearance" tone="muted">
         <p
-          className="font-mono text-xs uppercase text-text-muted"
-          style={{ letterSpacing: "0.14em" }}
+          className="font-mono"
+          style={{
+            fontSize: 11,
+            color: "var(--text-muted)",
+            textTransform: "uppercase",
+            letterSpacing: "0.14em",
+          }}
         >
-          AILA ships one design; midnight cloud 8 · no theme switch
+          aila ships one design; midnight cloud 8 {"\u00b7"} no theme switch
         </p>
-      </Section>
+      </WindowPanel>
 
       {/* Workspace preferences */}
-      <Section icon={<SlidersHorizontal size={18} />} title="Workspace">
-        <p className="text-xs text-text-muted -mt-1">
-          Personal preferences for how this console renders on your machine.
-          Persisted locally; not shared with other operators.
+      <WindowPanel title="preferences" tone="muted">
+        <p
+          className="font-mono"
+          style={{
+            fontSize: 10,
+            color: "var(--text-muted)",
+            marginBottom: 6,
+          }}
+        >
+          personal preferences for how this console renders on your machine.
+          persisted locally; not shared with other operators.
         </p>
 
-        {/* Density */}
-        <div className="flex items-center justify-between gap-4 pb-3 border-b border-border">
-          <div className="min-w-0">
-            <label
-              htmlFor="pref-density"
-              className="text-sm font-medium text-foreground"
-            >
-              Density
-            </label>
-            <p className="text-xs text-text-muted mt-0.5">
-              Compact tightens row and cell padding on tables and lists.
-            </p>
-          </div>
-          <Select
-            value={density}
-            onValueChange={(v) => {
-              if (typeof v === "string") setDensity(v as Density);
-            }}
-          >
-            <SelectTrigger
+        <ControlRow
+          htmlFor="pref-density"
+          label="density"
+          help="Compact tightens row and cell padding on tables and lists."
+          control={
+            <select
               id="pref-density"
               aria-label="Interface density"
-              className="font-mono text-xs h-8 w-[160px]"
+              value={density}
+              onChange={(e) => setDensity(e.target.value as Density)}
+              style={{ ...CONTROL_STYLE, minWidth: 160 }}
             >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="comfortable" className="font-mono text-xs">
-                Comfortable
-              </SelectItem>
-              <SelectItem value="compact" className="font-mono text-xs">
-                Compact
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+              <option value="comfortable">comfortable</option>
+              <option value="compact">compact</option>
+            </select>
+          }
+        />
 
-        {/* Default page size */}
-        <div className="flex items-center justify-between gap-4 pb-3 border-b border-border">
-          <div className="min-w-0">
-            <label
-              htmlFor="pref-page-size"
-              className="text-sm font-medium text-foreground"
-            >
-              Default page size
-            </label>
-            <p className="text-xs text-text-muted mt-0.5">
-              How many rows list screens load per page by default.
-            </p>
-          </div>
-          <Select
-            value={String(defaultPageSize)}
-            onValueChange={(v) => {
-              if (typeof v === "string") setDefaultPageSize(Number.parseInt(v, 10));
-            }}
-          >
-            <SelectTrigger
+        <ControlRow
+          htmlFor="pref-page-size"
+          label="default page size"
+          help="How many rows list screens load per page by default."
+          control={
+            <select
               id="pref-page-size"
               aria-label="Default rows per page"
-              className="font-mono text-xs h-8 w-[100px]"
+              value={String(defaultPageSize)}
+              onChange={(e) =>
+                setDefaultPageSize(Number.parseInt(e.target.value, 10))
+              }
+              style={{ ...CONTROL_STYLE, minWidth: 100 }}
             >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
               {allowedPageSizes.map((n) => (
-                <SelectItem
-                  key={n}
-                  value={String(n)}
-                  className="font-mono text-xs"
-                >
+                <option key={n} value={String(n)}>
                   {n}
-                </SelectItem>
+                </option>
               ))}
-            </SelectContent>
-          </Select>
-        </div>
+            </select>
+          }
+        />
 
-        {/* Reset */}
-        <div className="flex items-center justify-between gap-4">
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-foreground">
-              Reset preferences
-            </p>
-            <p className="text-xs text-text-muted mt-0.5">
+        <div
+          className="flex items-center justify-between"
+          style={{ gap: 16, padding: "10px 0" }}
+        >
+          <div className="min-w-0 flex flex-col">
+            <span style={LABEL_STYLE}>reset preferences</span>
+            <p style={SUBLABEL_STYLE}>
               Restores density, page size, and sidebar defaults. Does not
               affect theme or session.
             </p>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
+          <button
+            type="button"
             onClick={resetPreferences}
             aria-label="Reset workspace preferences to defaults"
+            style={ACTION_BUTTON_STYLE}
           >
-            Reset
-          </Button>
+            reset
+          </button>
         </div>
-      </Section>
+      </WindowPanel>
 
       {/* About */}
-      <Section icon={<Info size={18} />} title="About">
-        <div>
-          <ProfileRow label="Application" value="AILA \u2014 AI Lab Assistant" />
-          <ProfileRow
-            label="API Endpoint"
+      <WindowPanel title="about" tone="muted">
+        <div className="flex flex-col">
+          <KVRow label="application" value="AILA -- AI Lab Assistant" />
+          <KVRow
+            label="api endpoint"
             value={
-              <span className="font-mono text-xs text-text-muted">
+              <span
+                className="font-mono"
+                style={{ fontSize: 10.5, color: "var(--text-muted)" }}
+              >
                 {appEnv.apiBaseUrl}
               </span>
             }
           />
         </div>
-      </Section>
+      </WindowPanel>
     </div>
   );
 }

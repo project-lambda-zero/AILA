@@ -1,12 +1,11 @@
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { PixelIcon, type PixelIconName } from "@/components/aila/PixelIcon";
+import { MonoBadge, toneColor } from "@/components/aila/mock";
 
 /** Adjudication banner Topic 8.
  *
  *  Three verdicts:
- *    accepted   → green banner with check
- *    downgraded → amber banner with reason
- *    blocked    → red banner with unmet-obligations list
+ *    accepted   → mint accent block with check
+ *    downgraded → amber accent block with reason
+ *    blocked    → hot-pink accent block with unmet-obligations list
  *
  *  Render at the top of finding-detail / outcome surfaces. */
 export type AdjudicationVerdict = "accepted" | "downgraded" | "blocked";
@@ -23,67 +22,112 @@ export interface AdjudicationResult {
 
 const TONE: Record<
   AdjudicationVerdict,
-  { hue: string; badge: "low" | "medium" | "critical"; icon: PixelIconName }
+  { hue: string; badge: "ok" | "warn" | "critical" }
 > = {
-  accepted: {
-    hue: "var(--color-mint)",
-    badge: "low",
-    icon: "ok",
-  },
-  downgraded: {
-    hue: "var(--color-amber)",
-    badge: "medium",
-    icon: "status",
-  },
-  blocked: {
-    hue: "var(--color-critical)",
-    badge: "critical",
-    icon: "close",
-  },
+  accepted: { hue: toneColor("ok"), badge: "ok" },
+  downgraded: { hue: toneColor("warn"), badge: "warn" },
+  blocked: { hue: toneColor("accent"), badge: "critical" },
 };
 
 export function AdjudicationBanner({ result }: { result: AdjudicationResult }) {
   const tone = TONE[result.verdict];
   return (
     <div
-      className="border-l-4 rounded px-3 py-2"
+      className="font-mono"
       style={{
-        borderColor: tone.hue,
-        background: `color-mix(in srgb, ${tone.hue} 10%, transparent)`,
+        border: "1px solid var(--border-soft)",
+        borderLeft: `3px solid ${tone.hue}`,
+        background: `color-mix(in srgb, ${tone.hue} 8%, transparent)`,
+        padding: "8px 10px",
       }}
     >
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="inline-flex leading-none" aria-hidden style={{ color: tone.hue }}>
-          <PixelIcon name={tone.icon} size={16} />
-        </span>
-        <AilaBadge severity={tone.badge} size="sm">
-          {result.verdict}
-        </AilaBadge>
+      <div className="flex items-center flex-wrap" style={{ gap: 8 }}>
+        <span
+          aria-hidden
+          style={{
+            width: 12,
+            height: 12,
+            flex: "0 0 auto",
+            background: tone.hue,
+            boxShadow: `0 0 5px ${tone.hue}`,
+          }}
+        />
+        <MonoBadge tone={tone.badge}>{result.verdict}</MonoBadge>
         {result.total_critical != null && (
-          <span className="text-xs text-text-muted">
-            {result.met_critical ?? 0}/{result.total_critical} critical
-            obligations met
+          <span
+            className="font-mono"
+            style={{ fontSize: 10, color: "var(--text-muted)", letterSpacing: "0.06em" }}
+          >
+            {result.met_critical ?? 0}/{result.total_critical} critical met
           </span>
         )}
         {result.budget_used_pct != null && (
-          <span className="text-xs text-text-muted">
+          <span
+            className="font-mono"
+            style={{ fontSize: 10, color: "var(--text-muted)", letterSpacing: "0.06em" }}
+          >
             · budget {Math.round(result.budget_used_pct)}%
           </span>
         )}
       </div>
       {result.reason && (
-        <p className="text-xs text-foreground mt-1">{result.reason}</p>
-      )}
-      {result.hedge_phrases && result.hedge_phrases.length > 0 && (
-        <p className="text-3xs text-text-muted mt-1">
-          Hedge phrases:{" "}
-          <code style={{ color: "var(--color-amber)" }}>
-            {result.hedge_phrases.join(", ")}
-          </code>
+        <p
+          style={{
+            marginTop: 6,
+            fontFamily: "var(--font-sans)",
+            fontSize: 11.5,
+            lineHeight: 1.45,
+            color: "var(--text-primary)",
+          }}
+        >
+          {result.reason}
         </p>
       )}
+      {result.hedge_phrases && result.hedge_phrases.length > 0 && (
+        <div
+          className="font-mono"
+          style={{
+            marginTop: 6,
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 6,
+            alignItems: "center",
+            fontSize: 10,
+            color: "var(--text-muted)",
+            letterSpacing: "0.05em",
+          }}
+        >
+          <span>hedge:</span>
+          {result.hedge_phrases.map((p) => (
+            <code
+              key={p}
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: 10,
+                padding: "1px 5px",
+                border: "1px solid color-mix(in srgb, var(--status-warn) 32%, transparent)",
+                background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+                color: "var(--status-warn)",
+                borderRadius: 2,
+              }}
+            >
+              {p}
+            </code>
+          ))}
+        </div>
+      )}
       {result.unmet_obligations && result.unmet_obligations.length > 0 && (
-        <ul className="text-3xs text-text-muted mt-1 list-disc ml-4">
+        <ul
+          className="font-mono"
+          style={{
+            marginTop: 6,
+            marginLeft: 14,
+            fontSize: 10.5,
+            color: "var(--text-muted)",
+            listStyle: "disc",
+            lineHeight: 1.55,
+          }}
+        >
           {result.unmet_obligations.map((o) => (
             <li key={o}>{o}</li>
           ))}

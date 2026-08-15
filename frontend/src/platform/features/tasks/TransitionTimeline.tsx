@@ -1,12 +1,12 @@
 /**
  * TransitionTimeline -- compact audit trail for a workflow run (Phase 181).
  *
- * Shows one row per WorkflowStateTransition in seq-ascending order.
- * Displayed inside TaskDetailPanel below the metadata table.
- *
- * Design: mono font, cyberpunk density, event-type colour coding.
- * No accordion -- all rows visible, scroll container clips overflow.
+ * Shown inside the task detail column as a flush WindowPanel of dense
+ * mono rows -- one row per WorkflowStateTransition in seq-ascending order.
+ * from_state -> to_state, event, actor, timestamp, error.
  */
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import { MonoBadge } from "@/components/aila/mock";
 import type { TransitionView } from "./transitions";
 
 // ---------------------------------------------------------------------------
@@ -32,16 +32,16 @@ function formatTime(iso: string): string {
   }
 }
 
-/** Colour token for the event label badge. */
-function eventColour(event: string): string {
-  if (event === "entered") return "text-text-muted";
-  if (event === "exited:ok") return "text-[oklch(72%_0.18_150)]";        // green
-  if (event === "exited:retry") return "text-[oklch(78%_0.18_80)]";      // amber
-  if (event === "exited:phase_handoff") return "text-[oklch(72%_0.18_260)]"; // blue
+/** Tone token for the event label badge. */
+function eventTone(event: string): string {
+  if (event === "entered") return "muted";
+  if (event === "exited:ok") return "ok";
+  if (event === "exited:retry") return "warn";
+  if (event === "exited:phase_handoff") return "info";
   if (event.startsWith("exited:fail") || event === "exited:timeout") {
-    return "text-destructive";
+    return "critical";
   }
-  return "text-text";
+  return "muted";
 }
 
 /** Short human label for the event string. */
@@ -68,16 +68,28 @@ interface TransitionRowProps {
 }
 
 function TransitionRow({ row, onSelect }: TransitionRowProps) {
-  const colour = eventColour(row.event);
+  const tone = eventTone(row.event);
   const isError = row.error_class !== null;
   const clickable = onSelect !== undefined;
 
   return (
     <div
-      className={[
-        "flex flex-col gap-0.5 border-b border-border py-1.5 last:border-0",
-        clickable ? "cursor-pointer hover:bg-elevated/60 transition-colors" : "",
-      ].join(" ")}
+      className={`flex flex-col font-mono${
+        clickable ? " cursor-pointer" : ""
+      }`}
+      style={{
+        gap: 3,
+        padding: "6px 10px",
+        borderBottom: "1px solid var(--border-faint)",
+        background: "transparent",
+        transition: "background 100ms",
+      }}
+      onMouseEnter={(e) => {
+        if (clickable) e.currentTarget.style.background = "var(--surface-hover)";
+      }}
+      onMouseLeave={(e) => {
+        if (clickable) e.currentTarget.style.background = "transparent";
+      }}
       onClick={clickable ? () => onSelect(row) : undefined}
       onKeyDown={
         clickable
@@ -92,46 +104,77 @@ function TransitionRow({ row, onSelect }: TransitionRowProps) {
       role={clickable ? "button" : undefined}
       tabIndex={clickable ? 0 : undefined}
     >
-      {/* Main line */}
-      <div className="flex items-center gap-2 font-mono text-[11px]">
-        {/* seq */}
-        <span className="shrink-0 w-6 text-right text-text-muted opacity-60">
+      {/* Main line: seq | event | from -> to | duration */}
+      <div className="flex items-center" style={{ gap: 8, fontSize: 11 }}>
+        <span
+          className="shrink-0 text-right tabular-nums"
+          style={{ width: 26, color: "var(--text-faint)", fontSize: 10 }}
+        >
           {row.seq}
         </span>
-
-        {/* event badge */}
-        <span className={`shrink-0 w-[88px] font-semibold ${colour}`}>
-          {eventLabel(row.event)}
+        <span className="shrink-0" style={{ width: 88 }}>
+          <MonoBadge tone={tone}>{eventLabel(row.event)}</MonoBadge>
         </span>
-
-        {/* from → to */}
-        <span className="flex-1 truncate text-text">
+        <span
+          className="flex-1 truncate"
+          style={{ color: "var(--text-primary)" }}
+        >
           {row.from_state !== null ? (
             <>
-              <span className="opacity-60">{row.from_state}</span>
-              <span className="mx-1 opacity-40">→</span>
+              <span style={{ color: "var(--text-muted)" }}>
+                {row.from_state}
+              </span>
+              <span
+                style={{
+                  margin: "0 6px",
+                  color: "var(--text-faint)",
+                }}
+              >
+                {"\u2192"}
+              </span>
             </>
           ) : null}
           <span>{row.to_state}</span>
         </span>
-
-        {/* duration */}
-        <span className="shrink-0 text-text-muted opacity-60 tabular-nums">
+        <span
+          className="shrink-0 tabular-nums"
+          style={{ color: "var(--text-muted)", fontSize: 10 }}
+        >
           {formatDuration(row.duration_ms)}
         </span>
       </div>
 
-      {/* Time */}
-      <div className="flex items-center gap-2 font-mono text-[10px] text-text-muted opacity-50 pl-8">
+      {/* Meta line: timestamp */}
+      <div
+        className="flex items-center"
+        style={{
+          gap: 8,
+          fontSize: 10,
+          color: "var(--text-faint)",
+          paddingLeft: 34,
+        }}
+      >
         {formatTime(row.happened_at)}
       </div>
 
       {/* Error detail */}
       {isError && (
-        <div className="ml-8 mt-0.5 rounded-[2px] border border-destructive/40 bg-destructive/5 px-2 py-1 font-mono text-[10px] text-destructive">
+        <div
+          className="font-mono"
+          style={{
+            marginLeft: 34,
+            marginTop: 2,
+            padding: "4px 8px",
+            border: "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+            background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+            color: "var(--status-warn)",
+            fontSize: 10,
+            borderRadius: 3,
+          }}
+        >
           {row.error_class}
           {row.error_message && row.error_message !== row.error_class ? (
-            <span className="opacity-75"> -- {row.error_message}</span>
+            <span style={{ opacity: 0.75 }}> -- {row.error_message}</span>
           ) : null}
         </div>
       )}
@@ -161,32 +204,54 @@ export function TransitionTimeline({
   isError,
   onRowSelect,
 }: TransitionTimelineProps) {
+  const status = isLoading
+    ? "LOADING"
+    : isError
+      ? "ERROR"
+      : `${rows.length} EVENT${rows.length === 1 ? "" : "S"}`;
+
   return (
-    <div className="mt-4">
-      <h3 className="font-mono text-[10px] font-semibold uppercase tracking-wider text-text-muted mb-2">
-        State Transitions
-      </h3>
-
-      {isLoading && (
-        <div className="font-mono text-[11px] text-text-muted opacity-60 py-2">
-          Loading…
+    <WindowPanel
+      title="state transitions"
+      status={status}
+      tone={isError ? "warn" : "muted"}
+      flush
+    >
+      {isLoading ? (
+        <div
+          className="font-mono"
+          style={{
+            padding: "10px 12px",
+            fontSize: 11,
+            color: "var(--text-muted)",
+          }}
+        >
+          loading transitions...
         </div>
-      )}
-
-      {isError && (
-        <div className="font-mono text-[11px] text-destructive py-1">
-          Failed to load transitions.
+      ) : isError ? (
+        <div
+          className="font-mono"
+          style={{
+            padding: "10px 12px",
+            fontSize: 11,
+            color: "var(--status-warn)",
+          }}
+        >
+          failed to load transitions.
         </div>
-      )}
-
-      {!isLoading && !isError && rows.length === 0 && (
-        <div className="font-mono text-[11px] text-text-muted opacity-60 py-2">
-          No workflow transitions recorded.
+      ) : rows.length === 0 ? (
+        <div
+          className="font-mono"
+          style={{
+            padding: "10px 12px",
+            fontSize: 11,
+            color: "var(--text-faint)",
+          }}
+        >
+          no workflow transitions recorded.
         </div>
-      )}
-
-      {!isLoading && !isError && rows.length > 0 && (
-        <div className="max-h-64 overflow-y-auto rounded-[2px] border border-border">
+      ) : (
+        <div style={{ maxHeight: 260, overflowY: "auto" }}>
           {rows.map((row) => (
             <TransitionRow
               key={`${row.run_id}-${row.seq}`}
@@ -196,6 +261,6 @@ export function TransitionTimeline({
           ))}
         </div>
       )}
-    </div>
+    </WindowPanel>
   );
 }

@@ -1,43 +1,38 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Monitor } from "@phosphor-icons/react/dist/csr/Monitor";
-import { Globe } from "@phosphor-icons/react/dist/csr/Globe";
-import { Clock } from "@phosphor-icons/react/dist/csr/Clock";
-import { ShieldWarning } from "@phosphor-icons/react/dist/csr/ShieldWarning";
 
 import { fetchSessions, revokeSession, type SessionRecord } from "./api";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { WindowPanel } from "@/components/aila/WindowPanel";
+import {
+  SectionHeader,
+  DataGrid,
+  MonoBadge,
+} from "@/components/aila/mock";
 
 // ---------------------------------------------------------------------------
 // User-agent parsing
 // ---------------------------------------------------------------------------
 
 function parseBrowser(userAgent: string | null): string {
-  if (!userAgent) return "Unknown Browser";
-  if (/Firefox\//i.test(userAgent)) return "Firefox";
-  if (/Edg\//i.test(userAgent)) return "Edge";
-  if (/Chrome\//i.test(userAgent)) return "Chrome";
-  if (/Safari\//i.test(userAgent)) return "Safari";
-  if (/Opera|OPR\//i.test(userAgent)) return "Opera";
-  return "Unknown Browser";
+  if (!userAgent) return "unknown browser";
+  if (/Firefox\//i.test(userAgent)) return "firefox";
+  if (/Edg\//i.test(userAgent)) return "edge";
+  if (/Chrome\//i.test(userAgent)) return "chrome";
+  if (/Safari\//i.test(userAgent)) return "safari";
+  if (/Opera|OPR\//i.test(userAgent)) return "opera";
+  return "unknown browser";
 }
 
 function parseOS(userAgent: string | null): string {
-  if (!userAgent) return "Unknown OS";
-  if (/Windows NT/i.test(userAgent)) return "Windows";
-  if (/Mac OS X/i.test(userAgent)) return "macOS";
-  if (/Linux/i.test(userAgent)) return "Linux";
-  if (/Android/i.test(userAgent)) return "Android";
-  if (/iPhone|iPad/i.test(userAgent)) return "iOS";
-  return "Unknown OS";
-}
-
-function formatDeviceLabel(userAgent: string | null): string {
-  if (!userAgent) return "Unknown device";
-  return `${parseBrowser(userAgent)} on ${parseOS(userAgent)}`;
+  if (!userAgent) return "unknown os";
+  if (/Windows NT/i.test(userAgent)) return "windows";
+  if (/Mac OS X/i.test(userAgent)) return "macos";
+  if (/Linux/i.test(userAgent)) return "linux";
+  if (/Android/i.test(userAgent)) return "android";
+  if (/iPhone|iPad/i.test(userAgent)) return "ios";
+  return "unknown os";
 }
 
 // ---------------------------------------------------------------------------
@@ -45,101 +40,36 @@ function formatDeviceLabel(userAgent: string | null): string {
 // ---------------------------------------------------------------------------
 
 function relativeTime(isoString: string | null): string {
-  if (!isoString) return "Unknown";
+  if (!isoString) return "unknown";
   const now = Date.now();
   const then = new Date(isoString).getTime();
-  const diffMs = now - then;
-  const diffSec = Math.floor(diffMs / 1000);
-  if (diffSec < 60) return "Just now";
+  const diffSec = Math.floor((now - then) / 1000);
+  if (diffSec < 60) return "just now";
   const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `${diffMin} minute${diffMin !== 1 ? "s" : ""} ago`;
+  if (diffMin < 60) return `${diffMin}m ago`;
   const diffHour = Math.floor(diffMin / 60);
-  if (diffHour < 24) return `${diffHour} hour${diffHour !== 1 ? "s" : ""} ago`;
+  if (diffHour < 24) return `${diffHour}h ago`;
   const diffDay = Math.floor(diffHour / 24);
-  return `${diffDay} day${diffDay !== 1 ? "s" : ""} ago`;
+  return `${diffDay}d ago`;
 }
 
 // ---------------------------------------------------------------------------
-// Session row
+// Shared inline styles
 // ---------------------------------------------------------------------------
 
-interface SessionRowProps {
-  session: SessionRecord;
-  isCurrent: boolean;
-  onRevoke: (id: string) => void;
-  isRevoking: boolean;
-}
-
-function SessionRow({ session, isCurrent, onRevoke, isRevoking }: SessionRowProps) {
-  const deviceLabel = formatDeviceLabel(session.user_agent);
-  const ipLabel = session.ip_address ?? "Unknown";
-
-  return (
-    <tr className="border-b border-border last:border-0">
-      {/* Device / Browser */}
-      <td className="px-4 py-3">
-        <div className="flex items-center gap-2">
-          <Monitor size={16} className="text-text-muted shrink-0" />
-          <div>
-            <p className="text-sm font-medium text-foreground">{deviceLabel}</p>
-            {session.user_agent && (
-              <p
-                className="text-xs text-text-muted truncate max-w-xs"
-                title={session.user_agent}
-              >
-                {session.user_agent.slice(0, 60)}
-                {session.user_agent.length > 60 ? "…" : ""}
-              </p>
-            )}
-          </div>
-        </div>
-      </td>
-
-      {/* IP Address */}
-      <td className="px-4 py-3">
-        <div className="flex items-center gap-2 text-sm text-foreground">
-          <Globe size={14} className="text-text-muted shrink-0" />
-          {ipLabel}
-        </div>
-      </td>
-
-      {/* Last Active */}
-      <td className="px-4 py-3">
-        <div className="flex items-center gap-2 text-sm text-text-muted">
-          <Clock size={14} className="shrink-0" />
-          {relativeTime(session.created_at)}
-        </div>
-      </td>
-
-      {/* Status */}
-      <td className="px-4 py-3">
-        {isCurrent ? (
-          <Badge className="bg-accent/15 text-accent border border-accent/40 font-mono text-xs">
-            Current Session
-          </Badge>
-        ) : (
-          <Badge variant="outline" className="text-xs font-mono">
-            Active
-          </Badge>
-        )}
-      </td>
-
-      {/* Actions */}
-      <td className="px-4 py-3 text-right">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => onRevoke(session.id)}
-          disabled={isCurrent || isRevoking}
-          className="text-destructive hover:text-destructive border-destructive/30 hover:bg-destructive/10 disabled:opacity-40"
-          title={isCurrent ? "Cannot revoke current session" : "Revoke this session"}
-        >
-          Revoke
-        </Button>
-      </td>
-    </tr>
-  );
-}
+const ACTION_BUTTON_STYLE: React.CSSProperties = {
+  height: 22,
+  fontSize: 9.5,
+  padding: "0 10px",
+  textTransform: "uppercase",
+  letterSpacing: "0.1em",
+  background: "var(--surface-sunk)",
+  color: "var(--status-warn)",
+  border:
+    "1px solid color-mix(in srgb, var(--status-warn) 45%, transparent)",
+  borderRadius: 3,
+  cursor: "pointer",
+};
 
 // ---------------------------------------------------------------------------
 // Page
@@ -170,7 +100,9 @@ export function SessionsPage() {
       ? sessions.reduce((latest, s) => {
           if (!latest.created_at) return s;
           if (!s.created_at) return latest;
-          return new Date(s.created_at) > new Date(latest.created_at) ? s : latest;
+          return new Date(s.created_at) > new Date(latest.created_at)
+            ? s
+            : latest;
         }).id
       : null;
 
@@ -182,21 +114,64 @@ export function SessionsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Page header */}
+    <div className="flex flex-col" style={{ gap: 16, padding: 20 }}>
+      <SectionHeader
+        icon={"\u25c7"}
+        title="sessions"
+        actions={
+          <span
+            className="font-mono"
+            style={{
+              fontSize: 10,
+              color: "var(--text-muted)",
+              textTransform: "uppercase",
+              letterSpacing: "0.12em",
+            }}
+          >
+            {sessions.length} active
+          </span>
+        }
+      />
 
-      {/* Error state */}
       {sessionsQuery.isError && (
-        <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
-          <ShieldWarning size={16} className="shrink-0" />
-          Failed to load sessions. Please refresh the page.
+        <div
+          className="font-mono"
+          style={{
+            border:
+              "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+            background:
+              "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+            color: "var(--status-warn)",
+            padding: "10px 14px",
+            fontSize: 12,
+            borderRadius: 3,
+          }}
+        >
+          failed to load sessions. please refresh the page.
         </div>
       )}
 
-      {/* Loading state -- content-shaped skeleton mirrors the sessions table rows */}
-      {sessionsQuery.isLoading && (
+      {revokeMutation.isError && (
+        <div
+          className="font-mono"
+          style={{
+            border:
+              "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+            background:
+              "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+            color: "var(--status-warn)",
+            padding: "10px 14px",
+            fontSize: 12,
+            borderRadius: 3,
+          }}
+        >
+          failed to revoke session. please try again.
+        </div>
+      )}
+
+      {sessionsQuery.isLoading ? (
         <WindowPanel
-          title="Active Sessions"
+          title="session list"
           status="LOADING"
           tone="muted"
           aria-label="Loading sessions"
@@ -204,64 +179,110 @@ export function SessionsPage() {
         >
           <LoadingSkeletonGroup lines={4} />
         </WindowPanel>
-      )}
-
-      {/* Revoke error */}
-      {revokeMutation.isError && (
-        <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
-          <ShieldWarning size={16} className="shrink-0" />
-          Failed to revoke session. Please try again.
-        </div>
-      )}
-
-      {/* Sessions table */}
-      {!sessionsQuery.isLoading && (
+      ) : sessions.length === 0 ? (
+        <WindowPanel title="session list" tone="muted">
+          <EmptyState
+            icon={<Monitor className="h-10 w-10" />}
+            title="No active sessions"
+            description="Your account has no active browser sessions. Sign in from another device to see it listed here."
+          />
+        </WindowPanel>
+      ) : (
         <WindowPanel
-          title="Active Sessions"
-          status={sessions.length > 0 ? `${sessions.length} ACTIVE` : undefined}
+          title="session list"
+          status={`${sessions.length} ACTIVE`}
           tone="muted"
           flush
         >
-          {sessions.length === 0 ? (
-            <EmptyState
-              icon={<Monitor className="h-10 w-10" />}
-              title="No active sessions"
-              description="Your account has no active browser sessions. Sign in from another device to see it listed here."
-            />
-          ) : (
-            <table aria-label="Active sessions" className="w-full text-left border-collapse [&_th]:border [&_th]:border-border [&_td]:border [&_td]:border-border">
-              <thead>
-                <tr className="border-b border-border bg-elevated">
-                  <th className="px-4 py-3 font-mono text-xs font-medium text-text-muted uppercase tracking-wider">
-                    Device / Browser
-                  </th>
-                  <th className="px-4 py-3 font-mono text-xs font-medium text-text-muted uppercase tracking-wider">
-                    IP Address
-                  </th>
-                  <th className="px-4 py-3 font-mono text-xs font-medium text-text-muted uppercase tracking-wider">
-                    Last Active
-                  </th>
-                  <th className="px-4 py-3 font-mono text-xs font-medium text-text-muted uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-4 py-3 font-mono text-xs font-medium text-text-muted uppercase tracking-wider text-right">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {sessions.map((session) => (
-                  <SessionRow
-                    key={session.id}
-                    session={session}
-                    isCurrent={session.id === currentSessionId}
-                    onRevoke={handleRevoke}
-                    isRevoking={revokeMutation.isPending}
-                  />
-                ))}
-              </tbody>
-            </table>
-          )}
+          <DataGrid<SessionRecord>
+            columns={[
+              { label: "SESSION ID", width: "160px" },
+              { label: "DEVICE", width: "minmax(160px, 1fr)" },
+              { label: "IP", width: "140px" },
+              { label: "STARTED", width: "120px" },
+              { label: "STATUS", width: "130px" },
+              { label: "", width: "90px", align: "right" },
+            ]}
+            rows={sessions}
+            getKey={(s) => s.id}
+            renderCells={(s) => {
+              const isCurrent = s.id === currentSessionId;
+              const browser = parseBrowser(s.user_agent);
+              const os = parseOS(s.user_agent);
+              return [
+                <span
+                  className="truncate font-mono"
+                  style={{ color: "var(--accent)", fontSize: 11 }}
+                  title={s.id}
+                >
+                  {s.id.slice(0, 12)}
+                  {"\u2026"}
+                </span>,
+                <div className="flex flex-col" style={{ gap: 2, minWidth: 0 }}>
+                  <span
+                    className="font-mono"
+                    style={{
+                      color: "var(--text-primary)",
+                      fontSize: 11,
+                    }}
+                  >
+                    {browser} / {os}
+                  </span>
+                  {s.user_agent && (
+                    <span
+                      className="font-mono truncate"
+                      style={{
+                        color: "var(--text-faint)",
+                        fontSize: 9.5,
+                      }}
+                      title={s.user_agent}
+                    >
+                      {s.user_agent.slice(0, 72)}
+                      {s.user_agent.length > 72 ? "\u2026" : ""}
+                    </span>
+                  )}
+                </div>,
+                <span
+                  className="font-mono"
+                  style={{ color: "var(--text-muted)", fontSize: 11 }}
+                >
+                  {s.ip_address ?? "\u2014"}
+                </span>,
+                <span
+                  className="font-mono tabular-nums"
+                  style={{ color: "var(--text-muted)", fontSize: 10 }}
+                >
+                  {relativeTime(s.created_at)}
+                </span>,
+                isCurrent ? (
+                  <MonoBadge tone="accent">current</MonoBadge>
+                ) : (
+                  <MonoBadge tone="ok">active</MonoBadge>
+                ),
+                <button
+                  type="button"
+                  onClick={() => handleRevoke(s.id)}
+                  disabled={isCurrent || revokeMutation.isPending}
+                  className="font-mono no-row-click"
+                  style={{
+                    ...ACTION_BUTTON_STYLE,
+                    opacity: isCurrent || revokeMutation.isPending ? 0.35 : 1,
+                    cursor:
+                      isCurrent || revokeMutation.isPending
+                        ? "not-allowed"
+                        : "pointer",
+                  }}
+                  title={
+                    isCurrent
+                      ? "Cannot revoke current session"
+                      : "Revoke this session"
+                  }
+                >
+                  revoke
+                </button>,
+              ];
+            }}
+          />
         </WindowPanel>
       )}
     </div>

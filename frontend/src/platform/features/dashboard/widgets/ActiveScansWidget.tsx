@@ -1,14 +1,21 @@
 import * as React from "react";
-import { Activity } from "lucide-react";
 
+import { BigStat, MonoBadge } from "@/components/aila/mock";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { useDashboardData } from "../hooks/useDashboardData";
 
+const CENTER_STYLE: React.CSSProperties = {
+  height: "100%",
+  padding: 16,
+  fontFamily: "var(--font-mono)",
+  fontSize: 11,
+};
+
 /**
- * ActiveScansWidget -- shows currently active scan count.
+ * ActiveScansWidget -- currently active scan count.
  *
- * Checks module_data["vulnerability.active_scans"] first.
- * Falls back to showing total findings count if scan data is not available.
+ * Prefers module_data["vulnerability.active_scans"]. Falls back to
+ * total findings when the scan provider is absent.
  *
  * Data from GET /dashboard via useDashboardData().
  */
@@ -26,50 +33,55 @@ export function ActiveScansWidget() {
 
   if (isError) {
     return (
-      <div className="h-full w-full p-4 flex items-center justify-center">
-        <p className="text-sm text-destructive font-mono">
-          {error instanceof Error ? error.message : "Failed to load scan data"}
-        </p>
+      <div
+        className="flex items-center justify-center"
+        style={{ ...CENTER_STYLE, color: "var(--status-warn)" }}
+      >
+        {error instanceof Error ? error.message : "Failed to load scan data"}
       </div>
     );
   }
 
   if (!data) {
     return (
-      <div className="h-full w-full p-4 flex items-center justify-center">
-        <p className="text-sm text-text-muted font-mono">No data available</p>
+      <div
+        className="flex items-center justify-center"
+        style={{ ...CENTER_STYLE, color: "var(--text-muted)" }}
+      >
+        No data available
       </div>
     );
   }
 
-  // Check for active scan count in module_data
   const activeScanData = data.module_data["vulnerability.active_scans"];
   const hasActiveScanData =
     activeScanData !== undefined &&
     activeScanData !== null &&
     typeof activeScanData === "number";
 
+  const value = hasActiveScanData
+    ? (activeScanData as number)
+    : data.fleet_stats.total_findings;
+
   return (
-    <div className="h-full w-full p-4 flex flex-col justify-center gap-2">
-      <div className="flex items-center gap-2">
-        <Activity className="h-5 w-5 text-accent" aria-hidden="true" />
-        {!hasActiveScanData && (
-          <span className="font-mono text-[10px] uppercase tracking-widest text-text-muted">
-            fallback · total
-          </span>
-        )}
-      </div>
-
-      <p className="text-4xl font-mono font-bold text-text">
-        {hasActiveScanData
-          ? (activeScanData as number)
-          : data.fleet_stats.total_findings}
-      </p>
-
+    <div
+      className="h-full w-full flex flex-col justify-center"
+      style={{ padding: 16, gap: 10 }}
+    >
+      <BigStat
+        value={value}
+        sub={hasActiveScanData ? "active scans" : "total findings"}
+      />
       {!hasActiveScanData && (
-        <p className="text-xs font-mono text-text-muted">
-          No active scan data available
-        </p>
+        <div className="flex items-center" style={{ gap: 8 }}>
+          <MonoBadge tone="warn">fallback</MonoBadge>
+          <span
+            className="font-mono"
+            style={{ fontSize: 10, color: "var(--text-muted)" }}
+          >
+            no active scan provider
+          </span>
+        </div>
       )}
     </div>
   );

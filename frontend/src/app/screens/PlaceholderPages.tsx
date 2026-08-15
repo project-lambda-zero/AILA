@@ -1,54 +1,49 @@
 /**
  * Placeholder pages for routes that will be fully implemented in later plans.
- * Plan 03 will replace SessionsPlaceholder with the real session management page.
+ * Plan 03 will replace SessionsPlaceholder with the real session management
+ * page.
  *
- * A centered `WindowPanel` gives the placeholder the same OS-window chrome as
- * every other page, so a not-yet-shipped route still reads as part of the
- * workbench and not as a bare div.
+ * A centred `WindowPanel` with a mock `SectionHeader` gives the placeholder
+ * the same OS-window chrome as every other page, so a not-yet-shipped route
+ * still reads as part of the workbench and not as a bare div.
  */
 import * as React from "react";
 
+import { SectionHeader } from "@/components/aila/mock";
 import { WindowPanel } from "@/components/aila/WindowPanel";
 
-const PLACEHOLDER_BODY = (
-  <p className="font-mono text-xs text-text-muted">
-    This surface is queued for a later phase.
-  </p>
-);
-
-function PlaceholderShell({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
+function PlaceholderShell({ title }: { title: string }) {
   return (
     <div className="flex min-h-64 items-center justify-center p-6">
       <WindowPanel
-        title={title}
+        title={title.toLowerCase()}
         tone="muted"
         status="coming soon"
         className="w-full max-w-md"
       >
-        <div className="flex flex-col items-center gap-3 py-6 text-center">
+        <div className="flex flex-col" style={{ gap: 14, padding: "6px 2px 4px" }}>
+          <SectionHeader icon={"\u25ce"} title={title.toLowerCase()} size={20} />
           <p
-            className="font-mono uppercase text-text-muted"
-            style={{ fontSize: "10.5px", letterSpacing: "0.14em" }}
+            className="font-mono"
+            style={{
+              color: "var(--text-muted)",
+              fontSize: 11,
+              lineHeight: 1.55,
+              letterSpacing: "0.02em",
+            }}
           >
-            {title}
+            This surface is queued for a later phase.
           </p>
-          {children}
         </div>
       </WindowPanel>
     </div>
   );
 }
 
-export function SettingsPlaceholder() {
-  return <PlaceholderShell title="SETTINGS">{PLACEHOLDER_BODY}</PlaceholderShell>;
+export function SettingsPlaceholder(): React.ReactElement {
+  return <PlaceholderShell title="SETTINGS" />;
 }
 
-export function SessionsPlaceholder() {
-  return <PlaceholderShell title="SESSIONS">{PLACEHOLDER_BODY}</PlaceholderShell>;
+export function SessionsPlaceholder(): React.ReactElement {
+  return <PlaceholderShell title="SESSIONS" />;
 }

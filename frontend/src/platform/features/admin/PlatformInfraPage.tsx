@@ -1,17 +1,20 @@
 /**
  * PlatformInfraPage -- god-tier control surfaces for platform infra.
  *
- * Two tabs:
+ * Two concerns (Segmented switcher in the SectionHeader):
  *   MCP Registry -- CRUD + approve/revoke + drift over
- *     /platform/mcp/instances (see aila/api/routers/mcp_instances.py)
+ *     /platform/mcp/instances
  *   Specialists  -- CRUD + seed defaults over /agents/specialists
- *     (see aila/api/routers/specialist_agents.py)
  *
- * The route is admin-gated in `src/app/router.tsx` via
- * `protectPage("Platform Infra", PlatformInfraPage, "admin")`; the page
- * returns bare content and the shell renders the title bar (CLAUDE.md #16).
+ * Rebuilt to the AILA mock: SectionHeader top, WindowPanels for content,
+ * DataGrid for the instance / specialist lists, MonoBadge for approval /
+ * drift / enabled state. Dialogs are replaced by a lightweight ModalShell
+ * that reuses WindowPanel.
+ *
+ * The route is admin-gated in `src/app/router.tsx`; the page returns bare
+ * content and the shell renders the title bar (CLAUDE.md #16).
  */
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 
 import { Trash } from "@phosphor-icons/react/dist/csr/Trash";
 import { CheckCircle } from "@phosphor-icons/react/dist/csr/CheckCircle";
@@ -21,22 +24,12 @@ import { CaretRight } from "@phosphor-icons/react/dist/csr/CaretRight";
 import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
 import { ArrowsCounterClockwise } from "@phosphor-icons/react/dist/csr/ArrowsCounterClockwise";
 import { Plant } from "@phosphor-icons/react/dist/csr/Plant";
+import { X } from "@phosphor-icons/react/dist/csr/X";
 
-import { AilaCard } from "@/components/aila/AilaCard";
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { EmptyState } from "@/components/aila/EmptyState";
+import { SectionHeader, Segmented, MonoBadge, DataGrid } from "@/components/aila/mock";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
-import { Button } from "@/components/ui/button";
 import { FeatureBoundary } from "@app/FeatureBoundary";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 import {
   SPECIALIST_MODULE_IDS,
@@ -59,6 +52,54 @@ import {
 } from "./platformInfraQueries";
 
 // ---------------------------------------------------------------------------
+// Shared inline styles
+// ---------------------------------------------------------------------------
+
+const BUTTON_STYLE: CSSProperties = {
+  height: 24, padding: "0 9px", fontSize: 9, fontFamily: "var(--font-mono)",
+  letterSpacing: "0.08em", textTransform: "uppercase",
+  background: "var(--surface-sunk)", border: "1px solid var(--border-soft)",
+  color: "var(--text-primary)", borderRadius: 3, cursor: "pointer",
+  display: "inline-flex", alignItems: "center", gap: 5,
+};
+
+const PRIMARY_BUTTON_STYLE: CSSProperties = {
+  ...BUTTON_STYLE,
+  background: "var(--accent)", border: "1px solid var(--accent)",
+  color: "var(--text-on-accent)",
+};
+
+const WARN_BUTTON_STYLE: CSSProperties = {
+  ...BUTTON_STYLE,
+  background: "color-mix(in srgb, var(--status-warn) 14%, transparent)",
+  border: "1px solid var(--status-warn)", color: "var(--status-warn)",
+};
+
+const INPUT_STYLE: CSSProperties = {
+  height: 26, padding: "0 8px", fontSize: 11, fontFamily: "var(--font-mono)",
+  background: "var(--surface-sunk)", border: "1px solid var(--border-soft)",
+  color: "var(--text-primary)", borderRadius: 3, width: "100%",
+};
+
+const TEXTAREA_STYLE: CSSProperties = {
+  padding: "6px 8px", fontSize: 11, fontFamily: "var(--font-mono)",
+  background: "var(--surface-sunk)", border: "1px solid var(--border-soft)",
+  color: "var(--text-primary)", borderRadius: 3, resize: "vertical", width: "100%",
+};
+
+const LABEL_STYLE: CSSProperties = {
+  fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.14em",
+  color: "var(--text-faint)", textTransform: "uppercase",
+};
+
+const ERROR_BOX_STYLE: CSSProperties = {
+  border: "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+  background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+  color: "var(--status-warn)",
+  padding: "6px 10px", fontSize: 11, borderRadius: 3, fontFamily: "var(--font-mono)",
+};
+
+// ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
 
@@ -71,24 +112,76 @@ function formatTimestamp(value: string | null | undefined): string {
 
 function shortHash(hash: string | null | undefined): string {
   if (!hash) return "--";
-  return hash.length > 12 ? `${hash.slice(0, 12)}...` : hash;
+  return hash.length > 12 ? `${hash.slice(0, 12)}\u2026` : hash;
 }
 
-type ApprovalSeverity = "critical" | "medium" | "low" | "neutral";
+type ApprovalTone = "critical" | "medium" | "low" | "muted";
 
-function approvalSeverity(state: string): ApprovalSeverity {
+function approvalTone(state: string): ApprovalTone {
   const normalized = state.toLowerCase();
   if (normalized === "approved") return "low";
   if (normalized === "pending") return "medium";
   if (normalized === "revoked") return "critical";
-  return "neutral";
+  return "muted";
 }
 
 function isDrift(row: McpInstance): boolean {
   return (
-    row.schema_hash !== null &&
-    row.approved_hash !== null &&
-    row.schema_hash !== row.approved_hash
+    row.schema_hash !== null
+    && row.approved_hash !== null
+    && row.schema_hash !== row.approved_hash
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Modal shell (replaces shadcn Dialog)
+// ---------------------------------------------------------------------------
+
+interface ModalShellProps {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  tone?: "accent" | "warn" | "muted" | "ok" | "info";
+  width?: number;
+  children: ReactNode;
+}
+
+function ModalShell({ open, onClose, title, tone = "accent", width = 460, children }: ModalShellProps) {
+  if (!open) return null;
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 60, padding: 16,
+        background: "color-mix(in srgb, var(--surface-page) 80%, transparent)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}
+    >
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: width }}>
+        <WindowPanel
+          title={title}
+          tone={tone}
+          actions={
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              style={{
+                width: 20, height: 20, background: "transparent", border: 0,
+                color: "var(--text-muted)", cursor: "pointer",
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+              }}
+            >
+              <X size={12} aria-hidden />
+            </button>
+          }
+        >
+          {children}
+        </WindowPanel>
+      </div>
+    </div>
   );
 }
 
@@ -113,19 +206,10 @@ function NewMcpDialog({ open, onClose, onSubmit, isPending }: NewMcpDialogProps)
   const [error, setError] = useState<string | null>(null);
 
   function reset() {
-    setName("");
-    setTransport("http");
-    setEndpoint("");
-    setModuleScope("");
-    setCapabilityTags("");
-    setEnabled(true);
-    setError(null);
+    setName(""); setTransport("http"); setEndpoint("");
+    setModuleScope(""); setCapabilityTags(""); setEnabled(true); setError(null);
   }
-
-  function handleClose() {
-    reset();
-    onClose();
-  }
+  function handleClose() { reset(); onClose(); }
 
   async function handleSubmit() {
     setError(null);
@@ -135,10 +219,7 @@ function NewMcpDialog({ open, onClose, onSubmit, isPending }: NewMcpDialogProps)
       setError("name and endpoint are required");
       return;
     }
-    const tags = capabilityTags
-      .split(",")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
+    const tags = capabilityTags.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
     try {
       await onSubmit({
         name: trimmedName,
@@ -156,58 +237,46 @@ function NewMcpDialog({ open, onClose, onSubmit, isPending }: NewMcpDialogProps)
   }
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="font-mono text-text">New MCP instance</DialogTitle>
-        </DialogHeader>
-        <div className="flex flex-col gap-3">
-          <label className="font-mono text-xs text-text-muted flex flex-col gap-1">
-            Name
-            <Input aria-label="MCP instance name" value={name} onChange={(e) => setName(e.target.value)} className="font-mono text-sm" />
-          </label>
-          <label className="font-mono text-xs text-text-muted flex flex-col gap-1">
-            Transport (http | stdio)
-            <Input aria-label="Transport (http or stdio)" value={transport} onChange={(e) => setTransport(e.target.value)} className="font-mono text-sm" />
-          </label>
-          <label className="font-mono text-xs text-text-muted flex flex-col gap-1">
-            Endpoint (URL for http, command for stdio)
-            <Input aria-label="Endpoint URL or command" value={endpoint} onChange={(e) => setEndpoint(e.target.value)} className="font-mono text-sm" />
-          </label>
-          <label className="font-mono text-xs text-text-muted flex flex-col gap-1">
-            Module scope (optional)
-            <Input aria-label="Module scope (optional)" value={moduleScope} onChange={(e) => setModuleScope(e.target.value)} className="font-mono text-sm" />
-          </label>
-          <label className="font-mono text-xs text-text-muted flex flex-col gap-1">
-            Capability tags (comma-separated)
-            <Input aria-label="Capability tags (comma-separated)" value={capabilityTags} onChange={(e) => setCapabilityTags(e.target.value)} className="font-mono text-sm" />
-          </label>
-          {/* Single-toggle checkbox: WCAG 1.3.1 fieldset/legend applies to related-option groups, not to individual on/off toggles labelled via wrapping <label>. */}
-          <label className="font-mono text-xs text-text-muted inline-flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={enabled}
-              onChange={(e) => setEnabled(e.target.checked)}
-              className="h-3.5 w-3.5"
-            />
-            Enabled at creation
-          </label>
-          {error && (
-            <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-              {error}
-            </div>
-          )}
-          <div className="flex gap-2 pt-1">
-            <Button type="button" size="sm" className="flex-1" onClick={handleSubmit} disabled={isPending}>
-              {isPending ? "Creating..." : "Create"}
-            </Button>
-            <Button type="button" size="sm" variant="outline" onClick={handleClose}>
-              Cancel
-            </Button>
-          </div>
+    <ModalShell open={open} onClose={handleClose} title="new mcp instance">
+      <div className="flex flex-col" style={{ gap: 10 }}>
+        <div className="flex flex-col" style={{ gap: 4 }}>
+          <label style={LABEL_STYLE}>NAME</label>
+          <input aria-label="MCP instance name" value={name} onChange={(e) => setName(e.target.value)} style={INPUT_STYLE} />
         </div>
-      </DialogContent>
-    </Dialog>
+        <div className="flex flex-col" style={{ gap: 4 }}>
+          <label style={LABEL_STYLE}>TRANSPORT (HTTP | STDIO)</label>
+          <input aria-label="Transport (http or stdio)" value={transport} onChange={(e) => setTransport(e.target.value)} style={INPUT_STYLE} />
+        </div>
+        <div className="flex flex-col" style={{ gap: 4 }}>
+          <label style={LABEL_STYLE}>ENDPOINT (URL FOR HTTP, COMMAND FOR STDIO)</label>
+          <input aria-label="Endpoint URL or command" value={endpoint} onChange={(e) => setEndpoint(e.target.value)} style={INPUT_STYLE} />
+        </div>
+        <div className="flex flex-col" style={{ gap: 4 }}>
+          <label style={LABEL_STYLE}>MODULE SCOPE (OPTIONAL)</label>
+          <input aria-label="Module scope (optional)" value={moduleScope} onChange={(e) => setModuleScope(e.target.value)} style={INPUT_STYLE} />
+        </div>
+        <div className="flex flex-col" style={{ gap: 4 }}>
+          <label style={LABEL_STYLE}>CAPABILITY TAGS (COMMA-SEPARATED)</label>
+          <input aria-label="Capability tags (comma-separated)" value={capabilityTags} onChange={(e) => setCapabilityTags(e.target.value)} style={INPUT_STYLE} />
+        </div>
+        <label className="inline-flex items-center font-mono" style={{ gap: 8, fontSize: 11, color: "var(--text-primary)" }}>
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => setEnabled(e.target.checked)}
+            style={{ width: 12, height: 12, accentColor: "var(--accent)" }}
+          />
+          Enabled at creation
+        </label>
+        {error && <div style={ERROR_BOX_STYLE}>{error}</div>}
+        <div className="flex" style={{ gap: 8, paddingTop: 4 }}>
+          <button type="button" style={{ ...PRIMARY_BUTTON_STYLE, flex: 1 }} onClick={() => void handleSubmit()} disabled={isPending}>
+            {isPending ? "CREATING\u2026" : "CREATE"}
+          </button>
+          <button type="button" style={BUTTON_STYLE} onClick={handleClose}>CANCEL</button>
+        </div>
+      </div>
+    </ModalShell>
   );
 }
 
@@ -226,11 +295,7 @@ function RevokeDialog({ instance, onClose, onConfirm, isPending }: RevokeDialogP
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  function handleClose() {
-    setReason("");
-    setError(null);
-    onClose();
-  }
+  function handleClose() { setReason(""); setError(null); onClose(); }
 
   async function handleConfirm() {
     setError(null);
@@ -249,45 +314,27 @@ function RevokeDialog({ instance, onClose, onConfirm, isPending }: RevokeDialogP
   }
 
   return (
-    <Dialog open={instance !== null} onOpenChange={(v) => { if (!v) handleClose(); }}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="font-mono text-text">
-            Revoke MCP trust
-          </DialogTitle>
-        </DialogHeader>
-        <div className="flex flex-col gap-3">
-          {instance && (
-            <p className="font-mono text-xs text-text-muted">
-              Revoking trust for <span className="text-text">{instance.name}</span>.
-              The server is marked untrusted until re-approved.
-            </p>
-          )}
-          <label className="font-mono text-xs text-text-muted flex flex-col gap-1">
-            Reason (required, audited)
-            <Textarea
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              rows={4}
-              className="font-mono text-sm"
-            />
-          </label>
-          {error && (
-            <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-              {error}
-            </div>
-          )}
-          <div className="flex gap-2 pt-1">
-            <Button type="button" size="sm" className="flex-1" onClick={handleConfirm} disabled={isPending}>
-              {isPending ? "Revoking..." : "Revoke"}
-            </Button>
-            <Button type="button" size="sm" variant="outline" onClick={handleClose}>
-              Cancel
-            </Button>
-          </div>
+    <ModalShell open={instance !== null} onClose={handleClose} title="revoke mcp trust" tone="warn">
+      <div className="flex flex-col" style={{ gap: 10 }}>
+        {instance && (
+          <p className="font-mono" style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.55 }}>
+            Revoking trust for <span style={{ color: "var(--text-primary)" }}>{instance.name}</span>.
+            The server is marked untrusted until re-approved.
+          </p>
+        )}
+        <div className="flex flex-col" style={{ gap: 4 }}>
+          <label style={LABEL_STYLE}>REASON (REQUIRED, AUDITED)</label>
+          <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={4} style={TEXTAREA_STYLE} />
         </div>
-      </DialogContent>
-    </Dialog>
+        {error && <div style={ERROR_BOX_STYLE}>{error}</div>}
+        <div className="flex" style={{ gap: 8, paddingTop: 4 }}>
+          <button type="button" style={{ ...WARN_BUTTON_STYLE, flex: 1 }} onClick={() => void handleConfirm()} disabled={isPending}>
+            {isPending ? "REVOKING\u2026" : "REVOKE"}
+          </button>
+          <button type="button" style={BUTTON_STYLE} onClick={handleClose}>CANCEL</button>
+        </div>
+      </div>
+    </ModalShell>
   );
 }
 
@@ -316,113 +363,105 @@ function DeleteMcpDialog({ instance, onClose, onConfirm, isPending }: DeleteMcpD
   }
 
   return (
-    <Dialog open={instance !== null} onOpenChange={(v) => { if (!v) { setError(null); onClose(); } }}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle className="font-mono text-text">Delete MCP instance</DialogTitle>
-        </DialogHeader>
-        <div className="flex flex-col gap-3">
-          {instance && (
-            <p className="font-mono text-xs text-text-muted">
-              Permanently remove <span className="text-text">{instance.name}</span> from
-              the catalog. Existing approvals cannot be recovered.
-            </p>
-          )}
-          {error && (
-            <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-              {error}
-            </div>
-          )}
-          <div className="flex gap-2 pt-1">
-            <Button type="button" size="sm" className="flex-1" onClick={handleConfirm} disabled={isPending}>
-              {isPending ? "Deleting..." : "Delete"}
-            </Button>
-            <Button type="button" size="sm" variant="outline" onClick={() => { setError(null); onClose(); }}>
-              Cancel
-            </Button>
-          </div>
+    <ModalShell
+      open={instance !== null}
+      onClose={() => { setError(null); onClose(); }}
+      title="delete mcp instance"
+      tone="warn"
+      width={400}
+    >
+      <div className="flex flex-col" style={{ gap: 10 }}>
+        {instance && (
+          <p className="font-mono" style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.55 }}>
+            Permanently remove <span style={{ color: "var(--text-primary)" }}>{instance.name}</span> from
+            the catalog. Existing approvals cannot be recovered.
+          </p>
+        )}
+        {error && <div style={ERROR_BOX_STYLE}>{error}</div>}
+        <div className="flex" style={{ gap: 8, paddingTop: 4 }}>
+          <button type="button" style={{ ...WARN_BUTTON_STYLE, flex: 1 }} onClick={() => void handleConfirm()} disabled={isPending}>
+            {isPending ? "DELETING\u2026" : "DELETE"}
+          </button>
+          <button
+            type="button"
+            style={BUTTON_STYLE}
+            onClick={() => { setError(null); onClose(); }}
+          >
+            CANCEL
+          </button>
         </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </ModalShell>
   );
 }
 
 // ---------------------------------------------------------------------------
-// MCP: Tools panel (expanded row)
+// MCP: Tools panel (expanded row content)
 // ---------------------------------------------------------------------------
 
-interface McpToolsPanelProps {
-  instanceId: string;
-}
-
-function McpToolsPanel({ instanceId }: McpToolsPanelProps) {
+function McpToolsPanel({ instanceId }: { instanceId: string }) {
   const toolsQuery = useMcpInstanceTools(instanceId);
   const data = toolsQuery.data;
   const drift = data?.drift ?? false;
 
   return (
-    <div className="border-t border-border bg-elevated/40 px-4 py-3 flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <span className="font-mono text-xs text-text-muted">schema_hash:</span>
-        <code className="font-mono text-xs text-text bg-base px-1.5 py-0.5 rounded-[2px]">
+    <div
+      className="flex flex-col"
+      style={{
+        gap: 10, padding: 12,
+        background: "var(--surface-sunk)",
+        borderTop: "1px solid var(--border-faint)",
+      }}
+    >
+      <div className="flex flex-wrap items-center" style={{ gap: 10 }}>
+        <span style={LABEL_STYLE}>SCHEMA_HASH</span>
+        <code className="font-mono" style={{ fontSize: 10.5, color: "var(--text-primary)", padding: "2px 6px", background: "var(--surface-card)", borderRadius: 2 }}>
           {data ? shortHash(data.schema_hash) : "--"}
         </code>
-        <span className="font-mono text-xs text-text-muted">approved_hash:</span>
-        <code className="font-mono text-xs text-text bg-base px-1.5 py-0.5 rounded-[2px]">
+        <span style={LABEL_STYLE}>APPROVED_HASH</span>
+        <code className="font-mono" style={{ fontSize: 10.5, color: "var(--text-primary)", padding: "2px 6px", background: "var(--surface-card)", borderRadius: 2 }}>
           {data ? shortHash(data.approved_hash) : "--"}
         </code>
-        {data && drift && (
-          <AilaBadge severity="critical" size="sm">DRIFT</AilaBadge>
-        )}
-        {data && !drift && data.approved_hash && (
-          <AilaBadge severity="low" size="sm">In sync</AilaBadge>
-        )}
+        {data && drift && <MonoBadge tone="critical">DRIFT</MonoBadge>}
+        {data && !drift && data.approved_hash && <MonoBadge tone="ok">In sync</MonoBadge>}
       </div>
 
       {toolsQuery.isLoading && <LoadingSkeletonGroup lines={2} />}
       {toolsQuery.isError && (
-        <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
+        <div style={ERROR_BOX_STYLE}>
           Failed to load tools: {(toolsQuery.error as Error).message}
         </div>
       )}
       {data && data.tools.length === 0 && (
-        <p className="font-mono text-xs text-text-muted">Server exposes no tools.</p>
+        <p className="font-mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>Server exposes no tools.</p>
       )}
       {data && data.tools.length > 0 && (
-        <div className="overflow-x-auto">
-          <table aria-label="MCP instances" className="w-full border-collapse [&_th]:border [&_th]:border-border [&_th]:uppercase [&_th]:tracking-wider [&_td]:border [&_td]:border-border">
-            <thead>
-              <tr className="border-b border-border">
-                <th className="py-1.5 px-2 text-left font-mono text-xs text-text-muted">Name</th>
-                <th className="py-1.5 px-2 text-left font-mono text-xs text-text-muted">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.tools.map((tool, idx) => {
-                const name = typeof tool["name"] === "string" ? (tool["name"] as string) : `tool_${idx}`;
-                const description = typeof tool["description"] === "string"
-                  ? (tool["description"] as string)
-                  : "";
-                return (
-                  <tr key={`${name}-${idx}`} className="border-b border-border last:border-0 font-mono text-xs">
-                    <td className="py-1.5 px-2 text-text">{name}</td>
-                    <td className="py-1.5 px-2 text-text-muted max-w-[520px]">{description || "--"}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <DataGrid<Record<string, unknown>>
+          columns={[
+            { label: "NAME", width: "200px" },
+            { label: "DESCRIPTION", width: "1fr" },
+          ]}
+          rows={data.tools as Record<string, unknown>[]}
+          getKey={(tool, idx) => (typeof tool["name"] === "string" ? (tool["name"] as string) : `tool_${idx}`)}
+          renderCells={(tool) => {
+            const name = typeof tool["name"] === "string" ? (tool["name"] as string) : "";
+            const description = typeof tool["description"] === "string" ? (tool["description"] as string) : "";
+            return [
+              <span className="font-mono" style={{ fontSize: 10.5, color: "var(--text-primary)" }}>{name || "--"}</span>,
+              <span className="font-mono truncate" style={{ fontSize: 10.5, color: "var(--text-muted)" }}>{description || "--"}</span>,
+            ];
+          }}
+        />
       )}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// MCP: Tab body
+// MCP: Concern body
 // ---------------------------------------------------------------------------
 
-function McpRegistryTab() {
+function McpRegistryConcern() {
   const instancesQuery = useMcpInstances(true);
   const createMutation = useCreateMcpInstance();
   const patchMutation = usePatchMcpInstance();
@@ -438,172 +477,177 @@ function McpRegistryTab() {
   const rows = instancesQuery.data ?? [];
 
   return (
-    <div className="flex flex-col gap-4">
-      <AilaCard variant="default" padding="md">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="font-mono text-xs font-semibold uppercase tracking-wider text-text-muted">
-            MCP Server Catalog
-          </h2>
-          <div className="flex gap-2">
-            <Button
-              size="xs"
-              variant="outline"
+    <div className="flex flex-col" style={{ gap: 12 }}>
+      <WindowPanel
+        title="mcp server catalog"
+        actions={
+          <div className="flex items-center" style={{ gap: 6 }}>
+            <button
+              type="button"
+              style={BUTTON_STYLE}
               onClick={() => void instancesQuery.refetch()}
               disabled={instancesQuery.isFetching}
             >
-              <ArrowsCounterClockwise className="h-3 w-3" />
-              Refresh
-            </Button>
-            <Button size="xs" onClick={() => setNewOpen(true)}>
-              <Plus className="h-3 w-3" />
-              New instance
-            </Button>
+              <ArrowsCounterClockwise size={11} aria-hidden />
+              REFRESH
+            </button>
+            <button
+              type="button"
+              style={PRIMARY_BUTTON_STYLE}
+              onClick={() => setNewOpen(true)}
+            >
+              <Plus size={11} aria-hidden />
+              NEW INSTANCE
+            </button>
           </div>
-        </div>
-
-        {instancesQuery.isLoading && <LoadingSkeletonGroup lines={4} />}
+        }
+        flush
+      >
+        {instancesQuery.isLoading && <div style={{ padding: 14 }}><LoadingSkeletonGroup lines={4} /></div>}
         {instancesQuery.isError && (
-          <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
+          <div style={{ ...ERROR_BOX_STYLE, margin: 12 }}>
             Failed to load MCP instances: {(instancesQuery.error as Error).message}
           </div>
         )}
         {!instancesQuery.isLoading && !instancesQuery.isError && rows.length === 0 && (
-          <EmptyState
-            title="No MCP instances"
-            description="Register the first MCP server to expose its tools to the platform."
-          />
+          <div
+            className="font-mono"
+            style={{ padding: 32, textAlign: "center", fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}
+          >
+            No MCP instances.
+            <br />
+            Register the first MCP server to expose its tools to the platform.
+          </div>
         )}
         {!instancesQuery.isLoading && rows.length > 0 && (
-          <div className="overflow-x-auto">
-            <table aria-label="MCP capability audit" className="w-full border-collapse [&_th]:border [&_th]:border-border [&_th]:uppercase [&_th]:tracking-wider [&_td]:border [&_td]:border-border">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="w-6"></th>
-                  <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Name</th>
-                  <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Transport</th>
-                  <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Endpoint</th>
-                  <th className="py-2 px-3 text-left font-mono text-xs text-text-muted hidden md:table-cell">Module scope</th>
-                  <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Approval</th>
-                  <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Enabled</th>
-                  <th className="py-2 px-3 text-left font-mono text-xs text-text-muted hidden lg:table-cell">Tags</th>
-                  <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => {
-                  const drift = isDrift(row);
-                  const expanded = expandedId === row.id;
-                  return (
-                    <Fragment key={row.id}>
-                      <tr
-                        className="border-b border-border last:border-0 font-mono text-xs hover:bg-elevated"
+          <div
+            className="grid font-mono uppercase"
+            style={{
+              gridTemplateColumns: "24px 1fr 90px 1.4fr 130px 150px 68px 140px 180px",
+              gap: 10, padding: "8px 12px",
+              background: "var(--surface-sunk)", borderBottom: "1px solid var(--border-soft)",
+              fontSize: 9, letterSpacing: "0.14em", color: "var(--text-faint)",
+            }}
+          >
+            <span />
+            <span>NAME</span>
+            <span>TRANSPORT</span>
+            <span>ENDPOINT</span>
+            <span>MODULE SCOPE</span>
+            <span>APPROVAL</span>
+            <span>ENABLED</span>
+            <span>TAGS</span>
+            <span>ACTIONS</span>
+          </div>
+        )}
+        {!instancesQuery.isLoading && rows.length > 0 && (
+          <div>
+            {rows.map((row) => {
+              const drift = isDrift(row);
+              const expanded = expandedId === row.id;
+              return (
+                <Fragment key={row.id}>
+                  <div
+                    className="grid font-mono"
+                    style={{
+                      gridTemplateColumns: "24px 1fr 90px 1.4fr 130px 150px 68px 140px 180px",
+                      gap: 10, padding: "8px 12px", alignItems: "center",
+                      borderBottom: "1px solid var(--border-faint)",
+                      background: "var(--surface-card)",
+                      fontSize: 11,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setExpandedId(expanded ? null : row.id)}
+                      aria-label={expanded ? "Collapse tools" : "Expand tools"}
+                      style={{
+                        width: 20, height: 20, background: "transparent", border: 0,
+                        color: "var(--text-muted)", cursor: "pointer",
+                        display: "inline-flex", alignItems: "center", justifyContent: "center",
+                      }}
+                    >
+                      {expanded ? <CaretDown size={11} /> : <CaretRight size={11} />}
+                    </button>
+                    <span style={{ color: "var(--text-primary)" }}>{row.name}</span>
+                    <span style={{ color: "var(--text-muted)" }}>{row.transport}</span>
+                    <span className="truncate" style={{ color: "var(--text-muted)" }} title={row.endpoint}>{row.endpoint}</span>
+                    <span style={{ color: "var(--text-muted)" }}>{row.module_scope ?? "--"}</span>
+                    <span className="inline-flex items-center" style={{ gap: 6 }}>
+                      <MonoBadge tone={approvalTone(row.approval_state)}>{row.approval_state}</MonoBadge>
+                      {drift && <MonoBadge tone="critical">DRIFT</MonoBadge>}
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={row.enabled}
+                      disabled={patchMutation.isPending}
+                      onChange={(e) =>
+                        patchMutation.mutate({ id: row.id, patch: { enabled: e.target.checked } })
+                      }
+                      style={{ width: 12, height: 12, accentColor: "var(--accent)" }}
+                      aria-label={`Toggle ${row.name}`}
+                    />
+                    <div className="flex flex-wrap" style={{ gap: 4 }}>
+                      {row.capability_tags.length === 0 && <span style={{ color: "var(--text-faint)" }}>--</span>}
+                      {row.capability_tags.map((tag) => (
+                        <span
+                          key={tag}
+                          className="font-mono"
+                          style={{
+                            padding: "1px 6px", fontSize: 9.5, borderRadius: 2,
+                            background: "var(--surface-sunk)", color: "var(--text-muted)",
+                          }}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="flex flex-wrap" style={{ gap: 4 }}>
+                      <button
+                        type="button"
+                        style={BUTTON_STYLE}
+                        disabled={approveMutation.isPending}
+                        onClick={() => approveMutation.mutate(row.id)}
+                        title="Pin current schema and approve"
                       >
-                        <td className="py-2 px-1 align-top">
-                          <button
-                            type="button"
-                            onClick={() => setExpandedId(expanded ? null : row.id)}
-                            className="p-0.5 text-text-muted hover:text-text"
-                            aria-label={expanded ? "Collapse tools" : "Expand tools"}
-                          >
-                            {expanded ? <CaretDown className="h-3 w-3" /> : <CaretRight className="h-3 w-3" />}
-                          </button>
-                        </td>
-                        <td className="py-2 px-3 text-text">{row.name}</td>
-                        <td className="py-2 px-3 text-text-muted">{row.transport}</td>
-                        <td className="py-2 px-3 text-text-muted max-w-[240px] truncate" title={row.endpoint}>
-                          {row.endpoint}
-                        </td>
-                        <td className="py-2 px-3 text-text-muted hidden md:table-cell">{row.module_scope ?? "--"}</td>
-                        <td className="py-2 px-3">
-                          <div className="flex items-center gap-1.5">
-                            <AilaBadge severity={approvalSeverity(row.approval_state)} size="sm">
-                              {row.approval_state}
-                            </AilaBadge>
-                            {drift && <AilaBadge severity="critical" size="sm">DRIFT</AilaBadge>}
-                          </div>
-                        </td>
-                        <td className="py-2 px-3">
-                          <input
-                            type="checkbox"
-                            checked={row.enabled}
-                            disabled={patchMutation.isPending}
-                            onChange={(e) =>
-                              patchMutation.mutate({ id: row.id, patch: { enabled: e.target.checked } })
-                            }
-                            className="h-3.5 w-3.5"
-                            aria-label={`Toggle ${row.name}`}
-                          />
-                        </td>
-                        <td className="py-2 px-3 hidden lg:table-cell">
-                          <div className="flex flex-wrap gap-1 max-w-[220px]">
-                            {row.capability_tags.length === 0 && (
-                              <span className="text-text-muted">--</span>
-                            )}
-                            {row.capability_tags.map((tag) => (
-                              <span
-                                key={tag}
-                                className="bg-base px-1.5 py-0.5 rounded-[2px] text-text-muted"
-                              >
-                                {tag}
-                              </span>
-                            ))}
-                          </div>
-                        </td>
-                        <td className="py-2 px-3">
-                          <div className="flex flex-wrap gap-1">
-                            <Button
-                              size="xs"
-                              variant="outline"
-                              disabled={approveMutation.isPending}
-                              onClick={() => approveMutation.mutate(row.id)}
-                              title="Pin current schema and approve"
-                            >
-                              <CheckCircle className="h-3 w-3" />
-                              Approve
-                            </Button>
-                            <Button
-                              size="xs"
-                              variant="outline"
-                              onClick={() => setRevokeTarget(row)}
-                              title="Revoke trust"
-                            >
-                              <Prohibit className="h-3 w-3" />
-                              Revoke
-                            </Button>
-                            <Button
-                              size="xs"
-                              variant="outline"
-                              onClick={() => setDeleteTarget(row)}
-                              title="Delete instance"
-                            >
-                              <Trash className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        </td>
-                      </tr>
-                      {expanded && (
-                        <tr className="bg-elevated/40">
-                          <td colSpan={9} className="p-0">
-                            <McpToolsPanel instanceId={row.id} />
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
+                        <CheckCircle size={10} aria-hidden />
+                        APPROVE
+                      </button>
+                      <button
+                        type="button"
+                        style={BUTTON_STYLE}
+                        onClick={() => setRevokeTarget(row)}
+                        title="Revoke trust"
+                      >
+                        <Prohibit size={10} aria-hidden />
+                        REVOKE
+                      </button>
+                      <button
+                        type="button"
+                        style={BUTTON_STYLE}
+                        onClick={() => setDeleteTarget(row)}
+                        title="Delete instance"
+                        aria-label="Delete instance"
+                      >
+                        <Trash size={10} aria-hidden />
+                      </button>
+                    </div>
+                  </div>
+                  {expanded && <McpToolsPanel instanceId={row.id} />}
+                </Fragment>
+              );
+            })}
           </div>
         )}
 
         {(patchMutation.isError || approveMutation.isError) && (
-          <div className="mt-3 rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
+          <div style={{ ...ERROR_BOX_STYLE, margin: 12 }}>
             {(patchMutation.error ?? approveMutation.error) instanceof Error
               ? ((patchMutation.error ?? approveMutation.error) as Error).message
               : "Mutation failed"}
           </div>
         )}
-      </AilaCard>
+      </WindowPanel>
 
       <NewMcpDialog
         open={newOpen}
@@ -611,16 +655,12 @@ function McpRegistryTab() {
         onSubmit={(body) => createMutation.mutateAsync(body)}
         isPending={createMutation.isPending}
       />
-
       <RevokeDialog
         instance={revokeTarget}
         onClose={() => setRevokeTarget(null)}
-        onConfirm={(reason) =>
-          revokeMutation.mutateAsync({ id: revokeTarget!.id, reason })
-        }
+        onConfirm={(reason) => revokeMutation.mutateAsync({ id: revokeTarget!.id, reason })}
         isPending={revokeMutation.isPending}
       />
-
       <DeleteMcpDialog
         instance={deleteTarget}
         onClose={() => setDeleteTarget(null)}
@@ -652,18 +692,10 @@ function NewSpecialistDialog({ moduleId, open, onClose, onSubmit, isPending }: N
   const [error, setError] = useState<string | null>(null);
 
   function reset() {
-    setName("");
-    setCapability("");
-    setStrategy("");
-    setDescription("");
-    setEnabled(true);
-    setError(null);
+    setName(""); setCapability(""); setStrategy("");
+    setDescription(""); setEnabled(true); setError(null);
   }
-
-  function handleClose() {
-    reset();
-    onClose();
-  }
+  function handleClose() { reset(); onClose(); }
 
   async function handleSubmit() {
     setError(null);
@@ -690,60 +722,42 @@ function NewSpecialistDialog({ moduleId, open, onClose, onSubmit, isPending }: N
   }
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="font-mono text-text">
-            New specialist ({moduleId})
-          </DialogTitle>
-        </DialogHeader>
-        <div className="flex flex-col gap-3">
-          <label className="font-mono text-xs text-text-muted flex flex-col gap-1">
-            Name (persona voice)
-            <Input aria-label="Specialist name (persona voice)" value={name} onChange={(e) => setName(e.target.value)} className="font-mono text-sm" />
-          </label>
-          <label className="font-mono text-xs text-text-muted flex flex-col gap-1">
-            Capability (matches dispatch PhaseSpec.capability)
-            <Input aria-label="Capability (dispatch PhaseSpec.capability)" value={capability} onChange={(e) => setCapability(e.target.value)} className="font-mono text-sm" />
-          </label>
-          <label className="font-mono text-xs text-text-muted flex flex-col gap-1">
-            Strategy family (optional)
-            <Input aria-label="Strategy family (optional)" value={strategy} onChange={(e) => setStrategy(e.target.value)} className="font-mono text-sm" />
-          </label>
-          <label className="font-mono text-xs text-text-muted flex flex-col gap-1">
-            Description
-            <Textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={3}
-              className="font-mono text-sm"
-            />
-          </label>
-          <label className="font-mono text-xs text-text-muted inline-flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={enabled}
-              onChange={(e) => setEnabled(e.target.checked)}
-              className="h-3.5 w-3.5"
-            />
-            Enabled
-          </label>
-          {error && (
-            <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-              {error}
-            </div>
-          )}
-          <div className="flex gap-2 pt-1">
-            <Button type="button" size="sm" className="flex-1" onClick={handleSubmit} disabled={isPending}>
-              {isPending ? "Saving..." : "Save"}
-            </Button>
-            <Button type="button" size="sm" variant="outline" onClick={handleClose}>
-              Cancel
-            </Button>
-          </div>
+    <ModalShell open={open} onClose={handleClose} title={`new specialist (${moduleId})`}>
+      <div className="flex flex-col" style={{ gap: 10 }}>
+        <div className="flex flex-col" style={{ gap: 4 }}>
+          <label style={LABEL_STYLE}>NAME (PERSONA VOICE)</label>
+          <input aria-label="Specialist name (persona voice)" value={name} onChange={(e) => setName(e.target.value)} style={INPUT_STYLE} />
         </div>
-      </DialogContent>
-    </Dialog>
+        <div className="flex flex-col" style={{ gap: 4 }}>
+          <label style={LABEL_STYLE}>CAPABILITY (MATCHES PHASESPEC.CAPABILITY)</label>
+          <input aria-label="Capability (dispatch PhaseSpec.capability)" value={capability} onChange={(e) => setCapability(e.target.value)} style={INPUT_STYLE} />
+        </div>
+        <div className="flex flex-col" style={{ gap: 4 }}>
+          <label style={LABEL_STYLE}>STRATEGY FAMILY (OPTIONAL)</label>
+          <input aria-label="Strategy family (optional)" value={strategy} onChange={(e) => setStrategy(e.target.value)} style={INPUT_STYLE} />
+        </div>
+        <div className="flex flex-col" style={{ gap: 4 }}>
+          <label style={LABEL_STYLE}>DESCRIPTION</label>
+          <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} style={TEXTAREA_STYLE} />
+        </div>
+        <label className="inline-flex items-center font-mono" style={{ gap: 8, fontSize: 11, color: "var(--text-primary)" }}>
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => setEnabled(e.target.checked)}
+            style={{ width: 12, height: 12, accentColor: "var(--accent)" }}
+          />
+          Enabled
+        </label>
+        {error && <div style={ERROR_BOX_STYLE}>{error}</div>}
+        <div className="flex" style={{ gap: 8, paddingTop: 4 }}>
+          <button type="button" style={{ ...PRIMARY_BUTTON_STYLE, flex: 1 }} onClick={() => void handleSubmit()} disabled={isPending}>
+            {isPending ? "SAVING\u2026" : "SAVE"}
+          </button>
+          <button type="button" style={BUTTON_STYLE} onClick={handleClose}>CANCEL</button>
+        </div>
+      </div>
+    </ModalShell>
   );
 }
 
@@ -772,42 +786,43 @@ function DeleteSpecialistDialog({ target, onClose, onConfirm, isPending }: Delet
   }
 
   return (
-    <Dialog open={target !== null} onOpenChange={(v) => { if (!v) { setError(null); onClose(); } }}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle className="font-mono text-text">Delete specialist</DialogTitle>
-        </DialogHeader>
-        <div className="flex flex-col gap-3">
-          {target && (
-            <p className="font-mono text-xs text-text-muted">
-              Remove <span className="text-text">{target.name}</span> from
-              module <span className="text-text">{target.module_id}</span>?
-            </p>
-          )}
-          {error && (
-            <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-              {error}
-            </div>
-          )}
-          <div className="flex gap-2 pt-1">
-            <Button type="button" size="sm" className="flex-1" onClick={handleConfirm} disabled={isPending}>
-              {isPending ? "Deleting..." : "Delete"}
-            </Button>
-            <Button type="button" size="sm" variant="outline" onClick={() => { setError(null); onClose(); }}>
-              Cancel
-            </Button>
-          </div>
+    <ModalShell
+      open={target !== null}
+      onClose={() => { setError(null); onClose(); }}
+      title="delete specialist"
+      tone="warn"
+      width={400}
+    >
+      <div className="flex flex-col" style={{ gap: 10 }}>
+        {target && (
+          <p className="font-mono" style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.55 }}>
+            Remove <span style={{ color: "var(--text-primary)" }}>{target.name}</span> from
+            module <span style={{ color: "var(--text-primary)" }}>{target.module_id}</span>?
+          </p>
+        )}
+        {error && <div style={ERROR_BOX_STYLE}>{error}</div>}
+        <div className="flex" style={{ gap: 8, paddingTop: 4 }}>
+          <button type="button" style={{ ...WARN_BUTTON_STYLE, flex: 1 }} onClick={() => void handleConfirm()} disabled={isPending}>
+            {isPending ? "DELETING\u2026" : "DELETE"}
+          </button>
+          <button
+            type="button"
+            style={BUTTON_STYLE}
+            onClick={() => { setError(null); onClose(); }}
+          >
+            CANCEL
+          </button>
         </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </ModalShell>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Specialists: tab body
+// Specialists: concern body
 // ---------------------------------------------------------------------------
 
-function SpecialistsTab() {
+function SpecialistsConcern() {
   const [moduleId, setModuleId] = useState<SpecialistModuleId>("vr");
   const [newOpen, setNewOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<SpecialistAgent | null>(null);
@@ -818,145 +833,129 @@ function SpecialistsTab() {
   const deleteMutation = useDeleteSpecialist();
 
   const rows = specialistsQuery.data ?? [];
-
-  const sortedRows = useMemo(
-    () => [...rows].sort((a, b) => a.name.localeCompare(b.name)),
-    [rows],
-  );
+  const sortedRows = useMemo(() => [...rows].sort((a, b) => a.name.localeCompare(b.name)), [rows]);
 
   return (
-    <div className="flex flex-col gap-4">
-      <AilaCard variant="default" padding="md">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-xs uppercase tracking-wider text-text-muted">
-              Module
-            </span>
-            <div className="flex gap-1 rounded-[4px] border border-border p-0.5">
-              {SPECIALIST_MODULE_IDS.map((id) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setModuleId(id)}
-                  className={
-                    "font-mono text-xs px-2 py-1 rounded-[2px] " +
-                    (moduleId === id
-                      ? "bg-accent text-accent-foreground"
-                      : "text-text-muted hover:text-text")
-                  }
-                >
-                  {id}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <Button
-              size="xs"
-              variant="outline"
-              onClick={() => void specialistsQuery.refetch()}
-              disabled={specialistsQuery.isFetching}
-            >
-              <ArrowsCounterClockwise className="h-3 w-3" />
-              Refresh
-            </Button>
-            <Button
-              size="xs"
-              variant="outline"
-              onClick={() => seedMutation.mutate(moduleId)}
-              disabled={seedMutation.isPending}
-              title={`Seed built-in defaults for ${moduleId}`}
-            >
-              <Plant className="h-3 w-3" />
-              {seedMutation.isPending ? "Seeding..." : "Seed defaults"}
-            </Button>
-            <Button size="xs" onClick={() => setNewOpen(true)}>
-              <Plus className="h-3 w-3" />
-              New specialist
-            </Button>
-          </div>
+    <div className="flex flex-col" style={{ gap: 12 }}>
+      <div className="flex flex-wrap items-center justify-between" style={{ gap: 10 }}>
+        <div className="flex items-center" style={{ gap: 8 }}>
+          <span style={LABEL_STYLE}>MODULE</span>
+          <Segmented<SpecialistModuleId>
+            options={SPECIALIST_MODULE_IDS.map((id) => ({ value: id, label: id.toUpperCase() }))}
+            value={moduleId}
+            onChange={setModuleId}
+          />
         </div>
+        <div className="flex items-center" style={{ gap: 6 }}>
+          <button
+            type="button"
+            style={BUTTON_STYLE}
+            onClick={() => void specialistsQuery.refetch()}
+            disabled={specialistsQuery.isFetching}
+          >
+            <ArrowsCounterClockwise size={11} aria-hidden />
+            REFRESH
+          </button>
+          <button
+            type="button"
+            style={BUTTON_STYLE}
+            onClick={() => seedMutation.mutate(moduleId)}
+            disabled={seedMutation.isPending}
+            title={`Seed built-in defaults for ${moduleId}`}
+          >
+            <Plant size={11} aria-hidden />
+            {seedMutation.isPending ? "SEEDING\u2026" : "SEED DEFAULTS"}
+          </button>
+          <button
+            type="button"
+            style={PRIMARY_BUTTON_STYLE}
+            onClick={() => setNewOpen(true)}
+          >
+            <Plus size={11} aria-hidden />
+            NEW SPECIALIST
+          </button>
+        </div>
+      </div>
 
-        {seedMutation.isSuccess && seedMutation.data && (
-          <div className="mb-3 rounded-[4px] border border-low/40 bg-low/10 px-3 py-2 font-mono text-xs text-low">
-            Seeded {seedMutation.data.data.inserted} default specialist
-            {seedMutation.data.data.inserted === 1 ? "" : "s"} for {moduleId}.
-          </div>
-        )}
-        {seedMutation.isError && (
-          <div className="mb-3 rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-            Seed failed: {(seedMutation.error as Error).message}
-          </div>
-        )}
+      {seedMutation.isSuccess && seedMutation.data && (
+        <div
+          className="font-mono"
+          style={{
+            border: "1px solid color-mix(in srgb, var(--status-ok) 40%, transparent)",
+            background: "color-mix(in srgb, var(--status-ok) 10%, transparent)",
+            color: "var(--status-ok)",
+            padding: "6px 12px", fontSize: 11, borderRadius: 3,
+          }}
+        >
+          Seeded {seedMutation.data.data.inserted} default specialist
+          {seedMutation.data.data.inserted === 1 ? "" : "s"} for {moduleId}.
+        </div>
+      )}
+      {seedMutation.isError && (
+        <div style={ERROR_BOX_STYLE}>
+          Seed failed: {(seedMutation.error as Error).message}
+        </div>
+      )}
 
-        {specialistsQuery.isLoading && <LoadingSkeletonGroup lines={4} />}
+      <WindowPanel title={`specialists : ${moduleId}`} flush>
+        {specialistsQuery.isLoading && <div style={{ padding: 14 }}><LoadingSkeletonGroup lines={4} /></div>}
         {specialistsQuery.isError && (
-          <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
+          <div style={{ ...ERROR_BOX_STYLE, margin: 12 }}>
             Failed to load specialists: {(specialistsQuery.error as Error).message}
           </div>
         )}
         {!specialistsQuery.isLoading && !specialistsQuery.isError && sortedRows.length === 0 && (
-          <EmptyState
-            title="No specialists"
-            description={`Seed the built-in defaults for ${moduleId} or add one manually.`}
-          />
-        )}
-        {!specialistsQuery.isLoading && sortedRows.length > 0 && (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {sortedRows.map((row) => (
-              <div
-                key={row.id}
-                className="rounded-[4px] border border-border bg-base p-3 flex flex-col gap-2"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-mono text-sm font-semibold text-text">{row.name}</h3>
-                    <AilaBadge severity={row.enabled ? "low" : "neutral"} size="sm">
-                      {row.enabled ? "enabled" : "disabled"}
-                    </AilaBadge>
-                  </div>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    onClick={() => setDeleteTarget(row)}
-                    title="Delete specialist"
-                  >
-                    <Trash className="h-3 w-3" />
-                  </Button>
-                </div>
-                <div className="flex flex-col gap-1 font-mono text-xs">
-                  <div className="flex gap-1.5">
-                    <span className="text-text-muted">capability:</span>
-                    <code className="text-text bg-elevated px-1 rounded-[2px]">
-                      {row.capability}
-                    </code>
-                  </div>
-                  {row.strategy_family && (
-                    <div className="flex gap-1.5">
-                      <span className="text-text-muted">strategy:</span>
-                      <code className="text-text bg-elevated px-1 rounded-[2px]">
-                        {row.strategy_family}
-                      </code>
-                    </div>
-                  )}
-                  <div className="flex gap-1.5">
-                    <span className="text-text-muted">team_id:</span>
-                    <span className="text-text">{row.team_id ?? "global"}</span>
-                  </div>
-                </div>
-                {row.description && (
-                  <p className="font-mono text-xs text-text-muted line-clamp-3">
-                    {row.description}
-                  </p>
-                )}
-                <p className="font-mono text-[10px] text-text-muted">
-                  updated {formatTimestamp(row.updated_at)}
-                </p>
-              </div>
-            ))}
+          <div
+            className="font-mono"
+            style={{ padding: 32, textAlign: "center", fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}
+          >
+            No specialists.
+            <br />
+            Seed the built-in defaults for {moduleId} or add one manually.
           </div>
         )}
-      </AilaCard>
+        {!specialistsQuery.isLoading && sortedRows.length > 0 && (
+          <DataGrid<SpecialistAgent>
+            columns={[
+              { label: "NAME", width: "180px" },
+              { label: "CAPABILITY", width: "1fr" },
+              { label: "STRATEGY", width: "160px" },
+              { label: "TEAM", width: "110px" },
+              { label: "STATE", width: "80px" },
+              { label: "UPDATED", width: "150px" },
+              { label: "", width: "56px", align: "right" },
+            ]}
+            rows={sortedRows}
+            getKey={(row) => row.id}
+            renderCells={(row) => [
+              <div className="flex flex-col" style={{ gap: 2 }}>
+                <span className="font-mono" style={{ fontSize: 11, color: "var(--text-primary)" }}>{row.name}</span>
+                {row.description && (
+                  <span className="font-mono truncate" style={{ fontSize: 10, color: "var(--text-faint)" }}>
+                    {row.description}
+                  </span>
+                )}
+              </div>,
+              <code className="font-mono" style={{ fontSize: 10.5, color: "var(--text-primary)" }}>{row.capability}</code>,
+              <code className="font-mono" style={{ fontSize: 10.5, color: "var(--text-muted)" }}>{row.strategy_family ?? "--"}</code>,
+              <span className="font-mono" style={{ fontSize: 10.5, color: "var(--text-muted)" }}>{row.team_id ?? "global"}</span>,
+              <MonoBadge tone={row.enabled ? "ok" : "muted"}>
+                {row.enabled ? "enabled" : "disabled"}
+              </MonoBadge>,
+              <span className="font-mono" style={{ fontSize: 10, color: "var(--text-muted)" }}>{formatTimestamp(row.updated_at)}</span>,
+              <button
+                type="button"
+                style={BUTTON_STYLE}
+                onClick={() => setDeleteTarget(row)}
+                aria-label={`Delete ${row.name}`}
+                title="Delete specialist"
+              >
+                <Trash size={10} aria-hidden />
+              </button>,
+            ]}
+          />
+        )}
+      </WindowPanel>
 
       <NewSpecialistDialog
         moduleId={moduleId}
@@ -965,7 +964,6 @@ function SpecialistsTab() {
         onSubmit={(body) => upsertMutation.mutateAsync(body)}
         isPending={upsertMutation.isPending}
       />
-
       <DeleteSpecialistDialog
         target={deleteTarget}
         onClose={() => setDeleteTarget(null)}
@@ -985,30 +983,37 @@ function SpecialistsTab() {
 // Page
 // ---------------------------------------------------------------------------
 
+type Concern = "mcp" | "specialists";
+
 export function PlatformInfraPage() {
-  const [tab, setTab] = useState<string>("mcp");
+  const [tab, setTab] = useState<Concern>("mcp");
   return (
-    <div className="flex flex-col gap-6 p-4 lg:p-6">
-      <Tabs value={tab} onValueChange={setTab} className="flex flex-col gap-4">
-        <TabsList variant="line">
-          <TabsTrigger value="mcp">MCP Registry</TabsTrigger>
-          <TabsTrigger value="specialists">Specialists</TabsTrigger>
-        </TabsList>
-        {/* Each tab is its own scoped boundary: a render fault in the
-            MCP registry table doesn't take down the whole admin page,
-            and switching tabs re-mounts the tab's children so a repeat
-            fault gets a fresh render pass. */}
-        <TabsContent value="mcp">
-          <FeatureBoundary label="MCP Registry" resetKeys={[tab]}>
-            <McpRegistryTab />
-          </FeatureBoundary>
-        </TabsContent>
-        <TabsContent value="specialists">
-          <FeatureBoundary label="Specialists" resetKeys={[tab]}>
-            <SpecialistsTab />
-          </FeatureBoundary>
-        </TabsContent>
-      </Tabs>
+    <div className="flex flex-col" style={{ gap: 16, padding: 20 }}>
+      <SectionHeader
+        icon={"\u25b3"}
+        title="infra"
+        actions={
+          <Segmented<Concern>
+            options={[
+              { value: "mcp", label: "MCP REGISTRY" },
+              { value: "specialists", label: "SPECIALISTS" },
+            ]}
+            value={tab}
+            onChange={setTab}
+          />
+        }
+      />
+
+      {tab === "mcp" && (
+        <FeatureBoundary label="MCP Registry" resetKeys={[tab]}>
+          <McpRegistryConcern />
+        </FeatureBoundary>
+      )}
+      {tab === "specialists" && (
+        <FeatureBoundary label="Specialists" resetKeys={[tab]}>
+          <SpecialistsConcern />
+        </FeatureBoundary>
+      )}
     </div>
   );
 }

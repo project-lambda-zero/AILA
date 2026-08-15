@@ -1,13 +1,10 @@
 /**
- * ChatLauncher (issue #211 enhancement 2).
+ * ChatLauncher -- the empty-thread launcher, rebuilt from the design mock.
  *
- * Console-styled empty-session launcher: an operator-console header
- * (eyebrow + greeting + subline) above a grid of quick-action lanes.
- * Each lane carries a purposeful phosphor glyph and, when clicked,
- * fills the composer input via `onPick(prompt)`; it never auto-sends.
- * Rendered by ChatPage's ThreadPanel in the empty-thread branch (no
- * persisted messages, not currently streaming) and hides once the
- * conversation starts.
+ * Console-styled operator header (eyebrow chip + display greeting + subline)
+ * above a grid of quick-action lanes. Each lane fills the composer via
+ * `onPick(prompt)` -- never auto-sends. Preserves the `chat-launcher` and
+ * `chat-launcher-chip` testids and the exported `LAUNCHER_CHIPS` shape.
  */
 import { Terminal } from "@phosphor-icons/react/dist/csr/Terminal";
 import { Crosshair } from "@phosphor-icons/react/dist/csr/Crosshair";
@@ -49,8 +46,7 @@ export const LAUNCHER_CHIPS: readonly LauncherChip[] = [
   {
     label: "Forensics triage",
     hint: "Surface leads",
-    prompt:
-      "Triage the evidence in <project>: surface the strongest leads first.",
+    prompt: "Triage the evidence in <project>: surface the strongest leads first.",
     Icon: Fingerprint,
   },
   {
@@ -63,8 +59,7 @@ export const LAUNCHER_CHIPS: readonly LauncherChip[] = [
   {
     label: "What can you do?",
     hint: "Explore modules",
-    prompt:
-      "What can this platform do, and which module should I use for <goal>?",
+    prompt: "What can this platform do, and which module should I use for <goal>?",
     Icon: Compass,
   },
 ];
@@ -77,44 +72,95 @@ export interface ChatLauncherProps {
 
 export function ChatLauncher({
   onPick,
-  greeting = "AILA console",
-  subline = "Ask anything, or start from a lane below.",
+  greeting = "aila console",
+  subline = "point me at a target -- a repo, a binary, a CVE, an APK -- or pick a lane.",
 }: ChatLauncherProps) {
   return (
     <div
-      className="relative mx-auto my-auto flex w-full max-w-2xl flex-col gap-7 py-6"
       data-testid="chat-launcher"
       aria-label="Chat quick actions"
+      className="mx-auto my-auto flex w-full flex-col"
       style={{
-        // Faint engineering dot-grid -- a subtle console texture behind
-        // the launchpad. Cream at ~4% on an 18px lattice; one-off numeric,
-        // so inline style per the Tailwind v4 arbitrary-value rule.
+        maxWidth: 620,
+        padding: "24px 8px",
+        gap: 22,
+        fontFamily: "var(--font-mono)",
         backgroundImage:
           "radial-gradient(rgba(255, 215, 175, 0.045) 1px, transparent 1px)",
         backgroundSize: "18px 18px",
       }}
     >
-      {/* Operator header -- eyebrow chip, display greeting, mono subline. */}
-      <div className="flex flex-col gap-2.5">
-        <div className="flex items-center gap-2 text-text-muted">
-          <span className="inline-flex h-6 w-6 items-center justify-center rounded-[4px] border border-border bg-elevated text-accent">
-            <Terminal size={13} weight="bold" />
+      {/* Operator header -- eyebrow chip, display-font greeting, mono subline. */}
+      <div className="flex flex-col" style={{ gap: 8 }}>
+        <div className="flex items-center" style={{ gap: 9 }}>
+          <span
+            className="flex items-center justify-center"
+            aria-hidden="true"
+            style={{
+              width: 30,
+              height: 30,
+              flex: "0 0 auto",
+              border: "1px solid var(--accent)",
+              background: "color-mix(in srgb, var(--accent) 12%, transparent)",
+              borderRadius: 4,
+              color: "var(--accent)",
+            }}
+          >
+            <Terminal size={14} weight="bold" />
           </span>
-          <span className="font-mono text-[10px] font-semibold uppercase tracking-widest">
-            Operator console
+          <span
+            style={{
+              fontSize: 9,
+              letterSpacing: "0.18em",
+              textTransform: "uppercase",
+              color: "var(--text-muted)",
+              fontWeight: 600,
+            }}
+          >
+            operator console
           </span>
         </div>
-        <h2 className="text-2xl font-semibold text-text">{greeting}</h2>
-        <span className="font-mono text-xs text-text-muted">{subline}</span>
+        <h2
+          style={{
+            fontFamily: "var(--font-display)",
+            fontWeight: 300,
+            fontSize: 28,
+            letterSpacing: "-0.01em",
+            color: "var(--accent)",
+            margin: 0,
+          }}
+        >
+          {greeting}
+        </h2>
+        <span
+          style={{
+            fontSize: 12,
+            color: "var(--text-muted)",
+            fontFamily: "var(--font-sans)",
+            lineHeight: 1.4,
+          }}
+        >
+          {subline}
+        </span>
       </div>
 
-      {/* Quick lanes -- differentiated by glyph so it reads as a deliberate
-          menu, not a wall of identical cards. */}
-      <div className="flex flex-col gap-2.5">
-        <span className="font-mono text-[10px] font-semibold uppercase tracking-widest text-text-muted">
-          Quick lanes
+      {/* Quick lanes */}
+      <div className="flex flex-col" style={{ gap: 9 }}>
+        <span
+          style={{
+            fontSize: 9,
+            letterSpacing: "0.18em",
+            textTransform: "uppercase",
+            color: "var(--text-faint)",
+            fontWeight: 600,
+          }}
+        >
+          quick lanes
         </span>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div
+          className="grid"
+          style={{ gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 6 }}
+        >
           {LAUNCHER_CHIPS.map((chip) => {
             const ChipIcon = chip.Icon;
             return (
@@ -124,16 +170,37 @@ export function ChatLauncher({
                 data-testid="chat-launcher-chip"
                 data-launcher-label={chip.label}
                 onClick={() => onPick(chip.prompt)}
-                className="group flex items-center gap-3 rounded-[4px] border border-border bg-surface px-3 py-2.5 text-left transition-colors hover:border-accent focus:outline focus:outline-2 focus:outline-accent"
+                className="flex items-center text-left"
+                style={{
+                  gap: 10,
+                  padding: "9px 10px",
+                  background: "var(--surface-card)",
+                  border: "1px solid var(--border-soft)",
+                  borderRadius: 3,
+                  cursor: "pointer",
+                  fontFamily: "var(--font-mono)",
+                  color: "var(--text-primary)",
+                }}
               >
-                <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[4px] border border-border bg-elevated text-text-muted transition-colors group-hover:border-accent group-hover:bg-accent/10 group-hover:text-accent">
-                  <ChipIcon size={17} weight="bold" />
+                <span
+                  className="flex items-center justify-center"
+                  style={{
+                    width: 26,
+                    height: 26,
+                    flex: "0 0 auto",
+                    border: "1px solid var(--border-soft)",
+                    background: "var(--surface-sunk)",
+                    color: "var(--accent)",
+                    borderRadius: 3,
+                  }}
+                >
+                  <ChipIcon size={14} weight="bold" aria-hidden="true" />
                 </span>
-                <span className="flex min-w-0 flex-col gap-0.5">
-                  <span className="font-mono text-xs font-semibold text-text">
+                <span className="flex min-w-0 flex-col" style={{ gap: 2 }}>
+                  <span style={{ fontSize: 11, color: "var(--text-primary)" }}>
                     {chip.label}
                   </span>
-                  <span className="font-mono text-[11px] text-text-muted">
+                  <span style={{ fontSize: 9.5, color: "var(--text-faint)" }}>
                     {chip.hint}
                   </span>
                 </span>

@@ -1,29 +1,29 @@
 /**
- * ChatPage (Phase 176c).
+ * ChatPage -- the platform Console, rebuilt from the design mock
+ * (`AILA Console.dc.html`).
  *
- * Left: sessions list (new chat button + prior sessions).
- * Right: message thread for the selected session, with a sticky composer.
+ * Layout (over the shell's FaultyTerminal hero):
+ *   Left  -- conversations WindowPanel: new-chat button + prior sessions.
+ *   Centre -- CONSOLE WindowPanel: title bar (pink light + "console" +
+ *             hatch grip + turn count), thread body (assistant / user
+ *             mono bubbles + tag chips), suggestion-chip composer with a
+ *             `>` prompt glyph + SEND key.
+ *   Right -- vitals rail (hidden below xl).
  *
- * Streams assistant replies via POST /sessions/{id}/messages + SSE tokens
- * (see useSendMessage). Design follows ReportsPage / TasksPage: AilaCard +
- * AilaBadge + LoadingSkeleton + shadcn Button/Textarea, no new CSS classes.
+ * Preserves every hook (useSessions / useSendMessage / useSessionMessages /
+ * useCreateSession), every route (search params for ?session=), every
+ * `data-testid` and `aria-*`, and never fabricates data. There is NO import
+ * from `@/components/ui/*` -- raw styled elements per the mock.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { ChatCircleDots } from "@phosphor-icons/react/dist/csr/ChatCircleDots";
 import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
-import { PaperPlaneRight } from "@phosphor-icons/react/dist/csr/PaperPlaneRight";
-import { Robot } from "@phosphor-icons/react/dist/csr/Robot";
-import { User as UserIcon } from "@phosphor-icons/react/dist/csr/User";
 import { Warning } from "@phosphor-icons/react/dist/csr/Warning";
 
-import { AilaCard } from "@/components/aila/AilaCard";
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { PixelIcon } from "@/components/aila/PixelIcon";
-import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { EmptyState } from "@/components/aila/EmptyState";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { ApiHttpError } from "@platform/api/http";
 import { ChatLauncher, LAUNCHER_CHIPS } from "./ChatLauncher";
 import {
@@ -40,13 +40,6 @@ import { ConsoleVitalsRail } from "./ConsoleVitalsRail";
 // Helpers
 // ---------------------------------------------------------------------------
 
-function formatTimestamp(value: string | null | undefined): string {
-  if (!value) return "--";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "--";
-  return parsed.toLocaleString();
-}
-
 function shortTimestamp(value: string | null | undefined): string {
   if (!value) return "--";
   const parsed = new Date(value);
@@ -57,6 +50,16 @@ function shortTimestamp(value: string | null | undefined): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function clockTag(value: string | null | undefined): string {
+  if (!value) return "--:--:--";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "--:--:--";
+  const hh = String(parsed.getHours()).padStart(2, "0");
+  const mm = String(parsed.getMinutes()).padStart(2, "0");
+  const ss = String(parsed.getSeconds()).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
 }
 
 function describeError(err: unknown): string {
@@ -76,10 +79,10 @@ function describeErrorHint(err: unknown): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Sessions sidebar
+// Sessions panel -- left column, mock's conversations rail.
 // ---------------------------------------------------------------------------
 
-function SessionsSidebar({
+function SessionsPanel({
   sessions,
   selectedId,
   isLoading,
@@ -95,34 +98,70 @@ function SessionsSidebar({
   onCreate: () => void;
 }) {
   return (
-    <aside className="w-full lg:w-[280px] shrink-0 flex flex-col gap-3">
-      <Button
-        size="sm"
-        variant="default"
-        onClick={onCreate}
-        disabled={isCreating}
-        data-testid="chat-new-session"
-        className="justify-start gap-2"
-      >
-        <Plus size={16} weight="bold" />
-        {isCreating ? "Creating…" : "New chat"}
-      </Button>
-
-      <AilaCard variant="default" padding="none" className="flex flex-col"><div className="border-b border-border px-3 py-2">
-        <h2 className="font-mono text-xs font-semibold uppercase tracking-wider text-text-muted">
-          Conversations
-        </h2>
-      </div>
+    <WindowPanel
+      title="conversations"
+      className="hidden md:flex md:flex-col md:self-stretch"
+      style={{ flex: "0 0 240px" }}
+      flush
+      actions={
+        <button
+          type="button"
+          onClick={onCreate}
+          disabled={isCreating}
+          data-testid="chat-new-session"
+          aria-label={isCreating ? "Creating a new chat" : "New chat"}
+          className="flex items-center"
+          style={{
+            gap: 5,
+            padding: "0 8px",
+            height: 20,
+            background: "transparent",
+            border: "1px solid var(--border-soft)",
+            borderRadius: 2,
+            color: "var(--accent)",
+            fontFamily: "var(--font-mono)",
+            fontSize: 9,
+            letterSpacing: "0.1em",
+            textTransform: "uppercase",
+            cursor: isCreating ? "wait" : "pointer",
+            opacity: isCreating ? 0.6 : 1,
+          }}
+        >
+          <Plus size={11} weight="bold" />
+          <span>{isCreating ? "creating…" : "new"}</span>
+        </button>
+      }
+    >
       {isLoading ? (
-        <div className="p-3">
+        <div style={{ padding: 10 }}>
           <LoadingSkeletonGroup lines={4} />
         </div>
       ) : sessions.length === 0 ? (
-        <p className="px-3 py-4 font-mono text-xs text-text-muted">
-          No conversations yet. Start a new chat to ask the platform a question.
+        <p
+          style={{
+            padding: "12px 12px 14px",
+            fontFamily: "var(--font-mono)",
+            fontSize: 10.5,
+            color: "var(--text-muted)",
+            lineHeight: 1.4,
+            margin: 0,
+          }}
+        >
+          No conversations yet. Start a new chat to ask the platform anything.
         </p>
       ) : (
-        <ul className="flex flex-col max-h-[60vh] overflow-y-auto">
+        <ul
+          className="flex flex-col"
+          style={{
+            listStyle: "none",
+            padding: 0,
+            margin: 0,
+            maxHeight: "60vh",
+            overflowY: "auto",
+          }}
+          role="listbox"
+          aria-label="Conversations"
+        >
           {sessions.map((session) => {
             const active = session.session_id === selectedId;
             return (
@@ -134,75 +173,124 @@ function SessionsSidebar({
                   data-testid="chat-session-row"
                   data-session-id={session.session_id}
                   onClick={() => onSelect(session.session_id)}
-                  style={
-                    active
-                      ? { boxShadow: "inset 2px 0 0 var(--color-accent)" }
-                      : undefined
-                  }
-                  className={`w-full text-left flex flex-col gap-1 border-b border-border px-3 py-2.5 transition-colors hover:bg-elevated focus:outline focus:outline-2 focus:outline-accent ${
-                    active ? "bg-accent/10" : ""
-                  }`}
+                  className="flex w-full flex-col text-left"
+                  style={{
+                    gap: 4,
+                    padding: "8px 11px",
+                    borderTop: "1px solid var(--border-faint)",
+                    background: active
+                      ? "color-mix(in srgb, var(--accent) 10%, transparent)"
+                      : "transparent",
+                    boxShadow: active ? "inset 2px 0 0 var(--accent)" : "none",
+                    border: "0",
+                    cursor: "pointer",
+                    fontFamily: "var(--font-mono)",
+                  }}
                 >
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center" style={{ gap: 6 }}>
                     <span
-                      className={`font-mono text-xs font-semibold truncate ${
-                        active ? "text-accent" : "text-text"
-                      }`}
+                      aria-hidden="true"
+                      style={{
+                        width: 6,
+                        height: 6,
+                        flex: "0 0 auto",
+                        background: active ? "var(--accent)" : "var(--status-ok)",
+                        boxShadow: active ? "0 0 6px var(--accent)" : "none",
+                      }}
+                    />
+                    <span
+                      className="truncate"
+                      style={{
+                        fontSize: 11,
+                        color: active ? "var(--accent)" : "var(--text-primary)",
+                        flex: 1,
+                      }}
+                      title={session.title || "Untitled"}
                     >
                       {session.title || "Untitled"}
                     </span>
-                    <span className="font-mono text-[10px] text-text-muted shrink-0">
+                    <span
+                      style={{
+                        fontSize: 9,
+                        color: "var(--text-faint)",
+                        letterSpacing: "0.04em",
+                        flex: "0 0 auto",
+                      }}
+                    >
                       {shortTimestamp(session.last_message_at ?? session.created_at)}
                     </span>
                   </div>
                   {session.last_message_preview ? (
-                    <span className="font-mono text-[11px] text-text-muted line-clamp-2">
+                    <span
+                      className="truncate"
+                      style={{
+                        fontSize: 10,
+                        color: "var(--text-muted)",
+                        letterSpacing: "0.02em",
+                      }}
+                      title={session.last_message_preview}
+                    >
                       {session.last_message_preview}
                     </span>
                   ) : (
-                    <span className="font-mono text-[11px] text-text-muted italic">
+                    <span
+                      style={{
+                        fontSize: 10,
+                        color: "var(--text-faint)",
+                        fontStyle: "italic",
+                      }}
+                    >
                       No messages yet
                     </span>
                   )}
-                  <div className="flex items-center gap-2">
-                    <AilaBadge severity="neutral" size="sm">
-                      {session.message_count} msg
-                    </AilaBadge>
-                  </div>
+                  <span
+                    style={{
+                      marginTop: 2,
+                      fontSize: 8.5,
+                      letterSpacing: "0.14em",
+                      textTransform: "uppercase",
+                      color: "var(--text-faint)",
+                    }}
+                  >
+                    {session.message_count} msg
+                  </span>
                 </button>
               </li>
             );
           })}
         </ul>
-      )}</AilaCard>
-    </aside>
+      )}
+    </WindowPanel>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Message bubble
+// Streaming dots -- three hot-pink dots pulsing during a live turn.
 // ---------------------------------------------------------------------------
 
-/**
- * Streaming / "thinking" indicator -- three hot-pink dots on a gentle
- * staggered opacity pulse. Hot pink (#ff5f87) is reserved for the live
- * state. The `animate-severity-pulse` utility is switched off under
- * prefers-reduced-motion (globals.css), leaving the dots visible but
- * static, so the affordance still reads without motion.
- */
 function StreamingDots() {
   return (
-    <span className="inline-flex items-center gap-1 py-0.5" aria-hidden="true">
+    <span className="inline-flex items-center" aria-hidden="true" style={{ gap: 4, padding: "2px 0" }}>
       {[0, 1, 2].map((i) => (
         <span
           key={i}
-          className="h-1.5 w-1.5 rounded-full bg-accent animate-severity-pulse"
-          style={{ animationDelay: `${i * 0.2}s` }}
+          className="animate-severity-pulse"
+          style={{
+            width: 5,
+            height: 5,
+            borderRadius: "50%",
+            background: "var(--accent)",
+            animationDelay: `${i * 0.2}s`,
+          }}
         />
       ))}
     </span>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Message bubble -- assistant left, user right; mock tag + timestamp + bubble.
+// ---------------------------------------------------------------------------
 
 function MessageBubble({
   role,
@@ -216,48 +304,72 @@ function MessageBubble({
   isStreaming?: boolean;
 }) {
   const isUser = role === "user";
-  const align = isUser ? "items-end" : "items-start";
-  const Icon = isUser ? UserIcon : Robot;
-  // Hot pink is reserved for the live/active state, so a streaming turn is
-  // the only one that gets the accent treatment. Resting turns sit on the
-  // neutral charcoal tiers -- the operator's own turns lifted onto the
-  // elevated tier, assistant turns on the surface tier.
-  const bubbleTint = isStreaming
-    ? "border-accent/50 bg-accent/5"
-    : isUser
-      ? "border-border bg-elevated"
-      : "border-border bg-surface";
-  const avatarTint = isStreaming
-    ? "border-accent/50 bg-accent/10 text-accent"
-    : isUser
-      ? "border-border bg-elevated text-text-peach"
-      : "border-border bg-elevated text-lavender";
+  const tag = isUser ? "you" : "aila";
+  const tagColor = isUser ? "var(--status-info)" : "var(--accent)";
+  const bubbleBorder = isStreaming
+    ? "1px solid color-mix(in srgb, var(--accent) 60%, var(--border-soft))"
+    : "1px solid var(--border-soft)";
+  const bubbleBg = isStreaming
+    ? "color-mix(in srgb, var(--accent) 5%, var(--surface-sunk))"
+    : "var(--surface-sunk)";
 
   return (
     <div
-      className={`flex flex-col gap-1.5 ${align}`}
       data-testid="chat-message"
       data-role={role}
+      className={`flex flex-col ${isUser ? "items-end" : "items-start"}`}
+      style={{ gap: 6, fontFamily: "var(--font-mono)" }}
     >
-      {/* Role + metadata row. The operator's own turns mirror to the right
-          so the two voices read as distinct columns of the transcript. */}
+      {/* Meta row -- tag + clock. Mirrors on user rows so the two voices
+          read as distinct columns of the transcript. */}
       <div
-        className={`flex items-center gap-2 ${isUser ? "flex-row-reverse" : ""}`}
+        className="flex items-center"
+        style={{
+          gap: 8,
+          flexDirection: isUser ? "row-reverse" : "row",
+        }}
       >
         <span
-          className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-[4px] border ${avatarTint}`}
+          style={{
+            padding: "1px 6px",
+            fontSize: 9,
+            letterSpacing: "0.16em",
+            textTransform: "uppercase",
+            border: `1px solid ${tagColor}`,
+            color: tagColor,
+            background: "color-mix(in srgb, currentColor 12%, transparent)",
+            borderRadius: 2,
+            fontWeight: 700,
+          }}
         >
-          <Icon size={13} weight="bold" />
+          {tag}
         </span>
-        <span className="font-mono text-[11px] font-semibold text-text">
-          {isUser ? "You" : "Assistant"}
-        </span>
-        <span className="font-mono text-[10px] text-text-muted">
-          {isStreaming ? "streaming…" : shortTimestamp(createdAt)}
+        <span
+          style={{
+            fontSize: 9,
+            letterSpacing: "0.08em",
+            color: "var(--text-faint)",
+          }}
+        >
+          {isStreaming ? "streaming…" : clockTag(createdAt)}
         </span>
       </div>
+
+      {/* Bubble */}
       <div
-        className={`rounded-[4px] border px-3 py-2 max-w-[85%] font-mono text-xs leading-relaxed text-text whitespace-pre-wrap break-words ${bubbleTint}`}
+        style={{
+          maxWidth: "85%",
+          padding: "9px 12px",
+          border: bubbleBorder,
+          background: bubbleBg,
+          borderRadius: 3,
+          fontFamily: "var(--font-sans)",
+          fontSize: 12.5,
+          lineHeight: 1.45,
+          color: "var(--text-primary)",
+          whiteSpace: "pre-wrap",
+          overflowWrap: "anywhere",
+        }}
       >
         {content || (isStreaming ? <StreamingDots /> : "")}
       </div>
@@ -266,23 +378,9 @@ function MessageBubble({
 }
 
 // ---------------------------------------------------------------------------
-// Composer
+// Composer -- suggestion chips + `>` prompt glyph + send key.
 // ---------------------------------------------------------------------------
 
-/**
- * Console composer.
- *
- * Layout matches the design-system console mockup: a persistent one-line
- * chip rail above the input bay for seeding common prompts (present during
- * an active conversation too, not only on the empty launcher), a mono `>`
- * prompt glyph at the left edge of the textarea, a segmented mode toggle
- * (presentational -- routing/streaming behaviour is unchanged) and a send
- * key carrying an explicit `send` label + arrow glyph.
- *
- * The toggle carries local UI state only; it does not steer routing or
- * hit any hook. It is a hinted affordance the operator can flip while
- * chatting, in line with the mockup.
- */
 type ComposerMode = "auto" | "focus";
 
 function Composer({
@@ -290,14 +388,14 @@ function Composer({
   onValueChange,
   onSend,
   disabled,
-  textareaRef,
+  inputRef,
   onPickChip,
 }: {
   value: string;
   onValueChange: (next: string) => void;
   onSend: (content: string) => void;
   disabled: boolean;
-  textareaRef: React.RefObject<HTMLTextAreaElement | null>;
+  inputRef: React.RefObject<HTMLInputElement | null>;
   onPickChip: (prompt: string) => void;
 }) {
   const [mode, setMode] = useState<ComposerMode>("auto");
@@ -307,144 +405,244 @@ function Composer({
     if (!trimmed || disabled) return;
     onSend(trimmed);
     onValueChange("");
-    // Restore focus for rapid-fire chatting.
-    requestAnimationFrame(() => textareaRef.current?.focus());
+    requestAnimationFrame(() => inputRef.current?.focus());
   };
 
   return (
-    <div className="border-t border-border bg-surface p-3">
-      {/* Persistent suggestion chip rail. Mirrors ChatLauncher's prompt
-          list so the operator keeps quick lanes reachable even after the
-          conversation is under way. */}
+    <div
+      style={{
+        flex: "0 0 auto",
+        padding: "10px 14px 12px",
+        borderTop: "1px solid var(--border-soft)",
+        background: "color-mix(in srgb, var(--surface-sunk) 60%, transparent)",
+      }}
+    >
+      {/* Suggestion chip rail -- persistent, mirrors the launcher lanes. */}
       <div
-        className="mb-2 flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1"
         data-testid="chat-composer-chips"
         aria-label="Prompt suggestions"
+        className="flex items-center overflow-x-auto"
+        style={{ gap: 6, marginBottom: 9, paddingBottom: 2 }}
       >
         <span
-          className="shrink-0 font-mono uppercase text-text-muted"
-          style={{ fontSize: "9.5px", letterSpacing: "0.14em" }}
+          style={{
+            flex: "0 0 auto",
+            fontFamily: "var(--font-mono)",
+            fontSize: 9,
+            letterSpacing: "0.16em",
+            textTransform: "uppercase",
+            color: "var(--text-muted)",
+          }}
         >
           lanes
         </span>
-        {LAUNCHER_CHIPS.map((chip) => {
-          const ChipIcon = chip.Icon;
-          return (
-            <button
-              key={chip.label}
-              type="button"
-              onClick={() => onPickChip(chip.prompt)}
-              disabled={disabled}
-              className="shrink-0 inline-flex items-center gap-1 rounded-[3px] border border-border bg-elevated px-2 py-0.5 font-mono text-[10px] text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
-            >
-              <ChipIcon size={11} weight="bold" aria-hidden="true" />
-              {chip.label}
-            </button>
-          );
-        })}
+        {LAUNCHER_CHIPS.map((chip) => (
+          <button
+            key={chip.label}
+            type="button"
+            onClick={() => onPickChip(chip.prompt)}
+            disabled={disabled}
+            className="flex items-center"
+            style={{
+              flex: "0 0 auto",
+              gap: 5,
+              padding: "3px 8px",
+              border: "1px solid var(--border-soft)",
+              background: "var(--surface-card)",
+              borderRadius: 2,
+              color: "var(--text-muted)",
+              fontFamily: "var(--font-mono)",
+              fontSize: 9.5,
+              letterSpacing: "0.06em",
+              cursor: disabled ? "not-allowed" : "pointer",
+              opacity: disabled ? 0.5 : 1,
+              whiteSpace: "nowrap",
+            }}
+          >
+            <chip.Icon size={11} weight="bold" aria-hidden="true" />
+            {chip.label}
+          </button>
+        ))}
       </div>
 
-      {/* Input bay -- a recessed console well that lifts to the hot-pink
-          accent on focus. The textarea's own frame + ring are neutralised
-          so the bay owns a single, clear focus affordance. */}
-      <div className="rounded-[4px] border border-border bg-base transition-colors focus-within:border-accent/60">
-        <div className="flex items-start gap-2 px-2 pt-1.5">
-          <span
-            aria-hidden="true"
-            className="mt-1.5 shrink-0 font-mono text-xs font-bold text-accent"
-          >
-            &gt;
-          </span>
-          <Textarea
-            aria-label="Message composer"
-            ref={textareaRef}
-            value={value}
-            onChange={(e) => onValueChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                submit();
-              }
-            }}
-            placeholder="Ask the platform anything -- Enter to send, Shift+Enter for newline."
-            disabled={disabled}
-            rows={3}
-            data-testid="chat-composer"
-            className="flex-1 resize-none border-transparent bg-transparent px-0 font-mono text-xs focus-visible:border-transparent focus-visible:ring-0"
-          />
+      {/* Input bay -- recessed console well framed in accent, `>` glyph left. */}
+      <div
+        className="flex items-center"
+        style={{
+          gap: 9,
+          padding: "6px 8px 6px 12px",
+          background: "var(--surface-card)",
+          border: "1px solid color-mix(in srgb, var(--accent) 35%, transparent)",
+          borderRadius: 3,
+          boxShadow:
+            "0 0 30px color-mix(in srgb, var(--accent) 12%, transparent), var(--bevel-raised)",
+        }}
+      >
+        <span
+          aria-hidden="true"
+          style={{
+            flex: "0 0 auto",
+            color: "var(--accent)",
+            fontSize: 13,
+            fontWeight: 700,
+          }}
+        >
+          &gt;
+        </span>
+        <input
+          ref={inputRef}
+          aria-label="Message composer"
+          value={value}
+          onChange={(e) => onValueChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              submit();
+            }
+          }}
+          placeholder="describe a target or paste a repo / CVE / binary…"
+          disabled={disabled}
+          data-testid="chat-composer"
+          style={{
+            flex: 1,
+            minWidth: 0,
+            background: "transparent",
+            border: 0,
+            outline: 0,
+            color: "var(--text-primary)",
+            fontFamily: "var(--font-mono)",
+            fontSize: 13,
+            letterSpacing: "0.01em",
+            height: 26,
+          }}
+        />
+
+        {/* Mode toggle -- presentational segmented control. Local UI state
+            only; routing/streaming is not gated on `mode`. Mirrors the
+            mockup's modeBtn on the right of the input bay. */}
+        <div
+          role="radiogroup"
+          aria-label="Composer mode"
+          data-testid="chat-composer-mode"
+          className="hidden items-center sm:inline-flex"
+          style={{
+            border: "1px solid var(--border-soft)",
+            borderRadius: 2,
+            overflow: "hidden",
+            background: "var(--surface-sunk)",
+            fontFamily: "var(--font-mono)",
+          }}
+        >
+          {(["auto", "focus"] as const).map((m) => {
+            const active = mode === m;
+            return (
+              <button
+                key={m}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                onClick={() => setMode(m)}
+                style={{
+                  padding: "0 8px",
+                  height: 22,
+                  fontSize: 9,
+                  letterSpacing: "0.1em",
+                  textTransform: "uppercase",
+                  background: active
+                    ? "color-mix(in srgb, var(--accent) 15%, transparent)"
+                    : "transparent",
+                  color: active ? "var(--accent)" : "var(--text-muted)",
+                  border: 0,
+                  cursor: "pointer",
+                }}
+              >
+                {m}
+              </button>
+            );
+          })}
         </div>
-        <div className="flex items-center justify-between gap-2 border-t border-border px-2.5 py-1.5">
-          <span className="flex items-center gap-1.5 font-mono text-[10px] text-text-muted">
-            {disabled ? (
-              <>
-                <span
-                  className="h-1.5 w-1.5 rounded-full bg-accent animate-severity-pulse"
-                  aria-hidden="true"
-                />
-                Streaming reply…
-              </>
-            ) : (
-              `${value.length} characters`
-            )}
-          </span>
-          <div className="flex items-center gap-2">
-            {/* Mode toggle -- presentational segmented control. Flips a
-                local UI state only; routing/streaming behaviour is not
-                gated on `mode`. Kept in-shell so the mockup pattern
-                (label + two segments beside the send key) reads. */}
-            <div
-              role="radiogroup"
-              aria-label="Composer mode"
-              data-testid="chat-composer-mode"
-              className="hidden items-center rounded-[3px] border border-border bg-elevated font-mono text-[10px] sm:inline-flex"
+
+        <button
+          type="button"
+          onClick={submit}
+          disabled={disabled || value.trim().length === 0}
+          data-testid="chat-send"
+          className="flex items-center"
+          style={{
+            gap: 6,
+            padding: "0 14px",
+            height: 26,
+            background: "var(--accent)",
+            border: "1px solid var(--accent)",
+            borderRadius: 2,
+            color: "var(--text-on-accent)",
+            fontFamily: "var(--font-mono)",
+            fontSize: 10,
+            letterSpacing: "0.1em",
+            textTransform: "uppercase",
+            fontWeight: 700,
+            cursor: disabled || value.trim().length === 0 ? "not-allowed" : "pointer",
+            opacity: disabled || value.trim().length === 0 ? 0.55 : 1,
+            boxShadow:
+              disabled || value.trim().length === 0
+                ? "none"
+                : "0 0 16px color-mix(in srgb, var(--accent) 30%, transparent)",
+          }}
+        >
+          <span>send</span>
+          <span style={{ fontSize: 11 }}>▸</span>
+        </button>
+      </div>
+
+      {/* Foot hint */}
+      <div
+        className="flex items-center"
+        style={{
+          marginTop: 6,
+          gap: 8,
+          fontFamily: "var(--font-mono)",
+          fontSize: 9,
+          letterSpacing: "0.06em",
+          color: "var(--text-faint)",
+        }}
+      >
+        {disabled ? (
+          <>
+            <span
+              className="animate-severity-pulse"
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: "var(--accent)",
+              }}
+              aria-hidden="true"
+            />
+            <span>streaming reply…</span>
+          </>
+        ) : (
+          <>
+            <span
+              style={{
+                border: "1px solid var(--border-soft)",
+                padding: "1px 5px",
+                borderRadius: 2,
+                color: "var(--text-muted)",
+                background: "var(--surface-sunk)",
+              }}
             >
-              {(["auto", "focus"] as const).map((m) => {
-                const active = mode === m;
-                return (
-                  <button
-                    key={m}
-                    type="button"
-                    role="radio"
-                    aria-checked={active}
-                    onClick={() => setMode(m)}
-                    className={`px-1.5 py-0.5 uppercase tracking-widest transition-colors ${
-                      active
-                        ? "bg-accent/15 text-accent"
-                        : "text-text-muted hover:text-text"
-                    }`}
-                  >
-                    {m}
-                  </button>
-                );
-              })}
-            </div>
-            <span className="hidden items-center gap-1 font-mono text-[10px] text-text-muted sm:inline-flex">
-              <kbd className="rounded-[2px] border border-border bg-elevated px-1 py-px text-text">
-                Enter
-              </kbd>
-              to send
+              enter
             </span>
-            <Button
-              size="sm"
-              variant="default"
-              onClick={submit}
-              disabled={disabled || value.trim().length === 0}
-              data-testid="chat-send"
-              className="gap-1.5"
-            >
-              <PaperPlaneRight size={14} weight="bold" />
-              <span>send</span>
-              <PixelIcon name="arrow" size={12} aria-hidden="true" />
-            </Button>
-          </div>
-        </div>
+            <span>to send · shift+enter newline</span>
+          </>
+        )}
       </div>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Thread panel
+// Thread panel -- centre CONSOLE WindowPanel.
 // ---------------------------------------------------------------------------
 
 function ThreadPanel({
@@ -457,14 +655,12 @@ function ThreadPanel({
   const messagesQuery = useSessionMessages(sessionId);
   const { state, send } = useSendMessage(sessionId);
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerRef = useRef<HTMLInputElement | null>(null);
   const [draft, setDraft] = useState("");
 
   const seedComposer = (prompt: string) => {
     setDraft(prompt);
-    // Defer focus so the textarea has the seeded value in the DOM
-    // before the caret jump (otherwise selection collapses at index 0
-    // which reads oddly for prompts with a <placeholder> token).
+    // Defer focus so the input has the seeded value before caret placement.
     requestAnimationFrame(() => {
       const el = composerRef.current;
       if (!el) return;
@@ -485,92 +681,101 @@ function ThreadPanel({
     node.scrollTop = node.scrollHeight;
   }, [persistedMessages.length, state.buffer, state.isStreaming]);
 
+  const turnCount = persistedMessages.length + (state.isStreaming ? 1 : 0);
+
   if (!sessionId) {
     return (
-      <div className="flex-1 min-w-0 flex items-center justify-center">
-        <EmptyState
-          icon={<ChatCircleDots size={40} />}
-          title="Start a new chat"
-          description="Ask the platform about your scans, findings, or operational posture. Replies stream token-by-token."
-          action={{ label: "New chat", onClick: onCreateAndFocus }}
-        />
-      </div>
+      <WindowPanel
+        title="console"
+        status="no session bound"
+        tone="muted"
+        className="flex-1 self-stretch"
+        style={{ minWidth: 0 }}
+      >
+        <div className="flex flex-1 items-center justify-center" style={{ padding: 24 }}>
+          <EmptyState
+            icon={<ChatCircleDots size={40} />}
+            title="Start a new chat"
+            description="Ask the platform about your scans, findings, or operational posture. Replies stream token-by-token."
+            action={{ label: "New chat", onClick: onCreateAndFocus }}
+          />
+        </div>
+      </WindowPanel>
     );
   }
 
   if (messagesQuery.isLoading) {
     return (
-      <div className="flex-1 min-w-0">
-        <AilaCard variant="default" padding="md"><LoadingSkeletonGroup lines={6} /></AilaCard>
-      </div>
+      <WindowPanel
+        title="console"
+        status="loading"
+        className="flex-1 self-stretch"
+        style={{ minWidth: 0 }}
+      >
+        <div style={{ padding: 12 }}>
+          <LoadingSkeletonGroup lines={6} />
+        </div>
+      </WindowPanel>
     );
   }
 
   if (messagesQuery.isError) {
     return (
-      <div className="flex-1 min-w-0">
-        <AilaCard variant="default" padding="md"><div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-          <div className="flex items-center gap-2 font-semibold">
+      <WindowPanel
+        title="console"
+        tone="accent"
+        status="error"
+        className="flex-1 self-stretch"
+        style={{ minWidth: 0 }}
+      >
+        <div
+          role="alert"
+          aria-live="assertive"
+          style={{
+            padding: "9px 12px",
+            border: "1px solid var(--accent)",
+            background: "color-mix(in srgb, var(--accent) 8%, transparent)",
+            borderRadius: 3,
+            fontFamily: "var(--font-mono)",
+            fontSize: 11,
+            color: "var(--accent)",
+          }}
+        >
+          <div className="flex items-center" style={{ gap: 6, fontWeight: 700 }}>
             <Warning size={14} weight="bold" />
             {describeError(messagesQuery.error)}
           </div>
           {describeErrorHint(messagesQuery.error) && (
-            <p className="mt-1 text-text-muted">
+            <p style={{ marginTop: 4, color: "var(--text-muted)" }}>
               {describeErrorHint(messagesQuery.error)}
             </p>
           )}
-        </div></AilaCard>
-      </div>
+        </div>
+      </WindowPanel>
     );
   }
 
   const lastPersisted = persistedMessages[persistedMessages.length - 1];
-  const userJustSent =
-    state.isStreaming &&
-    (!lastPersisted || lastPersisted.role !== "user");
+  const userJustSent = state.isStreaming && (!lastPersisted || lastPersisted.role !== "user");
 
   return (
-    <div
-      className="flex-1 min-w-0 flex flex-col border rounded-[4px] overflow-hidden"
-      style={{
-        borderColor: "var(--color-border-bright)",
-        background: "var(--color-surface)",
-        boxShadow: "var(--bevel-raised)",
-      }}
+    <WindowPanel
+      title="console"
+      status={`bound · ${sessionId.slice(0, 8)} · ${turnCount} turn${turnCount === 1 ? "" : "s"}`}
+      className="flex-1 self-stretch"
+      style={{ minWidth: 0 }}
+      flush
     >
-      {/* console title bar -- the mockup panel chrome: pink light + mono
-          label + hatched grip + a turn-count sig. */}
-      <div
-        className="flex flex-none items-center gap-2 border-b px-3"
-        style={{
-          height: "var(--panel-title-h)",
-          borderColor: "var(--color-border)",
-          backgroundColor: "var(--color-chrome)",
-          backgroundImage: "var(--hatch)",
-        }}
-      >
-        <span
-          aria-hidden="true"
-          style={{ width: 7, height: 7, flex: "0 0 auto", background: "var(--color-accent)", boxShadow: "0 0 7px var(--color-accent)" }}
-        />
-        <span
-          className="font-mono uppercase"
-          style={{ fontSize: "10.5px", letterSpacing: "0.14em", color: "var(--color-text)" }}
-        >
-          console
-        </span>
-        <span aria-hidden="true" className="flex-1" style={{ height: 2, backgroundImage: "var(--hatch)" }} />
-        <span
-          className="font-mono"
-          style={{ fontSize: "9.5px", letterSpacing: "0.05em", color: "var(--color-text-faint)" }}
-        >
-          {persistedMessages.length} turns
-        </span>
-      </div>
+      {/* Thread body */}
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto p-4 flex flex-col gap-5"
         data-testid="chat-thread"
+        className="flex flex-1 flex-col overflow-auto"
+        style={{
+          minHeight: 0,
+          padding: "18px 18px 12px",
+          gap: 16,
+        }}
       >
         {persistedMessages.length === 0 && !state.isStreaming ? (
           <ChatLauncher onPick={seedComposer} />
@@ -587,32 +792,44 @@ function ThreadPanel({
 
         {/* Live streaming assistant bubble */}
         {state.isStreaming && (
-          <MessageBubble
-            role="assistant"
-            content={state.buffer}
-            isStreaming
-          />
+          <MessageBubble role="assistant" content={state.buffer} isStreaming />
         )}
 
-        {/* Optional: show a placeholder while the backend is persisting the user message */}
         {userJustSent && state.buffer.length === 0 && (
-          <p className="font-mono text-[10px] italic text-text-muted">
-            Waiting for the assistant to respond…
+          <p
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 10,
+              fontStyle: "italic",
+              color: "var(--text-muted)",
+              margin: 0,
+            }}
+          >
+            waiting for the assistant to respond…
           </p>
         )}
 
         {state.error && (
           <div
-            className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive"
-            role="alert" aria-live="assertive"
+            role="alert"
+            aria-live="assertive"
             data-testid="chat-error"
+            style={{
+              padding: "9px 12px",
+              border: "1px solid var(--accent)",
+              background: "color-mix(in srgb, var(--accent) 8%, transparent)",
+              borderRadius: 3,
+              fontFamily: "var(--font-mono)",
+              fontSize: 11,
+              color: "var(--accent)",
+            }}
           >
-            <div className="flex items-center gap-2 font-semibold">
+            <div className="flex items-center" style={{ gap: 6, fontWeight: 700 }}>
               <Warning size={14} weight="bold" />
               {describeError(state.error)}
             </div>
             {describeErrorHint(state.error) && (
-              <p className="mt-1 text-text-muted">
+              <p style={{ marginTop: 4, color: "var(--text-muted)" }}>
                 {describeErrorHint(state.error)}
               </p>
             )}
@@ -627,10 +844,10 @@ function ThreadPanel({
           void send(content);
         }}
         disabled={state.isStreaming}
-        textareaRef={composerRef}
+        inputRef={composerRef}
         onPickChip={seedComposer}
       />
-    </div>
+    </WindowPanel>
   );
 }
 
@@ -675,36 +892,48 @@ export function ChatPage() {
   };
 
   return (
-    <div className="flex flex-col gap-4 p-3 sm:p-4 lg:p-6">
+    <div
+      className="flex flex-col"
+      style={{
+        minHeight: "100%",
+        padding: 12,
+        gap: 10,
+        color: "var(--text-primary)",
+        fontFamily: "var(--font-mono)",
+      }}
+    >
       {sessionsQuery.isError && (
         <div
-          className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive"
           data-testid="chat-sessions-error"
+          style={{
+            padding: "8px 12px",
+            border: "1px solid var(--accent)",
+            background: "color-mix(in srgb, var(--accent) 8%, transparent)",
+            borderRadius: 3,
+            fontFamily: "var(--font-mono)",
+            fontSize: 11,
+            color: "var(--accent)",
+          }}
         >
           {describeError(sessionsQuery.error)}
           {describeErrorHint(sessionsQuery.error) && (
-            <span className="ml-2 text-text-muted">
+            <span style={{ marginLeft: 6, color: "var(--text-muted)" }}>
               {describeErrorHint(sessionsQuery.error)}
             </span>
           )}
         </div>
       )}
-      {sessionParam && (
-        <div className="flex items-center gap-2 font-mono text-[10px] text-text-muted">
-          <span className="rounded-[2px] border border-border px-1.5 py-0.5 font-semibold uppercase tracking-widest">
-            Session
-          </span>
-          <span>
-            Started{" "}
-            {formatTimestamp(
-              sessions.find((s) => s.session_id === sessionParam)?.created_at,
-            )}
-          </span>
-        </div>
-      )}
 
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-stretch min-h-[60vh]">
-        <SessionsSidebar
+      <div
+        className="flex flex-col lg:flex-row"
+        style={{
+          gap: 10,
+          alignItems: "stretch",
+          flex: 1,
+          minHeight: "70vh",
+        }}
+      >
+        <SessionsPanel
           sessions={sessions}
           selectedId={sessionParam}
           isLoading={sessionsQuery.isLoading}

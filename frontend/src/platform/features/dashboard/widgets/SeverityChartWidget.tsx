@@ -5,6 +5,13 @@ import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { useFindingsFacets } from "@platform/features/viz/useFindingsFacets";
 import { useThemeChartColors } from "@platform/features/viz/chartColors";
 
+const CENTER_STYLE: React.CSSProperties = {
+  height: "100%",
+  padding: 16,
+  fontFamily: "var(--font-mono)",
+  fontSize: 11,
+};
+
 /**
  * SeverityChartWidget -- donut/pie chart showing finding severity distribution.
  *
@@ -29,17 +36,22 @@ export function SeverityChartWidget() {
   if (isLoading) {
     return (
       <div className="h-full w-full p-4 flex flex-col gap-3">
-        <LoadingSkeleton size="full" width="full" className="rounded-full aspect-square max-h-36 mx-auto" />
+        <LoadingSkeleton
+          size="full"
+          width="full"
+          className="rounded-full aspect-square max-h-36 mx-auto"
+        />
       </div>
     );
   }
 
   if (isError) {
     return (
-      <div className="h-full w-full p-4 flex items-center justify-center">
-        <p className="text-sm text-destructive font-mono">
-          {error instanceof Error ? error.message : "Failed to load severity data"}
-        </p>
+      <div
+        className="flex items-center justify-center"
+        style={{ ...CENTER_STYLE, color: "var(--status-warn)" }}
+      >
+        {error instanceof Error ? error.message : "Failed to load severity data"}
       </div>
     );
   }
@@ -65,8 +77,11 @@ export function SeverityChartWidget() {
 
   if (chartData.length === 0) {
     return (
-      <div className="h-full w-full p-4 flex flex-col items-center justify-center gap-1">
-        <p className="text-xs font-mono text-text-muted">No findings recorded</p>
+      <div
+        className="flex items-center justify-center"
+        style={{ ...CENTER_STYLE, color: "var(--text-muted)" }}
+      >
+        No findings recorded
       </div>
     );
   }

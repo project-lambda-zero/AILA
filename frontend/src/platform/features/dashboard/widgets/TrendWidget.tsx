@@ -18,13 +18,17 @@ function isTrendDataArray(value: unknown): value is TrendDataPoint[] {
   );
 }
 
+const CENTER_STYLE: React.CSSProperties = {
+  height: "100%",
+  padding: 16,
+  fontFamily: "var(--font-mono)",
+  fontSize: 11,
+};
+
 /**
  * TrendWidget -- time-series area chart of findings over time.
  *
- * Reads module_data["vulnerability.trend"] which should be an array of
- * { date: string, count: number } objects. Shows empty state when not available.
- *
- * Data from GET /dashboard via useDashboardData().
+ * Reads module_data["vulnerability.trend"]. Renders empty state otherwise.
  */
 export function TrendWidget() {
   const { data, isLoading, isError, error } = useDashboardData();
@@ -39,18 +43,22 @@ export function TrendWidget() {
 
   if (isError) {
     return (
-      <div className="h-full w-full p-4 flex items-center justify-center">
-        <p className="text-sm text-destructive font-mono">
-          {error instanceof Error ? error.message : "Failed to load trend data"}
-        </p>
+      <div
+        className="flex items-center justify-center"
+        style={{ ...CENTER_STYLE, color: "var(--status-warn)" }}
+      >
+        {error instanceof Error ? error.message : "Failed to load trend data"}
       </div>
     );
   }
 
   if (!data) {
     return (
-      <div className="h-full w-full p-4 flex items-center justify-center">
-        <p className="text-sm text-text-muted font-mono">No data available</p>
+      <div
+        className="flex items-center justify-center"
+        style={{ ...CENTER_STYLE, color: "var(--text-muted)" }}
+      >
+        No data available
       </div>
     );
   }
@@ -60,8 +68,11 @@ export function TrendWidget() {
 
   if (!hasTrend) {
     return (
-      <div className="h-full w-full p-4 flex flex-col justify-center gap-1">
-        <p className="text-xs font-mono text-text-muted">Trend data not available</p>
+      <div
+        className="flex items-center justify-center"
+        style={{ ...CENTER_STYLE, color: "var(--text-muted)" }}
+      >
+        Trend data not available
       </div>
     );
   }

@@ -1,18 +1,19 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router";
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
+
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import { MonoBadge, SectionHeader } from "@/components/aila/mock";
+import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
 import { HexView } from "../components/HexView";
 import { useAppendCrashTriage } from "../mutations";
 import { useFuzzCrash } from "../queries";
-import type { CrashTriageVerdict } from "../types";
-import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
+import type { CrashSeverity, CrashTriageVerdict } from "../types";
 
-/** CrashTriageVerdict enum, mirrors contracts/fuzz.py. Kept in-file so
- *  the triage form dropdown stays in lockstep with the badge-color map
- *  at the top of this file. */
+// ─────────────────────────────────────────────────────────────────────
+// Vocabulary
+// ─────────────────────────────────────────────────────────────────────
 const TRIAGE_VERDICT_VALUES: readonly CrashTriageVerdict[] = [
   "untriaged",
   "security_relevant",
@@ -21,37 +22,127 @@ const TRIAGE_VERDICT_VALUES: readonly CrashTriageVerdict[] = [
   "needs_manual_review",
 ];
 
-const VERDICT_COLOR: Record<
-  CrashTriageVerdict,
-  "info" | "low" | "medium" | "high" | "critical"
-> = {
-  untriaged: "info",
+const VERDICT_TONE: Record<CrashTriageVerdict, string> = {
+  untriaged: "muted",
   security_relevant: "critical",
-  likely_harmless: "low",
+  likely_harmless: "ok",
   duplicate: "info",
-  needs_manual_review: "medium",
+  needs_manual_review: "warn",
 };
 
-/** Stack trace renderer that makes each frame clickable.
- *
- *  Parses lines like "#0  func+0x14 at libfoo.so+0x4c (/path/source.c:42)"
- *  and renders the function name as a button. On click, fires a custom
- *  event so the surrounding page (or future search palette) can resolve
- *  the function in the relevant target. For v0.5 we don't have a
- *  global function index -- the click navigates to the campaign target's
- *  Functions-of-interest tab and seeds a hash filter. */
-function ClickableStackTrace({
-  raw,
+const SEVERITY_TONE: Record<CrashSeverity, string> = {
+  critical: "critical",
+  high: "warn",
+  medium: "info",
+  low: "ok",
+  informational: "muted",
+  unknown: "muted",
+};
+
+// ─────────────────────────────────────────────────────────────────────
+// Shared control styles
+// ─────────────────────────────────────────────────────────────────────
+const CTRL: React.CSSProperties = {
+  padding: "6px 8px",
+  fontSize: 11,
+  letterSpacing: "0.04em",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  fontFamily: "var(--font-mono)",
+};
+
+const PRIMARY_BTN: React.CSSProperties = {
+  height: 28,
+  padding: "0 12px",
+  fontSize: 10,
+  letterSpacing: "0.08em",
+  background: "var(--accent)",
+  border: "1px solid var(--accent)",
+  color: "var(--text-on-accent)",
+  borderRadius: 3,
+  cursor: "pointer",
+  fontFamily: "var(--font-mono)",
+};
+
+// ─────────────────────────────────────────────────────────────────────
+// Brief row (mirrors ProjectDetailPage's local helper).
+// ─────────────────────────────────────────────────────────────────────
+function BriefRow({
+  label,
+  children,
 }: {
-  raw: string;
-  campaignId?: string;
+  label: React.ReactNode;
+  children: React.ReactNode;
 }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 3,
+        padding: "8px 0",
+        borderBottom: "1px solid var(--border-faint)",
+      }}
+    >
+      <span
+        className="font-mono uppercase"
+        style={{
+          fontSize: 9,
+          letterSpacing: "0.14em",
+          color: "var(--text-faint)",
+        }}
+      >
+        {label}
+      </span>
+      <span
+        className="font-mono"
+        style={{
+          fontSize: 11,
+          color: "var(--text-primary)",
+          minHeight: 14,
+          overflowWrap: "anywhere",
+        }}
+      >
+        {children}
+      </span>
+    </div>
+  );
+}
+
+function formatDateTime(value?: string | null): string {
+  if (!value) return "--";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleString();
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// ClickableStackTrace -- fires a global custom event with the clicked
+// frame name; parent apps can pick that up and jump to a target's
+// Functions-of-interest tab (v0.6 wiring).
+// ─────────────────────────────────────────────────────────────────────
+function ClickableStackTrace({ raw }: { raw: string }) {
   const lines = raw.split("\n");
   return (
-    <pre className="text-xs font-mono text-foreground whitespace-pre-wrap overflow-x-auto bg-surface p-3 rounded-md max-h-96 overflow-y-auto leading-relaxed">
+    <pre
+      className="font-mono"
+      style={{
+        margin: 0,
+        padding: 12,
+        fontSize: 11,
+        lineHeight: 1.55,
+        color: "var(--text-primary)",
+        background: "var(--surface-sunk)",
+        border: "1px solid var(--border-soft)",
+        borderRadius: 3,
+        overflow: "auto",
+        maxHeight: 400,
+        whiteSpace: "pre",
+      }}
+    >
       {lines.map((line, i) => {
-        // Match `func_name(...)` or `func_name+0x` or `func_name at` --
-        // the function name precedes either ( or + or whitespace.
         const m = line.match(/(\b[A-Za-z_][A-Za-z0-9_:.@$]*)/);
         if (!m) return <div key={i}>{line || "\u00a0"}</div>;
         const fn = m[1];
@@ -59,23 +150,30 @@ function ClickableStackTrace({
         const after = line.slice((m.index ?? 0) + fn.length);
         return (
           <div key={i}>
-            <span className="text-text-muted">{before}</span>
+            <span style={{ color: "var(--text-muted)" }}>{before}</span>
             <button
               type="button"
-              title={`Locate ${fn} in this target's Functions-of-interest tab`}
+              title={`locate ${fn} in this target's functions-of-interest tab`}
               onClick={() => {
-                // Future: navigate to /vr/targets/:id?tab=functions&fn=… --
-                // not wired because crash row doesn't carry target_id and the
-                // campaign→target lookup is an extra fetch. v0.6 work.
                 window.dispatchEvent(
                   new CustomEvent("vr-stack-frame-click", { detail: { fn } }),
                 );
               }}
-              className="text-accent hover:underline cursor-pointer"
+              style={{
+                background: "transparent",
+                border: "none",
+                padding: 0,
+                margin: 0,
+                fontFamily: "inherit",
+                fontSize: "inherit",
+                color: "var(--accent)",
+                textDecoration: "underline dotted",
+                cursor: "pointer",
+              }}
             >
               {fn}
             </button>
-            <span className="text-foreground">{after}</span>
+            <span>{after}</span>
           </div>
         );
       })}
@@ -83,297 +181,488 @@ function ClickableStackTrace({
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// FuzzCrashDetailPage
+// ─────────────────────────────────────────────────────────────────────
 export function FuzzCrashDetailPage() {
   const { crashId } = useParams<{ crashId: string }>();
   const cid = crashId ?? "";
-  const { data: crash, isLoading } = useFuzzCrash(cid);
+  const { data: crash, isLoading, isError } = useFuzzCrash(cid);
 
   useUpdatePageHeader({
-    title: crash?.crash_type ?? (crash ? 'Crash' : undefined),
-    subtitle: crash ? `stack ${crash.stack_hash.slice(0, 12)}…` : undefined,
+    title: crash?.crash_type ?? (crash ? "Crash" : undefined),
+    subtitle: crash ? `stack ${crash.stack_hash.slice(0, 12)}\u2026` : undefined,
     status: null,
   });
 
-  if (isLoading || !crash) return <LoadingSkeleton size="lg" width="full" />;
+  if (isLoading) {
+    return (
+      <WindowPanel title="fuzz crash" tone="muted">
+        <LoadingSkeleton size="lg" width="full" />
+      </WindowPanel>
+    );
+  }
+  if (isError || !crash) {
+    return (
+      <WindowPanel title="fuzz crash" tone="accent">
+        <p
+          className="font-mono"
+          style={{ fontSize: 11, color: "var(--accent)" }}
+        >
+          failed to load fuzz crash.
+        </p>
+      </WindowPanel>
+    );
+  }
+
+  const headerTitle =
+    crash.crash_type ??
+    `crash \u00b7 ${crash.stack_hash.slice(0, 12)}\u2026`;
+
+  const triageChain = crash.triage_chain ?? [];
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col" style={{ gap: 14 }}>
+      <SectionHeader icon="\u25c8" title={headerTitle} />
 
-      <div className="flex gap-2 flex-wrap">
-        <AilaBadge severity={VERDICT_COLOR[crash.triage_verdict]} size="sm">
+      {/* Chip row: verdict / severity / type / duplicate-of / promoted */}
+      <div className="flex" style={{ gap: 8, flexWrap: "wrap" }}>
+        <MonoBadge tone={VERDICT_TONE[crash.triage_verdict] ?? "muted"}>
           {crash.triage_verdict}
-        </AilaBadge>
-        <AilaBadge severity="medium" size="sm">
-          severity: {crash.severity}
-        </AilaBadge>
-        {crash.crash_type && (
-          <AilaBadge severity="info" size="sm">
-            type: {crash.crash_type}
-          </AilaBadge>
-        )}
-        {crash.duplicate_of_crash_id && (
-          <Link to={`/vr/fuzz/crashes/${crash.duplicate_of_crash_id}`}>
-            <AilaBadge severity="info" size="sm">
-              duplicate of earlier crash →
-            </AilaBadge>
+        </MonoBadge>
+        <MonoBadge tone={SEVERITY_TONE[crash.severity] ?? "muted"}>
+          severity \u00b7 {crash.severity}
+        </MonoBadge>
+        {crash.crash_type ? (
+          <MonoBadge tone="warn">type \u00b7 {crash.crash_type}</MonoBadge>
+        ) : null}
+        {crash.duplicate_of_crash_id ? (
+          <Link
+            to={`/vr/fuzz/crashes/${crash.duplicate_of_crash_id}`}
+            style={{ textDecoration: "none" }}
+          >
+            <MonoBadge tone="info">
+              duplicate of earlier crash \u2192
+            </MonoBadge>
           </Link>
-        )}
-        {crash.promoted_to_finding_id && (
-          <AilaBadge severity="low" size="sm">
-            promoted to finding
-          </AilaBadge>
-        )}
+        ) : null}
+        {crash.promoted_to_finding_id ? (
+          <MonoBadge tone="ok">promoted to finding</MonoBadge>
+        ) : null}
       </div>
 
-      <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
-        Triage
-      </h2>
-      <dl className="grid grid-cols-2 gap-3 text-sm">
-        <div>
-          <dt className="text-text-muted text-xs">Stack hash</dt>
-          <dd className="font-mono text-xs">{crash.stack_hash}</dd>
-        </div>
-        <div>
-          <dt className="text-text-muted text-xs">Triage reason</dt>
-          <dd className="text-xs">{crash.triage_reason ?? "--"}</dd>
-        </div>
-        <div className="col-span-2">
-          <dt className="text-text-muted text-xs">Signature</dt>
-          <dd className="font-mono text-xs">
-            {crash.crash_signature ?? "--"}
-          </dd>
-        </div>
-      </dl></AilaCard>
-
-      {/* Triage chain -- narrative of triage events that touched this crash.
-          Per 08_FRONTEND_UX.md §1.6 / §2.4. Real per-turn reasoning rows
-          (decompile_function / data_flow_trace / hypothesis_create /
-          exploitability_assess) still require a crash → reasoning-turn join
-          table -- backend pending. What we DO render today is the
-          triage_chain on the crash row itself: every verdict change with
-          actor, timestamp, reason, and free-form notes (migration 053 +
-          POST /vr/fuzz/crashes/:id/triage). */}
-      <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
-        Triage chain
-      </h2>
-      <ol className="space-y-2 text-xs">
-        <li className="border border-border rounded px-3 py-2">
-          <div className="flex items-center gap-2 flex-wrap">
-            <AilaBadge severity="info" size="sm">
-              step 1
-            </AilaBadge>
-            <span className="font-mono text-foreground">
-              crash_register
-            </span>
-            <span className="text-text-muted">
-              bucket created (stack hash matched) on{" "}
-              {crash.discovered_at
-                ? new Date(crash.discovered_at).toLocaleString()
-                : "--"}
-            </span>
-          </div>
-        </li>
-        {(crash.triage_chain ?? []).map((entry, i) => {
-          const e = entry as {
-            verdict?: string;
-            actor?: string;
-            ts?: string;
-            reason?: string;
-            notes?: string;
-          };
-          const sev = e.verdict === "security_relevant"
-            ? "critical"
-            : e.verdict === "likely_harmless"
-              ? "low"
-              : e.verdict === "duplicate"
-                ? "info"
-                : e.verdict === "needs_manual_review"
-                  ? "medium"
-                  : "info";
-          return (
-            <li
-              key={`triage-${i}`}
-              className="border border-border rounded px-3 py-2"
-            >
-              <div className="flex items-center gap-2 flex-wrap">
-                <AilaBadge severity={sev} size="sm">
-                  step {2 + i}
-                </AilaBadge>
-                <span className="font-mono text-foreground">
-                  crash_triage
-                </span>
-                {e.verdict && (
-                  <span className="text-text-muted">
-                    verdict: <strong>{e.verdict}</strong>
-                  </span>
-                )}
-                {e.actor && (
-                  <span className="text-text-muted">
-                    by <span className="font-mono">{e.actor}</span>
-                  </span>
-                )}
-                {e.ts && (
-                  <span className="text-text-muted">
-                    {new Date(e.ts).toLocaleString()}
-                  </span>
-                )}
-              </div>
-              {(e.reason || e.notes) && (
-                <div className="mt-1 text-text-muted leading-relaxed">
-                  {e.reason && <span>{e.reason}</span>}
-                  {e.reason && e.notes && <span> · </span>}
-                  {e.notes && <span className="italic">{e.notes}</span>}
-                </div>
-              )}
-            </li>
-          );
-        })}
-        {crash.promoted_to_finding_id && (
-          <li className="border border-border rounded px-3 py-2">
-            <div className="flex items-center gap-2 flex-wrap">
-              <AilaBadge severity="low" size="sm">
-                step {2 + (crash.triage_chain?.length ?? 0)}
-              </AilaBadge>
-              <span className="font-mono text-foreground">
-                promote_to_finding
-              </span>
-              <span className="text-text-muted">
-                exploitability confirmed
-              </span>
-            </div>
-          </li>
-        )}
-      </ol>
-      <p className="mt-2 text-3xs text-text-muted">
-        Per-turn reasoning rows (decompile_function / data_flow_trace /
-        hypothesis_create / exploitability_assess from §2.4) still
-        require a crash → reasoning-turn join table -- backend pending.
-      </p>
-      <div className="mt-4 pt-4 border-t border-border">
-        <TriageEventForm crashId={cid} />
-      </div></AilaCard>
-
-      {/* LLM one-line summary (§1.6) -- derived from the structured
-          report; placeholder when not present. */}
-      <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
-        LLM summary
-      </h2>
-      {crash.triage_reason ? (
-        <p className="text-sm text-foreground">{crash.triage_reason}</p>
-      ) : (
-        <p className="text-xs text-text-muted">
-          One-line summary populates after the engine runs crash_triage.
-          For now showing raw stack trace below.
-        </p>
-      )}</AilaCard>
-
-      {/* Minimised input -- hex view (§1.6). Backend exposes a path
-          (and size); the bytes themselves require a future
-          GET /vr/fuzz/crashes/{id}/reproducer endpoint. */}
-      <AilaCard  techBorder glow><div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-        <h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground">
-          Minimised input
-        </h2>
-        <button
-          type="button"
-          disabled
-          title="Re-run reproducer on workstation -- backend pending"
-          className="text-xs px-2 py-1 rounded bg-accent text-background opacity-50 cursor-not-allowed"
+      {/* Triage brief */}
+      <WindowPanel title="triage" tone="accent">
+        <div
+          className="grid"
+          style={{
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+            columnGap: 18,
+            rowGap: 0,
+          }}
         >
-          Re-run (pending)
-        </button>
-      </div>
-      <dl className="grid grid-cols-2 gap-3 text-sm mb-3">
-        <div>
-          <dt className="text-text-muted text-xs">Path on worker host</dt>
-          <dd className="font-mono text-xs break-all">
-            {crash.reproducer_path ?? "--"}
-          </dd>
+          <BriefRow label="stack hash">{crash.stack_hash}</BriefRow>
+          <BriefRow label="triage reason">
+            {crash.triage_reason ?? "--"}
+          </BriefRow>
+          <BriefRow label="signature">
+            {crash.crash_signature ?? "--"}
+          </BriefRow>
+          <BriefRow label="campaign">
+            {crash.campaign_id ? (
+              <Link
+                to={`/vr/fuzz/campaigns/${crash.campaign_id}`}
+                style={{
+                  color: "var(--accent)",
+                  textDecoration: "none",
+                }}
+              >
+                {crash.campaign_id.slice(0, 12)}\u2026
+              </Link>
+            ) : (
+              "--"
+            )}
+          </BriefRow>
+          <BriefRow label="discovered">
+            {formatDateTime(crash.discovered_at)}
+          </BriefRow>
+          <BriefRow label="llm summary">
+            {crash.llm_summary ?? crash.triage_reason ?? "--"}
+          </BriefRow>
         </div>
-        <div>
-          <dt className="text-text-muted text-xs">Size</dt>
-          <dd className="font-mono text-xs">
+      </WindowPanel>
+
+      {/* Triage chain -- numbered mono ordered list */}
+      <WindowPanel
+        title="triage chain"
+        tone="info"
+        actions={
+          <span
+            className="font-mono uppercase"
+            style={{
+              fontSize: 9,
+              letterSpacing: "0.12em",
+              color: "var(--text-faint)",
+            }}
+          >
+            {1 + triageChain.length + (crash.promoted_to_finding_id ? 1 : 0)}{" "}
+            steps
+          </span>
+        }
+      >
+        <ol
+          style={{
+            listStyle: "none",
+            padding: 0,
+            margin: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+          }}
+        >
+          <ChainStep step={1} tone="info" action="crash_register">
+            bucket created (stack hash matched) on{" "}
+            {formatDateTime(crash.discovered_at)}
+          </ChainStep>
+          {triageChain.map((entry, i) => {
+            const verdict = typeof entry.verdict === "string"
+              ? (entry.verdict as CrashTriageVerdict)
+              : undefined;
+            const tone = verdict
+              ? (VERDICT_TONE[verdict] ?? "muted")
+              : "muted";
+            return (
+              <ChainStep
+                key={`triage-${i}`}
+                step={2 + i}
+                tone={tone}
+                action="crash_triage"
+                meta={
+                  <>
+                    {verdict ? (
+                      <span style={{ color: "var(--text-muted)" }}>
+                        verdict:{" "}
+                        <span style={{ color: "var(--text-primary)" }}>
+                          {verdict}
+                        </span>
+                      </span>
+                    ) : null}
+                    {entry.actor ? (
+                      <span style={{ color: "var(--text-muted)" }}>
+                        by{" "}
+                        <span
+                          className="font-mono"
+                          style={{ color: "var(--text-primary)" }}
+                        >
+                          {entry.actor}
+                        </span>
+                      </span>
+                    ) : null}
+                    {entry.ts ? (
+                      <span style={{ color: "var(--text-faint)" }}>
+                        {formatDateTime(entry.ts)}
+                      </span>
+                    ) : null}
+                  </>
+                }
+              >
+                {entry.reason || entry.notes ? (
+                  <>
+                    {entry.reason ? (
+                      <span style={{ color: "var(--text-muted)" }}>
+                        {entry.reason}
+                      </span>
+                    ) : null}
+                    {entry.reason && entry.notes ? (
+                      <span style={{ color: "var(--text-faint)" }}>
+                        {" "}\u00b7{" "}
+                      </span>
+                    ) : null}
+                    {entry.notes ? (
+                      <span
+                        style={{
+                          color: "var(--text-muted)",
+                          fontStyle: "italic",
+                        }}
+                      >
+                        {entry.notes}
+                      </span>
+                    ) : null}
+                  </>
+                ) : null}
+              </ChainStep>
+            );
+          })}
+          {crash.promoted_to_finding_id ? (
+            <ChainStep
+              step={2 + triageChain.length}
+              tone="ok"
+              action="promote_to_finding"
+            >
+              exploitability confirmed
+            </ChainStep>
+          ) : null}
+        </ol>
+        <p
+          className="font-mono"
+          style={{
+            marginTop: 10,
+            marginBottom: 0,
+            fontSize: 10,
+            color: "var(--text-faint)",
+            letterSpacing: "0.04em",
+          }}
+        >
+          per-turn reasoning rows (decompile_function / data_flow_trace /
+          hypothesis_create / exploitability_assess) still require a crash
+          {" "}\u2192 reasoning-turn join table -- backend pending.
+        </p>
+        <div
+          style={{
+            marginTop: 14,
+            paddingTop: 12,
+            borderTop: "1px solid var(--border-faint)",
+          }}
+        >
+          <TriageEventForm crashId={cid} />
+        </div>
+      </WindowPanel>
+
+      {/* Minimised input -- HexView from the head-hex bytes */}
+      <WindowPanel
+        title="minimised input"
+        tone="muted"
+        actions={
+          <button
+            type="button"
+            disabled
+            title="re-run reproducer on workstation -- backend pending"
+            className="font-mono uppercase"
+            style={{
+              ...PRIMARY_BTN,
+              opacity: 0.4,
+              cursor: "not-allowed",
+            }}
+          >
+            re-run (pending)
+          </button>
+        }
+      >
+        <div
+          className="grid"
+          style={{
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+            columnGap: 18,
+            rowGap: 0,
+            marginBottom: 10,
+          }}
+        >
+          <BriefRow label="path on worker host">
+            {crash.reproducer_path ?? "--"}
+          </BriefRow>
+          <BriefRow label="size">
             {crash.reproducer_size_bytes != null
               ? `${crash.reproducer_size_bytes.toLocaleString()} bytes`
               : "--"}
-          </dd>
+          </BriefRow>
         </div>
-      </dl>
-      <HexView data={null} filename={crash.reproducer_path?.split(/[\\/]/).pop() ?? null} /></AilaCard>
-
-      {/* Stack trace -- clickable frames per §1.6. Each frame jumps to
-          the target's functions-of-interest tab scrolled to that
-          function. Frame click is a no-op when no target_id is known. */}
-      <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
-        Stack trace
-      </h2>
-      {crash.stack_trace ? (
-        <ClickableStackTrace
-          raw={crash.stack_trace}
-          campaignId={crash.campaign_id}
+        <HexView
+          data={crash.reproducer_head_hex ?? null}
+          filename={crash.reproducer_path?.split(/[\\/]/).pop() ?? null}
         />
-      ) : (
-        <p className="text-xs text-text-muted">No stack trace provided.</p>
-      )}</AilaCard>
+      </WindowPanel>
 
-      {/* Linked artefacts (§1.6 step 6) */}
-      <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
-        Linked artefacts
-      </h2>
-      <ul className="text-xs space-y-1">
-        {crash.campaign_id && (
-          <li>
-            <Link
-              to={`/vr/fuzz/campaigns/${crash.campaign_id}`}
-              className="font-mono text-accent hover:underline"
-            >
-              ← campaign that found this crash
-            </Link>
-          </li>
+      {/* Stack trace / ASAN excerpt -- mono pre */}
+      <WindowPanel title="stack trace" tone="warn">
+        {crash.stack_trace ? (
+          <ClickableStackTrace raw={crash.stack_trace} />
+        ) : (
+          <p
+            className="font-mono"
+            style={{ margin: 0, fontSize: 11, color: "var(--text-muted)" }}
+          >
+            no stack trace provided.
+          </p>
         )}
-        {crash.duplicate_of_crash_id && (
-          <li>
-            <Link
-              to={`/vr/fuzz/crashes/${crash.duplicate_of_crash_id}`}
-              className="font-mono text-accent hover:underline"
-            >
-              duplicate-of: earlier crash →
-            </Link>
-          </li>
-        )}
-        {crash.promoted_to_finding_id && (
-          <li className="text-text-muted">
-            promoted to finding: {crash.promoted_to_finding_id.slice(0, 12)}…
-          </li>
-        )}
-        {!crash.duplicate_of_crash_id && !crash.promoted_to_finding_id && (
-          <li className="text-text-muted">No cross-references yet.</li>
-        )}
-      </ul></AilaCard>
+      </WindowPanel>
 
-      {Object.keys(crash.extra).length > 0 && (
-        <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
-          Extra fields
-        </h2>
-        <pre className="text-xs font-mono text-text-muted whitespace-pre-wrap">
-          {JSON.stringify(crash.extra, null, 2)}
-        </pre></AilaCard>
-      )}
+      {/* Linked artefacts */}
+      <WindowPanel title="linked artefacts" tone="info">
+        <ul
+          style={{
+            listStyle: "none",
+            padding: 0,
+            margin: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+          }}
+        >
+          {crash.campaign_id ? (
+            <li>
+              <Link
+                to={`/vr/fuzz/campaigns/${crash.campaign_id}`}
+                className="font-mono"
+                style={{
+                  color: "var(--accent)",
+                  fontSize: 11,
+                  textDecoration: "none",
+                  letterSpacing: "0.04em",
+                }}
+              >
+                \u2190 campaign that found this crash
+              </Link>
+            </li>
+          ) : null}
+          {crash.duplicate_of_crash_id ? (
+            <li>
+              <Link
+                to={`/vr/fuzz/crashes/${crash.duplicate_of_crash_id}`}
+                className="font-mono"
+                style={{
+                  color: "var(--accent)",
+                  fontSize: 11,
+                  textDecoration: "none",
+                  letterSpacing: "0.04em",
+                }}
+              >
+                duplicate-of: earlier crash \u2192
+              </Link>
+            </li>
+          ) : null}
+          {crash.promoted_to_finding_id ? (
+            <li
+              className="font-mono"
+              style={{
+                fontSize: 11,
+                color: "var(--text-muted)",
+                letterSpacing: "0.04em",
+              }}
+            >
+              promoted to finding:{" "}
+              <span style={{ color: "var(--text-primary)" }}>
+                {crash.promoted_to_finding_id.slice(0, 12)}\u2026
+              </span>
+            </li>
+          ) : null}
+          {!crash.campaign_id &&
+          !crash.duplicate_of_crash_id &&
+          !crash.promoted_to_finding_id ? (
+            <li
+              className="font-mono"
+              style={{
+                fontSize: 11,
+                color: "var(--text-muted)",
+                letterSpacing: "0.04em",
+              }}
+            >
+              no cross-references yet.
+            </li>
+          ) : null}
+        </ul>
+      </WindowPanel>
+
+      {/* Extra fields JSON (mono pre) */}
+      {Object.keys(crash.extra).length > 0 ? (
+        <WindowPanel title="extra fields" tone="muted">
+          <pre
+            className="font-mono"
+            style={{
+              margin: 0,
+              padding: 12,
+              fontSize: 11,
+              lineHeight: 1.5,
+              color: "var(--text-primary)",
+              background: "var(--surface-sunk)",
+              border: "1px solid var(--border-soft)",
+              borderRadius: 3,
+              overflow: "auto",
+              maxHeight: 400,
+              whiteSpace: "pre",
+            }}
+          >
+            {JSON.stringify(crash.extra, null, 2)}
+          </pre>
+        </WindowPanel>
+      ) : null}
     </div>
   );
 }
 
-/** Operator-facing "add triage event" form (POST /vr/fuzz/crashes/:id/triage).
- *
- *  The backend appends the event onto triage_chain_json AND flips the
- *  crash's top-level triage_verdict / triage_reason to the latest
- *  event. The verdict dropdown mirrors contracts/fuzz.py::CrashTriageVerdict
- *  (see TRIAGE_VERDICT_VALUES at the top of the file). The actor is
- *  stamped as "operator" — the backend does not require caller-supplied
- *  actor identity, and we deliberately don't inject the logged-in
- *  user's display name to keep the audit trail attribution consistent
- *  with the other operator-driven paths (message send / reset / etc).
- */
+// ─────────────────────────────────────────────────────────────────────
+// ChainStep -- one numbered mono row inside the triage-chain list.
+// ─────────────────────────────────────────────────────────────────────
+function ChainStep({
+  step,
+  tone,
+  action,
+  meta,
+  children,
+}: {
+  step: number;
+  tone: string;
+  action: string;
+  meta?: React.ReactNode;
+  children?: React.ReactNode;
+}) {
+  return (
+    <li
+      style={{
+        border: "1px solid var(--border-faint)",
+        borderRadius: 3,
+        padding: "8px 10px",
+        background: "var(--surface-sunk)",
+      }}
+    >
+      <div
+        className="flex items-center"
+        style={{ gap: 8, flexWrap: "wrap" }}
+      >
+        <MonoBadge tone={tone}>step {step}</MonoBadge>
+        <span
+          className="font-mono"
+          style={{
+            fontSize: 11,
+            color: "var(--text-primary)",
+            letterSpacing: "0.04em",
+          }}
+        >
+          {action}
+        </span>
+        {meta ? (
+          <span
+            className="flex items-center font-mono"
+            style={{
+              gap: 8,
+              fontSize: 10.5,
+              flexWrap: "wrap",
+            }}
+          >
+            {meta}
+          </span>
+        ) : null}
+      </div>
+      {children ? (
+        <div
+          className="font-mono"
+          style={{
+            marginTop: 6,
+            fontSize: 10.5,
+            color: "var(--text-muted)",
+            lineHeight: 1.55,
+            letterSpacing: "0.02em",
+          }}
+        >
+          {children}
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// TriageEventForm -- append a triage event; POST /vr/fuzz/crashes/:id/triage.
+// ─────────────────────────────────────────────────────────────────────
 function TriageEventForm({ crashId }: { crashId: string }) {
   const [verdict, setVerdict] = useState<CrashTriageVerdict>(
     "needs_manual_review",
@@ -386,7 +675,7 @@ function TriageEventForm({ crashId }: { crashId: string }) {
 
   return (
     <form
-      className="space-y-2"
+      style={{ display: "flex", flexDirection: "column", gap: 8 }}
       onSubmit={(e) => {
         e.preventDefault();
         if (disabled) return;
@@ -407,18 +696,38 @@ function TriageEventForm({ crashId }: { crashId: string }) {
         );
       }}
     >
-      <h3 className="text-xs font-semibold text-foreground">
-        Add triage event
-      </h3>
-      <div className="flex gap-2 flex-wrap items-center">
-        <label className="text-3xs text-text-muted uppercase tracking-wide">
-          Verdict
+      <div
+        className="font-mono uppercase"
+        style={{
+          fontSize: 10,
+          letterSpacing: "0.12em",
+          color: "var(--text-primary)",
+        }}
+      >
+        add triage event
+      </div>
+      <div
+        className="flex items-center"
+        style={{ gap: 8, flexWrap: "wrap" }}
+      >
+        <label
+          className="font-mono uppercase"
+          style={{
+            fontSize: 9,
+            letterSpacing: "0.14em",
+            color: "var(--text-faint)",
+          }}
+          htmlFor={`triage-verdict-${crashId}`}
+        >
+          verdict
         </label>
         <select
+          id={`triage-verdict-${crashId}`}
           value={verdict}
           onChange={(e) => setVerdict(e.target.value as CrashTriageVerdict)}
-          className="text-xs px-2 py-1 rounded bg-surface border border-border"
           aria-label="Triage verdict"
+          className="font-mono"
+          style={CTRL}
         >
           {TRIAGE_VERDICT_VALUES.map((v) => (
             <option key={v} value={v}>
@@ -430,29 +739,51 @@ function TriageEventForm({ crashId }: { crashId: string }) {
       <textarea
         value={reason}
         onChange={(e) => setReason(e.target.value)}
-        placeholder="Reason (required) — one-liner justifying the verdict change"
+        placeholder="Reason (required) -- one-liner justifying the verdict change"
         rows={2}
-        className="w-full text-xs font-mono p-2 rounded bg-surface border border-border focus:border-accent focus:outline-none"
         aria-label="Triage reason"
+        className="font-mono"
+        style={{ ...CTRL, width: "100%", resize: "vertical" }}
       />
       <textarea
         value={notes}
         onChange={(e) => setNotes(e.target.value)}
-        placeholder="Notes (optional) — free-form context, links, follow-ups"
+        placeholder="Notes (optional) -- free-form context, links, follow-ups"
         rows={2}
-        className="w-full text-xs font-mono p-2 rounded bg-surface border border-border focus:border-accent focus:outline-none"
         aria-label="Triage notes"
+        className="font-mono"
+        style={{ ...CTRL, width: "100%", resize: "vertical" }}
       />
-      <div className="flex items-center justify-end gap-2">
-        <span className="text-3xs text-text-muted">
-          Appends to triage_chain and rewrites triage_verdict/triage_reason to the latest.
+      <div
+        className="flex items-center"
+        style={{
+          justifyContent: "space-between",
+          gap: 10,
+          flexWrap: "wrap",
+        }}
+      >
+        <span
+          className="font-mono"
+          style={{
+            fontSize: 10,
+            color: "var(--text-faint)",
+            letterSpacing: "0.04em",
+          }}
+        >
+          appends to triage_chain and rewrites triage_verdict/triage_reason to
+          the latest.
         </span>
         <button
           type="submit"
           disabled={disabled}
-          className="text-xs px-3 py-1 rounded bg-accent text-background disabled:opacity-50 disabled:cursor-not-allowed"
+          className="font-mono uppercase"
+          style={{
+            ...PRIMARY_BTN,
+            opacity: disabled ? 0.4 : 1,
+            cursor: disabled ? "not-allowed" : "pointer",
+          }}
         >
-          {triageMut.isPending ? "Appending…" : "Append event"}
+          {triageMut.isPending ? "appending\u2026" : "append event"}
         </button>
       </div>
     </form>

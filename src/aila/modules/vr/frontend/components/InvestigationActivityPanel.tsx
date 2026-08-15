@@ -13,14 +13,14 @@
  * key audit events under a different run identifier will simply
  * return zero rows -- handled as an empty state, never as an error.
  */
-import { useMemo, useState } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Funnel } from "@phosphor-icons/react/dist/csr/Funnel";
 import { ArrowClockwise } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
 
 import { authorizedRequestJson } from "@platform/api/http";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
+import { MonoBadge } from "@/components/aila/mock";
 import { WindowPanel } from "@/components/aila/WindowPanel";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 
@@ -50,9 +50,9 @@ interface AuditListResponse {
   items: AuditEvent[];
 }
 
-function statusSeverity(
-  status: string,
-): "critical" | "high" | "medium" | "low" | "info" | "neutral" {
+type Severity = "critical" | "high" | "medium" | "low" | "info" | "neutral";
+
+function statusSeverity(status: string): Severity {
   const s = status.toLowerCase();
   if (s === "failed" || s === "error") return "critical";
   if (s === "warning" || s === "skipped") return "medium";
@@ -61,12 +61,55 @@ function statusSeverity(
   return "neutral";
 }
 
+// Severity -> MonoBadge tone. low -> ok, neutral -> muted; the rest are
+// pass-through onto the mock kit's tone keys.
+const SEVERITY_TONE: Record<Severity, string> = {
+  critical: "critical",
+  high: "high",
+  medium: "medium",
+  low: "ok",
+  info: "info",
+  neutral: "muted",
+};
+
 function formatTs(value: string | null): string {
   if (!value) return "--";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
   return d.toLocaleString();
 }
+
+// Mock text-input control, matching the CTRL shape used across VR rebuilds.
+const CTRL: CSSProperties = {
+  height: 24,
+  padding: "0 8px",
+  fontSize: 10,
+  letterSpacing: "0.06em",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  fontFamily: "var(--font-mono)",
+};
+
+// Mock ghost button -- matches the header-action idiom used across VR
+// wave-1 rebuilds (see ProjectDetailPage, LiveRunPanel).
+const GHOST_BTN: CSSProperties = {
+  height: 24,
+  padding: "0 8px",
+  fontSize: 10,
+  letterSpacing: "0.08em",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  cursor: "pointer",
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+  fontFamily: "var(--font-mono)",
+  textTransform: "uppercase",
+};
 
 export function InvestigationActivityPanel({
   investigationId,
@@ -124,131 +167,260 @@ export function InvestigationActivityPanel({
   const totalReported = query.data?.total ?? 0;
   const shown = items.length;
 
+  const clearFilters = () => {
+    setActionFilter("");
+    setStatusFilter("");
+  };
+
+  const headerActions = (
+    <div className="flex items-center" style={{ gap: 8 }}>
+      {hasTaskId ? (
+        <span
+          className="font-mono tabular-nums"
+          style={{
+            fontSize: 10,
+            letterSpacing: "0.08em",
+            color: "var(--text-muted)",
+          }}
+        >
+          {shown} shown{totalReported > shown ? ` / ${totalReported}` : ""}
+        </span>
+      ) : null}
+      <button
+        type="button"
+        onClick={() => query.refetch()}
+        style={GHOST_BTN}
+        disabled={query.isFetching || !hasTaskId}
+        aria-label="Refresh activity log"
+        title="Refresh audit trail"
+      >
+        <ArrowClockwise
+          weight="bold"
+          size={11}
+          className={
+            query.isFetching ? "animate-spin motion-reduce:animate-none" : undefined
+          }
+        />
+        refresh
+      </button>
+    </div>
+  );
+
   return (
-    <WindowPanel
-      title="activity"
-      tone="info"
-      actions={
-        <div className="flex items-center gap-2">
-          {hasTaskId && (
-            <span className="text-3xs font-mono text-text-muted tabular-nums">
-              {shown} shown{totalReported > shown ? ` / ${totalReported}` : ""}
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() => query.refetch()}
-            className="inline-flex items-center gap-1 px-2 py-0.5 text-3xs font-mono rounded border border-border text-text-muted hover:border-accent hover:text-foreground transition-colors"
-            disabled={query.isFetching || !hasTaskId}
-            aria-label="Refresh activity log"
-            title="Refresh audit trail"
-          >
-            <ArrowClockwise
-              weight="bold"
-              size={11}
-              className={query.isFetching ? "animate-spin motion-reduce:animate-none" : undefined}
-            />
-            refresh
-          </button>
-        </div>
-      }
-    >
+    <WindowPanel title="activity" tone="info" actions={headerActions}>
       <h2 className="sr-only">Activity</h2>
 
-      {hasTaskId && (
-        <div className="flex items-center gap-2 mb-3 flex-wrap text-xs">
-          <span className="inline-flex items-center gap-1 text-text-muted font-mono uppercase tracking-wide text-3xs">
+      {hasTaskId ? (
+        <div
+          className="flex items-center flex-wrap"
+          style={{ gap: 8, marginBottom: 12 }}
+        >
+          <span
+            className="inline-flex items-center font-mono uppercase"
+            style={{
+              gap: 4,
+              fontSize: 10,
+              letterSpacing: "0.08em",
+              color: "var(--text-muted)",
+            }}
+          >
             <Funnel weight="fill" size={11} />
             filter
           </span>
-          <label className="inline-flex items-center gap-1 text-3xs">
-            <span className="text-text-muted font-mono">action</span>
+          <label className="inline-flex items-center" style={{ gap: 4 }}>
+            <span
+              className="font-mono uppercase"
+              style={{
+                fontSize: 10,
+                letterSpacing: "0.08em",
+                color: "var(--text-muted)",
+              }}
+            >
+              action
+            </span>
             <input
               type="text"
               value={actionFilter}
               onChange={(e) => setActionFilter(e.target.value)}
               placeholder="scan.start,ssh.execute"
               aria-label="Filter activity events by action (comma-separated)"
-              className="w-40 text-2xs font-mono px-2 py-0.5 rounded bg-elevated border border-border focus:border-accent focus:outline-none"
+              className="font-mono"
+              style={{ ...CTRL, width: 176 }}
             />
           </label>
-          <label className="inline-flex items-center gap-1 text-3xs">
-            <span className="text-text-muted font-mono">status</span>
+          <label className="inline-flex items-center" style={{ gap: 4 }}>
+            <span
+              className="font-mono uppercase"
+              style={{
+                fontSize: 10,
+                letterSpacing: "0.08em",
+                color: "var(--text-muted)",
+              }}
+            >
+              status
+            </span>
             <input
               type="text"
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
               placeholder="completed,failed"
               aria-label="Filter activity events by status (comma-separated)"
-              className="w-36 text-2xs font-mono px-2 py-0.5 rounded bg-elevated border border-border focus:border-accent focus:outline-none"
+              className="font-mono"
+              style={{ ...CTRL, width: 156 }}
             />
           </label>
-          {(actionFilter || statusFilter) && (
+          {actionFilter || statusFilter ? (
             <button
               type="button"
-              onClick={() => {
-                setActionFilter("");
-                setStatusFilter("");
+              onClick={clearFilters}
+              className="font-mono uppercase"
+              style={{
+                fontSize: 10,
+                letterSpacing: "0.08em",
+                color: "var(--text-muted)",
+                background: "transparent",
+                border: "none",
+                cursor: "pointer",
+                padding: 0,
               }}
-              className="text-3xs font-mono text-text-muted hover:text-foreground"
             >
               clear
             </button>
-          )}
+          ) : null}
         </div>
-      )}
+      ) : null}
 
       {!hasTaskId ? (
-        <p className="text-xs text-text-muted">
-          No workflow run bound yet. The audit trail populates once the
+        <div
+          className="font-mono"
+          style={{
+            padding: 20,
+            fontSize: 11.5,
+            color: "var(--text-muted)",
+            letterSpacing: "0.04em",
+            textAlign: "center",
+          }}
+        >
+          no workflow run bound yet. audit trail populates once the
           investigation dispatches a worker task.
-        </p>
+        </div>
       ) : query.isLoading ? (
         <LoadingSkeletonGroup lines={4} />
       ) : query.isError ? (
-        <p className="text-xs text-critical font-mono">
-          Failed to load audit trail. Retry above.
-        </p>
+        <div
+          className="font-mono"
+          style={{
+            padding: 20,
+            fontSize: 11.5,
+            color: "var(--accent)",
+            letterSpacing: "0.04em",
+            textAlign: "center",
+          }}
+        >
+          failed to load audit trail. retry above.
+        </div>
       ) : items.length === 0 ? (
-        <p className="text-xs text-text-muted">
+        <div
+          className="font-mono"
+          style={{
+            padding: 20,
+            fontSize: 11.5,
+            color: "var(--text-muted)",
+            letterSpacing: "0.04em",
+            textAlign: "center",
+          }}
+        >
           {actionFilter || statusFilter
-            ? "No events match the current filters."
-            : "No audit events recorded for this run yet."}
-        </p>
+            ? "no events match the current filters."
+            : "no audit events recorded for this run yet."}
+        </div>
       ) : (
         <ol
-          className="space-y-1.5 scroll-virtual-row"
           aria-label="Investigation audit trail (oldest first)"
+          style={{ listStyle: "none", margin: 0, padding: 0 }}
         >
-          {items.map((ev) => (
+          {items.map((ev, idx) => (
             <li
               key={`${ev.id ?? ""}:${ev.created_at ?? ""}:${ev.action}`}
-              className="flex items-start gap-2 rounded-md border border-border/60 bg-elevated/40 p-2 hover:border-accent/40 transition-colors"
+              className="flex items-start"
+              style={{
+                gap: 10,
+                padding: "8px 4px",
+                borderBottom:
+                  idx === items.length - 1
+                    ? "none"
+                    : "1px solid var(--border-faint)",
+              }}
             >
-              <AilaBadge severity={statusSeverity(ev.status)} size="sm">
-                {ev.status || "--"}
-              </AilaBadge>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-baseline gap-2 flex-wrap">
-                  <span className="text-xs font-mono text-foreground truncate">
+              <span
+                className="font-mono tabular-nums"
+                style={{
+                  fontSize: 10,
+                  color: "var(--text-faint)",
+                  letterSpacing: "0.04em",
+                  whiteSpace: "nowrap",
+                  flex: "0 0 auto",
+                  paddingTop: 2,
+                }}
+              >
+                {formatTs(ev.created_at)}
+              </span>
+              <span style={{ flex: "0 0 auto", paddingTop: 1 }}>
+                <MonoBadge tone={SEVERITY_TONE[statusSeverity(ev.status)]}>
+                  {ev.status || "--"}
+                </MonoBadge>
+              </span>
+              <div className="min-w-0" style={{ flex: 1 }}>
+                <div
+                  className="flex items-baseline flex-wrap"
+                  style={{ gap: 8 }}
+                >
+                  <span
+                    className="font-mono truncate"
+                    style={{
+                      fontSize: 11.5,
+                      color: "var(--text-primary)",
+                      letterSpacing: "0.02em",
+                    }}
+                  >
                     {ev.action || "(no action)"}
                   </span>
-                  {ev.stage && (
-                    <span className="text-3xs font-mono text-text-muted">
+                  {ev.stage ? (
+                    <span
+                      className="font-mono"
+                      style={{
+                        fontSize: 10,
+                        color: "var(--text-muted)",
+                        letterSpacing: "0.04em",
+                      }}
+                    >
                       stage:{ev.stage}
                     </span>
-                  )}
-                  {ev.target && (
+                  ) : null}
+                  {ev.target ? (
                     <span
-                      className="text-3xs font-mono text-text-muted truncate"
+                      className="font-mono truncate"
                       title={ev.target}
+                      style={{
+                        fontSize: 10,
+                        color: "var(--text-muted)",
+                        letterSpacing: "0.04em",
+                      }}
                     >
                       target:{ev.target}
                     </span>
-                  )}
+                  ) : null}
                 </div>
-                <div className="text-3xs font-mono text-text-muted mt-0.5 flex items-center gap-3 flex-wrap">
-                  <span>{formatTs(ev.created_at)}</span>
+                <div
+                  className="flex items-center flex-wrap font-mono"
+                  style={{
+                    gap: 12,
+                    marginTop: 2,
+                    fontSize: 10,
+                    color: "var(--text-faint)",
+                    letterSpacing: "0.04em",
+                  }}
+                >
                   <span>user:{ev.user_id || "system"}</span>
                 </div>
               </div>

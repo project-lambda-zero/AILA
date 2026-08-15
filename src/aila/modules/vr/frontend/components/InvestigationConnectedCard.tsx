@@ -18,7 +18,7 @@
  */
 import { useMemo } from "react";
 
-import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import {
   ConnectedEntities,
   type ConnectedEntity,
@@ -123,8 +123,8 @@ export function InvestigationConnectedCard({
   if (entities.length === 0) return null;
 
   return (
-    <AilaCard techBorder glow>
+    <WindowPanel title="connected" tone="info">
       <ConnectedEntities entities={entities} heading="Connected" />
-    </AilaCard>
+    </WindowPanel>
   );
 }

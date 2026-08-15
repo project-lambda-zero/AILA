@@ -1,24 +1,21 @@
 /**
- * RadarPage.tsx -- Network Radar page at /radar (Phase 144).
+ * RadarPage -- mock rebuild.
  *
- * Assembles the ReactFlow topology graph with toolbar and inspect panel.
- * Operator+ role required (enforced in router.tsx and by the backend).
- *
- * State:
- * - colorBy: active color-by mode (local state)
- * - filter: search + severity filters (local state)
- * - subnetGrouping: whether to group nodes by /24 subnet (local state)
- * - selectedNode: clicked topology node (local state)
- * - inspectOpen: inspect panel visibility (local state)
+ * SectionHeader('network radar') + RadarToolbar (FilterChip row +
+ * Segmented colorBy + count) + WindowPanel(title='radar', flush)
+ * hosting RadarGraph. RadarInspectPanel is a right-side WindowPanel
+ * shown on node click. Data hooks + physics engine unchanged.
  */
 import * as React from "react";
 
-import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
-import { EmptyState } from "@/components/aila/EmptyState";
 import { GlobeHemisphereEast } from "@phosphor-icons/react/dist/csr/GlobeHemisphereEast";
 import { WifiSlash } from "@phosphor-icons/react/dist/csr/WifiSlash";
 import { FeatureBoundary } from "@app/FeatureBoundary";
+
+import { SectionHeader } from "@/components/aila/mock";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+
 import { RadarGraph } from "./RadarGraph";
 import { RadarInspectPanel } from "./RadarInspectPanel";
 import { RadarToolbar } from "./RadarToolbar";
@@ -44,59 +41,15 @@ export function RadarPage() {
     setInspectOpen(false);
   }, []);
 
-  // Compute filtered count for toolbar
   const filteredCount = React.useMemo(() => {
     if (!topology) return 0;
     return filterNodes(topology.nodes, filter).length;
   }, [topology, filter]);
 
-  // Loading state
-  if (isLoading) {
-    return (
-      <div className="flex flex-col p-4 gap-3" style={{ height: "70vh" }}>
-        <LoadingSkeleton size="md" width="quarter" />
-        <LoadingSkeleton size="full" width="full" />
-      </div>
-    );
-  }
-
-  // Error state
-  if (isError) {
-    return (
-      <div className="flex items-center justify-center p-4" style={{ height: "70vh" }}>
-        <div className="max-w-md w-full">
-          <EmptyState
-            icon={<WifiSlash className="h-10 w-10" />}
-            title="Failed to load network topology"
-            description={
-              (error instanceof Error ? error.message : "Unknown error occurred.") +
-              " Ensure you have operator or admin role. The topology endpoint requires operator+ access."
-            }
-            action={{ label: "Try again", onClick: () => void refetch() }}
-          />
-        </div>
-      </div>
-    );
-  }
-
-  // Empty state (API returned successfully but no systems registered)
-  if (!topology || topology.nodes.length === 0) {
-    return (
-      <div className="flex items-center justify-center p-4" style={{ height: "70vh" }}>
-        <div className="max-w-md w-full">
-          <EmptyState
-            icon={<GlobeHemisphereEast className="h-10 w-10" />}
-            title="No network data yet"
-            description="No systems have been discovered. Add systems on the Systems page and run a discovery scan to populate the radar."
-            action={{ label: "Go to Systems", href: "/systems" }}
-          />
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col" style={{ gap: 16, padding: 20, height: "100%", minHeight: 0 }}>
+      <SectionHeader icon={"\u25CE"} title="network radar" />
+
       <RadarToolbar
         colorBy={colorBy}
         onColorByChange={setColorBy}
@@ -104,33 +57,107 @@ export function RadarPage() {
         onFilterChange={setFilter}
         subnetGrouping={subnetGrouping}
         onSubnetGroupingChange={setSubnetGrouping}
-        nodeCount={topology.nodes.length}
+        nodeCount={topology?.nodes.length ?? 0}
         filteredCount={filteredCount}
       />
 
-      <div className="relative w-full" style={{ height: "70vh" }}>
-        <FeatureBoundary
-          label="Network radar graph"
-          resetKeys={[topology.nodes.length, colorBy, subnetGrouping]}
-          onReset={() => void refetch()}
-        >
-          <RadarGraph
-            nodes={topology.nodes}
-            edges={topology.edges}
-            subnets={topology.subnets}
-            colorBy={colorBy}
-            filter={filter}
-            subnetGrouping={subnetGrouping}
-            onNodeClick={handleNodeClick}
+      <WindowPanel title="radar" flush className="flex flex-col" style={{ flex: 1, minHeight: 0 }}>
+        {isLoading ? (
+          <div className="flex flex-col" style={{ padding: 16, gap: 10, flex: 1 }}>
+            <LoadingSkeleton size="md" width="quarter" />
+            <LoadingSkeleton size="full" width="full" className="h-full" />
+          </div>
+        ) : isError ? (
+          <RadarEmpty
+            icon={<WifiSlash size={28} />}
+            title="failed to load network topology"
+            detail={
+              (error instanceof Error ? error.message : "unknown error occurred.") +
+              " ensure you have operator or admin role."
+            }
+            action={{ label: "try again", onClick: () => void refetch() }}
           />
-        </FeatureBoundary>
-      </div>
+        ) : !topology || topology.nodes.length === 0 ? (
+          <RadarEmpty
+            icon={<GlobeHemisphereEast size={28} />}
+            title="no network data yet"
+            detail="no systems have been discovered. add systems on the Systems page and run a discovery scan."
+          />
+        ) : (
+          <div style={{ position: "relative", width: "100%", flex: 1, minHeight: 0 }}>
+            <FeatureBoundary
+              label="Network radar graph"
+              resetKeys={[topology.nodes.length, colorBy, subnetGrouping]}
+              onReset={() => void refetch()}
+            >
+              <RadarGraph
+                nodes={topology.nodes}
+                edges={topology.edges}
+                subnets={topology.subnets}
+                colorBy={colorBy}
+                filter={filter}
+                subnetGrouping={subnetGrouping}
+                onNodeClick={handleNodeClick}
+              />
+            </FeatureBoundary>
+          </div>
+        )}
+      </WindowPanel>
 
       <RadarInspectPanel
         node={selectedNode}
         open={inspectOpen}
         onClose={handleInspectClose}
       />
+    </div>
+  );
+}
+
+function RadarEmpty({
+  icon,
+  title,
+  detail,
+  action,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  detail: string;
+  action?: { label: string; onClick: () => void };
+}) {
+  return (
+    <div
+      className="flex flex-col items-center justify-center font-mono"
+      style={{ flex: 1, gap: 10, padding: 32, color: "var(--text-muted)" }}
+    >
+      <span style={{ color: "var(--text-faint)" }}>{icon}</span>
+      <span
+        className="uppercase"
+        style={{ fontSize: 11, letterSpacing: "0.14em", color: "var(--text-primary)" }}
+      >
+        {title}
+      </span>
+      <span style={{ fontSize: 11, textAlign: "center", maxWidth: 480 }}>{detail}</span>
+      {action && (
+        <button
+          type="button"
+          onClick={action.onClick}
+          className="font-mono uppercase"
+          style={{
+            height: 26,
+            fontSize: 9.5,
+            letterSpacing: "0.08em",
+            border: "1px solid var(--border-soft)",
+            background: "var(--surface-sunk)",
+            color: "var(--text-primary)",
+            padding: "0 11px",
+            borderRadius: 3,
+            cursor: "pointer",
+            marginTop: 6,
+          }}
+        >
+          {action.label}
+        </button>
+      )}
     </div>
   );
 }

@@ -1,11 +1,9 @@
 import * as React from "react";
-import { Plus } from "lucide-react";
 import { SquaresFour } from "@phosphor-icons/react/dist/csr/SquaresFour";
 
-import { Button } from "@/components/ui/button";
-import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
+import { SectionHeader } from "@/components/aila/mock";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
-import { EmptyState } from "@/components/aila/EmptyState";
 import { initModuleWidgets, getWidgetById } from "./widgetRegistry";
 import { registerAllPlatformWidgets } from "./widgets";
 import { useWidgetLayout, useSaveLayout } from "./useWidgetLayout";
@@ -20,7 +18,7 @@ import type { DashboardLayoutItem, SerializedLayout } from "./types";
  */
 function findNextSlot(
   existingItems: DashboardLayoutItem[],
-  w: number,
+  _w: number,
 ): { x: number; y: number } {
   if (existingItems.length === 0) {
     return { x: 0, y: 0 };
@@ -28,6 +26,23 @@ function findNextSlot(
   const maxY = Math.max(...existingItems.map((item) => item.y + item.h));
   return { x: 0, y: maxY };
 }
+
+const MOCK_BUTTON_STYLE: React.CSSProperties = {
+  height: 26,
+  padding: "0 12px",
+  borderRadius: 3,
+  fontFamily: "var(--font-mono)",
+  fontSize: 9.5,
+  letterSpacing: "0.1em",
+  textTransform: "uppercase",
+  border: "1px solid var(--border-soft)",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  cursor: "pointer",
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+};
 
 export function DashboardPage() {
   const [editMode, setEditMode] = React.useState(false);
@@ -51,13 +66,11 @@ export function DashboardPage() {
   }, [serverLayout, localLayout]);
 
   // Debounce timer ref for saves
-  const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveTimerRef = React.useRef<number | null>(null);
 
   function triggerDebouncedSave(layout: SerializedLayout) {
-    if (saveTimerRef.current !== null) {
-      clearTimeout(saveTimerRef.current);
-    }
-    saveTimerRef.current = setTimeout(() => {
+    clearTimeout(saveTimerRef.current ?? undefined);
+    saveTimerRef.current = window.setTimeout(() => {
       saveLayout.mutate(layout);
     }, 1000);
   }
@@ -107,70 +120,108 @@ export function DashboardPage() {
   // Clean up debounce timer on unmount
   React.useEffect(() => {
     return () => {
-      if (saveTimerRef.current !== null) {
-        clearTimeout(saveTimerRef.current);
-      }
+      clearTimeout(saveTimerRef.current ?? undefined);
     };
   }, []);
 
   const currentLayout = localLayout ?? serverLayout;
 
-  // Hoist the page-level actions (Add Widget when editing + EditModeToggle)
-  // into the PageShell sticky header via useUpdatePageHeader, so the
-  // controls sit alongside the page title in the global cyber-tech bar.
-  //
-  // MUST be memoized: useUpdatePageHeader stores `actions` in a useEffect
-  // dep array (reference equality). An inline JSX fragment here is a fresh
-  // object every render → effect fires → setOverrides → context update →
-  // re-render → "Maximum update depth exceeded".
-  const headerActions = React.useMemo(
-    () => (
-      <>
-        {editMode && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setPickerOpen(true)}
-          >
-            <Plus className="h-4 w-4 mr-1" />
-            Add Widget
-          </Button>
-        )}
-        <EditModeToggle
-          editMode={editMode}
-          onToggle={() => setEditMode((prev) => !prev)}
-        />
-      </>
-    ),
-    [editMode],
+  const actions = (
+    <>
+      {editMode && (
+        <button
+          type="button"
+          onClick={() => setPickerOpen(true)}
+          style={MOCK_BUTTON_STYLE}
+          data-testid="dashboard-add-widget"
+        >
+          <span aria-hidden="true" style={{ fontSize: 11 }}>{"+"}</span>
+          add widget
+        </button>
+      )}
+      <EditModeToggle
+        editMode={editMode}
+        onToggle={() => setEditMode((prev) => !prev)}
+      />
+    </>
   );
-  useUpdatePageHeader({ actions: headerActions });
+
   return (
-    <div className="depth-mesh space-y-4">
+    <div className="flex flex-col" style={{ gap: 16, padding: 20 }}>
+      <SectionHeader icon={"\u25CE"} title="dashboard" actions={actions} />
+
       {/* Loading state */}
       {isLoading && (
-        <div className="p-4">
+        <WindowPanel title="dashboard" status="LOADING" tone="muted">
           <LoadingSkeletonGroup lines={6} />
-        </div>
+        </WindowPanel>
       )}
 
       {/* Error state */}
       {isError && (
-        <div className="rounded-[4px] border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-          Failed to load dashboard layout:{" "}
-          {error instanceof Error ? error.message : "Unknown error"}
-        </div>
+        <WindowPanel title="dashboard" status="ERROR" tone="warn">
+          <div
+            className="font-mono"
+            style={{
+              color: "var(--status-warn)",
+              fontSize: 11,
+              padding: "6px 2px",
+              letterSpacing: "0.02em",
+            }}
+          >
+            Failed to load dashboard layout:{" "}
+            {error instanceof Error ? error.message : "Unknown error"}
+          </div>
+        </WindowPanel>
       )}
 
-      {/* Grid -- or empty state when no widgets */}
-      {!isLoading && currentLayout.items.length === 0 && (
-        <EmptyState
-          icon={<SquaresFour size={40} />}
-          title="Your dashboard is empty"
-          description="Add widgets to build your personalized security overview."
-          action={{ label: "Add Widget", onClick: () => setPickerOpen(true) }}
-        />
+      {/* Empty state -- mock-styled EmptyState replacement */}
+      {!isLoading && !isError && currentLayout.items.length === 0 && (
+        <WindowPanel title="dashboard" tone="muted">
+          <div
+            className="flex flex-col items-center justify-center"
+            style={{ gap: 12, padding: "40px 16px", textAlign: "center" }}
+          >
+            <SquaresFour size={40} style={{ color: "var(--text-faint)" }} aria-hidden="true" />
+            <div
+              className="font-mono"
+              style={{
+                fontSize: 12,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                color: "var(--text-primary)",
+              }}
+            >
+              your dashboard is empty
+            </div>
+            <div
+              className="font-mono"
+              style={{
+                fontSize: 11,
+                color: "var(--text-muted)",
+                maxWidth: 380,
+              }}
+            >
+              Add widgets to build your personalized security overview.
+            </div>
+            <button
+              type="button"
+              onClick={() => setPickerOpen(true)}
+              style={{
+                ...MOCK_BUTTON_STYLE,
+                border: "1px solid var(--accent)",
+                color: "var(--accent)",
+                marginTop: 4,
+              }}
+              data-testid="dashboard-empty-add-widget"
+            >
+              add widget
+            </button>
+          </div>
+        </WindowPanel>
       )}
+
+      {/* Grid */}
       {!isLoading && currentLayout.items.length > 0 && (
         <DashboardGrid
           layout={currentLayout.items}

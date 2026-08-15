@@ -1,35 +1,79 @@
 /**
  * ToolsConsolePage -- live tool invocation console at /admin/tools.
  *
- * Requires operator+ role at the frontend route level (defense-in-depth, GA5).
- * Backend POST /tools/{key} independently enforces ROLE_OPERATOR.
+ * Rebuilt to the AILA mock language: SectionHeader + split of
+ * WindowPanel('tool registry', flush) DataGrid on the left and
+ * WindowPanel('invoke') form on the right. All chrome via WindowPanel /
+ * DataGrid / MonoBadge / raw mock-styled inputs. Preserves data hooks,
+ * mutations, ROLE_OPERATOR gate, and the SchemaField-driven form loop.
  *
- * Layout:
- * - Left panel: searchable tool list grouped by module_id
- * - Right panel: selected tool detail + dynamic form + invoke + result/error
+ * Backend POST /tools/{key} independently enforces ROLE_OPERATOR -- the
+ * `canInvoke` gate here is defense-in-depth (bypass yields a 403).
  */
 
-import { useState, useCallback, useMemo } from "react";
+import {
+  useState,
+  useCallback,
+  useMemo,
+  type CSSProperties,
+} from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Wrench } from "@phosphor-icons/react/dist/csr/Wrench";
-import { Lock } from "@phosphor-icons/react/dist/csr/Lock";
-import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
-import { ArrowClockwise } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
 
-import { AilaCard } from "@/components/aila/AilaCard";
-import { AilaBadge } from "@/components/aila/AilaBadge";
+import {
+  SectionHeader,
+  DataGrid,
+  MonoBadge,
+  FilterChip,
+} from "@/components/aila/mock";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
-import { EmptyState } from "@/components/aila/EmptyState";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { authorizedRequestJson } from "@platform/api/http";
 import { useAuthStore } from "@platform/auth/useAuthStore";
 import { isAllowedRole } from "@platform/auth/roles";
 
 import { SchemaField } from "./SchemaField";
-import { fetchToolDetail, fetchToolsList, invokeTool } from "./tools-api";
-import type { JSONSchema, ToolDetail, ToolInvokeResponse, ToolSummary } from "./tools-types";
+import { fetchToolDetail, invokeTool } from "./tools-api";
+import type {
+  JSONSchema,
+  ToolDetail,
+  ToolInvokeResponse,
+  ToolSummary,
+} from "./tools-types";
+
+// ---------------------------------------------------------------------------
+// Mock-styled inline primitives (shared across left + right columns)
+// ---------------------------------------------------------------------------
+
+const ACTION_BTN: CSSProperties = {
+  height: 26,
+  padding: "0 12px",
+  fontSize: 9.5,
+  letterSpacing: "0.08em",
+  borderRadius: 3,
+  cursor: "pointer",
+  color: "var(--text-primary)",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+};
+
+const PRIMARY_BTN: CSSProperties = {
+  ...ACTION_BTN,
+  color: "var(--text-on-accent)",
+  background: "var(--accent)",
+  borderColor: "var(--accent)",
+};
+
+const INPUT_STYLE: CSSProperties = {
+  height: 28,
+  padding: "0 10px",
+  fontSize: 11,
+  color: "var(--text-primary)",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  outline: "none",
+};
 
 // ---------------------------------------------------------------------------
 // Utilities
@@ -50,7 +94,10 @@ function asObjectSchema(
     inputs.properties !== null &&
     typeof inputs.properties === "object"
   ) {
-    return inputs as { properties: Record<string, JSONSchema>; required?: string[] };
+    return inputs as {
+      properties: Record<string, JSONSchema>;
+      required?: string[];
+    };
   }
   return null;
 }
@@ -77,125 +124,8 @@ function initFormValues(
   return result;
 }
 
-/** Derive a short module label from a module_id string (e.g. "vuln" → "vuln"). */
-function moduleLabel(moduleId: string): string {
-  return moduleId;
-}
-
 // ---------------------------------------------------------------------------
-// Tool list panel
-// ---------------------------------------------------------------------------
-
-interface ToolListPanelProps {
-  tools: ToolSummary[];
-  selectedKey: string | null;
-  onSelect: (key: string) => void;
-  isLoading: boolean;
-  isError: boolean;
-  onRefresh: () => void;
-}
-
-function ToolListPanel({
-  tools,
-  selectedKey,
-  onSelect,
-  isLoading,
-  isError,
-  onRefresh,
-}: ToolListPanelProps) {
-  const [search, setSearch] = useState("");
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return tools;
-    return tools.filter(
-      (t) =>
-        t.tool_key.toLowerCase().includes(q) ||
-        t.name.toLowerCase().includes(q) ||
-        t.module_id.toLowerCase().includes(q),
-    );
-  }, [tools, search]);
-
-  return (
-    <div className="flex flex-col h-full gap-3">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="font-mono text-sm font-semibold text-foreground">
-          Registered Tools
-        </h2>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 w-7 p-0"
-          onClick={onRefresh}
-          aria-label="Refresh tool list"
-          title="Refresh tool list"
-        >
-          <ArrowClockwise className="h-3.5 w-3.5" />
-        </Button>
-      </div>
-
-      <div className="relative">
-        <MagnifyingGlass className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-        <Input
-          type="text"
-          placeholder="Search tools…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="touch-target pl-7 font-mono text-xs"
-          aria-label="Search tools"
-        />
-      </div>
-
-      {isLoading && <LoadingSkeletonGroup lines={6} />}
-
-      {isError && (
-        <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-          Failed to load tools. Check backend connectivity.
-        </div>
-      )}
-
-      {!isLoading && !isError && filtered.length === 0 && (
-        <p className="font-mono text-xs text-muted-foreground">
-          {search ? "No tools match the search." : "No tools registered."}
-        </p>
-      )}
-
-      <div className="flex flex-col gap-0.5 overflow-y-auto">
-        {filtered.map((tool) => {
-          const isSelected = tool.tool_key === selectedKey;
-          return (
-            <button
-              key={tool.tool_key}
-              type="button"
-              onClick={() => onSelect(tool.tool_key)}
-              className={[
-                "w-full text-left px-3 py-2 rounded-[4px] transition-colors group",
-                isSelected
-                  ? "bg-accent/15 border border-accent/40"
-                  : "hover:bg-elevated border border-transparent hover:border-border",
-              ].join(" ")}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <span className="font-mono text-xs text-foreground break-all leading-tight">
-                  {tool.name}
-                </span>
-                <AilaBadge severity="neutral" size="sm">
-                  {moduleLabel(tool.module_id)}
-                </AilaBadge>
-              </div>
-              <p className="font-mono text-[10px] text-muted-foreground mt-0.5 truncate">
-                {tool.tool_key}
-              </p>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Tool detail + form panel
+// Tool detail + invoke form (right column)
 // ---------------------------------------------------------------------------
 
 interface ToolDetailPanelProps {
@@ -211,9 +141,13 @@ function ToolDetailPanel({ toolKey, canInvoke }: ToolDetailPanelProps) {
   });
 
   const [formValues, setFormValues] = useState<Record<string, unknown>>({});
-  const [invokeResult, setInvokeResult] = useState<ToolInvokeResponse | null>(null);
+  const [invokeResult, setInvokeResult] = useState<ToolInvokeResponse | null>(
+    null,
+  );
 
-  const schema = detailQuery.data ? asObjectSchema(detailQuery.data.inputs) : null;
+  const schema = detailQuery.data
+    ? asObjectSchema(detailQuery.data.inputs)
+    : null;
 
   // Reset form when tool changes
   useMemo(() => {
@@ -226,13 +160,16 @@ function ToolDetailPanel({ toolKey, canInvoke }: ToolDetailPanelProps) {
     setFormValues((prev) => ({ ...prev, [name]: value }));
   }, []);
 
-  const invokeMutation = useMutation<ToolInvokeResponse, Error, Record<string, unknown>>({
+  const invokeMutation = useMutation<
+    ToolInvokeResponse,
+    Error,
+    Record<string, unknown>
+  >({
     mutationFn: (kwargs) => invokeTool(toolKey, kwargs),
     onSuccess: (data) => {
       setInvokeResult(data);
     },
     onError: (err) => {
-      // Network/HTTP error (non-tool error) -- surface as a synthetic invoke response
       setInvokeResult({
         tool_key: toolKey,
         result: null,
@@ -241,196 +178,422 @@ function ToolDetailPanel({ toolKey, canInvoke }: ToolDetailPanelProps) {
     },
   });
 
-  function handleSubmit(e: React.FormEvent): void {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    // Defense-in-depth: backend POST /tools/{key} enforces ROLE_OPERATOR.
-    // This `disabled` check is UX only -- bypassing it yields a 403, not unauthorized access.
     if (!canInvoke) return;
     invokeMutation.mutate(formValues);
   }
 
   if (detailQuery.isLoading) {
     return (
-      <AilaCard variant="elevated" padding="md" className="h-full"><LoadingSkeletonGroup lines={8} /></AilaCard>
+      <WindowPanel title="invoke" status="LOADING" tone="muted">
+        <LoadingSkeletonGroup lines={8} />
+      </WindowPanel>
     );
   }
 
   if (detailQuery.isError) {
     return (
-      <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs text-destructive">
-        Failed to load tool detail: {(detailQuery.error as Error).message}
-      </p></AilaCard>
+      <WindowPanel title="invoke" tone="warn">
+        <p
+          className="font-mono"
+          style={{ color: "var(--status-warn)", fontSize: 11 }}
+        >
+          Failed to load tool detail: {(detailQuery.error as Error).message}
+        </p>
+      </WindowPanel>
     );
   }
 
   const detail = detailQuery.data;
   if (!detail) return null;
 
-  const hasInputs = schema !== null && Object.keys(schema.properties).length > 0;
+  const hasInputs =
+    schema !== null && Object.keys(schema.properties).length > 0;
   const isInvoking = invokeMutation.isPending;
 
   return (
-    <div className="flex flex-col gap-4">
-      {/* Tool header */}
-      <AilaCard variant="elevated" padding="md"><div className="flex items-start justify-between gap-4">
-        <div className="flex flex-col gap-1 min-w-0">
-          <h2 className="font-mono text-base font-semibold text-foreground">
-            {detail.name}
-          </h2>
-          <p className="font-mono text-[10px] text-muted-foreground break-all">
-            {detail.tool_key}
-          </p>
-          <p className="font-mono text-xs text-muted-foreground mt-1">
-            {detail.description}
-          </p>
-        </div>
-        <div className="flex flex-col items-end gap-1 shrink-0">
-          <AilaBadge severity="neutral" size="sm">
-            {moduleLabel(detail.module_id)}
-          </AilaBadge>
-          <span className="font-mono text-[10px] text-muted-foreground">
-            → {detail.output_type}
-          </span>
-        </div>
-      </div></AilaCard>
-
-      {/* Invoke form */}
-      <AilaCard variant="elevated" padding="md"><h3 className="font-mono text-sm font-semibold text-foreground mb-3">
-        Inputs
-      </h3>
-      
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        {hasInputs ? (
-          Object.entries(schema.properties).map(([fieldName, fieldSchema]) => (
-            <SchemaField
-              key={fieldName}
-              name={fieldName}
-              schema={fieldSchema}
-              required={schema.required?.includes(fieldName) ?? false}
-              value={formValues[fieldName]}
-              onChange={updateFormValue}
-            />
-          ))
-        ) : (
-          <p className="font-mono text-xs text-muted-foreground">
-            This tool takes no inputs.
-          </p>
-        )}
-      
-        <div className="flex items-center gap-3 pt-2">
-          {canInvoke ? (
-            <Button type="submit" size="sm" disabled={isInvoking}>
-              <Wrench className="h-3.5 w-3.5 mr-1.5" />
-              {isInvoking ? "Invoking…" : "Invoke"}
-            </Button>
-          ) : (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger>
-                  <Button type="button" size="sm" disabled className="gap-1.5 opacity-60">
-                    <Lock className="h-3.5 w-3.5" />
-                    Invoke
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <span className="font-mono text-xs">Operator role required</span>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
-      
-          {invokeResult !== null && (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                setInvokeResult(null);
-                invokeMutation.reset();
+    <div className="flex flex-col" style={{ gap: 12, minWidth: 0 }}>
+      <WindowPanel title="tool">
+        <div className="flex items-start justify-between" style={{ gap: 12 }}>
+          <div className="flex flex-col" style={{ gap: 6, minWidth: 0 }}>
+            <div
+              className="font-mono"
+              style={{
+                fontFamily: "var(--font-display)",
+                fontSize: 18,
+                letterSpacing: "-0.01em",
+                color: "var(--text-primary)",
               }}
             >
-              Clear result
-            </Button>
-          )}
+              {detail.name}
+            </div>
+            <div
+              className="font-mono"
+              style={{
+                color: "var(--text-faint)",
+                fontSize: 10.5,
+                wordBreak: "break-all",
+              }}
+            >
+              {detail.tool_key}
+            </div>
+            <p
+              className="font-mono"
+              style={{ color: "var(--text-muted)", fontSize: 11 }}
+            >
+              {detail.description}
+            </p>
+          </div>
+          <div
+            className="flex flex-col items-end"
+            style={{ gap: 6, flexShrink: 0 }}
+          >
+            <MonoBadge tone="muted">{detail.module_id}</MonoBadge>
+            <span
+              className="font-mono"
+              style={{
+                color: "var(--text-faint)",
+                fontSize: 10,
+                letterSpacing: "0.08em",
+              }}
+            >
+              {"\u2192 "}
+              {detail.output_type}
+            </span>
+          </div>
         </div>
-      </form></AilaCard>
+      </WindowPanel>
 
-      {/* Result pane */}
+      <WindowPanel title="invoke">
+        <form
+          onSubmit={handleSubmit}
+          className="flex flex-col"
+          style={{ gap: 14 }}
+        >
+          {hasInputs ? (
+            Object.entries(schema.properties).map(
+              ([fieldName, fieldSchema]) => (
+                <SchemaField
+                  key={fieldName}
+                  name={fieldName}
+                  schema={fieldSchema}
+                  required={schema.required?.includes(fieldName) ?? false}
+                  value={formValues[fieldName]}
+                  onChange={updateFormValue}
+                />
+              ),
+            )
+          ) : (
+            <p
+              className="font-mono"
+              style={{ color: "var(--text-muted)", fontSize: 11 }}
+            >
+              This tool takes no inputs.
+            </p>
+          )}
+
+          <div className="flex items-center" style={{ gap: 10, paddingTop: 4 }}>
+            <button
+              type="submit"
+              className="font-mono uppercase"
+              disabled={!canInvoke || isInvoking}
+              title={canInvoke ? undefined : "Operator role required"}
+              style={{
+                ...(canInvoke ? PRIMARY_BTN : ACTION_BTN),
+                opacity: canInvoke && !isInvoking ? 1 : 0.6,
+                cursor:
+                  !canInvoke || isInvoking ? "not-allowed" : "pointer",
+              }}
+            >
+              {canInvoke
+                ? isInvoking
+                  ? "invoking\u2026"
+                  : "invoke"
+                : "invoke (locked)"}
+            </button>
+
+            {invokeResult !== null && (
+              <button
+                type="button"
+                className="font-mono uppercase"
+                onClick={() => {
+                  setInvokeResult(null);
+                  invokeMutation.reset();
+                }}
+                style={ACTION_BTN}
+              >
+                clear result
+              </button>
+            )}
+          </div>
+        </form>
+      </WindowPanel>
+
       {invokeResult !== null && (
-        <AilaCard variant="elevated"
-        padding="md"
-        className={
-          invokeResult.error
-            ? "border-destructive/40 bg-destructive/5"
-            : "border-border"
-        }><h3 className="font-mono text-sm font-semibold text-foreground mb-2">
-          {invokeResult.error ? "Invocation Error" : "Result"}
-        </h3>
-        
-        {invokeResult.error ? (
-          <p className="font-mono text-xs text-destructive break-words">
-            {invokeResult.error}
-          </p>
-        ) : (
-          <pre className="font-mono text-xs text-foreground whitespace-pre-wrap break-words bg-surface rounded-[4px] border border-border p-3 overflow-auto max-h-[400px]">
-            {JSON.stringify(invokeResult.result, null, 2)}
-          </pre>
-        )}</AilaCard>
+        <WindowPanel
+          title={invokeResult.error ? "invocation error" : "result"}
+          tone={invokeResult.error ? "warn" : "ok"}
+        >
+          {invokeResult.error ? (
+            <p
+              className="font-mono"
+              style={{
+                color: "var(--status-warn)",
+                fontSize: 11,
+                wordBreak: "break-word",
+              }}
+            >
+              {invokeResult.error}
+            </p>
+          ) : (
+            <pre
+              className="font-mono"
+              style={{
+                margin: 0,
+                padding: 10,
+                fontSize: 11,
+                lineHeight: 1.5,
+                color: "var(--text-primary)",
+                background: "var(--surface-sunk)",
+                border: "1px solid var(--border-soft)",
+                borderRadius: 3,
+                maxHeight: 400,
+                overflow: "auto",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              }}
+            >
+              {JSON.stringify(invokeResult.result, null, 2)}
+            </pre>
+          )}
+        </WindowPanel>
       )}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Page root
+// Page root -- registry grid (left) + detail (right)
 // ---------------------------------------------------------------------------
 
 export function ToolsConsolePage() {
   const [selectedToolKey, setSelectedToolKey] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [moduleFilter, setModuleFilter] = useState<string | null>(null);
 
   const role = useAuthStore((s) => s.role);
   const canInvoke = isAllowedRole(role, "operator");
 
   const toolsQuery = useQuery<ToolSummary[]>({
     queryKey: ["platform", "tools"],
-    queryFn: () => authorizedRequestJson<ToolSummary[]>("/tools", { method: "GET" }),
+    queryFn: () =>
+      authorizedRequestJson<ToolSummary[]>("/tools", { method: "GET" }),
     staleTime: 60_000,
   });
 
   const tools = toolsQuery.data ?? [];
 
-  function handleSelectTool(key: string): void {
-    setSelectedToolKey(key);
-  }
+  const modules = useMemo(() => {
+    const seen = new Set<string>();
+    for (const t of tools) seen.add(t.module_id);
+    return [...seen].sort();
+  }, [tools]);
+
+  const filteredTools = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return tools.filter((t) => {
+      if (moduleFilter && t.module_id !== moduleFilter) return false;
+      if (!q) return true;
+      return (
+        t.tool_key.toLowerCase().includes(q) ||
+        t.name.toLowerCase().includes(q) ||
+        t.module_id.toLowerCase().includes(q)
+      );
+    });
+  }, [tools, search, moduleFilter]);
 
   return (
-    <div className="flex flex-col gap-6 p-4 lg:p-6 h-full">
-      {/* Page header */}
+    <div
+      className="flex flex-col"
+      style={{ gap: 16, padding: 20, minHeight: "100%" }}
+    >
+      <SectionHeader
+        icon={
+          <Wrench
+            size={16}
+            weight="duotone"
+            style={{ color: "var(--text-on-accent)" }}
+            aria-hidden="true"
+          />
+        }
+        title="tools console"
+        actions={
+          <button
+            type="button"
+            className="font-mono uppercase"
+            onClick={() => void toolsQuery.refetch()}
+            disabled={toolsQuery.isFetching}
+            style={{
+              ...ACTION_BTN,
+              opacity: toolsQuery.isFetching ? 0.6 : 1,
+            }}
+          >
+            {toolsQuery.isFetching ? "refreshing" : "refresh"}
+          </button>
+        }
+      />
 
-      {/* Two-column split */}
-      <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-4 min-h-0 flex-1">
-        {/* Left: tool list */}
-        <AilaCard variant="default" padding="md" className="overflow-hidden"><ToolListPanel
-          tools={tools}
-          selectedKey={selectedToolKey}
-          onSelect={handleSelectTool}
-          isLoading={toolsQuery.isLoading}
-          isError={toolsQuery.isError}
-          onRefresh={() => void toolsQuery.refetch()}
-        /></AilaCard>
+      {/* Filter row */}
+      <div className="flex items-center flex-wrap" style={{ gap: 8 }}>
+        <input
+          type="text"
+          placeholder={"search tools\u2026"}
+          aria-label="Search tools"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="font-mono"
+          style={{ ...INPUT_STYLE, width: 260 }}
+        />
+        <FilterChip
+          active={moduleFilter === null}
+          onClick={() => setModuleFilter(null)}
+        >
+          all modules
+        </FilterChip>
+        {modules.map((mod) => (
+          <FilterChip
+            key={mod}
+            active={moduleFilter === mod}
+            onClick={() =>
+              setModuleFilter(moduleFilter === mod ? null : mod)
+            }
+          >
+            {mod}
+          </FilterChip>
+        ))}
+        {!canInvoke && (
+          <MonoBadge tone="warn" title="Operator role required for invocation">
+            read-only
+          </MonoBadge>
+        )}
+      </div>
 
-        {/* Right: tool detail */}
-        <div className="min-w-0">
-          {selectedToolKey === null ? (
-            <EmptyState
-              icon={<Wrench className="h-10 w-10" />}
-              title="Select a tool"
-              description="Choose a tool from the left panel to view its schema and invoke it."
-            />
+      <div
+        className="grid"
+        style={{
+          gridTemplateColumns: "1fr 460px",
+          gap: 16,
+          minHeight: 0,
+        }}
+      >
+        <WindowPanel
+          title={`tool registry \u00b7 ${filteredTools.length}`}
+          flush
+        >
+          {toolsQuery.isLoading ? (
+            <div style={{ padding: 16 }}>
+              <LoadingSkeletonGroup lines={6} />
+            </div>
+          ) : toolsQuery.isError ? (
+            <div
+              className="font-mono"
+              style={{
+                padding: 16,
+                color: "var(--status-warn)",
+                fontSize: 11,
+              }}
+            >
+              Failed to load tools. Check backend connectivity.
+            </div>
           ) : (
-            <ToolDetailPanel toolKey={selectedToolKey} canInvoke={canInvoke} />
+            <DataGrid<ToolSummary>
+              columns={[
+                { label: "NAME", width: "1fr" },
+                { label: "KEY", width: "1.4fr" },
+                { label: "MODULE", width: "120px" },
+              ]}
+              rows={filteredTools}
+              getKey={(t) => t.tool_key}
+              onRowClick={(t) => setSelectedToolKey(t.tool_key)}
+              empty={
+                <div
+                  className="font-mono"
+                  style={{
+                    padding: 24,
+                    textAlign: "center",
+                    fontSize: 11,
+                    color: "var(--text-muted)",
+                  }}
+                >
+                  {search || moduleFilter
+                    ? "no tools match the filters."
+                    : "no tools registered."}
+                </div>
+              }
+              renderCells={(t) => {
+                const isSel = t.tool_key === selectedToolKey;
+                return [
+                  <span
+                    key="name"
+                    className="font-mono truncate"
+                    style={{
+                      color: isSel ? "var(--accent)" : "var(--text-primary)",
+                      fontSize: 11,
+                    }}
+                  >
+                    {t.name}
+                  </span>,
+                  <span
+                    key="key"
+                    className="font-mono truncate"
+                    title={t.tool_key}
+                    style={{
+                      color: "var(--text-muted)",
+                      fontSize: 10.5,
+                    }}
+                  >
+                    {t.tool_key}
+                  </span>,
+                  <MonoBadge key="mod" tone="muted">
+                    {t.module_id}
+                  </MonoBadge>,
+                ];
+              }}
+            />
           )}
-        </div>
+        </WindowPanel>
+
+        {selectedToolKey === null ? (
+          <WindowPanel title="invoke" tone="muted">
+            <div
+              className="flex flex-col items-center justify-center"
+              style={{ gap: 8, padding: "36px 12px", textAlign: "center" }}
+            >
+              <span aria-hidden="true" style={{ color: "var(--text-faint)" }}>
+                <Wrench size={28} weight="duotone" />
+              </span>
+              <span
+                className="font-mono"
+                style={{ color: "var(--text-primary)", fontSize: 12 }}
+              >
+                Select a tool
+              </span>
+              <span
+                className="font-mono"
+                style={{
+                  color: "var(--text-muted)",
+                  fontSize: 10.5,
+                  maxWidth: 260,
+                }}
+              >
+                Choose a tool from the registry to inspect its schema and invoke.
+              </span>
+            </div>
+          </WindowPanel>
+        ) : (
+          <ToolDetailPanel toolKey={selectedToolKey} canInvoke={canInvoke} />
+        )}
       </div>
     </div>
   );

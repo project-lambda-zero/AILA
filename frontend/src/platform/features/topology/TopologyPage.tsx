@@ -1,44 +1,25 @@
 /**
- * TopologyPage.tsx -- full network-topology console (issue #212).
+ * TopologyPage -- mock rebuild (dense mono terminal).
  *
- * Wires the two /topology endpoints together and lays out the console:
+ * SectionHeader + FilterChip toolbar (overlays + refresh) + 2-col grid:
+ *   left  = WindowPanel(title='subnets', flush)   -- subnet picker
+ *   right = WindowPanel(title='topology graph', flush) -- reactflow canvas
  *
- *   +------------------+---------------------------------+
- *   | subnet sidebar   | overlay toolbar                 |
- *   |  (subnets query) +---------------------------------+
- *   |                  | xyflow canvas (full topology)   |
- *   |                  |                                 |
- *   +------------------+---------------------------------+
- *
- * The page returns bare content -- protectPage wraps it in <PageFrame>,
- * so wrapping our own <PageShell> would double the header (rule #16).
- *
- * Endpoints wired:
- *   GET /topology          -- nodes + edges + subnets (payload rendered)
- *   GET /topology/subnets  -- sidebar counts (independent cache)
- *
- * Graph lib: @xyflow/react (vendor-xyflow chunk already shipped).
- * Console aesthetic: mono, sharp 2-4px radii, midnight-cloud-8 palette.
- * Motion: pan/zoom on subnet focus honours prefers-reduced-motion.
+ * TopologyDetailSheet stays a fixed right sheet (composed of WindowPanel)
+ * shown when a node is clicked. Data hooks + reactflow engine unchanged.
  */
 import * as React from "react";
 import { ArrowsClockwise } from "@phosphor-icons/react/dist/csr/ArrowsClockwise";
 import { Broadcast } from "@phosphor-icons/react/dist/csr/Broadcast";
-import { CirclesThreePlus } from "@phosphor-icons/react/dist/csr/CirclesThreePlus";
-import { HardDrives } from "@phosphor-icons/react/dist/csr/HardDrives";
-import { LineSegments } from "@phosphor-icons/react/dist/csr/LineSegments";
 import { TreeStructure } from "@phosphor-icons/react/dist/csr/TreeStructure";
 import { Warning } from "@phosphor-icons/react/dist/csr/Warning";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
-import { EmptyState } from "@/components/aila/EmptyState";
-import { KpiTile } from "@/components/aila/KpiTile";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 import { FeatureBoundary } from "@app/FeatureBoundary";
 import type { UseQueryResult } from "@tanstack/react-query";
+
+import { FilterChip, MonoBadge, SectionHeader, StatBar } from "@/components/aila/mock";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 import type {
   SubnetGroup,
@@ -72,9 +53,6 @@ export function TopologyPage() {
     setSheetOpen(true);
   }, []);
 
-  // Prefer live subnets from /topology/subnets; fall back to the copy
-  // embedded in the full response so the sidebar renders even if the
-  // secondary query hasn't returned yet.
   const sidebarSubnets: SubnetGroup[] =
     subnetsQuery.data ?? full.data?.subnets ?? [];
 
@@ -86,28 +64,86 @@ export function TopologyPage() {
     [sidebarSubnets],
   );
 
+  const nodes = full.data?.nodes ?? [];
+  const edges = full.data?.edges ?? [];
+  const staleCount = nodes.filter((n) => n.is_stale).length;
+  const refreshing = full.isFetching || subnetsQuery.isFetching;
+
   return (
-    <div className="flex flex-col gap-3 h-full min-h-0">
-      <TopologyHeader
-        overlays={overlays}
-        onOverlaysChange={setOverlays}
-        onRefresh={() => {
-          void full.refetch();
-          void subnetsQuery.refetch();
-        }}
-        refreshing={full.isFetching || subnetsQuery.isFetching}
-        nodeCount={full.data?.nodes.length ?? 0}
-        edgeCount={full.data?.edges.length ?? 0}
-        subnetCount={sidebarSubnets.length}
-        staleCount={
-          full.data?.nodes.filter((n) => n.is_stale).length ?? 0
+    <div className="flex flex-col" style={{ gap: 16, padding: 20, height: "100%", minHeight: 0 }}>
+      <SectionHeader
+        icon={"\u25CE"}
+        title="topology"
+        actions={
+          <div className="flex items-center" style={{ gap: 8 }}>
+            <span className="font-mono uppercase" style={{ fontSize: 9, letterSpacing: "0.14em", color: "var(--text-faint)" }}>
+              {nodes.length} nodes
+            </span>
+            <span className="font-mono uppercase" style={{ fontSize: 9, letterSpacing: "0.14em", color: "var(--text-faint)" }}>
+              {edges.length} edges
+            </span>
+            <span className="font-mono uppercase" style={{ fontSize: 9, letterSpacing: "0.14em", color: "var(--text-faint)" }}>
+              {sidebarSubnets.length} subnets
+            </span>
+            {staleCount > 0 && (
+              <MonoBadge tone="warn">{`${staleCount} stale`}</MonoBadge>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                void full.refetch();
+                void subnetsQuery.refetch();
+              }}
+              disabled={refreshing}
+              className="font-mono uppercase flex items-center"
+              style={{
+                gap: 6,
+                height: 26,
+                fontSize: 9.5,
+                letterSpacing: "0.08em",
+                border: "1px solid var(--border-soft)",
+                background: "var(--surface-sunk)",
+                color: "var(--text-primary)",
+                padding: "0 11px",
+                borderRadius: 3,
+                cursor: refreshing ? "wait" : "pointer",
+                opacity: refreshing ? 0.6 : 1,
+              }}
+            >
+              <ArrowsClockwise size={12} />
+              refresh
+            </button>
+          </div>
         }
       />
 
-      {/* Sidebar + canvas each get their own boundary: a subnet-query
-          render fault only kills the sidebar; a canvas render fault
-          only kills the graph. */}
-      <div className="flex-1 grid gap-3 min-h-0" style={{ gridTemplateColumns: "260px 1fr" }}>
+      {/* Overlay filter chip row */}
+      <div className="flex items-center flex-wrap" style={{ gap: 8 }}>
+        <FilterChip
+          active={overlays.severityHeat}
+          color="var(--accent)"
+          onClick={() => setOverlays({ ...overlays, severityHeat: !overlays.severityHeat })}
+        >
+          severity heat
+        </FilterChip>
+        <FilterChip
+          active={overlays.staleOnly}
+          color="var(--status-warn)"
+          onClick={() => setOverlays({ ...overlays, staleOnly: !overlays.staleOnly })}
+        >
+          stale only
+        </FilterChip>
+        <FilterChip
+          active={overlays.groupBySubnet}
+          color="var(--status-info)"
+          onClick={() => setOverlays({ ...overlays, groupBySubnet: !overlays.groupBySubnet })}
+        >
+          group by subnet
+        </FilterChip>
+      </div>
+
+      {/* Main = subnet sidebar + graph canvas */}
+      <div className="grid" style={{ gap: 12, gridTemplateColumns: "260px 1fr", flex: 1, minHeight: 0 }}>
         <FeatureBoundary
           label="Subnet sidebar"
           resetKeys={[subnetsQuery.dataUpdatedAt, sidebarSubnets.length]}
@@ -115,7 +151,7 @@ export function TopologyPage() {
         >
           <SubnetSidebar
             subnets={sidebarSubnets}
-            nodes={full.data?.nodes ?? []}
+            nodes={nodes}
             focused={focusedSubnet}
             onFocus={handleSubnetPick}
             loading={subnetsQuery.isLoading && !subnetsQuery.data}
@@ -126,11 +162,7 @@ export function TopologyPage() {
           resetKeys={[full.dataUpdatedAt, focusedSubnet]}
           onReset={() => void full.refetch()}
         >
-          <AilaCard
-            padding="none"
-            className="flex flex-col min-h-0 overflow-hidden"
-           
-          >
+          <WindowPanel title="topology graph" flush className="flex flex-col" style={{ minHeight: 0 }}>
             <TopologyBody
               full={full}
               overlays={overlays}
@@ -138,7 +170,7 @@ export function TopologyPage() {
               onNodeClick={handleNodeClick}
               canvasRef={canvasRef}
             />
-          </AilaCard>
+          </WindowPanel>
         </FeatureBoundary>
       </div>
 
@@ -152,113 +184,7 @@ export function TopologyPage() {
 }
 
 // ---------------------------------------------------------------------------
-// Header: KPIs + overlay toggles + refresh
-// ---------------------------------------------------------------------------
-
-function TopologyHeader({
-  overlays,
-  onOverlaysChange,
-  onRefresh,
-  refreshing,
-  nodeCount,
-  edgeCount,
-  subnetCount,
-  staleCount,
-}: {
-  overlays: TopologyOverlays;
-  onOverlaysChange(next: TopologyOverlays): void;
-  onRefresh(): void;
-  refreshing: boolean;
-  nodeCount: number;
-  edgeCount: number;
-  subnetCount: number;
-  staleCount: number;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3 flex-wrap">
-      <div className="flex gap-2 flex-wrap">
-        <KpiTile label="Systems" value={nodeCount} icon={<HardDrives />} tone="accent" />
-        <KpiTile label="Edges" value={edgeCount} icon={<LineSegments />} />
-        <KpiTile
-          label="Subnets"
-          value={subnetCount}
-          icon={<CirclesThreePlus />}
-        />
-        <KpiTile
-          label="Stale"
-          value={staleCount}
-          icon={<Warning />}
-          tone={staleCount > 0 ? "warn" : "neutral"}
-        />
-      </div>
-      <div className="flex items-center gap-2 flex-wrap">
-        <OverlayToggle
-          active={overlays.severityHeat}
-          onClick={() =>
-            onOverlaysChange({ ...overlays, severityHeat: !overlays.severityHeat })
-          }
-          label="Severity heat"
-        />
-        <OverlayToggle
-          active={overlays.staleOnly}
-          onClick={() =>
-            onOverlaysChange({ ...overlays, staleOnly: !overlays.staleOnly })
-          }
-          label="Stale only"
-        />
-        <OverlayToggle
-          active={overlays.groupBySubnet}
-          onClick={() =>
-            onOverlaysChange({ ...overlays, groupBySubnet: !overlays.groupBySubnet })
-          }
-          label="Group by subnet"
-        />
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onRefresh}
-          disabled={refreshing}
-          className="font-mono text-xs"
-        >
-          <ArrowsClockwise
-            size={14}
-            className={cn(refreshing && "animate-spin motion-reduce:animate-none")}
-          />
-          <span className="ml-1">Refresh</span>
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function OverlayToggle({
-  active,
-  onClick,
-  label,
-}: {
-  active: boolean;
-  onClick(): void;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(
-        "font-mono text-xs uppercase tracking-wider px-3 py-1.5 rounded-[2px] border transition-colors duration-150",
-        active
-          ? "bg-accent text-badge-text border-accent"
-          : "bg-surface text-text-muted border-border hover:border-accent hover:text-text",
-      )}
-    >
-      {label}
-    </button>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Subnet sidebar
+// Subnet sidebar -- WindowPanel with a list of chips
 // ---------------------------------------------------------------------------
 
 function SubnetSidebar({
@@ -284,39 +210,45 @@ function SubnetSidebar({
     return map;
   }, [nodes]);
 
+  const maxCount = subnets.reduce((m, s) => Math.max(m, s.system_ids.length), 0) || 1;
+
   return (
-    <AilaCard
-      padding="none"
-      className="flex flex-col min-h-0 overflow-hidden"
-     
-    >
-      <div className="flex items-center justify-between px-3 py-2 border-b border-border">
-        <span className="font-mono text-[10px] uppercase tracking-wider text-text-muted">
-          Subnets
-        </span>
+    <WindowPanel
+      title="subnets"
+      flush
+      className="flex flex-col"
+      style={{ minHeight: 0 }}
+      actions={
         <button
           type="button"
           onClick={() => onFocus(null)}
-          className={cn(
-            "font-mono text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-[2px] border",
-            focused === null
-              ? "bg-accent text-badge-text border-accent"
-              : "border-border text-text-muted hover:text-text hover:border-accent",
-          )}
+          className="font-mono uppercase"
+          style={{
+            height: 20,
+            fontSize: 9,
+            letterSpacing: "0.1em",
+            padding: "0 8px",
+            border: focused === null ? "1px solid var(--accent)" : "1px solid var(--border-soft)",
+            background: focused === null ? "color-mix(in srgb, var(--accent) 18%, transparent)" : "var(--surface-sunk)",
+            color: focused === null ? "var(--accent)" : "var(--text-muted)",
+            borderRadius: 3,
+            cursor: "pointer",
+          }}
         >
-          All
+          all
         </button>
-      </div>
-      <div className="flex-1 overflow-y-auto">
+      }
+    >
+      <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
         {loading && subnets.length === 0 ? (
-          <div className="p-3 flex flex-col gap-2">
+          <div className="flex flex-col" style={{ padding: 10, gap: 6 }}>
             <LoadingSkeleton size="lg" width="full" />
             <LoadingSkeleton size="lg" width="full" />
             <LoadingSkeleton size="lg" width="full" />
           </div>
         ) : subnets.length === 0 ? (
-          <p className="p-3 font-mono text-[11px] text-text-muted">
-            No subnets discovered.
+          <p className="font-mono" style={{ padding: 12, fontSize: 11, color: "var(--text-muted)" }}>
+            no subnets discovered.
           </p>
         ) : (
           subnets.map((s) => {
@@ -327,35 +259,46 @@ function SubnetSidebar({
                 key={s.subnet_prefix}
                 type="button"
                 onClick={() => onFocus(isFocused ? null : s.subnet_prefix)}
-                className={cn(
-                  "w-full flex items-center justify-between gap-2 px-3 py-2 border-b border-border/60 text-left transition-colors duration-100 font-mono",
-                  isFocused
-                    ? "bg-surface text-accent"
-                    : "text-text hover:bg-surface/60",
-                )}
+                className="w-full font-mono text-left"
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 4,
+                  padding: "8px 12px",
+                  borderBottom: "1px solid var(--border-faint)",
+                  background: isFocused ? "var(--surface-hover)" : "transparent",
+                  color: isFocused ? "var(--accent)" : "var(--text-primary)",
+                  cursor: "pointer",
+                }}
               >
-                <span className="text-xs truncate">{s.subnet_prefix}</span>
-                <span className="flex items-center gap-1 shrink-0">
-                  {stale > 0 && (
-                    <AilaBadge severity="medium" size="sm">
-                      {`${stale} stale`}
-                    </AilaBadge>
-                  )}
-                  <span className="text-[10px] text-text-muted">
-                    {s.system_ids.length}
+                <div className="flex items-center justify-between" style={{ gap: 6 }}>
+                  <span style={{ fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {s.subnet_prefix}
                   </span>
-                </span>
+                  <span className="flex items-center" style={{ gap: 6 }}>
+                    {stale > 0 && <MonoBadge tone="warn">{`${stale} STALE`}</MonoBadge>}
+                    <span style={{ fontSize: 9, color: "var(--text-faint)", letterSpacing: "0.1em" }}>
+                      {s.system_ids.length}
+                    </span>
+                  </span>
+                </div>
+                <StatBar
+                  label=""
+                  color={isFocused ? "var(--accent)" : "var(--border)"}
+                  value={s.system_ids.length}
+                  max={maxCount}
+                />
               </button>
             );
           })
         )}
       </div>
-    </AilaCard>
+    </WindowPanel>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Canvas body -- handles loading/error/empty gates
+// Canvas body -- loading / error / empty gates
 // ---------------------------------------------------------------------------
 
 function TopologyBody({
@@ -373,35 +316,35 @@ function TopologyBody({
 }) {
   if (full.isLoading) {
     return (
-      <div className="flex-1 grid place-items-center p-6">
+      <div className="flex items-center justify-center" style={{ flex: 1, padding: 24 }}>
         <LoadingSkeleton size="full" width="full" className="h-full" />
       </div>
     );
   }
   if (full.isError) {
     return (
-      <EmptyState
-        icon={<Warning size={32} />}
-        title="Topology unavailable"
-        description={
+      <EmptyPanel
+        icon={<Warning size={28} />}
+        title="topology unavailable"
+        detail={
           full.error instanceof Error
             ? full.error.message
-            : "The /topology endpoint returned an error."
+            : "the /topology endpoint returned an error."
         }
       />
     );
   }
   if (!full.data || full.data.nodes.length === 0) {
     return (
-      <EmptyState
-        icon={<Broadcast size={32} />}
-        title="No systems registered"
-        description="Run a discovery scan or register systems to populate the topology."
+      <EmptyPanel
+        icon={<Broadcast size={28} />}
+        title="no systems registered"
+        detail="run a discovery scan or register systems to populate the topology."
       />
     );
   }
   return (
-    <div className="flex-1 min-h-0">
+    <div style={{ flex: 1, minHeight: 0 }}>
       <TopologyCanvas
         ref={canvasRef}
         nodes={full.data.nodes}
@@ -410,6 +353,21 @@ function TopologyBody({
         focusedSubnet={focusedSubnet}
         onNodeClick={onNodeClick}
       />
+    </div>
+  );
+}
+
+function EmptyPanel({ icon, title, detail }: { icon: React.ReactNode; title: string; detail: string }) {
+  return (
+    <div
+      className="flex flex-col items-center justify-center font-mono"
+      style={{ flex: 1, gap: 10, padding: 32, color: "var(--text-muted)" }}
+    >
+      <span style={{ color: "var(--text-faint)" }}>{icon}</span>
+      <span className="uppercase" style={{ fontSize: 11, letterSpacing: "0.14em", color: "var(--text-primary)" }}>
+        {title}
+      </span>
+      <span style={{ fontSize: 11, textAlign: "center", maxWidth: 420 }}>{detail}</span>
     </div>
   );
 }

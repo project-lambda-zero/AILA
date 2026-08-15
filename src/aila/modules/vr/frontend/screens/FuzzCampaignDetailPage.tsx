@@ -1,10 +1,17 @@
+import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { useState } from "react";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaChart } from "@/components/aila/AilaChart";
-import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import {
+  DataGrid,
+  FilterChip,
+  MonoBadge,
+  SectionHeader,
+  StatBar,
+  type GridColumn,
+} from "@/components/aila/mock";
+import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 import { useThemeChartColors } from "@platform/features/viz/chartColors";
 
 import { DeleteButton } from "../components/DeleteButton";
@@ -20,30 +27,30 @@ import {
   useSystemHeartbeat,
   useSystemMap,
 } from "../queries";
-import type { CampaignStatus, CrashTriageVerdict } from "../types";
-import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
-
-const STATUS_COLOR: Record<
+import type {
   CampaignStatus,
-  "info" | "low" | "medium" | "high" | "critical"
-> = {
-  created: "info",
-  running: "medium",
-  paused: "info",
-  completed: "low",
-  failed: "high",
-  aborted: "high",
+  CrashTriageVerdict,
+  VRFuzzCrashSummary,
+} from "../types";
+
+// ─────────────────────────────────────────────────────────────────────
+// Vocabulary maps -- mock tones only.
+// ─────────────────────────────────────────────────────────────────────
+const STATUS_TONE: Record<CampaignStatus, string> = {
+  created: "muted",
+  running: "ok",
+  paused: "warn",
+  completed: "info",
+  failed: "critical",
+  aborted: "critical",
 };
 
-const VERDICT_COLOR: Record<
-  CrashTriageVerdict,
-  "info" | "low" | "medium" | "high" | "critical"
-> = {
-  untriaged: "info",
+const VERDICT_TONE: Record<CrashTriageVerdict, string> = {
+  untriaged: "muted",
   security_relevant: "critical",
-  likely_harmless: "low",
+  likely_harmless: "ok",
   duplicate: "info",
-  needs_manual_review: "medium",
+  needs_manual_review: "warn",
 };
 
 const NEXT_STATES: Record<CampaignStatus, CampaignStatus[]> = {
@@ -55,14 +62,149 @@ const NEXT_STATES: Record<CampaignStatus, CampaignStatus[]> = {
   aborted: [],
 };
 
-/** Bucket crashes by hour-of-discovery for the crash-rate bar chart.
- *  Returns the last 12 buckets (rolling 12h window) so the chart fits. */
+type CrashFilter = "all" | "exploitable" | "unique-stack" | "untriaged";
+
+const CRASH_FILTER_OPTIONS: readonly CrashFilter[] = [
+  "all",
+  "exploitable",
+  "unique-stack",
+  "untriaged",
+];
+
+// ─────────────────────────────────────────────────────────────────────
+// Shared control styles (mirror ProjectDetailPage / InvestigationsListPage).
+// ─────────────────────────────────────────────────────────────────────
+const BTN_BASE: React.CSSProperties = {
+  height: 28,
+  padding: "0 12px",
+  fontSize: 10,
+  letterSpacing: "0.08em",
+  border: "1px solid var(--border-soft)",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  borderRadius: 3,
+  cursor: "pointer",
+  fontFamily: "var(--font-mono)",
+};
+
+function actionButton(
+  label: string,
+  onClick: (() => void) | undefined,
+  {
+    primary = false,
+    disabled = false,
+    title,
+    key,
+  }: { primary?: boolean; disabled?: boolean; title?: string; key?: string } = {},
+) {
+  return (
+    <button
+      key={key}
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className="font-mono uppercase"
+      style={{
+        ...BTN_BASE,
+        background: primary ? "var(--accent)" : BTN_BASE.background,
+        borderColor: primary ? "var(--accent)" : BTN_BASE.border ? "var(--border-soft)" : undefined,
+        color: primary ? "var(--text-on-accent)" : BTN_BASE.color,
+        opacity: disabled ? 0.4 : 1,
+        cursor: disabled ? "not-allowed" : "pointer",
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Brief row -- uppercase mono label above value, border-bottom rule.
+// ─────────────────────────────────────────────────────────────────────
+function BriefRow({
+  label,
+  children,
+}: {
+  label: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 3,
+        padding: "8px 0",
+        borderBottom: "1px solid var(--border-faint)",
+      }}
+    >
+      <span
+        className="font-mono uppercase"
+        style={{
+          fontSize: 9,
+          letterSpacing: "0.14em",
+          color: "var(--text-faint)",
+        }}
+      >
+        {label}
+      </span>
+      <span
+        className="font-mono"
+        style={{
+          fontSize: 11,
+          color: "var(--text-primary)",
+          minHeight: 14,
+          overflowWrap: "anywhere",
+        }}
+      >
+        {children}
+      </span>
+    </div>
+  );
+}
+
+function formatDateTime(value?: string | null): string {
+  if (!value) return "--";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleString();
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Backend-pending inline block (bordered muted box).
+// ─────────────────────────────────────────────────────────────────────
+function PendingBox({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="font-mono"
+      style={{
+        padding: 12,
+        fontSize: 11,
+        lineHeight: 1.55,
+        color: "var(--text-muted)",
+        background: "var(--surface-sunk)",
+        border: "1px dashed var(--border-soft)",
+        borderRadius: 3,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Bucket crashes by hour-of-discovery -- 12h rolling window.
+// (Preserved from prior implementation.)
+// ─────────────────────────────────────────────────────────────────────
 function bucketCrashesByHour(
-  crashes: ReadonlyArray<{ discovered_at?: string | null; created_at?: string | null }>,
+  crashes: ReadonlyArray<{
+    discovered_at?: string | null;
+    created_at?: string | null;
+  }>,
 ): Array<{ bucket: string; count: number }> {
   const counts = new Map<string, number>();
   const now = Date.now();
-  // Init buckets for the last 12 hours so empty hours render as zero
   for (let i = 11; i >= 0; i--) {
     const t = new Date(now - i * 3600_000);
     const k = `${t.getHours().toString().padStart(2, "0")}h`;
@@ -80,27 +222,51 @@ function bucketCrashesByHour(
   return Array.from(counts.entries()).map(([bucket, count]) => ({ bucket, count }));
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Crashes DataGrid columns.
+// ─────────────────────────────────────────────────────────────────────
+const CRASH_COLUMNS: GridColumn[] = [
+  { label: "id", width: "110px" },
+  { label: "type", width: "160px" },
+  { label: "signature", width: "minmax(0, 1.6fr)" },
+  { label: "verdict", width: "170px" },
+  { label: "severity", width: "110px" },
+  { label: "first seen", width: "170px" },
+];
+
+// ─────────────────────────────────────────────────────────────────────
+// FuzzCampaignDetailPage
+// ─────────────────────────────────────────────────────────────────────
 export function FuzzCampaignDetailPage() {
   const { campaignId } = useParams<{ campaignId: string }>();
   const cid = campaignId ?? "";
   const navigate = useNavigate();
 
-  const { data: campaign, isLoading } = useFuzzCampaign(cid);
+  const { data: campaign, isLoading, isError } = useFuzzCampaign(cid);
   const { data: crashesData } = useFuzzCrashes({ campaignId: cid });
 
   useUpdatePageHeader({
     title: campaign?.name,
-    subtitle: campaign ? `${campaign.engine_id} · ${campaign.strategy_id}` : undefined,
-    status: campaign?.status === 'running' ? 'live' : campaign?.status === 'paused' ? 'paused' : campaign?.status === 'failed' ? 'error' : 'ready',
+    subtitle: campaign
+      ? `${campaign.engine_id} \u00b7 ${campaign.strategy_id}`
+      : undefined,
+    status:
+      campaign?.status === "running"
+        ? "live"
+        : campaign?.status === "paused"
+          ? "paused"
+          : campaign?.status === "failed"
+            ? "error"
+            : "ready",
   });
+
   const crashes = crashesData?.data ?? [];
   const patchMut = usePatchFuzzCampaign(cid);
   const launchMut = useLaunchFuzzCampaign(cid);
   const deleteMut = useDeleteFuzzCampaign();
-  const [crashFilter, setCrashFilter] = useState<
-    "all" | "exploitable" | "unique-stack" | "untriaged"
-  >("all");
-  const filteredCrashes = (() => {
+  const [crashFilter, setCrashFilter] = useState<CrashFilter>("all");
+
+  const filteredCrashes = useMemo(() => {
     if (crashFilter === "exploitable") {
       return crashes.filter((c) => c.triage_verdict === "security_relevant");
     }
@@ -108,9 +274,8 @@ export function FuzzCampaignDetailPage() {
       return crashes.filter((c) => c.triage_verdict === "untriaged");
     }
     if (crashFilter === "unique-stack") {
-      // dedup by stack_hash, keep earliest per group
       const seen = new Set<string>();
-      const out: typeof crashes = [];
+      const out: VRFuzzCrashSummary[] = [];
       for (const c of crashes) {
         if (!c.stack_hash || seen.has(c.stack_hash)) continue;
         seen.add(c.stack_hash);
@@ -119,376 +284,485 @@ export function FuzzCampaignDetailPage() {
       return out;
     }
     return crashes;
-  })();
+  }, [crashes, crashFilter]);
 
-  if (isLoading || !campaign) return <LoadingSkeleton size="lg" width="full" />;
+  if (isLoading) {
+    return (
+      <WindowPanel title="fuzz campaign" tone="muted">
+        <LoadingSkeleton size="lg" width="full" />
+      </WindowPanel>
+    );
+  }
+  if (isError || !campaign) {
+    return (
+      <WindowPanel title="fuzz campaign" tone="accent">
+        <p
+          className="font-mono"
+          style={{ fontSize: 11, color: "var(--accent)" }}
+        >
+          failed to load fuzz campaign.
+        </p>
+      </WindowPanel>
+    );
+  }
 
   const transitions = NEXT_STATES[campaign.status] ?? [];
+  const buckets = bucketCrashesByHour(crashes);
+  const bucketMax = buckets.reduce((m, b) => Math.max(m, b.count), 0);
+
+  const headerActions = (
+    <DeleteButton
+      id={cid}
+      label={`fuzz campaign "${campaign.name}"`}
+      mutation={deleteMut}
+      onDeleted={() => navigate("/vr/fuzz/campaigns")}
+    />
+  );
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <DeleteButton
-          id={cid}
-          label={`fuzz campaign "${campaign.name}"`}
-          mutation={deleteMut}
-          onDeleted={() => navigate("/vr/fuzz/campaigns")}
-        />
-      </div>
+    <div className="flex flex-col" style={{ gap: 14 }}>
+      <SectionHeader
+        icon="\u25c8"
+        title={campaign.name}
+        actions={headerActions}
+      />
 
-      <div className="flex gap-2 flex-wrap items-center">
-        <AilaBadge severity={STATUS_COLOR[campaign.status]} size="sm">
+      {/* Status / workstation / stuck / duration chip row */}
+      <div className="flex" style={{ gap: 8, flexWrap: "wrap" }}>
+        <MonoBadge tone={STATUS_TONE[campaign.status] ?? "muted"}>
           {campaign.status}
-        </AilaBadge>
+        </MonoBadge>
         <WorkstationBadge systemId={campaign.analysis_system_id} />
-        <StuckBadge lastProgressAt={campaign.last_progress_at} status={campaign.status} />
-        {campaign.duration_hours && (
-          <AilaBadge severity="info" size="sm">
-            duration:{campaign.duration_hours}h
-          </AilaBadge>
-        )}
+        <StuckBadge
+          lastProgressAt={campaign.last_progress_at}
+          status={campaign.status}
+        />
+        {campaign.duration_hours != null ? (
+          <MonoBadge tone="info">
+            duration \u00b7 {campaign.duration_hours}h
+          </MonoBadge>
+        ) : null}
       </div>
 
-      {/* State control + Launcher (§1.5). Launch button enqueues an
-          ARQ task that SSHes to the campaign's analysis_system_id and
-          starts the fuzzer per its engine_id. Idempotent -- clicking
-          while running returns the existing PID. */}
-      <AilaCard  techBorder glow><div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-        <h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground">
-          State control
-        </h2>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => launchMut.mutate({})}
-            disabled={
-              launchMut.isPending || !campaign.analysis_system_id
-            }
-            title={
-              campaign.analysis_system_id
-                ? "Enqueue the launcher ARQ task -- SSHes to the workstation and starts the fuzzer"
-                : "Set analysis_system_id on the campaign before launching"
-            }
-            className="px-3 py-1.5 text-sm font-medium rounded-md bg-mint text-background hover:brightness-110 disabled:opacity-40"
+      {/* State control */}
+      <WindowPanel
+        title="state control"
+        tone="accent"
+        actions={
+          <span
+            className="font-mono uppercase"
+            style={{
+              fontSize: 9,
+              letterSpacing: "0.14em",
+              color: "var(--text-faint)",
+            }}
           >
-            {launchMut.isPending
-              ? "Launching…"
+            {campaign.remote_pid ? `pid ${campaign.remote_pid}` : "no pid"}
+          </span>
+        }
+      >
+        <div className="flex" style={{ flexWrap: "wrap", gap: 8 }}>
+          {actionButton(
+            launchMut.isPending
+              ? "launching\u2026"
               : campaign.remote_pid
-                ? `Re-launch (current PID ${campaign.remote_pid})`
-                : "Launch on workstation"}
-          </button>
-        </div>
-      </div>
-      {campaign.remote_pid && (
-        <p className="text-3xs text-text-muted font-mono mb-2">
-          remote_pid={campaign.remote_pid}
-          {campaign.remote_corpus_dir
-            ? ` · corpus=${campaign.remote_corpus_dir}`
-            : ""}
-          {campaign.remote_crashes_dir
-            ? ` · crashes=${campaign.remote_crashes_dir}`
-            : ""}
-        </p>
-      )}
-      {transitions.length === 0 ? (
-        <p className="text-xs text-text-muted">Campaign is terminal.</p>
-      ) : (
-        <div className="flex flex-wrap gap-2">
-          {transitions.map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => patchMut.mutate({ status: s })}
-              disabled={patchMut.isPending}
-              className="px-3 py-1.5 text-sm font-medium rounded-md bg-accent text-background hover:bg-accent/90 disabled:opacity-50"
+                ? "re-launch"
+                : "launch on workstation",
+            () => launchMut.mutate({}),
+            {
+              primary: true,
+              disabled:
+                launchMut.isPending || !campaign.analysis_system_id,
+              title: campaign.analysis_system_id
+                ? "enqueue the launcher arq task -- sshes to the workstation and starts the fuzzer"
+                : "set analysis_system_id on the campaign before launching",
+              key: "launch",
+            },
+          )}
+          {transitions.map((s) =>
+            actionButton(
+              `\u2192 ${s}`,
+              () => patchMut.mutate({ status: s }),
+              { disabled: patchMut.isPending, key: `t-${s}` },
+            ),
+          )}
+          {transitions.length === 0 ? (
+            <span
+              className="font-mono uppercase"
+              style={{
+                fontSize: 10,
+                letterSpacing: "0.1em",
+                color: "var(--text-faint)",
+                alignSelf: "center",
+              }}
             >
-              → {s}
-            </button>
-          ))}
+              campaign is terminal.
+            </span>
+          ) : null}
         </div>
-      )}</AilaCard>
-
-
-      {/* Rebuild + Tune (§1.5) -- campaign config knobs. Backend wiring
-          pending: rebuild requires a /campaigns/:id/rebuild endpoint
-          that re-runs harness generation; tune requires PATCH on
-          engine_config + strategy_config (the schemas exist on the
-          summary contract, the endpoint is partial). */}
-      <AilaCard  techBorder glow><div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-        <h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground">
-          Rebuild + tune
-        </h2>
-        <AilaBadge severity="info" size="sm">backend pending</AilaBadge>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div className="border border-dashed border-border rounded p-3 bg-surface/40">
-          <h3 className="text-xs font-semibold text-foreground">Rebuild harness</h3>
-          <p className="text-3xs text-text-muted mt-1">
-            Re-runs harness generation with the last spec. Spec §1.5
-            calls for this to be invokable from this drawer without
-            leaving the page. POST /vr/fuzz/campaigns/{cid}/rebuild
-            is pending.
-          </p>
-          <button
-            type="button"
-            disabled
-            className="mt-2 px-3 py-1 text-xs font-medium rounded bg-accent text-background opacity-50 cursor-not-allowed"
+        {campaign.remote_pid ? (
+          <p
+            className="font-mono"
+            style={{
+              marginTop: 10,
+              fontSize: 10,
+              color: "var(--text-muted)",
+              letterSpacing: "0.04em",
+              overflowWrap: "anywhere",
+            }}
           >
-            Rebuild harness
-          </button>
-        </div>
-        <div className="border border-dashed border-border rounded p-3 bg-surface/40">
-          <h3 className="text-xs font-semibold text-foreground">Tune</h3>
-          <p className="text-3xs text-text-muted mt-1">
-            Adjust timeout / dictionary / mutation rate. Reads
-            engine_config + strategy_config from the current campaign;
-            PATCH endpoint pending.
+            remote_pid={campaign.remote_pid}
+            {campaign.remote_corpus_dir
+              ? ` \u00b7 corpus=${campaign.remote_corpus_dir}`
+              : ""}
+            {campaign.remote_crashes_dir
+              ? ` \u00b7 crashes=${campaign.remote_crashes_dir}`
+              : ""}
           </p>
-          <dl className="mt-2 text-3xs font-mono grid grid-cols-2 gap-1 text-text-muted">
-            <dt>engine_config</dt>
-            <dd className="truncate">
-              {Object.keys(campaign.engine_config).length} keys
-            </dd>
-            <dt>strategy_config</dt>
-            <dd className="truncate">
-              {Object.keys(campaign.strategy_config).length} keys
-            </dd>
-          </dl>
+        ) : null}
+      </WindowPanel>
+
+      {/* Rebuild + tune -- backend pending */}
+      <WindowPanel
+        title="rebuild + tune"
+        tone="warn"
+        actions={<MonoBadge tone="warn">backend pending</MonoBadge>}
+      >
+        <div
+          className="grid"
+          style={{
+            gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+            gap: 10,
+          }}
+        >
+          <PendingBox>
+            <div
+              className="font-mono uppercase"
+              style={{
+                fontSize: 10,
+                letterSpacing: "0.12em",
+                color: "var(--text-primary)",
+                marginBottom: 6,
+              }}
+            >
+              rebuild harness
+            </div>
+            <p style={{ margin: 0 }}>
+              re-runs harness generation with the last spec. post{" "}
+              /vr/fuzz/campaigns/{cid}/rebuild is pending.
+            </p>
+            <div style={{ marginTop: 8 }}>
+              {actionButton("rebuild harness", undefined, {
+                primary: true,
+                disabled: true,
+              })}
+            </div>
+          </PendingBox>
+          <PendingBox>
+            <div
+              className="font-mono uppercase"
+              style={{
+                fontSize: 10,
+                letterSpacing: "0.12em",
+                color: "var(--text-primary)",
+                marginBottom: 6,
+              }}
+            >
+              tune
+            </div>
+            <p style={{ margin: 0 }}>
+              adjust timeout / dictionary / mutation rate. patch endpoint
+              pending.
+            </p>
+            <dl
+              className="font-mono"
+              style={{
+                marginTop: 8,
+                display: "grid",
+                gridTemplateColumns: "auto 1fr",
+                columnGap: 10,
+                rowGap: 3,
+                fontSize: 10,
+              }}
+            >
+              <dt style={{ color: "var(--text-faint)" }}>engine_config</dt>
+              <dd style={{ margin: 0, color: "var(--text-primary)" }}>
+                {Object.keys(campaign.engine_config).length} keys
+              </dd>
+              <dt style={{ color: "var(--text-faint)" }}>strategy_config</dt>
+              <dd style={{ margin: 0, color: "var(--text-primary)" }}>
+                {Object.keys(campaign.strategy_config).length} keys
+              </dd>
+            </dl>
+          </PendingBox>
         </div>
-      </div></AilaCard>
+      </WindowPanel>
+
       {/* Metrics */}
-      <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">Metrics</h2>
-      <dl className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-        <div>
-          <dt className="text-text-muted text-xs">Total execs</dt>
-          <dd className="font-mono text-foreground">
+      <WindowPanel title="metrics" tone="info">
+        <div
+          className="grid"
+          style={{
+            gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+            columnGap: 18,
+            rowGap: 0,
+          }}
+        >
+          <BriefRow label="total execs">
             {campaign.total_execs.toLocaleString()}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-text-muted text-xs">Execs / sec</dt>
-          <dd className="font-mono text-foreground">
+          </BriefRow>
+          <BriefRow label="execs / sec">
             {campaign.execs_per_sec != null
               ? campaign.execs_per_sec.toLocaleString()
               : "--"}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-text-muted text-xs">Corpus size</dt>
-          <dd className="font-mono text-foreground">
+          </BriefRow>
+          <BriefRow label="corpus size">
             {campaign.corpus_size.toLocaleString()}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-text-muted text-xs">Coverage</dt>
-          <dd className="font-mono text-foreground">
+          </BriefRow>
+          <BriefRow label="coverage">
             {campaign.coverage_pct != null
               ? `${campaign.coverage_pct.toFixed(2)}%`
               : "--"}
-          </dd>
+          </BriefRow>
+          <BriefRow label="crashes found">
+            {campaign.crashes_found}
+          </BriefRow>
+          <BriefRow label="started">
+            {formatDateTime(campaign.started_at)}
+          </BriefRow>
+          <BriefRow label="stopped">
+            {formatDateTime(campaign.stopped_at)}
+          </BriefRow>
+          <BriefRow label="last progress">
+            {formatDateTime(campaign.last_progress_at)}
+          </BriefRow>
         </div>
-        <div>
-          <dt className="text-text-muted text-xs">Crashes found</dt>
-          <dd className="font-mono text-foreground">{campaign.crashes_found}</dd>
-        </div>
-        <div>
-          <dt className="text-text-muted text-xs">Started</dt>
-          <dd className="font-mono text-xs text-text-muted">
-            {campaign.started_at
-              ? new Date(campaign.started_at).toLocaleString()
-              : "--"}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-text-muted text-xs">Stopped</dt>
-          <dd className="font-mono text-xs text-text-muted">
-            {campaign.stopped_at
-              ? new Date(campaign.stopped_at).toLocaleString()
-              : "--"}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-text-muted text-xs">Last progress</dt>
-          <dd className="font-mono text-xs text-text-muted">
-            {campaign.last_progress_at
-              ? new Date(campaign.last_progress_at).toLocaleString()
-              : "--"}
-          </dd>
-        </div>
-      </dl></AilaCard>
+      </WindowPanel>
 
-      {/* Live charts (§1.5 -- coverage / crashes / corpus / stability).
-          v0.5: derived from scalar metrics + crash discovery timestamps.
-          Real time-series telemetry stream is backend pending. */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <AilaCard  techBorder glow><h3 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
-          Crashes over time
-        </h3>
-        {crashes.length === 0 ? (
-          <p className="text-xs text-text-muted">
-            No crashes yet -- chart populates once the engine finds one.
-          </p>
-        ) : (
-          <AilaChart
-            type="bar"
-            data={bucketCrashesByHour(crashes)}
-            dataKey="count"
-            xKey="bucket"
-            size="sm"
-            ariaLabel="Crashes per hour bucket"
-          />
-        )}
-        {/* Accessibility: sr-only table mirrors the chart so screen
-            readers get the same data series. */}
-        {crashes.length > 0 && (
-          <table className="sr-only">
-            <caption>Crashes per hour (last 12 hours)</caption>
-            <thead>
-              <tr>
-                <th>Hour</th>
-                <th>Count</th>
-              </tr>
-            </thead>
-            <tbody>
-              {bucketCrashesByHour(crashes).map((row) => (
-                <tr key={row.bucket}>
-                  <td>{row.bucket}</td>
-                  <td>{row.count}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}</AilaCard>
+      {/* Live charts row */}
+      <div
+        className="grid"
+        style={{
+          gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+          gap: 14,
+        }}
+      >
+        <WindowPanel
+          title="crashes over time"
+          tone="accent"
+          actions={
+            <span
+              className="font-mono uppercase"
+              style={{
+                fontSize: 9,
+                letterSpacing: "0.12em",
+                color: "var(--text-faint)",
+              }}
+            >
+              last 12h
+            </span>
+          }
+        >
+          {crashes.length === 0 ? (
+            <p
+              className="font-mono"
+              style={{
+                margin: 0,
+                fontSize: 11,
+                color: "var(--text-muted)",
+              }}
+            >
+              no crashes yet -- populates once the engine finds one.
+            </p>
+          ) : (
+            <>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                {buckets.map((b) => (
+                  <StatBar
+                    key={b.bucket}
+                    label={b.bucket}
+                    color="var(--accent)"
+                    value={b.count}
+                    max={Math.max(1, bucketMax)}
+                  />
+                ))}
+              </div>
+              <table className="sr-only">
+                <caption>Crashes per hour (last 12 hours)</caption>
+                <thead>
+                  <tr>
+                    <th>Hour</th>
+                    <th>Count</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {buckets.map((row) => (
+                    <tr key={row.bucket}>
+                      <td>{row.bucket}</td>
+                      <td>{row.count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+        </WindowPanel>
 
-        <AilaCard  techBorder glow><h3 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
-          Coverage / corpus / stability
-        </h3>
-        <CoverageChart campaignId={cid} /></AilaCard>
+        <WindowPanel title="coverage / corpus / stability" tone="info">
+          <CoverageChart campaignId={cid} />
+        </WindowPanel>
       </div>
 
-      {/* Resource band (§1.5 -- per-instance CPU/mem/IO from workstation polls) */}
-      <AilaCard  techBorder glow><h3 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
-        Workstation resources
-      </h3>
-      <div className="border border-dashed border-border rounded p-3 bg-surface/40">
-        <AilaBadge severity="info" size="sm">
-          backend pending
-        </AilaBadge>
-        <p className="text-3xs text-text-muted mt-2">
-          Spec calls for per-instance CPU / memory / disk-write-rate polled
-          from the workstation every 10 s.{" "}
+      {/* Workstation resources -- backend pending */}
+      <WindowPanel
+        title="workstation resources"
+        tone="muted"
+        actions={<MonoBadge tone="warn">backend pending</MonoBadge>}
+      >
+        <PendingBox>
+          per-instance cpu / memory / disk-write-rate polled from the
+          workstation every 10s.{" "}
           {campaign.analysis_system_id
-            ? `Workstation: registered system #${campaign.analysis_system_id}.`
-            : "No analysis_system_id set on this campaign."}
-        </p>
-      </div></AilaCard>
+            ? `workstation: registered system #${campaign.analysis_system_id}.`
+            : "no analysis_system_id set on this campaign."}
+        </PendingBox>
+      </WindowPanel>
 
-      {/* Crashes */}
-      <AilaCard  techBorder glow><div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-        <h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground">
-          Crashes ({filteredCrashes.length}
-          {filteredCrashes.length !== crashes.length && ` of ${crashes.length}`})
-        </h2>
-        <div className="flex items-center gap-1 flex-wrap text-3xs">
-          <span className="text-text-muted">Show:</span>
-          {(["all", "exploitable", "unique-stack", "untriaged"] as const).map((chip) => (
-            <button
+      {/* Crashes grid */}
+      <WindowPanel
+        title="crashes"
+        tone="accent"
+        actions={
+          <span
+            className="font-mono uppercase"
+            style={{
+              fontSize: 9,
+              letterSpacing: "0.12em",
+              color: "var(--text-faint)",
+            }}
+          >
+            {filteredCrashes.length}
+            {filteredCrashes.length !== crashes.length
+              ? ` / ${crashes.length}`
+              : ""}
+          </span>
+        }
+      >
+        <div
+          className="flex"
+          style={{ gap: 6, flexWrap: "wrap", marginBottom: 10 }}
+        >
+          {CRASH_FILTER_OPTIONS.map((chip) => (
+            <FilterChip
               key={chip}
-              type="button"
+              active={crashFilter === chip}
               onClick={() => setCrashFilter(chip)}
-              className={
-                "px-2 py-0.5 rounded font-mono border " +
-                (crashFilter === chip
-                  ? "bg-accent text-background border-accent"
-                  : "bg-surface border-border text-text-muted hover:text-foreground hover:bg-elevated")
-              }
             >
               {chip}
-            </button>
+            </FilterChip>
           ))}
         </div>
-      </div>
-      {crashes.length === 0 ? (
-        <p className="text-xs text-text-muted">
-          No crashes registered yet.
-        </p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <caption className="sr-only">Registered crashes for this campaign</caption>
-            <thead>
-              <tr className="border-b border-border text-left text-text-muted">
-                <th className="px-2 py-1 font-semibold">Stack hash</th>
-                <th className="px-2 py-1 font-semibold">Type</th>
-                <th className="px-2 py-1 font-semibold">Verdict</th>
-                <th className="px-2 py-1 font-semibold">Severity</th>
-                <th className="px-2 py-1 font-semibold">Signature</th>
-                <th className="px-2 py-1 font-semibold">Discovered</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredCrashes.map((c) => (
-                <tr
-                  key={c.id}
-                  onClick={() => navigate(`/vr/fuzz/crashes/${c.id}`)}
-                  className="border-b border-border last:border-b-0 cursor-pointer hover:bg-surface transition-colors"
-                >
-                  <td className="px-2 py-1 font-mono">
-                    {c.stack_hash.slice(0, 16)}…
-                  </td>
-                  <td className="px-2 py-1 font-mono">
-                    {c.crash_type ?? "--"}
-                  </td>
-                  <td className="px-2 py-1">
-                    <AilaBadge severity={VERDICT_COLOR[c.triage_verdict]} size="sm">
-                      {c.triage_verdict}
-                    </AilaBadge>
-                  </td>
-                  <td className="px-2 py-1 font-mono">{c.severity}</td>
-                  <td className="px-2 py-1 max-w-xs truncate">
-                    {c.crash_signature ?? "--"}
-                  </td>
-                  <td className="px-2 py-1 font-mono text-text-muted">
-                    {c.discovered_at
-                      ? new Date(c.discovered_at).toLocaleString()
-                      : "--"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}</AilaCard>
+        <DataGrid<VRFuzzCrashSummary>
+          columns={CRASH_COLUMNS}
+          rows={filteredCrashes}
+          getKey={(c) => c.id}
+          onRowClick={(c) => navigate(`/vr/fuzz/crashes/${c.id}`)}
+          empty={
+            <div
+              className="font-mono"
+              style={{
+                padding: 34,
+                textAlign: "center",
+                fontSize: 11.5,
+                color: "var(--text-muted)",
+                letterSpacing: "0.04em",
+              }}
+            >
+              no crashes registered yet.
+            </div>
+          }
+          renderCells={(c) => [
+            <span
+              style={{
+                fontSize: 10.5,
+                color: "var(--text-muted)",
+                letterSpacing: "0.06em",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                display: "block",
+              }}
+            >
+              {c.stack_hash.slice(0, 12)}\u2026
+            </span>,
+            c.crash_type ? (
+              <MonoBadge tone="warn">{c.crash_type}</MonoBadge>
+            ) : (
+              <span style={{ fontSize: 10, color: "var(--text-faint)" }}>--</span>
+            ),
+            <span
+              style={{
+                fontSize: 11,
+                color: "var(--text-primary)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                display: "block",
+              }}
+            >
+              {c.crash_signature ?? "--"}
+            </span>,
+            <MonoBadge tone={VERDICT_TONE[c.triage_verdict] ?? "muted"}>
+              {c.triage_verdict}
+            </MonoBadge>,
+            <span
+              className="font-mono uppercase"
+              style={{
+                fontSize: 10,
+                letterSpacing: "0.08em",
+                color: "var(--text-muted)",
+              }}
+            >
+              {c.severity}
+            </span>,
+            <span
+              style={{ fontSize: 10.5, color: "var(--text-muted)" }}
+            >
+              {formatDateTime(c.discovered_at ?? c.created_at ?? null)}
+            </span>,
+          ]}
+        />
+      </WindowPanel>
     </div>
   );
 }
 
-/** Time-series coverage / exec rate / corpus size chart fed from
- *  /vr/fuzz/campaigns/:id/telemetry (08_FRONTEND_UX.md §1.5). Renders
- *  a small line chart per metric, plus a sr-only table mirror. */
+// ─────────────────────────────────────────────────────────────────────
+// CoverageChart -- time-series telemetry rendered as mono StatBar rows
+// per metric (coverage % / corpus / execs / new-crashes) with an
+// sr-only mirror table for screen readers. Preserves the
+// useCampaignTelemetry + useThemeChartColors data path.
+// ─────────────────────────────────────────────────────────────────────
 function CoverageChart({ campaignId }: { campaignId: string }) {
   const { data } = useCampaignTelemetry(campaignId);
   const colors = useThemeChartColors();
   const points = data?.data ?? [];
+
   if (points.length === 0) {
     return (
-      <div className="border border-dashed border-border rounded p-3 bg-surface/40">
-        <p className="text-xs text-text-muted">
-          No telemetry samples recorded yet. Workers POST to{" "}
-          <code className="font-mono">
-            /vr/fuzz/campaigns/{campaignId}/telemetry
-          </code>{" "}
-          and this chart populates as samples land.
-        </p>
-      </div>
+      <PendingBox>
+        no telemetry samples recorded yet. workers post to{" "}
+        <span
+          className="font-mono"
+          style={{ color: "var(--text-primary)" }}
+        >
+          /vr/fuzz/campaigns/{campaignId}/telemetry
+        </span>{" "}
+        and this panel populates as samples land.
+      </PendingBox>
     );
   }
-  // Project once, then feed the same rows into each metric chart. `t`
-  // is HH:MM sliced off `measured_at` (ISO 8601) so tight sample
-  // cadences don't push the axis into an unreadable full-timestamp
-  // fallback. `crashes` is a per-sample delta over the cumulative
-  // `crashes_found` reading so the bars answer "when did crashes
-  // arrive" rather than the redundant monotonic curve.
+
   const series = points.map((p, i, arr) => {
     const prevCrashes = i > 0 ? (arr[i - 1].crashes_found ?? 0) : 0;
     const currCrashes = p.crashes_found ?? 0;
@@ -501,72 +775,85 @@ function CoverageChart({ campaignId }: { campaignId: string }) {
       crashes: i === 0 ? currCrashes : delta,
     };
   });
-  const latest = points.at(-1);
+
+  const latest = series[series.length - 1];
+  const maxCov = Math.max(1, ...series.map((s) => s.coverage));
+  const maxCorpus = Math.max(1, ...series.map((s) => s.corpus));
+  const maxEps = Math.max(1, ...series.map((s) => s.eps));
+  const maxCrashes = Math.max(1, ...series.map((s) => s.crashes));
+
+  const metrics: Array<{
+    label: string;
+    color: string;
+    values: number[];
+    max: number;
+  }> = [
+    {
+      label: "coverage %",
+      color: colors.accent ?? "var(--accent)",
+      values: series.map((s) => s.coverage),
+      max: maxCov,
+    },
+    {
+      label: "execs / sec",
+      color: colors.high ?? "var(--status-warn)",
+      values: series.map((s) => s.eps),
+      max: maxEps,
+    },
+    {
+      label: "corpus size",
+      color: colors.medium ?? "var(--status-info)",
+      values: series.map((s) => s.corpus),
+      max: maxCorpus,
+    },
+    {
+      label: "new crashes",
+      color: colors.critical ?? "var(--accent)",
+      values: series.map((s) => s.crashes),
+      max: maxCrashes,
+    },
+  ];
+
   return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        <div>
-          <p className="text-3xs text-text-muted font-mono uppercase tracking-wide mb-1">
-            Coverage % over time
-          </p>
-          <AilaChart
-            type="area"
-            data={series}
-            dataKey="coverage"
-            xKey="t"
-            colors={[colors.accent]}
-            size="sm"
-            ariaLabel="Coverage percent over time"
-          />
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {metrics.map((m) => (
+        <div key={m.label}>
+          <div
+            className="font-mono uppercase"
+            style={{
+              fontSize: 9,
+              letterSpacing: "0.14em",
+              color: "var(--text-faint)",
+              marginBottom: 4,
+            }}
+          >
+            {m.label}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {series.map((s, i) => (
+              <StatBar
+                key={`${m.label}-${i}`}
+                label={s.t}
+                color={m.color}
+                value={m.values[i]}
+                max={m.max}
+              />
+            ))}
+          </div>
         </div>
-        <div>
-          <p className="text-3xs text-text-muted font-mono uppercase tracking-wide mb-1">
-            Execs / second
-          </p>
-          <AilaChart
-            type="line"
-            data={series}
-            dataKey="eps"
-            xKey="t"
-            colors={[colors.high]}
-            size="sm"
-            ariaLabel="Execs per second over time"
-          />
-        </div>
-        <div>
-          <p className="text-3xs text-text-muted font-mono uppercase tracking-wide mb-1">
-            Corpus size
-          </p>
-          <AilaChart
-            type="line"
-            data={series}
-            dataKey="corpus"
-            xKey="t"
-            colors={[colors.medium]}
-            size="sm"
-            ariaLabel="Corpus size over time"
-          />
-        </div>
-        <div>
-          <p className="text-3xs text-text-muted font-mono uppercase tracking-wide mb-1">
-            New crashes per sample
-          </p>
-          <AilaChart
-            type="bar"
-            data={series}
-            dataKey="crashes"
-            xKey="t"
-            colors={[colors.critical]}
-            size="sm"
-            ariaLabel="New crashes per telemetry sample"
-          />
-        </div>
-      </div>
-      <p className="text-3xs text-text-muted font-mono">
-        {series.length} samples · latest: {latest?.coverage_pct ?? 0}% cov
-        · {latest?.corpus_size ?? 0} corpus
-        · {latest?.execs_per_sec?.toFixed(0) ?? 0} exec/s
-        · {latest?.crashes_found ?? 0} crashes total
+      ))}
+      <p
+        className="font-mono"
+        style={{
+          margin: 0,
+          fontSize: 10,
+          color: "var(--text-muted)",
+          letterSpacing: "0.04em",
+        }}
+      >
+        {series.length} samples \u00b7 latest: {latest?.coverage.toFixed(2)}% cov
+        {" "}\u00b7 {latest?.corpus} corpus \u00b7 {latest?.eps.toFixed(0)}{" "}
+        exec/s \u00b7 {latest?.crashes} new crashes
       </p>
       <table className="sr-only">
         <caption>Fuzz telemetry samples</caption>
@@ -595,8 +882,10 @@ function CoverageChart({ campaignId }: { campaignId: string }) {
   );
 }
 
-/** "Stuck" detection -- render an amber badge when the campaign has been
- *  running but hasn't reported progress in > 4h (08_FRONTEND_UX.md §1.5). */
+// ─────────────────────────────────────────────────────────────────────
+// StuckBadge -- amber warn chip when the campaign is `running` but has
+// not reported progress in > 4h.
+// ─────────────────────────────────────────────────────────────────────
 function StuckBadge({
   lastProgressAt,
   status,
@@ -609,47 +898,54 @@ function StuckBadge({
   if (Number.isNaN(ms) || ms < 4 * 3600_000) return null;
   const hours = Math.floor(ms / 3600_000);
   return (
-    <AilaBadge severity="medium" size="sm">
-      stuck · no progress in {hours}h
-    </AilaBadge>
+    <MonoBadge tone="warn">stuck \u00b7 no progress in {hours}h</MonoBadge>
   );
 }
 
-/** Workstation identity + live reachability for the campaign header.
- *  Combines the system map (id → name/host lookup) with the heartbeat
- *  poll (cached 30 s server-side). A green LiveDot + name when reachable,
- *  amber when unreachable, "no workstation" when no FK is set. */
-function WorkstationBadge({ systemId }: { systemId: number | null | undefined }) {
+// ─────────────────────────────────────────────────────────────────────
+// WorkstationBadge -- workstation name + live-reachability dot.
+// ─────────────────────────────────────────────────────────────────────
+function WorkstationBadge({
+  systemId,
+}: {
+  systemId: number | null | undefined;
+}) {
   const systems = useSystemMap();
   const { data: heartbeat } = useSystemHeartbeat(systemId ?? null);
+
   if (!systemId) {
-    return (
-      <AilaBadge severity="info" size="sm">
-        no workstation
-      </AilaBadge>
-    );
+    return <MonoBadge tone="muted">no workstation</MonoBadge>;
   }
   const sys = systems.get(systemId);
   const label = sys ? `${sys.name} (${sys.host})` : `system #${systemId}`;
   const live = heartbeat?.reachable === true;
-  const sev = heartbeat
-    ? heartbeat.reachable ? "low" : "high"
-    : "info";
+  const tone = heartbeat ? (heartbeat.reachable ? "ok" : "critical") : "muted";
   const tooltip = heartbeat
     ? heartbeat.reachable
-      ? `reachable · ${heartbeat.latency_ms ?? "?"} ms · checked ${new Date(heartbeat.checked_at).toLocaleTimeString()}`
+      ? `reachable \u00b7 ${heartbeat.latency_ms ?? "?"} ms \u00b7 checked ${new Date(heartbeat.checked_at).toLocaleTimeString()}`
       : `unreachable: ${heartbeat.error ?? "no response"}`
-    : "probing…";
+    : "probing\u2026";
   return (
-    <span className="inline-flex items-center gap-1" title={tooltip}>
+    <span
+      className="inline-flex items-center"
+      style={{ gap: 6 }}
+      title={tooltip}
+    >
       <span
-        className="inline-block w-1.5 h-1.5 rounded-full"
-        style={{ background: live ? "var(--color-mint)" : "var(--color-amber)" }}
         aria-label={live ? "reachable" : "unreachable"}
+        style={{
+          display: "inline-block",
+          width: 7,
+          height: 7,
+          borderRadius: 2,
+          background: live
+            ? "var(--status-ok)"
+            : heartbeat
+              ? "var(--accent)"
+              : "var(--text-faint)",
+        }}
       />
-      <AilaBadge severity={sev} size="sm">
-        {label}
-      </AilaBadge>
+      <MonoBadge tone={tone}>{label}</MonoBadge>
     </span>
   );
 }

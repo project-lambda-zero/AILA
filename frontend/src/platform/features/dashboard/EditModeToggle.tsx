@@ -1,6 +1,4 @@
-import { Lock, LockOpen } from "lucide-react";
-
-import { Button } from "@/components/ui/button";
+import * as React from "react";
 
 export interface EditModeToggleProps {
   editMode: boolean;
@@ -8,27 +6,39 @@ export interface EditModeToggleProps {
 }
 
 /**
- * EditModeToggle -- lock/unlock toggle for dashboard edit mode (D-02).
- *
- * Locked state: shows Lock icon, "Locked" label in muted text.
- * Editing state: shows LockOpen icon, "Editing" label in amber accent text.
+ * EditModeToggle -- mock-styled lock/unlock toggle for dashboard edit mode
+ * (D-02). Renders as a single mono button in the SectionHeader action
+ * cluster. Active state (editing) fills the button with `--accent`.
  */
 export function EditModeToggle({ editMode, onToggle }: EditModeToggleProps) {
   return (
-    <Button
-      variant="ghost"
-      size="sm"
+    <button
+      type="button"
       onClick={onToggle}
       aria-label="Toggle dashboard edit mode"
       aria-pressed={editMode}
-      className={editMode ? "text-amber-500 hover:text-amber-400" : "text-muted-foreground"}
+      data-testid="dashboard-edit-toggle"
+      style={{
+        height: 26,
+        padding: "0 12px",
+        borderRadius: 3,
+        fontFamily: "var(--font-mono)",
+        fontSize: 9.5,
+        letterSpacing: "0.1em",
+        textTransform: "uppercase",
+        border: `1px solid ${editMode ? "var(--accent)" : "var(--border-soft)"}`,
+        background: editMode ? "var(--accent)" : "var(--surface-sunk)",
+        color: editMode ? "var(--text-on-accent)" : "var(--text-primary)",
+        cursor: "pointer",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+      }}
     >
-      {editMode ? (
-        <LockOpen className="h-4 w-4 mr-1" />
-      ) : (
-        <Lock className="h-4 w-4 mr-1" />
-      )}
-      {editMode ? "Editing" : "Locked"}
-    </Button>
+      <span aria-hidden="true" style={{ fontSize: 10 }}>
+        {editMode ? "\u25A0" : "\u25CB"}
+      </span>
+      {editMode ? "editing" : "locked"}
+    </button>
   );
 }

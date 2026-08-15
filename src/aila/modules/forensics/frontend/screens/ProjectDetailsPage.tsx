@@ -3,6 +3,8 @@ import { useNavigate, useParams } from "react-router";
 
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { WindowPanel } from "@/components/aila/WindowPanel";
+import { PixelIcon } from "@/components/aila/PixelIcon";
+import { SectionHeader } from "@/components/aila/mock";
 
 import { CarvedFilesPanel } from "../components/CarvedFilesPanel";
 import { NetworkAnalysisPanel } from "../components/NetworkAnalysisPanel";
@@ -16,7 +18,7 @@ import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
 type TabId = "network" | "registry" | "timeline" | "via" | "questions" | "writeups";
 
-const tabs: { id: TabId; label: string }[] = [
+const TABS: { id: TabId; label: string }[] = [
   { id: "network", label: "Network Analysis" },
   { id: "registry", label: "Registry" },
   { id: "timeline", label: "Timeline" },
@@ -25,10 +27,24 @@ const tabs: { id: TabId; label: string }[] = [
   { id: "writeups", label: "Write-Ups" },
 ];
 
+const CHROME_BTN: React.CSSProperties = {
+  height: 28,
+  padding: "0 12px",
+  fontSize: 10,
+  letterSpacing: "0.08em",
+  color: "var(--text-muted)",
+  background: "transparent",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  cursor: "pointer",
+};
+
 export function ProjectDetailsPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
-  const { data: project, isLoading, isError } = useForensicsProject(projectId ?? "");
+  const { data: project, isLoading, isError } = useForensicsProject(
+    projectId ?? "",
+  );
 
   useUpdatePageHeader({
     title: project ? `${project.name} -- Details` : undefined,
@@ -39,8 +55,17 @@ export function ProjectDetailsPage() {
 
   if (!projectId) {
     return (
-      <WindowPanel title="project details" tone="warn" status="forensics ; invalid project id">
-        <p className="text-sm text-critical">Invalid project ID.</p>
+      <WindowPanel
+        title="project details"
+        tone="warn"
+        status="forensics ; invalid project id"
+      >
+        <p
+          className="font-mono"
+          style={{ fontSize: 11, color: "var(--accent)" }}
+        >
+          Invalid project ID.
+        </p>
       </WindowPanel>
     );
   }
@@ -49,45 +74,71 @@ export function ProjectDetailsPage() {
 
   if (isError || !project) {
     return (
-      <WindowPanel title="project details" tone="warn" status="forensics ; details unavailable">
-        <p className="text-sm text-critical">Failed to load project details.</p>
+      <WindowPanel
+        title="project details"
+        tone="warn"
+        status="forensics ; details unavailable"
+      >
+        <p
+          className="font-mono"
+          style={{ fontSize: 11, color: "var(--accent)" }}
+        >
+          Failed to load project details.
+        </p>
       </WindowPanel>
     );
   }
 
   return (
-    <div className="space-y-4 bg-surface text-foreground p-4 rounded-md border border-border">
-      <div className="flex items-center justify-between">
-        <button
-          type="button"
-          onClick={() => navigate(`/forensics/projects/${projectId}`)}
-          className="px-4 py-2 font-mono text-xs uppercase tracking-cyber-sm rounded-[3px] border border-border text-foreground hover:bg-elevated hover:border-border-hover transition-colors"
-        >
-          Back to Dashboard
-        </button>
-      </div>
-
-      <div className="flex flex-wrap gap-1 border-b border-border pb-0">
-        {tabs.map((tab) => (
+    <div className="space-y-4">
+      <SectionHeader
+        icon={<PixelIcon name="folder" />}
+        title={`${project.name.toLowerCase()} \u2014 details`}
+        actions={
           <button
-            key={tab.id}
             type="button"
-            onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2 font-mono text-xs uppercase tracking-cyber-sm rounded-t-[4px] transition-colors ${
-              activeTab === tab.id
-                ? "bg-surface border border-b-0 border-border text-foreground"
-                : "text-text-muted hover:text-foreground hover:bg-elevated"
-            }`}
-            style={activeTab === tab.id ? { boxShadow: "inset 0 2px 0 var(--color-accent)" } : undefined}
+            onClick={() => navigate(`/forensics/projects/${projectId}`)}
+            className="font-mono uppercase"
+            style={CHROME_BTN}
           >
-            {tab.label}
+            {"\u2190"} back to dashboard
           </button>
-        ))}
+        }
+      />
+
+      {/* Tab strip -- mock chip toggle. */}
+      <div className="flex flex-wrap" style={{ gap: 6 }}>
+        {TABS.map((tab) => {
+          const active = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              className="font-mono uppercase"
+              style={{
+                height: 28,
+                padding: "0 14px",
+                fontSize: 10,
+                letterSpacing: "0.08em",
+                borderRadius: 3,
+                color: active ? "var(--text-on-accent)" : "var(--text-muted)",
+                background: active ? "var(--accent)" : "var(--surface-sunk)",
+                border: `1px solid ${
+                  active ? "var(--accent)" : "var(--border-soft)"
+                }`,
+                cursor: "pointer",
+              }}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
       </div>
 
-      <div className="pt-2">
+      <div>
         {activeTab === "network" && (
-          <div className="space-y-6">
+          <div className="space-y-4">
             <NetworkAnalysisPanel projectId={projectId} />
             <CarvedFilesPanel projectId={projectId} />
           </div>

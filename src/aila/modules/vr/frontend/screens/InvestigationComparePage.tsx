@@ -4,18 +4,8 @@ import { useQueries } from "@tanstack/react-query";
 
 import { authorizedRequestJson } from "@platform/api/http";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
-import { EmptyState } from "@/components/aila/EmptyState";
-import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
-
-import { ArrowSquareOut } from "@phosphor-icons/react/dist/csr/ArrowSquareOut";
-import { GitBranch } from "@phosphor-icons/react/dist/csr/GitBranch";
-import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
-import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
-import { Rows } from "@phosphor-icons/react/dist/csr/Rows";
-import { Scales } from "@phosphor-icons/react/dist/csr/Scales";
-import { X } from "@phosphor-icons/react/dist/csr/X";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import { SectionHeader, MonoBadge, Segmented } from "@/components/aila/mock";
 
 import { OutcomeKindBadge } from "../components/OutcomeKindBadge";
 import { OutcomePolarityBadge } from "../components/OutcomePolarityBadge";
@@ -31,23 +21,25 @@ import type {
   VRInvestigationSummary,
   VROutcomeSummary,
 } from "../types";
+import { personaMeta } from "../components/personaMeta";
 
-// ─────────────────────────────────────────────────────────────────────
-// Constants + tiny formatters. Kept local so this screen is
-// self-contained and doesn't force sibling files to export helpers.
-// ─────────────────────────────────────────────────────────────────────
-
+// ---------------------------------------------------------------------------
+// Constants + tiny formatters.
+// ---------------------------------------------------------------------------
 const MAX_COLUMNS = 4;
 const IDS_PARAM = "ids";
 
-const STATUS_DOT: Record<InvestigationStatus, string> = {
-  created: "var(--color-text-muted)",
-  running: "var(--color-mint)",
-  paused: "var(--color-amber)",
-  completed: "var(--color-lavender)",
-  failed: "var(--color-peach)",
-  abandoned: "var(--color-text-muted)",
-  stalled: "var(--color-text-muted)",
+const STATUS_META: Record<
+  InvestigationStatus,
+  { tone: string; label: string }
+> = {
+  created: { tone: "muted", label: "created" },
+  running: { tone: "ok", label: "running" },
+  paused: { tone: "warn", label: "paused" },
+  completed: { tone: "info", label: "completed" },
+  failed: { tone: "critical", label: "failed" },
+  abandoned: { tone: "muted", label: "abandoned" },
+  stalled: { tone: "muted", label: "stalled" },
 };
 
 function fmtUsd(n: number | null | undefined): string {
@@ -61,14 +53,11 @@ function humanize(s: string | null | undefined): string {
   return last.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// Per-column read bundle. Uses EXISTING query keys shared with
-// useInvestigation / useInvestigationOutcomes / useInvestigationHypotheses
-// so TanStack cache hits are reused across pages -- opening this page
-// after visiting InvestigationDetailPage renders instantly for the
-// already-loaded investigation. No new backend endpoints are touched.
-// ─────────────────────────────────────────────────────────────────────
-
+// ---------------------------------------------------------------------------
+// Per-column data bundle -- reuses the EXACT query keys as
+// useInvestigation / useInvestigationOutcomes / useInvestigationHypotheses so
+// TanStack cache hits are shared across pages.
+// ---------------------------------------------------------------------------
 interface Bundle {
   id: string | null;
   inv: VRInvestigationSummary | undefined;
@@ -81,9 +70,6 @@ interface Bundle {
 }
 
 function useCompareBundles(ids: readonly (string | null)[]): Bundle[] {
-  // Fetch investigation summary per selected id. Reuses the exact
-  // ["vr", "investigation", id] key used by useInvestigation, so
-  // TanStack Query caches are shared.
   const invQueries = useQueries({
     queries: ids.map((id) => ({
       queryKey: ["vr", "investigation", id ?? ""],
@@ -137,22 +123,9 @@ function useCompareBundles(ids: readonly (string | null)[]): Bundle[] {
   }));
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// Investigation picker -- lightweight typeahead over the workspace
-// investigations list. No new dep; a plain input filters the same
-// list this page's Compare rows are built from.
-// ─────────────────────────────────────────────────────────────────────
-
-interface InvestigationPickerProps {
-  slotIndex: number;
-  currentId: string | null;
-  otherIds: readonly (string | null)[];
-  investigations: VRInvestigationSummary[];
-  targetLabel: (targetId: string) => string;
-  onPick: (id: string) => void;
-  onClear: () => void;
-}
-
+// ---------------------------------------------------------------------------
+// Column picker -- mono search over the workspace investigation list.
+// ---------------------------------------------------------------------------
 function InvestigationPicker({
   slotIndex,
   currentId,
@@ -161,23 +134,31 @@ function InvestigationPicker({
   targetLabel,
   onPick,
   onClear,
-}: InvestigationPickerProps) {
+  onRemoveSlot,
+  removable,
+}: {
+  slotIndex: number;
+  currentId: string | null;
+  otherIds: readonly (string | null)[];
+  investigations: VRInvestigationSummary[];
+  targetLabel: (targetId: string) => string;
+  onPick: (id: string) => void;
+  onClear: () => void;
+  onRemoveSlot: () => void;
+  removable: boolean;
+}) {
   const [q, setQ] = useState("");
-  const [open, setOpen] = useState(false);
-
   const current = currentId
     ? investigations.find((i) => i.id === currentId)
     : undefined;
 
   const matches = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    // otherIds is at most MAX_COLUMNS - 1 items; a linear .includes is
-    // cheaper and clearer than materialising a Set every render.
     const taken = otherIds.filter((s): s is string => !!s);
     const pool = investigations.filter(
       (inv) => inv.id !== currentId && !taken.includes(inv.id),
     );
-    if (!needle) return pool.slice(0, 20);
+    if (!needle) return pool.slice(0, 12);
     return pool
       .filter((inv) => {
         const hay = [
@@ -192,300 +173,667 @@ function InvestigationPicker({
           .toLowerCase();
         return hay.includes(needle);
       })
-      .slice(0, 20);
+      .slice(0, 12);
   }, [q, investigations, currentId, otherIds, targetLabel]);
 
   return (
-    <AilaCard techBorder padding="sm" className="flex flex-col gap-2">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-2xs font-mono uppercase tracking-wide text-text-muted">
-          Slot {slotIndex + 1}
-        </span>
-        {current && (
-          <button
-            type="button"
-            onClick={onClear}
-            className="text-2xs font-mono text-text-muted hover:text-text inline-flex items-center gap-1"
-            aria-label="Clear selection"
-          >
-            <X className="h-3 w-3" /> Clear
-          </button>
-        )}
-      </div>
-
-      {current ? (
-        <div className="flex flex-col gap-1 min-w-0">
-          <div className="flex items-center gap-2 min-w-0">
-            <span
-              aria-hidden
-              className="inline-block h-2 w-2 rounded-full shrink-0"
-              style={{
-                background: STATUS_DOT[current.status] ?? "var(--color-text-muted)",
-                boxShadow:
-                  current.status === "running"
-                    ? `0 0 6px ${STATUS_DOT.running}`
-                    : "none",
-              }}
+    <WindowPanel
+      title={`slot ${slotIndex + 1}`}
+      tone={current ? "info" : "muted"}
+      actions={
+        <div className="flex items-center" style={{ gap: 6 }}>
+          {current && (
+            <IconButton
+              label="clear"
+              onClick={onClear}
+              ariaLabel={`Clear slot ${slotIndex + 1}`}
             />
+          )}
+          {removable && (
+            <IconButton
+              label="\u00d7"
+              onClick={onRemoveSlot}
+              ariaLabel={`Remove slot ${slotIndex + 1}`}
+            />
+          )}
+        </div>
+      }
+    >
+      {current ? (
+        <div className="flex flex-col" style={{ gap: 6 }}>
+          <div className="flex items-center" style={{ gap: 8, minWidth: 0 }}>
+            <MonoBadge tone={STATUS_META[current.status].tone}>
+              {STATUS_META[current.status].label}
+            </MonoBadge>
             <Link
               to={`/vr/investigations/${current.id}`}
-              className="font-mono text-sm font-semibold text-foreground truncate hover:underline"
+              className="font-mono"
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                color: "var(--text-primary)",
+                textDecoration: "none",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                minWidth: 0,
+              }}
               title={current.title}
             >
               {current.title || current.id.slice(0, 8)}
             </Link>
           </div>
-          <span className="font-mono text-2xs text-text-muted truncate">
+          <span
+            className="font-mono"
+            style={{
+              fontSize: 10,
+              color: "var(--text-muted)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
             {targetLabel(current.target_id)} · {humanize(current.kind)}
           </span>
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            className="mt-1 self-start text-2xs font-mono text-accent hover:underline"
-          >
-            {open ? "Hide picker" : "Replace…"}
-          </button>
         </div>
       ) : (
-        <>
-          <div className="flex items-center gap-2">
-            <MagnifyingGlass className="h-3.5 w-3.5 text-text-muted" />
-            <input
-              type="text"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              onFocus={() => setOpen(true)}
-              placeholder="Find investigation…"
-              className="min-w-0 flex-1 bg-transparent border-b border-border focus:border-accent outline-none font-mono text-xs py-1"
-              aria-label="Search investigations"
-            />
-          </div>
-          {!open && (
-            <button
-              type="button"
-              onClick={() => setOpen(true)}
-              className="self-start text-2xs font-mono text-accent hover:underline"
-            >
-              Browse recent
-            </button>
-          )}
-        </>
-      )}
-
-      {open && (
-        <ul
-          className="mt-1 max-h-64 overflow-y-auto flex flex-col gap-0.5 border-t border-border pt-2"
-          role="listbox"
-          aria-label={`Slot ${slotIndex + 1} candidates`}
-        >
-          {matches.length === 0 && (
-            <li className="font-mono text-2xs text-text-muted px-1 py-1">
-              No matches.
-            </li>
-          )}
-          {matches.map((inv) => (
-            <li key={inv.id}>
-              <button
-                type="button"
-                onClick={() => {
-                  onPick(inv.id);
-                  setQ("");
-                  setOpen(false);
+        <div className="flex flex-col" style={{ gap: 8 }}>
+          <input
+            type="text"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="find investigation…"
+            aria-label={`Search investigations for slot ${slotIndex + 1}`}
+            className="font-mono"
+            style={{
+              width: "100%",
+              padding: "5px 8px",
+              fontSize: 11,
+              color: "var(--text-primary)",
+              background: "var(--surface-sunk)",
+              border: "1px solid var(--border-soft)",
+              borderRadius: 2,
+              outline: "none",
+            }}
+          />
+          <ul
+            role="listbox"
+            aria-label={`Slot ${slotIndex + 1} candidates`}
+            className="flex flex-col"
+            style={{
+              gap: 2,
+              maxHeight: 220,
+              overflowY: "auto",
+              margin: 0,
+              padding: 0,
+              listStyle: "none",
+            }}
+          >
+            {matches.length === 0 && (
+              <li
+                className="font-mono"
+                style={{
+                  fontSize: 10,
+                  color: "var(--text-faint)",
+                  padding: "6px 8px",
                 }}
-                className="w-full text-left px-2 py-1 rounded-sm hover:bg-surface-elevated flex items-center gap-2 min-w-0"
               >
-                <span
-                  aria-hidden
-                  className="inline-block h-1.5 w-1.5 rounded-full shrink-0"
-                  style={{
-                    background: STATUS_DOT[inv.status] ?? "var(--color-text-muted)",
+                no matches.
+              </li>
+            )}
+            {matches.map((inv) => (
+              <li key={inv.id}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onPick(inv.id);
+                    setQ("");
                   }}
-                />
-                <span className="flex-1 min-w-0 flex flex-col">
-                  <span className="font-mono text-xs text-foreground truncate">
-                    {inv.title || inv.id.slice(0, 8)}
+                  className="font-mono"
+                  style={{
+                    display: "flex",
+                    width: "100%",
+                    padding: "5px 8px",
+                    gap: 8,
+                    alignItems: "center",
+                    background: "transparent",
+                    border: "1px solid transparent",
+                    borderRadius: 2,
+                    textAlign: "left",
+                    cursor: "pointer",
+                    color: "var(--text-primary)",
+                    minWidth: 0,
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "var(--surface-hover)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "transparent";
+                  }}
+                >
+                  <MonoBadge tone={STATUS_META[inv.status].tone}>
+                    {STATUS_META[inv.status].label}
+                  </MonoBadge>
+                  <span
+                    className="flex flex-col"
+                    style={{ minWidth: 0, flex: 1 }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 11,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                      title={inv.title || inv.id}
+                    >
+                      {inv.title || inv.id.slice(0, 8)}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 9.5,
+                        color: "var(--text-faint)",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {targetLabel(inv.target_id)} · {humanize(inv.kind)}
+                    </span>
                   </span>
-                  <span className="font-mono text-2xs text-text-muted truncate">
-                    {targetLabel(inv.target_id)} · {humanize(inv.kind)} ·{" "}
-                    {inv.status}
-                  </span>
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
-    </AilaCard>
+    </WindowPanel>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// Compare row -- one row = one facet, N cells = N selected columns.
-// Divergence highlighting is driven by `key`: cells whose key differs
-// between columns get a subtle left-accent border so the operator can
-// scan a variant-hunt for signal without reading every cell.
-// ─────────────────────────────────────────────────────────────────────
-
-interface CellSpec {
-  /** Value used to compute divergence. `null` means "empty / N/A" and
-   *  is treated as its own bucket so a missing column is highlighted
-   *  against a populated one. */
-  key: string | null;
-  render: React.ReactNode;
-}
-
-function CompareRow({
-  label,
-  help,
-  cells,
-  slots,
+// ---------------------------------------------------------------------------
+// Column view -- header (persona tile + title + status) + brief-row mock
+// list + outcome list.
+// ---------------------------------------------------------------------------
+function ColumnView({
+  bundle,
+  targetLabel,
+  divergentFields,
+  viewMode,
 }: {
-  label: string;
-  help?: string;
-  cells: (CellSpec | null)[];
-  slots: number;
+  bundle: Bundle;
+  targetLabel: (targetId: string) => string;
+  divergentFields: ReadonlySet<CompareFacet>;
+  viewMode: "rows" | "scales";
 }) {
-  // Divergence: only compute across non-empty slots (an empty slot is
-  // the picker; comparing populated vs picker isn't useful signal).
-  const populated = cells
-    .map((c, i) => ({ c, i }))
-    .filter((x) => x.c !== null);
-  const uniq = new Set(populated.map((x) => x.c!.key));
-  const divergent = uniq.size > 1;
+  if (!bundle.id) {
+    return (
+      <WindowPanel title="empty" tone="muted">
+        <p
+          className="font-mono"
+          style={{ fontSize: 11, color: "var(--text-faint)" }}
+        >
+          pick an investigation via the slot above.
+        </p>
+      </WindowPanel>
+    );
+  }
 
-  const gridStyle = { gridTemplateColumns: `160px repeat(${slots}, minmax(0, 1fr))` };
+  if (bundle.invLoading && !bundle.inv) {
+    return (
+      <WindowPanel title="loading" tone="muted">
+        <p
+          className="font-mono"
+          style={{ fontSize: 11, color: "var(--text-muted)" }}
+        >
+          fetching investigation…
+        </p>
+      </WindowPanel>
+    );
+  }
+
+  if (bundle.invError || !bundle.inv) {
+    return (
+      <WindowPanel title="load error" tone="warn">
+        <p
+          className="font-mono"
+          style={{ fontSize: 11, color: "var(--accent)" }}
+        >
+          failed to load investigation {bundle.id?.slice(0, 8)}.
+        </p>
+      </WindowPanel>
+    );
+  }
+
+  const inv = bundle.inv;
+  const meta = STATUS_META[inv.status];
+  // Investigations don't carry a single persona; seed the tile off
+  // strategy_family so operators can eyeball same-strategy columns fast.
+  // personaMeta() falls back to a neutral hue + "?" for unknown keys.
+  const pm = personaMeta(inv.strategy_family);
+  const tileInitial =
+    (inv.title || inv.strategy_family || inv.id).trim().charAt(0).toUpperCase() ||
+    pm.initial;
+  const budget = inv.cost_budget_usd ?? 0;
+  const actual = inv.cost_actual_usd ?? 0;
+  const bar = budget > 0 ? Math.min(100, (actual / budget) * 100) : 0;
+
+  const outcomeMix = new Map<string, number>();
+  for (const o of bundle.outcomes)
+    outcomeMix.set(o.outcome_kind, (outcomeMix.get(o.outcome_kind) ?? 0) + 1);
+  const outcomeMixEntries = Array.from(outcomeMix.entries()).sort(
+    (a, b) => b[1] - a[1],
+  );
+
+  const hypCounts = { live: 0, rejected: 0, resolved: 0, mixed: 0 };
+  for (const h of bundle.hyps) hypCounts[h.state]++;
+
+  const verdict = inv.verifier_verdict ?? null;
+  const verdictTone =
+    verdict === "confirmed"
+      ? "critical"
+      : verdict === "refuted"
+        ? "ok"
+        : verdict
+          ? "medium"
+          : "muted";
+
+  const rows: {
+    facet: CompareFacet;
+    label: string;
+    value: React.ReactNode;
+  }[] = [
+    {
+      facet: "status",
+      label: "status",
+      value: <MonoBadge tone={meta.tone}>{meta.label}</MonoBadge>,
+    },
+    {
+      facet: "kind",
+      label: "kind",
+      value: (
+        <span style={{ color: "var(--text-primary)" }}>
+          {humanize(inv.kind)}
+        </span>
+      ),
+    },
+    {
+      facet: "strategy",
+      label: "strategy",
+      value: (
+        <span style={{ color: "var(--text-primary)" }}>
+          {humanize(inv.strategy_family) || "—"}
+        </span>
+      ),
+    },
+    {
+      facet: "progress",
+      label: "progress",
+      value: (
+        <span className="flex items-center flex-wrap" style={{ gap: 10 }}>
+          <span>br {inv.branch_count}</span>
+          <span>msg {inv.message_count}</span>
+          <span style={{ color: "var(--text-faint)" }}>
+            oc {inv.outcome_count}
+          </span>
+        </span>
+      ),
+    },
+    {
+      facet: "primary",
+      label: "primary",
+      value: inv.primary_outcome_id ? (
+        <span className="flex items-center flex-wrap" style={{ gap: 6 }}>
+          {inv.primary_outcome_kind && (
+            <OutcomeKindBadge kind={inv.primary_outcome_kind} />
+          )}
+          <OutcomePolarityBadge
+            polarity={inv.primary_outcome_polarity ?? "inconclusive"}
+            showLabel
+            size="sm"
+          />
+        </span>
+      ) : (
+        <span style={{ color: "var(--text-faint)", fontStyle: "italic" }}>
+          none
+        </span>
+      ),
+    },
+    {
+      facet: "verifier",
+      label: "verifier",
+      value: verdict ? (
+        <span className="flex items-center" style={{ gap: 6 }}>
+          <MonoBadge tone={verdictTone}>{humanize(verdict)}</MonoBadge>
+          {inv.verifier_confidence != null && (
+            <span style={{ color: "var(--text-faint)", fontSize: 10 }}>
+              conf {inv.verifier_confidence.toFixed(2)}
+            </span>
+          )}
+        </span>
+      ) : (
+        <span style={{ color: "var(--text-faint)", fontStyle: "italic" }}>
+          no run
+        </span>
+      ),
+    },
+    {
+      facet: "cost",
+      label: "cost",
+      value: (
+        <div className="flex flex-col" style={{ gap: 4, minWidth: 0 }}>
+          <span className="flex items-baseline" style={{ gap: 6 }}>
+            <span style={{ fontWeight: 600 }}>{fmtUsd(actual)}</span>
+            <span style={{ color: "var(--text-faint)", fontSize: 10 }}>
+              / {fmtUsd(budget)}
+            </span>
+          </span>
+          <span
+            style={{
+              display: "block",
+              height: 4,
+              background: "var(--surface-sunk)",
+              border: "1px solid var(--border-soft)",
+              borderRadius: 2,
+              overflow: "hidden",
+            }}
+          >
+            <span
+              style={{
+                display: "block",
+                height: "100%",
+                width: `${bar}%`,
+                background:
+                  bar >= 90 ? "var(--accent)" : "var(--status-info)",
+              }}
+            />
+          </span>
+        </div>
+      ),
+    },
+    {
+      facet: "findings",
+      label: "findings",
+      value: (
+        <span className="flex items-center flex-wrap" style={{ gap: 6 }}>
+          <span style={{ fontWeight: 600 }}>
+            {(inv.linked_finding_ids ?? []).length}
+          </span>
+          {(inv.linked_finding_ids ?? []).slice(0, 3).map((fid) => (
+            <Link
+              key={fid}
+              to={`/vr/findings/${fid}`}
+              className="font-mono"
+              style={{
+                fontSize: 9,
+                color: "var(--text-muted)",
+                textDecoration: "none",
+                border: "1px solid var(--border-soft)",
+                padding: "1px 5px",
+                borderRadius: 2,
+              }}
+              title={fid}
+            >
+              {fid.slice(0, 8)}
+            </Link>
+          ))}
+        </span>
+      ),
+    },
+    {
+      facet: "hypotheses",
+      label: "hypotheses",
+      value: (
+        <span className="flex items-center flex-wrap" style={{ gap: 6 }}>
+          <span style={{ fontWeight: 600 }}>{bundle.hyps.length}</span>
+          {hypCounts.live > 0 && (
+            <MonoBadge tone="ok">{hypCounts.live} live</MonoBadge>
+          )}
+          {hypCounts.resolved > 0 && (
+            <MonoBadge tone="info">{hypCounts.resolved} res</MonoBadge>
+          )}
+          {hypCounts.rejected > 0 && (
+            <MonoBadge tone="muted">{hypCounts.rejected} rej</MonoBadge>
+          )}
+          {hypCounts.mixed > 0 && (
+            <MonoBadge tone="medium">{hypCounts.mixed} mix</MonoBadge>
+          )}
+        </span>
+      ),
+    },
+    {
+      facet: "mix",
+      label: "outcome mix",
+      value:
+        outcomeMixEntries.length === 0 ? (
+          <span style={{ color: "var(--text-faint)", fontStyle: "italic" }}>
+            no outcomes
+          </span>
+        ) : (
+          <div className="flex flex-col" style={{ gap: 3 }}>
+            {outcomeMixEntries.slice(0, 5).map(([kind, n]) => (
+              <span
+                key={kind}
+                className="flex items-center"
+                style={{ gap: 6 }}
+              >
+                <OutcomeKindBadge kind={kind} />
+                <span style={{ color: "var(--text-faint)", fontSize: 10 }}>
+                  × {n}
+                </span>
+              </span>
+            ))}
+          </div>
+        ),
+    },
+  ];
 
   return (
-    <div
-      className="grid items-start gap-3 border-b border-border/60 py-2 px-2"
-      style={gridStyle}
-    >
-      <div className="flex flex-col gap-0.5 min-w-0">
-        <span className="font-mono text-2xs uppercase tracking-wide text-text-muted">
-          {label}
-        </span>
-        {help && (
-          <span className="font-mono text-3xs text-text-muted opacity-70">
-            {help}
-          </span>
-        )}
-      </div>
-      {cells.map((cell, i) => {
-        if (cell === null) {
-          return (
-            <div
-              key={i}
-              className="min-w-0 font-mono text-2xs text-text-muted opacity-50 italic"
+    <div className="flex flex-col" style={{ gap: 10 }}>
+      <WindowPanel title="brief" tone="accent">
+        <div className="flex flex-col" style={{ gap: 10 }}>
+          <div className="flex items-center" style={{ gap: 10 }}>
+            <span
+              aria-hidden
+              className="flex items-center justify-center font-mono uppercase"
+              style={{
+                width: 22,
+                height: 22,
+                flex: "0 0 auto",
+                fontSize: 11,
+                color: pm.hue,
+                background: `color-mix(in srgb, ${pm.hue} 18%, transparent)`,
+                border: `1px solid color-mix(in srgb, ${pm.hue} 40%, transparent)`,
+                borderRadius: 3,
+              }}
             >
-              —
+              {tileInitial}
+            </span>
+            <div
+              className="flex flex-col"
+              style={{ minWidth: 0, gap: 2, flex: 1 }}
+            >
+              <Link
+                to={`/vr/investigations/${inv.id}`}
+                className="font-mono"
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: "var(--text-primary)",
+                  textDecoration: "none",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+                title={inv.title}
+              >
+                {inv.title || inv.id.slice(0, 8)}
+              </Link>
+              <span
+                className="font-mono"
+                style={{
+                  fontSize: 10,
+                  color: "var(--text-faint)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {targetLabel(inv.target_id)}
+              </span>
             </div>
-          );
-        }
-        const isThisDivergent =
-          divergent &&
-          populated.length > 1 &&
-          populated.some((p) => p.i === i);
-        return (
-          <div
-            key={i}
-            className={`min-w-0 rounded-sm pl-2 py-1 ${
-              isThisDivergent ? "border-l-2 border-accent bg-accent/5" : ""
-            }`}
-          >
-            {cell.render}
+            <MonoBadge tone={meta.tone}>{meta.label}</MonoBadge>
           </div>
-        );
-      })}
+          <div className="flex flex-col">
+            {rows.map((r, i) => {
+              const divergent = divergentFields.has(r.facet);
+              return (
+                <div
+                  key={r.label}
+                  className="grid items-start"
+                  style={{
+                    gridTemplateColumns: "84px 1fr",
+                    gap: 10,
+                    padding: "6px 0",
+                    borderTop:
+                      i === 0 ? "none" : "1px solid var(--border-faint)",
+                    borderLeft: divergent
+                      ? "2px solid var(--accent)"
+                      : undefined,
+                    paddingLeft: divergent ? 8 : undefined,
+                    marginLeft: divergent ? -10 : undefined,
+                    background: divergent
+                      ? "color-mix(in srgb, var(--accent) 5%, transparent)"
+                      : undefined,
+                  }}
+                >
+                  <span
+                    className="font-mono uppercase"
+                    style={{
+                      fontSize: 9,
+                      letterSpacing: "0.12em",
+                      color: "var(--text-faint)",
+                      paddingTop: 2,
+                    }}
+                  >
+                    {r.label}
+                  </span>
+                  <span
+                    className="font-mono"
+                    style={{
+                      fontSize: 11,
+                      color: "var(--text-primary)",
+                      minWidth: 0,
+                    }}
+                  >
+                    {r.value}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </WindowPanel>
+
+      {viewMode === "rows" && (
+        <WindowPanel
+          title={`outcomes (${bundle.outcomes.length})`}
+          tone="muted"
+          flush
+        >
+          {bundle.outcomes.length === 0 ? (
+            <p
+              className="font-mono"
+              style={{
+                fontSize: 11,
+                padding: 12,
+                color: "var(--text-faint)",
+                fontStyle: "italic",
+              }}
+            >
+              no outcomes yet.
+            </p>
+          ) : (
+            <div className="flex flex-col">
+              {bundle.outcomes.slice(0, 8).map((o, i) => (
+                <div
+                  key={o.id}
+                  className="flex items-center"
+                  style={{
+                    gap: 8,
+                    padding: "8px 12px",
+                    borderTop:
+                      i === 0 ? "none" : "1px solid var(--border-faint)",
+                    minWidth: 0,
+                  }}
+                >
+                  <OutcomeKindBadge kind={o.outcome_kind} />
+                  <span
+                    className="font-mono"
+                    style={{
+                      flex: 1,
+                      fontSize: 10.5,
+                      color: "var(--text-muted)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      minWidth: 0,
+                    }}
+                    title={o.id}
+                  >
+                    {o.id.slice(0, 8)} · {o.confidence}
+                  </span>
+                  <MonoBadge
+                    tone={
+                      o.dispatch_status === "dispatched"
+                        ? "low"
+                        : o.dispatch_status === "failed"
+                          ? "critical"
+                          : o.dispatch_status === "skipped"
+                            ? "medium"
+                            : "info"
+                    }
+                  >
+                    {o.dispatch_status}
+                  </MonoBadge>
+                </div>
+              ))}
+              {bundle.outcomes.length > 8 && (
+                <div
+                  className="font-mono"
+                  style={{
+                    padding: "6px 12px",
+                    fontSize: 9.5,
+                    color: "var(--text-faint)",
+                    borderTop: "1px solid var(--border-faint)",
+                  }}
+                >
+                  + {bundle.outcomes.length - 8} more
+                </div>
+              )}
+            </div>
+          )}
+        </WindowPanel>
+      )}
     </div>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// Cell builders. Each returns a CellSpec so CompareRow can compute
-// divergence + render side-by-side.
-// ─────────────────────────────────────────────────────────────────────
-
-function statusCell(b: Bundle): CellSpec | null {
-  if (!b.id) return null;
-  if (b.invLoading) return { key: "__loading__", render: <LoadingSkeleton size="sm" width="half" /> };
-  if (b.invError || !b.inv)
-    return { key: "__error__", render: <span className="text-2xs text-critical font-mono">failed</span> };
-  const inv = b.inv;
-  const live = isInvestigationLive(inv.status);
-  return {
-    key: inv.status,
-    render: (
-      <span className="inline-flex items-center gap-1.5">
-        <span
-          aria-hidden
-          className="inline-block h-2 w-2 rounded-full"
-          style={{
-            background: STATUS_DOT[inv.status] ?? "var(--color-text-muted)",
-            boxShadow: live ? `0 0 6px ${STATUS_DOT[inv.status]}` : "none",
-          }}
-        />
-        <span className="font-mono text-xs text-foreground">
-          {humanize(inv.status)}
-        </span>
-      </span>
-    ),
-  };
-}
-
-function kindCell(b: Bundle): CellSpec | null {
-  if (!b.id) return null;
-  if (!b.inv) return { key: "__loading__", render: <LoadingSkeleton size="sm" width="quarter" /> };
-  return {
-    key: b.inv.kind,
-    render: (
-      <span className="font-mono text-xs text-foreground">
-        {humanize(b.inv.kind)}
-      </span>
-    ),
-  };
-}
-
-function strategyCell(b: Bundle): CellSpec | null {
-  if (!b.id) return null;
-  if (!b.inv) return { key: "__loading__", render: <LoadingSkeleton size="sm" width="half" /> };
-  return {
-    key: b.inv.strategy_family || "",
-    render: (
-      <span className="font-mono text-xs text-foreground">
-        {humanize(b.inv.strategy_family) || "—"}
-      </span>
-    ),
-  };
-}
-
-function progressCell(b: Bundle): CellSpec | null {
-  if (!b.id) return null;
-  if (!b.inv) return { key: "__loading__", render: <LoadingSkeleton size="sm" width="half" /> };
-  const inv = b.inv;
-  // Divergence bucket by scale of activity, not exact turn counts (a
-  // 34-vs-35 turn split is not meaningful).
-  const bucket = `${bucketize(inv.branch_count, [1, 3, 8])}/${bucketize(inv.message_count, [10, 50, 200, 800])}`;
-  return {
-    key: bucket,
-    render: (
-      <div className="flex flex-col gap-1 min-w-0">
-        <div className="flex items-center gap-3 font-mono text-2xs text-text-muted">
-          <span className="inline-flex items-center gap-1">
-            <GitBranch className="h-3 w-3" />
-            {inv.branch_count}
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <Rows className="h-3 w-3" />
-            {inv.message_count}
-          </span>
-          <span className="text-text-muted opacity-60">
-            {inv.outcome_count} outcome{inv.outcome_count === 1 ? "" : "s"}
-          </span>
-        </div>
-      </div>
-    ),
-  };
-}
+// ---------------------------------------------------------------------------
+// Divergence detector -- returns a set of facet names that differ across
+// populated columns. Used to accent-stripe the corresponding rows.
+// ---------------------------------------------------------------------------
+type CompareFacet =
+  | "status"
+  | "kind"
+  | "strategy"
+  | "progress"
+  | "primary"
+  | "verifier"
+  | "cost"
+  | "findings"
+  | "hypotheses"
+  | "mix";
 
 function bucketize(n: number, edges: number[]): string {
   for (let i = 0; i < edges.length; i++) {
@@ -494,255 +842,66 @@ function bucketize(n: number, edges: number[]): string {
   return `>=${edges[edges.length - 1]}`;
 }
 
-function primaryOutcomeCell(b: Bundle): CellSpec | null {
-  if (!b.id) return null;
-  if (!b.inv) return { key: "__loading__", render: <LoadingSkeleton size="sm" width="full" /> };
-  const inv = b.inv;
-  if (!inv.primary_outcome_id) {
-    return {
-      key: "__none__",
-      render: (
-        <span className="font-mono text-2xs text-text-muted italic">
-          No primary outcome
-        </span>
-      ),
-    };
+function facetKeys(bundle: Bundle): Record<CompareFacet, string> | null {
+  const inv = bundle.inv;
+  if (!inv) return null;
+  const hypCounts = { live: 0, rejected: 0, resolved: 0, mixed: 0 };
+  for (const h of bundle.hyps) hypCounts[h.state]++;
+  const mix = new Map<string, number>();
+  for (const o of bundle.outcomes)
+    mix.set(o.outcome_kind, (mix.get(o.outcome_kind) ?? 0) + 1);
+  const mixKey = Array.from(mix.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, n]) => `${k}:${n}`)
+    .join("|");
+  return {
+    status: inv.status,
+    kind: inv.kind,
+    strategy: inv.strategy_family || "",
+    progress: `${bucketize(inv.branch_count, [1, 3, 8])}/${bucketize(inv.message_count, [10, 50, 200, 800])}`,
+    primary: inv.primary_outcome_id
+      ? `${inv.primary_outcome_kind ?? ""}:${inv.primary_outcome_polarity ?? "inconclusive"}`
+      : "__none__",
+    verifier: inv.verifier_verdict ?? "__none__",
+    cost: String(Math.round(inv.cost_actual_usd ?? 0)),
+    findings: String((inv.linked_finding_ids ?? []).length),
+    hypotheses: `${hypCounts.live}/${hypCounts.rejected}/${hypCounts.resolved}/${hypCounts.mixed}`,
+    mix: mixKey || "__none__",
+  };
+}
+
+function computeDivergence(bundles: Bundle[]): ReadonlySet<CompareFacet> {
+  const populated = bundles
+    .map(facetKeys)
+    .filter((k): k is Record<CompareFacet, string> => k !== null);
+  if (populated.length < 2) return new Set();
+  const facets: CompareFacet[] = [
+    "status",
+    "kind",
+    "strategy",
+    "progress",
+    "primary",
+    "verifier",
+    "cost",
+    "findings",
+    "hypotheses",
+    "mix",
+  ];
+  const divergent = new Set<CompareFacet>();
+  for (const f of facets) {
+    const first = populated[0][f];
+    if (populated.some((p) => p[f] !== first)) divergent.add(f);
   }
-  const kind = inv.primary_outcome_kind ?? "";
-  const polarity = inv.primary_outcome_polarity ?? "inconclusive";
-  return {
-    key: `${kind}:${polarity}`,
-    render: (
-      <div className="flex flex-col gap-1 min-w-0">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {kind && <OutcomeKindBadge kind={kind} />}
-          <OutcomePolarityBadge polarity={polarity} showLabel size="sm" />
-        </div>
-        {inv.primary_outcome_verdict_head && (
-          <p className="font-mono text-2xs text-text-muted line-clamp-3">
-            {inv.primary_outcome_verdict_head}
-          </p>
-        )}
-      </div>
-    ),
-  };
+  return divergent;
 }
 
-function verifierCell(b: Bundle): CellSpec | null {
-  if (!b.id) return null;
-  if (!b.inv) return { key: "__loading__", render: <LoadingSkeleton size="sm" width="half" /> };
-  const inv = b.inv;
-  const verdict = inv.verifier_verdict ?? null;
-  if (!verdict) {
-    return {
-      key: "__none__",
-      render: (
-        <span className="font-mono text-2xs text-text-muted italic">
-          No verifier run
-        </span>
-      ),
-    };
-  }
-  const badge =
-    verdict === "confirmed" ? (
-      <AilaBadge severity="critical" size="sm">
-        Confirmed
-      </AilaBadge>
-    ) : verdict === "refuted" ? (
-      <AilaBadge status="completed" size="sm">
-        Refuted
-      </AilaBadge>
-    ) : (
-      <AilaBadge severity="medium" size="sm">
-        {humanize(verdict)}
-      </AilaBadge>
-    );
-  return {
-    key: verdict,
-    render: (
-      <div className="flex flex-col gap-1">
-        {badge}
-        {inv.verifier_confidence != null && (
-          <span className="font-mono text-2xs text-text-muted">
-            conf {inv.verifier_confidence.toFixed(2)}
-          </span>
-        )}
-      </div>
-    ),
-  };
-}
-
-function costCell(b: Bundle): CellSpec | null {
-  if (!b.id) return null;
-  if (!b.inv) return { key: "__loading__", render: <LoadingSkeleton size="sm" width="full" /> };
-  const inv = b.inv;
-  const actual = inv.cost_actual_usd ?? 0;
-  const budget = inv.cost_budget_usd ?? 0;
-  const bar = budget > 0 ? Math.min(100, (actual / budget) * 100) : 0;
-  // Divergence bucket by cost decile so $12.34 vs $12.90 doesn't lie
-  // to the operator about "different".
-  const bucket = `${Math.round(actual)}`;
-  return {
-    key: bucket,
-    render: (
-      <div className="flex flex-col gap-1 min-w-0">
-        <div className="flex items-baseline gap-1.5">
-          <span className="font-mono text-sm text-foreground font-semibold">
-            {fmtUsd(actual)}
-          </span>
-          <span className="font-mono text-2xs text-text-muted">
-            / {fmtUsd(budget)}
-          </span>
-        </div>
-        <div
-          className="h-1 rounded-full overflow-hidden"
-          style={{ background: "color-mix(in srgb, var(--color-text-muted) 22%, transparent)" }}
-        >
-          <div
-            style={{
-              width: `${bar}%`,
-              height: "100%",
-              background:
-                bar >= 90
-                  ? "var(--color-accent)"
-                  : "color-mix(in srgb, var(--color-accent) 60%, transparent)",
-            }}
-          />
-        </div>
-        <div className="flex items-center gap-2 font-mono text-3xs text-text-muted">
-          <span title="LLM tokens">L {fmtUsd(inv.llm_tokens_cost_usd)}</span>
-          <span title="MCP calls">M {fmtUsd(inv.mcp_calls_cost_usd)}</span>
-          <span title="Fuzz infra">F {fmtUsd(inv.fuzz_infra_cost_usd)}</span>
-        </div>
-      </div>
-    ),
-  };
-}
-
-function findingsCell(b: Bundle): CellSpec | null {
-  if (!b.id) return null;
-  if (!b.inv) return { key: "__loading__", render: <LoadingSkeleton size="sm" width="half" /> };
-  const ids = b.inv.linked_finding_ids ?? [];
-  return {
-    key: String(ids.length),
-    render: (
-      <div className="flex flex-col gap-1 min-w-0">
-        <span className="font-mono text-sm text-foreground font-semibold">
-          {ids.length}
-        </span>
-        {ids.length > 0 && (
-          <div className="flex flex-wrap gap-1">
-            {ids.slice(0, 4).map((fid) => (
-              <Link
-                key={fid}
-                to={`/vr/findings/${fid}`}
-                className="font-mono text-3xs px-1.5 py-0.5 rounded-sm bg-surface-elevated text-text hover:text-accent inline-flex items-center gap-1"
-                title={fid}
-              >
-                <ArrowSquareOut className="h-2.5 w-2.5" />
-                {fid.slice(0, 8)}
-              </Link>
-            ))}
-            {ids.length > 4 && (
-              <span className="font-mono text-3xs text-text-muted px-1 py-0.5">
-                +{ids.length - 4}
-              </span>
-            )}
-          </div>
-        )}
-      </div>
-    ),
-  };
-}
-
-function hypothesesCell(b: Bundle): CellSpec | null {
-  if (!b.id) return null;
-  if (b.hypsLoading && !b.hyps.length) {
-    return { key: "__loading__", render: <LoadingSkeleton size="sm" width="half" /> };
-  }
-  const counts = { live: 0, rejected: 0, resolved: 0, mixed: 0 };
-  for (const h of b.hyps) counts[h.state]++;
-  const total = b.hyps.length;
-  return {
-    key: `${counts.live}/${counts.rejected}/${counts.resolved}/${counts.mixed}`,
-    render: (
-      <div className="flex flex-col gap-1 min-w-0">
-        <div className="flex items-baseline gap-2">
-          <span className="font-mono text-sm text-foreground font-semibold">
-            {total}
-          </span>
-          <span className="font-mono text-2xs text-text-muted">total</span>
-        </div>
-        <div className="flex flex-wrap gap-1">
-          {counts.live > 0 && (
-            <AilaBadge status="running" size="sm">
-              {counts.live} live
-            </AilaBadge>
-          )}
-          {counts.resolved > 0 && (
-            <AilaBadge status="completed" size="sm">
-              {counts.resolved} resolved
-            </AilaBadge>
-          )}
-          {counts.rejected > 0 && (
-            <AilaBadge severity="low" size="sm">
-              {counts.rejected} rejected
-            </AilaBadge>
-          )}
-          {counts.mixed > 0 && (
-            <AilaBadge severity="medium" size="sm">
-              {counts.mixed} mixed
-            </AilaBadge>
-          )}
-        </div>
-      </div>
-    ),
-  };
-}
-
-function outcomeMixCell(b: Bundle): CellSpec | null {
-  if (!b.id) return null;
-  if (b.outcomesLoading && b.outcomes.length === 0) {
-    return { key: "__loading__", render: <LoadingSkeleton size="sm" width="half" /> };
-  }
-  const byKind = new Map<string, number>();
-  for (const o of b.outcomes) byKind.set(o.outcome_kind, (byKind.get(o.outcome_kind) ?? 0) + 1);
-  if (byKind.size === 0) {
-    return {
-      key: "__none__",
-      render: (
-        <span className="font-mono text-2xs text-text-muted italic">
-          No outcomes yet
-        </span>
-      ),
-    };
-  }
-  const entries = Array.from(byKind.entries()).sort((a, b) => b[1] - a[1]);
-  const key = entries.map(([k, n]) => `${k}:${n}`).join("|");
-  return {
-    key,
-    render: (
-      <div className="flex flex-col gap-1">
-        {entries.slice(0, 5).map(([kind, n]) => (
-          <div key={kind} className="flex items-center gap-1.5 min-w-0">
-            <OutcomeKindBadge kind={kind} />
-            <span className="font-mono text-2xs text-text-muted">× {n}</span>
-          </div>
-        ))}
-      </div>
-    ),
-  };
-}
-
-// ─────────────────────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
 // Page
-// ─────────────────────────────────────────────────────────────────────
-
+// ---------------------------------------------------------------------------
 export function InvestigationComparePage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const [viewMode, setViewMode] = useState<"rows" | "scales">("rows");
 
-  // Fixed-length slot array; a `null` slot renders as an empty picker.
-  // Default: 2 slots. Grows/shrinks between 1 and MAX_COLUMNS on demand.
   const rawIds = searchParams.get(IDS_PARAM);
   const initialIds: string[] = rawIds
     ? rawIds
@@ -751,7 +910,10 @@ export function InvestigationComparePage() {
         .filter((s) => s.length > 0)
         .slice(0, MAX_COLUMNS)
     : [];
-  const initialSlotCount = Math.max(2, Math.min(MAX_COLUMNS, initialIds.length || 2));
+  const initialSlotCount = Math.max(
+    2,
+    Math.min(MAX_COLUMNS, initialIds.length || 2),
+  );
 
   const [slots, setSlots] = useState<(string | null)[]>(() => {
     const arr: (string | null)[] = Array(initialSlotCount).fill(null);
@@ -793,9 +955,6 @@ export function InvestigationComparePage() {
     commitSlots(next);
   }
 
-  // Investigation list is the source of the picker candidates. Same
-  // filters as InvestigationsListPage default view: broad workspace
-  // window, no server-side status/kind filter.
   const listQuery = useInvestigations({ offset: 0, limit: 200 });
   const investigations = listQuery.data?.data ?? [];
 
@@ -805,188 +964,196 @@ export function InvestigationComparePage() {
 
   const bundles = useCompareBundles(slots);
   const populatedCount = slots.filter((s): s is string => !!s).length;
+  const divergent = useMemo(() => computeDivergence(bundles), [bundles]);
 
   return (
-    <div className="flex flex-col gap-6">
-      {/* Intro strip -- states the point of the screen without cargo. */}
-      <AilaCard techBorder padding="sm">
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div className="flex items-start gap-3 min-w-0">
-            <div
-              aria-hidden
-              className="rounded-sm p-2 shrink-0"
-              style={{ background: "color-mix(in srgb, var(--color-accent) 14%, transparent)" }}
+    <div className="flex flex-col" style={{ gap: 14 }}>
+      <SectionHeader
+        icon="⚖"
+        title="Compare Investigations"
+        actions={
+          <div className="flex items-center" style={{ gap: 10 }}>
+            <span
+              className="font-mono uppercase"
+              style={{
+                fontSize: 9,
+                letterSpacing: "0.12em",
+                color: "var(--text-faint)",
+              }}
             >
-              <Scales className="h-5 w-5 text-accent" weight="fill" />
-            </div>
-            <div className="flex flex-col gap-0.5 min-w-0">
-              <p className="font-mono text-sm text-foreground font-semibold">
-                Compare investigations side by side
-              </p>
-              <p className="font-mono text-2xs text-text-muted">
-                Pick up to {MAX_COLUMNS} investigations. Cells that diverge
-                across columns get a left accent so variant hunts are
-                scannable.
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
+              {populatedCount}/{slots.length} selected
+            </span>
+            <Segmented
+              options={[
+                { value: "rows", label: "rows" },
+                { value: "scales", label: "scales" },
+              ]}
+              value={viewMode}
+              onChange={setViewMode}
+            />
             {slots.length < MAX_COLUMNS && (
               <button
                 type="button"
                 onClick={addSlot}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-sm font-mono text-xs border border-border hover:border-accent hover:text-accent"
+                className="font-mono uppercase"
+                style={{
+                  height: 26,
+                  padding: "0 11px",
+                  fontSize: 9.5,
+                  letterSpacing: "0.08em",
+                  borderRadius: 3,
+                  border: "1px solid var(--border-soft)",
+                  background: "transparent",
+                  color: "var(--text-primary)",
+                  cursor: "pointer",
+                }}
               >
-                <Plus className="h-3.5 w-3.5" /> Add column
+                + add column
               </button>
             )}
-            <span className="font-mono text-2xs text-text-muted">
-              {populatedCount}/{slots.length} selected
-            </span>
           </div>
-        </div>
-      </AilaCard>
+        }
+      />
 
-      {/* Picker row -- one card per slot. */}
+      {/* Picker strip */}
       <div
-        className="grid gap-3"
+        className="grid"
         style={{
-          gridTemplateColumns: `repeat(${slots.length}, minmax(0, 1fr))`,
+          gridTemplateColumns: `repeat(${slots.length}, minmax(220px, 1fr))`,
+          gap: 12,
+          overflowX: "auto",
         }}
       >
         {slots.map((id, i) => (
-          <div key={i} className="flex flex-col gap-2 min-w-0">
-            <InvestigationPicker
-              slotIndex={i}
-              currentId={id}
-              otherIds={slots.filter((_, j) => j !== i)}
-              investigations={investigations}
-              targetLabel={targetLabel}
-              onPick={(picked) => setSlot(i, picked)}
-              onClear={() => setSlot(i, null)}
-            />
-            {slots.length > 1 && (
-              <button
-                type="button"
-                onClick={() => removeSlot(i)}
-                className="self-end text-2xs font-mono text-text-muted hover:text-critical inline-flex items-center gap-1"
-                aria-label={`Remove slot ${i + 1}`}
-              >
-                <X className="h-3 w-3" /> Remove column
-              </button>
-            )}
-          </div>
+          <InvestigationPicker
+            key={i}
+            slotIndex={i}
+            currentId={id}
+            otherIds={slots.filter((_, j) => j !== i)}
+            investigations={investigations}
+            targetLabel={targetLabel}
+            onPick={(picked) => setSlot(i, picked)}
+            onClear={() => setSlot(i, null)}
+            onRemoveSlot={() => removeSlot(i)}
+            removable={slots.length > 1}
+          />
         ))}
       </div>
 
-      {/* Compare grid -- one row per facet, one cell per slot. */}
+      {/* Comparison grid */}
       {populatedCount === 0 ? (
-        <EmptyState
-          icon={<Scales className="h-7 w-7" weight="duotone" />}
-          title="Pick at least one investigation to compare"
-          description="Select investigations from the pickers above. Two or more populated columns unlock divergence highlighting."
-          action={{ label: "Browse investigations", href: "/vr/investigations" }}
-        />
-      ) : listQuery.isError && populatedCount === 0 ? (
-        <AilaCard className="border-critical" techBorder>
-          <p className="text-sm text-critical font-mono">
-            Failed to load the investigations list.
-          </p>
-        </AilaCard>
-      ) : (
-        <AilaCard techBorder padding="sm" className="overflow-x-auto">
-          <div className="min-w-full flex flex-col">
-            {/* Header row -- column titles for context. */}
-            <div
-              className="grid gap-3 border-b border-border pb-2 px-2 items-end"
+        <WindowPanel title="no columns" tone="muted">
+          <div
+            className="flex flex-col items-start"
+            style={{ gap: 8, padding: "12px 0" }}
+          >
+            <p
+              className="font-mono"
               style={{
-                gridTemplateColumns: `160px repeat(${slots.length}, minmax(0, 1fr))`,
+                fontSize: 12,
+                color: "var(--text-primary)",
               }}
             >
-              <span className="font-mono text-2xs uppercase tracking-wide text-text-muted">
-                Facet
-              </span>
-              {bundles.map((b, i) => (
-                <div key={i} className="min-w-0 flex flex-col gap-0.5">
-                  {b.inv ? (
-                    <>
-                      <Link
-                        to={`/vr/investigations/${b.inv.id}`}
-                        className="font-mono text-xs font-semibold text-foreground truncate hover:underline"
-                        title={b.inv.title}
-                      >
-                        {b.inv.title || b.inv.id.slice(0, 8)}
-                      </Link>
-                      <span className="font-mono text-3xs text-text-muted truncate">
-                        {targetLabel(b.inv.target_id)}
-                      </span>
-                    </>
-                  ) : (
-                    <span className="font-mono text-2xs text-text-muted italic">
-                      No selection
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            <CompareRow
-              label="Status"
-              slots={slots.length}
-              cells={bundles.map(statusCell)}
-            />
-            <CompareRow
-              label="Kind"
-              slots={slots.length}
-              cells={bundles.map(kindCell)}
-            />
-            <CompareRow
-              label="Strategy"
-              slots={slots.length}
-              cells={bundles.map(strategyCell)}
-            />
-            <CompareRow
-              label="Progress"
-              help="branches · messages · outcomes"
-              slots={slots.length}
-              cells={bundles.map(progressCell)}
-            />
-            <CompareRow
-              label="Primary outcome"
-              slots={slots.length}
-              cells={bundles.map(primaryOutcomeCell)}
-            />
-            <CompareRow
-              label="Verifier"
-              slots={slots.length}
-              cells={bundles.map(verifierCell)}
-            />
-            <CompareRow
-              label="Cost"
-              help="actual / budget · L=llm M=mcp F=fuzz"
-              slots={slots.length}
-              cells={bundles.map(costCell)}
-            />
-            <CompareRow
-              label="Findings"
-              slots={slots.length}
-              cells={bundles.map(findingsCell)}
-            />
-            <CompareRow
-              label="Hypotheses"
-              help="live / resolved / rejected / mixed"
-              slots={slots.length}
-              cells={bundles.map(hypothesesCell)}
-            />
-            <CompareRow
-              label="Outcome mix"
-              help="counts per outcome kind"
-              slots={slots.length}
-              cells={bundles.map(outcomeMixCell)}
-            />
+              pick at least one investigation to compare.
+            </p>
+            <p
+              className="font-mono"
+              style={{
+                fontSize: 10,
+                color: "var(--text-muted)",
+                lineHeight: 1.5,
+              }}
+            >
+              select investigations from the pickers above. two or more
+              populated columns unlock divergence highlighting on facets that
+              differ.
+            </p>
+            <Link
+              to="/vr/investigations"
+              className="font-mono uppercase"
+              style={{
+                marginTop: 4,
+                height: 26,
+                padding: "0 11px",
+                fontSize: 9.5,
+                letterSpacing: "0.08em",
+                borderRadius: 3,
+                border: "1px solid var(--accent)",
+                background: "var(--accent)",
+                color: "var(--text-on-accent)",
+                display: "inline-flex",
+                alignItems: "center",
+                textDecoration: "none",
+              }}
+            >
+              browse investigations
+            </Link>
           </div>
-        </AilaCard>
+        </WindowPanel>
+      ) : listQuery.isError && populatedCount === 0 ? (
+        <WindowPanel title="load error" tone="warn">
+          <p
+            className="font-mono"
+            style={{ fontSize: 11, color: "var(--accent)" }}
+          >
+            failed to load the investigations list.
+          </p>
+        </WindowPanel>
+      ) : (
+        <div
+          className="grid"
+          style={{
+            gridTemplateColumns: `repeat(${slots.length}, minmax(300px, 1fr))`,
+            gap: 12,
+            overflowX: "auto",
+          }}
+        >
+          {bundles.map((b, i) => (
+            <ColumnView
+              key={i}
+              bundle={b}
+              targetLabel={targetLabel}
+              divergentFields={divergent}
+              viewMode={viewMode}
+            />
+          ))}
+        </div>
       )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Icon-only mini button used in slot title bars.
+// ---------------------------------------------------------------------------
+function IconButton({
+  label,
+  onClick,
+  ariaLabel,
+}: {
+  label: React.ReactNode;
+  onClick: () => void;
+  ariaLabel: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={ariaLabel}
+      className="font-mono uppercase"
+      style={{
+        height: 20,
+        padding: "0 6px",
+        fontSize: 9,
+        letterSpacing: "0.08em",
+        borderRadius: 2,
+        border: "1px solid var(--border-soft)",
+        background: "transparent",
+        color: "var(--text-muted)",
+        cursor: "pointer",
+      }}
+    >
+      {label}
+    </button>
   );
 }

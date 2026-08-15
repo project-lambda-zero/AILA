@@ -1,16 +1,15 @@
 /**
- * SeverityDonutChart -- VIZ-01.
+ * SeverityDonutChart -- VIZ-01 wrapper (mock rebuild).
  *
- * Donut chart showing severity distribution from real findings facet data.
- * The recharts-using JSX lives in ./SeverityDonutChart.view and is
- * loaded lazily (C17) so the recharts vendor chunk stays out of the
- * root entry. Falls back to an empty state when facets are absent or
- * all-zero, and to a skeleton while data is in flight.
+ * Wraps SeverityDonutChart.view in a WindowPanel with a mono legend row.
+ * Data fetch + suspense/lazy loading unchanged. Empty/loading states use
+ * mock-styled panels.
  */
 import * as React from "react";
 
-import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { MonoBadge } from "@/components/aila/mock";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 import { useFindingsFacets } from "./useFindingsFacets";
 import { ChartExportButton } from "./ChartExportButton";
@@ -36,20 +35,17 @@ export function SeverityDonutChart({ className, exportRef }: SeverityDonutChartP
 
   if (isLoading) {
     return (
-      <AilaCard className={className}><div className="p-4 flex flex-col gap-2">
-        <p className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
-          Severity Distribution
-        </p>
+      <WindowPanel title="severity distribution" tone="muted" status="LOADING" className={className}>
         <LoadingSkeleton size="xl" width="full" />
-      </div></AilaCard>
+      </WindowPanel>
     );
   }
 
   const rawFacets = data?.severity ?? {};
-  // Normalize keys to lowercase for case-insensitive lookup
   const facets: Record<string, number> = {};
   for (const [k, v] of Object.entries(rawFacets)) {
-    facets[k.toLowerCase()] = (facets[k.toLowerCase()] ?? 0) + (v as number);
+    const key = k.toLowerCase();
+    facets[key] = (facets[key] ?? 0) + (v as number);
   }
 
   const slices = [
@@ -62,32 +58,74 @@ export function SeverityDonutChart({ className, exportRef }: SeverityDonutChartP
   const total = slices.reduce((sum, s) => sum + s.value, 0);
 
   return (
-    <AilaCard className={className}><div ref={chartRef} className="p-4">
-      <div className="flex items-center justify-between mb-3">
-        <p className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
-          Severity Distribution
-        </p>
-        <ChartExportButton chartRef={chartRef} filename="severity-distribution" />
-      </div>
-    
-      {slices.length === 0 ? (
-        <div className="h-48 flex items-center justify-center">
-          <p className="font-mono text-xs text-muted-foreground">
-            No findings data yet.
-          </p>
-        </div>
-      ) : (
-        <>
-          <div className="h-48">
-            <React.Suspense fallback={<LoadingSkeleton size="full" width="full" className="h-full" />}>
-              <SeverityDonutChartView slices={slices} />
-            </React.Suspense>
+    <WindowPanel
+      title="severity distribution"
+      className={className}
+      actions={<ChartExportButton chartRef={chartRef} filename="severity-distribution" />}
+    >
+      <div ref={chartRef} className="flex flex-col" style={{ gap: 10 }}>
+        {slices.length === 0 ? (
+          <div
+            className="flex items-center justify-center font-mono"
+            style={{
+              height: 192,
+              fontSize: 11,
+              color: "var(--text-muted)",
+            }}
+          >
+            no findings data yet.
           </div>
-          <p className="font-mono text-xs text-muted-foreground text-center mt-1">
-            {total} total findings
-          </p>
-        </>
-      )}
-    </div></AilaCard>
+        ) : (
+          <>
+            <div style={{ height: 192 }}>
+              <React.Suspense fallback={<LoadingSkeleton size="full" width="full" className="h-full" />}>
+                <SeverityDonutChartView slices={slices} />
+              </React.Suspense>
+            </div>
+            {/* Mono legend row */}
+            <div className="flex items-center justify-center flex-wrap" style={{ gap: 8 }}>
+              {slices.map((s) => (
+                <SeverityLegendChip key={s.name} name={s.name} value={s.value} color={s.fill} />
+              ))}
+            </div>
+            <p
+              className="font-mono uppercase text-center"
+              style={{ fontSize: 9, letterSpacing: "0.14em", color: "var(--text-faint)" }}
+            >
+              {total} TOTAL FINDINGS
+            </p>
+          </>
+        )}
+      </div>
+    </WindowPanel>
+  );
+}
+
+function SeverityLegendChip({
+  name,
+  value,
+  color,
+}: {
+  name: string;
+  value: number;
+  color: string;
+}) {
+  // Prefer MonoBadge tone when the severity name maps cleanly.
+  const tone = name.toLowerCase();
+  const known = tone === "critical" || tone === "high" || tone === "medium" || tone === "low";
+  if (known) {
+    return <MonoBadge tone={tone}>{`${name.toUpperCase()} ${value}`}</MonoBadge>;
+  }
+  return (
+    <span
+      className="flex items-center font-mono uppercase"
+      style={{ gap: 5, fontSize: 9, letterSpacing: "0.12em", color: "var(--text-primary)" }}
+    >
+      <span
+        aria-hidden="true"
+        style={{ width: 8, height: 8, background: color, borderRadius: 1 }}
+      />
+      {name} {value}
+    </span>
   );
 }

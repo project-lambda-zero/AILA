@@ -1,11 +1,11 @@
-import { AilaBadge } from "@/components/aila/AilaBadge";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { WindowPanel } from "@/components/aila/WindowPanel";
+import { DataGrid, MonoBadge } from "@/components/aila/mock";
 
 import { useProjectLeads } from "../queries";
 import type { PromotedLead } from "../types";
 
-function scoreSeverity(score: number): "critical" | "high" | "medium" | "low" | "info" {
+function scoreTone(score: number): string {
   if (score >= 80) return "critical";
   if (score >= 60) return "high";
   if (score >= 40) return "medium";
@@ -22,8 +22,20 @@ export function VIATable({ projectId }: { projectId: string }) {
 
   if (items.length === 0) {
     return (
-      <WindowPanel title="v.i.a." tone="muted" status="forensics ; no artifacts identified">
-        <p className="text-sm text-text-muted text-center py-8">
+      <WindowPanel
+        title="v.i.a."
+        tone="muted"
+        status="forensics ; no artifacts identified"
+      >
+        <p
+          className="font-mono"
+          style={{
+            fontSize: 11,
+            color: "var(--text-muted)",
+            padding: "24px 0",
+            textAlign: "center",
+          }}
+        >
           No Very Important Artifacts identified yet.
         </p>
       </WindowPanel>
@@ -31,40 +43,51 @@ export function VIATable({ projectId }: { projectId: string }) {
   }
 
   return (
-    <div className="border border-border rounded-md bg-surface text-foreground overflow-x-auto">
-      <table className="w-full text-sm" aria-label="Verified-in-action rows">
-        <caption className="sr-only">Analyst-verified indicators of activity, one row per confirmed action.</caption>
-        <thead className="bg-elevated">
-          <tr>
-            <th className="text-left px-3 py-2 text-text-muted font-medium">Score</th>
-            <th className="text-left px-3 py-2 text-text-muted font-medium">Family</th>
-            <th className="text-left px-3 py-2 text-text-muted font-medium">Reason</th>
-            <th className="text-left px-3 py-2 text-text-muted font-medium">Question Families</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((lead: PromotedLead) => (
-            <tr key={lead.id} className="border-t border-border hover:bg-elevated">
-              <td className="px-3 py-2">
-                <AilaBadge severity={scoreSeverity(lead.score)} size="sm">
-                  {lead.score.toFixed(1)}
-                </AilaBadge>
-              </td>
-              <td className="px-3 py-2 text-foreground font-mono text-xs">{lead.artifact_family}</td>
-              <td className="px-3 py-2 text-foreground text-xs max-w-md truncate">{lead.reason}</td>
-              <td className="px-3 py-2">
-                <div className="flex flex-wrap gap-1">
-                  {lead.question_families.map((qf) => (
-                    <span key={qf} className="px-1.5 py-0.5 text-xs bg-elevated rounded text-text-muted">
-                      {qf}
-                    </span>
-                  ))}
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div aria-label="Verified-in-action rows">
+      <DataGrid<PromotedLead>
+        columns={[
+          { label: "score", width: "80px" },
+          { label: "family", width: "140px" },
+          { label: "reason", width: "minmax(0, 2fr)" },
+          { label: "question families", width: "minmax(0, 1fr)" },
+        ]}
+        rows={items}
+        getKey={(l) => l.id}
+        renderCells={(l) => [
+          <MonoBadge key="s" tone={scoreTone(l.score)}>
+            {l.score.toFixed(1)}
+          </MonoBadge>,
+          <span
+            key="f"
+            className="font-mono"
+            style={{ fontSize: 10.5, color: "var(--text-primary)" }}
+          >
+            {l.artifact_family}
+          </span>,
+          <span
+            key="r"
+            className="font-mono"
+            style={{
+              fontSize: 10.5,
+              color: "var(--text-primary)",
+              display: "block",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+            title={l.reason}
+          >
+            {l.reason}
+          </span>,
+          <span key="qf" className="flex flex-wrap" style={{ gap: 4 }}>
+            {l.question_families.map((qf) => (
+              <MonoBadge key={qf} tone="muted">
+                {qf}
+              </MonoBadge>
+            ))}
+          </span>,
+        ]}
+      />
     </div>
   );
 }

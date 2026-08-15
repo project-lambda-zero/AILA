@@ -1,21 +1,18 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { CheckCircle } from "@phosphor-icons/react/dist/csr/CheckCircle";
-import { Desktop } from "@phosphor-icons/react/dist/csr/Desktop";
-import { Crosshair } from "@phosphor-icons/react/dist/csr/Crosshair";
 import { ArrowRight } from "@phosphor-icons/react/dist/csr/ArrowRight";
 
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { WindowPanel } from "@/components/aila/WindowPanel";
-import { useCreateSystem, type SystemMutationInput } from "@platform/features/systems/api";
-import { useSubmitScan, type ScanSubmissionRequest } from "@platform/features/scans/api";
+import { FilterChip } from "@/components/aila/mock";
+import {
+  useCreateSystem,
+  type SystemMutationInput,
+} from "@platform/features/systems/api";
+import {
+  useSubmitScan,
+  type ScanSubmissionRequest,
+} from "@platform/features/scans/api";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -23,6 +20,8 @@ import { useSubmitScan, type ScanSubmissionRequest } from "@platform/features/sc
 
 const STORAGE_KEY = "aila-onboarding-done";
 const TOTAL_STEPS = 4;
+
+const STEP_LABELS = ["welcome", "target", "run", "done"] as const;
 
 const DEFAULT_SYSTEM_FORM: SystemMutationInput = {
   name: "",
@@ -54,27 +53,110 @@ function markOnboardingDone(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Style tokens
+// ---------------------------------------------------------------------------
+
+const INPUT_STYLE: React.CSSProperties = {
+  height: 32,
+  fontSize: 12,
+  padding: "0 10px",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  outline: "none",
+  fontFamily: "var(--font-mono)",
+  width: "100%",
+};
+
+const LABEL_STYLE: React.CSSProperties = {
+  fontSize: 10,
+  color: "var(--text-muted)",
+  fontFamily: "var(--font-mono)",
+  textTransform: "uppercase",
+  letterSpacing: "0.12em",
+};
+
+const PRIMARY_BUTTON_STYLE: React.CSSProperties = {
+  height: 30,
+  fontSize: 11,
+  padding: "0 14px",
+  textTransform: "uppercase",
+  letterSpacing: "0.12em",
+  background: "var(--accent)",
+  color: "var(--text-on-accent)",
+  border: "1px solid var(--accent)",
+  borderRadius: 3,
+  cursor: "pointer",
+  fontFamily: "var(--font-mono)",
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+};
+
+const SECONDARY_BUTTON_STYLE: React.CSSProperties = {
+  height: 30,
+  fontSize: 11,
+  padding: "0 14px",
+  textTransform: "uppercase",
+  letterSpacing: "0.12em",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  cursor: "pointer",
+  fontFamily: "var(--font-mono)",
+};
+
+const GHOST_LINK_STYLE: React.CSSProperties = {
+  fontSize: 10,
+  color: "var(--text-muted)",
+  background: "transparent",
+  border: "none",
+  cursor: "pointer",
+  textTransform: "uppercase",
+  letterSpacing: "0.12em",
+  fontFamily: "var(--font-mono)",
+  padding: "0 6px",
+};
+
+const ERROR_BOX_STYLE: React.CSSProperties = {
+  border:
+    "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+  background:
+    "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+  color: "var(--status-warn)",
+  padding: "8px 12px",
+  fontSize: 11,
+  borderRadius: 3,
+  fontFamily: "var(--font-mono)",
+};
+
+// ---------------------------------------------------------------------------
 // Step indicator
 // ---------------------------------------------------------------------------
 
-function StepDots({ current, total }: { current: number; total: number }) {
+function StepChips({ current }: { current: number }) {
   return (
-    <div className="flex items-center gap-1.5" aria-label={`Step ${current} of ${total}`}>
-      {Array.from({ length: total }, (_, i) => (
-        <div
-          key={i}
-          className={`h-1.5 rounded-full transition-all duration-200 ${
-            i + 1 === current
-              ? "w-4 bg-accent"
-              : i + 1 < current
-                ? "w-1.5 bg-accent/50"
-                : "w-1.5 bg-border"
-          }`}
-        />
-      ))}
-      <span className="ml-1 font-mono text-xs text-text-muted">
-        {current}/{total}
-      </span>
+    <div
+      className="flex items-center flex-wrap"
+      style={{ gap: 6 }}
+      aria-label={`Step ${current} of ${TOTAL_STEPS}`}
+    >
+      {STEP_LABELS.map((label, i) => {
+        const stepNum = i + 1;
+        const active = stepNum === current;
+        const done = stepNum < current;
+        return (
+          <FilterChip
+            key={label}
+            active={active || done}
+            color={done ? "var(--status-ok)" : "var(--accent)"}
+          >
+            {stepNum}. {label}
+          </FilterChip>
+        );
+      })}
     </div>
   );
 }
@@ -83,32 +165,73 @@ function StepDots({ current, total }: { current: number; total: number }) {
 // Step 1: Welcome
 // ---------------------------------------------------------------------------
 
-function StepWelcome({ onNext, onSkip }: { onNext: () => void; onSkip: () => void }) {
+function StepWelcome({
+  onNext,
+  onSkip,
+}: {
+  onNext: () => void;
+  onSkip: () => void;
+}) {
   return (
-    <div className="flex flex-col items-center gap-6 py-4 text-center">
-      <div className="flex h-16 w-16 items-center justify-center rounded-full border-2 border-accent/30 bg-accent/10">
-        <span className="font-mono text-2xl font-bold text-accent">A</span>
+    <div
+      className="flex flex-col items-center text-center"
+      style={{ gap: 20, padding: "12px 0" }}
+    >
+      <div
+        className="flex items-center justify-center font-mono"
+        style={{
+          width: 56,
+          height: 56,
+          background:
+            "color-mix(in srgb, var(--accent) 12%, transparent)",
+          border:
+            "2px solid color-mix(in srgb, var(--accent) 45%, transparent)",
+          borderRadius: 3,
+          fontSize: 22,
+          fontWeight: 700,
+          color: "var(--accent)",
+        }}
+      >
+        A
       </div>
-      <div className="flex flex-col gap-2">
-        <h2 className="font-mono text-xl font-semibold text-text">
-          Welcome to AILA
+      <div className="flex flex-col" style={{ gap: 8 }}>
+        <h2
+          className="font-mono"
+          style={{
+            fontSize: 18,
+            color: "var(--text-primary)",
+            fontFamily: "var(--font-display)",
+            textTransform: "uppercase",
+            letterSpacing: "0.14em",
+          }}
+        >
+          welcome to aila
         </h2>
-        <p className="font-mono text-sm text-text-muted max-w-sm">
+        <p
+          className="font-mono"
+          style={{
+            fontSize: 12,
+            color: "var(--text-muted)",
+            maxWidth: 380,
+            lineHeight: 1.5,
+          }}
+        >
           AI Lab Assistant -- your modular security platform for vulnerability
-          scanning and fleet management. Let&apos;s get you set up in 4 quick steps.
+          scanning and fleet management. Let&apos;s get you set up in 4 quick
+          steps.
         </p>
       </div>
-      <div className="flex flex-col w-full gap-2">
-        <Button onClick={onNext} className="w-full gap-2">
-          Get Started
-          <ArrowRight size={16} />
-        </Button>
+      <div className="flex flex-col" style={{ gap: 8, width: "100%" }}>
         <button
           type="button"
-          onClick={onSkip}
-          className="font-mono text-xs text-text-muted hover:text-text transition-colors"
+          onClick={onNext}
+          style={{ ...PRIMARY_BUTTON_STYLE, width: "100%", justifyContent: "center" }}
         >
-          Skip setup
+          get started
+          <ArrowRight size={14} />
+        </button>
+        <button type="button" onClick={onSkip} style={GHOST_LINK_STYLE}>
+          skip setup
         </button>
       </div>
     </div>
@@ -144,91 +267,118 @@ function StepRegisterSystem({
   }
 
   return (
-    <WindowPanel
-      title="register a system"
-      tone="accent"
-      status="step 2 · target"
-      actions={<Desktop size={14} className="text-text-muted" aria-hidden="true" />}
-    >
-      <p className="mb-4 font-mono text-xs text-text-muted">
-        Add your first SSH-reachable target to start scanning.
+    <form onSubmit={handleSubmit} className="flex flex-col" style={{ gap: 12 }}>
+      <p
+        className="font-mono"
+        style={{ fontSize: 11, color: "var(--text-muted)" }}
+      >
+        add your first ssh-reachable target to start scanning.
       </p>
-      <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div className="flex flex-col gap-1">
-            <label className="font-mono text-xs text-text-muted" htmlFor="ob-name">
-              System name *
-            </label>
-            <Input
-              id="ob-name"
-              value={form.name}
-              onChange={(e) => setForm((d) => ({ ...d, name: e.target.value }))}
-              placeholder="arch-vm"
-              required
-            />
-          </div>
-          <div className="flex flex-col gap-1">
-            <label className="font-mono text-xs text-text-muted" htmlFor="ob-host">
-              Host / IP *
-            </label>
-            <Input
-              id="ob-host"
-              value={form.host}
-              onChange={(e) => setForm((d) => ({ ...d, host: e.target.value }))}
-              placeholder="192.168.1.100"
-              required
-            />
-          </div>
-          <div className="flex flex-col gap-1">
-            <label className="font-mono text-xs text-text-muted" htmlFor="ob-user">
-              SSH username
-            </label>
-            <Input
-              id="ob-user"
-              value={form.username}
-              onChange={(e) => setForm((d) => ({ ...d, username: e.target.value }))}
-            />
-          </div>
-          <div className="flex flex-col gap-1">
-            <label className="font-mono text-xs text-text-muted" htmlFor="ob-port">
-              SSH port
-            </label>
-            <Input
-              id="ob-port"
-              type="number"
-              min={1}
-              max={65535}
-              value={form.port}
-              onChange={(e) => setForm((d) => ({ ...d, port: Number(e.target.value) || 22 }))}
-            />
-          </div>
-        </div>
 
-        {createSystem.isError && (
-          <div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-            {(createSystem.error as Error).message}
-          </div>
-        )}
-
-        <div className="flex items-center justify-between pt-1">
-          <Button type="button" variant="outline" size="sm" onClick={onBack}>
-            Back
-          </Button>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={onSkip}
-              className="font-mono text-xs text-text-muted hover:text-text transition-colors"
-            >
-              Skip
-            </button>
-            <Button type="submit" size="sm" disabled={createSystem.isPending}>
-              {createSystem.isPending ? "Registering..." : "Register & Continue"}
-            </Button>
-          </div>
+      <div
+        className="grid"
+        style={{
+          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+          gap: 10,
+        }}
+      >
+        <div className="flex flex-col" style={{ gap: 4 }}>
+          <label htmlFor="ob-name" style={LABEL_STYLE}>
+            system name *
+          </label>
+          <input
+            id="ob-name"
+            value={form.name}
+            onChange={(e) =>
+              setForm((d) => ({ ...d, name: e.target.value }))
+            }
+            placeholder="arch-vm"
+            required
+            style={INPUT_STYLE}
+          />
         </div>
-      </form>
-    </WindowPanel>
+        <div className="flex flex-col" style={{ gap: 4 }}>
+          <label htmlFor="ob-host" style={LABEL_STYLE}>
+            host / ip *
+          </label>
+          <input
+            id="ob-host"
+            value={form.host}
+            onChange={(e) =>
+              setForm((d) => ({ ...d, host: e.target.value }))
+            }
+            placeholder="192.168.1.100"
+            required
+            style={INPUT_STYLE}
+          />
+        </div>
+        <div className="flex flex-col" style={{ gap: 4 }}>
+          <label htmlFor="ob-user" style={LABEL_STYLE}>
+            ssh username
+          </label>
+          <input
+            id="ob-user"
+            value={form.username}
+            onChange={(e) =>
+              setForm((d) => ({ ...d, username: e.target.value }))
+            }
+            style={INPUT_STYLE}
+          />
+        </div>
+        <div className="flex flex-col" style={{ gap: 4 }}>
+          <label htmlFor="ob-port" style={LABEL_STYLE}>
+            ssh port
+          </label>
+          <input
+            id="ob-port"
+            type="number"
+            min={1}
+            max={65535}
+            value={form.port}
+            onChange={(e) =>
+              setForm((d) => ({
+                ...d,
+                port: Number(e.target.value) || 22,
+              }))
+            }
+            style={INPUT_STYLE}
+          />
+        </div>
+      </div>
+
+      {createSystem.isError && (
+        <div style={ERROR_BOX_STYLE}>
+          {(createSystem.error as Error).message}
+        </div>
+      )}
+
+      <div
+        className="flex items-center justify-between"
+        style={{ paddingTop: 4 }}
+      >
+        <button type="button" onClick={onBack} style={SECONDARY_BUTTON_STYLE}>
+          back
+        </button>
+        <div className="flex items-center" style={{ gap: 8 }}>
+          <button type="button" onClick={onSkip} style={GHOST_LINK_STYLE}>
+            skip
+          </button>
+          <button
+            type="submit"
+            disabled={createSystem.isPending}
+            style={{
+              ...PRIMARY_BUTTON_STYLE,
+              opacity: createSystem.isPending ? 0.55 : 1,
+              cursor: createSystem.isPending ? "not-allowed" : "pointer",
+            }}
+          >
+            {createSystem.isPending
+              ? "registering..."
+              : "register & continue"}
+          </button>
+        </div>
+      </div>
+    </form>
   );
 }
 
@@ -271,64 +421,69 @@ function StepLaunchScan({
   }
 
   return (
-    <WindowPanel
-      title="launch your first scan"
-      tone="accent"
-      status="step 3 · run"
-      actions={<Crosshair size={14} className="text-text-muted" aria-hidden="true" />}
-    >
-      <p className="mb-4 font-mono text-xs text-text-muted">
-        Run a vulnerability scan to discover CVEs on your system.
+    <form onSubmit={handleSubmit} className="flex flex-col" style={{ gap: 12 }}>
+      <p
+        className="font-mono"
+        style={{ fontSize: 11, color: "var(--text-muted)" }}
+      >
+        run a vulnerability scan to discover cves on your system.
       </p>
-      <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-        <div className="flex flex-col gap-1">
-          <label className="font-mono text-xs text-text-muted" htmlFor="ob-target">
-            Target host
-          </label>
-          <Input
-            id="ob-target"
-            value={target}
-            onChange={(e) => setTarget(e.target.value)}
-            placeholder="192.168.1.100"
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <label className="font-mono text-xs text-text-muted" htmlFor="ob-query">
-            Scan query
-          </label>
-          <Input
-            id="ob-query"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="give me a full vulnerability scan"
-          />
-        </div>
+      <div className="flex flex-col" style={{ gap: 4 }}>
+        <label htmlFor="ob-target" style={LABEL_STYLE}>
+          target host
+        </label>
+        <input
+          id="ob-target"
+          value={target}
+          onChange={(e) => setTarget(e.target.value)}
+          placeholder="192.168.1.100"
+          style={INPUT_STYLE}
+        />
+      </div>
+      <div className="flex flex-col" style={{ gap: 4 }}>
+        <label htmlFor="ob-query" style={LABEL_STYLE}>
+          scan query
+        </label>
+        <input
+          id="ob-query"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="give me a full vulnerability scan"
+          style={INPUT_STYLE}
+        />
+      </div>
 
-        {submitScan.isError && (
-          <div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-            {(submitScan.error as Error).message}
-          </div>
-        )}
-
-        <div className="flex items-center justify-between pt-1">
-          <Button type="button" variant="outline" size="sm" onClick={onBack}>
-            Back
-          </Button>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={onSkip}
-              className="font-mono text-xs text-text-muted hover:text-text transition-colors"
-            >
-              Skip
-            </button>
-            <Button type="submit" size="sm" disabled={submitScan.isPending}>
-              {submitScan.isPending ? "Launching..." : "Launch Scan"}
-            </Button>
-          </div>
+      {submitScan.isError && (
+        <div style={ERROR_BOX_STYLE}>
+          {(submitScan.error as Error).message}
         </div>
-      </form>
-    </WindowPanel>
+      )}
+
+      <div
+        className="flex items-center justify-between"
+        style={{ paddingTop: 4 }}
+      >
+        <button type="button" onClick={onBack} style={SECONDARY_BUTTON_STYLE}>
+          back
+        </button>
+        <div className="flex items-center" style={{ gap: 8 }}>
+          <button type="button" onClick={onSkip} style={GHOST_LINK_STYLE}>
+            skip
+          </button>
+          <button
+            type="submit"
+            disabled={submitScan.isPending}
+            style={{
+              ...PRIMARY_BUTTON_STYLE,
+              opacity: submitScan.isPending ? 0.55 : 1,
+              cursor: submitScan.isPending ? "not-allowed" : "pointer",
+            }}
+          >
+            {submitScan.isPending ? "launching..." : "launch scan"}
+          </button>
+        </div>
+      </div>
+    </form>
   );
 }
 
@@ -344,27 +499,66 @@ function StepDone({
   onViewFindings: () => void;
 }) {
   return (
-    <div className="flex flex-col items-center gap-6 py-4 text-center">
-      <div className="flex h-16 w-16 items-center justify-center rounded-full border-2 border-accent/30 bg-accent/10">
-        <CheckCircle size={32} className="text-accent" weight="fill" />
+    <div
+      className="flex flex-col items-center text-center"
+      style={{ gap: 20, padding: "12px 0" }}
+    >
+      <div
+        className="flex items-center justify-center"
+        style={{
+          width: 56,
+          height: 56,
+          background:
+            "color-mix(in srgb, var(--status-ok) 15%, transparent)",
+          border:
+            "2px solid color-mix(in srgb, var(--status-ok) 55%, transparent)",
+          borderRadius: 3,
+        }}
+      >
+        <CheckCircle size={30} weight="fill" color="var(--status-ok)" />
       </div>
-      <div className="flex flex-col gap-2">
-        <h2 className="font-mono text-xl font-semibold text-text">
-          Setup Complete!
+      <div className="flex flex-col" style={{ gap: 8 }}>
+        <h2
+          className="font-mono"
+          style={{
+            fontSize: 18,
+            color: "var(--text-primary)",
+            fontFamily: "var(--font-display)",
+            textTransform: "uppercase",
+            letterSpacing: "0.14em",
+          }}
+        >
+          setup complete
         </h2>
-        <p className="font-mono text-sm text-text-muted max-w-sm">
-          Your first scan is running. Results will appear in the findings list
+        <p
+          className="font-mono"
+          style={{
+            fontSize: 12,
+            color: "var(--text-muted)",
+            maxWidth: 380,
+            lineHeight: 1.5,
+          }}
+        >
+          your first scan is running. results will appear in the findings list
           once the scan completes.
         </p>
       </div>
-      <div className="flex flex-col w-full gap-2">
-        <Button onClick={onViewFindings} className="w-full gap-2">
-          View Scan Center
-          <ArrowRight size={16} />
-        </Button>
-        <Button variant="outline" onClick={onClose} className="w-full">
-          Go to Dashboard
-        </Button>
+      <div className="flex flex-col" style={{ gap: 8, width: "100%" }}>
+        <button
+          type="button"
+          onClick={onViewFindings}
+          style={{ ...PRIMARY_BUTTON_STYLE, width: "100%", justifyContent: "center" }}
+        >
+          view scan center
+          <ArrowRight size={14} />
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          style={{ ...SECONDARY_BUTTON_STYLE, width: "100%" }}
+        >
+          go to dashboard
+        </button>
       </div>
     </div>
   );
@@ -378,7 +572,7 @@ function StepDone({
  * OnboardingWizard -- guided first-run setup modal (UX-01).
  *
  * Shown to new users on first visit (localStorage "aila-onboarding-done" absent).
- * Steps: Welcome → Register System → Launch Scan → Done.
+ * Steps: Welcome -> Register System -> Launch Scan -> Done.
  * Stores completion flag in localStorage to avoid reshowing.
  */
 export function OnboardingWizard() {
@@ -416,53 +610,92 @@ export function OnboardingWizard() {
     setRegisteredHost(host);
   }
 
+  // ESC-to-skip parity with the previous shadcn Dialog.
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") handleSkip();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
   if (!open) return null;
 
   return (
-    <Dialog open={open} onOpenChange={(nextOpen) => {
-      if (!nextOpen) handleSkip();
-    }}>
-      <DialogContent
-        className="sm:max-w-lg"
-        aria-describedby="onboarding-description"
-      >
-        <DialogHeader className="sr-only">
-          <DialogTitle>AILA Setup Wizard</DialogTitle>
-        </DialogHeader>
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="AILA Setup Wizard"
+      className="fixed inset-0 flex items-center justify-center"
+      style={{
+        zIndex: 60,
+        background: "color-mix(in srgb, var(--surface-page) 78%, transparent)",
+        backdropFilter: "blur(2px)",
+        padding: 16,
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) handleSkip();
+      }}
+    >
+      <div style={{ width: "100%", maxWidth: 560 }}>
+        <WindowPanel
+          title="onboarding"
+          status={`STEP ${step} / ${TOTAL_STEPS}`}
+          tone="accent"
+          actions={
+            <button
+              type="button"
+              onClick={handleSkip}
+              aria-label="Close wizard"
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "var(--text-muted)",
+                fontSize: 13,
+                cursor: "pointer",
+                padding: "0 4px",
+                fontFamily: "var(--font-mono)",
+              }}
+            >
+              {"\u2715"}
+            </button>
+          }
+        >
+          <div className="flex flex-col" style={{ gap: 14 }}>
+            <StepChips current={step} />
 
-        {/* Progress dots */}
-        <div className="flex justify-center pt-2 pb-1">
-          <StepDots current={step} total={TOTAL_STEPS} />
-        </div>
-
-        <div id="onboarding-description" className="px-2 pb-2">
-          {step === 1 && (
-            <StepWelcome onNext={handleNext} onSkip={handleSkip} />
-          )}
-          {step === 2 && (
-            <StepRegisterSystem
-              onNext={handleNext}
-              onBack={handleBack}
-              onSkip={handleNext}
-              onSystemRegistered={handleSystemRegistered}
-            />
-          )}
-          {step === 3 && (
-            <StepLaunchScan
-              onNext={handleNext}
-              onBack={handleBack}
-              onSkip={handleNext}
-              prefilledHost={registeredHost}
-            />
-          )}
-          {step === 4 && (
-            <StepDone
-              onClose={handleClose}
-              onViewFindings={handleViewFindings}
-            />
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
+            <div id="onboarding-description">
+              {step === 1 && (
+                <StepWelcome onNext={handleNext} onSkip={handleSkip} />
+              )}
+              {step === 2 && (
+                <StepRegisterSystem
+                  onNext={handleNext}
+                  onBack={handleBack}
+                  onSkip={handleNext}
+                  onSystemRegistered={handleSystemRegistered}
+                />
+              )}
+              {step === 3 && (
+                <StepLaunchScan
+                  onNext={handleNext}
+                  onBack={handleBack}
+                  onSkip={handleNext}
+                  prefilledHost={registeredHost}
+                />
+              )}
+              {step === 4 && (
+                <StepDone
+                  onClose={handleClose}
+                  onViewFindings={handleViewFindings}
+                />
+              )}
+            </div>
+          </div>
+        </WindowPanel>
+      </div>
+    </div>
   );
 }

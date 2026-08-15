@@ -23,14 +23,14 @@ import {
 type Tone = "ok" | "info" | "warn" | "crit" | "muted";
 
 const TONE_COLOR: Record<Tone, string> = {
-  ok: "var(--color-mint)",
-  info: "var(--color-lavender)",
-  warn: "var(--color-amber)",
-  crit: "var(--color-accent)",
-  muted: "var(--color-text-muted)",
+  ok: "var(--status-ok)",
+  info: "var(--status-info)",
+  warn: "var(--status-warn)",
+  crit: "var(--accent)",
+  muted: "var(--text-muted)",
 };
 
-const ROW_RULE = "1px solid color-mix(in srgb, var(--color-border) 55%, transparent)";
+const ROW_RULE = "1px solid color-mix(in srgb, var(--border-soft) 55%, transparent)";
 
 function VitalRow({
   label,
@@ -48,7 +48,7 @@ function VitalRow({
     >
       <span
         className="uppercase"
-        style={{ flex: "0 0 84px", color: "var(--color-text-muted)", letterSpacing: "0.04em" }}
+        style={{ flex: "0 0 84px", color: "var(--text-muted)", letterSpacing: "0.04em" }}
       >
         {label}
       </span>
@@ -65,9 +65,9 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       <div
         className="pb-1 font-mono text-[9px] uppercase"
         style={{
-          color: "var(--color-text-faint)",
+          color: "var(--text-faint)",
           letterSpacing: "0.14em",
-          borderBottom: "1px solid var(--color-border)",
+          borderBottom: "1px solid var(--border-soft)",
         }}
       >
         {title}
@@ -128,7 +128,7 @@ export function ConsoleVitalsRail() {
       {loading ? (
         <LoadingSkeletonGroup lines={6} />
       ) : failed ? (
-        <p className="font-mono text-[10px]" style={{ color: "var(--color-text-muted)" }}>
+        <p className="font-mono text-[10px]" style={{ color: "var(--text-muted)" }}>
           vitals unavailable
         </p>
       ) : (

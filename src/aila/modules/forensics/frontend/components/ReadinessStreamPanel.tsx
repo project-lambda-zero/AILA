@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from "react";
 
 import { PixelIcon } from "@/components/aila/PixelIcon";
 import { WindowPanel } from "@/components/aila/WindowPanel";
+import { DataGrid, MonoBadge } from "@/components/aila/mock";
 import { buildApiUrl } from "@platform/api/http";
 import { getAuthTokenStandalone } from "@platform/auth/useAuthStore";
 
@@ -25,12 +26,6 @@ export interface ReadinessEvent {
   offline_type?: string;
   offline_bundle?: string;
 }
-
-const TOOL_STATUS_COLOR: Record<string, string> = {
-  installed: "text-mint",
-  missing: "text-critical",
-  skipped: "text-text-muted",
-};
 
 /**
  * Streams `/forensics/projects/<id>/readiness-check/stream` via SSE and
@@ -136,6 +131,28 @@ export function useReadinessStream(projectId: string) {
   return { events, running, result, start, reset };
 }
 
+// ---------------------------------------------------------------------------
+// Presentation -- mock-kit rebuild. Composes WindowPanel + DataGrid +
+// MonoBadge; no shadcn / AilaBadge / palette-class primitives. Every event
+// stream and lifecycle branch of the previous panel is preserved verbatim,
+// only the surface language shifts to the dense-mono mock grammar.
+// ---------------------------------------------------------------------------
+
+const XRAY_STAGE_COLOR: Record<string, string> = {
+  install_verified: "var(--status-ok)",
+  installing: "var(--status-warn)",
+  install_exec: "var(--status-warn)",
+  checking: "var(--status-info)",
+};
+
+function xrayColor(event: ReadinessEvent): string {
+  const stage = event.stage ?? "event";
+  if (stage.includes("failed")) return "var(--accent)";
+  if (stage === "tool_done" && event.status === "installed") return "var(--status-ok)";
+  if (stage === "heartbeat") return "color-mix(in srgb, var(--text-muted) 60%, transparent)";
+  return XRAY_STAGE_COLOR[stage] ?? "var(--text-muted)";
+}
+
 export function ReadinessStreamPanel({
   projectId,
   autoStart = false,
@@ -154,137 +171,320 @@ export function ReadinessStreamPanel({
 
   const toolEvents = events.filter((e) => e.stage === "tool_done");
   const currentAction = running
-    ? [...events].reverse().find((e) => e.stage === "checking" || e.stage === "installing" || e.stage === "install_exec") ?? null
+    ? [...events]
+        .reverse()
+        .find(
+          (e) =>
+            e.stage === "checking" ||
+            e.stage === "installing" ||
+            e.stage === "install_exec",
+        ) ?? null
     : null;
   const startEvent = events.find((e) => e.stage === "start");
 
+  const panelTone: "ok" | "warn" | "accent" = result
+    ? result.ready
+      ? "ok"
+      : "warn"
+    : "accent";
+  const panelStatus = running
+    ? "readiness ; checking tools"
+    : result
+      ? result.ready
+        ? "readiness ; machine ready"
+        : "readiness ; tools missing"
+      : "readiness ; idle";
+
+  const runDisabled = running;
+
   return (
-    <WindowPanel title="machine readiness" tone={result ? (result.ready ? "ok" : "warn") : "accent"}><div className="flex items-center justify-between mb-4">
-      <div className="min-w-0">
-        {startEvent?.message && (
-          <p className="text-xs text-text-muted truncate">{startEvent.message}</p>
-        )}
-      </div>
-      <div className="flex gap-2">
-        {result && (
-          <button
-            type="button"
-            onClick={reset}
-            className="px-3 py-1.5 text-xs rounded-md border border-border text-text-muted hover:text-foreground"
-          >
-            Reset
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={start}
-          disabled={running}
-          className="px-3 py-1.5 text-sm font-medium rounded-md bg-accent text-badge-text hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-        >
-          {running && <span className="inline-block w-2 h-2 rounded-full bg-badge-text/70 animate-pulse" />}
-          {running ? "Running..." : result ? "Re-run Check" : "Run Check"}
-        </button>
-      </div>
-    </div>
-    
-    {currentAction && (
-      <div className="mb-3 px-3 py-2 rounded-md bg-elevated border border-border text-xs text-text-muted font-mono flex items-center gap-2">
-        <span className="inline-block w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "var(--color-amber)" }} />
-        {currentAction.message}
-      </div>
-    )}
-    
-    {toolEvents.length > 0 && (
-      <div className="space-y-1 max-h-96 overflow-y-auto">
-        {toolEvents.map((e, i) => (
-          <div
-            key={i}
-            className="flex items-center justify-between px-3 py-1.5 rounded text-xs font-mono hover:bg-elevated"
-          >
-            <div className="flex items-center gap-2 min-w-0">
-              <span className={`inline-flex items-center ${TOOL_STATUS_COLOR[e.status ?? ""] ?? "text-text-muted"}`}>
-                {e.status === "installed" ? (
-                  <PixelIcon name="ok" size={12} />
-                ) : e.status === "missing" ? (
-                  <PixelIcon name="close" size={12} />
-                ) : (
-                  "--"
-                )}
-              </span>
-              <span className="text-foreground truncate">{e.tool}</span>
-              {e.version && <span className="text-text-muted shrink-0">{e.version}</span>}
-              {e.install_method && e.install_method !== "pre_installed" && (
-                <span className="text-accent shrink-0 text-3xs">[{e.install_method}]</span>
-              )}
-            </div>
-            {e.required && e.status === "missing" && (
-              <span className="text-critical shrink-0 ml-2">REQUIRED</span>
+    <WindowPanel title="machine readiness" tone={panelTone} status={panelStatus}>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            {startEvent?.message && (
+              <p
+                className="font-mono truncate"
+                style={{ fontSize: 11, color: "var(--text-muted)" }}
+              >
+                {startEvent.message}
+              </p>
             )}
           </div>
-        ))}
-      </div>
-    )}
-    
-    {events.length > 0 && (
-      <details className="mt-4">
-        <summary className="text-xs font-mono text-text-muted cursor-pointer select-none hover:text-foreground">
-          xray log ({events.length} events) -- expand for full stream
-        </summary>
-        <div className="mt-2 max-h-96 overflow-y-auto rounded border border-border bg-elevated">
-          {events.map((e, i) => {
-            const stage = e.stage ?? "event";
-            const color =
-              stage.includes("failed")
-                ? "var(--color-critical)"
-                : stage === "tool_done" && e.status === "installed"
-                ? "var(--color-mint)"
-                : stage === "install_verified"
-                ? "var(--color-mint)"
-                : stage === "installing" || stage === "install_exec"
-                ? "var(--color-amber)"
-                : stage === "checking"
-                ? "var(--color-lavender)"
-                : stage === "heartbeat"
-                ? "color-mix(in srgb, var(--color-text-muted) 60%, transparent)"
-                : "var(--color-text-muted)";
-            return (
-              <div key={i} className="px-2 py-1 text-3xs font-mono border-b border-border/40 last:border-b-0">
-                <span className="font-semibold" style={{ color }}>[{stage}]</span>
-                {e.tool && <span className="text-foreground ml-2">{e.tool}</span>}
-                {e.message && <span className="text-text-muted ml-2">-- {e.message}</span>}
-                {e.command && (
-                  <div className="text-text-muted/70 text-4xs ml-6 mt-0.5 break-all">$ {e.command}</div>
-                )}
-                {e.error && (
-                  <div className="text-critical/80 text-4xs ml-6 mt-0.5 break-all whitespace-pre-wrap">{e.error}</div>
-                )}
-                {e.output_tail && (
-                  <div className="text-text-muted/70 text-4xs ml-6 mt-0.5 break-all whitespace-pre-wrap">{e.output_tail}</div>
-                )}
-              </div>
-            );
-          })}
+          <div className="flex items-center gap-2 shrink-0">
+            {result && (
+              <button
+                type="button"
+                onClick={reset}
+                className="font-mono uppercase"
+                style={{
+                  height: 28,
+                  padding: "0 12px",
+                  fontSize: 10,
+                  letterSpacing: "0.08em",
+                  color: "var(--text-muted)",
+                  background: "transparent",
+                  border: "1px solid var(--border-soft)",
+                  borderRadius: 3,
+                  cursor: "pointer",
+                }}
+              >
+                RESET
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={start}
+              disabled={runDisabled}
+              className="font-mono uppercase inline-flex items-center gap-2"
+              style={{
+                height: 28,
+                padding: "0 12px",
+                fontSize: 10,
+                letterSpacing: "0.08em",
+                color: "var(--text-on-accent)",
+                background: "var(--accent)",
+                border: "1px solid var(--accent)",
+                borderRadius: 3,
+                cursor: runDisabled ? "not-allowed" : "pointer",
+                opacity: runDisabled ? 0.6 : 1,
+              }}
+            >
+              {running && (
+                <span
+                  aria-hidden
+                  className="inline-block rounded-full motion-safe:animate-pulse"
+                  style={{
+                    width: 6,
+                    height: 6,
+                    backgroundColor: "var(--text-on-accent)",
+                  }}
+                />
+              )}
+              {running ? "RUNNING\u2026" : result ? "RE-RUN CHECK" : "RUN CHECK"}
+            </button>
+          </div>
         </div>
-      </details>
-    )}
-    
-    {result && (
-      <div
-        className={`mt-4 px-4 py-3 rounded-md border text-sm font-medium flex items-center gap-2 ${
-          result.ready
-            ? "border-mint/50 bg-mint/10 text-mint"
-            : "border-critical/50 bg-critical/15 text-critical"
-        }`}
-      >
-        {result.ready ? <PixelIcon name="ok" size={14} /> : <PixelIcon name="close" size={14} />}
-        <span>{result.ready ? "Machine is ready" : "Some required tools are missing"}</span>
+
+        {currentAction && (
+          <WindowPanel flush tone="info">
+            <div
+              className="flex items-center gap-2 font-mono"
+              style={{ padding: "8px 12px", fontSize: 11 }}
+            >
+              <span
+                aria-hidden
+                className="inline-block rounded-full motion-safe:animate-pulse shrink-0"
+                style={{
+                  width: 6,
+                  height: 6,
+                  backgroundColor: "var(--status-info)",
+                }}
+              />
+              <span
+                className="shrink-0"
+                style={{ color: "var(--status-info)", fontWeight: 600 }}
+              >
+                [{currentAction.stage}]
+              </span>
+              <span
+                className="break-all"
+                style={{ color: "var(--text-primary)" }}
+              >
+                {currentAction.message ?? ""}
+              </span>
+            </div>
+          </WindowPanel>
+        )}
+
+        {toolEvents.length > 0 && (
+          <DataGrid<ReadinessEvent>
+            columns={[
+              { label: "TOOL", width: "2fr" },
+              { label: "VERSION", width: "120px" },
+              { label: "STATUS", width: "110px" },
+              { label: "REQUIRED", width: "110px" },
+              { label: "METHOD", width: "110px" },
+            ]}
+            rows={toolEvents}
+            getKey={(_row, i) => i}
+            renderCells={(e) => {
+              const statusTone =
+                e.status === "installed"
+                  ? "ok"
+                  : e.status === "missing"
+                    ? "critical"
+                    : "muted";
+              return [
+                <span
+                  key="tool"
+                  className="truncate"
+                  style={{ color: "var(--text-primary)", fontSize: 11 }}
+                >
+                  {e.tool ?? ""}
+                </span>,
+                <span
+                  key="ver"
+                  className="truncate"
+                  style={{ color: "var(--text-muted)", fontSize: 11 }}
+                >
+                  {e.version ?? ""}
+                </span>,
+                <MonoBadge key="status" tone={statusTone}>
+                  {e.status ?? "--"}
+                </MonoBadge>,
+                e.required && e.status === "missing" ? (
+                  <MonoBadge key="req" tone="warn">REQUIRED</MonoBadge>
+                ) : null,
+                e.install_method && e.install_method !== "pre_installed" ? (
+                  <MonoBadge key="method" tone="info">{e.install_method}</MonoBadge>
+                ) : null,
+              ];
+            }}
+          />
+        )}
+
+        {events.length > 0 && (
+          <details>
+            <summary
+              className="font-mono uppercase cursor-pointer"
+              style={{
+                fontSize: 10,
+                color: "var(--text-muted)",
+                letterSpacing: "0.08em",
+                padding: "4px 0",
+              }}
+            >
+              XRAY LOG ({events.length} EVENTS) -- EXPAND FOR FULL STREAM
+            </summary>
+            <div
+              className="font-mono overflow-y-auto"
+              style={{
+                marginTop: 8,
+                maxHeight: 384,
+                background: "var(--surface-sunk)",
+                border: "1px solid var(--border-soft)",
+                borderRadius: 3,
+              }}
+            >
+              {events.map((e, i) => {
+                const stage = e.stage ?? "event";
+                const color = xrayColor(e);
+                return (
+                  <div
+                    key={i}
+                    style={{
+                      padding: "4px 10px",
+                      fontSize: 10,
+                      borderBottom:
+                        "1px solid color-mix(in srgb, var(--border-soft) 55%, transparent)",
+                    }}
+                  >
+                    <span style={{ color, fontWeight: 600 }}>[{stage}]</span>
+                    {e.tool && (
+                      <span
+                        style={{ color: "var(--text-primary)", marginLeft: 8 }}
+                      >
+                        {e.tool}
+                      </span>
+                    )}
+                    {e.message && (
+                      <span
+                        style={{ color: "var(--text-muted)", marginLeft: 8 }}
+                      >
+                        -- {e.message}
+                      </span>
+                    )}
+                    {e.command && (
+                      <div
+                        style={{
+                          marginLeft: 24,
+                          marginTop: 2,
+                          fontSize: 9,
+                          color: "var(--text-faint)",
+                          wordBreak: "break-all",
+                        }}
+                      >
+                        $ {e.command}
+                      </div>
+                    )}
+                    {e.error && (
+                      <div
+                        style={{
+                          marginLeft: 24,
+                          marginTop: 2,
+                          fontSize: 9,
+                          color: "var(--accent)",
+                          wordBreak: "break-all",
+                          whiteSpace: "pre-wrap",
+                        }}
+                      >
+                        {e.error}
+                      </div>
+                    )}
+                    {e.output_tail && (
+                      <div
+                        style={{
+                          marginLeft: 24,
+                          marginTop: 2,
+                          fontSize: 9,
+                          color: "var(--text-faint)",
+                          wordBreak: "break-all",
+                          whiteSpace: "pre-wrap",
+                        }}
+                      >
+                        {e.output_tail}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </details>
+        )}
+
+        {result && (
+          <WindowPanel flush tone={result.ready ? "ok" : "warn"}>
+            <div
+              className="flex items-center gap-2 font-mono uppercase"
+              style={{
+                padding: "10px 14px",
+                fontSize: 11,
+                letterSpacing: "0.08em",
+                color: result.ready ? "var(--status-ok)" : "var(--accent)",
+              }}
+            >
+              {result.ready ? (
+                <PixelIcon name="ok" size={14} />
+              ) : (
+                <PixelIcon name="close" size={14} />
+              )}
+              <span>
+                {result.ready
+                  ? "MACHINE IS READY"
+                  : "SOME REQUIRED TOOLS ARE MISSING"}
+              </span>
+            </div>
+          </WindowPanel>
+        )}
+
+        {!running && events.length === 0 && (
+          <WindowPanel flush tone="muted">
+            <div
+              className="font-mono uppercase"
+              style={{
+                padding: "18px 14px",
+                fontSize: 10,
+                letterSpacing: "0.08em",
+                color: "var(--text-muted)",
+                textAlign: "center",
+              }}
+            >
+              RUN A READINESS CHECK TO VERIFY FORENSIC TOOLS.
+            </div>
+          </WindowPanel>
+        )}
       </div>
-    )}
-    
-    {!running && events.length === 0 && (
-      <p className="text-sm text-text-muted text-center py-6">
-        Run a readiness check to verify forensic tools on the analyzer machine.
-      </p>
-    )}</WindowPanel>
+    </WindowPanel>
   );
 }

@@ -1,37 +1,27 @@
 /**
  * TaskQueueAdminPage -- admin controls for the platform task queue.
  *
- * Operator-facing task list lives at /tasks (TasksPage). This page exposes
- * admin-only queue operations:
- *   GET  /tasks/queue-depth                -- task counts by status (OPS-04)
- *   POST /tasks/drain                      -- pause new submissions (OPS-05)
- *   POST /tasks/requeue-failed             -- requeue recent failures (OPS-05)
- *   GET  /admin/tasks/dead-letter          -- list dead-lettered tasks (Phase 178)
+ * Endpoints:
+ *   GET  /tasks/queue-depth                    -- task counts by status
+ *   POST /tasks/drain                          -- pause new submissions
+ *   POST /tasks/requeue-failed                 -- requeue recent failures
+ *   GET  /admin/tasks/dead-letter              -- list dead-lettered tasks
  *   POST /admin/tasks/dead-letter/{id}/requeue -- manual dead-letter recovery
- *
- * All endpoints require admin role; the route is gated via protectPage("admin").
+ *   POST /admin/reconcile                      -- heal drift for a task
  */
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowsCounterClockwise } from "@phosphor-icons/react/dist/csr/ArrowsCounterClockwise";
-import { Pause } from "@phosphor-icons/react/dist/csr/Pause";
-import { Queue } from "@phosphor-icons/react/dist/csr/Queue";
-import { Skull } from "@phosphor-icons/react/dist/csr/Skull";
-import { Broom } from "@phosphor-icons/react/dist/csr/Broom";
 
-import { AilaCard } from "@/components/aila/AilaCard";
 import { WindowPanel } from "@/components/aila/WindowPanel";
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
-import { EmptyState } from "@/components/aila/EmptyState";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  SectionHeader,
+  DataGrid,
+  MonoBadge,
+  BigStat,
+  StatBar,
+  toneColor,
+} from "@/components/aila/mock";
 import { authorizedRequestJson } from "@platform/api/http";
 import {
   useReconcileTask,
@@ -39,7 +29,7 @@ import {
 } from "./platformInfraQueries";
 
 // ---------------------------------------------------------------------------
-// Types -- mirror src/aila/api/schemas/tasks.py and admin_dead_letter.py
+// Types
 // ---------------------------------------------------------------------------
 
 interface DataEnvelope<T> {
@@ -70,38 +60,204 @@ interface DeadLetterEntry {
   dead_lettered_at: string;
 }
 
-// ---------------------------------------------------------------------------
-// Utilities
-// ---------------------------------------------------------------------------
+type Tone = "critical" | "high" | "medium" | "low" | "ok" | "info" | "warn" | "muted";
 
-function formatTimestamp(value: string | null | undefined): string {
-  if (!value) return "--";
-  return new Date(value).toLocaleString();
+function statusTone(status: string): Tone {
+  const s = status.toLowerCase();
+  if (s === "running") return "info";
+  if (s === "failed" || s === "dead_letter") return "critical";
+  if (s === "paused") return "warn";
+  if (s === "done") return "ok";
+  if (s === "queued" || s === "waiting") return "medium";
+  return "muted";
 }
 
-type BadgeSeverity = "neutral" | "info" | "medium" | "critical" | "low";
+function statusColor(status: string): string {
+  return toneColor(statusTone(status));
+}
 
-function statusSeverity(status: string): BadgeSeverity {
-  const normalized = status.toLowerCase();
-  if (normalized === "running") return "info";
-  if (normalized === "failed" || normalized === "dead_letter") return "critical";
-  if (normalized === "paused") return "medium";
-  if (normalized === "done") return "low";
-  return "neutral";
+// ---------------------------------------------------------------------------
+// Mock chrome primitives
+// ---------------------------------------------------------------------------
+
+const BTN_STYLE: React.CSSProperties = {
+  height: 26,
+  fontSize: 9.5,
+  padding: "0 11px",
+  letterSpacing: "0.08em",
+  borderRadius: 3,
+  border: "1px solid var(--border-soft)",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  cursor: "pointer",
+  fontFamily: "var(--font-mono)",
+  textTransform: "uppercase",
+};
+
+const BTN_ACCENT_STYLE: React.CSSProperties = {
+  ...BTN_STYLE,
+  border: "1px solid var(--accent)",
+  background: "color-mix(in srgb, var(--accent) 14%, transparent)",
+  color: "var(--accent)",
+};
+
+const BTN_DANGER_STYLE: React.CSSProperties = {
+  ...BTN_STYLE,
+  border: "1px solid color-mix(in srgb, var(--status-warn) 55%, transparent)",
+  background: "color-mix(in srgb, var(--status-warn) 12%, transparent)",
+  color: "var(--status-warn)",
+};
+
+const INPUT_STYLE: React.CSSProperties = {
+  height: 28,
+  fontSize: 11,
+  padding: "0 10px",
+  borderRadius: 3,
+  border: "1px solid var(--border-soft)",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  outline: "none",
+  fontFamily: "var(--font-mono)",
+  width: "100%",
+};
+
+function ErrorBox({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="font-mono"
+      style={{
+        border:
+          "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+        background:
+          "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+        color: "var(--status-warn)",
+        padding: "8px 12px",
+        fontSize: 11,
+        borderRadius: 3,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function SuccessBox({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="font-mono"
+      style={{
+        border:
+          "1px solid color-mix(in srgb, var(--status-ok) 40%, transparent)",
+        background:
+          "color-mix(in srgb, var(--status-ok) 10%, transparent)",
+        color: "var(--status-ok)",
+        padding: "8px 12px",
+        fontSize: 11,
+        borderRadius: 3,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Modal shell: fixed backdrop + centered WindowPanel. Escapes and backdrop
+ * clicks close via `onClose`. Rebuilt in-file to keep the shadcn dialog
+ * primitives out of the tree.
+ */
+function ModalShell({
+  open,
+  title,
+  onClose,
+  width = 460,
+  tone = "accent",
+  children,
+}: {
+  open: boolean;
+  title: React.ReactNode;
+  onClose: () => void;
+  width?: number;
+  tone?: "accent" | "ok" | "info" | "warn" | "muted";
+  children: React.ReactNode;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "color-mix(in srgb, var(--surface-page) 78%, transparent)",
+        backdropFilter: "blur(2px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 20,
+        zIndex: 60,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ width, maxWidth: "100%" }}
+      >
+        <WindowPanel
+          title={title}
+          tone={tone}
+          actions={
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={onClose}
+              className="font-mono"
+              style={{
+                width: 22,
+                height: 22,
+                border: "1px solid var(--border-soft)",
+                background: "var(--surface-sunk)",
+                color: "var(--text-primary)",
+                fontSize: 10,
+                cursor: "pointer",
+                borderRadius: 2,
+              }}
+            >
+              {"\u2715"}
+            </button>
+          }
+        >
+          {children}
+        </WindowPanel>
+      </div>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
 // Drain confirmation dialog
 // ---------------------------------------------------------------------------
 
-interface DrainConfirmDialogProps {
+function DrainConfirmDialog({
+  open,
+  isPending,
+  onConfirm,
+  onClose,
+}: {
   open: boolean;
   isPending: boolean;
   onConfirm: () => Promise<unknown>;
   onClose: () => void;
-}
-
-function DrainConfirmDialog({ open, isPending, onConfirm, onClose }: DrainConfirmDialogProps) {
+}) {
   const [error, setError] = useState<string | null>(null);
 
   async function handleConfirm() {
@@ -114,68 +270,82 @@ function DrainConfirmDialog({ open, isPending, onConfirm, onClose }: DrainConfir
     }
   }
 
+  function handleClose() {
+    setError(null);
+    onClose();
+  }
+
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) { setError(null); onClose(); } }}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle className="font-mono text-text">Drain task queue</DialogTitle>
-        </DialogHeader>
-
-        <div className="flex flex-col gap-4">
-          <div className="rounded-[4px] border border-medium/40 bg-medium/10 px-4 py-3">
-            <p className="font-mono text-xs text-medium font-semibold mb-1">
-              New task submissions will be rejected.
-            </p>
-            <p className="font-mono text-xs text-text-muted">
-              In-flight tasks continue to run until completion. Use this before
-              maintenance, restarts, or load shedding. The queue stays drained
-              until the platform is restarted.
-            </p>
-          </div>
-
-          {error && (
-            <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-              {error}
-            </div>
-          )}
-
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              size="sm"
-              className="flex-1"
-              onClick={handleConfirm}
-              disabled={isPending}
-            >
-              {isPending ? "Draining..." : "Confirm Drain"}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => { setError(null); onClose(); }}
-            >
-              Cancel
-            </Button>
-          </div>
+    <ModalShell
+      open={open}
+      title="drain task queue"
+      onClose={handleClose}
+      tone="warn"
+      width={420}
+    >
+      <div className="flex flex-col" style={{ gap: 12 }}>
+        <div
+          className="font-mono"
+          style={{
+            border:
+              "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+            background:
+              "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+            color: "var(--status-warn)",
+            padding: "10px 12px",
+            fontSize: 11,
+            borderRadius: 3,
+          }}
+        >
+          <p style={{ fontWeight: 600, marginBottom: 4 }}>
+            new task submissions will be rejected.
+          </p>
+          <p style={{ color: "var(--text-muted)" }}>
+            in-flight tasks continue to run until completion. use before
+            maintenance or restarts. the queue stays drained until the
+            platform is restarted.
+          </p>
         </div>
-      </DialogContent>
-    </Dialog>
+        {error && <ErrorBox>{error}</ErrorBox>}
+        <div className="flex" style={{ gap: 8 }}>
+          <button
+            type="button"
+            className="font-mono uppercase"
+            style={{ ...BTN_ACCENT_STYLE, flex: 1 }}
+            onClick={handleConfirm}
+            disabled={isPending}
+          >
+            {isPending ? "DRAINING\u2026" : "CONFIRM DRAIN"}
+          </button>
+          <button
+            type="button"
+            className="font-mono uppercase"
+            style={BTN_STYLE}
+            onClick={handleClose}
+          >
+            CANCEL
+          </button>
+        </div>
+      </div>
+    </ModalShell>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Requeue-failed dialog with max_age_hours input
+// Requeue-failed dialog
 // ---------------------------------------------------------------------------
 
-interface RequeueDialogProps {
+function RequeueFailedDialog({
+  open,
+  isPending,
+  onConfirm,
+  onClose,
+}: {
   open: boolean;
   isPending: boolean;
   onConfirm: (maxAgeHours: number) => Promise<RequeueFailedResponse>;
   onClose: () => void;
-}
-
-function RequeueFailedDialog({ open, isPending, onConfirm, onClose }: RequeueDialogProps) {
+}) {
   const [maxAgeHours, setMaxAgeHours] = useState("24");
   const [error, setError] = useState<string | null>(null);
   const [lastResult, setLastResult] = useState<number | null>(null);
@@ -203,87 +373,90 @@ function RequeueFailedDialog({ open, isPending, onConfirm, onClose }: RequeueDia
   }
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle className="font-mono text-text">Requeue failed tasks</DialogTitle>
-        </DialogHeader>
-
-        <div className="flex flex-col gap-4">
-          <p className="font-mono text-xs text-text-muted">
-            Requeue tasks that failed within the lookback window. Backend caps
-            the window at 168 hours (7 days).
-          </p>
-
-          <div className="flex flex-col gap-1">
-            <label className="font-mono text-xs text-text-muted" htmlFor="rq-age">
-              Max age (hours)
-            </label>
-            <Input
-              id="rq-age"
-              type="number"
-              min={1}
-              max={168}
-              value={maxAgeHours}
-              onChange={(e) => setMaxAgeHours(e.target.value)}
-              className="font-mono text-sm"
-            />
-          </div>
-
-          {lastResult !== null && (
-            <div className="rounded-[4px] border border-low/40 bg-low/10 px-3 py-2 font-mono text-xs text-low">
-              Requeued {lastResult} task{lastResult === 1 ? "" : "s"}.
-            </div>
-          )}
-
-          {error && (
-            <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-              {error}
-            </div>
-          )}
-
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              size="sm"
-              className="flex-1"
-              onClick={handleConfirm}
-              disabled={isPending}
-            >
-              {isPending ? "Requeueing..." : "Requeue Failed"}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={handleClose}
-            >
-              Close
-            </Button>
-          </div>
+    <ModalShell
+      open={open}
+      title="requeue failed tasks"
+      onClose={handleClose}
+      width={420}
+    >
+      <div className="flex flex-col" style={{ gap: 12 }}>
+        <p
+          className="font-mono"
+          style={{ fontSize: 11, color: "var(--text-muted)" }}
+        >
+          requeue tasks that failed within the lookback window. backend caps
+          the window at 168 hours (7 days).
+        </p>
+        <div className="flex flex-col" style={{ gap: 4 }}>
+          <label
+            className="font-mono uppercase"
+            htmlFor="rq-age"
+            style={{
+              fontSize: 9,
+              letterSpacing: "0.1em",
+              color: "var(--text-faint)",
+            }}
+          >
+            max age (hours)
+          </label>
+          <input
+            id="rq-age"
+            type="number"
+            min={1}
+            max={168}
+            value={maxAgeHours}
+            onChange={(e) => setMaxAgeHours(e.target.value)}
+            style={INPUT_STYLE}
+          />
         </div>
-      </DialogContent>
-    </Dialog>
+        {lastResult !== null && (
+          <SuccessBox>
+            requeued {lastResult} task{lastResult === 1 ? "" : "s"}.
+          </SuccessBox>
+        )}
+        {error && <ErrorBox>{error}</ErrorBox>}
+        <div className="flex" style={{ gap: 8 }}>
+          <button
+            type="button"
+            className="font-mono uppercase"
+            style={{ ...BTN_ACCENT_STYLE, flex: 1 }}
+            onClick={handleConfirm}
+            disabled={isPending}
+          >
+            {isPending ? "REQUEUEING\u2026" : "REQUEUE FAILED"}
+          </button>
+          <button
+            type="button"
+            className="font-mono uppercase"
+            style={BTN_STYLE}
+            onClick={handleClose}
+          >
+            CLOSE
+          </button>
+        </div>
+      </div>
+    </ModalShell>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Reconcile dialog -- POST /admin/reconcile { task_id }
+// Reconcile dialog
 // ---------------------------------------------------------------------------
 
-interface ReconcileDialogProps {
+function ReconcileDialog({
+  open,
+  initialTaskId,
+  onClose,
+}: {
   open: boolean;
   initialTaskId: string;
   onClose: () => void;
-}
-
-function ReconcileDialog({ open, initialTaskId, onClose }: ReconcileDialogProps) {
+}) {
   const [taskId, setTaskId] = useState(initialTaskId);
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<ReconcileReport | null>(null);
   const reconcileMutation = useReconcileTask();
 
-  // Sync the field with a preselected task id when the dialog opens.
   useEffect(() => {
     if (open) {
       setTaskId(initialTaskId);
@@ -313,116 +486,189 @@ function ReconcileDialog({ open, initialTaskId, onClose }: ReconcileDialogProps)
     }
   }
 
+  const heartbeatLabel = report?.signals.task_heartbeat_at
+    ? new Date(report.signals.task_heartbeat_at).toLocaleString()
+    : "--";
+
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle className="font-mono text-text">Reconcile task state</DialogTitle>
-        </DialogHeader>
-
-        <div className="flex flex-col gap-3">
-          <p className="font-mono text-xs text-text-muted">
-            Cross-checks the three sources of truth (TaskRecord status,
-            workflow cursor, ARQ lock) and heals drift. Idempotent: a
-            consistent row returns healed=false with no actions.
-          </p>
-
-          <label className="font-mono text-xs text-text-muted flex flex-col gap-1">
-            Task id
-            <Input
-              value={taskId}
-              onChange={(e) => setTaskId(e.target.value)}
-              className="font-mono text-sm"
-              placeholder="task_..."
-            />
+    <ModalShell
+      open={open}
+      title="reconcile task state"
+      onClose={handleClose}
+      width={540}
+    >
+      <div className="flex flex-col" style={{ gap: 12 }}>
+        <p
+          className="font-mono"
+          style={{ fontSize: 11, color: "var(--text-muted)" }}
+        >
+          cross-checks TaskRecord status, workflow cursor, and ARQ lock and
+          heals drift. idempotent: a consistent row returns healed=false.
+        </p>
+        <div className="flex flex-col" style={{ gap: 4 }}>
+          <label
+            className="font-mono uppercase"
+            style={{
+              fontSize: 9,
+              letterSpacing: "0.1em",
+              color: "var(--text-faint)",
+            }}
+          >
+            task id
           </label>
-
-          {error && (
-            <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-              {error}
+          <input
+            value={taskId}
+            onChange={(e) => setTaskId(e.target.value)}
+            placeholder="task_..."
+            style={INPUT_STYLE}
+          />
+        </div>
+        {error && <ErrorBox>{error}</ErrorBox>}
+        {report && (
+          <div
+            className="flex flex-col"
+            style={{
+              gap: 10,
+              padding: 10,
+              borderRadius: 3,
+              border: "1px solid var(--border-soft)",
+              background: "var(--surface-sunk)",
+            }}
+          >
+            <div className="flex items-center" style={{ gap: 8 }}>
+              <MonoBadge tone={report.healed ? "warn" : "ok"}>
+                {report.healed ? "HEALED" : "NO DRIFT"}
+              </MonoBadge>
+              <span
+                className="font-mono truncate"
+                style={{ fontSize: 10.5, color: "var(--text-muted)" }}
+              >
+                {report.task_id}
+              </span>
             </div>
-          )}
-
-          {report && (
-            <div className="flex flex-col gap-3 rounded-[4px] border border-border bg-elevated/50 p-3">
-              <div className="flex items-center gap-2">
-                <AilaBadge
-                  severity={report.healed ? "medium" : "low"}
-                  size="sm"
-                >
-                  {report.healed ? "healed" : "no drift"}
-                </AilaBadge>
-                <span className="font-mono text-xs text-text-muted truncate">
-                  {report.task_id}
+            <div>
+              <p
+                className="font-mono uppercase"
+                style={{
+                  fontSize: 9,
+                  letterSpacing: "0.1em",
+                  color: "var(--text-faint)",
+                  marginBottom: 4,
+                }}
+              >
+                signals
+              </p>
+              <div
+                className="grid font-mono"
+                style={{
+                  gridTemplateColumns: "max-content 1fr",
+                  columnGap: 10,
+                  rowGap: 3,
+                  fontSize: 10.5,
+                }}
+              >
+                <span style={{ color: "var(--text-faint)" }}>
+                  task_status
+                </span>
+                <span style={{ color: "var(--text-primary)" }}>
+                  {report.signals.task_status ?? "--"}
+                </span>
+                <span style={{ color: "var(--text-faint)" }}>
+                  heartbeat_at
+                </span>
+                <span style={{ color: "var(--text-primary)" }}>
+                  {heartbeatLabel}
+                </span>
+                <span style={{ color: "var(--text-faint)" }}>
+                  cursor_state
+                </span>
+                <span style={{ color: "var(--text-primary)" }}>
+                  {report.signals.cursor_state ?? "--"}
+                </span>
+                <span style={{ color: "var(--text-faint)" }}>
+                  lock_present
+                </span>
+                <span style={{ color: "var(--text-primary)" }}>
+                  {report.signals.lock_present === null
+                    ? "--"
+                    : report.signals.lock_present
+                      ? "true"
+                      : "false"}
                 </span>
               </div>
-
-              <div>
-                <p className="font-mono text-xs font-semibold uppercase tracking-wider text-text-muted mb-1">
-                  Signals
-                </p>
-                <div className="grid grid-cols-2 gap-x-3 gap-y-1 font-mono text-xs">
-                  <span className="text-text-muted">task_status</span>
-                  <span className="text-text">{report.signals.task_status ?? "--"}</span>
-                  <span className="text-text-muted">task_heartbeat_at</span>
-                  <span className="text-text">
-                    {formatTimestamp(report.signals.task_heartbeat_at)}
-                  </span>
-                  <span className="text-text-muted">cursor_state</span>
-                  <span className="text-text">{report.signals.cursor_state ?? "--"}</span>
-                  <span className="text-text-muted">lock_present</span>
-                  <span className="text-text">
-                    {report.signals.lock_present === null
-                      ? "--"
-                      : report.signals.lock_present
-                        ? "true"
-                        : "false"}
-                  </span>
-                </div>
-              </div>
-
-              <div>
-                <p className="font-mono text-xs font-semibold uppercase tracking-wider text-text-muted mb-1">
-                  Actions ({report.actions.length})
-                </p>
-                {report.actions.length === 0 ? (
-                  <p className="font-mono text-xs text-text-muted">
-                    No mutations required.
-                  </p>
-                ) : (
-                  <ul className="flex flex-col gap-1">
-                    {report.actions.map((action, idx) => (
-                      <li
-                        key={`${action.kind}-${idx}`}
-                        className="rounded-[2px] border border-border bg-base px-2 py-1 font-mono text-xs"
-                      >
-                        <code className="text-text">{action.kind}</code>
-                        <span className="ml-2 text-text-muted">{action.reason}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
             </div>
-          )}
-
-          <div className="flex gap-2 pt-1">
-            <Button
-              type="button"
-              size="sm"
-              className="flex-1"
-              onClick={handleRun}
-              disabled={reconcileMutation.isPending}
-            >
-              {reconcileMutation.isPending ? "Reconciling..." : "Run reconcile"}
-            </Button>
-            <Button type="button" size="sm" variant="outline" onClick={handleClose}>
-              Close
-            </Button>
+            <div>
+              <p
+                className="font-mono uppercase"
+                style={{
+                  fontSize: 9,
+                  letterSpacing: "0.1em",
+                  color: "var(--text-faint)",
+                  marginBottom: 4,
+                }}
+              >
+                actions ({report.actions.length})
+              </p>
+              {report.actions.length === 0 ? (
+                <p
+                  className="font-mono"
+                  style={{ fontSize: 10.5, color: "var(--text-muted)" }}
+                >
+                  no mutations required.
+                </p>
+              ) : (
+                <ul
+                  className="flex flex-col"
+                  style={{ gap: 3, listStyle: "none", padding: 0 }}
+                >
+                  {report.actions.map((action, idx) => (
+                    <li
+                      key={`${action.kind}-${idx}`}
+                      className="font-mono"
+                      style={{
+                        border: "1px solid var(--border-faint)",
+                        background: "var(--surface-card)",
+                        padding: "4px 8px",
+                        fontSize: 10.5,
+                        borderRadius: 2,
+                      }}
+                    >
+                      <code style={{ color: "var(--accent)" }}>
+                        {action.kind}
+                      </code>
+                      <span
+                        style={{ color: "var(--text-muted)", marginLeft: 8 }}
+                      >
+                        {action.reason}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </div>
+        )}
+        <div className="flex" style={{ gap: 8 }}>
+          <button
+            type="button"
+            className="font-mono uppercase"
+            style={{ ...BTN_ACCENT_STYLE, flex: 1 }}
+            onClick={handleRun}
+            disabled={reconcileMutation.isPending}
+          >
+            {reconcileMutation.isPending ? "RECONCILING\u2026" : "RUN RECONCILE"}
+          </button>
+          <button
+            type="button"
+            className="font-mono uppercase"
+            style={BTN_STYLE}
+            onClick={handleClose}
+          >
+            CLOSE
+          </button>
         </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </ModalShell>
   );
 }
 
@@ -447,7 +693,9 @@ export function TaskQueueAdminPage() {
   const deadLetterQuery = useQuery({
     queryKey: ["platform", "tasks", "dead-letter"],
     queryFn: () =>
-      authorizedRequestJson<DataEnvelope<DeadLetterEntry[]>>("/admin/tasks/dead-letter"),
+      authorizedRequestJson<DataEnvelope<DeadLetterEntry[]>>(
+        "/admin/tasks/dead-letter",
+      ),
     refetchInterval: 30_000,
   });
 
@@ -457,7 +705,9 @@ export function TaskQueueAdminPage() {
         method: "POST",
       }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["platform", "tasks", "queue-depth"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["platform", "tasks", "queue-depth"],
+      });
     },
   });
 
@@ -468,7 +718,9 @@ export function TaskQueueAdminPage() {
         { method: "POST" },
       ),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["platform", "tasks", "queue-depth"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["platform", "tasks", "queue-depth"],
+      });
     },
   });
 
@@ -479,8 +731,12 @@ export function TaskQueueAdminPage() {
         { method: "POST" },
       ),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["platform", "tasks", "queue-depth"] });
-      void queryClient.invalidateQueries({ queryKey: ["platform", "tasks", "dead-letter"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["platform", "tasks", "queue-depth"],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["platform", "tasks", "dead-letter"],
+      });
     },
   });
 
@@ -493,8 +749,6 @@ export function TaskQueueAdminPage() {
   );
 
   const sortedStatuses = useMemo(() => {
-    // Preserve a stable order for the common task statuses; unknown statuses
-    // appended alphabetically at the end.
     const preferred = [
       "queued",
       "waiting",
@@ -513,285 +767,262 @@ export function TaskQueueAdminPage() {
   }, [queueDepth]);
 
   const drainResult = drainMutation.data?.data;
+  const runningCount = queueDepth["running"] ?? 0;
+  const failedCount = queueDepth["failed"] ?? 0;
 
   return (
-    <div className="flex flex-col gap-6 p-4 lg:p-6">
-      {/* Page header */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-      </div>
-
-      {/* Drain status banner */}
-      {drainResult?.draining && (
-        <div className="rounded-[4px] border border-medium/40 bg-medium/10 px-4 py-3 font-mono text-xs text-medium">
-          Queue is draining. {drainResult.pending} task
-          {drainResult.pending === 1 ? "" : "s"} still pending. New
-          submissions are rejected until the platform is restarted.
-        </div>
-      )}
-
-      {/* Top metrics */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Total Tasks
-        </p>
-        <div className="mt-1 min-h-[2rem]">
-          {queueDepthQuery.isLoading ? (
-            <LoadingSkeleton size="md" width="third" aria-label="Loading total task count" />
-          ) : (
-            <p className="font-mono text-2xl font-semibold text-text">{totalQueued}</p>
-          )}
-        </div>
-        <p className="font-mono text-xs text-text-muted mt-0.5">
-          Across all statuses
-        </p></AilaCard>
-
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Running
-        </p>
-        <div className="mt-1 min-h-[2rem]">
-          {queueDepthQuery.isLoading ? (
-            <LoadingSkeleton size="md" width="third" aria-label="Loading running task count" />
-          ) : (
-            <p className="font-mono text-2xl font-semibold text-text">{queueDepth["running"] ?? 0}</p>
-          )}
-        </div>
-        <p className="font-mono text-xs text-text-muted mt-0.5">
-          In-flight workers
-        </p></AilaCard>
-
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Dead-lettered
-        </p>
-        <div className="mt-1 min-h-[2rem]">
-          {deadLetterQuery.isLoading ? (
-            <LoadingSkeleton size="md" width="third" aria-label="Loading dead-lettered task count" />
-          ) : (
-            <p className="font-mono text-2xl font-semibold text-text">{deadLetterEntries.length}</p>
-          )}
-        </div>
-        <p className="font-mono text-xs text-text-muted mt-0.5">
-          Awaiting manual recovery
-        </p></AilaCard>
-      </div>
-
-      {/* Queue depth detail */}
-      <WindowPanel
-        title="Queue Depth by Status"
-        tone="muted"
+    <div className="flex flex-col" style={{ gap: 16, padding: 20 }}>
+      <SectionHeader
+        icon={"\u25a0"}
+        title="Task queue"
         actions={
-          <Button
-            size="xs"
-            variant="outline"
-            onClick={() => void queueDepthQuery.refetch()}
-            disabled={queueDepthQuery.isFetching}
-          >
-            <ArrowsCounterClockwise className="h-3 w-3" />
-            Refresh
-          </Button>
-        }
-      >
-      {queueDepthQuery.isLoading && <LoadingSkeletonGroup lines={3} />}
-      
-      {queueDepthQuery.isError && (
-        <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-          Failed to load queue depth: {(queueDepthQuery.error as Error).message}
-        </div>
-      )}
-      
-      {!queueDepthQuery.isLoading && !queueDepthQuery.isError && sortedStatuses.length === 0 && (
-        <p className="font-mono text-xs text-text-muted">
-          No tasks in the queue.
-        </p>
-      )}
-      
-      {!queueDepthQuery.isLoading && sortedStatuses.length > 0 && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {sortedStatuses.map((status) => (
-            <div
-              key={status}
-              className="rounded-[4px] border border-border bg-base px-3 py-2 flex flex-col gap-1"
+          <div className="flex items-center" style={{ gap: 8 }}>
+            <button
+              type="button"
+              style={BTN_STYLE}
+              onClick={() => void queueDepthQuery.refetch()}
+              disabled={queueDepthQuery.isFetching}
             >
-              <AilaBadge severity={statusSeverity(status)} size="sm">
-                {status}
-              </AilaBadge>
-              <p className="font-mono text-lg font-semibold text-text">
-                {queueDepth[status] ?? 0}
-              </p>
-            </div>
-          ))}
-        </div>
-      )}</WindowPanel>
+              REFRESH
+            </button>
+            <button
+              type="button"
+              style={BTN_DANGER_STYLE}
+              onClick={() => setDrainOpen(true)}
+              disabled={drainMutation.isPending}
+            >
+              {drainMutation.isPending ? "DRAINING\u2026" : "PAUSE / DRAIN"}
+            </button>
+            <button
+              type="button"
+              style={BTN_ACCENT_STYLE}
+              onClick={() => setRequeueOpen(true)}
+              disabled={requeueFailedMutation.isPending}
+            >
+              REQUEUE FAILED
+            </button>
+            <button
+              type="button"
+              style={BTN_ACCENT_STYLE}
+              onClick={() => {
+                setReconcileTaskId("");
+                setReconcileOpen(true);
+              }}
+            >
+              {"RECONCILE\u2026"}
+            </button>
+          </div>
+        }
+      />
 
-      {/* Admin actions */}
-      <WindowPanel title="Admin Actions" tone="muted">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <div className="rounded-[4px] border border-border p-3 flex flex-col gap-2">
-          <div className="flex items-center gap-2">
-            <Pause className="h-4 w-4 text-medium" />
-            <h3 className="font-mono text-sm font-semibold text-text">Drain Queue</h3>
-          </div>
-          <p className="font-mono text-xs text-text-muted">
-            Reject new submissions; in-flight tasks continue to run.
-          </p>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setDrainOpen(true)}
-            disabled={drainMutation.isPending}
-            className="self-start"
-          >
-            {drainMutation.isPending ? "Draining..." : "Drain Queue"}
-          </Button>
+      {drainResult?.draining && (
+        <div
+          className="font-mono"
+          style={{
+            border:
+              "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+            background:
+              "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+            color: "var(--status-warn)",
+            padding: "8px 12px",
+            fontSize: 11,
+            borderRadius: 3,
+          }}
+        >
+          {`QUEUE DRAINING \u00b7 ${drainResult.pending} task${drainResult.pending === 1 ? "" : "s"} pending \u00b7 new submissions rejected until platform restart.`}
         </div>
-      
-        <div className="rounded-[4px] border border-border p-3 flex flex-col gap-2">
-          <div className="flex items-center gap-2">
-            <ArrowsCounterClockwise className="h-4 w-4 text-info" />
-            <h3 className="font-mono text-sm font-semibold text-text">Requeue Failed</h3>
-          </div>
-          <p className="font-mono text-xs text-text-muted">
-            Requeue tasks that failed within the configured lookback window.
-          </p>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setRequeueOpen(true)}
-            disabled={requeueFailedMutation.isPending}
-            className="self-start"
-          >
-            {requeueFailedMutation.isPending ? "Requeueing..." : "Requeue Failed"}
-          </Button>
-        </div>
+      )}
 
-        <div className="rounded-[4px] border border-border p-3 flex flex-col gap-2">
-          <div className="flex items-center gap-2">
-            <Broom className="h-4 w-4 text-info" />
-            <h3 className="font-mono text-sm font-semibold text-text">Reconcile State</h3>
+      {/* Top BigStats */}
+      <div
+        className="grid"
+        style={{
+          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+          gap: 12,
+        }}
+      >
+        <WindowPanel title="total tasks">
+          <BigStat value={totalQueued} sub="across all statuses" />
+        </WindowPanel>
+        <WindowPanel title="running">
+          <BigStat value={runningCount} sub="in-flight workers" />
+        </WindowPanel>
+        <WindowPanel title="failed">
+          <BigStat value={failedCount} sub="recent lookback" />
+        </WindowPanel>
+        <WindowPanel title="dead-lettered">
+          <BigStat
+            value={deadLetterEntries.length}
+            sub="awaiting manual recovery"
+          />
+        </WindowPanel>
+      </div>
+
+      {/* Per-status depth + latency panels */}
+      <WindowPanel
+        title="queue depth by status"
+        tone="muted"
+      >
+        {queueDepthQuery.isLoading && <LoadingSkeletonGroup lines={3} />}
+        {queueDepthQuery.isError && (
+          <ErrorBox>
+            failed to load queue depth:{" "}
+            {(queueDepthQuery.error as Error).message}
+          </ErrorBox>
+        )}
+        {!queueDepthQuery.isLoading &&
+          !queueDepthQuery.isError &&
+          sortedStatuses.length === 0 && (
+            <p
+              className="font-mono"
+              style={{ fontSize: 11, color: "var(--text-muted)" }}
+            >
+              no tasks in the queue.
+            </p>
+          )}
+        {!queueDepthQuery.isLoading && sortedStatuses.length > 0 && (
+          <div className="flex flex-col" style={{ gap: 6 }}>
+            {sortedStatuses.map((status) => (
+              <StatBar
+                key={status}
+                label={status.toUpperCase()}
+                color={statusColor(status)}
+                value={queueDepth[status] ?? 0}
+                max={totalQueued || 1}
+              />
+            ))}
           </div>
-          <p className="font-mono text-xs text-text-muted">
-            Heal drift between TaskRecord, workflow cursor, and ARQ lock
-            for a single task.
-          </p>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setReconcileTaskId("");
-              setReconcileOpen(true);
-            }}
-            className="self-start"
-          >
-            Reconcile...
-          </Button>
-        </div>
-      </div></WindowPanel>
+        )}
+      </WindowPanel>
 
       {/* Dead-letter queue */}
       <WindowPanel
-        title="Dead Letter Queue"
+        title="dead-letter queue"
         tone="warn"
         actions={
-          <Button
-            size="xs"
-            variant="outline"
+          <button
+            type="button"
+            style={BTN_STYLE}
             onClick={() => void deadLetterQuery.refetch()}
             disabled={deadLetterQuery.isFetching}
           >
-            <ArrowsCounterClockwise className="h-3 w-3" />
-            Refresh
-          </Button>
+            REFRESH
+          </button>
         }
+        flush
       >
-      {deadLetterQuery.isLoading && <LoadingSkeletonGroup lines={3} />}
-      
-      {deadLetterQuery.isError && (
-        <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-          Failed to load dead-letter entries: {(deadLetterQuery.error as Error).message}
-        </div>
-      )}
-      
-      {!deadLetterQuery.isLoading && !deadLetterQuery.isError && deadLetterEntries.length === 0 && (
-        <EmptyState
-          icon={<Skull className="h-10 w-10" />}
-          title="No dead-lettered tasks"
-          description="Tasks that exhaust their retry budget land here for manual triage."
-        />
-      )}
-      
-      {!deadLetterQuery.isLoading && deadLetterEntries.length > 0 && (
-        <div className="overflow-x-auto">
-          <table aria-label="Queued tasks" className="w-full border-collapse [&_th]:border [&_th]:border-border [&_th]:uppercase [&_th]:tracking-wider [&_td]:border [&_td]:border-border">
-            <thead>
-              <tr className="border-b border-border bg-elevated">
-                <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Task ID</th>
-                <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Track</th>
-                <th className="py-2 px-3 text-left font-mono text-xs text-text-muted hidden md:table-cell">Function</th>
-                <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Attempts</th>
-                <th className="py-2 px-3 text-left font-mono text-xs text-text-muted hidden lg:table-cell">Exception</th>
-                <th className="py-2 px-3 text-left font-mono text-xs text-text-muted hidden xl:table-cell">Dead-lettered</th>
-                <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {deadLetterEntries.map((entry) => (
-                <tr
-                  key={`${entry.track}:${entry.task_id}`}
-                  className="border-b border-border last:border-0 font-mono text-xs hover:bg-elevated"
+        {deadLetterQuery.isLoading && (
+          <div style={{ padding: 12 }}>
+            <LoadingSkeletonGroup lines={3} />
+          </div>
+        )}
+        {deadLetterQuery.isError && (
+          <div style={{ padding: 12 }}>
+            <ErrorBox>
+              failed to load dead-letter entries:{" "}
+              {(deadLetterQuery.error as Error).message}
+            </ErrorBox>
+          </div>
+        )}
+        {!deadLetterQuery.isLoading && !deadLetterQuery.isError && (
+          <DataGrid
+            columns={[
+              { label: "TASK ID", width: "150px" },
+              { label: "TRACK", width: "110px" },
+              { label: "FUNCTION", width: "1fr" },
+              { label: "ATTEMPTS", width: "80px", align: "right" },
+              { label: "EXCEPTION", width: "150px" },
+              { label: "DEAD AT", width: "160px" },
+              { label: "ACTIONS", width: "170px", align: "right" },
+            ]}
+            rows={deadLetterEntries}
+            getKey={(entry) => `${entry.track}:${entry.task_id}`}
+            empty={
+              <div
+                className="font-mono"
+                style={{
+                  padding: 34,
+                  textAlign: "center",
+                  fontSize: 12,
+                  color: "var(--text-muted)",
+                }}
+              >
+                no dead-lettered tasks. failures that exhaust their retry
+                budget land here for manual triage.
+              </div>
+            }
+            renderCells={(entry) => [
+              <span
+                key="id"
+                title={entry.task_id}
+                className="truncate"
+                style={{ color: "var(--text-muted)", fontSize: 10.5 }}
+              >
+                {`${entry.task_id.slice(0, 12)}\u2026`}
+              </span>,
+              <MonoBadge key="tr" tone="info">
+                {entry.track}
+              </MonoBadge>,
+              <span
+                key="fn"
+                title={entry.fn_path}
+                className="truncate"
+                style={{ color: "var(--text-primary)", fontSize: 10.5 }}
+              >
+                {entry.fn_path}
+              </span>,
+              <span
+                key="at"
+                style={{ color: "var(--text-primary)", fontSize: 11 }}
+              >
+                {entry.attempts}
+              </span>,
+              <MonoBadge key="ex" tone="critical" title={entry.error}>
+                {entry.exception_class || "Exception"}
+              </MonoBadge>,
+              <span
+                key="da"
+                style={{ color: "var(--text-faint)", fontSize: 10 }}
+              >
+                {entry.dead_lettered_at
+                  ? new Date(entry.dead_lettered_at).toLocaleString()
+                  : "--"}
+              </span>,
+              <span key="ac" className="flex" style={{ gap: 6, justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  style={{ ...BTN_ACCENT_STYLE, height: 22, fontSize: 9 }}
+                  disabled={requeueDeadLetterMutation.isPending}
+                  onClick={() =>
+                    requeueDeadLetterMutation.mutate(entry.task_id)
+                  }
                 >
-                  <td className="py-2 px-3 text-text-muted max-w-[120px] truncate" title={entry.task_id}>
-                    {entry.task_id.slice(0, 8)}…
-                  </td>
-                  <td className="py-2 px-3 text-text">{entry.track}</td>
-                  <td className="py-2 px-3 text-text-muted hidden md:table-cell max-w-[280px] truncate" title={entry.fn_path}>
-                    {entry.fn_path}
-                  </td>
-                  <td className="py-2 px-3 text-text">{entry.attempts}</td>
-                  <td className="py-2 px-3 text-text-muted hidden lg:table-cell max-w-[200px] truncate" title={entry.error}>
-                    <code className="bg-base px-1.5 py-0.5 rounded-[2px]">
-                      {entry.exception_class || "Exception"}
-                    </code>
-                  </td>
-                  <td className="py-2 px-3 text-text-muted hidden xl:table-cell whitespace-nowrap">
-                    {formatTimestamp(entry.dead_lettered_at)}
-                  </td>
-                  <td className="py-2 px-3">
-                    <div className="flex flex-wrap gap-1">
-                      <Button
-                        size="xs"
-                        variant="outline"
-                        disabled={requeueDeadLetterMutation.isPending}
-                        onClick={() =>
-                          requeueDeadLetterMutation.mutate(entry.task_id)
-                        }
-                      >
-                        Requeue
-                      </Button>
-                      <Button
-                        size="xs"
-                        variant="outline"
-                        onClick={() => {
-                          setReconcileTaskId(entry.task_id);
-                          setReconcileOpen(true);
-                        }}
-                        title="Reconcile task state"
-                      >
-                        <Broom className="h-3 w-3" />
-                        Reconcile
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      
-      {requeueDeadLetterMutation.isError && (
-        <div className="mt-3 rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-          Requeue failed: {(requeueDeadLetterMutation.error as Error).message}
-        </div>
-      )}</WindowPanel>
+                  REQUEUE
+                </button>
+                <button
+                  type="button"
+                  style={{ ...BTN_STYLE, height: 22, fontSize: 9 }}
+                  onClick={() => {
+                    setReconcileTaskId(entry.task_id);
+                    setReconcileOpen(true);
+                  }}
+                  title="Reconcile task state"
+                >
+                  RECONCILE
+                </button>
+              </span>,
+            ]}
+          />
+        )}
+        {requeueDeadLetterMutation.isError && (
+          <div style={{ padding: 12 }}>
+            <ErrorBox>
+              requeue failed:{" "}
+              {(requeueDeadLetterMutation.error as Error).message}
+            </ErrorBox>
+          </div>
+        )}
+      </WindowPanel>
 
       {/* Dialogs */}
       <DrainConfirmDialog

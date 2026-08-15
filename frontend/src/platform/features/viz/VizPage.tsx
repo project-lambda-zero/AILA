@@ -1,10 +1,13 @@
 /**
- * VizPage -- Data Visualization hub.
+ * VizPage -- mock rebuild.
  *
- * Assembles all VIZ-01 through VIZ-04 charts on a single responsive grid page.
- * Available at /viz for any authenticated user.
+ * SectionHeader('visualization') + responsive grid of WindowPanels
+ * hosting the chart .view components. Each chart wrapper (below)
+ * owns its own WindowPanel now, so this page is purely layout.
  */
 import * as React from "react";
+
+import { SectionHeader } from "@/components/aila/mock";
 
 import { SeverityDonutChart } from "./SeverityDonutChart";
 import { FindingsTrendChart } from "./FindingsTrendChart";
@@ -17,25 +20,33 @@ export function VizPage() {
   const heatmapRef = React.useRef<HTMLDivElement>(null);
 
   return (
-    <div className="p-4 grid grid-cols-1 lg:grid-cols-2 gap-4 h-[calc(100vh-8rem)] min-h-[600px]">
-      {/* VIZ-01: Severity donut */}
-      <div ref={severityDonutRef} className="h-full">
-        <SeverityDonutChart exportRef={severityDonutRef} />
-      </div>
+    <div className="flex flex-col" style={{ gap: 16, padding: 20, minHeight: "100%" }}>
+      <SectionHeader icon={"\u25CE"} title="visualization" />
 
-      {/* VIZ-02: Findings trend */}
-      <div ref={trendRef} className="h-full">
-        <FindingsTrendChart exportRef={trendRef} />
-      </div>
-
-          <div ref={heatmapRef} className="lg:col-span-2 h-full">
-            <SystemHeatmap exportRef={heatmapRef} />
-          </div>
-    
-          {/* VIZ-04: Geographic map -- full width */}
-          <div className="lg:col-span-2 h-full">
-            <GeographicMap />
-          </div>
+      <div
+        className="grid"
+        style={{
+          gap: 16,
+          gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))",
+        }}
+      >
+        <div ref={severityDonutRef}>
+          <SeverityDonutChart exportRef={severityDonutRef} />
         </div>
-      );
-    }
+        <div ref={trendRef}>
+          <FindingsTrendChart exportRef={trendRef} />
+        </div>
+      </div>
+
+      <div
+        className="grid"
+        style={{ gap: 16, gridTemplateColumns: "1fr" }}
+      >
+        <div ref={heatmapRef}>
+          <SystemHeatmap exportRef={heatmapRef} />
+        </div>
+        <GeographicMap />
+      </div>
+    </div>
+  );
+}

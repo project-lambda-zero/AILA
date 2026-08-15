@@ -1,56 +1,25 @@
 /**
  * WorkflowInspectorPage -- Admin Workflow Inspector at /admin/workflows.
  *
- * Requires admin role at the route level (defense-in-depth).
- * Backend endpoints also independently enforce admin role.
- *
- * Layout:
- * - Filter bar: definition_id dropdown + current_state text + auto-refresh toggle
- * - Run table: columns for run_id, definition_id, current_state, retries, version, updated_at
- * - Right panel (row click): run metadata + TransitionTimeline from tasks/
- *
- * State badge colors (from CONTEXT.md Part 10):
- * - __succeeded__ → green  (oklch 72% 0.18 150)
- * - __failed__    → text-destructive
- * - on_failure    → amber  (oklch 78% 0.18 80)
- * - other         → text-accent
+ * Rebuilt to the AILA mock language: SectionHeader + FilterChip filter row +
+ * split (left: run selector as DataGrid; right: WindowPanel('cursor') mono kv
+ * + WindowPanel('transitions', flush) DataGrid). No shadcn Sheet / Tabs /
+ * Select / Card. All chrome via WindowPanel + DataGrid + MonoBadge.
  */
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback, type CSSProperties } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { GitBranch } from "@phosphor-icons/react/dist/csr/GitBranch";
-import { ArrowClockwise } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
-import { Copy } from "@phosphor-icons/react/dist/csr/Copy";
-import { Check } from "@phosphor-icons/react/dist/csr/Check";
 
-import { AilaCard } from "@/components/aila/AilaCard";
+import {
+  SectionHeader,
+  DataGrid,
+  MonoBadge,
+  FilterChip,
+} from "@/components/aila/mock";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
-import { EmptyState } from "@/components/aila/EmptyState";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { TransitionTimeline } from "@platform/features/tasks/TransitionTimeline";
 import type { TransitionView } from "@platform/features/tasks/transitions";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
-import { ActivityTimeline } from "@platform/features/activity/ActivityTimeline";
 
 import {
   fetchWorkflowRunTransition,
@@ -60,15 +29,45 @@ import {
 import type { WorkflowRunView } from "./workflow-inspector-types";
 
 // ---------------------------------------------------------------------------
+// Shared mock button + input primitives
+// ---------------------------------------------------------------------------
+
+const ACTION_BTN: CSSProperties = {
+  height: 26,
+  padding: "0 10px",
+  fontSize: 9.5,
+  letterSpacing: "0.08em",
+  borderRadius: 3,
+  cursor: "pointer",
+  color: "var(--text-primary)",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+};
+
+const INPUT_STYLE: CSSProperties = {
+  height: 28,
+  padding: "0 10px",
+  fontSize: 11,
+  color: "var(--text-primary)",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  outline: "none",
+};
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** State badge colour class per CONTEXT.md Part 10. */
-function stateBadgeClass(state: string): string {
-  if (state === "__succeeded__") return "text-[oklch(72%_0.18_150)]"; // green
-  if (state === "__failed__") return "text-destructive";
-  if (state === "on_failure") return "text-[oklch(78%_0.18_80)]"; // amber
-  return "text-accent";
+const STATE_TONE: Record<string, string> = {
+  __succeeded__: "ok",
+  __failed__: "critical",
+  __crashed__: "critical",
+  on_failure: "warn",
+};
+
+function stateTone(state: string): string {
+  return STATE_TONE[state] ?? "accent";
 }
 
 function formatRelativeTime(iso: string): string {
@@ -85,19 +84,14 @@ function formatRelativeTime(iso: string): string {
   return `${Math.floor(diffHr / 24)}d ago`;
 }
 
-/** Truncate a run_id UUID for display in the table (first 8 chars + ellipsis). */
-function truncateRunId(runId: string): string {
-  return runId.length > 12 ? `${runId.slice(0, 8)}…` : runId;
-}
-
 // ---------------------------------------------------------------------------
-// CopyButton -- copies text to clipboard, shows brief checkmark
+// Copy button (inline, mock-styled)
 // ---------------------------------------------------------------------------
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
 
-  function handleCopy(e: React.MouseEvent): void {
+  function handleCopy(e: React.MouseEvent) {
     e.stopPropagation();
     void navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
@@ -108,244 +102,67 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       type="button"
-      role="button"
       onClick={handleCopy}
-      className="ml-1 shrink-0 opacity-50 hover:opacity-100 transition-opacity"
-      title="Copy run_id"
-      aria-label="Copy run_id"
+      className="font-mono uppercase"
+      title="Copy"
+      aria-label="Copy value"
+      style={{
+        height: 18,
+        padding: "0 6px",
+        fontSize: 8.5,
+        letterSpacing: "0.1em",
+        borderRadius: 2,
+        cursor: "pointer",
+        color: copied ? "var(--status-ok)" : "var(--text-faint)",
+        background: "transparent",
+        border: "1px solid var(--border-faint)",
+      }}
     >
-      {copied ? (
-        <Check className="h-3 w-3 text-[oklch(72%_0.18_150)]" />
-      ) : (
-        <Copy className="h-3 w-3" />
-      )}
+      {copied ? "ok" : "copy"}
     </button>
   );
 }
 
 // ---------------------------------------------------------------------------
-// RunTable
+// Cursor + transitions panel (right column)
 // ---------------------------------------------------------------------------
 
-interface RunTableProps {
-  runs: WorkflowRunView[];
-  selectedRunId: string | null;
-  onSelectRun: (runId: string) => void;
-  isLoading: boolean;
-  isError: boolean;
-}
-
-function RunTable({
-  runs,
-  selectedRunId,
-  onSelectRun,
-  isLoading,
-  isError,
-}: RunTableProps) {
-  if (isLoading) {
-    return <LoadingSkeletonGroup lines={6} />;
-  }
-
-  if (isError) {
-    return (
-      <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-        Failed to load workflow runs. Check backend connectivity.
-      </div>
-    );
-  }
-
-  if (runs.length === 0) {
-    return (
-      <p className="font-mono text-xs text-muted-foreground py-4 text-center">
-        No workflow runs found.
-      </p>
-    );
-  }
-
+function KvRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="overflow-x-auto rounded-[4px] border border-border">
-      <table aria-label="Workflow states" className="w-full font-mono text-xs border-collapse [&_th]:border [&_th]:border-border [&_th]:uppercase [&_th]:tracking-wider [&_td]:border [&_td]:border-border">
-        <thead>
-          <tr className="border-b border-border bg-elevated">
-            <th className="text-left px-3 py-2 text-muted-foreground font-semibold whitespace-nowrap">
-              Run ID
-            </th>
-            <th className="text-left px-3 py-2 text-muted-foreground font-semibold whitespace-nowrap">
-              Definition
-            </th>
-            <th className="text-left px-3 py-2 text-muted-foreground font-semibold whitespace-nowrap">
-              State
-            </th>
-            <th className="text-right px-3 py-2 text-muted-foreground font-semibold whitespace-nowrap">
-              Retries
-            </th>
-            <th className="text-right px-3 py-2 text-muted-foreground font-semibold whitespace-nowrap">
-              Version
-            </th>
-            <th className="text-right px-3 py-2 text-muted-foreground font-semibold whitespace-nowrap">
-              Updated
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {runs.map((run) => {
-            const isSelected = run.run_id === selectedRunId;
-            return (
-              <tr
-                key={run.run_id}
-                onClick={(e) => {
-                  const target = e.target as HTMLElement;
-                  // Row-click trap: ignore clicks on buttons/icons inside the row
-                  if (
-                    target !== e.currentTarget &&
-                    target.closest('[role="button"], button')
-                  ) {
-                    return;
-                  }
-                  onSelectRun(run.run_id);
-                }}
-                className={[
-                  "border-b border-border last:border-0 cursor-pointer transition-colors",
-                  isSelected
-                    ? "bg-accent/10 border-accent/30"
-                    : "hover:bg-elevated",
-                ].join(" ")}
-              >
-                <td className="px-3 py-2 whitespace-nowrap">
-                  <div className="flex items-center gap-1">
-                    <span
-                      className="text-foreground"
-                      title={run.run_id}
-                    >
-                      {truncateRunId(run.run_id)}
-                    </span>
-                    <CopyButton text={run.run_id} />
-                  </div>
-                </td>
-                <td className="px-3 py-2 whitespace-nowrap text-foreground">
-                  {run.definition_id}
-                </td>
-                <td className="px-3 py-2 whitespace-nowrap">
-                  <span className={`font-semibold ${stateBadgeClass(run.current_state)}`}>
-                    {run.current_state}
-                  </span>
-                </td>
-                <td className="px-3 py-2 text-right text-muted-foreground tabular-nums">
-                  {run.retries_in_state}
-                </td>
-                <td className="px-3 py-2 text-right text-muted-foreground tabular-nums">
-                  {run.version}
-                </td>
-                <td className="px-3 py-2 text-right text-muted-foreground whitespace-nowrap">
-                  {formatRelativeTime(run.updated_at)}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+    <div
+      className="flex items-start"
+      style={{
+        gap: 10,
+        padding: "6px 0",
+        borderBottom: "1px solid var(--border-faint)",
+      }}
+    >
+      <span
+        className="font-mono uppercase"
+        style={{
+          flex: "0 0 110px",
+          fontSize: 9.5,
+          letterSpacing: "0.12em",
+          color: "var(--text-muted)",
+        }}
+      >
+        {label}
+      </span>
+      <span
+        className="font-mono"
+        style={{
+          flex: 1,
+          minWidth: 0,
+          fontSize: 11,
+          color: "var(--text-primary)",
+          wordBreak: "break-all",
+        }}
+      >
+        {children}
+      </span>
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// RunDetailPanel
-// ---------------------------------------------------------------------------
-
-interface RunDetailPanelProps {
-  run: WorkflowRunView;
-}
-
-function RunDetailPanel({ run }: RunDetailPanelProps) {
-  const { data: transitions, isLoading, isError } = useQuery({
-    queryKey: ["workflow-run-transitions", run.run_id],
-    queryFn: () => fetchWorkflowRunTransitions(run.run_id),
-    staleTime: 15_000,
-  });
-
-  const [selectedTransition, setSelectedTransition] =
-    useState<TransitionView | null>(null);
-
-  return (
-    <AilaCard variant="elevated" padding="md" className="flex flex-col gap-4">{/* Run metadata header */}
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-2">
-        <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          Run ID
-        </span>
-        <div className="flex items-center gap-1">
-          <span className="font-mono text-xs text-foreground break-all">
-            {run.run_id}
-          </span>
-          <CopyButton text={run.run_id} />
-        </div>
-      </div>
-    
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-[11px]">
-        <div>
-          <span className="text-muted-foreground">Definition: </span>
-          <span className="text-foreground">{run.definition_id}</span>
-        </div>
-        <div>
-          <span className="text-muted-foreground">Version: </span>
-          <span className="text-foreground tabular-nums">{run.version}</span>
-        </div>
-        <div>
-          <span className="text-muted-foreground">State: </span>
-          <span className={`font-semibold ${stateBadgeClass(run.current_state)}`}>
-            {run.current_state}
-          </span>
-        </div>
-        <div>
-          <span className="text-muted-foreground">Updated: </span>
-          <span className="text-foreground">{formatRelativeTime(run.updated_at)}</span>
-        </div>
-      </div>
-    </div>
-
-    {/* State machine sketch -- text-only ordered edge list derived from the
-       observed transitions. Mermaid is intentionally NOT rendered because
-       it is not a workspace dependency; the ordered list is the durable
-       readable form of the same information. */}
-    {(transitions?.length ?? 0) > 0 && (
-      <StateMachineSketch rows={transitions ?? []} />
-    )}
-
-    {/* Transitions + Activity -- the transitions tab is the durable view the
-       inspector has always shown; the activity tab reuses the shared
-       ActivityTimeline (GET /audit/events?run_id=<id>) so the same panel
-       exposes both the state-machine trace and the audit trail without
-       duplicating the admin AuditLogsPage. */}
-    <Tabs defaultValue="transitions">
-      <TabsList variant="line">
-        <TabsTrigger value="transitions">Transitions</TabsTrigger>
-        <TabsTrigger value="activity">Activity</TabsTrigger>
-      </TabsList>
-      <TabsContent value="transitions">
-        <TransitionTimeline
-          rows={transitions ?? []}
-          isLoading={isLoading}
-          isError={isError}
-          onRowSelect={setSelectedTransition}
-        />
-      </TabsContent>
-      <TabsContent value="activity">
-        <ActivityTimeline runId={run.run_id} label="Workflow Run" />
-      </TabsContent>
-    </Tabs>
-
-    {/* Drill-down drawer for a single transition */}
-    <TransitionDetailSheet
-      row={selectedTransition}
-      onClose={() => setSelectedTransition(null)}
-    /></AilaCard>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// StateMachineSketch -- ordered edge list derived from observed transitions.
-// (Mermaid render is intentionally omitted; no workspace dep.)
-// ---------------------------------------------------------------------------
 
 function StateMachineSketch({ rows }: { rows: TransitionView[] }) {
   const edges = useMemo(() => {
@@ -354,7 +171,7 @@ function StateMachineSketch({ rows }: { rows: TransitionView[] }) {
     const counts = new Map<string, number>();
     for (const r of rows) {
       if (r.from_state === null) continue;
-      const key = `${r.from_state}→${r.to_state}`;
+      const key = `${r.from_state}\u2192${r.to_state}`;
       counts.set(key, (counts.get(key) ?? 0) + 1);
       if (!seen.has(key)) {
         seen.add(key);
@@ -362,7 +179,7 @@ function StateMachineSketch({ rows }: { rows: TransitionView[] }) {
       }
     }
     for (const edge of ordered) {
-      edge.count = counts.get(`${edge.from}→${edge.to}`) ?? 0;
+      edge.count = counts.get(`${edge.from}\u2192${edge.to}`) ?? 0;
     }
     return ordered;
   }, [rows]);
@@ -370,134 +187,307 @@ function StateMachineSketch({ rows }: { rows: TransitionView[] }) {
   if (edges.length === 0) return null;
 
   return (
-    <div className="rounded-[2px] border border-border bg-elevated/30 p-2">
-      <p className="font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
-        Observed edges ({edges.length})
-      </p>
-      <ul className="flex flex-col gap-0.5 font-mono text-[10px]">
+    <WindowPanel title={`edges \u00b7 ${edges.length}`} tone="muted">
+      <ul
+        className="flex flex-col"
+        style={{
+          gap: 4,
+          margin: 0,
+          padding: 0,
+          listStyle: "none",
+          fontSize: 10.5,
+        }}
+      >
         {edges.map((e) => (
-          <li key={`${e.from}→${e.to}`} className="flex items-center gap-2">
-            <span className="text-foreground opacity-80">{e.from}</span>
-            <span className="text-muted-foreground">→</span>
-            <span className="text-foreground">{e.to}</span>
+          <li
+            key={`${e.from}\u2192${e.to}`}
+            className="flex items-center font-mono"
+            style={{ gap: 8, color: "var(--text-primary)" }}
+          >
+            <span style={{ opacity: 0.85 }}>{e.from}</span>
+            <span style={{ color: "var(--text-muted)" }}>{"\u2192"}</span>
+            <span>{e.to}</span>
             {e.count > 1 && (
-              <span className="text-muted-foreground opacity-60">×{e.count}</span>
+              <span style={{ color: "var(--text-faint)" }}>
+                {"\u00d7"}
+                {e.count}
+              </span>
             )}
           </li>
         ))}
       </ul>
-    </div>
+    </WindowPanel>
   );
 }
 
-// ---------------------------------------------------------------------------
-// TransitionDetailSheet -- drill-down drawer for a single transition
-// ---------------------------------------------------------------------------
-
-interface TransitionDetailSheetProps {
-  row: TransitionView | null;
+interface TransitionDetailProps {
+  row: TransitionView;
   onClose: () => void;
 }
 
-function TransitionDetailSheet({ row, onClose }: TransitionDetailSheetProps) {
-  // Refetch the authoritative row via /transitions/{seq} so the drawer shows
-  // the server-side canonical data (not a snapshot from the list). The list
-  // row is the seed for the drawer; the query is the source of truth once
-  // opened.
+function TransitionDetail({ row, onClose }: TransitionDetailProps) {
   const query = useQuery({
-    queryKey: [
-      "workflow-run-transition",
-      row?.run_id ?? "",
-      row?.seq ?? -1,
-    ],
-    queryFn: () => fetchWorkflowRunTransition(row!.run_id, row!.seq),
+    queryKey: ["workflow-run-transition", row.run_id, row.seq],
+    queryFn: () => fetchWorkflowRunTransition(row.run_id, row.seq),
     enabled: row !== null,
     staleTime: 30_000,
-    initialData: row ?? undefined,
+    initialData: row,
   });
 
   const view = query.data ?? row;
 
   return (
-    <Sheet
-      open={row !== null}
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
+    <WindowPanel
+      title={`transition seq #${view.seq}`}
+      tone={stateTone(view.to_state) === "critical" ? "warn" : "info"}
+      actions={
+        <button
+          type="button"
+          className="font-mono uppercase"
+          onClick={onClose}
+          style={{ ...ACTION_BTN, height: 22, fontSize: 9 }}
+        >
+          close
+        </button>
+      }
     >
-      <SheetContent side="right" className="w-full sm:max-w-lg p-4 sm:p-6">
-        <SheetHeader className="flex flex-col gap-1">
-          <SheetTitle className="font-mono text-sm">
-            Transition seq #{view?.seq ?? "--"}
-          </SheetTitle>
-          <SheetDescription className="font-mono text-[11px]">
-            run {view?.run_id ?? ""}
-          </SheetDescription>
-        </SheetHeader>
+      {query.isError && (
+        <div
+          className="font-mono"
+          style={{
+            border:
+              "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+            background:
+              "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+            color: "var(--status-warn)",
+            padding: "6px 10px",
+            fontSize: 10.5,
+            borderRadius: 3,
+            marginBottom: 8,
+          }}
+        >
+          Failed to fetch transition: {(query.error as Error).message}
+        </div>
+      )}
+      <div className="flex flex-col">
+        <KvRow label="event">
+          <MonoBadge tone={stateTone(view.to_state)}>{view.event}</MonoBadge>
+        </KvRow>
+        <KvRow label="from_state">
+          {view.from_state ?? (
+            <span style={{ color: "var(--text-faint)" }}>(initial)</span>
+          )}
+        </KvRow>
+        <KvRow label="to_state">
+          <MonoBadge tone={stateTone(view.to_state)}>{view.to_state}</MonoBadge>
+        </KvRow>
+        <KvRow label="duration_ms">
+          <span className="tabular-nums">{view.duration_ms ?? "--"}</span>
+        </KvRow>
+        <KvRow label="happened_at">{view.happened_at}</KvRow>
+        <KvRow label="task_id">
+          {view.task_id ?? (
+            <span style={{ color: "var(--text-faint)" }}>(none)</span>
+          )}
+        </KvRow>
+      </div>
 
-        {view === undefined && (
-          <p className="font-mono text-xs text-muted-foreground">Loading…</p>
-        )}
-
-        {query.isError && (
-          <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-[11px] text-destructive">
-            Failed to fetch transition:{" "}
-            {(query.error as Error).message}
+      {view.error_class !== null && (
+        <div style={{ marginTop: 10 }}>
+          <div
+            className="font-mono uppercase"
+            style={{
+              fontSize: 9,
+              letterSpacing: "0.14em",
+              color: "var(--status-warn)",
+              marginBottom: 4,
+            }}
+          >
+            error
           </div>
-        )}
+          <div
+            className="font-mono"
+            style={{
+              padding: 8,
+              fontSize: 10.5,
+              color: "var(--status-warn)",
+              background:
+                "color-mix(in srgb, var(--status-warn) 8%, transparent)",
+              border:
+                "1px solid color-mix(in srgb, var(--status-warn) 32%, transparent)",
+              borderRadius: 3,
+            }}
+          >
+            <div style={{ fontWeight: 500 }}>{view.error_class}</div>
+            {view.error_message !== null &&
+              view.error_message !== view.error_class && (
+                <pre
+                  className="font-mono"
+                  style={{
+                    margin: "6px 0 0",
+                    maxHeight: 240,
+                    overflow: "auto",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                    fontSize: 10,
+                  }}
+                >
+                  {view.error_message}
+                </pre>
+              )}
+          </div>
+        </div>
+      )}
+    </WindowPanel>
+  );
+}
 
-        {view !== undefined && view !== null && (
-          <div className="flex flex-col gap-3 overflow-y-auto">
-            <div className="grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1 font-mono text-[11px]">
-              <span className="text-muted-foreground">event</span>
-              <span className={`font-semibold ${stateBadgeClass(view.to_state)}`}>
-                {view.event}
-              </span>
+interface RunDetailPanelProps {
+  run: WorkflowRunView;
+}
 
-              <span className="text-muted-foreground">from_state</span>
-              <span className="text-foreground">
-                {view.from_state ?? <span className="opacity-60">(initial)</span>}
-              </span>
+function RunDetailPanel({ run }: RunDetailPanelProps) {
+  const {
+    data: transitions,
+    isLoading,
+    isError,
+  } = useQuery({
+    queryKey: ["workflow-run-transitions", run.run_id],
+    queryFn: () => fetchWorkflowRunTransitions(run.run_id),
+    staleTime: 15_000,
+  });
 
-              <span className="text-muted-foreground">to_state</span>
-              <span className={`font-semibold ${stateBadgeClass(view.to_state)}`}>
-                {view.to_state}
-              </span>
+  const [selectedTransition, setSelectedTransition] =
+    useState<TransitionView | null>(null);
 
-              <span className="text-muted-foreground">duration_ms</span>
-              <span className="text-foreground tabular-nums">
-                {view.duration_ms ?? "--"}
-              </span>
+  const rows = transitions ?? [];
 
-              <span className="text-muted-foreground">happened_at</span>
-              <span className="text-foreground">{view.happened_at}</span>
+  return (
+    <div className="flex flex-col" style={{ gap: 12, minWidth: 0 }}>
+      <WindowPanel title="cursor" tone={stateTone(run.current_state) === "critical" ? "warn" : "accent"}>
+        <div className="flex flex-col">
+          <KvRow label="run_id">
+            <span className="inline-flex items-center" style={{ gap: 6 }}>
+              <span style={{ wordBreak: "break-all" }}>{run.run_id}</span>
+              <CopyButton text={run.run_id} />
+            </span>
+          </KvRow>
+          <KvRow label="definition">{run.definition_id}</KvRow>
+          <KvRow label="current_state">
+            <MonoBadge tone={stateTone(run.current_state)}>
+              {run.current_state}
+            </MonoBadge>
+          </KvRow>
+          <KvRow label="retries">
+            <span className="tabular-nums">{run.retries_in_state}</span>
+          </KvRow>
+          <KvRow label="version">
+            <span className="tabular-nums">{run.version}</span>
+          </KvRow>
+          <KvRow label="updated_at">{formatRelativeTime(run.updated_at)}</KvRow>
+        </div>
+      </WindowPanel>
 
-              <span className="text-muted-foreground">task_id</span>
-              <span className="text-foreground break-all">
-                {view.task_id ?? <span className="opacity-60">(none)</span>}
-              </span>
-            </div>
+      <StateMachineSketch rows={rows} />
 
-            {view.error_class !== null && (
-              <div className="rounded-[2px] border border-destructive/40 bg-destructive/5 p-2">
-                <p className="font-mono text-[10px] font-semibold uppercase tracking-wider text-destructive mb-1">
-                  Error
-                </p>
-                <p className="font-mono text-[11px] text-destructive">
-                  {view.error_class}
-                </p>
-                {view.error_message !== null &&
-                  view.error_message !== view.error_class && (
-                    <pre className="mt-1 max-h-64 overflow-auto font-mono text-[10px] text-destructive whitespace-pre-wrap break-words">
-{view.error_message}
-                    </pre>
-                  )}
+      <WindowPanel title={`transitions \u00b7 ${rows.length}`} flush>
+        {isLoading ? (
+          <div style={{ padding: 16 }}>
+            <LoadingSkeletonGroup lines={5} />
+          </div>
+        ) : isError ? (
+          <div
+            className="font-mono"
+            style={{
+              padding: 16,
+              color: "var(--status-warn)",
+              fontSize: 11,
+            }}
+          >
+            Failed to load transitions.
+          </div>
+        ) : (
+          <DataGrid<TransitionView>
+            columns={[
+              { label: "SEQ", width: "60px", align: "right" },
+              { label: "EVENT", width: "1fr" },
+              { label: "FROM", width: "1.2fr" },
+              { label: "TO", width: "1.2fr" },
+              { label: "MS", width: "60px", align: "right" },
+              { label: "WHEN", width: "160px" },
+            ]}
+            rows={rows}
+            getKey={(r) => r.seq}
+            onRowClick={(r) => setSelectedTransition(r)}
+            empty={
+              <div
+                className="font-mono"
+                style={{
+                  padding: 24,
+                  textAlign: "center",
+                  fontSize: 11,
+                  color: "var(--text-muted)",
+                }}
+              >
+                no transitions recorded for this run.
               </div>
-            )}
-          </div>
+            }
+            renderCells={(r) => [
+              <span
+                key="seq"
+                className="font-mono tabular-nums"
+                style={{ color: "var(--text-primary)", fontSize: 11 }}
+              >
+                {r.seq}
+              </span>,
+              <span
+                key="ev"
+                className="font-mono truncate"
+                style={{ color: "var(--text-primary)", fontSize: 11 }}
+              >
+                {r.event}
+              </span>,
+              <span
+                key="from"
+                className="font-mono truncate"
+                style={{ color: "var(--text-muted)", fontSize: 11 }}
+              >
+                {r.from_state ?? "(initial)"}
+              </span>,
+              <MonoBadge key="to" tone={stateTone(r.to_state)}>
+                {r.to_state}
+              </MonoBadge>,
+              <span
+                key="ms"
+                className="font-mono tabular-nums"
+                style={{ color: "var(--text-muted)", fontSize: 11 }}
+              >
+                {r.duration_ms ?? "--"}
+              </span>,
+              <span
+                key="ha"
+                className="font-mono"
+                style={{
+                  color: "var(--text-muted)",
+                  fontSize: 10.5,
+                  whiteSpace: "nowrap",
+                }}
+                title={r.happened_at}
+              >
+                {formatRelativeTime(r.happened_at)}
+              </span>,
+            ]}
+          />
         )}
-      </SheetContent>
-    </Sheet>
+      </WindowPanel>
+
+      {selectedTransition && (
+        <TransitionDetail
+          row={selectedTransition}
+          onClose={() => setSelectedTransition(null)}
+        />
+      )}
+    </div>
   );
 }
 
@@ -529,82 +519,187 @@ function FilterBar({
   onRefresh,
   isLoading,
 }: FilterBarProps) {
-  // Populate definition_id dropdown from distinct values in the current run list
   const definitionIds = useMemo(() => {
     const seen = new Set<string>();
-    for (const run of runs) {
-      seen.add(run.definition_id);
-    }
+    for (const run of runs) seen.add(run.definition_id);
     return [...seen].sort();
   }, [runs]);
 
   return (
-    <div className="flex flex-wrap items-center gap-3">
-      {/* Definition ID dropdown */}
-      <Select
-        value={filters.definition_id || "__all__"}
-        onValueChange={(val) => {
-          const selected = val ?? "__all__";
-          onFiltersChange({
-            ...filters,
-            definition_id: selected === "__all__" ? "" : selected,
-          });
-        }}
+    <div className="flex items-center flex-wrap" style={{ gap: 8 }}>
+      <select
+        aria-label="Filter by definition"
+        value={filters.definition_id}
+        onChange={(e) =>
+          onFiltersChange({ ...filters, definition_id: e.target.value })
+        }
+        className="font-mono"
+        style={{ ...INPUT_STYLE, width: 220 }}
       >
-        <SelectTrigger className="touch-target font-mono text-xs h-8 w-[220px]">
-          <SelectValue placeholder="All definitions" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="__all__">All definitions</SelectItem>
-          {definitionIds.map((id) => (
-            <SelectItem key={id} value={id}>
-              {id}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+        <option value="">All definitions</option>
+        {definitionIds.map((id) => (
+          <option key={id} value={id}>
+            {id}
+          </option>
+        ))}
+      </select>
 
-      {/* State text filter */}
-      <Input
+      <input
         type="text"
-        placeholder="Filter by state…"
-        value={filters.current_state}
-        onChange={(e) => {
-          onFiltersChange({ ...filters, current_state: e.target.value });
-        }}
-        className="touch-target font-mono text-xs h-8 w-[180px]"
+        placeholder="filter by state…"
         aria-label="Filter by current state"
+        value={filters.current_state}
+        onChange={(e) =>
+          onFiltersChange({ ...filters, current_state: e.target.value })
+        }
+        className="font-mono"
+        style={{ ...INPUT_STYLE, width: 180 }}
       />
 
-      {/* Auto-refresh toggle */}
+      <FilterChip
+        active={autoRefresh}
+        onClick={() => onAutoRefreshChange(!autoRefresh)}
+      >
+        {autoRefresh ? "auto-refresh on" : "auto-refresh off"}
+      </FilterChip>
+
       <button
         type="button"
-        onClick={() => onAutoRefreshChange(!autoRefresh)}
-        className={[
-          "touch-target flex items-center gap-1.5 px-2.5 py-1 rounded-[4px] border font-mono text-[11px] transition-colors",
-          autoRefresh
-            ? "border-accent/60 bg-accent/10 text-accent"
-            : "border-border text-muted-foreground hover:border-border hover:text-foreground",
-        ].join(" ")}
-        title={autoRefresh ? "Auto-refresh on (30s) -- click to disable" : "Enable auto-refresh (30s)"}
-      >
-        <ArrowClockwise className={`h-3 w-3 ${autoRefresh ? "animate-spin" : ""}`} style={autoRefresh ? { animationDuration: "3s" } : undefined} />
-        Auto-refresh
-      </button>
-
-      {/* Manual refresh */}
-      <Button
-        size="sm"
-        variant="ghost"
-        className="touch-target h-8 w-8 p-0"
+        className="font-mono uppercase"
         onClick={onRefresh}
         disabled={isLoading}
-        aria-label="Refresh now"
-        title="Refresh now"
+        style={{
+          ...ACTION_BTN,
+          opacity: isLoading ? 0.6 : 1,
+        }}
       >
-        <ArrowClockwise className="h-3.5 w-3.5" />
-      </Button>
+        {isLoading ? "refreshing" : "refresh"}
+      </button>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Run list panel (left column)
+// ---------------------------------------------------------------------------
+
+interface RunListProps {
+  runs: WorkflowRunView[];
+  selectedRunId: string | null;
+  onSelectRun: (runId: string) => void;
+  isLoading: boolean;
+  isError: boolean;
+}
+
+function RunList({
+  runs,
+  selectedRunId,
+  onSelectRun,
+  isLoading,
+  isError,
+}: RunListProps) {
+  if (isLoading) {
+    return (
+      <div style={{ padding: 16 }}>
+        <LoadingSkeletonGroup lines={6} />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div
+        className="font-mono"
+        style={{
+          padding: 16,
+          color: "var(--status-warn)",
+          fontSize: 11,
+        }}
+      >
+        Failed to load workflow runs. Check backend connectivity.
+      </div>
+    );
+  }
+
+  return (
+    <DataGrid<WorkflowRunView>
+      columns={[
+        { label: "RUN", width: "110px" },
+        { label: "DEFINITION", width: "1fr" },
+        { label: "STATE", width: "170px" },
+        { label: "RTY", width: "44px", align: "right" },
+        { label: "V", width: "36px", align: "right" },
+        { label: "UPDATED", width: "90px", align: "right" },
+      ]}
+      rows={runs}
+      getKey={(r) => r.run_id}
+      onRowClick={(r) => onSelectRun(r.run_id)}
+      empty={
+        <div
+          className="font-mono"
+          style={{
+            padding: 24,
+            textAlign: "center",
+            fontSize: 11,
+            color: "var(--text-muted)",
+          }}
+        >
+          no workflow runs match the filters.
+        </div>
+      }
+      renderCells={(r) => {
+        const isSelected = r.run_id === selectedRunId;
+        return [
+          <span
+            key="id"
+            className="font-mono truncate"
+            title={r.run_id}
+            style={{
+              color: isSelected ? "var(--accent)" : "var(--text-primary)",
+              fontSize: 10.5,
+            }}
+          >
+            {r.run_id.slice(0, 8)}
+            {"\u2026"}
+          </span>,
+          <span
+            key="def"
+            className="font-mono truncate"
+            style={{ color: "var(--text-primary)", fontSize: 11 }}
+          >
+            {r.definition_id}
+          </span>,
+          <MonoBadge key="st" tone={stateTone(r.current_state)}>
+            {r.current_state}
+          </MonoBadge>,
+          <span
+            key="rty"
+            className="font-mono tabular-nums"
+            style={{ color: "var(--text-muted)", fontSize: 11 }}
+          >
+            {r.retries_in_state}
+          </span>,
+          <span
+            key="v"
+            className="font-mono tabular-nums"
+            style={{ color: "var(--text-muted)", fontSize: 11 }}
+          >
+            {r.version}
+          </span>,
+          <span
+            key="upd"
+            className="font-mono"
+            style={{
+              color: "var(--text-muted)",
+              fontSize: 10.5,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {formatRelativeTime(r.updated_at)}
+          </span>,
+        ];
+      }}
+    />
   );
 }
 
@@ -620,7 +715,6 @@ export function WorkflowInspectorPage() {
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
-  // API params -- only pass non-empty strings
   const apiParams = useMemo(
     () => ({
       definition_id: filters.definition_id || undefined,
@@ -643,64 +737,90 @@ export function WorkflowInspectorPage() {
 
   const allRuns = runs ?? [];
 
-  // Resolve the selected run from the list for the detail panel
   const selectedRun = useMemo(
     () => allRuns.find((r) => r.run_id === selectedRunId) ?? null,
     [allRuns, selectedRunId],
   );
 
-  return (
-    <div className="flex flex-col gap-6 p-4 lg:p-6 h-full">
-      {/* Page header */}
+  const handleRefresh = useCallback(() => {
+    void refetchRuns();
+  }, [refetchRuns]);
 
-      {/* Filter bar */}
+  return (
+    <div
+      className="flex flex-col"
+      style={{ gap: 16, padding: 20, minHeight: "100%" }}
+    >
+      <SectionHeader
+        icon={
+          <GitBranch
+            size={16}
+            weight="duotone"
+            style={{ color: "var(--text-on-accent)" }}
+            aria-hidden="true"
+          />
+        }
+        title="workflow inspector"
+      />
+
       <FilterBar
         runs={allRuns}
         filters={filters}
         onFiltersChange={setFilters}
         autoRefresh={autoRefresh}
         onAutoRefreshChange={setAutoRefresh}
-        onRefresh={() => void refetchRuns()}
+        onRefresh={handleRefresh}
         isLoading={runsLoading}
       />
 
-      {/* Two-column split: run table + detail panel */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-4 min-h-0 flex-1">
-        {/* Left: run table */}
-        <AilaCard variant="default" padding="md" className="overflow-hidden min-w-0"><div className="flex flex-col gap-3 h-full">
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="font-mono text-sm font-semibold text-foreground">
-              Runs
-              {allRuns.length > 0 && (
-                <span className="ml-2 text-muted-foreground font-normal">
-                  ({allRuns.length})
-                </span>
-              )}
-            </h2>
-          </div>
-          <div className="overflow-auto min-h-0 flex-1">
-            <RunTable
-              runs={allRuns}
-              selectedRunId={selectedRunId}
-              onSelectRun={setSelectedRunId}
-              isLoading={runsLoading}
-              isError={runsError}
-            />
-          </div>
-        </div></AilaCard>
+      <div
+        className="grid"
+        style={{
+          gridTemplateColumns: "1fr 460px",
+          gap: 16,
+          minHeight: 0,
+        }}
+      >
+        <WindowPanel title={`runs \u00b7 ${allRuns.length}`} flush>
+          <RunList
+            runs={allRuns}
+            selectedRunId={selectedRunId}
+            onSelectRun={setSelectedRunId}
+            isLoading={runsLoading}
+            isError={runsError}
+          />
+        </WindowPanel>
 
-        {/* Right: run detail + transition timeline */}
-        <div className="min-w-0">
-          {selectedRun === null ? (
-            <EmptyState
-              icon={<GitBranch className="h-10 w-10" />}
-              title="Select a run"
-              description="Click a row to view its state transition history."
-            />
-          ) : (
-            <RunDetailPanel run={selectedRun} />
-          )}
-        </div>
+        {selectedRun === null ? (
+          <WindowPanel title="cursor" tone="muted">
+            <div
+              className="flex flex-col items-center justify-center"
+              style={{ gap: 8, padding: "36px 12px", textAlign: "center" }}
+            >
+              <span aria-hidden="true" style={{ color: "var(--text-faint)" }}>
+                <GitBranch size={28} weight="duotone" />
+              </span>
+              <span
+                className="font-mono"
+                style={{ color: "var(--text-primary)", fontSize: 12 }}
+              >
+                Select a run
+              </span>
+              <span
+                className="font-mono"
+                style={{
+                  color: "var(--text-muted)",
+                  fontSize: 10.5,
+                  maxWidth: 260,
+                }}
+              >
+                Click a row to inspect its cursor and the recorded transitions.
+              </span>
+            </div>
+          </WindowPanel>
+        ) : (
+          <RunDetailPanel run={selectedRun} />
+        )}
       </div>
     </div>
   );

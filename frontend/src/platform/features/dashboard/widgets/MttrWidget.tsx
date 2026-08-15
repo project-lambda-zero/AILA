@@ -1,16 +1,20 @@
 import * as React from "react";
-import { Clock } from "lucide-react";
 
+import { BigStat } from "@/components/aila/mock";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { useDashboardData } from "../hooks/useDashboardData";
+
+const CENTER_STYLE: React.CSSProperties = {
+  height: "100%",
+  padding: 16,
+  fontFamily: "var(--font-mono)",
+  fontSize: 11,
+};
 
 /**
  * MttrWidget -- findings closed in the last 30 days.
  *
  * Reads meta.closed_last_30d from the dashboard envelope.
- * Displays count as primary metric with a clock icon.
- *
- * Data from GET /dashboard via useDashboardData().
  */
 export function MttrWidget() {
   const { meta, isLoading, isError, error } = useDashboardData();
@@ -26,10 +30,11 @@ export function MttrWidget() {
 
   if (isError) {
     return (
-      <div className="h-full w-full p-4 flex items-center justify-center">
-        <p className="text-sm text-destructive font-mono">
-          {error instanceof Error ? error.message : "Failed to load metrics"}
-        </p>
+      <div
+        className="flex items-center justify-center"
+        style={{ ...CENTER_STYLE, color: "var(--status-warn)" }}
+      >
+        {error instanceof Error ? error.message : "Failed to load metrics"}
       </div>
     );
   }
@@ -37,12 +42,14 @@ export function MttrWidget() {
   const closedLast30d = meta?.closed_last_30d ?? null;
 
   return (
-    <div className="h-full w-full p-4 flex flex-col justify-center gap-2">
-      <Clock className="h-4 w-4 text-accent" aria-hidden="true" />
-      <p className="text-4xl font-mono font-bold text-text">
-        {closedLast30d !== null ? closedLast30d : "--"}
-      </p>
-      <p className="text-xs font-mono text-text-muted">Last 30 days</p>
+    <div
+      className="h-full w-full flex flex-col justify-center"
+      style={{ padding: 16 }}
+    >
+      <BigStat
+        value={closedLast30d !== null ? closedLast30d : "--"}
+        sub="closed / last 30d"
+      />
     </div>
   );
 }

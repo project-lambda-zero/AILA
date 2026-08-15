@@ -1,9 +1,8 @@
 import { useNavigate } from "react-router";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { WindowPanel } from "@/components/aila/WindowPanel";
-import { Button } from "@/components/ui/button";
+import { DataGrid, MonoBadge } from "@/components/aila/mock";
 
 import { useUntagSolidEvidence } from "../mutations";
 import { useSolidEvidence } from "../queries";
@@ -34,8 +33,17 @@ export function SolidEvidencePanel({ projectId }: Props) {
   if (isLoading) return <LoadingSkeleton size="lg" width="full" />;
   if (isError) {
     return (
-      <WindowPanel title="solid evidence" tone="warn" status="forensics ; solid evidence unavailable">
-        <p className="text-sm text-critical">Failed to load solid evidence.</p>
+      <WindowPanel
+        title="solid evidence"
+        tone="warn"
+        status="forensics ; unavailable"
+      >
+        <p
+          className="font-mono"
+          style={{ fontSize: 11, color: "var(--accent)" }}
+        >
+          Failed to load solid evidence.
+        </p>
       </WindowPanel>
     );
   }
@@ -44,19 +52,31 @@ export function SolidEvidencePanel({ projectId }: Props) {
 
   if (rows.length === 0) {
     return (
-      <WindowPanel title="solid evidence" tone="muted" status="forensics ; no tagged findings"><div className="py-6 text-center space-y-1">
-        <p className="text-sm text-text-muted">
-          No analyst-tagged findings yet.
-        </p>
-        <p className="text-xs text-text-muted">
-          Open a completed investigation and hit{" "}
-          <span className="font-mono text-mint">Tag as TRUE</span> or{" "}
-          <span className="font-mono" style={{ color: "var(--color-amber)" }}>Tag as FALSE</span> to
-          promote its answer to solid evidence. Tagged findings are injected
-          into every future investigation's prompt so the agent treats them
-          as ground truth / known dead-ends.
-        </p>
-      </div></WindowPanel>
+      <WindowPanel
+        title="solid evidence"
+        tone="muted"
+        status="forensics ; no tagged findings"
+      >
+        <div className="space-y-2">
+          <p
+            className="font-mono"
+            style={{ fontSize: 11, color: "var(--text-muted)" }}
+          >
+            no analyst-tagged findings yet.
+          </p>
+          <p
+            className="font-mono"
+            style={{ fontSize: 10, color: "var(--text-faint)", lineHeight: 1.6 }}
+          >
+            open a completed investigation and hit the{" "}
+            <span style={{ color: "var(--status-ok)" }}>Tag as TRUE</span> or{" "}
+            <span style={{ color: "var(--status-warn)" }}>Tag as FALSE</span>{" "}
+            button to promote its answer to solid evidence. tagged findings are
+            injected into every future investigation's prompt so the agent
+            treats them as ground truth / known dead-ends.
+          </p>
+        </div>
+      </WindowPanel>
     );
   }
 
@@ -64,7 +84,12 @@ export function SolidEvidencePanel({ projectId }: Props) {
   const falseCount = rows.length - trueCount;
 
   const handleUntag = (id: string) => {
-    if (!window.confirm("Remove this row from Solid Evidence? Its linked directive will also be deactivated.")) return;
+    if (
+      !window.confirm(
+        "Remove this row from Solid Evidence? Its linked directive will also be deactivated.",
+      )
+    )
+      return;
     untag.mutate(id);
   };
 
@@ -76,99 +101,111 @@ export function SolidEvidencePanel({ projectId }: Props) {
   };
 
   return (
-    <WindowPanel title="solid evidence" status={`total ${rows.length} ; true ${trueCount} ; false ${falseCount}`}>
-      <div className="rounded-md border border-border overflow-hidden bg-surface text-foreground">
-        <table className="w-full text-sm" aria-label="Solid-evidence tags">
-          <caption className="sr-only">Analyst-confirmed and disproved findings tagged as solid evidence.</caption>
-          <thead className="bg-elevated text-xs text-text-muted">
-            <tr>
-              <th className="text-left px-3 py-2 font-semibold w-20">Verdict</th>
-              <th className="text-left px-3 py-2 font-semibold">Question</th>
-              <th className="text-left px-3 py-2 font-semibold">Answer</th>
-              <th className="text-left px-3 py-2 font-semibold w-24">Confidence</th>
-              <th className="text-left px-3 py-2 font-semibold w-36">Tagged</th>
-              <th className="text-left px-3 py-2 font-semibold w-32">Source</th>
-              <th className="px-3 py-2 w-20" />
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr
-                key={r.id}
-                className="border-t border-border align-top hover:bg-elevated/30"
-              >
-                <td className="px-3 py-2">
-                  <AilaBadge
-                    severity={r.verdict === "true" ? "low" : "high"}
-                    size="sm"
-                  >
-                    {r.verdict === "true" ? "TRUE" : "FALSE"}
-                  </AilaBadge>
-                </td>
-                <td className="px-3 py-2 text-foreground">{r.question}</td>
-                <td className="px-3 py-2 text-foreground">
-                  <div className="whitespace-pre-wrap">{r.answer}</div>
-                  {r.notes && (
-                    <div className="mt-1 text-xs text-text-muted italic">
-                      Notes: {r.notes}
-                    </div>
-                  )}
-                  {r.primary_artifact && (
-                    <div className="mt-1 text-xs font-mono text-text-muted">
-                      artifact={r.primary_artifact}
-                    </div>
-                  )}
-                  {r.corroboration.length > 0 && (
-                    <div className="mt-1 text-xs text-text-muted">
-                      corroborated by:{" "}
-                      {r.corroboration.map((c, i) => (
-                        <code
-                          key={i}
-                          className="ml-1 px-1.5 py-0.5 bg-surface rounded font-mono"
-                        >
-                          {c}
-                        </code>
-                      ))}
-                    </div>
-                  )}
-                </td>
-                <td className="px-3 py-2 text-xs font-mono text-text-muted">
-                  {r.confidence}
-                </td>
-                <td className="px-3 py-2 text-xs text-text-muted">
-                  <div>{formatStamp(r.tagged_at)}</div>
-                  {r.tagged_by && (
-                    <div className="font-mono text-2xs">{r.tagged_by}</div>
-                  )}
-                </td>
-                <td className="px-3 py-2 text-xs">
-                  {r.source_investigation_id ? (
-                    <button
-                      type="button"
-                      onClick={() => openSourceInvestigation(r)}
-                      className="text-accent hover:underline font-mono"
-                    >
-                      {r.source_investigation_id.slice(0, 8)}…
-                    </button>
-                  ) : (
-                    <span className="text-text-muted">--</span>
-                  )}
-                </td>
-                <td className="px-3 py-2 text-right">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleUntag(r.id)}
-                    disabled={untag.isPending}
-                  >
-                    Untag
-                  </Button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+    <WindowPanel
+      title="solid evidence"
+      status={`total ${rows.length} ; true ${trueCount} ; false ${falseCount}`}
+    >
+      <DataGrid<SolidEvidence>
+        columns={[
+          { label: "VERDICT", width: "80px" },
+          { label: "ANSWER", width: "2fr" },
+          { label: "QUESTION", width: "2fr" },
+          { label: "INVESTIGATION", width: "110px" },
+          { label: "STAMP", width: "150px" },
+          { label: "", width: "110px", align: "right" },
+        ]}
+        rows={rows}
+        getKey={(r) => r.id}
+        renderCells={(r) => [
+          <MonoBadge key="v" tone={r.verdict === "true" ? "ok" : "warn"}>
+            {r.verdict}
+          </MonoBadge>,
+          <span
+            key="a"
+            title={r.answer}
+            className="truncate"
+            style={{
+              fontSize: 11,
+              color: "var(--text-primary)",
+              display: "block",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {r.answer}
+          </span>,
+          <span
+            key="q"
+            title={r.question}
+            className="truncate"
+            style={{
+              fontSize: 11,
+              color: "var(--text-muted)",
+              display: "block",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {r.question}
+          </span>,
+          r.source_investigation_id ? (
+            <button
+              key="inv"
+              type="button"
+              onClick={() => openSourceInvestigation(r)}
+              className="font-mono"
+              style={{
+                background: "transparent",
+                border: 0,
+                padding: 0,
+                cursor: "pointer",
+                fontSize: 10,
+                color: "var(--accent)",
+                textDecoration: "underline",
+                textAlign: "left",
+              }}
+            >
+              {`${r.source_investigation_id.slice(0, 8)}\u2026`}
+            </button>
+          ) : (
+            <span
+              key="inv"
+              style={{ fontSize: 10, color: "var(--text-faint)" }}
+            >
+              --
+            </span>
+          ),
+          <span
+            key="ts"
+            style={{ fontSize: 10, color: "var(--text-faint)" }}
+          >
+            {formatStamp(r.tagged_at)}
+          </span>,
+          <button
+            key="untag"
+            type="button"
+            onClick={() => handleUntag(r.id)}
+            disabled={untag.isPending}
+            className="font-mono uppercase"
+            style={{
+              height: 22,
+              padding: "0 10px",
+              fontSize: 9,
+              letterSpacing: "0.1em",
+              color: "var(--text-muted)",
+              background: "transparent",
+              border: "1px solid var(--border-soft)",
+              borderRadius: 3,
+              cursor: untag.isPending ? "wait" : "pointer",
+              opacity: untag.isPending ? 0.6 : 1,
+            }}
+          >
+            Untag
+          </button>,
+        ]}
+      />
     </WindowPanel>
   );
 }

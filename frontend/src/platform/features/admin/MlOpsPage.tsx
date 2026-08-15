@@ -15,44 +15,37 @@
  *     alias bar with "deploy to alias" -- amber badge when production
  *     lags the latest registered version.
  *
+ * Rebuilt to the AILA mock: SectionHeader top with a Segmented switcher for
+ * the three concerns, WindowPanels + DataGrid + MonoBadge for content,
+ * ModalShell replaces shadcn Dialog. Every data hook is preserved verbatim.
+ *
  * All endpoints take a ``key`` (a model / prompt registry key). There is
  * no list-keys endpoint by contract: the operator types the key and the
- * page keeps a rolling list of the ten most-recent keys in localStorage
- * for one-click recall.
+ * page keeps a rolling list of the ten most-recent keys in localStorage.
  */
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { Brain } from "@phosphor-icons/react/dist/csr/Brain";
 import { Warning } from "@phosphor-icons/react/dist/csr/Warning";
 import { Play } from "@phosphor-icons/react/dist/csr/Play";
 import { Eye } from "@phosphor-icons/react/dist/csr/Eye";
 import { GitCommit } from "@phosphor-icons/react/dist/csr/GitCommit";
-import { GitBranch } from "@phosphor-icons/react/dist/csr/GitBranch";
 import { ArrowClockwise } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
 import { CaretRight } from "@phosphor-icons/react/dist/csr/CaretRight";
 import { CaretDown } from "@phosphor-icons/react/dist/csr/CaretDown";
-import { Flask } from "@phosphor-icons/react/dist/csr/Flask";
 import { Sparkle } from "@phosphor-icons/react/dist/csr/Sparkle";
+import { X } from "@phosphor-icons/react/dist/csr/X";
 
-import { AilaCard } from "@/components/aila/AilaCard";
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { EmptyState } from "@/components/aila/EmptyState";
+import {
+  SectionHeader,
+  Segmented,
+  MonoBadge,
+  DataGrid,
+  FilterChip,
+  toneColor,
+} from "@/components/aila/mock";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
-import { Button } from "@/components/ui/button";
 import { FeatureBoundary } from "@app/FeatureBoundary";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
 import { toast } from "@/components/ui/sonner";
 import { ApiHttpError } from "@platform/api/http";
 
@@ -89,9 +82,65 @@ import {
 } from "./mlOpsQueries";
 
 // ---------------------------------------------------------------------------
-// Recent-keys memory -- localStorage-backed rolling list of the last ten
-// operator-entered keys. There is no list-keys endpoint by contract; this
-// gives one-click recall without persisting server-side.
+// Shared inline styles
+// ---------------------------------------------------------------------------
+
+const BUTTON_STYLE: CSSProperties = {
+  height: 24, padding: "0 9px", fontSize: 9, fontFamily: "var(--font-mono)",
+  letterSpacing: "0.08em", textTransform: "uppercase",
+  background: "var(--surface-sunk)", border: "1px solid var(--border-soft)",
+  color: "var(--text-primary)", borderRadius: 3, cursor: "pointer",
+  display: "inline-flex", alignItems: "center", gap: 5,
+};
+
+const PRIMARY_BUTTON_STYLE: CSSProperties = {
+  ...BUTTON_STYLE,
+  background: "var(--accent)", border: "1px solid var(--accent)",
+  color: "var(--text-on-accent)",
+};
+
+const WARN_BUTTON_STYLE: CSSProperties = {
+  ...BUTTON_STYLE,
+  background: "color-mix(in srgb, var(--status-warn) 14%, transparent)",
+  border: "1px solid var(--status-warn)", color: "var(--status-warn)",
+};
+
+const GHOST_BUTTON_STYLE: CSSProperties = {
+  ...BUTTON_STYLE,
+  background: "transparent", border: "1px solid var(--border-faint)",
+  color: "var(--text-muted)",
+};
+
+const INPUT_STYLE: CSSProperties = {
+  height: 26, padding: "0 8px", fontSize: 11, fontFamily: "var(--font-mono)",
+  background: "var(--surface-sunk)", border: "1px solid var(--border-soft)",
+  color: "var(--text-primary)", borderRadius: 3, width: "100%",
+};
+
+const TEXTAREA_STYLE: CSSProperties = {
+  padding: "6px 8px", fontSize: 11, fontFamily: "var(--font-mono)",
+  background: "var(--surface-sunk)", border: "1px solid var(--border-soft)",
+  color: "var(--text-primary)", borderRadius: 3, resize: "vertical", width: "100%",
+};
+
+const LABEL_STYLE: CSSProperties = {
+  fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.14em",
+  color: "var(--text-faint)", textTransform: "uppercase",
+};
+
+const ERROR_TEXT_STYLE: CSSProperties = {
+  fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--status-warn)",
+};
+
+const ERROR_BOX_STYLE: CSSProperties = {
+  border: "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+  background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+  color: "var(--status-warn)",
+  padding: "6px 10px", fontSize: 11, borderRadius: 3, fontFamily: "var(--font-mono)",
+};
+
+// ---------------------------------------------------------------------------
+// Recent-keys memory -- localStorage-backed rolling list.
 // ---------------------------------------------------------------------------
 
 const RECENT_KEYS_STORAGE = "aila.ml-ops.recent-keys.v1";
@@ -138,39 +187,90 @@ function extractErrorMessage(err: unknown, fallback: string): string {
   return fallback;
 }
 
-interface StageBadgeProps {
-  stage: string | null;
-}
-
-function StageBadge({ stage }: StageBadgeProps) {
-  if (!stage) return <span className="font-mono text-[11px] text-text-muted">--</span>;
+function stageTone(stage: string | null | undefined): string {
+  if (!stage) return "muted";
   const s = stage.toLowerCase();
-  let severity: "critical" | "high" | "medium" | "low" | "info" | "neutral" = "neutral";
-  if (s === "production") severity = "info";
-  else if (s === "rolled_back" || s === "failed") severity = "critical";
-  else if (s === "canary") severity = "medium";
-  else if (s === "shadow") severity = "low";
-  else if (s === "evaluated" || s === "approved") severity = "info";
-  return <AilaBadge severity={severity}>{stage}</AilaBadge>;
+  if (s === "production") return "info";
+  if (s === "rolled_back" || s === "failed") return "critical";
+  if (s === "canary") return "medium";
+  if (s === "shadow") return "low";
+  if (s === "evaluated" || s === "approved") return "info";
+  return "muted";
 }
 
-interface VerdictBadgeProps {
-  verdict: string | null;
-}
-
-function VerdictBadge({ verdict }: VerdictBadgeProps) {
-  if (!verdict) return <span className="font-mono text-[11px] text-text-muted">--</span>;
+function verdictTone(verdict: string | null | undefined): string {
+  if (!verdict) return "muted";
   const v = verdict.toLowerCase();
-  let severity: "critical" | "high" | "medium" | "low" | "info" | "neutral" = "neutral";
-  if (v === "pass" || v === "passed") severity = "info";
-  else if (v === "fail" || v === "failed") severity = "critical";
-  else if (v === "regression") severity = "high";
-  return <AilaBadge severity={severity}>{verdict}</AilaBadge>;
+  if (v === "pass" || v === "passed") return "info";
+  if (v === "fail" || v === "failed") return "critical";
+  if (v === "regression") return "high";
+  return "muted";
+}
+
+function StageBadge({ stage }: { stage: string | null }) {
+  if (!stage) return <span className="font-mono" style={{ fontSize: 10.5, color: "var(--text-muted)" }}>--</span>;
+  return <MonoBadge tone={stageTone(stage)}>{stage}</MonoBadge>;
+}
+
+function VerdictBadge({ verdict }: { verdict: string | null }) {
+  if (!verdict) return <span className="font-mono" style={{ fontSize: 10.5, color: "var(--text-muted)" }}>--</span>;
+  return <MonoBadge tone={verdictTone(verdict)}>{verdict}</MonoBadge>;
 }
 
 // ---------------------------------------------------------------------------
-// Key picker -- text input + recent-keys chip row. Bubbles the committed
-// key up via onCommit; the tabs mount their queries against that key.
+// Modal shell (replaces shadcn Dialog)
+// ---------------------------------------------------------------------------
+
+interface ModalShellProps {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  tone?: "accent" | "warn" | "muted" | "ok" | "info";
+  width?: number;
+  children: ReactNode;
+}
+
+function ModalShell({ open, onClose, title, tone = "accent", width = 480, children }: ModalShellProps) {
+  if (!open) return null;
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 60, padding: 16,
+        background: "color-mix(in srgb, var(--surface-page) 80%, transparent)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}
+    >
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: width }}>
+        <WindowPanel
+          title={title}
+          tone={tone}
+          actions={
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              style={{
+                width: 20, height: 20, background: "transparent", border: 0,
+                color: "var(--text-muted)", cursor: "pointer",
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+              }}
+            >
+              <X size={12} aria-hidden />
+            </button>
+          }
+        >
+          {children}
+        </WindowPanel>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Key picker -- text input + recent-keys chip row.
 // ---------------------------------------------------------------------------
 
 interface KeyPickerProps {
@@ -182,9 +282,7 @@ function KeyPicker({ activeKey, onCommit }: KeyPickerProps) {
   const [draft, setDraft] = useState(activeKey);
   const [recent, setRecent] = useState<string[]>(() => loadRecentKeys());
 
-  useEffect(() => {
-    setDraft(activeKey);
-  }, [activeKey]);
+  useEffect(() => { setDraft(activeKey); }, [activeKey]);
 
   function commit(next: string) {
     const trimmed = next.trim();
@@ -196,14 +294,12 @@ function KeyPicker({ activeKey, onCommit }: KeyPickerProps) {
   }
 
   return (
-    <AilaCard variant="default" padding="md">
-      <div className="flex flex-col gap-3">
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="ml-ops-key" className="font-mono text-xs uppercase tracking-wider text-text-muted">
-            Model / prompt registry key
-          </label>
-          <div className="flex gap-2">
-            <Input
+    <WindowPanel title="registry key">
+      <div className="flex flex-col" style={{ gap: 10 }}>
+        <div className="flex flex-col" style={{ gap: 4 }}>
+          <label htmlFor="ml-ops-key" style={LABEL_STYLE}>MODEL / PROMPT REGISTRY KEY</label>
+          <div className="flex" style={{ gap: 8 }}>
+            <input
               id="ml-ops-key"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
@@ -214,52 +310,43 @@ function KeyPicker({ activeKey, onCommit }: KeyPickerProps) {
                 }
               }}
               placeholder="e.g. vuln.researcher.system_prompt"
-              className="font-mono text-xs"
               spellCheck={false}
+              style={{ ...INPUT_STYLE, flex: 1 }}
             />
-            <Button
+            <button
               type="button"
               onClick={() => commit(draft)}
               disabled={draft.trim().length === 0 || draft.trim() === activeKey}
-              className="gap-1.5"
+              style={PRIMARY_BUTTON_STYLE}
             >
-              Load
-            </Button>
+              LOAD
+            </button>
           </div>
-          <p className="font-mono text-[10px] text-text-muted">
+          <p className="font-mono" style={{ fontSize: 10, color: "var(--text-faint)", lineHeight: 1.5 }}>
             There is no list-keys endpoint; type the exact registry key or pick a recent one.
             The ten most-recent keys are remembered per-browser.
           </p>
         </div>
         {recent.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap" style={{ gap: 6 }}>
             {recent.map((k) => (
-              <button
+              <FilterChip
                 key={k}
-                type="button"
-                onClick={() => {
-                  setDraft(k);
-                  commit(k);
-                }}
-                className={
-                  "rounded-[2px] border px-2 py-1 font-mono text-[11px] transition-colors " +
-                  (k === activeKey
-                    ? "border-accent text-accent"
-                    : "border-border text-text-muted hover:border-accent hover:text-text")
-                }
+                active={k === activeKey}
+                onClick={() => { setDraft(k); commit(k); }}
               >
                 {k}
-              </button>
+              </FilterChip>
             ))}
           </div>
         )}
       </div>
-    </AilaCard>
+    </WindowPanel>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Confirm dialog -- single reusable modal for destructive actions.
+// Confirm dialog helper
 // ---------------------------------------------------------------------------
 
 interface ConfirmDialogProps {
@@ -272,37 +359,41 @@ interface ConfirmDialogProps {
   pending?: boolean;
 }
 
-function ConfirmDialog({
-  open, title, description, confirmLabel, onConfirm, onCancel, pending,
-}: ConfirmDialogProps) {
+function ConfirmDialog({ open, title, description, confirmLabel, onConfirm, onCancel, pending }: ConfirmDialogProps) {
   return (
-    <Dialog open={open} onOpenChange={(next) => { if (!next) onCancel(); }}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="font-mono text-text">{title}</DialogTitle>
-        </DialogHeader>
-        <div className="flex flex-col gap-4">
-          <div className="rounded-[4px] border border-warning/40 bg-warning/10 px-4 py-3 font-mono text-xs text-text">
-            {description}
-          </div>
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant="destructive"
-              className="flex-1"
-              onClick={onConfirm}
-              disabled={pending}
-            >
-              {pending ? "Working…" : confirmLabel}
-            </Button>
-            <Button type="button" size="sm" variant="outline" onClick={onCancel} disabled={pending}>
-              Cancel
-            </Button>
-          </div>
+    <ModalShell open={open} onClose={onCancel} title={title} tone="warn">
+      <div className="flex flex-col" style={{ gap: 12 }}>
+        <div
+          className="font-mono"
+          style={{
+            padding: 10, fontSize: 11, color: "var(--text-primary)", lineHeight: 1.55,
+            border: "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+            background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+            borderRadius: 3,
+          }}
+        >
+          {description}
         </div>
-      </DialogContent>
-    </Dialog>
+        <div className="flex" style={{ gap: 8 }}>
+          <button
+            type="button"
+            style={{ ...WARN_BUTTON_STYLE, flex: 1 }}
+            onClick={onConfirm}
+            disabled={pending}
+          >
+            {pending ? "WORKING\u2026" : confirmLabel.toUpperCase()}
+          </button>
+          <button
+            type="button"
+            style={BUTTON_STYLE}
+            onClick={onCancel}
+            disabled={pending}
+          >
+            CANCEL
+          </button>
+        </div>
+      </div>
+    </ModalShell>
   );
 }
 
@@ -333,7 +424,6 @@ function LifecycleTab({ activeKey }: LifecycleTabProps) {
   const [evalBenchmarkId, setEvalBenchmarkId] = useState("");
   const [canaryOpen, setCanaryOpen] = useState<{ row: VersionMetricsRow } | null>(null);
   const [canaryPercent, setCanaryPercent] = useState(10);
-  const [shadowOpen, setShadowOpen] = useState<{ row: VersionMetricsRow } | null>(null);
   const [shadowSampleN, setShadowSampleN] = useState(5);
   const [routeOpen, setRouteOpen] = useState(false);
   const [routeInvestigationId, setRouteInvestigationId] = useState("");
@@ -428,152 +518,148 @@ function LifecycleTab({ activeKey }: LifecycleTabProps) {
   const transitions = transitionsQuery.data ?? [];
 
   return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,1fr)]">
-      {/* Left column: metrics table + shadow panel */}
-      <div className="flex flex-col gap-6">
-        <AilaCard variant="default" padding="md">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="font-mono text-xs uppercase tracking-wider text-text-muted">
-              Per-version metrics
-            </h2>
-            <Button
+    <div
+      className="grid"
+      style={{ gridTemplateColumns: "minmax(0, 3fr) minmax(0, 1fr)", gap: 16 }}
+    >
+      {/* Left column: metrics + shadow */}
+      <div className="flex flex-col" style={{ gap: 16 }}>
+        <WindowPanel
+          title="per-version metrics"
+          actions={
+            <button
               type="button"
-              size="sm"
-              variant="outline"
               onClick={() => setRouteOpen((v) => !v)}
-              className="gap-1.5"
+              style={BUTTON_STYLE}
             >
-              <Eye className="h-3.5 w-3.5" />
-              Route preview
-            </Button>
-          </div>
-
+              <Eye size={11} aria-hidden />
+              ROUTE PREVIEW
+            </button>
+          }
+          flush
+        >
           {routeOpen && (
-            <div className="mb-4 rounded-[4px] border border-border bg-elevated px-3 py-3">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <Input
+            <div
+              style={{
+                padding: 12,
+                background: "var(--surface-sunk)",
+                borderBottom: "1px solid var(--border-faint)",
+              }}
+            >
+              <div className="flex flex-col sm:flex-row" style={{ gap: 8 }}>
+                <input
                   value={routeInvestigationId}
                   onChange={(e) => setRouteInvestigationId(e.target.value)}
                   placeholder="investigation_id"
-                  className="font-mono text-xs"
+                  style={{ ...INPUT_STYLE, flex: 1 }}
                 />
-                <Button
+                <button
                   type="button"
-                  size="sm"
                   onClick={() => setRouteInvestigationCommitted(routeInvestigationId.trim())}
                   disabled={routeInvestigationId.trim().length === 0}
+                  style={PRIMARY_BUTTON_STYLE}
                 >
-                  Resolve
-                </Button>
+                  RESOLVE
+                </button>
               </div>
               {routeQuery.isLoading && (
-                <p className="mt-2 font-mono text-[11px] text-text-muted">Resolving…</p>
+                <p className="font-mono" style={{ marginTop: 8, fontSize: 10.5, color: "var(--text-muted)" }}>
+                  Resolving\u2026
+                </p>
               )}
               {routeQuery.isError && (
-                <p className="mt-2 font-mono text-[11px] text-critical">
+                <p style={{ ...ERROR_TEXT_STYLE, marginTop: 8 }}>
                   {extractErrorMessage(routeQuery.error, "Route resolve failed.")}
                 </p>
               )}
               {routeQuery.data && (
-                <dl className="mt-3 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 font-mono text-[11px]">
-                  <dt className="text-text-muted">resolved version</dt>
-                  <dd className="text-text">{routeQuery.data.version ?? "--"}</dd>
-                  <dt className="text-text-muted">bucket</dt>
-                  <dd className="text-text">{routeQuery.data.bucket}</dd>
-                  <dt className="text-text-muted">on canary</dt>
-                  <dd className="text-text">{routeQuery.data.on_canary ? "yes" : "no"}</dd>
-                  <dt className="text-text-muted">canary_version</dt>
-                  <dd className="text-text">{routeQuery.data.canary_version ?? "--"}</dd>
-                  <dt className="text-text-muted">production_version</dt>
-                  <dd className="text-text">{routeQuery.data.production_version ?? "--"}</dd>
-                  <dt className="text-text-muted">cohort_percent</dt>
-                  <dd className="text-text">{routeQuery.data.cohort_percent ?? "--"}</dd>
+                <dl
+                  className="grid font-mono"
+                  style={{ marginTop: 10, gridTemplateColumns: "max-content 1fr", gap: "4px 16px", fontSize: 10.5 }}
+                >
+                  <dt style={{ color: "var(--text-faint)", textTransform: "uppercase", letterSpacing: "0.08em", fontSize: 9 }}>RESOLVED VERSION</dt>
+                  <dd style={{ color: "var(--text-primary)" }}>{routeQuery.data.version ?? "--"}</dd>
+                  <dt style={{ color: "var(--text-faint)", textTransform: "uppercase", letterSpacing: "0.08em", fontSize: 9 }}>BUCKET</dt>
+                  <dd style={{ color: "var(--text-primary)" }}>{routeQuery.data.bucket}</dd>
+                  <dt style={{ color: "var(--text-faint)", textTransform: "uppercase", letterSpacing: "0.08em", fontSize: 9 }}>ON CANARY</dt>
+                  <dd style={{ color: "var(--text-primary)" }}>{routeQuery.data.on_canary ? "yes" : "no"}</dd>
+                  <dt style={{ color: "var(--text-faint)", textTransform: "uppercase", letterSpacing: "0.08em", fontSize: 9 }}>CANARY_VERSION</dt>
+                  <dd style={{ color: "var(--text-primary)" }}>{routeQuery.data.canary_version ?? "--"}</dd>
+                  <dt style={{ color: "var(--text-faint)", textTransform: "uppercase", letterSpacing: "0.08em", fontSize: 9 }}>PRODUCTION_VERSION</dt>
+                  <dd style={{ color: "var(--text-primary)" }}>{routeQuery.data.production_version ?? "--"}</dd>
+                  <dt style={{ color: "var(--text-faint)", textTransform: "uppercase", letterSpacing: "0.08em", fontSize: 9 }}>COHORT_PERCENT</dt>
+                  <dd style={{ color: "var(--text-primary)" }}>{routeQuery.data.cohort_percent ?? "--"}</dd>
                 </dl>
               )}
             </div>
           )}
 
-          {metricsQuery.isLoading && <LoadingSkeletonGroup lines={5} />}
+          {metricsQuery.isLoading && <div style={{ padding: 14 }}><LoadingSkeletonGroup lines={5} /></div>}
           {metricsQuery.isError && (
-            <p className="font-mono text-xs text-critical">
+            <p style={{ ...ERROR_TEXT_STYLE, padding: 14 }}>
               {extractErrorMessage(metricsQuery.error, "Failed to load metrics.")}
             </p>
           )}
           {metricsQuery.data && rows.length === 0 && (
-            <EmptyState
-              icon={<GitBranch className="h-10 w-10" />}
-              title="No versions found"
-              description="No lifecycle rows exist for this key yet."
-            />
+            <div
+              className="font-mono"
+              style={{ padding: 32, textAlign: "center", fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}
+            >
+              No versions found.
+              <br />
+              No lifecycle rows exist for this key yet.
+            </div>
           )}
 
           {rows.length > 0 && (
-            <div className="overflow-x-auto">
-              <table aria-label="Prompt versions" className="w-full font-mono text-[11px] border-collapse [&_th]:border [&_th]:border-border [&_th]:uppercase [&_th]:tracking-wider [&_td]:border [&_td]:border-border">
-                <thead>
-                  <tr className="text-left text-text-muted">
-                    <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">Version</th>
-                    <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">Stage</th>
-                    <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">Eval</th>
-                    <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">Approvers</th>
-                    <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">Quorum rate</th>
-                    <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">Cost</th>
-                    <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">Drift</th>
-                    <th className="pb-2 font-normal uppercase tracking-wider text-[10px] text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => (
-                    <tr key={row.version} className="border-t border-border align-top">
-                      <td className="py-2 text-text">{row.version}</td>
-                      <td className="py-2"><StageBadge stage={row.latest_stage} /></td>
-                      <td className="py-2"><VerdictBadge verdict={row.eval_verdict} /></td>
-                      <td className="py-2 text-text">
-                        {row.approver_count}
-                        <span className="text-text-muted"> / {row.evaluated_count}</span>
-                      </td>
-                      <td className="py-2 text-text">{(row.quorum_accept_rate * 100).toFixed(0)}%</td>
-                      <td className="py-2 text-text">
-                        {`$${row.cost_usd_total.toFixed(4)}`}
-                        <span className="text-text-muted"> ({row.cost_call_count})</span>
-                      </td>
-                      <td className="py-2">
-                        <div className="flex flex-col gap-0.5">
-                          <span className="text-text">{row.drift_status ?? "--"}</span>
-                          <span className="text-[10px] text-text-muted">
-                            {formatTimestamp(row.drift_last_recorded)}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="py-2">
-                        <div className="flex flex-wrap justify-end gap-1">
-                          <Button type="button" size="sm" variant="ghost"
-                            onClick={() => setEvalOpen({ row })}
-                          >evaluate</Button>
-                          <Button type="button" size="sm" variant="ghost"
-                            onClick={() => void handleApprove(row)}
-                          >approve</Button>
-                          <Button type="button" size="sm" variant="ghost"
-                            onClick={() => setPending({ kind: "promote", row })}
-                          >promote</Button>
-                          <Button type="button" size="sm" variant="ghost"
-                            onClick={() => setPending({ kind: "rollback", row, targetVersion: "" })}
-                          >rollback</Button>
-                          <Button type="button" size="sm" variant="ghost"
-                            onClick={() => void handleShadow(row)}
-                          >shadow</Button>
-                          <Button type="button" size="sm" variant="ghost"
-                            onClick={() => setCanaryOpen({ row })}
-                          >canary</Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataGrid<VersionMetricsRow>
+              columns={[
+                { label: "VERSION", width: "120px" },
+                { label: "STAGE", width: "110px" },
+                { label: "EVAL", width: "90px" },
+                { label: "APPROVERS", width: "100px" },
+                { label: "QUORUM", width: "70px", align: "right" },
+                { label: "COST", width: "120px", align: "right" },
+                { label: "DRIFT", width: "130px" },
+                { label: "ACTIONS", width: "300px" },
+              ]}
+              rows={rows}
+              getKey={(row) => row.version}
+              renderCells={(row) => [
+                <span className="font-mono" style={{ fontSize: 11, color: "var(--text-primary)" }}>{row.version}</span>,
+                <StageBadge stage={row.latest_stage} />,
+                <VerdictBadge verdict={row.eval_verdict} />,
+                <span className="font-mono" style={{ fontSize: 11, color: "var(--text-primary)" }}>
+                  {row.approver_count}
+                  <span style={{ color: "var(--text-muted)" }}> / {row.evaluated_count}</span>
+                </span>,
+                <span className="font-mono" style={{ fontSize: 11, color: "var(--text-primary)" }}>
+                  {(row.quorum_accept_rate * 100).toFixed(0)}%
+                </span>,
+                <span className="font-mono" style={{ fontSize: 11, color: "var(--text-primary)" }}>
+                  {`$${row.cost_usd_total.toFixed(4)}`}
+                  <span style={{ color: "var(--text-muted)" }}> ({row.cost_call_count})</span>
+                </span>,
+                <div className="flex flex-col" style={{ gap: 2 }}>
+                  <span className="font-mono" style={{ fontSize: 10.5, color: "var(--text-primary)" }}>
+                    {row.drift_status ?? "--"}
+                  </span>
+                  <span className="font-mono" style={{ fontSize: 10, color: "var(--text-faint)" }}>
+                    {formatTimestamp(row.drift_last_recorded)}
+                  </span>
+                </div>,
+                <div className="flex flex-wrap justify-end" style={{ gap: 4 }}>
+                  <button type="button" style={GHOST_BUTTON_STYLE} onClick={() => setEvalOpen({ row })}>evaluate</button>
+                  <button type="button" style={GHOST_BUTTON_STYLE} onClick={() => void handleApprove(row)}>approve</button>
+                  <button type="button" style={GHOST_BUTTON_STYLE} onClick={() => setPending({ kind: "promote", row })}>promote</button>
+                  <button type="button" style={GHOST_BUTTON_STYLE} onClick={() => setPending({ kind: "rollback", row, targetVersion: "" })}>rollback</button>
+                  <button type="button" style={GHOST_BUTTON_STYLE} onClick={() => void handleShadow(row)}>shadow</button>
+                  <button type="button" style={GHOST_BUTTON_STYLE} onClick={() => setCanaryOpen({ row })}>canary</button>
+                </div>,
+              ]}
+            />
           )}
-        </AilaCard>
+        </WindowPanel>
 
         <ShadowPanel
           activeKey={activeKey}
@@ -586,83 +672,73 @@ function LifecycleTab({ activeKey }: LifecycleTabProps) {
       </div>
 
       {/* Right column: transitions timeline */}
-      <AilaCard variant="default" padding="md">
-        <h2 className="mb-4 font-mono text-xs uppercase tracking-wider text-text-muted">
-          Transitions
-        </h2>
+      <WindowPanel title="transitions">
         {transitionsQuery.isLoading && <LoadingSkeletonGroup lines={6} />}
         {transitionsQuery.isError && (
-          <p className="font-mono text-xs text-critical">
+          <p style={ERROR_TEXT_STYLE}>
             {extractErrorMessage(transitionsQuery.error, "Failed to load transitions.")}
           </p>
         )}
         {transitionsQuery.data && transitions.length === 0 && (
-          <p className="font-mono text-xs text-text-muted">No transitions journaled for this key.</p>
+          <p className="font-mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
+            No transitions journaled for this key.
+          </p>
         )}
         {transitions.length > 0 && (
-          <ol className="flex flex-col gap-3">
+          <ol className="flex flex-col" style={{ gap: 10, padding: 0, margin: 0, listStyle: "none" }}>
             {transitions.map((t) => (
               <TransitionEntry key={t.id} transition={t} />
             ))}
           </ol>
         )}
-      </AilaCard>
+      </WindowPanel>
 
       {/* Evaluate modal */}
-      <Dialog
+      <ModalShell
         open={evalOpen !== null}
-        onOpenChange={(next) => { if (!next) { setEvalOpen(null); setEvalBenchmarkId(""); } }}
+        onClose={() => { setEvalOpen(null); setEvalBenchmarkId(""); }}
+        title={`evaluate ${evalOpen?.row.version ?? ""}`}
       >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="font-mono text-text">
-              Evaluate {evalOpen?.row.version}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="flex flex-col gap-3">
-            <label className="font-mono text-xs uppercase tracking-wider text-text-muted">
-              benchmark_id
-            </label>
-            <Input
+        <div className="flex flex-col" style={{ gap: 10 }}>
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE}>BENCHMARK_ID</label>
+            <input
               value={evalBenchmarkId}
               onChange={(e) => setEvalBenchmarkId(e.target.value)}
               placeholder="e.g. vuln-classify-2025q4"
-              className="font-mono text-xs"
+              style={INPUT_STYLE}
             />
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                size="sm"
-                className="flex-1"
-                onClick={() => evalOpen && void handleEvaluate(evalOpen.row)}
-                disabled={evaluateMutation.isPending}
-              >
-                {evaluateMutation.isPending ? "Running…" : "Evaluate"}
-              </Button>
-              <Button type="button" size="sm" variant="outline"
-                onClick={() => { setEvalOpen(null); setEvalBenchmarkId(""); }}
-              >Cancel</Button>
-            </div>
           </div>
-        </DialogContent>
-      </Dialog>
+          <div className="flex" style={{ gap: 8 }}>
+            <button
+              type="button"
+              style={{ ...PRIMARY_BUTTON_STYLE, flex: 1 }}
+              onClick={() => evalOpen && void handleEvaluate(evalOpen.row)}
+              disabled={evaluateMutation.isPending}
+            >
+              {evaluateMutation.isPending ? "RUNNING\u2026" : "EVALUATE"}
+            </button>
+            <button
+              type="button"
+              style={BUTTON_STYLE}
+              onClick={() => { setEvalOpen(null); setEvalBenchmarkId(""); }}
+            >
+              CANCEL
+            </button>
+          </div>
+        </div>
+      </ModalShell>
 
       {/* Canary modal */}
-      <Dialog
+      <ModalShell
         open={canaryOpen !== null}
-        onOpenChange={(next) => { if (!next) setCanaryOpen(null); }}
+        onClose={() => setCanaryOpen(null)}
+        title={`canary ${canaryOpen?.row.version ?? ""}`}
       >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="font-mono text-text">
-              Canary {canaryOpen?.row.version}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="flex flex-col gap-3">
-            <label className="font-mono text-xs uppercase tracking-wider text-text-muted">
-              cohort_percent (1-100)
-            </label>
-            <Input
+        <div className="flex flex-col" style={{ gap: 10 }}>
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE}>COHORT_PERCENT (1-100)</label>
+            <input
               type="number"
               min={1}
               max={100}
@@ -671,79 +747,87 @@ function LifecycleTab({ activeKey }: LifecycleTabProps) {
                 const v = Number.parseInt(e.target.value, 10);
                 if (Number.isFinite(v)) setCanaryPercent(Math.min(100, Math.max(1, v)));
               }}
-              className="font-mono text-xs"
+              style={INPUT_STYLE}
             />
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                size="sm"
-                className="flex-1"
-                onClick={() => canaryOpen && void handleCanary(canaryOpen.row)}
-                disabled={canaryMutation.isPending}
-              >
-                {canaryMutation.isPending ? "Assigning…" : "Assign canary"}
-              </Button>
-              <Button type="button" size="sm" variant="outline" onClick={() => setCanaryOpen(null)}>
-                Cancel
-              </Button>
-            </div>
           </div>
-        </DialogContent>
-      </Dialog>
+          <div className="flex" style={{ gap: 8 }}>
+            <button
+              type="button"
+              style={{ ...PRIMARY_BUTTON_STYLE, flex: 1 }}
+              onClick={() => canaryOpen && void handleCanary(canaryOpen.row)}
+              disabled={canaryMutation.isPending}
+            >
+              {canaryMutation.isPending ? "ASSIGNING\u2026" : "ASSIGN CANARY"}
+            </button>
+            <button
+              type="button"
+              style={BUTTON_STYLE}
+              onClick={() => setCanaryOpen(null)}
+            >
+              CANCEL
+            </button>
+          </div>
+        </div>
+      </ModalShell>
 
-      {/* Rollback dialog (uses ConfirmDialog + inline target input) */}
-      <Dialog
+      {/* Rollback dialog (target version input + confirm) */}
+      <ModalShell
         open={pending?.kind === "rollback"}
-        onOpenChange={(next) => { if (!next) setPending(null); }}
+        onClose={() => setPending(null)}
+        title={`rollback ${pending?.kind === "rollback" ? pending.row.version : ""}`}
+        tone="warn"
       >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="font-mono text-text">
-              Rollback {pending?.kind === "rollback" ? pending.row.version : ""}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="flex flex-col gap-3">
-            <div className="rounded-[4px] border border-warning/40 bg-warning/10 px-4 py-3 font-mono text-xs text-text">
-              Flips the production alias for <code className="font-mono">{activeKey}</code> back to the target version.
-              Every team's investigations resolve through this alias.
-            </div>
-            <label className="font-mono text-xs uppercase tracking-wider text-text-muted">
-              target_version (optional)
-            </label>
-            <Input
+        <div className="flex flex-col" style={{ gap: 10 }}>
+          <div
+            className="font-mono"
+            style={{
+              padding: 10, fontSize: 11, color: "var(--text-primary)", lineHeight: 1.55,
+              border: "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+              background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+              borderRadius: 3,
+            }}
+          >
+            Flips the production alias for <code>{activeKey}</code> back to the target version.
+            Every team's investigations resolve through this alias.
+          </div>
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE}>TARGET_VERSION (OPTIONAL)</label>
+            <input
               value={pending?.kind === "rollback" ? pending.targetVersion : ""}
               onChange={(e) => setPending((prev) =>
                 prev?.kind === "rollback" ? { ...prev, targetVersion: e.target.value } : prev,
               )}
               placeholder="leave empty for prior production"
-              className="font-mono text-xs"
+              style={INPUT_STYLE}
             />
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="destructive"
-                className="flex-1"
-                onClick={() => void handleConfirmPending()}
-                disabled={rollbackMutation.isPending}
-              >
-                {rollbackMutation.isPending ? "Rolling back…" : "Confirm rollback"}
-              </Button>
-              <Button type="button" size="sm" variant="outline" onClick={() => setPending(null)}>
-                Cancel
-              </Button>
-            </div>
           </div>
-        </DialogContent>
-      </Dialog>
+          <div className="flex" style={{ gap: 8 }}>
+            <button
+              type="button"
+              style={{ ...WARN_BUTTON_STYLE, flex: 1 }}
+              onClick={() => void handleConfirmPending()}
+              disabled={rollbackMutation.isPending}
+            >
+              {rollbackMutation.isPending ? "ROLLING BACK\u2026" : "CONFIRM ROLLBACK"}
+            </button>
+            <button
+              type="button"
+              style={BUTTON_STYLE}
+              onClick={() => setPending(null)}
+            >
+              CANCEL
+            </button>
+          </div>
+        </div>
+      </ModalShell>
 
       {/* Promote confirm */}
       <ConfirmDialog
         open={pending?.kind === "promote"}
-        title={`Promote ${pending?.kind === "promote" ? pending.row.version : ""} to production?`}
+        title={`promote ${pending?.kind === "promote" ? pending.row.version : ""} to production?`}
         description={(
           <>
-            Flips the production alias for <code className="font-mono">{activeKey}</code>.
+            Flips the production alias for <code>{activeKey}</code>.
             Requires a passing eval and a distinct-approver quorum -- the controller will
             reject the transition if either gate is unmet.
           </>
@@ -753,11 +837,6 @@ function LifecycleTab({ activeKey }: LifecycleTabProps) {
         onConfirm={() => void handleConfirmPending()}
         onCancel={() => setPending(null)}
       />
-
-      {/* Placeholder to consume unused local (silences noUnusedParameters if TS strict) */}
-      {shadowOpen === null ? null : (
-        <Dialog open onOpenChange={() => setShadowOpen(null)}><DialogContent /></Dialog>
-      )}
     </div>
   );
 }
@@ -789,37 +868,29 @@ function ShadowPanel({ activeKey, rows, sampleN, setSampleN, runPending, onRun }
   const selectedRow = shadowRows.find((r) => r.version === selectedVersion);
 
   return (
-    <AilaCard variant="default" padding="md">
-      <div className="mb-4 flex items-center justify-between">
-        <h3 className="font-mono text-xs uppercase tracking-wider text-text-muted">Shadow run + report</h3>
-        <Flask className="h-4 w-4 text-text-muted" />
-      </div>
+    <WindowPanel title="shadow run + report">
       {shadowRows.length === 0 ? (
-        <p className="font-mono text-xs text-text-muted">
+        <p className="font-mono" style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.55 }}>
           No version currently sits in the shadow stage. Assign one from the row actions above.
         </p>
       ) : (
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="flex flex-col gap-1.5">
-              <label className="font-mono text-[11px] uppercase tracking-wider text-text-muted">
-                shadow version
-              </label>
+        <div className="flex flex-col" style={{ gap: 12 }}>
+          <div className="flex flex-wrap items-end" style={{ gap: 10 }}>
+            <div className="flex flex-col" style={{ gap: 4 }}>
+              <label style={LABEL_STYLE}>SHADOW VERSION</label>
               <select
                 value={selectedVersion}
                 onChange={(e) => setSelectedVersion(e.target.value)}
-                className="rounded-[2px] border border-border bg-base px-2 py-1 font-mono text-xs text-text"
+                style={{ ...INPUT_STYLE, width: 220 }}
               >
                 {shadowRows.map((r) => (
                   <option key={r.version} value={r.version}>{r.version}</option>
                 ))}
               </select>
             </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="font-mono text-[11px] uppercase tracking-wider text-text-muted">
-                sample_n
-              </label>
-              <Input
+            <div className="flex flex-col" style={{ gap: 4 }}>
+              <label style={LABEL_STYLE}>SAMPLE_N</label>
+              <input
                 type="number"
                 min={1}
                 max={100}
@@ -828,48 +899,49 @@ function ShadowPanel({ activeKey, rows, sampleN, setSampleN, runPending, onRun }
                   const v = Number.parseInt(e.target.value, 10);
                   if (Number.isFinite(v)) setSampleN(Math.min(100, Math.max(1, v)));
                 }}
-                style={{ width: 96 }}
-                className="font-mono text-xs"
+                style={{ ...INPUT_STYLE, width: 96 }}
               />
             </div>
-            <Button
+            <button
               type="button"
-              size="sm"
               onClick={() => selectedRow && void onRun(selectedRow)}
               disabled={runPending || !selectedRow}
-              className="gap-1.5"
+              style={PRIMARY_BUTTON_STYLE}
             >
-              <Play className="h-3.5 w-3.5" />
-              {runPending ? "Running…" : "Run shadow"}
-            </Button>
+              <Play size={11} aria-hidden />
+              {runPending ? "RUNNING\u2026" : "RUN SHADOW"}
+            </button>
           </div>
 
           {reportQuery.isLoading && <LoadingSkeletonGroup lines={4} />}
           {reportQuery.isError && (
-            <p className="font-mono text-xs text-critical">
+            <p style={ERROR_TEXT_STYLE}>
               {extractErrorMessage(reportQuery.error, "Failed to load report.")}
             </p>
           )}
           {reportQuery.data === null && (
-            <p className="font-mono text-xs text-text-muted">
+            <p className="font-mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
               No report persisted yet -- click Run shadow.
             </p>
           )}
-          {reportQuery.data && (
-            <ShadowReportView report={reportQuery.data} />
-          )}
+          {reportQuery.data && <ShadowReportView report={reportQuery.data} />}
         </div>
       )}
-    </AilaCard>
+    </WindowPanel>
   );
 }
 
-interface ShadowReportViewProps { report: ShadowReportInfo }
-
-function ShadowReportView({ report }: ShadowReportViewProps) {
+function ShadowReportView({ report }: { report: ShadowReportInfo }) {
   return (
-    <div className="flex flex-col gap-3 rounded-[4px] border border-border bg-elevated px-3 py-3">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+    <div
+      className="flex flex-col"
+      style={{
+        gap: 10, padding: 12,
+        border: "1px solid var(--border-faint)", borderRadius: 3,
+        background: "var(--surface-sunk)",
+      }}
+    >
+      <div className="grid" style={{ gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
         <ReportMetric label="mean faithfulness" value={report.mean_faithfulness.toFixed(3)} />
         <ReportMetric label="mean determinism" value={report.mean_determinism.toFixed(3)} />
         <ReportMetric
@@ -877,55 +949,60 @@ function ShadowReportView({ report }: ShadowReportViewProps) {
           value={String(report.regressions)}
           tone={report.regressions > 0 ? "critical" : "info"}
         />
-        <ReportMetric
-          label="samples"
-          value={`${report.sample_succeeded}/${report.sample_attempted}`}
-        />
+        <ReportMetric label="samples" value={`${report.sample_succeeded}/${report.sample_attempted}`} />
       </div>
-      <div>
-        <span className="mb-1 block font-mono text-[10px] uppercase tracking-wider text-text-muted">
-          diff_summary
-        </span>
-        <pre className="max-h-56 overflow-auto rounded-[4px] border border-border bg-base px-3 py-2 font-mono text-[11px] text-text whitespace-pre-wrap">
+      <div className="flex flex-col" style={{ gap: 4 }}>
+        <span style={LABEL_STYLE}>DIFF_SUMMARY</span>
+        <pre
+          style={{
+            maxHeight: 220, overflow: "auto",
+            padding: 8, fontSize: 10.5, fontFamily: "var(--font-mono)",
+            color: "var(--text-primary)", background: "var(--surface-card)",
+            border: "1px solid var(--border-faint)", borderRadius: 3,
+            whiteSpace: "pre-wrap", margin: 0,
+          }}
+        >
           {JSON.stringify(report.diff_summary, null, 2)}
         </pre>
       </div>
-      <span className="font-mono text-[10px] text-text-muted">
+      <span className="font-mono" style={{ fontSize: 10, color: "var(--text-faint)" }}>
         recorded {formatTimestamp(report.created_at)} by {report.actor}
       </span>
     </div>
   );
 }
 
-interface ReportMetricProps { label: string; value: string; tone?: "critical" | "info" | "neutral" }
-
-function ReportMetric({ label, value, tone = "neutral" }: ReportMetricProps) {
-  const color = tone === "critical" ? "text-critical" : tone === "info" ? "text-accent" : "text-text";
+function ReportMetric({ label, value, tone = "muted" }: { label: string; value: string; tone?: string }) {
+  const color = tone === "critical" ? toneColor("critical") : tone === "info" ? toneColor("info") : "var(--text-primary)";
   return (
-    <div className="flex flex-col gap-1">
-      <span className="font-mono text-[10px] uppercase tracking-wider text-text-muted">{label}</span>
-      <span className={`font-mono text-sm ${color}`}>{value}</span>
+    <div className="flex flex-col" style={{ gap: 4 }}>
+      <span style={LABEL_STYLE}>{label.toUpperCase()}</span>
+      <span className="font-mono" style={{ fontSize: 14, color }}>{value}</span>
     </div>
   );
 }
 
-interface TransitionEntryProps { transition: TransitionInfo }
-
-function TransitionEntry({ transition }: TransitionEntryProps) {
+function TransitionEntry({ transition }: { transition: TransitionInfo }) {
   return (
-    <li className="flex gap-2">
-      <GitCommit className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-muted" />
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="font-mono text-[11px] text-text">{transition.version}</span>
-          <span className="font-mono text-[10px] text-text-muted">{transition.from_stage}</span>
-          <CaretRight className="h-3 w-3 text-text-muted" />
+    <li className="flex" style={{ gap: 8 }}>
+      <GitCommit size={12} aria-hidden style={{ marginTop: 2, flex: "0 0 auto", color: "var(--text-muted)" }} />
+      <div className="flex flex-col" style={{ gap: 3, minWidth: 0 }}>
+        <div className="flex flex-wrap items-center" style={{ gap: 5 }}>
+          <span className="font-mono" style={{ fontSize: 11, color: "var(--text-primary)" }}>
+            {transition.version}
+          </span>
+          <span className="font-mono" style={{ fontSize: 10, color: "var(--text-faint)" }}>
+            {transition.from_stage}
+          </span>
+          <CaretRight size={10} aria-hidden style={{ color: "var(--text-faint)" }} />
           <StageBadge stage={transition.to_stage} />
         </div>
         {transition.reason && (
-          <span className="font-mono text-[10px] text-text-muted break-words">{transition.reason}</span>
+          <span className="font-mono" style={{ fontSize: 10, color: "var(--text-muted)", wordBreak: "break-word" }}>
+            {transition.reason}
+          </span>
         )}
-        <span className="font-mono text-[10px] text-text-muted">
+        <span className="font-mono" style={{ fontSize: 10, color: "var(--text-faint)" }}>
           {formatTimestamp(transition.created_at)} {"\u00b7"} {transition.actor}
         </span>
       </div>
@@ -937,9 +1014,7 @@ function TransitionEntry({ transition }: TransitionEntryProps) {
 // Tab 2 -- Evals
 // ---------------------------------------------------------------------------
 
-interface EvalsTabProps { activeKey: string }
-
-function EvalsTab({ activeKey }: EvalsTabProps) {
+function EvalsTab({ activeKey }: { activeKey: string }) {
   const runsQuery = useEvalRuns(activeKey);
   const scoreMutation = useRunEval();
   const benchMutation = useRegisterBenchmark();
@@ -991,14 +1066,8 @@ function EvalsTab({ activeKey }: EvalsTabProps) {
       toast.error(`cases must be a JSON array of BenchmarkCaseSpec: ${(err as Error).message}`);
       return;
     }
-    if (cases.length === 0) {
-      toast.error("At least one case is required.");
-      return;
-    }
-    if (benchName.trim().length === 0) {
-      toast.error("name is required.");
-      return;
-    }
+    if (cases.length === 0) { toast.error("At least one case is required."); return; }
+    if (benchName.trim().length === 0) { toast.error("name is required."); return; }
     try {
       const env = await benchMutation.mutateAsync({ key: activeKey, name: benchName.trim(), cases });
       toast.success(`Registered benchmark ${env.data.id} (${env.data.case_count} cases).`);
@@ -1025,10 +1094,7 @@ function EvalsTab({ activeKey }: EvalsTabProps) {
   }
 
   async function handlePromoteCalibrator(row: CalibratorVersionInfo) {
-    const approver_ids = approversDraft
-      .split(",")
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
+    const approver_ids = approversDraft.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
     if (approver_ids.length === 0) {
       toast.error("At least one approver_id is required (comma-separated).");
       return;
@@ -1045,263 +1111,216 @@ function EvalsTab({ activeKey }: EvalsTabProps) {
   const calibrators = calibratorsQuery.data ?? [];
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col" style={{ gap: 16 }}>
       {/* Eval runs */}
-      <AilaCard variant="default" padding="md">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="font-mono text-xs uppercase tracking-wider text-text-muted">Eval runs</h2>
-          <Button type="button" size="sm" onClick={() => setScoreOpen(true)} className="gap-1.5">
-            <Sparkle className="h-3.5 w-3.5" />
-            Score version
-          </Button>
-        </div>
-        {runsQuery.isLoading && <LoadingSkeletonGroup lines={4} />}
+      <WindowPanel
+        title="eval runs"
+        actions={
+          <button
+            type="button"
+            onClick={() => setScoreOpen(true)}
+            style={PRIMARY_BUTTON_STYLE}
+          >
+            <Sparkle size={11} aria-hidden />
+            SCORE VERSION
+          </button>
+        }
+        flush
+      >
+        {runsQuery.isLoading && <div style={{ padding: 14 }}><LoadingSkeletonGroup lines={4} /></div>}
         {runsQuery.isError && (
-          <p className="font-mono text-xs text-critical">
+          <p style={{ ...ERROR_TEXT_STYLE, padding: 14 }}>
             {extractErrorMessage(runsQuery.error, "Failed to load eval runs.")}
           </p>
         )}
         {runsQuery.data && runs.length === 0 && (
-          <EmptyState
-            icon={<Flask className="h-10 w-10" />}
-            title="No eval runs recorded"
-            description="Click Score version to run a candidate against a registered benchmark."
-          />
-        )}
-        {runs.length > 0 && (
-          <div className="overflow-x-auto">
-            <table aria-label="Traffic split" className="w-full font-mono text-[11px] border-collapse [&_th]:border [&_th]:border-border [&_th]:uppercase [&_th]:tracking-wider [&_td]:border [&_td]:border-border">
-              <thead>
-                <tr className="text-left text-text-muted">
-                  <th className="pb-2 w-4"></th>
-                  <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">When</th>
-                  <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">Candidate</th>
-                  <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">Baseline</th>
-                  <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">Benchmark</th>
-                  <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">Verdict</th>
-                  <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">Actor</th>
-                </tr>
-              </thead>
-              <tbody>
-                {runs.map((run) => (
-                  <EvalRunRow
-                    key={run.id}
-                    run={run}
-                    expanded={expandedRunId === run.id}
-                    onToggle={() =>
-                      setExpandedRunId((prev) => (prev === run.id ? null : run.id))
-                    }
-                  />
-                ))}
-              </tbody>
-            </table>
+          <div
+            className="font-mono"
+            style={{ padding: 32, textAlign: "center", fontSize: 11, color: "var(--text-muted)", lineHeight: 1.6 }}
+          >
+            No eval runs recorded.
+            <br />
+            Click SCORE VERSION to run a candidate against a registered benchmark.
           </div>
         )}
-      </AilaCard>
+        {runs.length > 0 && (
+          <div>
+            <div
+              className="grid font-mono uppercase"
+              style={{
+                gridTemplateColumns: "24px 160px 130px 130px 1fr 110px 130px",
+                gap: 10, padding: "8px 12px",
+                background: "var(--surface-sunk)", borderBottom: "1px solid var(--border-soft)",
+                fontSize: 9, letterSpacing: "0.14em", color: "var(--text-faint)",
+              }}
+            >
+              <span />
+              <span>WHEN</span>
+              <span>CANDIDATE</span>
+              <span>BASELINE</span>
+              <span>BENCHMARK</span>
+              <span>VERDICT</span>
+              <span>ACTOR</span>
+            </div>
+            {runs.map((run) => (
+              <EvalRunRow
+                key={run.id}
+                run={run}
+                expanded={expandedRunId === run.id}
+                onToggle={() => setExpandedRunId((prev) => (prev === run.id ? null : run.id))}
+              />
+            ))}
+          </div>
+        )}
+      </WindowPanel>
 
       {/* Calibrators */}
-      <AilaCard variant="default" padding="md">
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="font-mono text-xs uppercase tracking-wider text-text-muted">Calibrators</h2>
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
+      <WindowPanel
+        title="calibrators"
+        actions={
+          <div className="flex items-center" style={{ gap: 6 }}>
+            <input
               placeholder="task_type filter (blank = all)"
               value={taskTypeDraft}
               onChange={(e) => setTaskTypeDraft(e.target.value)}
-              className="font-mono text-xs"
-              style={{ width: 220 }}
+              style={{ ...INPUT_STYLE, width: 220 }}
             />
-            <Button
+            <button
               type="button"
-              size="sm"
-              variant="outline"
+              style={BUTTON_STYLE}
               onClick={() => setTaskType(taskTypeDraft.trim())}
             >
-              Filter
-            </Button>
-            <Button
+              FILTER
+            </button>
+            <button
               type="button"
-              size="sm"
+              style={PRIMARY_BUTTON_STYLE}
               onClick={() => void handleTrain()}
               disabled={trainMutation.isPending || taskTypeDraft.trim().length === 0}
-              className="gap-1.5"
             >
-              <Play className="h-3.5 w-3.5" />
-              {trainMutation.isPending ? "Training…" : "Train"}
-            </Button>
+              <Play size={11} aria-hidden />
+              {trainMutation.isPending ? "TRAINING\u2026" : "TRAIN"}
+            </button>
+          </div>
+        }
+        flush
+      >
+        <div style={{ padding: 12, background: "var(--surface-sunk)", borderBottom: "1px solid var(--border-faint)" }}>
+          <div className="flex flex-wrap items-center" style={{ gap: 8 }}>
+            <label style={LABEL_STYLE}>APPROVER_IDS (COMMA-SEPARATED)</label>
+            <input
+              value={approversDraft}
+              onChange={(e) => setApproversDraft(e.target.value)}
+              placeholder="user-a, user-b"
+              style={{ ...INPUT_STYLE, width: 280 }}
+            />
           </div>
         </div>
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          <label className="font-mono text-[11px] uppercase tracking-wider text-text-muted">
-            approver_ids (comma-separated)
-          </label>
-          <Input
-            value={approversDraft}
-            onChange={(e) => setApproversDraft(e.target.value)}
-            placeholder="user-a, user-b"
-            className="font-mono text-xs"
-            style={{ width: 260 }}
-          />
-        </div>
-        {calibratorsQuery.isLoading && <LoadingSkeletonGroup lines={3} />}
+        {calibratorsQuery.isLoading && <div style={{ padding: 14 }}><LoadingSkeletonGroup lines={3} /></div>}
         {calibratorsQuery.isError && (
-          <p className="font-mono text-xs text-critical">
+          <p style={{ ...ERROR_TEXT_STYLE, padding: 14 }}>
             {extractErrorMessage(calibratorsQuery.error, "Failed to load calibrators.")}
           </p>
         )}
         {calibratorsQuery.data && calibrators.length === 0 && (
-          <p className="font-mono text-xs text-text-muted">
+          <div
+            className="font-mono"
+            style={{ padding: 24, textAlign: "center", fontSize: 11, color: "var(--text-muted)" }}
+          >
             No calibrator versions match {taskType.length > 0 ? `task_type=${taskType}` : "any filter"}.
-          </p>
-        )}
-        {calibrators.length > 0 && (
-          <div className="overflow-x-auto">
-            <table aria-label="Version metrics" className="w-full font-mono text-[11px] border-collapse [&_th]:border [&_th]:border-border [&_th]:uppercase [&_th]:tracking-wider [&_td]:border [&_td]:border-border">
-              <thead>
-                <tr className="text-left text-text-muted">
-                  <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">Task type</th>
-                  <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">Method</th>
-                  <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">ECE before</th>
-                  <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">ECE after</th>
-                  <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">Samples</th>
-                  <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">Status</th>
-                  <th className="pb-2 font-normal uppercase tracking-wider text-[10px] text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {calibrators.map((row) => (
-                  <tr key={row.id} className="border-t border-border">
-                    <td className="py-2 text-text">{row.task_type}</td>
-                    <td className="py-2 text-text">{row.method}</td>
-                    <td className="py-2 text-text">{row.ece_before.toFixed(3)}</td>
-                    <td className="py-2 text-text">{row.ece_after.toFixed(3)}</td>
-                    <td className="py-2 text-text">{row.sample_count}</td>
-                    <td className="py-2">
-                      <AilaBadge severity={row.status === "active" ? "info" : "neutral"}>
-                        {row.status}
-                      </AilaBadge>
-                    </td>
-                    <td className="py-2 text-right">
-                      <Button type="button" size="sm" variant="ghost"
-                        onClick={() => void handlePromoteCalibrator(row)}
-                        disabled={promoteCalibratorMutation.isPending || row.status === "active"}
-                      >
-                        promote
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
           </div>
         )}
-      </AilaCard>
+        {calibrators.length > 0 && (
+          <DataGrid<CalibratorVersionInfo>
+            columns={[
+              { label: "TASK TYPE", width: "150px" },
+              { label: "METHOD", width: "120px" },
+              { label: "ECE BEFORE", width: "110px", align: "right" },
+              { label: "ECE AFTER", width: "110px", align: "right" },
+              { label: "SAMPLES", width: "90px", align: "right" },
+              { label: "STATUS", width: "110px" },
+              { label: "", width: "100px", align: "right" },
+            ]}
+            rows={calibrators}
+            getKey={(row) => row.id}
+            renderCells={(row) => [
+              <span className="font-mono" style={{ fontSize: 11, color: "var(--text-primary)" }}>{row.task_type}</span>,
+              <span className="font-mono" style={{ fontSize: 11, color: "var(--text-primary)" }}>{row.method}</span>,
+              <span className="font-mono" style={{ fontSize: 11, color: "var(--text-primary)" }}>{row.ece_before.toFixed(3)}</span>,
+              <span className="font-mono" style={{ fontSize: 11, color: "var(--text-primary)" }}>{row.ece_after.toFixed(3)}</span>,
+              <span className="font-mono" style={{ fontSize: 11, color: "var(--text-primary)" }}>{row.sample_count}</span>,
+              <MonoBadge tone={row.status === "active" ? "info" : "muted"}>{row.status}</MonoBadge>,
+              <button
+                type="button"
+                style={GHOST_BUTTON_STYLE}
+                onClick={() => void handlePromoteCalibrator(row)}
+                disabled={promoteCalibratorMutation.isPending || row.status === "active"}
+              >
+                promote
+              </button>,
+            ]}
+          />
+        )}
+      </WindowPanel>
 
       {/* Bottom action row -- new benchmark */}
       <div className="flex justify-end">
-        <Button
+        <button
           type="button"
-          size="sm"
-          variant="outline"
+          style={BUTTON_STYLE}
           onClick={() => setBenchOpen(true)}
-          className="gap-1.5"
         >
-          <ArrowClockwise className="h-3.5 w-3.5" />
-          New benchmark
-        </Button>
+          <ArrowClockwise size={11} aria-hidden />
+          NEW BENCHMARK
+        </button>
       </div>
 
       {/* Score version modal */}
-      <Dialog
-        open={scoreOpen}
-        onOpenChange={(next) => { if (!next) setScoreOpen(false); }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="font-mono text-text">Score a candidate version</DialogTitle>
-          </DialogHeader>
-          <div className="flex flex-col gap-3">
-            <label className="font-mono text-xs uppercase tracking-wider text-text-muted">
-              candidate_version
-            </label>
-            <Input
-              value={scoreCandidate}
-              onChange={(e) => setScoreCandidate(e.target.value)}
-              className="font-mono text-xs"
-              placeholder="v42"
-            />
-            <label className="font-mono text-xs uppercase tracking-wider text-text-muted">
-              benchmark_id
-            </label>
-            <Input
-              value={scoreBenchmark}
-              onChange={(e) => setScoreBenchmark(e.target.value)}
-              className="font-mono text-xs"
-              placeholder="bench-uuid-or-slug"
-            />
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                size="sm"
-                className="flex-1"
-                onClick={() => void handleScore()}
-                disabled={scoreMutation.isPending}
-              >
-                {scoreMutation.isPending ? "Scoring…" : "Score"}
-              </Button>
-              <Button type="button" size="sm" variant="outline" onClick={() => setScoreOpen(false)}>
-                Cancel
-              </Button>
-            </div>
+      <ModalShell open={scoreOpen} onClose={() => setScoreOpen(false)} title="score a candidate version">
+        <div className="flex flex-col" style={{ gap: 10 }}>
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE}>CANDIDATE_VERSION</label>
+            <input value={scoreCandidate} onChange={(e) => setScoreCandidate(e.target.value)} placeholder="v42" style={INPUT_STYLE} />
           </div>
-        </DialogContent>
-      </Dialog>
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE}>BENCHMARK_ID</label>
+            <input value={scoreBenchmark} onChange={(e) => setScoreBenchmark(e.target.value)} placeholder="bench-uuid-or-slug" style={INPUT_STYLE} />
+          </div>
+          <div className="flex" style={{ gap: 8 }}>
+            <button type="button" style={{ ...PRIMARY_BUTTON_STYLE, flex: 1 }} onClick={() => void handleScore()} disabled={scoreMutation.isPending}>
+              {scoreMutation.isPending ? "SCORING\u2026" : "SCORE"}
+            </button>
+            <button type="button" style={BUTTON_STYLE} onClick={() => setScoreOpen(false)}>CANCEL</button>
+          </div>
+        </div>
+      </ModalShell>
 
       {/* New benchmark modal */}
-      <Dialog
-        open={benchOpen}
-        onOpenChange={(next) => { if (!next) setBenchOpen(false); }}
-      >
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="font-mono text-text">Register new benchmark</DialogTitle>
-          </DialogHeader>
-          <div className="flex flex-col gap-3">
-            <label className="font-mono text-xs uppercase tracking-wider text-text-muted">name</label>
-            <Input
-              value={benchName}
-              onChange={(e) => setBenchName(e.target.value)}
-              className="font-mono text-xs"
-              placeholder="human-readable name"
-            />
-            <label className="font-mono text-xs uppercase tracking-wider text-text-muted">
-              cases (JSON array of BenchmarkCaseSpec)
-            </label>
-            <Textarea
+      <ModalShell open={benchOpen} onClose={() => setBenchOpen(false)} title="register new benchmark" width={560}>
+        <div className="flex flex-col" style={{ gap: 10 }}>
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE}>NAME</label>
+            <input value={benchName} onChange={(e) => setBenchName(e.target.value)} placeholder="human-readable name" style={INPUT_STYLE} />
+          </div>
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE}>CASES (JSON ARRAY OF BENCHMARKCASESPEC)</label>
+            <textarea
               value={benchCasesJson}
               onChange={(e) => setBenchCasesJson(e.target.value)}
               rows={10}
-              className="font-mono text-[11px]"
               spellCheck={false}
               placeholder={'[\n  {\n    "outcome_kind": "vuln_classify",\n    "predicted_verdict": "true_positive",\n    "verified_verdict": "true_positive",\n    "confidence": 0.92,\n    "version": "v41"\n  }\n]'}
+              style={TEXTAREA_STYLE}
             />
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                size="sm"
-                className="flex-1"
-                onClick={() => void handleRegisterBenchmark()}
-                disabled={benchMutation.isPending}
-              >
-                {benchMutation.isPending ? "Registering…" : "Register"}
-              </Button>
-              <Button type="button" size="sm" variant="outline" onClick={() => setBenchOpen(false)}>
-                Cancel
-              </Button>
-            </div>
           </div>
-        </DialogContent>
-      </Dialog>
+          <div className="flex" style={{ gap: 8 }}>
+            <button type="button" style={{ ...PRIMARY_BUTTON_STYLE, flex: 1 }} onClick={() => void handleRegisterBenchmark()} disabled={benchMutation.isPending}>
+              {benchMutation.isPending ? "REGISTERING\u2026" : "REGISTER"}
+            </button>
+            <button type="button" style={BUTTON_STYLE} onClick={() => setBenchOpen(false)}>CANCEL</button>
+          </div>
+        </div>
+      </ModalShell>
     </div>
   );
 }
@@ -1315,27 +1334,54 @@ interface EvalRunRowProps {
 function EvalRunRow({ run, expanded, onToggle }: EvalRunRowProps) {
   return (
     <>
-      <tr className="border-t border-border">
-        <td className="py-2">
-          <button type="button" onClick={onToggle} className="text-text-muted hover:text-text">
-            {expanded ? <CaretDown className="h-3.5 w-3.5" /> : <CaretRight className="h-3.5 w-3.5" />}
-          </button>
-        </td>
-        <td className="py-2 text-text">{formatTimestamp(run.created_at)}</td>
-        <td className="py-2 text-text">{run.candidate_version}</td>
-        <td className="py-2 text-text-muted">{run.baseline_version ?? "--"}</td>
-        <td className="py-2 text-text-muted break-all">{run.benchmark_id}</td>
-        <td className="py-2"><VerdictBadge verdict={run.verdict} /></td>
-        <td className="py-2 text-text-muted">{run.actor}</td>
-      </tr>
+      <div
+        className="grid font-mono"
+        style={{
+          gridTemplateColumns: "24px 160px 130px 130px 1fr 110px 130px",
+          gap: 10, padding: "8px 12px",
+          borderBottom: "1px solid var(--border-faint)",
+          background: "var(--surface-card)",
+          alignItems: "center", fontSize: 11,
+        }}
+      >
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-label={expanded ? "Collapse" : "Expand"}
+          style={{
+            width: 20, height: 20, background: "transparent", border: 0,
+            color: "var(--text-muted)", cursor: "pointer",
+            display: "inline-flex", alignItems: "center", justifyContent: "center",
+          }}
+        >
+          {expanded ? <CaretDown size={11} /> : <CaretRight size={11} />}
+        </button>
+        <span style={{ color: "var(--text-primary)" }}>{formatTimestamp(run.created_at)}</span>
+        <span style={{ color: "var(--text-primary)" }}>{run.candidate_version}</span>
+        <span style={{ color: "var(--text-muted)" }}>{run.baseline_version ?? "--"}</span>
+        <span className="truncate" style={{ color: "var(--text-muted)", wordBreak: "break-all" }}>{run.benchmark_id}</span>
+        <VerdictBadge verdict={run.verdict} />
+        <span style={{ color: "var(--text-muted)" }}>{run.actor}</span>
+      </div>
       {expanded && (
-        <tr className="border-t border-border/40 bg-elevated/40">
-          <td colSpan={7} className="px-3 py-3">
-            <pre className="max-h-96 overflow-auto rounded-[4px] border border-border bg-base px-3 py-2 font-mono text-[11px] text-text whitespace-pre-wrap">
-              {JSON.stringify(run.report, null, 2)}
-            </pre>
-          </td>
-        </tr>
+        <div
+          style={{
+            padding: 12, background: "var(--surface-sunk)",
+            borderBottom: "1px solid var(--border-faint)",
+          }}
+        >
+          <pre
+            style={{
+              maxHeight: 380, overflow: "auto",
+              padding: 10, fontSize: 10.5, fontFamily: "var(--font-mono)",
+              color: "var(--text-primary)", background: "var(--surface-card)",
+              border: "1px solid var(--border-faint)", borderRadius: 3,
+              whiteSpace: "pre-wrap", margin: 0,
+            }}
+          >
+            {JSON.stringify(run.report, null, 2)}
+          </pre>
+        </div>
       )}
     </>
   );
@@ -1345,9 +1391,7 @@ function EvalRunRow({ run, expanded, onToggle }: EvalRunRowProps) {
 // Tab 3 -- Prompts
 // ---------------------------------------------------------------------------
 
-interface PromptsTabProps { activeKey: string }
-
-function PromptsTab({ activeKey }: PromptsTabProps) {
+function PromptsTab({ activeKey }: { activeKey: string }) {
   const versionsQuery = usePromptVersions(activeKey);
   const aliasesQuery = usePromptAliases(activeKey);
   const registerMutation = useRegisterPromptVersion();
@@ -1355,9 +1399,6 @@ function PromptsTab({ activeKey }: PromptsTabProps) {
 
   const [selectedLeft, setSelectedLeft] = useState<string>("");
   const [selectedRight, setSelectedRight] = useState<string>("");
-  // The list_versions endpoint returns metadata only. To diff bodies the
-  // operator registers a version (idempotent by content-hash) and we cache
-  // the body locally, or they paste the body in.
   const [bodyCache, setBodyCache] = useState<Record<string, string>>({});
 
   const [newOpen, setNewOpen] = useState(false);
@@ -1371,9 +1412,7 @@ function PromptsTab({ activeKey }: PromptsTabProps) {
   const [aliasReason, setAliasReason] = useState("");
 
   const versions = useMemo(
-    () => [...(versionsQuery.data ?? [])].sort(
-      (a, b) => (a.created_at < b.created_at ? 1 : -1),
-    ),
+    () => [...(versionsQuery.data ?? [])].sort((a, b) => (a.created_at < b.created_at ? 1 : -1)),
     [versionsQuery.data],
   );
   const aliases = aliasesQuery.data ?? [];
@@ -1381,9 +1420,9 @@ function PromptsTab({ activeKey }: PromptsTabProps) {
   const productionAlias = aliases.find((a) => a.alias === "production");
   const latestVersion = versions[0]?.version ?? null;
   const productionLagging =
-    productionAlias !== undefined &&
-    latestVersion !== null &&
-    productionAlias.version !== latestVersion;
+    productionAlias !== undefined
+    && latestVersion !== null
+    && productionAlias.version !== latestVersion;
 
   useEffect(() => {
     if (versions.length >= 2) {
@@ -1400,10 +1439,7 @@ function PromptsTab({ activeKey }: PromptsTabProps) {
   }, [versions, selectedLeft, selectedRight]);
 
   async function handleRegisterNew() {
-    if (newBody.length === 0) {
-      toast.error("body is required.");
-      return;
-    }
+    if (newBody.length === 0) { toast.error("body is required."); return; }
     try {
       const env = await registerMutation.mutateAsync({
         key: activeKey,
@@ -1411,8 +1447,6 @@ function PromptsTab({ activeKey }: PromptsTabProps) {
         author: newAuthor.length > 0 ? newAuthor : undefined,
         notes: newNotes.length > 0 ? newNotes : undefined,
       });
-      // Cache body against version so the diff view can render it without
-      // a round-trip. Register is content-hash-dedup so this is safe on repeat.
       setBodyCache((prev) => ({ ...prev, [env.data.version]: newBody }));
       toast.success(`Registered ${env.data.version} (${env.data.content_hash.slice(0, 12)}\u2026).`);
       setNewOpen(false);
@@ -1424,10 +1458,7 @@ function PromptsTab({ activeKey }: PromptsTabProps) {
   }
 
   async function handleSetAlias() {
-    if (aliasVersion.trim().length === 0) {
-      toast.error("version is required.");
-      return;
-    }
+    if (aliasVersion.trim().length === 0) { toast.error("version is required."); return; }
     try {
       await setAliasMutation.mutateAsync({
         key: activeKey,
@@ -1445,71 +1476,84 @@ function PromptsTab({ activeKey }: PromptsTabProps) {
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      {/* Aliases bar */}
-      <AilaCard variant="default" padding="md">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-3">
-            <h2 className="font-mono text-xs uppercase tracking-wider text-text-muted">Aliases</h2>
+    <div className="flex flex-col" style={{ gap: 16 }}>
+      {/* Aliases */}
+      <WindowPanel
+        title="aliases"
+        actions={
+          <div className="flex items-center" style={{ gap: 8 }}>
             {productionLagging && (
-              <span
+              <MonoBadge
+                tone="medium"
                 title={`production is at ${productionAlias?.version} but the latest registered version is ${latestVersion}`}
               >
-                <AilaBadge severity="medium">
-                  <Warning className="mr-1 inline h-3 w-3" />
-                  production lags latest
-                </AilaBadge>
-              </span>
+                <Warning size={9} aria-hidden style={{ marginRight: 4, verticalAlign: "-1px" }} />
+                production lags latest
+              </MonoBadge>
             )}
+            <button
+              type="button"
+              onClick={() => setAliasOpen(true)}
+              style={PRIMARY_BUTTON_STYLE}
+            >
+              DEPLOY TO ALIAS
+            </button>
           </div>
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => setAliasOpen(true)}
-            className="gap-1.5"
-          >
-            Deploy to alias
-          </Button>
-        </div>
+        }
+      >
         {aliasesQuery.isLoading && <LoadingSkeletonGroup lines={2} />}
         {aliasesQuery.isError && (
-          <p className="font-mono text-xs text-critical">
+          <p style={ERROR_TEXT_STYLE}>
             {extractErrorMessage(aliasesQuery.error, "Failed to load aliases.")}
           </p>
         )}
         {aliasesQuery.data && aliases.length === 0 && (
-          <p className="font-mono text-xs text-text-muted">No alias pointers for this key.</p>
+          <p className="font-mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
+            No alias pointers for this key.
+          </p>
         )}
         {aliases.length > 0 && (
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap" style={{ gap: 10 }}>
             {aliases.map((a) => (
               <AliasChip key={a.alias} alias={a} lagging={a.alias === "production" && productionLagging} />
             ))}
           </div>
         )}
-      </AilaCard>
+      </WindowPanel>
 
       {/* Split pane: timeline + diff */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
-        {/* Versions timeline */}
-        <AilaCard variant="default" padding="md">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="font-mono text-xs uppercase tracking-wider text-text-muted">Versions</h2>
-            <Button type="button" size="sm" onClick={() => setNewOpen(true)}>New version</Button>
-          </div>
+      <div
+        className="grid"
+        style={{ gridTemplateColumns: "minmax(0, 1fr) minmax(0, 2fr)", gap: 16 }}
+      >
+        <WindowPanel
+          title="versions"
+          actions={
+            <button
+              type="button"
+              onClick={() => setNewOpen(true)}
+              style={PRIMARY_BUTTON_STYLE}
+            >
+              NEW VERSION
+            </button>
+          }
+        >
           {versionsQuery.isLoading && <LoadingSkeletonGroup lines={5} />}
           {versionsQuery.isError && (
-            <p className="font-mono text-xs text-critical">
+            <p style={ERROR_TEXT_STYLE}>
               {extractErrorMessage(versionsQuery.error, "Failed to load versions.")}
             </p>
           )}
           {versionsQuery.data && versions.length === 0 && (
-            <p className="font-mono text-xs text-text-muted">
+            <p className="font-mono" style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.55 }}>
               No versions registered for this key. Click New version to write the first.
             </p>
           )}
           {versions.length > 0 && (
-            <ol className="flex flex-col gap-2">
+            <ol
+              className="flex flex-col"
+              style={{ gap: 8, padding: 0, margin: 0, listStyle: "none" }}
+            >
               {versions.map((v) => (
                 <PromptVersionEntry
                   key={v.version}
@@ -1523,147 +1567,117 @@ function PromptsTab({ activeKey }: PromptsTabProps) {
               ))}
             </ol>
           )}
-        </AilaCard>
+        </WindowPanel>
 
-        {/* Diff view */}
-        <AilaCard variant="default" padding="md">
-          <h2 className="mb-4 font-mono text-xs uppercase tracking-wider text-text-muted">
-            Body diff
-          </h2>
+        <WindowPanel title="body diff">
           <BodyDiffView
             leftVersion={selectedLeft}
             rightVersion={selectedRight}
             bodyCache={bodyCache}
             setBody={(v, b) => setBodyCache((prev) => ({ ...prev, [v]: b }))}
           />
-        </AilaCard>
+        </WindowPanel>
       </div>
 
       {/* New version modal */}
-      <Dialog
-        open={newOpen}
-        onOpenChange={(next) => { if (!next) setNewOpen(false); }}
-      >
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle className="font-mono text-text">Register new prompt version</DialogTitle>
-          </DialogHeader>
-          <div className="flex flex-col gap-3">
-            <label className="font-mono text-xs uppercase tracking-wider text-text-muted">body</label>
-            <Textarea
+      <ModalShell open={newOpen} onClose={() => setNewOpen(false)} title="register new prompt version" width={640}>
+        <div className="flex flex-col" style={{ gap: 10 }}>
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE}>BODY</label>
+            <textarea
               value={newBody}
               onChange={(e) => setNewBody(e.target.value)}
               rows={12}
-              className="font-mono text-[11px]"
               spellCheck={false}
+              style={TEXTAREA_STYLE}
             />
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="flex flex-col gap-1.5">
-                <label className="font-mono text-xs uppercase tracking-wider text-text-muted">
-                  author (optional)
-                </label>
-                <Input
-                  value={newAuthor}
-                  onChange={(e) => setNewAuthor(e.target.value)}
-                  className="font-mono text-xs"
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="font-mono text-xs uppercase tracking-wider text-text-muted">
-                  notes (optional)
-                </label>
-                <Input
-                  value={newNotes}
-                  onChange={(e) => setNewNotes(e.target.value)}
-                  className="font-mono text-xs"
-                />
-              </div>
+          </div>
+          <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div className="flex flex-col" style={{ gap: 4 }}>
+              <label style={LABEL_STYLE}>AUTHOR (OPTIONAL)</label>
+              <input value={newAuthor} onChange={(e) => setNewAuthor(e.target.value)} style={INPUT_STYLE} />
             </div>
-            <p className="font-mono text-[10px] text-text-muted">
-              Registration is content-hash-deduplicated: identical bodies return the existing version.
-              The body is cached in-page against its assigned version so the diff view renders immediately.
-            </p>
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                size="sm"
-                className="flex-1"
-                onClick={() => void handleRegisterNew()}
-                disabled={registerMutation.isPending}
-              >
-                {registerMutation.isPending ? "Registering…" : "Register"}
-              </Button>
-              <Button type="button" size="sm" variant="outline" onClick={() => setNewOpen(false)}>
-                Cancel
-              </Button>
+            <div className="flex flex-col" style={{ gap: 4 }}>
+              <label style={LABEL_STYLE}>NOTES (OPTIONAL)</label>
+              <input value={newNotes} onChange={(e) => setNewNotes(e.target.value)} style={INPUT_STYLE} />
             </div>
           </div>
-        </DialogContent>
-      </Dialog>
+          <p className="font-mono" style={{ fontSize: 10, color: "var(--text-faint)", lineHeight: 1.55 }}>
+            Registration is content-hash-deduplicated: identical bodies return the existing version.
+            The body is cached in-page against its assigned version so the diff view renders immediately.
+          </p>
+          <div className="flex" style={{ gap: 8 }}>
+            <button type="button" style={{ ...PRIMARY_BUTTON_STYLE, flex: 1 }} onClick={() => void handleRegisterNew()} disabled={registerMutation.isPending}>
+              {registerMutation.isPending ? "REGISTERING\u2026" : "REGISTER"}
+            </button>
+            <button type="button" style={BUTTON_STYLE} onClick={() => setNewOpen(false)}>CANCEL</button>
+          </div>
+        </div>
+      </ModalShell>
 
       {/* Alias modal */}
-      <Dialog
-        open={aliasOpen}
-        onOpenChange={(next) => { if (!next) setAliasOpen(false); }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="font-mono text-text">Deploy version to alias</DialogTitle>
-          </DialogHeader>
-          <div className="flex flex-col gap-3">
-            <div className="rounded-[4px] border border-warning/40 bg-warning/10 px-4 py-3 font-mono text-xs text-text">
-              Pointing <code className="font-mono">production</code> flips the live prompt for every team
-              resolving <code className="font-mono">{activeKey}</code>. Use <code className="font-mono">staging</code>
-              or <code className="font-mono">candidate</code> for out-of-line rollouts.
-            </div>
-            <label className="font-mono text-xs uppercase tracking-wider text-text-muted">alias</label>
-            <Input aria-label="Alias name" value={aliasName} onChange={(e) => setAliasName(e.target.value)} className="font-mono text-xs" />
-            <label className="font-mono text-xs uppercase tracking-wider text-text-muted">version</label>
-            <Input aria-label="Version identifier" value={aliasVersion} onChange={(e) => setAliasVersion(e.target.value)} className="font-mono text-xs" />
-            <label className="font-mono text-xs uppercase tracking-wider text-text-muted">reason</label>
-            <Textarea
-              value={aliasReason}
-              onChange={(e) => setAliasReason(e.target.value)}
-              rows={3}
-              className="font-mono text-xs"
-              spellCheck={false}
-            />
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant={aliasName.trim() === "production" ? "destructive" : "default"}
-                className="flex-1"
-                onClick={() => void handleSetAlias()}
-                disabled={setAliasMutation.isPending}
-              >
-                {setAliasMutation.isPending ? "Deploying…" : "Deploy"}
-              </Button>
-              <Button type="button" size="sm" variant="outline" onClick={() => setAliasOpen(false)}>
-                Cancel
-              </Button>
-            </div>
+      <ModalShell open={aliasOpen} onClose={() => setAliasOpen(false)} title="deploy version to alias" tone="warn">
+        <div className="flex flex-col" style={{ gap: 10 }}>
+          <div
+            className="font-mono"
+            style={{
+              padding: 10, fontSize: 11, color: "var(--text-primary)", lineHeight: 1.55,
+              border: "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+              background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+              borderRadius: 3,
+            }}
+          >
+            Pointing <code>production</code> flips the live prompt for every team resolving <code>{activeKey}</code>.
+            Use <code>staging</code> or <code>candidate</code> for out-of-line rollouts.
           </div>
-        </DialogContent>
-      </Dialog>
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE}>ALIAS</label>
+            <input aria-label="Alias name" value={aliasName} onChange={(e) => setAliasName(e.target.value)} style={INPUT_STYLE} />
+          </div>
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE}>VERSION</label>
+            <input aria-label="Version identifier" value={aliasVersion} onChange={(e) => setAliasVersion(e.target.value)} style={INPUT_STYLE} />
+          </div>
+          <div className="flex flex-col" style={{ gap: 4 }}>
+            <label style={LABEL_STYLE}>REASON</label>
+            <textarea value={aliasReason} onChange={(e) => setAliasReason(e.target.value)} rows={3} style={TEXTAREA_STYLE} />
+          </div>
+          <div className="flex" style={{ gap: 8 }}>
+            <button
+              type="button"
+              style={aliasName.trim() === "production" ? { ...WARN_BUTTON_STYLE, flex: 1 } : { ...PRIMARY_BUTTON_STYLE, flex: 1 }}
+              onClick={() => void handleSetAlias()}
+              disabled={setAliasMutation.isPending}
+            >
+              {setAliasMutation.isPending ? "DEPLOYING\u2026" : "DEPLOY"}
+            </button>
+            <button type="button" style={BUTTON_STYLE} onClick={() => setAliasOpen(false)}>CANCEL</button>
+          </div>
+        </div>
+      </ModalShell>
     </div>
   );
 }
 
-interface AliasChipProps { alias: PromptAliasInfo; lagging: boolean }
-
-function AliasChip({ alias, lagging }: AliasChipProps) {
-  const severity =
+function AliasChip({ alias, lagging }: { alias: PromptAliasInfo; lagging: boolean }) {
+  const tone =
     alias.alias === "production" ? (lagging ? "medium" : "info")
     : alias.alias === "staging" ? "low"
-    : "neutral";
+    : "muted";
   return (
-    <div className="flex flex-col gap-1 rounded-[4px] border border-border bg-elevated px-3 py-2">
-      <div className="flex items-center gap-2">
-        <AilaBadge severity={severity}>{alias.alias}</AilaBadge>
-        <span className="font-mono text-xs text-text">{alias.version}</span>
+    <div
+      className="flex flex-col"
+      style={{
+        gap: 4, padding: "8px 10px",
+        border: "1px solid var(--border-soft)", borderRadius: 3,
+        background: "var(--surface-sunk)",
+      }}
+    >
+      <div className="flex items-center" style={{ gap: 6 }}>
+        <MonoBadge tone={tone}>{alias.alias}</MonoBadge>
+        <span className="font-mono" style={{ fontSize: 11, color: "var(--text-primary)" }}>{alias.version}</span>
       </div>
-      <span className="font-mono text-[10px] text-text-muted">
+      <span className="font-mono" style={{ fontSize: 10, color: "var(--text-faint)" }}>
         updated {formatTimestamp(alias.updated_at)}
       </span>
     </div>
@@ -1683,31 +1697,48 @@ function PromptVersionEntry({
   version, isLeft, isRight, onSelectLeft, onSelectRight, aliasBadges,
 }: PromptVersionEntryProps) {
   return (
-    <li className="flex flex-col gap-1 rounded-[2px] border border-border px-3 py-2">
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-mono text-xs text-text">{version.version}</span>
-        <div className="flex flex-wrap gap-1">
+    <li
+      className="flex flex-col"
+      style={{
+        gap: 4, padding: "8px 10px",
+        border: "1px solid var(--border-soft)", borderRadius: 3,
+        background: "var(--surface-card)",
+      }}
+    >
+      <div className="flex items-center justify-between" style={{ gap: 6 }}>
+        <span className="font-mono" style={{ fontSize: 11, color: "var(--text-primary)" }}>{version.version}</span>
+        <div className="flex flex-wrap" style={{ gap: 4 }}>
           {aliasBadges.map((a) => (
-            <AilaBadge key={a} severity={a === "production" ? "info" : "neutral"}>{a}</AilaBadge>
+            <MonoBadge key={a} tone={a === "production" ? "info" : "muted"}>{a}</MonoBadge>
           ))}
         </div>
       </div>
-      <span className="font-mono text-[10px] text-text-muted break-all">
+      <span className="font-mono" style={{ fontSize: 10, color: "var(--text-faint)", wordBreak: "break-all" }}>
         {version.content_hash.slice(0, 16)}{"\u2026 \u00b7 "}{formatTimestamp(version.created_at)}
       </span>
       {version.author && (
-        <span className="font-mono text-[10px] text-text-muted">by {version.author}</span>
+        <span className="font-mono" style={{ fontSize: 10, color: "var(--text-muted)" }}>by {version.author}</span>
       )}
       {version.notes && (
-        <span className="font-mono text-[10px] text-text break-words">{version.notes}</span>
+        <span className="font-mono" style={{ fontSize: 10, color: "var(--text-primary)", wordBreak: "break-word" }}>
+          {version.notes}
+        </span>
       )}
-      <div className="mt-1 flex gap-1">
-        <Button type="button" size="sm" variant={isLeft ? "default" : "ghost"} onClick={onSelectLeft}>
+      <div className="flex" style={{ gap: 4, marginTop: 4 }}>
+        <button
+          type="button"
+          style={isLeft ? PRIMARY_BUTTON_STYLE : GHOST_BUTTON_STYLE}
+          onClick={onSelectLeft}
+        >
           A
-        </Button>
-        <Button type="button" size="sm" variant={isRight ? "default" : "ghost"} onClick={onSelectRight}>
+        </button>
+        <button
+          type="button"
+          style={isRight ? PRIMARY_BUTTON_STYLE : GHOST_BUTTON_STYLE}
+          onClick={onSelectRight}
+        >
           B
-        </Button>
+        </button>
       </div>
     </li>
   );
@@ -1731,15 +1762,15 @@ function BodyDiffView({ leftVersion, rightVersion, bodyCache, setBody }: BodyDif
 
   if (leftVersion.length === 0 || rightVersion.length === 0) {
     return (
-      <p className="font-mono text-xs text-text-muted">
+      <p className="font-mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
         Pick versions A and B from the timeline to diff their bodies.
       </p>
     );
   }
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="grid grid-cols-2 gap-3">
+    <div className="flex flex-col" style={{ gap: 10 }}>
+      <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         <BodyPaneEditor
           label={`A: ${leftVersion}`}
           body={leftBody}
@@ -1752,26 +1783,32 @@ function BodyDiffView({ leftVersion, rightVersion, bodyCache, setBody }: BodyDif
         />
       </div>
       {diff && (
-        <div>
-          <span className="mb-1 block font-mono text-[10px] uppercase tracking-wider text-text-muted">
-            unified diff
-          </span>
-          <pre className="max-h-96 overflow-auto rounded-[4px] border border-border bg-base px-3 py-2 font-mono text-[11px] whitespace-pre-wrap">
+        <div className="flex flex-col" style={{ gap: 4 }}>
+          <span style={LABEL_STYLE}>UNIFIED DIFF</span>
+          <pre
+            style={{
+              maxHeight: 380, overflow: "auto",
+              padding: 10, fontSize: 10.5, fontFamily: "var(--font-mono)",
+              background: "var(--surface-sunk)",
+              border: "1px solid var(--border-faint)", borderRadius: 3,
+              whiteSpace: "pre-wrap", margin: 0,
+            }}
+          >
             {diff.map((line, idx) => {
               const color =
-                line.kind === "add" ? "text-accent"
-                : line.kind === "del" ? "text-critical"
-                : "text-text-muted";
+                line.kind === "add" ? toneColor("ok")
+                : line.kind === "del" ? toneColor("critical")
+                : "var(--text-muted)";
               const prefix = line.kind === "add" ? "+ " : line.kind === "del" ? "- " : "  ";
               return (
-                <span key={idx} className={color}>{`${prefix}${line.text}\n`}</span>
+                <span key={idx} style={{ color }}>{`${prefix}${line.text}\n`}</span>
               );
             })}
           </pre>
         </div>
       )}
       {(leftBody === undefined || rightBody === undefined) && (
-        <p className="font-mono text-[11px] text-text-muted">
+        <p className="font-mono" style={{ fontSize: 10.5, color: "var(--text-muted)", lineHeight: 1.55 }}>
           The list endpoint returns metadata only. Paste the raw body into the pane above --
           or click New version and re-register it (content-hash-dedup safe) to hydrate.
         </p>
@@ -1788,15 +1825,15 @@ interface BodyPaneEditorProps {
 
 function BodyPaneEditor({ label, body, onChange }: BodyPaneEditorProps) {
   return (
-    <div className="flex flex-col gap-1">
-      <span className="font-mono text-[10px] uppercase tracking-wider text-text-muted">{label}</span>
-      <Textarea
+    <div className="flex flex-col" style={{ gap: 4 }}>
+      <span style={LABEL_STYLE}>{label.toUpperCase()}</span>
+      <textarea
         value={body ?? ""}
         onChange={(e) => onChange(e.target.value)}
         rows={12}
-        className="font-mono text-[11px]"
         placeholder="(body not cached in page; paste to diff)"
         spellCheck={false}
+        style={TEXTAREA_STYLE}
       />
     </div>
   );
@@ -1805,8 +1842,8 @@ function BodyPaneEditor({ label, body, onChange }: BodyPaneEditorProps) {
 interface DiffLine { kind: "eq" | "add" | "del"; text: string }
 
 /**
- * Small LCS-based line diff. n*m table, fine for the prompt body sizes
- * this UI carries (few KB, tens to hundreds of lines).
+ * LCS-based line diff. n*m table, fine for the prompt body sizes this UI
+ * carries (few KB, tens to hundreds of lines).
  */
 function computeLineDiff(a: string, b: string): DiffLine[] {
   const A = a.split("\n");
@@ -1844,50 +1881,69 @@ function computeLineDiff(a: string, b: string): DiffLine[] {
 // Page
 // ---------------------------------------------------------------------------
 
+type Concern = "lifecycle" | "evals" | "prompts";
+
 export function MlOpsPage() {
-  const [tab, setTab] = useState("lifecycle");
+  const [tab, setTab] = useState<Concern>("lifecycle");
   const [activeKey, setActiveKey] = useState("");
 
   return (
-    <div className="flex flex-col gap-6 p-4 lg:p-6">
+    <div className="flex flex-col" style={{ gap: 16, padding: 20 }}>
+      <SectionHeader
+        icon={"\u25c6"}
+        title="ml ops"
+        actions={
+          activeKey.length > 0 ? (
+            <Segmented<Concern>
+              options={[
+                { value: "lifecycle", label: "LIFECYCLE" },
+                { value: "evals", label: "EVALS" },
+                { value: "prompts", label: "PROMPTS" },
+              ]}
+              value={tab}
+              onChange={setTab}
+            />
+          ) : undefined
+        }
+      />
+
       <KeyPicker activeKey={activeKey} onCommit={setActiveKey} />
 
       {activeKey.length === 0 ? (
-        <EmptyState
-          icon={<Brain className="h-10 w-10" />}
-          title="Type a registry key to begin"
-          description="Every ML-Ops surface is scoped to a single model or prompt registry key."
-        />
-      ) : (
-        <Tabs value={tab} onValueChange={setTab}>
-          <div className="overflow-x-auto">
-            <TabsList variant="line" className="mb-4">
-              <TabsTrigger value="lifecycle">Lifecycle</TabsTrigger>
-              <TabsTrigger value="evals">Evals</TabsTrigger>
-              <TabsTrigger value="prompts">Prompts</TabsTrigger>
-            </TabsList>
+        <WindowPanel title="awaiting key" tone="muted">
+          <div className="flex items-center" style={{ gap: 12, padding: 12 }}>
+            <Brain size={32} aria-hidden style={{ color: "var(--text-faint)" }} />
+            <div className="flex flex-col" style={{ gap: 4 }}>
+              <span
+                className="font-mono uppercase"
+                style={{ fontSize: 11, letterSpacing: "0.1em", color: "var(--text-primary)" }}
+              >
+                type a registry key to begin
+              </span>
+              <span className="font-mono" style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.55 }}>
+                Every ML-Ops surface is scoped to a single model or prompt registry key.
+              </span>
+            </div>
           </div>
-          {/* Per-tab FeatureBoundary: a single tab's queries can misbehave
-              (recharts render fault, malformed transition payload, unknown
-              alias schema) without blanking the whole ML-Ops surface. Tab
-              switches remount via resetKeys so a repeat fault gets a fresh
-              render pass. */}
-          <TabsContent value="lifecycle">
+        </WindowPanel>
+      ) : (
+        <>
+          {tab === "lifecycle" && (
             <FeatureBoundary label="Lifecycle" resetKeys={[activeKey, tab]}>
               <LifecycleTab activeKey={activeKey} />
             </FeatureBoundary>
-          </TabsContent>
-          <TabsContent value="evals">
+          )}
+          {tab === "evals" && (
             <FeatureBoundary label="Evals" resetKeys={[activeKey, tab]}>
               <EvalsTab activeKey={activeKey} />
             </FeatureBoundary>
-          </TabsContent>
-          <TabsContent value="prompts">
+          )}
+          {tab === "prompts" && (
             <FeatureBoundary label="Prompts" resetKeys={[activeKey, tab]}>
               <PromptsTab activeKey={activeKey} />
             </FeatureBoundary>
-          </TabsContent>
-        </Tabs>
+          )}
+        </>
       )}
     </div>
   );

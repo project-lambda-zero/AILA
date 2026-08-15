@@ -1,39 +1,52 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
-import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
-import { Lightning } from "@phosphor-icons/react/dist/csr/Lightning";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import {
+  DataGrid,
+  MonoBadge,
+  SectionHeader,
+} from "@/components/aila/mock";
 
 import { DeleteButton } from "../components/DeleteButton";
-import {
-  SortHeader,
-  useSortableRows,
-  useTableRowNav,
-  type SortValue,
-} from "../components/tableHelpers";
 import { useDeleteFuzzCampaign } from "../mutations";
 import { useFuzzCampaigns, useWorkspaces } from "../queries";
 import { useVRListInvalidation } from "../hooks/useVRListInvalidation";
 import type { CampaignStatus, VRFuzzCampaignSummary } from "../types";
 
-const STATUS_COLOR: Record<
-  CampaignStatus,
-  "info" | "low" | "medium" | "high" | "critical"
-> = {
+// Status -> MonoBadge tone.
+const STATUS_TONE: Record<CampaignStatus, string> = {
   created: "info",
   running: "medium",
   paused: "info",
-  completed: "low",
+  completed: "ok",
   failed: "high",
   aborted: "high",
 };
 
 const STATUSES: CampaignStatus[] = [
-  "created", "running", "paused", "completed", "failed", "aborted",
+  "created",
+  "running",
+  "paused",
+  "completed",
+  "failed",
+  "aborted",
 ];
+
+// Mock chrome for raw form controls -- matches sibling filter shelves.
+const CTRL: React.CSSProperties = {
+  height: 26,
+  fontSize: 10.5,
+  padding: "0 8px",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  color: "var(--text-primary)",
+  borderRadius: 3,
+  letterSpacing: "0.04em",
+  outline: "none",
+  fontFamily: "var(--font-mono)",
+};
 
 export function FuzzCampaignsPage() {
   const navigate = useNavigate();
@@ -67,172 +80,242 @@ export function FuzzCampaignsPage() {
     );
   }, [rows, query]);
 
-  const accessors = useMemo<
-    Record<string, (c: VRFuzzCampaignSummary) => SortValue>
-  >(
-    () => ({
-      name: (c) => c.name,
-      engine_id: (c) => c.engine_id,
-      strategy_id: (c) => c.strategy_id,
-      status: (c) => c.status,
-      total_execs: (c) => c.total_execs,
-      corpus_size: (c) => c.corpus_size,
-      coverage_pct: (c) => c.coverage_pct ?? null,
-      crashes_found: (c) => c.crashes_found,
-      last_progress_at: (c) =>
-        c.last_progress_at ? new Date(c.last_progress_at) : null,
-    }),
-    [],
-  );
-  const { sortedRows, sortKey, sortDir, cycleSort } = useSortableRows(
-    filteredRows,
-    accessors,
-  );
-
-  const tbodyRef = useRef<HTMLTableSectionElement | null>(null);
-  const { tbodyProps, getRowProps } = useTableRowNav(
-    sortedRows,
-    (c) => navigate(`/vr/fuzz/campaigns/${c.id}`),
-    tbodyRef,
-  );
-
-  return (
-    <div className="space-y-4">
-
-      <AilaCard  techBorder glow><div className="flex items-center gap-2 flex-wrap">
+  // ─── Filter shelf ───
+  const filterShelf = (
+    <WindowPanel title="filters" tone="muted">
+      <div className="flex flex-wrap items-center" style={{ gap: 8 }}>
         <input
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Filter campaigns (name / engine / strategy)…"
+          placeholder="filter (name / engine / strategy)…"
           aria-label="Filter fuzz campaigns"
-          className="flex-1 min-w-[220px] max-w-md px-3 py-1.5 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
+          className="font-mono"
+          style={{ ...CTRL, width: 260 }}
         />
-        <label className="text-sm text-text-muted">Workspace:</label>
         <select
           value={workspaceFilter}
           onChange={(e) => setWorkspaceFilter(e.target.value)}
           aria-label="Filter by workspace"
-          className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border"
+          className="font-mono uppercase"
+          style={CTRL}
         >
-          <option value="">-- all --</option>
-          {workspaces.map((ws) => (
-            <option key={ws.id} value={ws.id}>
-              {ws.name}
-            </option>
-          ))}
+          <option value="">all workspaces</option>
+          {workspaces
+            .slice()
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map((ws) => (
+              <option key={ws.id} value={ws.id}>
+                {ws.name}
+              </option>
+            ))}
         </select>
-      
-        <label className="text-sm text-text-muted ml-2">Status:</label>
         <select
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as CampaignStatus | "")}
+          onChange={(e) =>
+            setStatusFilter(e.target.value as CampaignStatus | "")
+          }
           aria-label="Filter by status"
-          className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border"
+          className="font-mono uppercase"
+          style={CTRL}
         >
-          <option value="">-- all --</option>
+          <option value="">all status</option>
           {STATUSES.map((s) => (
             <option key={s} value={s}>
               {s}
             </option>
           ))}
         </select>
-      
-        <span className="text-xs text-text-muted ml-auto">
+        <span style={{ flex: 1 }} />
+        <span
+          className="font-mono"
+          style={{
+            fontSize: 10,
+            color: "var(--text-faint)",
+            letterSpacing: "0.06em",
+          }}
+        >
           {query.trim()
-            ? `${sortedRows.length} of ${rows.length} campaign${rows.length === 1 ? "" : "s"}`
-            : `${rows.length} campaign${rows.length === 1 ? "" : "s"}`}
+            ? `${filteredRows.length} of ${rows.length}`
+            : `${rows.length}`}
+          {" "}campaign{rows.length === 1 ? "" : "s"}
         </span>
-      </div></AilaCard>
+      </div>
+    </WindowPanel>
+  );
 
-      {isLoading && <LoadingSkeleton size="lg" width="full" />}
+  // ─── Table ───
+  const columns: {
+    label: string;
+    width: string;
+    align?: "left" | "right" | "center";
+  }[] = [
+    { label: "name", width: "1fr" },
+    { label: "engine", width: "120px" },
+    { label: "strategy", width: "120px" },
+    { label: "status", width: "100px" },
+    { label: "execs", width: "90px", align: "right" },
+    { label: "corpus", width: "80px", align: "right" },
+    { label: "cov %", width: "70px", align: "right" },
+    { label: "crashes", width: "80px", align: "right" },
+    { label: "last progress", width: "150px" },
+    { label: "", width: "40px", align: "center" },
+  ];
 
-      {isError && (
-        <AilaCard className="border-critical" techBorder glow><p className="text-sm text-critical">Failed to load campaigns.</p></AilaCard>
-      )}
-
-      {!isLoading && !isError && rows.length === 0 && (
-        <EmptyState
-          icon={<Lightning className="h-7 w-7" weight="duotone" />}
-          title="No fuzz campaigns yet"
-          description="Campaigns get proposed by the reasoning agent (accept them from an investigation's Fuzz proposals panel) or created directly via POST /vr/fuzz/campaigns."
+  function renderCells(c: VRFuzzCampaignSummary): React.ReactNode[] {
+    return [
+      <span
+        className="font-mono"
+        title={c.name}
+        style={{
+          fontSize: 11.5,
+          color: "var(--text-primary)",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          display: "block",
+        }}
+      >
+        {c.name}
+      </span>,
+      <span
+        className="font-mono"
+        style={{ fontSize: 10.5, color: "var(--text-muted)" }}
+      >
+        {c.engine_id}
+      </span>,
+      <span
+        className="font-mono"
+        style={{ fontSize: 10.5, color: "var(--text-muted)" }}
+      >
+        {c.strategy_id}
+      </span>,
+      <MonoBadge tone={STATUS_TONE[c.status]}>{c.status}</MonoBadge>,
+      <span
+        className="font-mono"
+        style={{ fontSize: 11, color: "var(--text-primary)" }}
+      >
+        {c.total_execs.toLocaleString()}
+      </span>,
+      <span
+        className="font-mono"
+        style={{ fontSize: 11, color: "var(--text-primary)" }}
+      >
+        {c.corpus_size.toLocaleString()}
+      </span>,
+      <span
+        className="font-mono"
+        style={{ fontSize: 11, color: "var(--text-primary)" }}
+      >
+        {c.coverage_pct != null ? `${c.coverage_pct.toFixed(2)}%` : "--"}
+      </span>,
+      <span
+        className="font-mono"
+        style={{
+          fontSize: 11,
+          color:
+            c.crashes_found > 0
+              ? "var(--accent)"
+              : "var(--text-primary)",
+        }}
+      >
+        {c.crashes_found}
+      </span>,
+      <span
+        className="font-mono"
+        style={{ fontSize: 10, color: "var(--text-faint)" }}
+      >
+        {c.last_progress_at
+          ? new Date(c.last_progress_at).toLocaleString()
+          : "--"}
+      </span>,
+      <span onClick={(e) => e.stopPropagation()}>
+        <DeleteButton
+          id={c.id}
+          label={`fuzz campaign "${c.name}"`}
+          mutation={deleteMut}
+          compact
         />
-      )}
-      {!isLoading && !isError && rows.length > 0 && (
-        <AilaCard className="overflow-x-auto p-0" techBorder glow><table className="w-full text-sm">
-          <caption className="sr-only">Fuzz campaigns</caption>
-          <thead>
-            <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-muted">
-              <SortHeader columnKey="name" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Name</SortHeader>
-              <SortHeader columnKey="engine_id" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Engine</SortHeader>
-              <SortHeader columnKey="strategy_id" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Strategy</SortHeader>
-              <SortHeader columnKey="status" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Status</SortHeader>
-              <SortHeader columnKey="total_execs" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort} align="right">Execs</SortHeader>
-              <SortHeader columnKey="corpus_size" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort} align="right">Corpus</SortHeader>
-              <SortHeader columnKey="coverage_pct" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort} align="right">Cov %</SortHeader>
-              <SortHeader columnKey="crashes_found" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort} align="right">Crashes</SortHeader>
-              <SortHeader columnKey="last_progress_at" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Last progress</SortHeader>
-              <th className="px-2 py-2"></th>
-            </tr>
-          </thead>
-          <tbody ref={tbodyRef} {...tbodyProps}>
-            {sortedRows.map((c, idx) => {
-              const rowProps = getRowProps(idx);
-              return (
-              <tr
-                key={c.id}
-                {...rowProps}
-                onClick={() => navigate(`/vr/fuzz/campaigns/${c.id}`)}
-                className={
-                  "border-b border-border last:border-b-0 cursor-pointer hover:bg-surface transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset " +
-                  (rowProps["data-row-active"] ? "bg-elevated" : "")
-                }
-              >
-                <td className="px-4 py-2 font-semibold text-foreground">
-                  {c.name}
-                </td>
-                <td className="px-4 py-2 font-mono text-xs">{c.engine_id}</td>
-                <td className="px-4 py-2 font-mono text-xs">
-                  {c.strategy_id}
-                </td>
-                <td className="px-4 py-2">
-                  <AilaBadge severity={STATUS_COLOR[c.status]} size="sm">
-                    {c.status}
-                  </AilaBadge>
-                </td>
-                <td className="px-4 py-2 font-mono text-xs text-right">
-                  {c.total_execs.toLocaleString()}
-                </td>
-                <td className="px-4 py-2 font-mono text-xs text-right">
-                  {c.corpus_size.toLocaleString()}
-                </td>
-                <td className="px-4 py-2 font-mono text-xs text-right">
-                  {c.coverage_pct != null
-                    ? `${c.coverage_pct.toFixed(2)}%`
-                    : "--"}
-                </td>
-                <td className="px-4 py-2 font-mono text-xs text-right">
-                  {c.crashes_found}
-                </td>
-                <td className="px-4 py-2 font-mono text-xs text-text-muted">
-                  {c.last_progress_at
-                    ? new Date(c.last_progress_at).toLocaleString()
-                    : "--"}
-                </td>
-                <td className="px-2 py-2 text-right">
-                  <DeleteButton
-                    id={c.id}
-                    label={`fuzz campaign "${c.name}"`}
-                    mutation={deleteMut}
-                    compact
-                  />
-                </td>
-              </tr>
-              );
-            })}
-          </tbody>
-        </table></AilaCard>
-      )}
+      </span>,
+    ];
+  }
+
+  const tableActions = (
+    <span
+      className="font-mono"
+      style={{
+        fontSize: 10,
+        letterSpacing: "0.06em",
+        color: "var(--text-faint)",
+      }}
+    >
+      {filteredRows.length}
+      <span style={{ opacity: 0.5 }}> / {rows.length}</span>
+    </span>
+  );
+
+  let tableBody: React.ReactNode;
+  if (isLoading) {
+    tableBody = (
+      <div style={{ padding: 12 }}>
+        <LoadingSkeleton size="lg" width="full" />
+      </div>
+    );
+  } else if (isError) {
+    tableBody = (
+      <div
+        className="font-mono"
+        style={{
+          padding: 24,
+          textAlign: "center",
+          color: "var(--accent)",
+          fontSize: 11,
+          letterSpacing: "0.06em",
+        }}
+      >
+        failed to load campaigns.
+      </div>
+    );
+  } else {
+    tableBody = (
+      <DataGrid
+        columns={columns}
+        rows={filteredRows}
+        renderCells={renderCells}
+        getKey={(c) => c.id}
+        onRowClick={(c) => navigate(`/vr/fuzz/campaigns/${c.id}`)}
+        empty={
+          <div
+            className="font-mono"
+            style={{
+              padding: 34,
+              textAlign: "center",
+              fontSize: 11.5,
+              color: "var(--text-muted)",
+              letterSpacing: "0.04em",
+            }}
+          >
+            {query.trim() || workspaceFilter || statusFilter
+              ? "no campaigns match the current filters."
+              : "no fuzz campaigns yet -- propose one from an investigation's fuzz panel."}
+          </div>
+        }
+      />
+    );
+  }
+
+  return (
+    <div className="flex flex-col" style={{ gap: 14 }}>
+      <SectionHeader icon="◈" title="Fuzz Campaigns" />
+      {filterShelf}
+      <WindowPanel
+        title="results"
+        tone="accent"
+        actions={tableActions}
+        flush
+      >
+        {tableBody}
+      </WindowPanel>
     </div>
   );
 }

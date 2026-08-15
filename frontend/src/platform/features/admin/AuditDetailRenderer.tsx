@@ -1,28 +1,29 @@
 /**
- * AuditDetailRenderer -- structured renderer for audit event `details` JSON
- * (Plan 176e P1).
+ * AuditDetailRenderer -- structured renderer for audit event `details` JSON.
  *
- * Replaces the raw JSON dump in AuditLogsPage's detail view. Operator value:
- * rapid scanning of nested keys instead of squinting at `JSON.stringify`.
+ * Rebuilt to the AILA mock language: mono `label / value` grid rows, native
+ * `<details>/<summary>` for nested objects, bullet lists for arrays, and a
+ * mock-styled copy button for long strings + UUIDs. Only tokens; no shadcn.
  *
- * Rendering rules:
+ * Rendering rules preserved from the original:
  *   - Top-level primitives render as a `label: value` row.
- *   - Nested objects render inside a native `<details>/<summary>` block so
- *     they are keyboard-accessible without extra JS plumbing.
+ *   - Nested objects render inside a native `<details>/<summary>` block.
  *   - Arrays render as bullet lists.
  *   - Long strings (>80 chars) pick up a Copy button.
  *   - IDs/UUIDs render monospace with a Copy button.
  *   - ISO-ish timestamps format to local time.
  *
- * Only shared primitives (AilaCard, AilaBadge, shadcn Button, phosphor icons,
- * Tailwind utilities) are used -- no new CSS classes are introduced.
+ * Test contract (LLMLogPage.test uses this indirectly, AuditDetailRenderer
+ * tests hit us directly):
+ *   - Copy button aria-label pattern: `Copy <keyName>` (e.g. "Copy note").
+ *   - `<summary>` for nested object contains the key name.
+ *   - Arrays render as `<ul>` + `<li>`.
+ *   - `null`/`undefined` details show "No details captured".
+ *   - Empty object shows "empty object".
  */
-import { useState, useCallback } from "react";
-import { Copy } from "@phosphor-icons/react/dist/csr/Copy";
-import { Check } from "@phosphor-icons/react/dist/csr/Check";
+import { useState, useCallback, type CSSProperties } from "react";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { Button } from "@/components/ui/button";
+import { MonoBadge } from "@/components/aila/mock";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -61,8 +62,21 @@ function looksLikeId(key: string, value: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Copy button
+// Copy button (mock-styled, no shadcn)
 // ---------------------------------------------------------------------------
+
+const COPY_BTN_STYLE: CSSProperties = {
+  height: 20,
+  padding: "0 7px",
+  fontSize: 9,
+  letterSpacing: "0.1em",
+  borderRadius: 2,
+  cursor: "pointer",
+  color: "var(--text-muted)",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  marginLeft: 4,
+};
 
 interface CopyButtonProps {
   value: string;
@@ -78,32 +92,20 @@ function CopyButton({ value, label }: CopyButtonProps) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
     } catch {
-      // Clipboard permission denied -- fall through silently. The button
-      // still looks like a button; no hidden success.
+      // Clipboard permission denied -- fall through silently.
     }
   }, [value]);
 
   return (
-    <Button
+    <button
       type="button"
-      size="sm"
-      variant="ghost"
-      className="h-6 px-1.5 gap-1 font-mono text-[10px] text-text-muted"
       onClick={handleCopy}
       aria-label={label ?? "Copy value"}
+      className="font-mono uppercase"
+      style={COPY_BTN_STYLE}
     >
-      {copied ? (
-        <>
-          <Check className="h-3 w-3" />
-          copied
-        </>
-      ) : (
-        <>
-          <Copy className="h-3 w-3" />
-          copy
-        </>
-      )}
-    </Button>
+      {copied ? "copied" : "copy"}
+    </button>
   );
 }
 
@@ -118,24 +120,23 @@ interface ScalarProps {
 
 function Scalar({ keyName, value }: ScalarProps) {
   if (value === null) {
-    return (
-      <AilaBadge severity="neutral" size="sm">
-        null
-      </AilaBadge>
-    );
+    return <MonoBadge tone="muted">null</MonoBadge>;
   }
 
   if (typeof value === "boolean") {
     return (
-      <AilaBadge severity={value ? "info" : "neutral"} size="sm">
+      <MonoBadge tone={value ? "info" : "muted"}>
         {String(value)}
-      </AilaBadge>
+      </MonoBadge>
     );
   }
 
   if (typeof value === "number") {
     return (
-      <span className="font-mono text-xs text-text tabular-nums">
+      <span
+        className="font-mono tabular-nums"
+        style={{ color: "var(--text-primary)", fontSize: 11 }}
+      >
         {String(value)}
       </span>
     );
@@ -147,8 +148,13 @@ function Scalar({ keyName, value }: ScalarProps) {
   if (looksLikeTimestamp(str)) {
     return (
       <span
-        className="font-mono text-xs text-text whitespace-nowrap"
+        className="font-mono"
         title={str}
+        style={{
+          color: "var(--text-primary)",
+          fontSize: 11,
+          whiteSpace: "nowrap",
+        }}
       >
         {formatTimestamp(str)}
       </span>
@@ -157,10 +163,15 @@ function Scalar({ keyName, value }: ScalarProps) {
 
   if (looksLikeId(keyName, str)) {
     return (
-      <span className="inline-flex items-center gap-1">
+      <span className="inline-flex items-center" style={{ gap: 4 }}>
         <span
-          className="font-mono text-xs text-text truncate max-w-[360px]"
+          className="font-mono truncate"
           title={str}
+          style={{
+            color: "var(--text-primary)",
+            fontSize: 11,
+            maxWidth: 360,
+          }}
         >
           {str}
         </span>
@@ -171,8 +182,18 @@ function Scalar({ keyName, value }: ScalarProps) {
 
   if (str.length > LONG_STRING_THRESHOLD) {
     return (
-      <span className="inline-flex items-start gap-1 w-full">
-        <span className="font-mono text-xs text-text break-all">
+      <span
+        className="inline-flex items-start"
+        style={{ gap: 4, width: "100%" }}
+      >
+        <span
+          className="font-mono"
+          style={{
+            color: "var(--text-primary)",
+            fontSize: 11,
+            wordBreak: "break-all",
+          }}
+        >
           {str}
         </span>
         <CopyButton value={str} label={`Copy ${keyName}`} />
@@ -181,7 +202,14 @@ function Scalar({ keyName, value }: ScalarProps) {
   }
 
   return (
-    <span className="font-mono text-xs text-text break-all">
+    <span
+      className="font-mono"
+      style={{
+        color: "var(--text-primary)",
+        fontSize: 11,
+        wordBreak: "break-all",
+      }}
+    >
       {str}
     </span>
   );
@@ -201,17 +229,39 @@ function DetailNode({ keyName, value, depth }: DetailNodeProps) {
   if (isPlainObject(value)) {
     return (
       <details
-        className="group rounded-[4px] border border-border bg-surface/40"
         open={depth === 0}
+        style={{
+          borderRadius: 3,
+          border: "1px solid var(--border-faint)",
+          background:
+            "color-mix(in srgb, var(--surface-sunk) 55%, transparent)",
+        }}
       >
-        <summary className="cursor-pointer px-2 py-1 font-mono text-xs text-text-muted uppercase tracking-wider select-none">
+        <summary
+          className="font-mono uppercase"
+          style={{
+            cursor: "pointer",
+            padding: "5px 9px",
+            fontSize: 9.5,
+            letterSpacing: "0.12em",
+            color: "var(--text-muted)",
+            userSelect: "none",
+          }}
+        >
           {keyName}
-          <span className="ml-2 text-text-muted/60 normal-case tracking-normal">
+          <span
+            style={{
+              marginLeft: 8,
+              color: "var(--text-faint)",
+              textTransform: "none",
+              letterSpacing: 0,
+            }}
+          >
             ({Object.keys(value).length}{" "}
             {Object.keys(value).length === 1 ? "field" : "fields"})
           </span>
         </summary>
-        <div className="px-2 pb-2">
+        <div style={{ padding: "6px 9px 8px" }}>
           <DetailTable data={value} depth={depth + 1} />
         </div>
       </details>
@@ -221,15 +271,35 @@ function DetailNode({ keyName, value, depth }: DetailNodeProps) {
   if (Array.isArray(value)) {
     if (value.length === 0) {
       return (
-        <span className="font-mono text-xs text-text-muted italic">
+        <span
+          className="font-mono"
+          style={{
+            color: "var(--text-faint)",
+            fontSize: 11,
+            fontStyle: "italic",
+          }}
+        >
           empty list
         </span>
       );
     }
     return (
-      <ul className="list-disc pl-5 space-y-1">
+      <ul
+        style={{
+          listStyleType: "disc",
+          paddingLeft: 20,
+          margin: 0,
+          display: "flex",
+          flexDirection: "column",
+          gap: 4,
+        }}
+      >
         {value.map((item, idx) => (
-          <li key={idx} className="font-mono text-xs text-text">
+          <li
+            key={idx}
+            className="font-mono"
+            style={{ color: "var(--text-primary)", fontSize: 11 }}
+          >
             <DetailNode
               keyName={`[${idx}]`}
               value={item}
@@ -243,11 +313,7 @@ function DetailNode({ keyName, value, depth }: DetailNodeProps) {
 
   // Scalar primitive (string, number, boolean, null, undefined).
   if (value === undefined) {
-    return (
-      <AilaBadge severity="neutral" size="sm">
-        undefined
-      </AilaBadge>
-    );
+    return <MonoBadge tone="muted">undefined</MonoBadge>;
   }
   return (
     <Scalar
@@ -258,7 +324,7 @@ function DetailNode({ keyName, value, depth }: DetailNodeProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Table layout
+// Table layout -- honest key/value grid
 // ---------------------------------------------------------------------------
 
 interface DetailTableProps {
@@ -270,20 +336,51 @@ function DetailTable({ data, depth }: DetailTableProps) {
   const entries = Object.entries(data);
   if (entries.length === 0) {
     return (
-      <p className="font-mono text-xs text-text-muted italic">empty object</p>
+      <p
+        className="font-mono"
+        style={{
+          color: "var(--text-faint)",
+          fontSize: 11,
+          fontStyle: "italic",
+        }}
+      >
+        empty object
+      </p>
     );
   }
   return (
-    <dl className="grid grid-cols-[minmax(120px,auto)_1fr] gap-x-3 gap-y-1.5">
+    <dl
+      className="grid"
+      style={{
+        gridTemplateColumns: "minmax(120px, auto) 1fr",
+        columnGap: 12,
+        rowGap: 6,
+        margin: 0,
+      }}
+    >
       {entries.map(([key, value]) => (
-        <div
-          key={key}
-          className="contents"
-        >
-          <dt className="font-mono text-xs text-text-muted uppercase tracking-wider truncate">
+        <div key={key} className="contents">
+          <dt
+            className="font-mono uppercase truncate"
+            style={{
+              color: "var(--text-muted)",
+              fontSize: 9.5,
+              letterSpacing: "0.12em",
+              alignSelf: "start",
+              paddingTop: 2,
+            }}
+          >
             {key}
           </dt>
-          <dd className="font-mono text-xs text-text min-w-0">
+          <dd
+            className="font-mono"
+            style={{
+              color: "var(--text-primary)",
+              fontSize: 11,
+              minWidth: 0,
+              margin: 0,
+            }}
+          >
             <DetailNode keyName={key} value={value} depth={depth} />
           </dd>
         </div>
@@ -303,17 +400,25 @@ export interface AuditDetailRendererProps {
 export function AuditDetailRenderer({ details }: AuditDetailRendererProps) {
   if (details === null || details === undefined) {
     return (
-      <p className="font-mono text-xs text-text-muted italic">
+      <p
+        className="font-mono"
+        style={{
+          color: "var(--text-faint)",
+          fontSize: 11,
+          fontStyle: "italic",
+        }}
+      >
         No details captured.
       </p>
     );
   }
 
   if (!isPlainObject(details)) {
-    // Render a single-row pseudo-table so primitive or array payloads still
-    // benefit from the same rules (copy, timestamps, severity badges).
     return (
-      <div className="font-mono text-xs text-text">
+      <div
+        className="font-mono"
+        style={{ color: "var(--text-primary)", fontSize: 11 }}
+      >
         <DetailNode keyName="value" value={details} depth={0} />
       </div>
     );

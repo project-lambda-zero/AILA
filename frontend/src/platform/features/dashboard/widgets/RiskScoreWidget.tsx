@@ -30,13 +30,20 @@ function formatTimestamp(isoString: string): string {
   }
 }
 
+const CENTER_STYLE: React.CSSProperties = {
+  height: "100%",
+  padding: 16,
+  fontFamily: "var(--font-mono)",
+  fontSize: 11,
+};
+
 /**
  * RiskScoreWidget -- circular SVG gauge showing composite risk score (0-10).
  *
  * Arc color:
- *   - score < 5 → amber (accent)
- *   - score 5-7 → orange (high)
- *   - score > 7 → red (critical)
+ *   - score < 5 -> amber (accent)
+ *   - score 5-7 -> orange (high)
+ *   - score > 7 -> red (critical)
  *
  * Data from GET /dashboard via useDashboardData().
  */
@@ -47,7 +54,11 @@ export function RiskScoreWidget() {
   if (isLoading) {
     return (
       <div className="h-full w-full p-4 flex flex-col gap-3">
-        <LoadingSkeleton size="xl" width="half" className="mx-auto rounded-full" />
+        <LoadingSkeleton
+          size="xl"
+          width="half"
+          className="mx-auto rounded-full"
+        />
         <LoadingSkeleton size="sm" width="third" className="mx-auto" />
       </div>
     );
@@ -55,18 +66,22 @@ export function RiskScoreWidget() {
 
   if (isError) {
     return (
-      <div className="h-full w-full p-4 flex items-center justify-center">
-        <p className="text-sm text-destructive font-mono">
-          {error instanceof Error ? error.message : "Failed to load risk score"}
-        </p>
+      <div
+        className="flex items-center justify-center"
+        style={{ ...CENTER_STYLE, color: "var(--status-warn)" }}
+      >
+        {error instanceof Error ? error.message : "Failed to load risk score"}
       </div>
     );
   }
 
   if (!data) {
     return (
-      <div className="h-full w-full p-4 flex items-center justify-center">
-        <p className="text-sm text-text-muted font-mono">No data available</p>
+      <div
+        className="flex items-center justify-center"
+        style={{ ...CENTER_STYLE, color: "var(--text-muted)" }}
+      >
+        No data available
       </div>
     );
   }
@@ -77,7 +92,10 @@ export function RiskScoreWidget() {
   const dashOffset = CIRCUMFERENCE * (1 - score / 10);
 
   return (
-    <div className="h-full w-full p-4 flex flex-col items-center justify-center gap-2">
+    <div
+      className="h-full w-full flex flex-col items-center justify-center"
+      style={{ padding: 16, gap: 8 }}
+    >
       <svg
         viewBox="0 0 120 120"
         width={100}
@@ -123,9 +141,22 @@ export function RiskScoreWidget() {
         </text>
       </svg>
 
-      <p className="text-xs font-mono text-text-muted">
-        Updated {formatTimestamp(data.generated_at)}
-      </p>
+      <div
+        className="font-mono uppercase"
+        style={{
+          fontSize: 9.5,
+          letterSpacing: "0.14em",
+          color: "var(--text-muted)",
+        }}
+      >
+        risk score
+      </div>
+      <div
+        className="font-mono"
+        style={{ fontSize: 10, color: "var(--text-faint)" }}
+      >
+        updated {formatTimestamp(data.generated_at)}
+      </div>
     </div>
   );
 }

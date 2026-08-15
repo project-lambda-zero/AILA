@@ -1,42 +1,23 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useNavigate } from "react-router";
-import type { Icon } from "@phosphor-icons/react/lib";
-import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
-import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
-import { ArrowRight } from "@phosphor-icons/react/dist/csr/ArrowRight";
-import { Briefcase } from "@phosphor-icons/react/dist/csr/Briefcase";
-import { Bug } from "@phosphor-icons/react/dist/csr/Bug";
-import { Lightning } from "@phosphor-icons/react/dist/csr/Lightning";
-import { ShieldCheck } from "@phosphor-icons/react/dist/csr/ShieldCheck";
-import { Star } from "@phosphor-icons/react/dist/csr/Star";
-import { X } from "@phosphor-icons/react/dist/csr/X";
-import { Scales } from "@phosphor-icons/react/dist/csr/Scales";
-import { CaretLeft } from "@phosphor-icons/react/dist/csr/CaretLeft";
-import { CaretRight } from "@phosphor-icons/react/dist/csr/CaretRight";
-import { GitBranch } from "@phosphor-icons/react/dist/csr/GitBranch";
-import { Funnel } from "@phosphor-icons/react/dist/csr/Funnel";
-import { Calendar } from "@phosphor-icons/react/dist/csr/Calendar";
-import { CaretDown } from "@phosphor-icons/react/dist/csr/CaretDown";
-import { CaretRight as CaretRightSmall } from "@phosphor-icons/react/dist/csr/CaretRight";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
-import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
-import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import {
-  StaggeredItem,
-  StaggeredList,
-} from "@/components/aila/StaggeredList";
+  BigStat,
+  FilterChip,
+  MonoBadge,
+  SectionHeader,
+  Segmented,
+  StatBar,
+} from "@/components/aila/mock";
 
-import { OutcomeKindBadge, outcomeKindSeverity } from "../components/OutcomeKindBadge";
-import { OutcomePolarityBadge } from "../components/OutcomePolarityBadge";
 import { DeleteButton } from "../components/DeleteButton";
+import { SavedViews } from "../components/SavedViews";
 import {
   useDebouncedValue,
   useTableRowNav,
 } from "../components/tableHelpers";
-import { SavedViews } from "../components/SavedViews";
 import {
   useCreateInvestigation,
   useDeleteInvestigation,
@@ -56,20 +37,42 @@ import type {
 } from "../types";
 
 // ─────────────────────────────────────────────────────────────────────
-// Status palette -- matches the dots on the detail page.
+// Status vocabulary (mock tokens only).
+//   STATUS_TONE  → MonoBadge tone key
+//   STATUS_HUE   → raw css var for status dots / StatBar rows
+//   STATUS_LABEL → operator-visible label (matches vr-persona-contract)
 // ─────────────────────────────────────────────────────────────────────
-
-const STATUS_DOT: Record<InvestigationStatus, string> = {
-  created: "var(--color-text-muted)",
-  running: "var(--color-mint)",
-  paused: "var(--color-amber)",
-  completed: "var(--color-lavender)",
-  failed: "var(--color-peach)",
-  abandoned: "var(--color-text-muted)",
-  stalled: "var(--color-text-muted)",
+const STATUS_TONE: Record<InvestigationStatus, string> = {
+  created: "muted",
+  running: "ok",
+  paused: "warn",
+  completed: "info",
+  failed: "critical",
+  abandoned: "muted",
+  stalled: "muted",
 };
 
-// Priority for the default "Smart" sort: live and actionable first.
+const STATUS_HUE: Record<InvestigationStatus, string> = {
+  created: "var(--text-faint)",
+  running: "var(--status-ok)",
+  paused: "var(--status-warn)",
+  completed: "var(--status-info)",
+  failed: "var(--accent)",
+  abandoned: "var(--text-faint)",
+  stalled: "var(--text-faint)",
+};
+
+const STATUS_LABEL: Record<InvestigationStatus, string> = {
+  created: "created",
+  running: "running",
+  paused: "paused",
+  completed: "completed",
+  failed: "failed",
+  abandoned: "abandoned",
+  stalled: "stalled",
+};
+
+// Smart-sort tier: live and actionable first.
 const STATUS_PRIORITY: Record<InvestigationStatus, number> = {
   running: 0,
   paused: 1,
@@ -80,18 +83,27 @@ const STATUS_PRIORITY: Record<InvestigationStatus, number> = {
   abandoned: 6,
 };
 
-const KIND_ICON: Record<InvestigationKind, Icon> = {
-  discovery: MagnifyingGlass,
-  variant_hunt: GitBranch,
-  triage: Funnel,
-  n_day: Calendar,
-  audit: ShieldCheck,
-};
+const STATUS_ORDER: InvestigationStatus[] = [
+  "running",
+  "paused",
+  "completed",
+  "failed",
+  "created",
+  "stalled",
+  "abandoned",
+];
+
+type SortMode = "smart" | "newest" | "cost";
+
+const SORT_OPTIONS: { value: SortMode; label: string }[] = [
+  { value: "smart", label: "smart" },
+  { value: "newest", label: "newest" },
+  { value: "cost", label: "cost" },
+];
 
 // ─────────────────────────────────────────────────────────────────────
 // Pure helpers
 // ─────────────────────────────────────────────────────────────────────
-
 function relativeTime(value?: string | null): string {
   if (!value) return "--";
   const t = new Date(value).getTime();
@@ -107,360 +119,53 @@ function relativeTime(value?: string | null): string {
   return `${d}d ago`;
 }
 
-type VerifierTone = "low" | "medium" | "high" | "critical" | null;
-
-function verifierBadgeTone(verdict?: string | null): VerifierTone {
-  if (verdict === "confirmed") return "low";
-  if (verdict === "refuted") return "critical";
-  if (verdict === "inconclusive") return "medium";
-  return null;
+function fmtCost(v: number): string {
+  if (!Number.isFinite(v) || v <= 0) return "$0.00";
+  if (v >= 100) return `$${v.toFixed(0)}`;
+  return `$${v.toFixed(2)}`;
 }
 
-function verdictTextColor(verdict?: string | null): string {
-  if (verdict === "confirmed") return "var(--color-mint)";
-  if (verdict === "refuted") return "var(--color-peach)";
-  return "var(--color-text-muted)";
-}
-
-// Inline label + color for the compact "\u00b7 <polarity>" fragment inside
-// the row-header span (which is color-locked to the status dot). A nested
-// span with an override color renders the polarity in its own hue without
-// leaking into siblings. Colors mirror OutcomePolarityBadge's semantic
-// vocabulary (finding=danger, no_finding=success, inconclusive=warning).
-const POLARITY_INLINE: Record<
-  "finding" | "no_finding" | "inconclusive",
-  { label: string; color: string }
-> = {
-  finding: { label: "finding", color: "var(--color-peach)" },
-  no_finding: { label: "no finding", color: "var(--color-mint)" },
-  inconclusive: { label: "inconclusive", color: "var(--color-amber)" },
+// ─────────────────────────────────────────────────────────────────────
+// Mock chrome styles reused across raw <input>/<select> controls so the
+// filter shelf stays visually coherent with FilterChip / Segmented.
+// ─────────────────────────────────────────────────────────────────────
+const CTRL: React.CSSProperties = {
+  height: 26,
+  fontSize: 10.5,
+  padding: "0 8px",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  color: "var(--text-primary)",
+  borderRadius: 3,
+  letterSpacing: "0.04em",
+  outline: "none",
 };
 
-// ─────────────────────────────────────────────────────────────────────
-// InvestigationCard -- one investigation per row, ~80px tall.
-//
-// Replaces the old 14-column table. Status dot (pulses if live) + kind
-// icon on the left, title/target/verdict in the middle, outcome /
-// findings / time / actions on the right. CREATED investigations are
-// dimmed; RUNNING ones get an accent left-border and a pulse ring.
-// ─────────────────────────────────────────────────────────────────────
-
-function InvestigationCard({
-  inv,
-  targetName,
-  onOpen,
-  onToggleFavorite,
-  deleteMut,
-  rowProps,
-}: {
-  inv: VRInvestigationSummary;
-  targetName: string;
-  onOpen: () => void;
-  onToggleFavorite: () => void;
-  deleteMut: ReturnType<typeof useDeleteInvestigation>;
-  /** Roving-tabindex props forwarded by the parent list so j/k/Enter
-   *  navigation works on the flat card list. Optional -- grouped view
-   *  omits it. */
-  rowProps?: {
-    tabIndex?: number;
-    "aria-selected"?: boolean;
-    "data-row-index"?: number;
-    "data-row-active"?: "true";
-    onFocus?: () => void;
-  };
-}) {
-  const isRunning = inv.status === "running";
-  const isCreated = inv.status === "created";
-  const dotColor = STATUS_DOT[inv.status] ?? "var(--color-text-muted)";
-  const KindIcon = KIND_ICON[inv.kind] ?? MagnifyingGlass;
-
-  const verifierTone = verifierBadgeTone(inv.verifier_verdict);
-  const verdictColor = verdictTextColor(inv.verifier_verdict);
-  const findingsCount = inv.linked_finding_ids.length;
-
-  // Visual hierarchy: completed-with-findings pops, created fades back,
-  // running gets a glow edge.
-  const hasFindings = findingsCount > 0;
-  const dim = isCreated && !inv.is_favorite;
-
-  return (
-    <StaggeredItem
-      as="li"
-      onClick={onOpen}
-      {...(rowProps ?? {})}
-      className={
-        "group relative flex items-center gap-3 px-4 py-3 rounded-md border bg-surface hover:bg-elevated cursor-pointer transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-accent " +
-        (rowProps?.["data-row-active"] ? "bg-elevated" : "")
-      }
-      style={{
-        opacity: dim ? 0.55 : 1,
-        borderColor: isRunning
-          ? "color-mix(in srgb, var(--color-mint) 45%, var(--color-border))"
-          : hasFindings && inv.verifier_verdict === "confirmed"
-            ? "color-mix(in srgb, var(--color-mint) 30%, var(--color-border))"
-            : "var(--color-border)",
-        boxShadow: isRunning
-          ? "inset 3px 0 0 var(--color-mint), 0 0 12px color-mix(in srgb, var(--color-mint) 18%, transparent)"
-          : hasFindings && inv.verifier_verdict === "confirmed"
-            ? "inset 3px 0 0 var(--color-mint)"
-            : inv.verifier_verdict === "refuted"
-              ? "inset 3px 0 0 var(--color-peach)"
-              : isCreated
-                ? "inset 3px 0 0 transparent"
-                : "inset 3px 0 0 color-mix(in srgb, var(--color-text-muted) 30%, transparent)",
-      }}
-    >
-      {/* Status dot + kind icon column */}
-      <div className="flex items-center gap-2.5 shrink-0">
-        <span className="relative flex h-2.5 w-2.5 items-center justify-center">
-          <span
-            className="absolute inset-0 rounded-full"
-            style={{ background: dotColor }}
-          />
-          {isRunning && (
-            <span
-              className="absolute inset-0 rounded-full animate-ping"
-              style={{ background: dotColor, opacity: 0.6 }}
-            />
-          )}
-        </span>
-        <KindIcon
-          className="h-5 w-5 text-text-muted shrink-0"
-          weight="duotone"
-          aria-label={inv.kind}
-        />
-      </div>
-
-      {/* Title / target / verdict excerpt */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <span
-            className="text-sm font-medium text-foreground truncate"
-            title={inv.title}
-          >
-            {inv.title}
-          </span>
-          {inv.is_favorite && (
-            <Star
-              className="h-3.5 w-3.5 shrink-0"
-              weight="fill"
-              style={{ color: "var(--color-amber)" }}
-              aria-label="favorite"
-            />
-          )}
-          <span
-            className="hidden sm:inline shrink-0 px-1.5 py-0.5 rounded text-4xs font-mono uppercase tracking-wider text-text-muted"
-            style={{
-              border:
-                "1px solid color-mix(in srgb, var(--color-text-muted) 25%, transparent)",
-            }}
-          >
-            {inv.kind}
-          </span>
-          <span
-            className="hidden md:inline shrink-0 text-3xs font-mono uppercase tracking-wider"
-            style={{ color: dotColor }}
-          >
-            {inv.pause_reason ? `${inv.status}:${inv.pause_reason}` : inv.status}
-            {isRunning && inv.message_count > 0 && (
-              <span className="text-text-muted ml-1">
-                · {inv.message_count} turns
-                {inv.primary_outcome_polarity && (
-                  <span
-                    style={{ color: POLARITY_INLINE[inv.primary_outcome_polarity].color }}
-                  >
-                    {" · "}
-                    {POLARITY_INLINE[inv.primary_outcome_polarity].label}
-                  </span>
-                )}
-              </span>
-            )}
-          </span>
-        </div>
-        <div
-          className="mt-0.5 text-2xs font-mono text-text-muted truncate"
-          title={targetName}
-        >
-          target: {targetName}
-        </div>
-        {inv.primary_outcome_verdict_head && (
-          <div
-            className="mt-0.5 text-xs truncate"
-            style={{ color: verdictColor }}
-            title={inv.primary_outcome_verdict_head}
-          >
-            {inv.primary_outcome_verdict_head}
-          </div>
-        )}
-      </div>
-
-      {/* Right cluster: findings · outcome · verifier · time · actions */}
-      <div className="flex items-center gap-3 shrink-0">
-        {hasFindings && (
-          <span
-            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-mono font-semibold"
-            title={`${findingsCount} linked findings`}
-            style={{
-              background: "color-mix(in srgb, var(--color-mint) 14%, transparent)",
-              color: "var(--color-mint)",
-            }}
-          >
-            <Bug className="h-3 w-3" weight="bold" />
-            {findingsCount}
-          </span>
-        )}
-        {inv.primary_outcome_polarity && (
-          <OutcomePolarityBadge polarity={inv.primary_outcome_polarity} />
-        )}
-        {inv.primary_outcome_kind && (
-          <AilaBadge
-            severity={outcomeKindSeverity(inv.primary_outcome_kind)}
-            size="sm"
-          >
-            <OutcomeKindBadge kind={inv.primary_outcome_kind} />
-            {inv.primary_outcome_confidence
-              ? ` · ${inv.primary_outcome_confidence}`
-              : ""}
-          </AilaBadge>
-        )}
-        {verifierTone && (
-          <AilaBadge severity={verifierTone} size="sm">
-            {inv.verifier_verdict}
-            {typeof inv.verifier_confidence === "number"
-              ? ` ${inv.verifier_confidence.toFixed(2)}`
-              : ""}
-          </AilaBadge>
-        )}
-        <span
-          className="text-2xs font-mono text-text-muted whitespace-nowrap w-16 text-right"
-          title={inv.created_at ?? ""}
-        >
-          {relativeTime(inv.created_at)}
-        </span>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleFavorite();
-          }}
-          className="flex transition-colors"
-          style={{
-            color: inv.is_favorite ? "var(--color-amber)" : "var(--color-text-muted)",
-          }}
-          title={inv.is_favorite ? "Unfavorite" : "Favorite"}
-          aria-label={inv.is_favorite ? "Unfavorite" : "Favorite"}
-        >
-          <Star
-            className="h-4 w-4"
-            weight={inv.is_favorite ? "fill" : "regular"}
-          />
-        </button>
-        <div
-          className="opacity-0 group-hover:opacity-100 transition-opacity"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <DeleteButton
-            id={inv.id}
-            label={`investigation "${inv.title}"`}
-            mutation={deleteMut}
-            compact
-          />
-        </div>
-        <ArrowRight
-          className="h-4 w-4 text-text-muted/50 group-hover:text-accent group-hover:translate-x-0.5 transition-all"
-          aria-hidden
-        />
-      </div>
-    </StaggeredItem>
-  );
-}
+// Column grid track template shared by the honest-grid header + rows so
+// keyboard navigation (data-row-index) still lives on the true row DOM.
+const COL_TEMPLATE =
+  "100px 1fr 100px 180px 80px 80px 90px 40px 100px 40px";
 
 // ─────────────────────────────────────────────────────────────────────
-// StatusPill -- single toggle button used by the status filter row.
+// InvestigationsListPage
 // ─────────────────────────────────────────────────────────────────────
-
-function StatusPill({
-  id,
-  label,
-  active,
-  count,
-  onClick,
-  accentColor,
-}: {
-  id: string;
-  label: string;
-  active: boolean;
-  count?: number;
-  onClick: () => void;
-  accentColor?: string;
-}) {
-  const color = accentColor ?? "var(--color-accent)";
-  return (
-    <button
-      key={id || "all"}
-      type="button"
-      onClick={onClick}
-      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-2xs font-mono rounded-md border uppercase tracking-wider transition-colors"
-      style={
-        active
-          ? {
-              borderColor: color,
-              background: `color-mix(in srgb, ${color} 14%, transparent)`,
-              color,
-            }
-          : {
-              borderColor: "var(--color-border)",
-              background: "var(--color-surface)",
-              color: "var(--color-text-muted)",
-            }
-      }
-    >
-      {accentColor && (
-        <span
-          className="h-1.5 w-1.5 rounded-full"
-          style={{ background: color }}
-        />
-      )}
-      {label}
-      {typeof count === "number" && (
-        <span
-          className="font-mono text-3xs"
-          style={{ color: active ? color : "var(--color-text-muted)" }}
-        >
-          {count}
-        </span>
-      )}
-    </button>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// InvestigationsListPage -- card list with KPIs, status pills and
-// optional target grouping. Replaces the old 14-column table.
-// ─────────────────────────────────────────────────────────────────────
-
 export function InvestigationsListPage() {
   const navigate = useNavigate();
   useVRListInvalidation("investigations");
 
+  // Filter surface -- every knob previously exposed on the page is preserved.
   const [searchQ, setSearchQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [kindFilter, setKindFilter] = useState<string>("");
+  const [workspaceFilter, setWorkspaceFilter] = useState<string>("");
+  const [verifierFilter, setVerifierFilter] = useState<string>("");
   const [findingsOnly, setFindingsOnly] = useState(false);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
-  const [verifierFilter, setVerifierFilter] = useState<string>("");
   const [hideCreated, setHideCreated] = useState(true);
-  const [groupByTarget, setGroupByTarget] = useState(false);
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
-    () => new Set(),
-  );
+  const [sortMode, setSortMode] = useState<SortMode>("smart");
   const [pageSize, setPageSize] = useState(100);
   const [offset, setOffset] = useState(0);
 
-  // Debounce the search term before it flows into the query key so
-  // TanStack Query doesn't fire a new request on every keystroke. The
-  // input stays snappy because `searchQ` still binds directly to it;
-  // only the fetch trails by ~300ms.
   const debouncedSearchQ = useDebouncedValue(searchQ.trim(), 300);
 
   const { data: result, isLoading, isError } = useInvestigations({
@@ -485,95 +190,71 @@ export function InvestigationsListPage() {
   const [formKind, setFormKind] = useState<InvestigationKind>("discovery");
   const [formBudget, setFormBudget] = useState("50");
 
-  // Inject the "New investigation" toggle into the global page header
-  // so it sits at the top-right next to the page title, not buried in
-  // the filter bar.
-  const headerActions = useMemo(
-    () => (
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => navigate("/vr/investigations/compare")}
-          className="touch-target inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all hover:-translate-y-px border"
-          style={{
-            borderColor: "var(--color-border-default)",
-            color: "var(--color-foreground)",
-            background: "transparent",
-          }}
-          title="Compare investigations side by side"
-        >
-          <Scales className="h-3.5 w-3.5" weight="bold" />
-          Compare
-        </button>
-        <button
-          type="button"
-          onClick={() => setShowForm((v) => !v)}
-          className="touch-target inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all hover:-translate-y-px"
-          style={{
-            background: showForm
-              ? "color-mix(in srgb, var(--color-text-muted) 28%, transparent)"
-              : "var(--color-accent)",
-            color: showForm ? "var(--color-foreground)" : "var(--color-base)",
-            boxShadow: showForm
-              ? "none"
-              : "0 0 0 1px color-mix(in srgb, var(--color-accent) 50%, transparent), 0 0 12px color-mix(in srgb, var(--color-accent) 28%, transparent)",
-          }}
-        >
-          {showForm ? (
-            <X className="h-3.5 w-3.5" />
-          ) : (
-            <Plus className="h-3.5 w-3.5" weight="bold" />
-          )}
-          {showForm ? "Cancel" : "New investigation"}
-        </button>
-      </div>
-    ),
-    [showForm, navigate],
-  );
-  useUpdatePageHeader({ actions: headerActions });
-
-  const totalRaw = (result?.meta as { total?: number } | undefined)?.total ?? 0;
+  const totalRaw =
+    (result?.meta as { total?: number } | undefined)?.total ?? 0;
   const investigationsRaw = result?.data ?? [];
+  const workspaces = workspacesResult?.data ?? [];
+  const targets = targetsResult?.data ?? [];
 
-  // Status-pill counts use the unfiltered server page so the operator
-  // can see what is hidden by their current pill choice.
+  // Client-side filters that don't round-trip through the server.
+  const filtered = useMemo(() => {
+    let rows: VRInvestigationSummary[] = investigationsRaw;
+    if (findingsOnly) {
+      rows = rows.filter((i) => i.linked_finding_ids.length > 0);
+    }
+    if (verifierFilter) {
+      rows = rows.filter(
+        (i) => (i.verifier_verdict ?? "") === verifierFilter,
+      );
+    }
+    if (workspaceFilter) {
+      rows = rows.filter(
+        (i) => targetMap.get(i.target_id)?.workspace_id === workspaceFilter,
+      );
+    }
+    if (hideCreated && statusFilter !== "created") {
+      rows = rows.filter((i) => i.status !== "created");
+    }
+    return rows;
+  }, [
+    investigationsRaw,
+    findingsOnly,
+    verifierFilter,
+    workspaceFilter,
+    hideCreated,
+    statusFilter,
+    targetMap,
+  ]);
+
+  // Status-mix distribution (uses the unfiltered server page so the operator
+  // still sees the shape of what is hidden by their current status choice).
   const statusCounts = useMemo(() => {
-    const counts: Record<string, number> = {
-      "": investigationsRaw.length,
-      running: 0,
-      completed: 0,
-      failed: 0,
-      stalled: 0,
-      created: 0,
-      paused: 0,
-      abandoned: 0,
-    };
+    const counts: Record<string, number> = {};
+    for (const s of STATUS_ORDER) counts[s] = 0;
     for (const i of investigationsRaw) {
       counts[i.status] = (counts[i.status] ?? 0) + 1;
     }
     return counts;
   }, [investigationsRaw]);
 
-  // Apply client-side filters that don't round-trip through the server.
-  let filtered: VRInvestigationSummary[] = investigationsRaw;
-  if (findingsOnly) {
-    filtered = filtered.filter((i) => i.linked_finding_ids.length > 0);
-  }
-  if (verifierFilter) {
-    filtered = filtered.filter(
-      (i) => (i.verifier_verdict ?? "") === verifierFilter,
-    );
-  }
-  // Hide created unless the operator explicitly filters for that status
-  // or unchecks the toggle.
-  if (hideCreated && statusFilter !== "created") {
-    filtered = filtered.filter((i) => i.status !== "created");
-  }
+  const runningCount = statusCounts.running ?? 0;
+  const statusMax = Math.max(1, ...STATUS_ORDER.map((s) => statusCounts[s] ?? 0));
 
-  // Smart sort: running > paused > completed > failed > created >
-  // abandoned. Within each bucket, newest first.
   const sorted = useMemo(() => {
     const copy = [...filtered];
+    if (sortMode === "cost") {
+      copy.sort((a, b) => (b.cost_actual_usd ?? 0) - (a.cost_actual_usd ?? 0));
+      return copy;
+    }
+    if (sortMode === "newest") {
+      copy.sort((a, b) => {
+        const at = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const bt = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return bt - at;
+      });
+      return copy;
+    }
+    // smart: status tier, then newest first.
     copy.sort((a, b) => {
       const ap = STATUS_PRIORITY[a.status] ?? 99;
       const bp = STATUS_PRIORITY[b.status] ?? 99;
@@ -583,71 +264,44 @@ export function InvestigationsListPage() {
       return bt - at;
     });
     return copy;
-  }, [filtered]);
+  }, [filtered, sortMode]);
 
-  // Roving-tabindex keyboard nav (j/k/Enter) over the flat card list.
-  // Grouped view opts out because focus semantics across collapsible
-  // sections is a bigger change than this power-table pass wants.
-  const flatListContainerRef = useRef<HTMLDivElement | null>(null);
+  // Roving-tabindex j/k/Enter nav over the flat honest grid.
+  const listContainerRef = useRef<HTMLDivElement | null>(null);
   const {
-    tbodyProps: flatListTbodyProps,
-    getRowProps: flatListGetRowProps,
+    tbodyProps: listTbodyProps,
+    getRowProps: listGetRowProps,
   } = useTableRowNav(
     sorted,
     (inv) => navigate(`/vr/investigations/${inv.id}`),
-    flatListContainerRef,
+    listContainerRef,
   );
-
-  // Group by target -- preserves the sorted order so the first group
-  // shown is the target with the most "important" investigation.
-  const grouped = useMemo(() => {
-    const m = new Map<string, VRInvestigationSummary[]>();
-    for (const inv of sorted) {
-      const arr = m.get(inv.target_id) ?? [];
-      arr.push(inv);
-      m.set(inv.target_id, arr);
-    }
-    return m;
-  }, [sorted]);
-
-  function toggleGroup(targetId: string) {
-    setCollapsedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(targetId)) next.delete(targetId);
-      else next.add(targetId);
-      return next;
-    });
-  }
-
-  function resetToFirstPage() {
-    setOffset(0);
-  }
 
   function clearAllFilters() {
     setSearchQ("");
     setStatusFilter("");
     setKindFilter("");
+    setWorkspaceFilter("");
+    setVerifierFilter("");
     setFindingsOnly(false);
     setFavoritesOnly(false);
-    setVerifierFilter("");
     setHideCreated(true);
-    resetToFirstPage();
+    setSortMode("smart");
+    setOffset(0);
   }
 
-  // Saved-view round-trip. Every filter/toggle the operator sees on
-  // this page is captured; pageSize/offset stay out because they are
-  // pagination state, not filter state. Stable key order so
-  // aria-pressed compares correctly regardless of insertion order.
+  // Saved-view round-trip: every filter/toggle captured, pagination excluded.
   const currentViewJson = JSON.stringify({
     v: 1,
     q: searchQ,
     status: statusFilter,
     kind: kindFilter,
+    workspace: workspaceFilter,
     verifier: verifierFilter,
     findingsOnly,
     favoritesOnly,
     hideCreated,
-    groupByTarget,
+    sortMode,
     pageSize,
   });
 
@@ -657,17 +311,26 @@ export function InvestigationsListPage() {
       setSearchQ(typeof p.q === "string" ? p.q : "");
       setStatusFilter(typeof p.status === "string" ? p.status : "");
       setKindFilter(typeof p.kind === "string" ? p.kind : "");
+      setWorkspaceFilter(
+        typeof p.workspace === "string" ? p.workspace : "",
+      );
       setVerifierFilter(typeof p.verifier === "string" ? p.verifier : "");
       setFindingsOnly(p.findingsOnly === true);
       setFavoritesOnly(p.favoritesOnly === true);
-      // hideCreated defaults to true when the view omits it so a
-      // legacy payload doesn't suddenly flood the list with queued rows.
       setHideCreated(p.hideCreated !== false);
-      setGroupByTarget(p.groupByTarget === true);
+      if (
+        p.sortMode === "smart" ||
+        p.sortMode === "newest" ||
+        p.sortMode === "cost"
+      ) {
+        setSortMode(p.sortMode);
+      } else {
+        setSortMode("smart");
+      }
       if (typeof p.pageSize === "number" && p.pageSize > 0) {
         setPageSize(p.pageSize);
       }
-      resetToFirstPage();
+      setOffset(0);
     } catch {
       // Malformed view -- ignore rather than blank the operator's screen.
     }
@@ -677,663 +340,790 @@ export function InvestigationsListPage() {
     !!searchQ ||
     !!statusFilter ||
     !!kindFilter ||
+    !!workspaceFilter ||
+    !!verifierFilter ||
     findingsOnly ||
     favoritesOnly ||
-    !!verifierFilter ||
     !hideCreated ||
-    groupByTarget;
+    sortMode !== "smart";
 
-  const kpis = useMemo(() => {
-    const running = investigationsRaw.filter((i) => i.status === "running").length;
-    const withFindings = investigationsRaw.filter((i) => i.linked_finding_ids.length > 0).length;
-    const confirmed = investigationsRaw.filter((i) => i.verifier_verdict === "confirmed").length;
-    const refuted = investigationsRaw.filter((i) => i.verifier_verdict === "refuted").length;
-    const totalMessages = investigationsRaw.reduce((sum, i) => sum + (i.message_count ?? 0), 0);
-    const estTokensM = ((totalMessages * 28000) / 1_000_000);
-    return { running, withFindings, confirmed, refuted, totalMessages, estTokensM };
-  }, [investigationsRaw]);
+  // ─── Section header actions: Compare + New investigation ───
+  const headerActions = (
+    <div className="flex items-center" style={{ gap: 8 }}>
+      <button
+        type="button"
+        onClick={() => navigate("/vr/investigations/compare")}
+        className="font-mono uppercase"
+        style={{
+          height: 28,
+          padding: "0 12px",
+          fontSize: 10,
+          letterSpacing: "0.08em",
+          background: "var(--surface-sunk)",
+          border: "1px solid var(--border-soft)",
+          color: "var(--text-primary)",
+          borderRadius: 3,
+          cursor: "pointer",
+        }}
+        title="Compare investigations side by side"
+      >
+        compare
+      </button>
+      <button
+        type="button"
+        onClick={() => setShowForm((v) => !v)}
+        className="font-mono uppercase"
+        style={{
+          height: 28,
+          padding: "0 12px",
+          fontSize: 10,
+          letterSpacing: "0.08em",
+          background: showForm ? "var(--surface-sunk)" : "var(--accent)",
+          border: "1px solid " + (showForm ? "var(--border-soft)" : "var(--accent)"),
+          color: showForm ? "var(--text-primary)" : "var(--text-on-accent)",
+          borderRadius: 3,
+          cursor: "pointer",
+        }}
+      >
+        {showForm ? "cancel" : "+ new"}
+      </button>
+    </div>
+  );
 
-  return (
-    <div className="flex flex-col gap-6">
-      {/* Stats bar -- compact inline, no boxes */}
-      <AilaCard techBorder glow padding="sm">
-        <div className="flex items-center justify-between gap-6 flex-wrap">
-          <div className="flex items-center gap-5 flex-wrap">
-            <span className="inline-flex items-center gap-2 text-sm">
-              <Briefcase weight="fill" size={16} className="text-accent" />
-              <span className="font-mono font-bold text-foreground text-lg">{totalRaw}</span>
-              <span className="text-text-muted text-xs">investigations</span>
-            </span>
-            <span className="w-px h-5 bg-border" />
-            <span className="inline-flex items-center gap-1.5 text-sm">
-              <span
-                className="w-2 h-2 rounded-full"
-                style={{
-                  background: kpis.running > 0 ? "var(--color-mint)" : "var(--color-text-muted)",
-                  boxShadow: kpis.running > 0 ? "0 0 6px var(--color-mint)" : "none",
-                }}
-              />
-              <span className="font-mono font-semibold text-foreground">{kpis.running}</span>
-              <span className="text-text-muted text-xs">running</span>
-            </span>
-            <span className="w-px h-5 bg-border" />
-            <span className="inline-flex items-center gap-1.5 text-sm">
-              <Bug weight="fill" size={14} className={kpis.withFindings > 0 ? "text-mint" : "text-text-muted"} />
-              <span className="font-mono font-semibold text-foreground">{kpis.withFindings}</span>
-              <span className="text-text-muted text-xs">with findings</span>
-            </span>
-            <span className="w-px h-5 bg-border" />
-            <span className="inline-flex items-center gap-1.5 text-sm">
-              <Lightning weight="fill" size={14} className="text-text-muted" />
-              <span className="font-mono font-semibold text-foreground">
-                {kpis.estTokensM >= 1000 ? `${(kpis.estTokensM / 1000).toFixed(1)}B` : `${kpis.estTokensM.toFixed(0)}M`}
-              </span>
-              <span className="text-text-muted text-xs">tokens</span>
-            </span>
-            {(kpis.confirmed > 0 || kpis.refuted > 0) && (
-              <>
-                <span className="w-px h-5 bg-border" />
-                <span className="inline-flex items-center gap-1.5 text-sm">
-                  <ShieldCheck weight="fill" size={14} className="text-mint" />
-                  <span className="font-mono text-xs">
-                    <span style={{ color: "var(--color-mint)" }}>{kpis.confirmed}</span>
-                    <span className="text-text-muted/60"> / </span>
-                    <span style={{ color: "var(--color-peach)" }}>{kpis.refuted}</span>
-                  </span>
-                  <span className="text-text-muted text-xs">verdicts</span>
-                </span>
-              </>
-            )}
-          </div>
-          <span className="text-2xs font-mono text-text-muted">
-            {kpis.totalMessages.toLocaleString()} total turns
-          </span>
-        </div>
-      </AilaCard>
-
-      {/* Create form */}
-      {showForm && (
-        <AilaCard padding="md" techBorder glow>
-          <div className="flex items-center gap-2 mb-3">
-            <Plus className="h-4 w-4 text-accent" />
-            <h2 className="font-display text-base font-semibold text-foreground">
-              Start a new investigation
-            </h2>
-          </div>
-          <p className="text-xs text-text-muted mb-4 leading-relaxed">
-            Pick a target you already onboarded under{" "}
-            <strong>Workspaces → Targets</strong>. The adaptive
-            investigation hub fires immediately on create.
-          </p>
-          <div className="space-y-3">
-            <input
-              type="text"
-              value={formTitle}
-              onChange={(e) => setFormTitle(e.target.value)}
-              placeholder="Title (e.g. 'Audit V8 InferMaps for missing alias check')"
-              aria-label="Investigation title"
-              className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none transition-colors"
-            />
-            <textarea
-              value={formQuestion}
-              onChange={(e) => setFormQuestion(e.target.value)}
-              placeholder="Initial question -- what are you asking the engine to investigate?"
-              rows={3}
-              aria-label="Initial question"
-              className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border focus:border-accent focus:outline-none transition-colors"
-            />
-            {(() => {
-              const targets = targetsResult?.data ?? [];
-              const workspaces = workspacesResult?.data ?? [];
-              const byWs = new Map<string, typeof targets>();
-              for (const t of targets) {
-                const arr = byWs.get(t.workspace_id) ?? [];
-                arr.push(t);
-                byWs.set(t.workspace_id, arr);
-              }
-              const wsName = (id: string) =>
-                workspaces.find((w) => w.id === id)?.name ??
-                "(unknown workspace)";
-              const orderedWsIds = Array.from(byWs.keys()).sort((a, b) =>
-                wsName(a).localeCompare(wsName(b)),
-              );
-              if (targetsResult === undefined) {
-                return (
-                  <div className="px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border text-text-muted">
-                    Loading targets…
-                  </div>
-                );
-              }
-              if (targets.length === 0) {
-                return (
-                  <div className="px-3 py-2 text-xs font-mono rounded-md bg-surface border border-critical text-critical">
-                    No targets exist yet. Create one under Workspaces → Targets
-                    before starting an investigation.
-                  </div>
-                );
-              }
-              return (
-                <select
-                  value={formTargetId}
-                  onChange={(e) => setFormTargetId(e.target.value)}
-                  aria-label="Target"
-                  className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none transition-colors"
-                >
-                  <option value="">-- Pick a target --</option>
-                  {orderedWsIds.map((wsId) => (
-                    <optgroup key={wsId} label={wsName(wsId)}>
-                      {(byWs.get(wsId) ?? [])
-                        .slice()
-                        .sort((a, b) =>
-                          a.display_name.localeCompare(b.display_name),
-                        )
-                        .map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {t.display_name} · {t.kind} ·{" "}
-                            {t.primary_language ?? "--"} · {t.analysis_state}
-                          </option>
-                        ))}
-                    </optgroup>
-                  ))}
-                </select>
-              );
-            })()}
-            <div className="flex items-center gap-3 flex-wrap">
-              <select
-                value={formKind}
-                onChange={(e) =>
-                  setFormKind(e.target.value as InvestigationKind)
-                }
-                aria-label="Investigation kind"
-                className="px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
+  // ─── Create form (mock language) ───
+  const createFormPanel = showForm ? (
+    <WindowPanel title="new investigation" tone="accent">
+      <div className="flex flex-col" style={{ gap: 10 }}>
+        <input
+          type="text"
+          value={formTitle}
+          onChange={(e) => setFormTitle(e.target.value)}
+          placeholder="title (e.g. audit V8 InferMaps for missing alias check)"
+          aria-label="Investigation title"
+          className="font-mono w-full"
+          style={{ ...CTRL, height: 30, fontSize: 11 }}
+        />
+        <textarea
+          value={formQuestion}
+          onChange={(e) => setFormQuestion(e.target.value)}
+          placeholder="initial question -- what should the engine investigate?"
+          rows={3}
+          aria-label="Initial question"
+          className="font-mono w-full"
+          style={{
+            ...CTRL,
+            height: "auto",
+            padding: "8px 10px",
+            fontSize: 11,
+            resize: "vertical",
+          }}
+        />
+        {(() => {
+          const byWs = new Map<string, typeof targets>();
+          for (const t of targets) {
+            const arr = byWs.get(t.workspace_id) ?? [];
+            arr.push(t);
+            byWs.set(t.workspace_id, arr);
+          }
+          const wsName = (id: string) =>
+            workspaces.find((w) => w.id === id)?.name ?? "(unknown workspace)";
+          const orderedWsIds = Array.from(byWs.keys()).sort((a, b) =>
+            wsName(a).localeCompare(wsName(b)),
+          );
+          if (targetsResult === undefined) {
+            return (
+              <div
+                className="font-mono"
+                style={{ ...CTRL, height: 30, display: "flex", alignItems: "center", color: "var(--text-muted)" }}
               >
-                <option value="discovery">discovery</option>
-                <option value="variant_hunt">variant_hunt</option>
-                <option value="triage">triage</option>
-                <option value="n_day">n_day</option>
-                <option value="audit">audit</option>
-              </select>
-              <div className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-surface border border-border">
-                <span className="text-xs font-mono text-text-muted">
-                  budget $
-                </span>
-                <input
-                  type="number"
-                  step="1"
-                  min="0"
-                  value={formBudget}
-                  onChange={(e) => setFormBudget(e.target.value)}
-                  aria-label="Budget USD"
-                  className="w-20 px-1 text-sm font-mono bg-transparent border-0 focus:outline-none"
-                />
+                loading targets…
               </div>
-              <button
-                type="button"
-                disabled={
-                  !formTitle.trim() ||
-                  !formQuestion.trim() ||
-                  !formTargetId.trim() ||
-                  createMut.isPending
-                }
-                onClick={() => {
-                  const budget = parseFloat(formBudget);
-                  createMut.mutate(
-                    {
-                      title: formTitle.trim(),
-                      initial_question: formQuestion.trim(),
-                      target_id: formTargetId.trim(),
-                      kind: formKind,
-                      cost_budget_usd: Number.isFinite(budget) ? budget : 50,
-                    },
-                    {
-                      onSuccess: (created) => {
-                        setShowForm(false);
-                        setFormTitle("");
-                        setFormQuestion("");
-                        setFormTargetId("");
-                        setFormKind("discovery");
-                        setFormBudget("50");
-                        navigate(`/vr/investigations/${created.data.id}`);
-                      },
-                    },
-                  );
-                }}
-                className="ml-auto inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-md transition-all hover:-translate-y-px disabled:opacity-50 disabled:hover:translate-y-0"
+            );
+          }
+          if (targets.length === 0) {
+            return (
+              <div
+                className="font-mono"
                 style={{
-                  background: "var(--color-accent)",
-                  color: "var(--color-base)",
-                  boxShadow:
-                    "0 0 16px color-mix(in srgb, var(--color-accent) 28%, transparent)",
+                  ...CTRL,
+                  height: 30,
+                  display: "flex",
+                  alignItems: "center",
+                  color: "var(--accent)",
+                  borderColor: "var(--accent)",
                 }}
               >
-                {createMut.isPending ? "Creating…" : "Start investigation"}
-              </button>
-            </div>
+                no targets exist yet -- create one under workspaces → targets before starting an investigation.
+              </div>
+            );
+          }
+          return (
+            <select
+              value={formTargetId}
+              onChange={(e) => setFormTargetId(e.target.value)}
+              aria-label="Target"
+              className="font-mono w-full"
+              style={{ ...CTRL, height: 30, fontSize: 11 }}
+            >
+              <option value="">-- pick a target --</option>
+              {orderedWsIds.map((wsId) => (
+                <optgroup key={wsId} label={wsName(wsId)}>
+                  {(byWs.get(wsId) ?? [])
+                    .slice()
+                    .sort((a, b) =>
+                      a.display_name.localeCompare(b.display_name),
+                    )
+                    .map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.display_name} · {t.kind} · {t.primary_language ?? "--"} · {t.analysis_state}
+                      </option>
+                    ))}
+                </optgroup>
+              ))}
+            </select>
+          );
+        })()}
+        <div className="flex flex-wrap items-center" style={{ gap: 8 }}>
+          <select
+            value={formKind}
+            onChange={(e) => setFormKind(e.target.value as InvestigationKind)}
+            aria-label="Investigation kind"
+            className="font-mono uppercase"
+            style={CTRL}
+          >
+            <option value="discovery">discovery</option>
+            <option value="variant_hunt">variant_hunt</option>
+            <option value="triage">triage</option>
+            <option value="n_day">n_day</option>
+            <option value="audit">audit</option>
+          </select>
+          <div
+            className="flex items-center font-mono"
+            style={{
+              ...CTRL,
+              padding: "0 8px",
+              gap: 6,
+              color: "var(--text-muted)",
+            }}
+          >
+            <span style={{ fontSize: 10, letterSpacing: "0.08em" }}>budget $</span>
+            <input
+              type="number"
+              step="1"
+              min="0"
+              value={formBudget}
+              onChange={(e) => setFormBudget(e.target.value)}
+              aria-label="Budget USD"
+              className="font-mono"
+              style={{
+                width: 56,
+                background: "transparent",
+                border: 0,
+                color: "var(--text-primary)",
+                fontSize: 10.5,
+                outline: "none",
+              }}
+            />
           </div>
-        </AilaCard>
-      )}
-
-      {/* Saved views -- chip row above the status pills, additive to
-          every existing control. Serializes the full filter surface
-          into filter_json and restores it on apply. */}
-      <SavedViews
-        entityType="vr_investigation"
-        entityLabel="investigations"
-        currentFilterJson={currentViewJson}
-        onApply={applyView}
-      />
-
-      {/* Status pills -- primary axis the operator scans by */}
-      <div className="flex flex-wrap items-center gap-1.5">
-        <StatusPill
-          id=""
-          label="All"
-          active={statusFilter === ""}
-          count={statusCounts[""]}
-          onClick={() => {
-            setStatusFilter("");
-            resetToFirstPage();
-          }}
-        />
-        <StatusPill
-          id="running"
-          label="Running"
-          active={statusFilter === "running"}
-          count={statusCounts.running}
-          accentColor={STATUS_DOT.running}
-          onClick={() => {
-            setStatusFilter("running");
-            resetToFirstPage();
-          }}
-        />
-        <StatusPill
-          id="completed"
-          label="Completed"
-          active={statusFilter === "completed"}
-          count={statusCounts.completed}
-          accentColor={STATUS_DOT.completed}
-          onClick={() => {
-            setStatusFilter("completed");
-            resetToFirstPage();
-          }}
-        />
-        <StatusPill
-          id="failed"
-          label="Failed"
-          active={statusFilter === "failed"}
-          count={statusCounts.failed}
-          accentColor={STATUS_DOT.failed}
-          onClick={() => {
-            setStatusFilter("failed");
-            resetToFirstPage();
-          }}
-        />
-        <StatusPill
-          id="created"
-          label="Created"
-          active={statusFilter === "created"}
-          count={statusCounts.created}
-          accentColor={STATUS_DOT.created}
-          onClick={() => {
-            setStatusFilter("created");
-            resetToFirstPage();
-          }}
-        />
-        <StatusPill
-          id="paused"
-          label="Paused"
-          active={statusFilter === "paused"}
-          count={statusCounts.paused}
-          accentColor={STATUS_DOT.paused}
-          onClick={() => {
-            setStatusFilter("paused");
-            resetToFirstPage();
-          }}
-        />
-        <StatusPill
-          id="stalled"
-          label="Stalled"
-          active={statusFilter === "stalled"}
-          count={statusCounts.stalled}
-          accentColor={STATUS_DOT.stalled}
-          onClick={() => {
-            setStatusFilter("stalled");
-            resetToFirstPage();
-          }}
-        />
-        <StatusPill
-          id="abandoned"
-          label="Abandoned"
-          active={statusFilter === "abandoned"}
-          count={statusCounts.abandoned}
-          accentColor={STATUS_DOT.abandoned}
-          onClick={() => {
-            setStatusFilter("abandoned");
-            resetToFirstPage();
-          }}
-        />
+          <button
+            type="button"
+            disabled={
+              !formTitle.trim() ||
+              !formQuestion.trim() ||
+              !formTargetId.trim() ||
+              createMut.isPending
+            }
+            onClick={() => {
+              const budget = parseFloat(formBudget);
+              createMut.mutate(
+                {
+                  title: formTitle.trim(),
+                  initial_question: formQuestion.trim(),
+                  target_id: formTargetId.trim(),
+                  kind: formKind,
+                  cost_budget_usd: Number.isFinite(budget) ? budget : 50,
+                },
+                {
+                  onSuccess: (created) => {
+                    setShowForm(false);
+                    setFormTitle("");
+                    setFormQuestion("");
+                    setFormTargetId("");
+                    setFormKind("discovery");
+                    setFormBudget("50");
+                    navigate(`/vr/investigations/${created.data.id}`);
+                  },
+                },
+              );
+            }}
+            className="font-mono uppercase"
+            style={{
+              marginLeft: "auto",
+              height: 28,
+              padding: "0 14px",
+              fontSize: 10,
+              letterSpacing: "0.08em",
+              background: "var(--accent)",
+              border: "1px solid var(--accent)",
+              color: "var(--text-on-accent)",
+              borderRadius: 3,
+              cursor: createMut.isPending ? "wait" : "pointer",
+              opacity: createMut.isPending ? 0.7 : 1,
+            }}
+          >
+            {createMut.isPending ? "creating…" : "start investigation"}
+          </button>
+        </div>
       </div>
+    </WindowPanel>
+  ) : null;
 
-      {/* Secondary filter bar */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 max-w-md" style={{ minWidth: 220 }}>
-          <MagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted pointer-events-none" />
+  // ─── Filter shelf ───
+  const filterShelf = (
+    <WindowPanel title="filters" tone="muted">
+      <div className="flex flex-col" style={{ gap: 10 }}>
+        <div className="flex flex-wrap items-center" style={{ gap: 8 }}>
           <input
             type="search"
             value={searchQ}
             onChange={(e) => {
               setSearchQ(e.target.value);
-              resetToFirstPage();
+              setOffset(0);
             }}
-            placeholder="Search title (ILIKE)…"
+            placeholder="search title (ILIKE)…"
             aria-label="Search investigations"
-            className="touch-target w-full pl-9 pr-3 py-2 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none transition-colors"
+            className="font-mono"
+            style={{ ...CTRL, width: 260 }}
+          />
+          <select
+            value={kindFilter}
+            onChange={(e) => {
+              setKindFilter(e.target.value);
+              setOffset(0);
+            }}
+            aria-label="Filter by kind"
+            className="font-mono uppercase"
+            style={CTRL}
+          >
+            <option value="">all kind</option>
+            <option value="discovery">discovery</option>
+            <option value="variant_hunt">variant_hunt</option>
+            <option value="triage">triage</option>
+            <option value="n_day">n_day</option>
+            <option value="audit">audit</option>
+          </select>
+          <select
+            value={statusFilter}
+            onChange={(e) => {
+              setStatusFilter(e.target.value);
+              setOffset(0);
+            }}
+            aria-label="Filter by status"
+            className="font-mono uppercase"
+            style={CTRL}
+          >
+            <option value="">all status</option>
+            {STATUS_ORDER.map((s) => (
+              <option key={s} value={s}>
+                {STATUS_LABEL[s]}
+                {statusCounts[s] ? ` (${statusCounts[s]})` : ""}
+              </option>
+            ))}
+          </select>
+          <select
+            value={verifierFilter}
+            onChange={(e) => {
+              setVerifierFilter(e.target.value);
+              setOffset(0);
+            }}
+            aria-label="Filter by verifier verdict"
+            className="font-mono uppercase"
+            style={CTRL}
+          >
+            <option value="">all verifier</option>
+            <option value="confirmed">confirmed</option>
+            <option value="refuted">refuted</option>
+            <option value="inconclusive">inconclusive</option>
+          </select>
+          <select
+            value={workspaceFilter}
+            onChange={(e) => {
+              setWorkspaceFilter(e.target.value);
+              setOffset(0);
+            }}
+            aria-label="Filter by workspace"
+            className="font-mono uppercase"
+            style={CTRL}
+          >
+            <option value="">all workspaces</option>
+            {workspaces
+              .slice()
+              .sort((a, b) => a.name.localeCompare(b.name))
+              .map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.name}
+                </option>
+              ))}
+          </select>
+          <FilterChip
+            active={favoritesOnly}
+            color="var(--status-warn)"
+            onClick={() => {
+              setFavoritesOnly((v) => !v);
+              setOffset(0);
+            }}
+          >
+            ★ favorites
+          </FilterChip>
+          <FilterChip
+            active={findingsOnly}
+            color="var(--status-ok)"
+            onClick={() => setFindingsOnly((v) => !v)}
+          >
+            findings only
+          </FilterChip>
+          <FilterChip
+            active={hideCreated}
+            color="var(--accent)"
+            onClick={() => setHideCreated((v) => !v)}
+          >
+            hide created
+          </FilterChip>
+          {hasActiveFilters ? (
+            <FilterChip active={false} onClick={clearAllFilters}>
+              ✕ clear
+            </FilterChip>
+          ) : null}
+          <span style={{ flex: 1 }} />
+          <Segmented<SortMode>
+            options={SORT_OPTIONS}
+            value={sortMode}
+            onChange={setSortMode}
           />
         </div>
-        <select
-          value={kindFilter}
-          onChange={(e) => {
-            setKindFilter(e.target.value);
-            resetToFirstPage();
-          }}
-          className="touch-target px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border focus:border-accent focus:outline-none uppercase tracking-wider"
-          aria-label="Filter by kind"
-        >
-          <option value="">all kind</option>
-          <option value="discovery">discovery</option>
-          <option value="variant_hunt">variant_hunt</option>
-          <option value="triage">triage</option>
-          <option value="n_day">n_day</option>
-          <option value="audit">audit</option>
-        </select>
-        <select
-          value={verifierFilter}
-          onChange={(e) => {
-            setVerifierFilter(e.target.value);
-            resetToFirstPage();
-          }}
-          className="touch-target px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border focus:border-accent focus:outline-none uppercase tracking-wider"
-          aria-label="Filter by verifier verdict"
-        >
-          <option value="">all verifier</option>
-          <option value="confirmed">confirmed</option>
-          <option value="refuted">refuted</option>
-          <option value="inconclusive">inconclusive</option>
-        </select>
-        <fieldset className="contents border-0 p-0 m-0 min-w-0">
-          <legend className="sr-only">Investigation list toggles</legend>
-          <label className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border uppercase tracking-wider cursor-pointer">
-            <input
-              type="checkbox"
-              className="accent-accent"
-              checked={findingsOnly}
-              onChange={(e) => setFindingsOnly(e.target.checked)}
-            />
-            findings only
-          </label>
-          <label
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-mono rounded-md border uppercase tracking-wider cursor-pointer transition-colors"
-            style={{
-              borderColor: hideCreated
-                ? "var(--color-accent)"
-                : "var(--color-border)",
-              background: hideCreated
-                ? "color-mix(in srgb, var(--color-accent) 10%, transparent)"
-                : "var(--color-surface)",
-              color: hideCreated
-                ? "var(--color-accent)"
-                : "var(--color-text-muted)",
-            }}
-            title="Hide queued (created) investigations from the list"
-          >
-            <input
-              type="checkbox"
-              className="accent-accent"
-              checked={hideCreated}
-              onChange={(e) => setHideCreated(e.target.checked)}
-            />
-            hide created
-          </label>
-        </fieldset>
-        <button
-          type="button"
-          onClick={() => {
-            setFavoritesOnly((v) => !v);
-            resetToFirstPage();
-          }}
-          className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-mono rounded-md border uppercase tracking-wider transition-colors"
-          style={
-            favoritesOnly
-              ? {
-                  borderColor: "var(--color-amber)",
-                  background:
-                    "color-mix(in srgb, var(--color-amber) 12%, transparent)",
-                  color: "var(--color-amber)",
-                }
-              : {
-                  borderColor: "var(--color-border)",
-                  background: "var(--color-surface)",
-                  color: "var(--color-text-muted)",
-                }
-          }
-          title="Show only favorited investigations"
-        >
-          <Star
-            className="h-3.5 w-3.5"
-            weight={favoritesOnly ? "fill" : "regular"}
+        <div style={{ minHeight: 26 }}>
+          <SavedViews
+            entityType="vr_investigation"
+            entityLabel="investigations"
+            currentFilterJson={currentViewJson}
+            onApply={applyView}
           />
-          favorites
-        </button>
-        <button
-          type="button"
-          onClick={() => setGroupByTarget((v) => !v)}
-          className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-mono rounded-md border uppercase tracking-wider transition-colors"
-          style={
-            groupByTarget
-              ? {
-                  borderColor: "var(--color-accent)",
-                  background:
-                    "color-mix(in srgb, var(--color-accent) 14%, transparent)",
-                  color: "var(--color-accent)",
-                }
-              : {
-                  borderColor: "var(--color-border)",
-                  background: "var(--color-surface)",
-                  color: "var(--color-text-muted)",
-                }
-          }
-          title="Group investigations by target"
-        >
-          <GitBranch className="h-3.5 w-3.5" weight="duotone" />
-          group by target
-        </button>
-        {hasActiveFilters && (
+        </div>
+      </div>
+    </WindowPanel>
+  );
+
+  // ─── Stats trio ───
+  const statsRow = (
+    <div
+      className="grid"
+      style={{
+        gridTemplateColumns: "1fr 1fr 1.6fr",
+        gap: 12,
+      }}
+    >
+      <WindowPanel title="total" tone="info">
+        <BigStat value={totalRaw.toLocaleString()} sub="investigations" />
+      </WindowPanel>
+      <WindowPanel title="live" tone="ok">
+        <BigStat value={runningCount.toLocaleString()} sub="running" />
+      </WindowPanel>
+      <WindowPanel title="status mix" tone="muted">
+        <div className="flex flex-col" style={{ gap: 6 }}>
+          {STATUS_ORDER.map((s) => (
+            <StatBar
+              key={s}
+              label={STATUS_LABEL[s]}
+              color={STATUS_HUE[s]}
+              value={statusCounts[s] ?? 0}
+              max={statusMax}
+            />
+          ))}
+        </div>
+      </WindowPanel>
+    </div>
+  );
+
+  // ─── Main table (honest grid with keyboard nav) ───
+  const columns: {
+    label: string;
+    width: string;
+    align?: "left" | "right" | "center";
+  }[] = [
+    { label: "status", width: "100px" },
+    { label: "title", width: "1fr" },
+    { label: "kind", width: "100px" },
+    { label: "target", width: "180px" },
+    { label: "branches", width: "80px", align: "right" },
+    { label: "outcomes", width: "80px", align: "right" },
+    { label: "cost", width: "90px", align: "right" },
+    { label: "fav", width: "40px", align: "center" },
+    { label: "updated", width: "100px", align: "right" },
+    { label: "", width: "40px", align: "center" },
+  ];
+
+  function renderCells(inv: VRInvestigationSummary): React.ReactNode[] {
+    const targetName =
+      targetMap.get(inv.target_id)?.display_name ?? "loading…";
+    return [
+      <MonoBadge tone={STATUS_TONE[inv.status]} title={STATUS_LABEL[inv.status]}>
+        {STATUS_LABEL[inv.status]}
+      </MonoBadge>,
+      <span
+        className="font-mono"
+        title={inv.title}
+        style={{
+          fontSize: 11.5,
+          color: "var(--text-primary)",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          display: "block",
+        }}
+      >
+        {inv.title}
+      </span>,
+      <MonoBadge tone="muted">{inv.kind}</MonoBadge>,
+      <span
+        className="font-mono"
+        title={targetName}
+        style={{
+          fontSize: 10.5,
+          color: "var(--text-muted)",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          display: "block",
+        }}
+      >
+        {targetName}
+      </span>,
+      <span
+        className="font-mono"
+        style={{ fontSize: 11, color: "var(--text-primary)" }}
+      >
+        {inv.branch_count}
+      </span>,
+      <span
+        className="font-mono"
+        style={{ fontSize: 11, color: "var(--text-primary)" }}
+      >
+        {inv.outcome_count}
+      </span>,
+      <span
+        className="font-mono"
+        title={`budget ${fmtCost(inv.cost_budget_usd)}`}
+        style={{
+          fontSize: 11,
+          color:
+            inv.cost_budget_usd > 0 &&
+            inv.cost_actual_usd >= inv.cost_budget_usd
+              ? "var(--accent)"
+              : "var(--text-primary)",
+        }}
+      >
+        {fmtCost(inv.cost_actual_usd)}
+      </span>,
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          favMut.mutate(inv.id);
+        }}
+        title={inv.is_favorite ? "Unfavorite" : "Favorite"}
+        aria-label={inv.is_favorite ? "Unfavorite" : "Favorite"}
+        className="font-mono"
+        style={{
+          background: "transparent",
+          border: 0,
+          padding: 0,
+          fontSize: 14,
+          lineHeight: 1,
+          cursor: "pointer",
+          color: inv.is_favorite
+            ? "var(--status-warn)"
+            : "var(--text-faint)",
+        }}
+      >
+        {inv.is_favorite ? "★" : "☆"}
+      </button>,
+      <span
+        className="font-mono"
+        title={inv.updated_at ?? inv.created_at ?? ""}
+        style={{
+          fontSize: 10,
+          color: "var(--text-faint)",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {relativeTime(inv.updated_at ?? inv.created_at)}
+      </span>,
+      <span onClick={(e) => e.stopPropagation()}>
+        <DeleteButton
+          id={inv.id}
+          label={`investigation "${inv.title}"`}
+          mutation={deleteMut}
+          compact
+        />
+      </span>,
+    ];
+  }
+
+  const tableActions = (
+    <span
+      className="font-mono"
+      style={{
+        fontSize: 10,
+        letterSpacing: "0.06em",
+        color: "var(--text-faint)",
+      }}
+    >
+      {sorted.length}
+      <span style={{ opacity: 0.5 }}> / {totalRaw}</span>
+    </span>
+  );
+
+  let tableBody: React.ReactNode;
+  if (isLoading) {
+    tableBody = (
+      <div style={{ padding: 12 }}>
+        <LoadingSkeleton size="lg" width="full" />
+      </div>
+    );
+  } else if (isError) {
+    tableBody = (
+      <div
+        className="font-mono"
+        style={{
+          padding: 24,
+          textAlign: "center",
+          color: "var(--accent)",
+          fontSize: 11,
+          letterSpacing: "0.06em",
+        }}
+      >
+        failed to load investigations.
+      </div>
+    );
+  } else {
+    tableBody = (
+      <HonestGrid
+        columns={columns}
+        rows={sorted}
+        renderCells={renderCells}
+        getKey={(inv) => inv.id}
+        onRowClick={(inv) => navigate(`/vr/investigations/${inv.id}`)}
+        containerRef={listContainerRef}
+        onKeyDown={listTbodyProps.onKeyDown}
+        getRowProps={listGetRowProps}
+        empty={
+          <div
+            className="font-mono"
+            style={{
+              padding: 34,
+              textAlign: "center",
+              fontSize: 11.5,
+              color: "var(--text-muted)",
+              letterSpacing: "0.04em",
+            }}
+          >
+            {hasActiveFilters
+              ? "no investigations match the current filters."
+              : "no investigations yet -- start one from the header."}
+          </div>
+        }
+      />
+    );
+  }
+
+  // ─── Pagination footer (mock language) ───
+  const pageEnd = Math.min(offset + sorted.length, totalRaw);
+  const pagination =
+    !isLoading && !isError && totalRaw > pageSize ? (
+      <div
+        className="flex items-center justify-between font-mono"
+        style={{
+          padding: "8px 12px",
+          border: "1px solid var(--border-soft)",
+          background: "var(--surface-sunk)",
+          borderRadius: 3,
+          fontSize: 10.5,
+          color: "var(--text-muted)",
+          letterSpacing: "0.04em",
+        }}
+      >
+        <span>
+          {offset + 1}–{pageEnd} of {totalRaw}
+        </span>
+        <div className="flex items-center" style={{ gap: 8 }}>
+          <select
+            value={pageSize}
+            onChange={(e) => {
+              setPageSize(parseInt(e.target.value, 10));
+              setOffset(0);
+            }}
+            title="Page size"
+            className="font-mono"
+            style={CTRL}
+          >
+            <option value="50">50 / page</option>
+            <option value="100">100 / page</option>
+            <option value="200">200 / page</option>
+            <option value="500">500 / page</option>
+          </select>
           <button
             type="button"
-            onClick={clearAllFilters}
-            className="inline-flex items-center gap-1 px-2 py-2 text-xs font-mono rounded-md text-text-muted hover:text-foreground transition-colors"
+            disabled={offset === 0}
+            onClick={() => setOffset(Math.max(0, offset - pageSize))}
+            className="font-mono uppercase"
+            style={{
+              ...CTRL,
+              cursor: offset === 0 ? "not-allowed" : "pointer",
+              opacity: offset === 0 ? 0.4 : 1,
+            }}
           >
-            <X className="h-3.5 w-3.5" />
-            clear
+            ← prev
           </button>
-        )}
-        <span className="text-2xs font-mono text-text-muted ml-auto">
-          {sorted.length}
-          <span className="text-text-muted/50"> / {totalRaw}</span>
-        </span>
-      </div>
-
-      {/* Loading / error / empty */}
-      {isLoading && <LoadingSkeleton size="lg" width="full" />}
-
-      {isError && (
-        <AilaCard className="border-critical" techBorder glow>
-          <p className="text-sm text-critical">
-            Failed to load investigations.
-          </p>
-        </AilaCard>
-      )}
-
-      {!isLoading && !isError && sorted.length === 0 && !showForm && (
-        <EmptyState
-          icon={<MagnifyingGlass className="h-7 w-7" weight="duotone" />}
-          title={
-            hasActiveFilters
-              ? "No investigations match the current filter"
-              : "No investigations yet"
-          }
-          description={
-            hasActiveFilters
-              ? "Adjust filters above or clear them to see everything."
-              : "Spin up a HonestVulnResearcher loop against any onboarded target."
-          }
-          action={
-            hasActiveFilters
-              ? { label: "Clear filters", onClick: clearAllFilters }
-              : {
-                  label: "Start your first investigation",
-                  onClick: () => setShowForm(true),
-                }
-          }
-        />
-      )}
-
-      {/* Card list -- either flat or grouped by target */}
-      {!isLoading && !isError && sorted.length > 0 && !groupByTarget && (
-        <div ref={flatListContainerRef}>
-          <StaggeredList
-            as="ul"
-            className="flex flex-col gap-2"
-            {...flatListTbodyProps}
+          <button
+            type="button"
+            disabled={offset + pageSize >= totalRaw}
+            onClick={() => setOffset(offset + pageSize)}
+            className="font-mono uppercase"
+            style={{
+              ...CTRL,
+              cursor:
+                offset + pageSize >= totalRaw ? "not-allowed" : "pointer",
+              opacity: offset + pageSize >= totalRaw ? 0.4 : 1,
+            }}
           >
-            {sorted.map((inv, idx) => (
-              <InvestigationCard
-                key={inv.id}
-                inv={inv}
-                targetName={
-                  targetMap.get(inv.target_id)?.display_name ?? "loading…"
-                }
-                onOpen={() => navigate(`/vr/investigations/${inv.id}`)}
-                onToggleFavorite={() => favMut.mutate(inv.id)}
-                deleteMut={deleteMut}
-                rowProps={flatListGetRowProps(idx)}
-              />
-            ))}
-          </StaggeredList>
+            next →
+          </button>
         </div>
-      )}
+      </div>
+    ) : null;
 
-      {!isLoading && !isError && sorted.length > 0 && groupByTarget && (
-        <div className="flex flex-col gap-5">
-          {Array.from(grouped.entries()).map(([targetId, items]) => {
-            const target = targetMap.get(targetId);
-            const targetName = target?.display_name ?? "loading…";
-            const targetKind = target?.kind ?? "";
-            const collapsed = collapsedGroups.has(targetId);
-            return (
-              <section key={targetId} className="flex flex-col gap-2">
-                <button
-                  type="button"
-                  onClick={() => toggleGroup(targetId)}
-                  className="flex items-center gap-2 text-left group/group"
-                >
-                  {collapsed ? (
-                    <CaretRightSmall className="h-3.5 w-3.5 text-text-muted" />
-                  ) : (
-                    <CaretDown className="h-3.5 w-3.5 text-text-muted" />
-                  )}
-                  <span
-                    className="font-mono text-3xs uppercase text-text-muted shrink-0"
-                    style={{ letterSpacing: "0.18em" }}
-                  >
-                    target
-                  </span>
-                  <span className="font-semibold text-foreground truncate" style={{ fontSize: 13 }}>
-                    {targetName}
-                  </span>
-                  {targetKind && (
-                    <span className="text-3xs font-mono uppercase tracking-wider text-text-muted">
-                      · {targetKind}
-                    </span>
-                  )}
-                  <span className="text-3xs font-mono text-text-muted">
-                    · {items.length} investigation
-                    {items.length === 1 ? "" : "s"}
-                  </span>
-                  <span
-                    className="flex-1 ml-2 h-px"
-                    style={{
-                      background:
-                        "color-mix(in srgb, var(--color-text-muted) 18%, transparent)",
-                    }}
-                  />
-                </button>
-                {!collapsed && (
-                  <StaggeredList as="ul" className="flex flex-col gap-2">
-                    {items.map((inv) => (
-                      <InvestigationCard
-                        key={inv.id}
-                        inv={inv}
-                        targetName={targetName}
-                        onOpen={() =>
-                          navigate(`/vr/investigations/${inv.id}`)
-                        }
-                        onToggleFavorite={() => favMut.mutate(inv.id)}
-                        deleteMut={deleteMut}
-                      />
-                    ))}
-                  </StaggeredList>
-                )}
-              </section>
-            );
-          })}
-        </div>
-      )}
+  return (
+    <div className="flex flex-col" style={{ gap: 14 }}>
+      <SectionHeader icon="◈" title="Investigations" actions={headerActions} />
+      {createFormPanel}
+      {filterShelf}
+      {statsRow}
+      <WindowPanel title="investigations" tone="accent" actions={tableActions} flush>
+        {tableBody}
+      </WindowPanel>
+      {pagination}
+    </div>
+  );
+}
 
-      {/* Pagination */}
-      {!isLoading && !isError && totalRaw > pageSize && (
-        <div className="flex items-center justify-between gap-4 px-4 py-3 rounded-md border border-border bg-surface text-xs font-mono text-text-muted">
-          <span>
-            {sorted.length === investigationsRaw.length
-              ? `${offset + 1}–${offset + sorted.length} of ${totalRaw}`
-              : `${sorted.length} of ${investigationsRaw.length} (page) · ${totalRaw} total`}
+// ─────────────────────────────────────────────────────────────────────
+// HonestGrid -- local table variant that mirrors the mock DataGrid look
+// but accepts per-row keyboard-nav props (data-row-index / tabIndex /
+// aria-selected) supplied by `useTableRowNav`. The shared DataGrid in
+// @/components/aila/mock intentionally has no rowProps hook, so this
+// page composes its own grid at the same visual grammar.
+// ─────────────────────────────────────────────────────────────────────
+interface HonestColumn {
+  label: React.ReactNode;
+  width: string;
+  align?: "left" | "right" | "center";
+}
+
+function HonestGrid<T>({
+  columns,
+  rows,
+  renderCells,
+  getKey,
+  onRowClick,
+  containerRef,
+  onKeyDown,
+  getRowProps,
+  empty,
+}: {
+  columns: HonestColumn[];
+  rows: T[];
+  renderCells: (row: T, index: number) => React.ReactNode[];
+  getKey: (row: T, index: number) => React.Key;
+  onRowClick?: (row: T, index: number) => void;
+  containerRef?: React.RefObject<HTMLDivElement | null>;
+  onKeyDown?: (event: ReactKeyboardEvent<HTMLElement>) => void;
+  getRowProps?: (idx: number) => {
+    tabIndex: number;
+    "aria-selected": boolean;
+    "data-row-index": number;
+    "data-row-active"?: "true";
+    onFocus: () => void;
+  };
+  empty?: React.ReactNode;
+}) {
+  const template = columns.map((c) => c.width).join(" ");
+  return (
+    <div>
+      <div
+        className="grid font-mono uppercase"
+        style={{
+          gridTemplateColumns: template,
+          gap: 10,
+          padding: "8px 12px",
+          background: "var(--surface-sunk)",
+          borderBottom: "1px solid var(--border-soft)",
+          fontSize: 9,
+          letterSpacing: "0.14em",
+          color: "var(--text-faint)",
+        }}
+      >
+        {columns.map((c, i) => (
+          <span key={i} style={{ textAlign: c.align }}>
+            {c.label}
           </span>
-          <div className="flex items-center gap-2">
-            <select
-              value={pageSize}
-              onChange={(e) => {
-                setPageSize(parseInt(e.target.value, 10));
-                resetToFirstPage();
-              }}
-              className="px-2 py-1 rounded bg-base border border-border focus:border-accent focus:outline-none text-text-muted"
-              title="Page size"
-            >
-              <option value="50">50 / page</option>
-              <option value="100">100 / page</option>
-              <option value="200">200 / page</option>
-              <option value="500">500 / page</option>
-            </select>
-            <button
-              type="button"
-              disabled={offset === 0}
-              onClick={() => setOffset(Math.max(0, offset - pageSize))}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border disabled:opacity-40 hover:text-foreground hover:border-accent/40 transition-colors"
-            >
-              <CaretLeft className="h-3 w-3" />
-              prev
-            </button>
-            <button
-              type="button"
-              disabled={offset + pageSize >= totalRaw}
-              onClick={() => setOffset(offset + pageSize)}
-              className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border disabled:opacity-40 hover:text-foreground hover:border-accent/40 transition-colors"
-            >
-              next
-              <CaretRight className="h-3 w-3" />
-            </button>
-          </div>
-        </div>
-      )}
+        ))}
+      </div>
+      <div
+        ref={containerRef}
+        role="listbox"
+        onKeyDown={onKeyDown}
+        style={{ background: "var(--surface-card)" }}
+      >
+        {rows.length === 0
+          ? empty
+          : rows.map((r, ri) => {
+              const rowProps = getRowProps ? getRowProps(ri) : undefined;
+              return (
+                <div
+                  key={getKey(r, ri)}
+                  role="option"
+                  onClick={onRowClick ? () => onRowClick(r, ri) : undefined}
+                  {...(rowProps ?? {})}
+                  className="grid font-mono"
+                  style={{
+                    gridTemplateColumns: template,
+                    gap: 10,
+                    padding: "8px 12px",
+                    borderBottom: "1px solid var(--border-faint)",
+                    background: rowProps?.["data-row-active"]
+                      ? "var(--surface-hover)"
+                      : "var(--surface-card)",
+                    alignItems: "center",
+                    cursor: onRowClick ? "pointer" : undefined,
+                    outline: "none",
+                  }}
+                >
+                  {renderCells(r, ri).map((cell, ci) => (
+                    <span
+                      key={ci}
+                      style={{
+                        minWidth: 0,
+                        textAlign: columns[ci]?.align,
+                        overflow: "hidden",
+                      }}
+                    >
+                      {cell}
+                    </span>
+                  ))}
+                </div>
+              );
+            })}
+      </div>
     </div>
   );
 }

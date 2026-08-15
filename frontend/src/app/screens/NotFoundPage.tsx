@@ -2,24 +2,28 @@ import { Link } from "react-router";
 
 import { WifiSlash } from "@phosphor-icons/react/dist/csr/WifiSlash";
 
+import { SectionHeader } from "@/components/aila/mock";
 import { WindowPanel } from "@/components/aila/WindowPanel";
 
 /**
- * 404 SIGNAL LOST -- a centred `WindowPanel` carrying the not-found notice.
+ * 404 SIGNAL LOST -- centred `WindowPanel` carrying the not-found notice.
  *
- * The panel gives the error state the same OS-window chrome as every other
- * surface. The large muted `404` glyph sits behind the panel as a page-scale
- * marker; the panel itself is the readable affordance.
+ * The large muted `404` glyph sits behind the panel as a page-scale marker;
+ * the panel itself is the readable affordance. Title is rendered by the mock
+ * `SectionHeader` (accent icon square + Apoc display font).
  */
 export function NotFoundPage() {
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-base p-6">
+    <div
+      className="relative flex min-h-screen items-center justify-center overflow-hidden p-6"
+      style={{ background: "var(--surface-page)" }}
+    >
       <span
         aria-hidden="true"
         className="pointer-events-none absolute select-none font-mono font-black"
         style={{
           fontSize: "clamp(8rem, 25vw, 20rem)",
-          color: "color-mix(in srgb, var(--color-text) 3%, transparent)",
+          color: "color-mix(in srgb, var(--text-primary) 3%, transparent)",
           lineHeight: 1,
         }}
       >
@@ -32,25 +36,49 @@ export function NotFoundPage() {
         status="404 · route not registered"
         className="relative z-10 w-full max-w-md"
       >
-        <div className="flex flex-col items-center gap-4 py-6 text-center">
-          <WifiSlash
-            size={40}
-            weight="duotone"
-            className="text-accent"
-            aria-hidden="true"
+        <div className="flex flex-col" style={{ gap: 14, padding: "6px 2px 4px" }}>
+          <SectionHeader
+            icon={
+              <WifiSlash
+                size={18}
+                weight="duotone"
+                style={{ color: "var(--text-on-accent)" }}
+                aria-hidden="true"
+              />
+            }
+            title="signal lost"
+            size={20}
           />
-          <h2 className="font-mono text-2xl font-bold uppercase tracking-widest text-accent">
-            Signal lost
-          </h2>
-          <p className="max-w-xs font-mono text-xs text-text-muted">
+          <p
+            className="font-mono"
+            style={{
+              color: "var(--text-muted)",
+              fontSize: 11,
+              lineHeight: 1.55,
+              letterSpacing: "0.02em",
+            }}
+          >
             The page you requested does not exist on this workbench.
           </p>
-          <Link
-            className="mt-1 font-mono text-xs text-accent underline underline-offset-2 hover:opacity-80"
-            to="/"
-          >
-            Return to dashboard
-          </Link>
+          <div className="flex items-center" style={{ gap: 8, paddingTop: 4 }}>
+            <Link
+              to="/"
+              className="font-mono uppercase inline-flex items-center"
+              style={{
+                height: 26,
+                padding: "0 12px",
+                fontSize: 9.5,
+                letterSpacing: "0.1em",
+                border: "1px solid var(--accent)",
+                background: "var(--accent)",
+                color: "var(--text-on-accent)",
+                borderRadius: 3,
+                textDecoration: "none",
+              }}
+            >
+              Return to dashboard
+            </Link>
+          </div>
         </div>
       </WindowPanel>
     </div>

@@ -1,21 +1,21 @@
 /**
- * RadarSeverityPie.view -- recharts-using pie chart for the radar inspect panel.
+ * RadarSeverityPie.view -- recharts pie for the radar inspect panel.
  *
- * Loaded lazily from RadarInspectPanel so the recharts vendor chunk stays
- * out of the root entry. The panel is itself lazily shown (only when a node
- * is clicked), but the recharts import inside it would otherwise be eager
- * because RadarInspectPanel is imported synchronously by RadarPage.
+ * Loaded lazily from RadarInspectPanel so recharts stays chunk-split.
+ * Fills come from tokens via useThemeChartColors upstream (SVG attrs
+ * cannot resolve var(...) directly).
  */
 import * as React from "react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 
 const TOOLTIP_STYLE: React.CSSProperties = {
-  backgroundColor: "var(--color-elevated)",
-  border: "1px solid var(--color-border)",
-  borderRadius: "4px",
+  backgroundColor: "var(--surface-card)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
   fontFamily: "var(--font-mono, monospace)",
-  fontSize: "11px",
-  color: "var(--color-text)",
+  fontSize: 11,
+  color: "var(--text-primary)",
+  letterSpacing: "0.06em",
 };
 
 interface SeveritySlice {

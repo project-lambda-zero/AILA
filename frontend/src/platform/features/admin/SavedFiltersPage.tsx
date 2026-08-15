@@ -5,27 +5,17 @@
  * own filters plus team-shared filters (shared_with_team=true). Only the
  * owner can update or delete a given filter; the API enforces ownership and
  * the UI hides edit/delete actions when the current user is not the owner.
+ *
+ * Presentation rebuilt to the AILA mock language. Data hooks, mutations,
+ * and testids preserved.
  */
+import * as React from "react";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookmarkSimple } from "@phosphor-icons/react/dist/csr/BookmarkSimple";
-import { PencilSimple } from "@phosphor-icons/react/dist/csr/PencilSimple";
-import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
-import { Trash } from "@phosphor-icons/react/dist/csr/Trash";
 
-import { AilaCard } from "@/components/aila/AilaCard";
+import { SectionHeader, DataGrid, MonoBadge, FilterChip } from "@/components/aila/mock";
 import { WindowPanel } from "@/components/aila/WindowPanel";
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
-import { EmptyState } from "@/components/aila/EmptyState";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { authorizedRequestJson } from "@platform/api/http";
 import { useAuthStore } from "@platform/auth/useAuthStore";
 
@@ -76,6 +66,142 @@ interface SavedFilterUpdateRequest {
 }
 
 // ---------------------------------------------------------------------------
+// Local mock styles
+// ---------------------------------------------------------------------------
+
+const btnBase: React.CSSProperties = {
+  height: 26,
+  fontSize: 9.5,
+  letterSpacing: "0.08em",
+  padding: "0 11px",
+  borderRadius: 3,
+  border: "1px solid var(--border-soft)",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  cursor: "pointer",
+  textTransform: "uppercase",
+  fontFamily: "var(--font-mono)",
+};
+
+const primaryBtn: React.CSSProperties = {
+  ...btnBase,
+  background: "var(--accent)",
+  color: "var(--text-on-accent)",
+  borderColor: "var(--accent)",
+};
+
+const dangerBtn: React.CSSProperties = {
+  ...btnBase,
+  color: "var(--status-warn)",
+  borderColor: "color-mix(in srgb, var(--status-warn) 40%, transparent)",
+};
+
+const inputStyle: React.CSSProperties = {
+  height: 28,
+  padding: "0 8px",
+  fontSize: 11,
+  fontFamily: "var(--font-mono)",
+  color: "var(--text-primary)",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  outline: "none",
+  width: "100%",
+};
+
+const textareaStyle: React.CSSProperties = {
+  ...inputStyle,
+  height: "auto",
+  padding: "6px 8px",
+  resize: "vertical",
+  lineHeight: 1.5,
+};
+
+const labelStyle: React.CSSProperties = {
+  fontFamily: "var(--font-mono)",
+  fontSize: 9,
+  letterSpacing: "0.12em",
+  textTransform: "uppercase",
+  color: "var(--text-faint)",
+};
+
+function ErrorLine({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="font-mono"
+      style={{
+        border: "1px solid color-mix(in srgb, var(--status-warn) 40%, transparent)",
+        background: "color-mix(in srgb, var(--status-warn) 10%, transparent)",
+        color: "var(--status-warn)",
+        padding: "8px 12px",
+        fontSize: 11,
+        borderRadius: 3,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function ModalFrame({
+  open,
+  onClose,
+  title,
+  children,
+  width = 500,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  children: React.ReactNode;
+  width?: number;
+}) {
+  if (!open) return null;
+  return (
+    <div
+      className="flex items-center justify-center"
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 60,
+        background: "color-mix(in srgb, var(--surface-page) 80%, transparent)",
+      }}
+      onClick={onClose}
+      role="presentation"
+    >
+      <div onClick={(e) => e.stopPropagation()} style={{ width, maxWidth: "94vw" }}>
+        <WindowPanel
+          title={title}
+          tone="accent"
+          actions={
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={onClose}
+              className="font-mono"
+              style={{
+                width: 20,
+                height: 20,
+                border: 0,
+                background: "transparent",
+                color: "var(--text-muted)",
+                cursor: "pointer",
+                fontSize: 13,
+                lineHeight: 1,
+              }}
+            >
+              {"\u2715"}
+            </button>
+          }
+        >
+          <div style={{ maxHeight: "70vh", overflowY: "auto" }}>{children}</div>
+        </WindowPanel>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
 
@@ -84,7 +210,6 @@ function formatTimestamp(value: string | null | undefined): string {
   return new Date(value).toLocaleString();
 }
 
-/** Validate a JSON string -- returns null if valid, error message otherwise. */
 function validateJson(value: string): string | null {
   if (value.trim() === "") return "Filter criteria cannot be empty.";
   try {
@@ -96,13 +221,11 @@ function validateJson(value: string): string | null {
 }
 
 function shortUserId(userId: string): string {
-  // user_id is a UUID-ish string; show enough to disambiguate without
-  // overflowing the table cell.
-  return userId.length > 12 ? `${userId.slice(0, 8)}…` : userId;
+  return userId.length > 12 ? `${userId.slice(0, 8)}\u2026` : userId;
 }
 
 // ---------------------------------------------------------------------------
-// Filter editor dialog (shared between Create and Edit)
+// Filter editor modal (shared)
 // ---------------------------------------------------------------------------
 
 interface FilterFormState {
@@ -125,10 +248,6 @@ interface FilterEditorDialogProps {
   mode: "create" | "edit";
   open: boolean;
   initial: FilterFormState;
-  /**
-   * In edit mode, entity_type is immutable (the backend does not accept
-   * entity_type in SavedFilterUpdate); we render it disabled.
-   */
   isPending: boolean;
   onSubmit: (form: FilterFormState) => Promise<unknown>;
   onClose: () => void;
@@ -145,9 +264,6 @@ function FilterEditorDialog({
   const [form, setForm] = useState<FilterFormState>(initial);
   const [error, setError] = useState<string | null>(null);
 
-  // Reset form when the dialog opens with a new initial value.
-  // useState initializer only runs once, so when `initial` changes between
-  // edits we must sync explicitly.
   const [lastInitialKey, setLastInitialKey] = useState(JSON.stringify(initial));
   const currentInitialKey = JSON.stringify(initial);
   if (open && currentInitialKey !== lastInitialKey) {
@@ -158,8 +274,6 @@ function FilterEditorDialog({
 
   function handleClose() {
     onClose();
-    // Defer reset so the user does not see the form jump while the dialog
-    // animates out.
     setTimeout(() => {
       setForm(DEFAULT_FORM);
       setError(null);
@@ -197,116 +311,108 @@ function FilterEditorDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="font-mono text-text">
-            {mode === "create" ? "Create saved filter" : "Edit saved filter"}
-          </DialogTitle>
-        </DialogHeader>
+    <ModalFrame
+      open={open}
+      onClose={handleClose}
+      title={mode === "create" ? "new saved filter" : "edit saved filter"}
+    >
+      <form className="flex flex-col" style={{ gap: 12 }} onSubmit={handleSubmit}>
+        <div className="flex flex-col" style={{ gap: 4 }}>
+          <label style={labelStyle} htmlFor="sf-name">name</label>
+          <input
+            id="sf-name"
+            style={inputStyle}
+            value={form.name}
+            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+            placeholder="e.g. Critical + KEV"
+            maxLength={128}
+            autoComplete="off"
+          />
+        </div>
 
-        <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
-          <div className="flex flex-col gap-1">
-            <label className="font-mono text-xs text-text-muted" htmlFor="sf-name">
-              Name
-            </label>
-            <Input
-              id="sf-name"
-              value={form.name}
-              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              placeholder="e.g. Critical + KEV"
-              className="font-mono text-sm"
-              autoComplete="off"
-              maxLength={128}
-            />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="font-mono text-xs text-text-muted" htmlFor="sf-entity">
-              Target page (entity_type)
-            </label>
-            <Input
-              id="sf-entity"
-              value={form.entity_type}
-              onChange={(e) => setForm((f) => ({ ...f, entity_type: e.target.value }))}
-              placeholder="findings"
-              className="font-mono text-sm"
-              autoComplete="off"
-              disabled={mode === "edit"}
-            />
-            {mode === "edit" && (
-              <p className="font-mono text-[10px] text-text-muted">
-                entity_type is immutable; create a new filter to target a different page.
-              </p>
-            )}
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="font-mono text-xs text-text-muted" htmlFor="sf-json">
-              Filter criteria (JSON)
-            </label>
-            <textarea
-              id="sf-json"
-              value={form.filter_json}
-              onChange={(e) => setForm((f) => ({ ...f, filter_json: e.target.value }))}
-              rows={6}
-              className="rounded-[2px] border border-border bg-base font-mono text-xs text-text px-2.5 py-1.5 outline-none focus:border-border-hover transition-colors duration-100 resize-y"
-              placeholder='{"severity": ["critical", "high"]}'
-              spellCheck={false}
-            />
-          </div>
-
-          <fieldset className="flex flex-col gap-2 border-0 p-0">
-            <legend className="sr-only">Filter visibility options</legend>
-            <label className="flex items-center gap-2 font-mono text-xs text-text">
-              <input
-                type="checkbox"
-                checked={form.is_pinned}
-                onChange={(e) => setForm((f) => ({ ...f, is_pinned: e.target.checked }))}
-                className="h-3.5 w-3.5"
-              />
-              Pin to toolbar
-            </label>
-            <label className="flex items-center gap-2 font-mono text-xs text-text">
-              <input
-                type="checkbox"
-                checked={form.shared_with_team}
-                onChange={(e) => setForm((f) => ({ ...f, shared_with_team: e.target.checked }))}
-                className="h-3.5 w-3.5"
-              />
-              Share with team
-            </label>
-          </fieldset>
-
-          {error && (
-            <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-              {error}
-            </div>
+        <div className="flex flex-col" style={{ gap: 4 }}>
+          <label style={labelStyle} htmlFor="sf-entity">target page (entity_type)</label>
+          <input
+            id="sf-entity"
+            style={{ ...inputStyle, opacity: mode === "edit" ? 0.6 : 1 }}
+            value={form.entity_type}
+            onChange={(e) => setForm((f) => ({ ...f, entity_type: e.target.value }))}
+            placeholder="findings"
+            disabled={mode === "edit"}
+            autoComplete="off"
+          />
+          {mode === "edit" && (
+            <p className="font-mono" style={{ fontSize: 9.5, color: "var(--text-faint)" }}>
+              entity_type is immutable; create a new filter to target a different page.
+            </p>
           )}
+        </div>
 
-          <div className="flex gap-2">
-            <Button type="submit" size="sm" disabled={isPending} className="flex-1">
-              {isPending
-                ? mode === "create" ? "Creating..." : "Saving..."
-                : mode === "create" ? "Create filter" : "Save changes"}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={handleClose}
-            >
-              Cancel
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
+        <div className="flex flex-col" style={{ gap: 4 }}>
+          <label style={labelStyle} htmlFor="sf-json">filter criteria (json)</label>
+          <textarea
+            id="sf-json"
+            style={textareaStyle}
+            value={form.filter_json}
+            onChange={(e) => setForm((f) => ({ ...f, filter_json: e.target.value }))}
+            rows={6}
+            placeholder='{"severity": ["critical", "high"]}'
+            spellCheck={false}
+          />
+        </div>
+
+        <fieldset
+          className="flex flex-col"
+          style={{ border: 0, padding: 0, gap: 6 }}
+        >
+          <legend className="sr-only">Filter visibility options</legend>
+          <label
+            className="inline-flex items-center font-mono"
+            style={{ gap: 8, fontSize: 11, color: "var(--text-primary)" }}
+          >
+            <input
+              type="checkbox"
+              checked={form.is_pinned}
+              onChange={(e) => setForm((f) => ({ ...f, is_pinned: e.target.checked }))}
+            />
+            Pin to toolbar
+          </label>
+          <label
+            className="inline-flex items-center font-mono"
+            style={{ gap: 8, fontSize: 11, color: "var(--text-primary)" }}
+          >
+            <input
+              type="checkbox"
+              checked={form.shared_with_team}
+              onChange={(e) => setForm((f) => ({ ...f, shared_with_team: e.target.checked }))}
+            />
+            Share with team
+          </label>
+        </fieldset>
+
+        {error && <ErrorLine>{error}</ErrorLine>}
+
+        <div className="flex" style={{ gap: 8, marginTop: 4 }}>
+          <button
+            type="submit"
+            style={{ ...primaryBtn, flex: 1 }}
+            disabled={isPending}
+          >
+            {isPending
+              ? mode === "create" ? "Creating..." : "Saving..."
+              : mode === "create" ? "Create filter" : "Save changes"}
+          </button>
+          <button type="button" style={btnBase} onClick={handleClose}>
+            Cancel
+          </button>
+        </div>
+      </form>
+    </ModalFrame>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Delete confirmation
+// Delete modal
 // ---------------------------------------------------------------------------
 
 interface DeleteFilterDialogProps {
@@ -336,59 +442,59 @@ function DeleteFilterDialog({
   }
 
   return (
-    <Dialog open={filter !== null} onOpenChange={(v) => { if (!v) { setError(null); onClose(); } }}>
-      <DialogContent className="sm:max-w-sm">
-        <DialogHeader>
-          <DialogTitle className="font-mono text-text">Delete saved filter</DialogTitle>
-        </DialogHeader>
-
-        <div className="flex flex-col gap-4">
-          {filter && (
-            <div className="rounded-[4px] border border-destructive/40 bg-destructive/10 px-4 py-3">
-              <p className="font-mono text-xs text-destructive font-semibold mb-1">
-                This cannot be undone.
-              </p>
-              <p className="font-mono text-xs text-text-muted">
-                Filter <span className="text-text font-semibold">{filter.name}</span>
-                {" "}will be removed permanently.
-              </p>
-            </div>
-          )}
-
-          {error && (
-            <div className="rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
-              {error}
-            </div>
-          )}
-
-          <div className="flex gap-2">
-            <Button
+    <ModalFrame
+      open={filter !== null}
+      onClose={() => {
+        setError(null);
+        onClose();
+      }}
+      title="delete saved filter"
+      width={420}
+    >
+      {filter && (
+        <div className="flex flex-col" style={{ gap: 12 }}>
+          <p className="font-mono" style={{ fontSize: 11, color: "var(--text-primary)" }}>
+            Filter{" "}
+            <span style={{ color: "var(--accent)" }}>{filter.name}</span> will
+            be removed permanently.
+          </p>
+          {error && <ErrorLine>{error}</ErrorLine>}
+          <div className="flex" style={{ gap: 8 }}>
+            <button
               type="button"
-              size="sm"
-              className="flex-1 bg-destructive text-[color:var(--text-on-accent)] hover:bg-destructive/90"
+              style={{
+                ...primaryBtn,
+                flex: 1,
+                background: "var(--status-warn)",
+                borderColor: "var(--status-warn)",
+              }}
               onClick={handleConfirm}
               disabled={isPending}
             >
               {isPending ? "Deleting..." : "Confirm Delete"}
-            </Button>
-            <Button
+            </button>
+            <button
               type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => { setError(null); onClose(); }}
+              style={btnBase}
+              onClick={() => {
+                setError(null);
+                onClose();
+              }}
             >
               Cancel
-            </Button>
+            </button>
           </div>
         </div>
-      </DialogContent>
-    </Dialog>
+      )}
+    </ModalFrame>
   );
 }
 
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
+
+type VisibilityFilter = "all" | "pinned" | "shared" | "mine";
 
 export function SavedFiltersPage() {
   const queryClient = useQueryClient();
@@ -397,11 +503,15 @@ export function SavedFiltersPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<SavedFilter | null>(null);
   const [deleting, setDeleting] = useState<SavedFilter | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [visibility, setVisibility] = useState<VisibilityFilter>("all");
 
   const filtersQuery = useQuery({
     queryKey: ["platform", "saved-filters"],
     queryFn: () =>
-      authorizedRequestJson<SavedFilterListEnvelope>("/saved-filters?offset=0&limit=250"),
+      authorizedRequestJson<SavedFilterListEnvelope>(
+        "/saved-filters?offset=0&limit=250",
+      ),
   });
 
   const createMutation = useMutation({
@@ -428,9 +538,7 @@ export function SavedFiltersPage() {
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) =>
-      authorizedRequestJson<void>(`/saved-filters/${id}`, {
-        method: "DELETE",
-      }),
+      authorizedRequestJson<void>(`/saved-filters/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["platform", "saved-filters"] });
     },
@@ -438,13 +546,35 @@ export function SavedFiltersPage() {
 
   const filters = filtersQuery.data?.data ?? [];
 
-  const { totalFilters, pinnedFilters, sharedFilters } = useMemo(() => {
+  const { totalFilters, pinnedFilters, sharedFilters, myFilters } = useMemo(() => {
     return {
       totalFilters: filters.length,
       pinnedFilters: filters.filter((f) => f.is_pinned).length,
       sharedFilters: filters.filter((f) => f.shared_with_team).length,
+      myFilters:
+        currentUserId === null
+          ? 0
+          : filters.filter((f) => f.user_id === currentUserId).length,
     };
-  }, [filters]);
+  }, [filters, currentUserId]);
+
+  const shown = useMemo(() => {
+    return filters.filter((f) => {
+      if (visibility === "pinned" && !f.is_pinned) return false;
+      if (visibility === "shared" && !f.shared_with_team) return false;
+      if (
+        visibility === "mine" &&
+        (currentUserId === null || f.user_id !== currentUserId)
+      )
+        return false;
+      return true;
+    });
+  }, [filters, visibility, currentUserId]);
+
+  const selected = useMemo(
+    () => (selectedId ? filters.find((f) => f.id === selectedId) ?? null : null),
+    [filters, selectedId],
+  );
 
   const editInitial: FilterFormState = editing
     ? {
@@ -457,160 +587,291 @@ export function SavedFiltersPage() {
     : DEFAULT_FORM;
 
   return (
-    <div className="flex flex-col gap-6 p-4 lg:p-6">
-      {/* Page header */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col" style={{ gap: 16, padding: 20 }}>
+      <SectionHeader
+        icon={"\u25ce"}
+        title="saved filters"
+        actions={
+          <button
+            type="button"
+            style={primaryBtn}
+            onClick={() => setCreateOpen(true)}
+          >
+            {"\u002b"} New Filter
+          </button>
+        }
+      />
 
-        <Button size="sm" className="gap-1.5" onClick={() => setCreateOpen(true)}>
-          <Plus className="h-4 w-4" />
-          New Filter
-        </Button>
+      {/* Metric strip */}
+      <div className="grid" style={{ gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
+        <WindowPanel title="total filters">
+          <span className="font-mono" style={{ fontSize: 26, color: "var(--accent)" }}>
+            {totalFilters}
+          </span>
+        </WindowPanel>
+        <WindowPanel title="pinned">
+          <span className="font-mono" style={{ fontSize: 26, color: "var(--status-info)" }}>
+            {pinnedFilters}
+          </span>
+        </WindowPanel>
+        <WindowPanel title="team-shared">
+          <span className="font-mono" style={{ fontSize: 26, color: "var(--status-ok)" }}>
+            {sharedFilters}
+          </span>
+        </WindowPanel>
+        <WindowPanel title="mine">
+          <span className="font-mono" style={{ fontSize: 26, color: "var(--status-signal)" }}>
+            {myFilters}
+          </span>
+        </WindowPanel>
       </div>
 
-      {/* Metric cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Total Filters
-        </p>
-        <div className="mt-1 min-h-[2rem]">
-          {filtersQuery.isLoading ? (
-            <LoadingSkeleton size="md" width="third" aria-label="Loading filters" />
-          ) : (
-            <p className="font-mono text-2xl font-semibold text-text">{totalFilters}</p>
-          )}
-        </div>
-        <p className="font-mono text-xs text-text-muted mt-0.5">
-          Visible to current user
-        </p></AilaCard>
-
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Pinned
-        </p>
-        <div className="mt-1 min-h-[2rem]">
-          {filtersQuery.isLoading ? (
-            <LoadingSkeleton size="md" width="third" aria-label="Loading filters" />
-          ) : (
-            <p className="font-mono text-2xl font-semibold text-text">{pinnedFilters}</p>
-          )}
-        </div>
-        <p className="font-mono text-xs text-text-muted mt-0.5">
-          Surfaced in toolbars
-        </p></AilaCard>
-
-        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
-          Team-Shared
-        </p>
-        <div className="mt-1 min-h-[2rem]">
-          {filtersQuery.isLoading ? (
-            <LoadingSkeleton size="md" width="third" aria-label="Loading filters" />
-          ) : (
-            <p className="font-mono text-2xl font-semibold text-text">{sharedFilters}</p>
-          )}
-        </div>
-        <p className="font-mono text-xs text-text-muted mt-0.5">
-          Shared across the team
-        </p></AilaCard>
+      {/* Filter chips */}
+      <div className="flex items-center flex-wrap" style={{ gap: 8 }}>
+        <FilterChip active={visibility === "all"} onClick={() => setVisibility("all")}>
+          ALL ({totalFilters})
+        </FilterChip>
+        <FilterChip
+          active={visibility === "pinned"}
+          color="var(--status-info)"
+          onClick={() => setVisibility("pinned")}
+        >
+          PINNED ({pinnedFilters})
+        </FilterChip>
+        <FilterChip
+          active={visibility === "shared"}
+          color="var(--status-ok)"
+          onClick={() => setVisibility("shared")}
+        >
+          SHARED ({sharedFilters})
+        </FilterChip>
+        <FilterChip
+          active={visibility === "mine"}
+          color="var(--status-signal)"
+          onClick={() => setVisibility("mine")}
+        >
+          MINE ({myFilters})
+        </FilterChip>
       </div>
 
-      {/* Error banner */}
       {filtersQuery.isError && (
-        <div className="rounded-[4px] border border-destructive bg-destructive/10 px-4 py-3 font-mono text-sm text-destructive">
+        <ErrorLine>
           Failed to load saved filters: {(filtersQuery.error as Error).message}
+        </ErrorLine>
+      )}
+
+      {filtersQuery.isLoading ? (
+        <WindowPanel title="filters" status="LOADING" tone="muted">
+          <LoadingSkeletonGroup lines={6} />
+        </WindowPanel>
+      ) : filters.length === 0 ? (
+        <WindowPanel title="filters" tone="muted">
+          <div
+            className="flex flex-col items-center"
+            style={{ padding: "42px 12px", gap: 10 }}
+          >
+            <span
+              className="font-mono"
+              style={{ fontSize: 15, color: "var(--text-primary)", letterSpacing: "0.04em" }}
+            >
+              No saved filters
+            </span>
+            <span
+              className="font-mono"
+              style={{ fontSize: 11, color: "var(--text-muted)", textAlign: "center", maxWidth: 420 }}
+            >
+              Create your first saved filter to reuse complex queries across sessions.
+            </span>
+          </div>
+        </WindowPanel>
+      ) : (
+        <div className="grid" style={{ gridTemplateColumns: "1fr 360px", gap: 16 }}>
+          <WindowPanel
+            title="filters"
+            status={`${shown.length} SHOWN / ${filters.length} TOTAL`}
+            flush
+          >
+            <DataGrid
+              columns={[
+                { label: "NAME", width: "1fr" },
+                { label: "ENTITY", width: "130px" },
+                { label: "OWNER", width: "160px" },
+                { label: "UPDATED", width: "170px" },
+                { label: "ACTIONS", width: "110px", align: "right" },
+              ]}
+              rows={shown}
+              getKey={(f) => f.id}
+              onRowClick={(f) => setSelectedId(f.id)}
+              renderCells={(f) => {
+                const isOwner =
+                  currentUserId !== null && f.user_id === currentUserId;
+                return [
+                  <div key="n" className="flex items-center" style={{ gap: 6, minWidth: 0 }}>
+                    <span
+                      className="font-mono truncate"
+                      style={{ fontSize: 11.5, color: "var(--text-primary)" }}
+                    >
+                      {f.name}
+                    </span>
+                    {f.is_pinned && (
+                      <MonoBadge tone="info">pinned</MonoBadge>
+                    )}
+                    {f.shared_with_team && (
+                      <MonoBadge tone="ok">shared</MonoBadge>
+                    )}
+                  </div>,
+                  <span
+                    key="e"
+                    className="font-mono"
+                    style={{ fontSize: 10.5, color: "var(--text-muted)" }}
+                  >
+                    {f.entity_type}
+                  </span>,
+                  <div key="o" className="flex items-center" style={{ gap: 6, minWidth: 0 }}>
+                    <span
+                      className="font-mono truncate"
+                      style={{ fontSize: 10, color: "var(--text-muted)" }}
+                      title={f.user_id}
+                    >
+                      {shortUserId(f.user_id)}
+                    </span>
+                    {isOwner && <MonoBadge tone="info">you</MonoBadge>}
+                  </div>,
+                  <span
+                    key="u"
+                    className="font-mono"
+                    style={{ fontSize: 10, color: "var(--text-faint)", whiteSpace: "nowrap" }}
+                  >
+                    {formatTimestamp(f.updated_at)}
+                  </span>,
+                  <div
+                    key="a"
+                    className="flex"
+                    style={{ gap: 6, justifyContent: "flex-end" }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      style={btnBase}
+                      disabled={!isOwner}
+                      title={isOwner ? "Edit filter" : "Only the owner can edit this filter"}
+                      onClick={() => setEditing(f)}
+                      aria-label={`Edit ${f.name}`}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      style={dangerBtn}
+                      disabled={!isOwner}
+                      title={isOwner ? "Delete filter" : "Only the owner can delete this filter"}
+                      onClick={() => setDeleting(f)}
+                      aria-label={`Delete ${f.name}`}
+                    >
+                      Del
+                    </button>
+                  </div>,
+                ];
+              }}
+            />
+          </WindowPanel>
+
+          <WindowPanel
+            title={selected ? "preview" : "select a filter"}
+            tone={selected ? "accent" : "muted"}
+          >
+            {selected ? (
+              <div className="flex flex-col" style={{ gap: 12 }}>
+                <div className="flex flex-col" style={{ gap: 3 }}>
+                  <span style={labelStyle}>name</span>
+                  <span
+                    className="font-mono"
+                    style={{ fontSize: 12, color: "var(--text-primary)" }}
+                  >
+                    {selected.name}
+                  </span>
+                </div>
+                <div className="flex flex-col" style={{ gap: 3 }}>
+                  <span style={labelStyle}>entity</span>
+                  <span
+                    className="font-mono"
+                    style={{ fontSize: 11, color: "var(--text-muted)" }}
+                  >
+                    {selected.entity_type}
+                  </span>
+                </div>
+                <div className="flex" style={{ gap: 6, flexWrap: "wrap" }}>
+                  {selected.is_pinned && <MonoBadge tone="info">pinned</MonoBadge>}
+                  {selected.shared_with_team && (
+                    <MonoBadge tone="ok">shared</MonoBadge>
+                  )}
+                  {currentUserId !== null && selected.user_id === currentUserId && (
+                    <MonoBadge tone="accent">you</MonoBadge>
+                  )}
+                </div>
+                <div className="flex flex-col" style={{ gap: 3 }}>
+                  <span style={labelStyle}>criteria (json)</span>
+                  <pre
+                    className="font-mono"
+                    style={{
+                      fontSize: 10.5,
+                      color: "var(--text-primary)",
+                      background: "var(--surface-sunk)",
+                      border: "1px solid var(--border-soft)",
+                      borderRadius: 3,
+                      padding: 10,
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                      maxHeight: 220,
+                      overflowY: "auto",
+                    }}
+                  >
+                    {(() => {
+                      try {
+                        return JSON.stringify(
+                          JSON.parse(selected.filter_json),
+                          null,
+                          2,
+                        );
+                      } catch {
+                        return selected.filter_json;
+                      }
+                    })()}
+                  </pre>
+                </div>
+                <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <div className="flex flex-col" style={{ gap: 3 }}>
+                    <span style={labelStyle}>created</span>
+                    <span
+                      className="font-mono"
+                      style={{ fontSize: 10, color: "var(--text-faint)" }}
+                    >
+                      {formatTimestamp(selected.created_at)}
+                    </span>
+                  </div>
+                  <div className="flex flex-col" style={{ gap: 3 }}>
+                    <span style={labelStyle}>updated</span>
+                    <span
+                      className="font-mono"
+                      style={{ fontSize: 10, color: "var(--text-faint)" }}
+                    >
+                      {formatTimestamp(selected.updated_at)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <span
+                className="font-mono"
+                style={{ fontSize: 11, color: "var(--text-muted)" }}
+              >
+                click a row to preview its criteria.
+              </span>
+            )}
+          </WindowPanel>
         </div>
       )}
 
-      {/* Loading skeleton */}
-      {filtersQuery.isLoading && (
-        <AilaCard variant="default" padding="md"><LoadingSkeletonGroup lines={6} /></AilaCard>
-      )}
-
-      {/* Empty state */}
-      {!filtersQuery.isLoading && !filtersQuery.isError && filters.length === 0 && (
-        <EmptyState
-          icon={<BookmarkSimple className="h-10 w-10" />}
-          title="No saved filters"
-          description="Create your first saved filter to reuse complex queries across sessions."
-          action={{ label: "New Filter", onClick: () => setCreateOpen(true) }}
-        />
-      )}
-
-      {/* Filters table */}
-      {!filtersQuery.isLoading && filters.length > 0 && (
-        <WindowPanel title="Saved Filters" status={`${filters.length} FILTER${filters.length === 1 ? "" : "S"}`} tone="muted" flush><div className="overflow-x-auto">
-          <table aria-label="Saved filters" className="w-full border-collapse [&_th]:border [&_th]:border-border [&_td]:border [&_td]:border-border">
-            <thead>
-              <tr className="border-b border-border bg-elevated">
-                <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted">Name</th>
-                <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted">Target page</th>
-                <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted hidden md:table-cell">Filter criteria</th>
-                <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted hidden lg:table-cell">Created by</th>
-                <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted hidden xl:table-cell">Updated</th>
-                <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filters.map((filter) => {
-                const isOwner = currentUserId !== null && filter.user_id === currentUserId;
-                return (
-                  <tr key={filter.id} className="border-b border-border last:border-0 font-mono text-xs hover:bg-elevated">
-                    <td className="py-2 px-3 text-text font-semibold">
-                      <div className="flex items-center gap-1.5">
-                        <span className="break-all">{filter.name}</span>
-                        {filter.is_pinned && (
-                          <AilaBadge severity="info" size="sm">pinned</AilaBadge>
-                        )}
-                        {filter.shared_with_team && (
-                          <AilaBadge severity="neutral" size="sm">shared</AilaBadge>
-                        )}
-                      </div>
-                    </td>
-                    <td className="py-2 px-3 text-text-muted">{filter.entity_type}</td>
-                    <td className="py-2 px-3 text-text-muted hidden md:table-cell max-w-[280px]">
-                      <code className="block truncate bg-base px-2 py-0.5 rounded-[2px]" title={filter.filter_json}>
-                        {filter.filter_json}
-                      </code>
-                    </td>
-                    <td className="py-2 px-3 text-text-muted hidden lg:table-cell">
-                      <span title={filter.user_id}>{shortUserId(filter.user_id)}</span>
-                      {isOwner && (
-                        <AilaBadge severity="info" size="sm" className="ml-1.5">you</AilaBadge>
-                      )}
-                    </td>
-                    <td className="py-2 px-3 text-text-muted hidden xl:table-cell whitespace-nowrap">
-                      {formatTimestamp(filter.updated_at)}
-                    </td>
-                    <td className="py-2 px-3">
-                      <div className="flex items-center gap-1">
-                        <Button
-                          size="xs"
-                          variant="outline"
-                          disabled={!isOwner}
-                          title={isOwner ? "Edit filter" : "Only the owner can edit this filter"}
-                          onClick={() => setEditing(filter)}
-                        >
-                          <PencilSimple className="h-3 w-3" />
-                        </Button>
-                        <Button
-                          size="xs"
-                          variant="outline"
-                          className="text-destructive border-destructive/40 hover:bg-destructive/10 hover:border-destructive disabled:text-text-muted disabled:border-border"
-                          disabled={!isOwner}
-                          title={isOwner ? "Delete filter" : "Only the owner can delete this filter"}
-                          onClick={() => setDeleting(filter)}
-                        >
-                          <Trash className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div></WindowPanel>
-      )}
-
-      {/* Create dialog */}
       <FilterEditorDialog
         mode="create"
         open={createOpen}
@@ -628,7 +889,6 @@ export function SavedFiltersPage() {
         onClose={() => setCreateOpen(false)}
       />
 
-      {/* Edit dialog */}
       <FilterEditorDialog
         mode="edit"
         open={editing !== null}
@@ -636,8 +896,6 @@ export function SavedFiltersPage() {
         isPending={updateMutation.isPending}
         onSubmit={(form) => {
           if (!editing) return Promise.resolve();
-          // Send only fields that may change. entity_type is immutable per
-          // SavedFilterUpdate schema, so it's never included.
           return updateMutation.mutateAsync({
             id: editing.id,
             req: {
@@ -651,7 +909,6 @@ export function SavedFiltersPage() {
         onClose={() => setEditing(null)}
       />
 
-      {/* Delete dialog */}
       <DeleteFilterDialog
         filter={deleting}
         isPending={deleteMutation.isPending}
