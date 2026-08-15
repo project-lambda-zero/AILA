@@ -3,9 +3,9 @@
 export type LiveStatus = "connected" | "reconnecting" | "disconnected";
 
 const TONE: Record<LiveStatus, { color: string; pulse: boolean }> = {
-  connected:    { color: "#22c55e", pulse: false }, // green-500
-  reconnecting: { color: "#f59e0b", pulse: true },  // amber-500
-  disconnected: { color: "#ef4444", pulse: false }, // red-500
+  connected:    { color: "#97dbbe", pulse: false }, // DS mint -- ok
+  reconnecting: { color: "#ffb85f", pulse: true },  // DS amber -- warn
+  disconnected: { color: "#ff5f87", pulse: false }, // DS accent -- failed
 };
 
 const LABEL: Record<LiveStatus, string> = {

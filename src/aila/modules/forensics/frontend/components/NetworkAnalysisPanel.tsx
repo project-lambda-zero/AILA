@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 
-import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 import { useNetworkAnalysis } from "../queries";
 import type { NetworkAnalysis, NetworkCommentary } from "../types";
@@ -81,7 +81,7 @@ const fmtSec = (v: unknown): string => {
 const ipFlag = (ip: unknown, isInternal: unknown): React.ReactNode => {
   const txt = String(ip ?? "");
   const label = isInternal ? "internal" : "external";
-  const cls = isInternal ? "text-emerald-700" : "text-blue-700";
+  const cls = isInternal ? "text-mint" : "text-lavender";
   return (
     <span>
       <span className="font-mono">{txt}</span>
@@ -93,10 +93,10 @@ const ipFlag = (ip: unknown, isInternal: unknown): React.ReactNode => {
 const classificationBadge = (v: unknown): React.ReactNode => {
   const k = String(v ?? "common");
   const map: Record<string, string> = {
-    common: "bg-slate-100 text-slate-700 border-slate-300",
-    suspicious: "bg-amber-50 text-amber-800 border-amber-300",
-    dga_shape: "bg-rose-50 text-rose-700 border-rose-300",
-    empty: "bg-slate-50 text-slate-500 border-slate-200",
+    common: "bg-elevated text-text-muted border-border",
+    suspicious: "bg-amber-400/10 text-amber-400 border-amber-400/40",
+    dga_shape: "bg-critical/10 text-critical border-critical/40",
+    empty: "bg-surface text-text-muted border-border",
   };
   const cls = map[k] ?? map.common;
   return (
@@ -108,10 +108,10 @@ const classificationBadge = (v: unknown): React.ReactNode => {
 
 const severityBadge = (s: string): React.ReactNode => {
   const map: Record<string, string> = {
-    info: "bg-slate-100 text-slate-700 border-slate-300",
-    low: "bg-sky-50 text-sky-700 border-sky-300",
-    medium: "bg-amber-50 text-amber-800 border-amber-300",
-    high: "bg-rose-50 text-rose-700 border-rose-300",
+    info: "bg-lavender/10 text-lavender border-lavender/40",
+    low: "bg-mint/10 text-mint border-mint/40",
+    medium: "bg-amber-400/10 text-amber-400 border-amber-400/40",
+    high: "bg-critical/10 text-critical border-critical/40",
   };
   const cls = map[s] ?? map.info;
   return (
@@ -145,7 +145,7 @@ const COLS_SESSIONS: ColumnDef[] = [
   {
     key: "is_long_lived",
     header: "Flag",
-    render: (r) => (r.is_long_lived ? <span className="text-amber-700 text-3xs font-semibold uppercase">long-lived</span> : ""),
+    render: (r) => (r.is_long_lived ? <span className="text-amber-400 text-3xs font-semibold uppercase">long-lived</span> : ""),
   },
 ];
 
@@ -184,7 +184,7 @@ const COLS_HTTP_REQ: ColumnDef[] = [
     header: "UA flag",
     render: (r) =>
       r.is_suspicious_ua ? (
-        <span className="text-rose-700 text-3xs font-semibold uppercase">{String(r.ua_tag ?? "sus")}</span>
+        <span className="text-critical text-3xs font-semibold uppercase">{String(r.ua_tag ?? "sus")}</span>
       ) : (
         ""
       ),
@@ -199,7 +199,7 @@ const COLS_HTTP_RESP: ColumnDef[] = [
     header: "Status",
     render: (r) => {
       const s = Number(r.status) || 0;
-      const cls = s >= 500 ? "text-rose-700" : s >= 400 ? "text-amber-700" : "text-emerald-700";
+      const cls = s >= 500 ? "text-critical" : s >= 400 ? "text-amber-400" : "text-mint";
       return <span className={`font-mono font-semibold ${cls}`}>{s || "?"}</span>;
     },
   },
@@ -222,7 +222,7 @@ const COLS_UA: ColumnDef[] = [
   {
     key: "is_suspicious",
     header: "Flag",
-    render: (r) => (r.is_suspicious ? <span className="text-rose-700 text-3xs font-semibold uppercase">{String(r.tag ?? "sus")}</span> : ""),
+    render: (r) => (r.is_suspicious ? <span className="text-critical text-3xs font-semibold uppercase">{String(r.tag ?? "sus")}</span> : ""),
   },
 ];
 
@@ -260,14 +260,14 @@ const COLS_BEACONS: ColumnDef[] = [
     align: "right",
     render: (r) => {
       const v = Number(r.regularity ?? 0);
-      const cls = v >= 0.9 ? "text-rose-700" : v >= 0.75 ? "text-amber-700" : "text-slate-600";
+      const cls = v >= 0.9 ? "text-critical" : v >= 0.75 ? "text-amber-400" : "text-text-muted";
       return <span className={`font-mono font-semibold ${cls}`}>{v.toFixed(3)}</span>;
     },
   },
   {
     key: "constant_size",
     header: "Const size",
-    render: (r) => (r.constant_size ? <span className="text-rose-700 text-3xs font-semibold uppercase">yes</span> : ""),
+    render: (r) => (r.constant_size ? <span className="text-critical text-3xs font-semibold uppercase">yes</span> : ""),
   },
 ];
 
@@ -418,10 +418,10 @@ function StatsBar({ stats }: { stats: NetworkAnalysis["stats"] }) {
     { label: "Duration", value: stats.duration_s ? fmtSec(stats.duration_s) : "--" },
   ];
   return (
-    <div className="flex gap-6 border border-border rounded-md px-4 py-3 bg-surface-secondary/40 mb-3">
+    <div className="flex gap-6 border border-border rounded-md px-4 py-3 bg-elevated/40 mb-3" style={{ boxShadow: "var(--bevel-raised)" }}>
       {items.map((it) => (
         <div key={it.label}>
-          <div className="text-3xs uppercase tracking-wide text-text-muted font-medium">{it.label}</div>
+          <div className="font-mono text-3xs uppercase tracking-cyber-sm text-muted-foreground">{it.label}</div>
           <div className="font-mono text-sm font-semibold text-foreground">{it.value}</div>
         </div>
       ))}
@@ -520,7 +520,7 @@ function DataTable({
 
   return (
     <div>
-      <div className="px-3 py-2 border-b border-border bg-surface-secondary/50 flex items-center gap-3">
+      <div className="px-3 py-2 border-b border-border bg-elevated/50 flex items-center gap-3">
         <input
           aria-label="Filter network rows"
           type="text"
@@ -536,7 +536,7 @@ function DataTable({
       <div className="overflow-x-auto overflow-y-auto" style={{ maxHeight: 600 }}>
         <table className="w-full text-xs" aria-label="Network analysis records">
           <caption className="sr-only">Structured network telemetry extracted from the packet capture.</caption>
-          <thead className="bg-surface-secondary sticky top-0 z-10">
+          <thead className="bg-elevated sticky top-0 z-10">
             <tr>
               <th className="text-left px-3 py-2 text-text-muted font-medium w-8">#</th>
               {columns.map((c) => (
@@ -554,7 +554,7 @@ function DataTable({
           </thead>
           <tbody>
             {sorted.slice(0, 1000).map((row, i) => (
-              <tr key={i} className="border-t border-border hover:bg-surface-secondary/30">
+              <tr key={i} className="border-t border-border hover:bg-elevated/30">
                 <td className="px-3 py-1.5 text-text-muted font-mono">{i + 1}</td>
                 {columns.map((c) => {
                   const raw = row[c.key];
@@ -580,7 +580,7 @@ function DataTable({
         </table>
       </div>
       {sorted.length > 1000 && (
-        <div className="px-3 py-2 text-3xs text-text-muted border-t border-border bg-surface-secondary/50">
+        <div className="px-3 py-2 text-3xs text-text-muted border-t border-border bg-elevated/50">
           Showing 1000 of {sorted.length} rows. Filter to narrow.
         </div>
       )}
@@ -597,7 +597,9 @@ export function NetworkAnalysisPanel({ projectId }: { projectId: string }) {
   if (isLoading) return <LoadingSkeleton size="lg" width="full" />;
   if (isError) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load network analysis.</p></AilaCard>
+      <WindowPanel title="network analysis" tone="warn" status="capture ; analysis unavailable">
+        <p className="text-sm text-critical">Failed to load network analysis.</p>
+      </WindowPanel>
     );
   }
   if (!analysis) return null;
@@ -617,9 +619,11 @@ export function NetworkAnalysisPanel({ projectId }: { projectId: string }) {
 
   if (!hasAnyData) {
     return (
-      <AilaCard  techBorder glow><p className="text-sm text-text-muted text-center py-8">
-        No network analysis data available. This project may not contain PCAP evidence.
-      </p></AilaCard>
+      <WindowPanel title="network analysis" tone="muted" status="capture ; no pcap evidence">
+        <p className="text-sm text-text-muted text-center py-8">
+          No network analysis data available. This project may not contain PCAP evidence.
+        </p>
+      </WindowPanel>
     );
   }
 
@@ -629,7 +633,7 @@ export function NetworkAnalysisPanel({ projectId }: { projectId: string }) {
     <div className="space-y-0">
       <StatsBar stats={analysis.stats} />
 
-      <div className="flex flex-wrap gap-0.5 bg-surface-secondary rounded-t-lg p-1 border border-b-0 border-border">
+      <div className="flex flex-wrap gap-0.5 bg-elevated rounded-t-lg p-1 border border-b-0 border-border">
         {SUB_TABS.map((tab) => {
           const count = tab.countOf(analysis);
           const isActive = activeSubTab === tab.id;
@@ -647,8 +651,8 @@ export function NetworkAnalysisPanel({ projectId }: { projectId: string }) {
               <span>{tab.label}</span>
               {count > 0 && (
                 <span
-                  className={`ml-1 px-1.5 py-0.5 rounded-full text-3xs font-bold ${
-                    isActive ? "bg-primary/10 text-primary" : "bg-surface-secondary text-text-muted"
+                  className={`ml-1 px-1.5 py-0.5 rounded-[3px] font-mono text-3xs font-bold ${
+                    isActive ? "bg-accent/15 text-accent" : "bg-elevated text-text-muted"
                   }`}
                 >
                   {count}

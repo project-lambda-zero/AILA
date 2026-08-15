@@ -20,10 +20,9 @@ import { ArrowsClockwise } from "@phosphor-icons/react/dist/csr/ArrowsClockwise"
 import { BookOpen } from "@phosphor-icons/react/dist/csr/BookOpen";
 import { CaretDown } from "@phosphor-icons/react/dist/csr/CaretDown";
 import { CaretRight } from "@phosphor-icons/react/dist/csr/CaretRight";
-import { Sparkle } from "@phosphor-icons/react/dist/csr/Sparkle";
 import { X } from "@phosphor-icons/react/dist/csr/X";
 
-import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { AilaBadge } from "@/components/aila/AilaBadge";
 
 import {
@@ -122,26 +121,22 @@ export function VRNarrativeControls({ investigationId, narrative }: Props) {
   };
 
   return (
-    <AilaCard techBorder>
-      <div className="space-y-3 p-4">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="inline-flex items-center gap-2">
-            <Sparkle weight="fill" size={14} className="text-accent" />
-            <span className="text-3xs font-mono uppercase tracking-cyber-sm text-accent">
-              Narrative writeup
-            </span>
-          </div>
-          <div className="text-3xs font-mono text-text-muted">
-            last narrative:{" "}
-            {formatRelative(narrative?.generated_at ?? null)}
-          </div>
-        </div>
-
+    <WindowPanel
+      title="narrative writeup"
+      tone="muted"
+      actions={
+        <span className="text-3xs font-mono text-text-muted">
+          last narrative: {formatRelative(narrative?.generated_at ?? null)}
+        </span>
+      }
+    >
+      <h2 className="sr-only">Narrative writeup</h2>
+      <div className="space-y-3">
         <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
             onClick={() => setFormOpen((v) => !v)}
-            className="inline-flex items-center gap-2 px-3 py-1.5 text-xs rounded-md border border-border-default bg-elevated/40 text-foreground hover:border-accent hover:bg-elevated/70 transition-colors"
+            className="inline-flex items-center gap-2 px-3 py-1.5 text-xs rounded-md border border-border bg-elevated/40 text-foreground hover:border-accent hover:bg-elevated/70 transition-colors"
           >
             {formOpen ? (
               <CaretDown weight="bold" size={12} />
@@ -179,7 +174,7 @@ export function VRNarrativeControls({ investigationId, narrative }: Props) {
         </div>
 
         {formOpen && (
-          <div className="rounded-md border border-border-default/60 bg-elevated/30 p-3 space-y-3">
+          <div className="rounded-md border border-border/60 bg-elevated/30 p-3 space-y-3">
             <DropdownRow
               label="Tone"
               value={tone}
@@ -211,7 +206,7 @@ export function VRNarrativeControls({ investigationId, narrative }: Props) {
               <button
                 type="button"
                 onClick={() => setFormOpen(false)}
-                className="px-3 py-1.5 text-xs rounded-md border border-border-default text-text-muted hover:text-foreground"
+                className="px-3 py-1.5 text-xs rounded-md border border-border text-text-muted hover:text-foreground"
               >
                 Cancel
               </button>
@@ -226,7 +221,7 @@ export function VRNarrativeControls({ investigationId, narrative }: Props) {
           onClose={() => setViewerOpen(false)}
         />
       )}
-    </AilaCard>
+    </WindowPanel>
   );
 }
 
@@ -257,7 +252,7 @@ function DropdownRow({
         <select
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className="w-full px-2 py-1 text-xs rounded-md border border-border-default bg-elevated text-foreground focus:border-accent focus:outline-none"
+          className="w-full px-2 py-1 text-xs rounded-md border border-border bg-elevated text-foreground focus:border-accent focus:outline-none"
         >
           {options.map((o) => (
             <option key={o.value} value={o.value}>
@@ -295,7 +290,7 @@ function FocusField({
         rows={2}
         maxLength={2000}
         placeholder={placeholder}
-        className="flex-1 px-2 py-1.5 text-xs font-mono rounded-md border border-border-default bg-elevated text-foreground focus:border-accent focus:outline-none resize-y"
+        className="flex-1 px-2 py-1.5 text-xs font-mono rounded-md border border-border bg-elevated text-foreground focus:border-accent focus:outline-none resize-y"
       />
     </div>
   );
@@ -323,7 +318,7 @@ function NarrativeViewer({
         className="relative max-w-4xl w-full max-h-[90vh] overflow-hidden rounded-lg border border-accent bg-background shadow-cyber-lg flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between gap-3 border-b border-border-default px-5 py-3 bg-elevated/40">
+        <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3 bg-elevated/40">
           <div className="min-w-0 flex-1">
             <div className="text-3xs font-mono uppercase tracking-cyber-sm text-accent mb-1">
               Investigation narrative {"\u00b7"} {narrative.tone_used}
@@ -344,7 +339,7 @@ function NarrativeViewer({
 
         <div className="overflow-y-auto px-5 py-4 flex-1 min-h-0">
           {narrative.chapter_outline.length > 0 && (
-            <details className="mb-4 rounded-md border border-border-default/60 bg-elevated/30 px-3 py-2">
+            <details className="mb-4 rounded-md border border-border/60 bg-elevated/30 px-3 py-2">
               <summary className="cursor-pointer text-2xs font-mono uppercase tracking-wide text-text-muted">
                 Table of contents ({narrative.chapter_outline.length})
               </summary>
@@ -363,13 +358,13 @@ function NarrativeViewer({
           </article>
         </div>
 
-        <div className="flex items-center justify-between gap-3 border-t border-border-default px-5 py-2 bg-elevated/40 text-3xs font-mono text-text-muted">
+        <div className="flex items-center justify-between gap-3 border-t border-border px-5 py-2 bg-elevated/40 text-3xs font-mono text-text-muted">
           <span>{wordCount} words</span>
           <span>generated {formatRelative(narrative.generated_at)}</span>
           <button
             type="button"
             onClick={() => navigator.clipboard.writeText(narrative.body)}
-            className="px-2 py-1 rounded border border-border-default hover:border-accent hover:text-foreground transition-colors"
+            className="px-2 py-1 rounded border border-border hover:border-accent hover:text-foreground transition-colors"
           >
             Copy markdown
           </button>

@@ -122,7 +122,7 @@ export function FindingDetailPage() {
   if (isLoading) return <LoadingSkeleton size="lg" width="full" />;
   if (isError || !finding) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load finding.</p></AilaCard>
+      <AilaCard className="border-critical" techBorder glow><p className="text-sm text-critical">Failed to load finding.</p></AilaCard>
     );
   }
 
@@ -278,7 +278,7 @@ export function FindingDetailPage() {
                   { onSuccess: () => setDraftInFlightAt(Date.now()) },
                 );
               }}
-              className="px-2 py-0.5 text-3xs font-mono rounded bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
+              className="px-2 py-0.5 text-3xs font-mono rounded bg-accent text-background hover:bg-accent/90 disabled:opacity-50"
               title={
                 f.poc?.code
                   ? "Re-draft the PoC — overwrites the existing poc.code."
@@ -300,14 +300,14 @@ export function FindingDetailPage() {
                   onClick={() => {
                     void navigator.clipboard?.writeText(f.poc?.code ?? "");
                   }}
-                  className="px-2 py-0.5 text-3xs font-mono rounded bg-surface border border-border-default hover:bg-surface-hover"
+                  className="px-2 py-0.5 text-3xs font-mono rounded bg-surface border border-border hover:bg-elevated"
                 >
                   Copy
                 </button>
                 <button
                   type="button"
                   onClick={downloadPoC}
-                  className="px-2 py-0.5 text-3xs font-mono rounded bg-surface border border-border-default hover:bg-surface-hover"
+                  className="px-2 py-0.5 text-3xs font-mono rounded bg-surface border border-border hover:bg-elevated"
                   title={`Download ${pocFileName}`}
                 >
                   Download
@@ -315,7 +315,7 @@ export function FindingDetailPage() {
                 {projectId && (
                   <Link
                     to={`/vr/projects/${projectId}/findings/${findingId}/exploit`}
-                    className="px-2 py-0.5 text-3xs font-mono rounded bg-accent text-white hover:bg-accent/90"
+                    className="px-2 py-0.5 text-3xs font-mono rounded bg-accent text-background hover:bg-accent/90"
                   >
                     Open in editor →
                   </Link>
@@ -342,7 +342,7 @@ export function FindingDetailPage() {
       {/* 6 -- ASAN report */}
       <AilaCard  techBorder glow><Section title="ASAN report" />
       {f.poc?.asan_report ? (
-        <pre className="text-2xs font-mono p-3 rounded bg-surface border border-border-default overflow-x-auto whitespace-pre max-h-96 overflow-y-auto">
+        <pre className="text-2xs font-mono p-3 rounded bg-surface border border-border overflow-x-auto whitespace-pre max-h-96 overflow-y-auto">
           {f.poc.asan_report}
         </pre>
       ) : (
@@ -491,8 +491,8 @@ function Section({
   actions?: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between gap-2 mb-2">
-      <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+    <div className="flex items-center justify-between gap-2 mb-2 pb-1.5 border-b border-border">
+      <h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground">{title}</h2>
       {actions}
     </div>
   );
@@ -506,7 +506,7 @@ function PendingBackend({
   hint: string;
 }) {
   return (
-    <div className="border border-dashed border-border-default rounded p-2 bg-surface/40">
+    <div className="border border-dashed border-border rounded p-2 bg-surface/40">
       <AilaBadge severity="info" size="sm">
         backend pending
       </AilaBadge>

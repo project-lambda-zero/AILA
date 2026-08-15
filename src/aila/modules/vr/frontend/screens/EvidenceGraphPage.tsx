@@ -3,6 +3,7 @@ import { useParams } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import { outcomeKindLabel } from "../components/OutcomeKindBadge";
@@ -180,7 +181,7 @@ export function EvidenceGraphPage() {
   if (isLoading) return <LoadingSkeleton size="lg" width="full" />;
   if (!inv) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Investigation not found.</p></AilaCard>
+      <AilaCard className="border-critical" techBorder glow><p className="text-sm text-critical">Investigation not found.</p></AilaCard>
     );
   }
 
@@ -217,9 +218,8 @@ export function EvidenceGraphPage() {
 
         {/* Right rail: selected node detail */}
         <aside className="space-y-2">
-          <AilaCard  techBorder glow><h2 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
-            Selection
-          </h2>
+          <WindowPanel title="selection" tone="muted">
+          <h2 className="sr-only">Selection</h2>
           {selected ? (
             <div className="text-xs space-y-2">
               <div className="flex items-center gap-1 flex-wrap">
@@ -251,7 +251,7 @@ export function EvidenceGraphPage() {
                   {observableLoading ? (
                     <p className="text-3xs text-text-muted">loading...</p>
                   ) : observableResult?.data ? (
-                    <pre className="text-3xs font-mono text-foreground whitespace-pre-wrap max-h-96 overflow-y-auto border border-border-default rounded p-2 bg-surface/40">
+                    <pre className="text-3xs font-mono text-foreground whitespace-pre-wrap max-h-96 overflow-y-auto border border-border rounded p-2 bg-surface/40">
                       {typeof observableResult.data.value === "string"
                         ? observableResult.data.value
                         : JSON.stringify(observableResult.data.value, null, 2)}
@@ -278,7 +278,7 @@ export function EvidenceGraphPage() {
                 );
               })()}
               {selected.kind === "obligation" && (
-                <div className="mt-2 border border-dashed border-border-default rounded p-2 bg-surface/40">
+                <div className="mt-2 border border-dashed border-border rounded p-2 bg-surface/40">
                   <AilaBadge severity="info" size="sm">operator-only</AilaBadge>
                   <p className="text-3xs text-text-muted mt-1">
                     "Manually close" -- backend pending.
@@ -290,11 +290,10 @@ export function EvidenceGraphPage() {
             <p className="text-xs text-text-muted">
               Click a node to inspect its payload.
             </p>
-          )}</AilaCard>
+          )}</WindowPanel>
 
-          <AilaCard  techBorder glow><h2 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
-            Counts
-          </h2>
+          <WindowPanel title="counts" tone="muted">
+          <h2 className="sr-only">Counts</h2>
           <dl className="text-xs grid grid-cols-2 gap-1 font-mono">
             <dt className="text-text-muted">branches</dt>
             <dd className="text-foreground text-right">
@@ -324,7 +323,7 @@ export function EvidenceGraphPage() {
             <dd className="text-foreground text-right">
               {nodes.filter((n) => n.kind === "obligation").length}
             </dd>
-          </dl></AilaCard>
+          </dl></WindowPanel>
         </aside>
       </div>
     </div>

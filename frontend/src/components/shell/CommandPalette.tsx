@@ -25,7 +25,6 @@ import { Files } from "@phosphor-icons/react/dist/csr/Files";
 import { Skull } from "@phosphor-icons/react/dist/csr/Skull";
 import { Wrench } from "@phosphor-icons/react/dist/csr/Wrench";
 import { Calendar } from "@phosphor-icons/react/dist/csr/Calendar";
-import { Palette } from "@phosphor-icons/react/dist/csr/Palette";
 import { SignOut } from "@phosphor-icons/react/dist/csr/SignOut";
 
 import {
@@ -57,7 +56,6 @@ import { useAuthStore } from "@platform/auth/useAuthStore";
 import { isAllowedRole, type AppRole } from "@platform/auth/roles";
 import { loadModuleFrontendSpecs } from "@platform/extension-registry/loadModuleSpecs";
 
-import { useTheme } from "@/providers/ThemeProvider";
 import { useRecentlyViewed } from "@/hooks/useRecentlyViewed";
 import { useSearchHistory } from "@/hooks/useSearchHistory";
 import {
@@ -316,15 +314,6 @@ const ACTIONS: readonly ActionEntry[] = [
     },
   },
   {
-    id: "action.cycle-theme",
-    label: "Cycle theme",
-    description: "Rotate through the installed theme palette",
-    icon: <Palette size={16} />,
-    run: () => {
-      // Wired via ThemeProvider in the palette body; overridden below.
-    },
-  },
-  {
     id: "action.sign-out",
     label: "Sign out",
     description: "End the current session",
@@ -356,7 +345,6 @@ export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const navigate = useNavigate();
-  const { cycleTheme } = useTheme();
   const { items: recentItems } = useRecentlyViewed();
   const { items: searchHistory, addSearch, clearHistory } = useSearchHistory();
   const { items: recentEntities, clear: clearRecentEntitiesList } =
@@ -475,12 +463,7 @@ export function CommandPalette() {
   const invokeAction = useCallback(
     (action: ActionEntry) => {
       setOpen(false);
-      // Local overrides for actions that use React-hook APIs (theme, auth).
-      if (action.id === "action.cycle-theme") {
-        cycleTheme();
-        toast.success("Theme cycled");
-        return;
-      }
+      // Local overrides for actions that use React-hook APIs (auth).
       if (action.id === "action.sign-out") {
         void useAuthStore.getState().logout();
         navigate("/login");
@@ -492,7 +475,7 @@ export function CommandPalette() {
       }
       void executeAction(action, "");
     },
-    [cycleTheme, executeAction, navigate],
+    [executeAction, navigate],
   );
 
   // ---------------------------------------------------------------------------

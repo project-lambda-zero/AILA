@@ -103,14 +103,14 @@ export function WorkspacesPage() {
         <button
           type="button"
           onClick={() => setShowForm((v) => !v)}
-          className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 transition-colors"
+          className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-background hover:bg-accent/90 transition-colors"
         >
           {showForm ? "Cancel" : "New Workspace"}
         </button>
       </div>
 
       {showForm && (
-        <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+        <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
           Create workspace
         </h2>
         <div className="space-y-2">
@@ -120,7 +120,7 @@ export function WorkspacesPage() {
             onChange={(e) => setFormName(e.target.value)}
             placeholder="Name (e.g. 'Browser engines')"
             aria-label="Workspace name"
-            className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+            className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
           />
           <input
             type="text"
@@ -131,7 +131,7 @@ export function WorkspacesPage() {
             placeholder="Slug (URL-safe, e.g. 'browser-engines')"
             pattern="[a-z0-9][a-z0-9_-]*"
             aria-label="Workspace slug"
-            className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+            className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
           />
           <textarea
             value={formDescription}
@@ -139,7 +139,7 @@ export function WorkspacesPage() {
             placeholder="Description (optional)"
             rows={2}
             aria-label="Workspace description"
-            className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+            className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
           />
           <div className="flex gap-2 items-center">
             <label htmlFor="ws-theme" className="text-sm text-text-muted">Theme:</label>
@@ -147,7 +147,7 @@ export function WorkspacesPage() {
               id="ws-theme"
               value={formTheme}
               onChange={(e) => setFormTheme(e.target.value as WorkspaceTheme)}
-              className="px-3 py-2 text-sm rounded-md bg-surface border border-border-default"
+              className="px-3 py-2 text-sm rounded-md bg-surface border border-border"
             >
               {THEMES.map((t) => (
                 <option key={t.value} value={t.value}>
@@ -179,7 +179,7 @@ export function WorkspacesPage() {
                   },
                 );
               }}
-              className="ml-auto px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 transition-colors disabled:opacity-50"
+              className="ml-auto px-4 py-2 text-sm font-medium rounded-md bg-accent text-background hover:bg-accent/90 transition-colors disabled:opacity-50"
             >
               {createMut.isPending ? "Creating…" : "Create"}
             </button>
@@ -190,7 +190,7 @@ export function WorkspacesPage() {
       {isLoading && <LoadingSkeleton size="lg" width="full" />}
 
       {isError && (
-        <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load workspaces.</p></AilaCard>
+        <AilaCard className="border-critical" techBorder glow><p className="text-sm text-critical">Failed to load workspaces.</p></AilaCard>
       )}
 
       {!isLoading && !isError && workspaces.length > 0 && (
@@ -202,7 +202,7 @@ export function WorkspacesPage() {
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Filter workspaces (name / slug / theme)…"
               aria-label="Filter workspaces"
-              className="flex-1 min-w-[220px] px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+              className="flex-1 min-w-[220px] px-3 py-1.5 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
             />
             <span className="text-xs text-text-muted ml-auto">
               {sortedRows.length} of {workspaces.length} workspace
@@ -228,7 +228,7 @@ export function WorkspacesPage() {
         <AilaCard className="overflow-x-auto p-0" techBorder glow><table className="w-full text-sm">
           <caption className="sr-only">Workspaces</caption>
           <thead>
-            <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
+            <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-muted">
               <SortHeader columnKey="name" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Name</SortHeader>
               <SortHeader columnKey="slug" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Slug</SortHeader>
               <SortHeader columnKey="theme" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Theme</SortHeader>
@@ -247,7 +247,7 @@ export function WorkspacesPage() {
                 key={ws.id}
                 {...rowProps}
                 className={
-                  "border-b border-border-default last:border-b-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset " +
+                  "border-b border-border last:border-b-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset " +
                   (rowProps["data-row-active"] ? "bg-elevated" : "")
                 }
               >

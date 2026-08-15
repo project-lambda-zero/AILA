@@ -13,6 +13,7 @@ import "@xyflow/react/dist/style.css";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
 import {
@@ -42,21 +43,21 @@ const PERSONA_VOICES: readonly PersonaVoice[] = [
 // Colour-code branches by status. Aligns with the AilaBadge palette so
 // the tree + list views look consistent.
 const STATUS_COLORS: Record<BranchStatus, string> = {
-  active: "#10b981",        // emerald -- running
-  paused: "#f59e0b",        // amber -- paused
-  merged: "#6366f1",        // indigo -- merged in
-  promoted: "#22c55e",      // green -- promoted to outcome
-  completed: "#3b82f6",     // blue -- completed
-  abandoned: "#ef4444",     // red -- abandoned
+  active: "#b092ff",        // running
+  paused: "#ffb85f",        // amber -- paused
+  merged: "#af87d7",        // lavender -- merged in
+  promoted: "#97dbbe",      // mint -- promoted to outcome
+  completed: "#97dbbe",     // mint -- completed
+  abandoned: "#6b563f",     // faint -- abandoned
 };
 
 const STATUS_BORDER: Record<BranchStatus, string> = {
-  active: "#059669",
-  paused: "#d97706",
-  merged: "#4338ca",
-  promoted: "#15803d",
-  completed: "#1d4ed8",
-  abandoned: "#b91c1c",
+  active: "#8f6fd0",
+  paused: "#d99a4a",
+  merged: "#8f6fb0",
+  promoted: "#6fb89a",
+  completed: "#6fb89a",
+  abandoned: "#4a3c2b",
 };
 
 // Spacing between strategy-family clusters + within a cluster.
@@ -109,7 +110,7 @@ function layoutNodes(clustered: ClusteredBranch[]): Node[] {
       style: {
         background: "transparent",
         border: "none",
-        color: "#94a3b8",
+        color: "#af8c6c",
         fontSize: 11,
         fontFamily: "monospace",
         width: 240,
@@ -119,15 +120,15 @@ function layoutNodes(clustered: ClusteredBranch[]): Node[] {
     });
 
     branches.forEach((b, rowIdx) => {
-      const colour = STATUS_COLORS[b.status] ?? "#64748b";
-      const border = STATUS_BORDER[b.status] ?? "#475569";
+      const colour = STATUS_COLORS[b.status] ?? "#af8c6c";
+      const border = STATUS_BORDER[b.status] ?? "#8a7256";
       nodes.push({
         id: b.id,
         type: "default",
         position: { x, y: rowIdx * BRANCH_Y_GAP },
         data: {
           label: (
-            <div style={{ textAlign: "left", color: "white", fontSize: 11 }}>
+            <div style={{ textAlign: "left", color: "#1a0a12", fontSize: 11 }}>
               <div style={{ fontWeight: 600 }}>
                 {formatBranchDisplayName(b)}
                 {b.fork_at_turn != null ? ` @t${b.fork_at_turn}` : ""}
@@ -143,7 +144,7 @@ function layoutNodes(clustered: ClusteredBranch[]): Node[] {
         },
         style: {
           background: colour,
-          color: "white",
+          color: "#1a0a12",
           border: `2px solid ${border}`,
           borderRadius: 6,
           width: 240,
@@ -169,8 +170,8 @@ function buildEdges(branches: VRBranchSummary[]): Edge[] {
         target: b.id,
         type: "smoothstep",
         label: "fork",
-        labelStyle: { fontSize: 10, fill: "#64748b" },
-        style: { stroke: "#64748b", strokeWidth: 1.5 },
+        labelStyle: { fontSize: 10, fill: "#af8c6c" },
+        style: { stroke: "#3a3a3a", strokeWidth: 1.5 },
       });
     }
     if (b.merged_into_branch_id && ids.has(b.merged_into_branch_id)) {
@@ -181,8 +182,8 @@ function buildEdges(branches: VRBranchSummary[]): Edge[] {
         type: "smoothstep",
         animated: true,
         label: "merge",
-        labelStyle: { fontSize: 10, fill: "#6366f1" },
-        style: { stroke: "#6366f1", strokeDasharray: "4 4" },
+        labelStyle: { fontSize: 10, fill: "#af87d7" },
+        style: { stroke: "#af87d7", strokeDasharray: "4 4" },
       });
     }
   }
@@ -219,7 +220,7 @@ export function BranchTreePage() {
 
   if (!inv) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">
+      <AilaCard className="border-critical" techBorder glow><p className="text-sm text-critical">
         Investigation {invId} not found.
       </p></AilaCard>
     );
@@ -237,7 +238,8 @@ export function BranchTreePage() {
   return (
     <div className="space-y-4">
 
-      <AilaCard  techBorder glow><div className="flex flex-wrap gap-2">
+      <WindowPanel title="branch states" tone="info">
+        <div className="flex flex-wrap gap-2">
         {(
           ["active", "paused", "merged", "promoted", "abandoned"] as BranchStatus[]
         ).map((s) => {
@@ -260,13 +262,14 @@ export function BranchTreePage() {
             </AilaBadge>
           );
         })}
-      </div></AilaCard>
+        </div>
+      </WindowPanel>
 
       <PanelBoundary
         label="Branch tree"
         invalidateKeyPrefix={["vr", "investigation-branches", invId]}
       >
-        <AilaCard className="p-0 overflow-hidden" techBorder glow><div style={{ width: "100%", height: 600 }}>
+        <WindowPanel title="branch tree" tone="info" flush className="overflow-hidden"><div style={{ width: "100%", height: 600 }}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -276,10 +279,10 @@ export function BranchTreePage() {
             elementsSelectable
             proOptions={{ hideAttribution: true }}
           >
-            <Background gap={20} size={1} color="#1e293b" />
+            <Background gap={20} size={1} color="#2a2a2a" />
             <Controls showInteractive={false} />
           </ReactFlow>
-        </div></AilaCard>
+        </div></WindowPanel>
       </PanelBoundary>
 
       {branches.length === 0 && (
@@ -289,10 +292,8 @@ export function BranchTreePage() {
         </p></AilaCard>
       )}
 
-      <AilaCard techBorder glow>
-        <h2 className="text-sm font-semibold text-foreground mb-2">
-          Spawn strategy branch
-        </h2>
+      <WindowPanel title="spawn strategy branch" tone="muted">
+        <h2 className="sr-only">Spawn strategy branch</h2>
         <p className="text-3xs text-text-muted mb-3">
           POST /vr/investigations/{`{id}`}/strategy-branches — creates a new
           branch tagged with a strategy_family. Leave parent empty for a
@@ -300,20 +301,18 @@ export function BranchTreePage() {
           case_state.
         </p>
         <StrategyBranchSpawnForm invId={invId} branches={branches} />
-      </AilaCard>
+      </WindowPanel>
 
       {branches.length > 0 && (
-        <AilaCard techBorder glow>
-          <h2 className="text-sm font-semibold text-foreground mb-2">
-            Branch operations
-          </h2>
+        <WindowPanel title="branch operations" tone="muted">
+          <h2 className="sr-only">Branch operations</h2>
           <p className="text-3xs text-text-muted mb-3">
             Per-branch fork / promote / abandon / pause / resume. Merge (two
             branches into a new one) is not surfaced here — pick a merge
             target from the dedicated merge dialog when available.
           </p>
           <BranchOpsTable invId={invId} branches={branches} />
-        </AilaCard>
+        </WindowPanel>
       )}
     </div>
   );
@@ -368,7 +367,7 @@ function StrategyBranchSpawnForm({
             onChange={(e) => setStrategyFamily(e.target.value)}
             placeholder="e.g. taint-first, memory-corruption"
             maxLength={128}
-            className="w-full text-xs font-mono px-2 py-1 rounded bg-surface border border-border-default focus:border-accent focus:outline-none"
+            className="w-full text-xs font-mono px-2 py-1 rounded bg-surface border border-border focus:border-accent focus:outline-none"
           />
         </label>
         <label className="text-xs">
@@ -378,7 +377,7 @@ function StrategyBranchSpawnForm({
           <select
             value={personaVoice}
             onChange={(e) => setPersonaVoice(e.target.value as PersonaVoice | "")}
-            className="w-full text-xs px-2 py-1 rounded bg-surface border border-border-default"
+            className="w-full text-xs px-2 py-1 rounded bg-surface border border-border"
           >
             <option value="">(none)</option>
             {PERSONA_VOICES.map((v) => (
@@ -393,7 +392,7 @@ function StrategyBranchSpawnForm({
           <select
             value={parentBranchId}
             onChange={(e) => setParentBranchId(e.target.value)}
-            className="w-full text-xs font-mono px-2 py-1 rounded bg-surface border border-border-default"
+            className="w-full text-xs font-mono px-2 py-1 rounded bg-surface border border-border"
           >
             <option value="">(fresh — no parent)</option>
             {branches.map((b) => (
@@ -410,13 +409,13 @@ function StrategyBranchSpawnForm({
         placeholder="Rationale (optional) — why this strategy is worth exploring"
         rows={2}
         maxLength={2048}
-        className="w-full text-xs font-mono p-2 rounded bg-surface border border-border-default focus:border-accent focus:outline-none"
+        className="w-full text-xs font-mono p-2 rounded bg-surface border border-border focus:border-accent focus:outline-none"
       />
       <div className="flex justify-end">
         <button
           type="submit"
           disabled={disabled}
-          className="text-xs px-3 py-1 rounded bg-accent text-white disabled:opacity-50 disabled:cursor-not-allowed"
+          className="text-xs px-3 py-1 rounded bg-accent text-background disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {spawnMut.isPending ? "Spawning…" : "Spawn branch"}
         </button>
@@ -444,7 +443,7 @@ function BranchOpsTable({
       <table className="w-full text-xs">
         <caption className="sr-only">Investigation branches with status and actions</caption>
         <thead>
-          <tr className="border-b border-border-default text-left text-text-muted">
+          <tr className="border-b border-border text-left text-text-muted">
             <th className="px-2 py-1 font-semibold">Branch</th>
             <th className="px-2 py-1 font-semibold">Status</th>
             <th className="px-2 py-1 font-semibold">Turns</th>
@@ -458,7 +457,7 @@ function BranchOpsTable({
             return (
               <tr
                 key={b.id}
-                className="border-b border-border-default last:border-b-0 align-top"
+                className="border-b border-border last:border-b-0 align-top"
               >
                 <td className="px-2 py-2 font-mono">
                   <div className="text-foreground">{formatBranchDisplayName(b)}</div>
@@ -584,10 +583,10 @@ function BranchOpButton({
     "text-3xs font-mono px-2 py-0.5 rounded border transition-colors disabled:opacity-40 disabled:cursor-not-allowed";
   const style =
     variant === "accent"
-      ? "bg-accent text-white border-accent hover:bg-accent/90"
+      ? "bg-accent text-background border-accent hover:bg-accent/90"
       : variant === "danger"
-        ? "bg-surface border-border-danger text-text-danger hover:bg-surface-hover"
-        : "bg-surface border-border-default hover:bg-surface-hover";
+        ? "bg-surface border-critical text-critical hover:bg-elevated"
+        : "bg-surface border-border hover:bg-elevated";
   return (
     <button
       type="button"

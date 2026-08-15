@@ -186,7 +186,7 @@ export function CVSSBreakdown({
             const selected = parsed[m.id];
             const valueSpec = m.values.find((v) => v.id === selected);
             return (
-              <tr key={m.id} className="border-b border-border-default last:border-b-0">
+              <tr key={m.id} className="border-b border-border last:border-b-0">
                 <th scope="row" className="px-2 py-1 text-text-muted whitespace-nowrap w-32 text-left font-normal">
                   {m.label} ({m.id})
                 </th>
@@ -232,7 +232,7 @@ export function CWEBadge({
       target="_blank"
       rel="noopener noreferrer"
       title={name ?? `Open ${cweId} on cwe.mitre.org`}
-      className="inline-flex items-center gap-1 text-3xs font-mono px-1.5 py-0.5 rounded bg-surface border border-border-default text-foreground hover:bg-surface-hover"
+      className="inline-flex items-center gap-1 text-3xs font-mono px-1.5 py-0.5 rounded bg-surface border border-border text-foreground hover:bg-elevated"
     >
       {cweId}
       {name && <span className="text-text-muted truncate" style={{ maxWidth: "18ch" }}>-- {name}</span>}

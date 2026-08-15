@@ -75,7 +75,7 @@ function FindingRow({
   const findingId = finding.id ?? null;
 
   return (
-    <div className="border border-border-default rounded-md">
+    <div className="border border-border rounded-md">
       <div className="flex items-center justify-between px-4 py-3">
         <button
           type="button"
@@ -101,7 +101,7 @@ function FindingRow({
           {findingId && (
             <Link
               to={`/vr/projects/${projectId}/findings/${findingId}`}
-              className="text-xs px-2 py-0.5 font-mono rounded bg-surface border border-border-default hover:bg-surface-hover"
+              className="text-xs px-2 py-0.5 font-mono rounded bg-surface border border-border hover:bg-elevated"
             >
               Open detail →
             </Link>
@@ -117,7 +117,7 @@ function FindingRow({
       </div>
 
       {expanded && (
-        <div className="border-t border-border-default px-4 py-3 space-y-3">
+        <div className="border-t border-border px-4 py-3 space-y-3">
           <div>
             <p className="text-xs uppercase tracking-wide text-text-muted">Root Cause</p>
             <p className="text-sm text-foreground whitespace-pre-wrap">
@@ -144,11 +144,11 @@ function FindingRow({
                 {finding.poc.crashes_vulnerable}/5, patched crashes:{" "}
                 {finding.poc.crashes_patched}/1
               </p>
-              <pre className="mt-1 p-3 rounded-md bg-surface border border-border-default font-mono text-xs text-foreground overflow-x-auto whitespace-pre">
+              <pre className="mt-1 p-3 rounded-md bg-surface border border-border font-mono text-xs text-foreground overflow-x-auto whitespace-pre">
                 {finding.poc.code}
               </pre>
               {finding.poc.asan_report && (
-                <pre className="mt-2 p-3 rounded-md bg-surface border border-border-default font-mono text-xs text-text-muted overflow-x-auto whitespace-pre">
+                <pre className="mt-2 p-3 rounded-md bg-surface border border-border font-mono text-xs text-text-muted overflow-x-auto whitespace-pre">
                   {finding.poc.asan_report}
                 </pre>
               )}
@@ -210,12 +210,12 @@ function OverviewTab({
       {/* Hub panels -- matches 08_FRONTEND_UX.md §1.3 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Targets panel */}
-        <AilaCard className="lg:col-span-1" techBorder glow><h2 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
+        <AilaCard className="lg:col-span-1" techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
           Targets
         </h2>
         <ul className="space-y-1.5 text-sm">
           {project.target_id && (
-            <li className="flex items-center justify-between gap-2 border border-border-default rounded px-2 py-1.5">
+            <li className="flex items-center justify-between gap-2 border border-border rounded px-2 py-1.5">
               <Link
                 to={`/vr/targets/${project.target_id}`}
                 className="font-mono text-foreground hover:underline truncate"
@@ -228,7 +228,7 @@ function OverviewTab({
             </li>
           )}
           {project.patched_target_id && (
-            <li className="flex items-center justify-between gap-2 border border-border-default rounded px-2 py-1.5">
+            <li className="flex items-center justify-between gap-2 border border-border rounded px-2 py-1.5">
               <Link
                 to={`/vr/targets/${project.patched_target_id}`}
                 className="font-mono text-foreground hover:underline truncate"
@@ -246,7 +246,7 @@ function OverviewTab({
         </ul></AilaCard>
 
         {/* Active investigations */}
-        <AilaCard className="lg:col-span-1" techBorder glow><h2 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
+        <AilaCard className="lg:col-span-1" techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
           Investigations
         </h2>
         {projInvs.length === 0 ? (
@@ -258,7 +258,7 @@ function OverviewTab({
             {projInvs.slice(0, 6).map((inv) => (
               <li
                 key={inv.id}
-                className="border border-border-default rounded px-2 py-1.5"
+                className="border border-border rounded px-2 py-1.5"
               >
                 <Link
                   to={`/vr/investigations/${inv.id}`}
@@ -294,7 +294,7 @@ function OverviewTab({
         )}</AilaCard>
 
         {/* Findings summary */}
-        <AilaCard className="lg:col-span-1" techBorder glow><h2 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
+        <AilaCard className="lg:col-span-1" techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
           Findings
         </h2>
         <p className="text-2xl font-bold font-mono text-foreground">
@@ -304,7 +304,7 @@ function OverviewTab({
           See <strong>Findings</strong> tab for per-vuln detail.
         </p>
         {activeFuzz.length > 0 && (
-          <div className="mt-3 pt-3 border-t border-border-default">
+          <div className="mt-3 pt-3 border-t border-border">
             <p className="text-xs text-text-muted">
               {activeFuzz.length} active fuzz campaign
               {activeFuzz.length === 1 ? "" : "s"}
@@ -335,7 +335,7 @@ function OverviewTab({
 
       {/* Project event timeline strip (§1.3) -- major events derived
           from existing data. Real event log is backend pending. */}
-      <AilaCard  techBorder glow><h2 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
+      <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
         Project events
       </h2>
       <ol className="space-y-2 text-xs">
@@ -402,7 +402,7 @@ function FindingsTab({ projectId }: { projectId: string }) {
   if (isLoading) return <LoadingSkeleton size="lg" width="full" />;
   if (isError) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load findings.</p></AilaCard>
+      <AilaCard className="border-critical" techBorder glow><p className="text-sm text-critical">Failed to load findings.</p></AilaCard>
     );
   }
   if (findings.length === 0) {
@@ -453,7 +453,7 @@ function AgentLogTab({
         <Link
           key={inv.id}
           to={`/vr/investigations/${inv.id}`}
-          className="block border border-border-default rounded-md px-3 py-2 hover:bg-surface-hover transition-colors"
+          className="block border border-border rounded-md px-3 py-2 hover:bg-elevated transition-colors"
         >
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <span className="text-sm font-mono text-foreground truncate">
@@ -563,7 +563,7 @@ export function ProjectDetailPage() {
   }
   if (isError || !project) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load VR project.</p></AilaCard>
+      <AilaCard className="border-critical" techBorder glow><p className="text-sm text-critical">Failed to load VR project.</p></AilaCard>
     );
   }
 
@@ -580,7 +580,7 @@ export function ProjectDetailPage() {
         />
       </div>
 
-      <div className="border-b border-border-default flex gap-1">
+      <div className="border-b border-border flex gap-1">
         {TABS.map((tab) => {
           const isActive = activeTab === tab.id;
           return (
@@ -640,7 +640,7 @@ function RecentReasoningRollup({
         {[0, 1, 2, 3].map((i) => (
           <li
             key={i}
-            className="border border-border-default rounded px-2 py-1"
+            className="border border-border rounded px-2 py-1"
           >
             <LoadingSkeleton size="sm" width="full" />
           </li>
@@ -655,7 +655,7 @@ function RecentReasoningRollup({
         {recent.map((m) => (
           <li
             key={m.id}
-            className="border border-border-default rounded px-2 py-1 flex items-center gap-2 flex-wrap"
+            className="border border-border rounded px-2 py-1 flex items-center gap-2 flex-wrap"
           >
             <AilaBadge
               severity={m.sender_kind === "operator" ? "info" : "medium"}
@@ -689,7 +689,7 @@ function EventRow({
   label: string;
 }) {
   return (
-    <li className="flex items-start gap-2 border border-border-default rounded px-2 py-1.5">
+    <li className="flex items-start gap-2 border border-border rounded px-2 py-1.5">
       <span className="w-2 h-2 rounded-full bg-accent mt-1.5 flex-shrink-0" />
       <div className="flex-1 min-w-0 flex items-center justify-between gap-2">
         <span className="font-mono text-foreground truncate">{label}</span>
@@ -736,9 +736,12 @@ function WorkstationHeartbeatCard({
       <span
         className={
           "inline-block w-2 h-2 rounded-full "
-          + (heartbeat
-            ? live ? "bg-green-500" : "bg-amber-500"
-            : "bg-text-muted animate-pulse")
+          + (heartbeat ? "" : "bg-text-muted animate-pulse")
+        }
+        style={
+          heartbeat
+            ? { background: live ? "var(--color-mint)" : "var(--color-amber)" }
+            : undefined
         }
         aria-label={live ? "reachable" : heartbeat ? "unreachable" : "probing"}
       />

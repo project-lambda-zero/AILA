@@ -133,7 +133,7 @@ export function NewProjectWizard() {
         <button
           type="button"
           onClick={() => navigate("/vr")}
-          className="text-xs px-3 py-1.5 rounded bg-surface border border-border-default hover:bg-surface-hover"
+          className="text-xs px-3 py-1.5 rounded bg-surface border border-border hover:bg-elevated"
         >
           Cancel
         </button>
@@ -144,7 +144,7 @@ export function NewProjectWizard() {
 
       {/* Step 1 -- Target intake */}
       {step === 1 && (
-        <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+        <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
           Step 1 -- Target intake
         </h2>
         <div className="space-y-3 text-sm">
@@ -153,7 +153,7 @@ export function NewProjectWizard() {
               id="npw-workspace"
               value={workspaceId}
               onChange={(e) => setWorkspaceId(e.target.value)}
-              className="w-full px-2 py-1.5 text-sm rounded bg-surface border border-border-default"
+              className="w-full px-2 py-1.5 text-sm rounded bg-surface border border-border"
             >
               <option value="">-- Pick a workspace --</option>
               {workspaces.map((w) => (
@@ -174,8 +174,8 @@ export function NewProjectWizard() {
                   className={
                     "px-2 py-1 text-xs font-mono rounded border " +
                     (inputSource === s
-                      ? "bg-accent text-white border-accent"
-                      : "bg-surface text-foreground border-border-default hover:bg-surface-hover")
+                      ? "bg-accent text-background border-accent"
+                      : "bg-surface text-foreground border-border hover:bg-elevated")
                   }
                 >
                   {s}
@@ -189,7 +189,7 @@ export function NewProjectWizard() {
               id="npw-target-class"
               value={targetClass}
               onChange={(e) => setTargetClass(e.target.value as TargetClass)}
-              className="px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
+              className="px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border"
             >
               {TARGET_CLASSES.map((c) => (
                 <option key={c} value={c}>
@@ -221,7 +221,7 @@ export function NewProjectWizard() {
                   value={repoUrl}
                   onChange={(e) => setRepoUrl(e.target.value)}
                   placeholder="https://github.com/owner/repo"
-                  className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
+                  className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border"
                 />
               </Field>
               <div className="grid grid-cols-2 gap-2">
@@ -232,7 +232,7 @@ export function NewProjectWizard() {
                     value={vulnerableRef}
                     onChange={(e) => setVulnerableRef(e.target.value)}
                     placeholder="commit / tag / branch"
-                    className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
+                    className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border"
                   />
                 </Field>
                 <Field label="Patched ref (optional)" htmlFor="npw-patched-ref">
@@ -242,7 +242,7 @@ export function NewProjectWizard() {
                     value={patchedRef}
                     onChange={(e) => setPatchedRef(e.target.value)}
                     placeholder="commit / tag / branch"
-                    className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
+                    className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border"
                   />
                 </Field>
               </div>
@@ -257,7 +257,7 @@ export function NewProjectWizard() {
                 value={downloadUrl}
                 onChange={(e) => setDownloadUrl(e.target.value)}
                 placeholder="https://…/firmware.bin"
-                className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
+                className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border"
               />
             </Field>
           )}
@@ -286,7 +286,7 @@ export function NewProjectWizard() {
             type="button"
             disabled={!step1Ready}
             onClick={() => setStep(2)}
-            className="px-3 py-1.5 text-sm font-medium rounded bg-accent text-white hover:bg-accent/90 disabled:opacity-40"
+            className="px-3 py-1.5 text-sm font-medium rounded bg-accent text-background hover:bg-accent/90 disabled:opacity-40"
           >
             Continue →
           </button>
@@ -295,7 +295,7 @@ export function NewProjectWizard() {
 
       {/* Step 2 -- Workstation */}
       {step === 2 && (
-        <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+        <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
           Step 2 -- Workstation selection
         </h2>
         <p className="text-xs text-text-muted mb-3">
@@ -303,8 +303,8 @@ export function NewProjectWizard() {
           / PoC execution). Pick the host with the right tools + GPU + OS.
         </p>
         {systemList.length === 0 ? (
-          <div className="border border-dashed border-border-danger rounded p-3 bg-surface/40">
-            <p className="text-xs text-text-danger">
+          <div className="border border-dashed border-critical rounded p-3 bg-surface/40">
+            <p className="text-xs text-critical">
               No systems registered. Register a workstation under{" "}
               <strong>Systems</strong> first.
             </p>
@@ -318,7 +318,7 @@ export function NewProjectWizard() {
                   "block border rounded p-3 cursor-pointer transition-colors " +
                   (systemId === s.id
                     ? "border-accent bg-surface"
-                    : "border-border-default hover:bg-surface-hover")
+                    : "border-border hover:bg-elevated")
                 }
               >
                 <div className="flex items-center gap-3">
@@ -352,7 +352,7 @@ export function NewProjectWizard() {
           <button
             type="button"
             onClick={() => setStep(1)}
-            className="px-3 py-1.5 text-sm font-medium rounded bg-surface border border-border-default hover:bg-surface-hover"
+            className="px-3 py-1.5 text-sm font-medium rounded bg-surface border border-border hover:bg-elevated"
           >
             ← Back
           </button>
@@ -360,7 +360,7 @@ export function NewProjectWizard() {
             type="button"
             disabled={!step2Ready}
             onClick={() => setStep(3)}
-            className="px-3 py-1.5 text-sm font-medium rounded bg-accent text-white hover:bg-accent/90 disabled:opacity-40"
+            className="px-3 py-1.5 text-sm font-medium rounded bg-accent text-background hover:bg-accent/90 disabled:opacity-40"
           >
             Continue →
           </button>
@@ -369,7 +369,7 @@ export function NewProjectWizard() {
 
       {/* Step 3 -- Scope + authorisation */}
       {step === 3 && (
-        <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+        <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
           Step 3 -- Scope + authorisation
         </h2>
         <div className="space-y-3 text-sm">
@@ -380,7 +380,7 @@ export function NewProjectWizard() {
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. 'CVE-2024-12345 -- libpng analysis'"
-              className="w-full px-2 py-1.5 text-sm rounded bg-surface border border-border-default"
+              className="w-full px-2 py-1.5 text-sm rounded bg-surface border border-border"
             />
           </Field>
         
@@ -391,7 +391,7 @@ export function NewProjectWizard() {
               value={cveId}
               onChange={(e) => setCveId(e.target.value)}
               placeholder="CVE-YYYY-NNNNN"
-              className="w-64 px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
+              className="w-64 px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border"
             />
           </Field>
         
@@ -402,11 +402,11 @@ export function NewProjectWizard() {
               onChange={(e) => setContextNotes(e.target.value)}
               rows={4}
               placeholder="What's in scope, what isn't. Customer-supplied context. Anything the agent should know up front."
-              className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
+              className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border"
             />
           </Field>
         
-          <label className="flex items-start gap-2 text-xs border border-border-default rounded p-3 bg-surface/40">
+          <label className="flex items-start gap-2 text-xs border border-border rounded p-3 bg-surface/40">
             <input
               type="checkbox"
               checked={authorised}
@@ -424,7 +424,7 @@ export function NewProjectWizard() {
         </div>
         
         {createMut.isError && (
-          <div className="mt-3 border border-border-danger rounded p-2 bg-surface/40 text-xs text-text-danger">
+          <div className="mt-3 border border-critical rounded p-2 bg-surface/40 text-xs text-critical">
             {(createMut.error as Error)?.message ?? "Create failed."}
           </div>
         )}
@@ -433,7 +433,7 @@ export function NewProjectWizard() {
           <button
             type="button"
             onClick={() => setStep(2)}
-            className="px-3 py-1.5 text-sm font-medium rounded bg-surface border border-border-default hover:bg-surface-hover"
+            className="px-3 py-1.5 text-sm font-medium rounded bg-surface border border-border hover:bg-elevated"
           >
             ← Back
           </button>
@@ -441,7 +441,7 @@ export function NewProjectWizard() {
             type="button"
             disabled={!step3Ready || createMut.isPending}
             onClick={submit}
-            className="px-4 py-1.5 text-sm font-medium rounded bg-accent text-white hover:bg-accent/90 disabled:opacity-40"
+            className="px-4 py-1.5 text-sm font-medium rounded bg-accent text-background hover:bg-accent/90 disabled:opacity-40"
           >
             {createMut.isPending ? "Starting…" : "Start research"}
           </button>
@@ -480,12 +480,12 @@ function WizardStepper({ step }: { step: Step }) {
           <li key={label} className="flex items-center flex-1 last:flex-initial gap-2">
             <div
               className={
-                "w-6 h-6 rounded-full flex items-center justify-center text-3xs font-bold border-2 " +
+                "w-6 h-6 rounded-[2px] flex items-center justify-center text-3xs font-bold border-2 " +
                 (active
-                  ? "bg-accent border-accent text-white"
+                  ? "bg-accent border-accent text-background"
                   : done
-                    ? "bg-surface border-border-default text-text-muted"
-                    : "bg-surface border-border-default text-text-muted opacity-60")
+                    ? "bg-surface border-border text-text-muted"
+                    : "bg-surface border-border text-text-muted opacity-60")
               }
             >
               {done ? "✓" : num}
@@ -503,7 +503,7 @@ function WizardStepper({ step }: { step: Step }) {
               <div
                 className={
                   "h-px flex-1 " +
-                  (done ? "bg-accent/40" : "bg-border-default")
+                  (done ? "bg-accent/40" : "bg-border")
                 }
               />
             )}

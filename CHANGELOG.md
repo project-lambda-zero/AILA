@@ -7,6 +7,54 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-14 -- AILA design system: single midnight-cloud-8 identity
+
+### Added
+
+- WindowPanel and PixelIcon primitives (`frontend/src/components/aila/`): the
+  design-system signature titled surface (hatched title bar, system light
+  square, mono uppercase title, inset bevel, optional mono status footer) and
+  the 16x16 crisp-edges system-glyph icon grammar (status, ok, close, arrow,
+  spawn, cycle, emit, merge, folder, terminal).
+- Self-hosted Apoc Revelations (display) and Monaspace Neon (mono) webfonts,
+  with Familjen Grotesk (body) plus Newsreader and JetBrains Mono fallbacks.
+
+### Changed
+
+- The frontend is restyled end to end to the midnight-cloud-8 design system.
+  OS-frame chrome: a 32px menubar (brand mark plus mono navigation), a module
+  rail with mono uppercase section labels and an accent active marker, and a
+  24px status strip. WindowPanel surfaces now carry titled content across the
+  shell and every module (vulnerability, vr, forensics, malware, hello_world).
+  Labels, ids, and status read as mono uppercase; headings use the display
+  serif; the palette is warm cream on midnight charcoal with a restrained
+  hot-pink accent; radii are sharp (2-6px) with inset bevels instead of drop
+  shadows.
+- Shared components (buttons, badges, inputs, select, tabs, dialogs, sheets,
+  dropdowns, tooltips, scroll areas) follow the design-system aesthetic. Button
+  styling is component-owned: primary is a hot-pink fill, ghost is a cream
+  outline, with a key-cap bevel that presses on active.
+- The login screen carries the design-system hero motif and a midnight
+  sign-in form.
+
+### Removed
+
+- The twelve alternate UI themes (synthwave, vaporwave, frutiger-aero, ps1,
+  ps2, cyberpunk-2077, matrix, truman-show, half-life-1, y2k-fever, vendetta,
+  specimen-index) and the theme-switcher UI in settings, the avatar menu, and
+  the command palette. AILA now ships a single canonical design. `globals.css`
+  drops from 5074 lines to under 1000, and `theme-init.js` and the theme
+  provider are pinned to the one theme.
+
+### Fixed
+
+- Dead CSS custom-property references surfaced during the sweep now resolve:
+  select and dropdown menu item focus (an undefined `--accent-foreground`), the
+  page-shell status dot color, and several module color tokens
+  (`--color-warning`, `--color-bg`).
+
+Workspace type-check and shell production build pass.
+
 ## [0.5.26] - 2026-08-13 -- Fix: command palette no longer treats plain words as entity ids
 
 ### Fixed

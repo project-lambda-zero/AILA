@@ -60,13 +60,13 @@ import type {
 // ─────────────────────────────────────────────────────────────────────
 
 const STATUS_DOT: Record<InvestigationStatus, string> = {
-  created: "#9aa0a6",
+  created: "#af8c6c",
   running: "#97dbbe",
-  paused: "#f0c97a",
-  completed: "#8ec5ff",
+  paused: "#ffb85f",
+  completed: "#af87d7",
   failed: "#f0a8c7",
-  abandoned: "#9aa0a6",
-  stalled: "#9aa0a6",
+  abandoned: "#af8c6c",
+  stalled: "#af8c6c",
 };
 
 // Priority for the default "Smart" sort: live and actionable first.
@@ -133,7 +133,7 @@ const POLARITY_INLINE: Record<
 > = {
   finding: { label: "finding", color: "#f0a8c7" },
   no_finding: { label: "no finding", color: "#97dbbe" },
-  inconclusive: { label: "inconclusive", color: "#f0c97a" },
+  inconclusive: { label: "inconclusive", color: "#ffb85f" },
 };
 
 // ─────────────────────────────────────────────────────────────────────
@@ -171,7 +171,7 @@ function InvestigationCard({
 }) {
   const isRunning = inv.status === "running";
   const isCreated = inv.status === "created";
-  const dotColor = STATUS_DOT[inv.status] ?? "#9aa0a6";
+  const dotColor = STATUS_DOT[inv.status] ?? "#af8c6c";
   const KindIcon = KIND_ICON[inv.kind] ?? MagnifyingGlass;
 
   const verifierTone = verifierBadgeTone(inv.verifier_verdict);
@@ -244,7 +244,7 @@ function InvestigationCard({
             <Star
               className="h-3.5 w-3.5 shrink-0"
               weight="fill"
-              style={{ color: "#fbbf24" }}
+              style={{ color: "#ffb85f" }}
               aria-label="favorite"
             />
           )}
@@ -345,7 +345,7 @@ function InvestigationCard({
           }}
           className="flex transition-colors"
           style={{
-            color: inv.is_favorite ? "#fbbf24" : "var(--color-text-muted)",
+            color: inv.is_favorite ? "#ffb85f" : "var(--color-text-muted)",
           }}
           title={inv.is_favorite ? "Unfavorite" : "Favorite"}
           aria-label={inv.is_favorite ? "Unfavorite" : "Favorite"}
@@ -704,25 +704,25 @@ export function InvestigationsListPage() {
               <span className="font-mono font-bold text-foreground text-lg">{totalRaw}</span>
               <span className="text-text-muted text-xs">investigations</span>
             </span>
-            <span className="w-px h-5 bg-border-default" />
+            <span className="w-px h-5 bg-border" />
             <span className="inline-flex items-center gap-1.5 text-sm">
               <span
                 className="w-2 h-2 rounded-full"
                 style={{
-                  background: kpis.running > 0 ? "#97dbbe" : "#9aa0a6",
+                  background: kpis.running > 0 ? "#97dbbe" : "#af8c6c",
                   boxShadow: kpis.running > 0 ? "0 0 6px #97dbbe" : "none",
                 }}
               />
               <span className="font-mono font-semibold text-foreground">{kpis.running}</span>
               <span className="text-text-muted text-xs">running</span>
             </span>
-            <span className="w-px h-5 bg-border-default" />
+            <span className="w-px h-5 bg-border" />
             <span className="inline-flex items-center gap-1.5 text-sm">
-              <Bug weight="fill" size={14} className={kpis.withFindings > 0 ? "text-emerald-400" : "text-text-muted"} />
+              <Bug weight="fill" size={14} className={kpis.withFindings > 0 ? "text-mint" : "text-text-muted"} />
               <span className="font-mono font-semibold text-foreground">{kpis.withFindings}</span>
               <span className="text-text-muted text-xs">with findings</span>
             </span>
-            <span className="w-px h-5 bg-border-default" />
+            <span className="w-px h-5 bg-border" />
             <span className="inline-flex items-center gap-1.5 text-sm">
               <Lightning weight="fill" size={14} className="text-text-muted" />
               <span className="font-mono font-semibold text-foreground">
@@ -732,9 +732,9 @@ export function InvestigationsListPage() {
             </span>
             {(kpis.confirmed > 0 || kpis.refuted > 0) && (
               <>
-                <span className="w-px h-5 bg-border-default" />
+                <span className="w-px h-5 bg-border" />
                 <span className="inline-flex items-center gap-1.5 text-sm">
-                  <ShieldCheck weight="fill" size={14} className="text-emerald-400" />
+                  <ShieldCheck weight="fill" size={14} className="text-mint" />
                   <span className="font-mono text-xs">
                     <span style={{ color: "#97dbbe" }}>{kpis.confirmed}</span>
                     <span className="text-text-muted/60"> / </span>
@@ -806,7 +806,7 @@ export function InvestigationsListPage() {
               }
               if (targets.length === 0) {
                 return (
-                  <div className="px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border-danger text-text-danger">
+                  <div className="px-3 py-2 text-xs font-mono rounded-md bg-surface border border-critical text-critical">
                     No targets exist yet. Create one under Workspaces → Targets
                     before starting an investigation.
                   </div>
@@ -1105,10 +1105,10 @@ export function InvestigationsListPage() {
           style={
             favoritesOnly
               ? {
-                  borderColor: "#fbbf24",
+                  borderColor: "#ffb85f",
                   background:
-                    "color-mix(in srgb, #fbbf24 12%, transparent)",
-                  color: "#fbbf24",
+                    "color-mix(in srgb, #ffb85f 12%, transparent)",
+                  color: "#ffb85f",
                 }
               : {
                   borderColor: "var(--color-border)",
@@ -1167,8 +1167,8 @@ export function InvestigationsListPage() {
       {isLoading && <LoadingSkeleton size="lg" width="full" />}
 
       {isError && (
-        <AilaCard className="border-border-danger" techBorder glow>
-          <p className="text-sm text-text-danger">
+        <AilaCard className="border-critical" techBorder glow>
+          <p className="text-sm text-critical">
             Failed to load investigations.
           </p>
         </AilaCard>

@@ -14,6 +14,7 @@ import { Plus } from "@phosphor-icons/react/dist/csr/Plus";
 import { Trash } from "@phosphor-icons/react/dist/csr/Trash";
 
 import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { EmptyState } from "@/components/aila/EmptyState";
@@ -468,7 +469,7 @@ export function SavedFiltersPage() {
 
       {/* Metric cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Total Filters
         </p>
         <div className="mt-1 min-h-[2rem]">
@@ -482,7 +483,7 @@ export function SavedFiltersPage() {
           Visible to current user
         </p></AilaCard>
 
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Pinned
         </p>
         <div className="mt-1 min-h-[2rem]">
@@ -496,7 +497,7 @@ export function SavedFiltersPage() {
           Surfaced in toolbars
         </p></AilaCard>
 
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Team-Shared
         </p>
         <div className="mt-1 min-h-[2rem]">
@@ -520,7 +521,7 @@ export function SavedFiltersPage() {
 
       {/* Loading skeleton */}
       {filtersQuery.isLoading && (
-        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={6} /></AilaCard>
+        <AilaCard variant="default" padding="md"><LoadingSkeletonGroup lines={6} /></AilaCard>
       )}
 
       {/* Empty state */}
@@ -535,16 +536,16 @@ export function SavedFiltersPage() {
 
       {/* Filters table */}
       {!filtersQuery.isLoading && filters.length > 0 && (
-        <AilaCard variant="default" padding="none" techBorder glow><div className="overflow-x-auto">
-          <table aria-label="Saved filters" className="w-full">
+        <WindowPanel title="Saved Filters" status={`${filters.length} FILTER${filters.length === 1 ? "" : "S"}`} tone="muted" flush><div className="overflow-x-auto">
+          <table aria-label="Saved filters" className="w-full border-collapse [&_th]:border [&_th]:border-border [&_td]:border [&_td]:border-border">
             <thead>
-              <tr className="border-b border-border">
-                <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Name</th>
-                <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Target page</th>
-                <th className="py-2 px-3 text-left font-mono text-xs text-text-muted hidden md:table-cell">Filter criteria</th>
-                <th className="py-2 px-3 text-left font-mono text-xs text-text-muted hidden lg:table-cell">Created by</th>
-                <th className="py-2 px-3 text-left font-mono text-xs text-text-muted hidden xl:table-cell">Updated</th>
-                <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Actions</th>
+              <tr className="border-b border-border bg-elevated">
+                <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted">Name</th>
+                <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted">Target page</th>
+                <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted hidden md:table-cell">Filter criteria</th>
+                <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted hidden lg:table-cell">Created by</th>
+                <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted hidden xl:table-cell">Updated</th>
+                <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -606,7 +607,7 @@ export function SavedFiltersPage() {
               })}
             </tbody>
           </table>
-        </div></AilaCard>
+        </div></WindowPanel>
       )}
 
       {/* Create dialog */}

@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 
-import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { PixelIcon } from "@/components/aila/PixelIcon";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 import { useProjectEvidence } from "../queries";
 import type { EvidenceItem } from "../types";
@@ -10,12 +11,12 @@ type SortKey = "name" | "type" | "size" | "path";
 type SortDir = "asc" | "desc";
 
 const TYPE_TONE: Record<string, string> = {
-  disk_image: "bg-blue-500/20 text-blue-300",
-  memory_dump: "bg-purple-500/20 text-purple-300",
-  pcap: "bg-green-500/20 text-green-300",
-  log_file: "bg-orange-500/20 text-orange-300",
-  extracted_dir: "bg-cyan-500/20 text-cyan-300",
-  unknown: "bg-gray-500/20 text-gray-300",
+  disk_image: "bg-lavender/15 text-lavender",
+  memory_dump: "bg-medium/15 text-medium",
+  pcap: "bg-mint/15 text-mint",
+  log_file: "bg-amber-400/15 text-amber-400",
+  extracted_dir: "bg-peach/15 text-peach",
+  unknown: "bg-elevated text-text-muted",
 };
 
 function formatBytes(bytes: number | null): string {
@@ -136,19 +137,19 @@ export function EvidenceTree({ projectId }: { projectId: string }) {
 
   if (isError) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow>
-        <p className="text-sm text-text-danger">Failed to load evidence.</p>
-      </AilaCard>
+      <WindowPanel title="evidence" tone="warn" status="forensics ; evidence unavailable">
+        <p className="text-sm text-critical">Failed to load evidence.</p>
+      </WindowPanel>
     );
   }
 
   if (items.length === 0) {
     return (
-      <AilaCard  techBorder glow>
+      <WindowPanel title="evidence" tone="muted" status="forensics ; no evidence discovered">
         <p className="text-sm text-text-muted text-center py-4">
           No evidence files discovered yet. Run analysis to scan the evidence directory.
         </p>
-      </AilaCard>
+      </WindowPanel>
     );
   }
 
@@ -156,7 +157,8 @@ export function EvidenceTree({ projectId }: { projectId: string }) {
     <div className="space-y-3">
       {/* Header row: title + totals */}
       <div className="flex items-baseline justify-between">
-        <h3 className="text-sm font-semibold text-foreground">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <PixelIcon name="folder" size={12} className="text-accent" />
           Evidence
           <span className="ml-2 text-xs font-normal text-text-muted">
             {filtered.length === items.length
@@ -179,10 +181,10 @@ export function EvidenceTree({ projectId }: { projectId: string }) {
         <button
           type="button"
           onClick={() => setTypeFilter(null)}
-          className={`px-2.5 py-1 text-3xs rounded-full font-medium ${
+          className={`px-2.5 py-1 text-3xs rounded-[3px] font-mono uppercase tracking-cyber-sm ${
             !typeFilter
-              ? "bg-primary text-white"
-              : "bg-surface-secondary text-text-muted hover:text-foreground"
+              ? "bg-primary text-badge-text"
+              : "bg-elevated text-text-muted hover:text-foreground"
           }`}
         >
           All ({items.length})
@@ -192,9 +194,9 @@ export function EvidenceTree({ projectId }: { projectId: string }) {
             key={t}
             type="button"
             onClick={() => setTypeFilter(typeFilter === t ? null : t)}
-            className={`px-2.5 py-1 text-3xs rounded-full font-medium ${
+            className={`px-2.5 py-1 text-3xs rounded-[3px] font-mono uppercase tracking-cyber-sm ${
               typeFilter === t
-                ? "bg-primary text-white"
+                ? "bg-primary text-badge-text"
                 : TYPE_TONE[t] || TYPE_TONE.unknown
             }`}
           >
@@ -205,17 +207,17 @@ export function EvidenceTree({ projectId }: { projectId: string }) {
 
       {/* Table */}
       {sorted.length === 0 ? (
-        <AilaCard  techBorder glow>
+        <WindowPanel tone="muted" status="evidence ; filter matched nothing">
           <p className="text-sm text-text-muted text-center py-4">
             No evidence matches the current filter.
           </p>
-        </AilaCard>
+        </WindowPanel>
       ) : (
         <div className="border border-border rounded-lg bg-surface text-foreground overflow-hidden">
           <div className="overflow-y-auto" style={{ maxHeight: 620 }}>
             <table className="w-full text-xs" aria-label="Evidence artifacts">
               <caption className="sr-only">Evidence artifacts grouped by source with size, hash, and status.</caption>
-              <thead className="bg-surface-secondary sticky top-0 z-10">
+              <thead className="bg-elevated sticky top-0 z-10">
                 <tr>
                   <SortHeader
                     label="Name"
@@ -266,7 +268,7 @@ export function EvidenceTree({ projectId }: { projectId: string }) {
                   return (
                     <tr
                       key={f.id}
-                      className="border-t border-border hover:bg-surface-secondary/30"
+                      className="border-t border-border hover:bg-elevated/30"
                     >
                       <td
                         className="px-3 py-1.5 font-mono text-foreground truncate max-w-xs align-top"

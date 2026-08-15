@@ -33,7 +33,7 @@ function ActiveProjectsWidget() {
 
   return (
     <AilaCard className="h-full flex flex-col" techBorder glow><div className="flex items-center justify-between mb-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+      <h3 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground">
         Active Research
       </h3>
       <Link
@@ -64,7 +64,7 @@ function CrashesFoundWidget() {
 
   return (
     <AilaCard className="h-full flex flex-col" techBorder glow><div className="flex items-center justify-between mb-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+      <h3 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground">
         Crashes Found
       </h3>
     </div>
@@ -118,7 +118,7 @@ function ExploitableWidget() {
 
   return (
     <AilaCard className="h-full flex flex-col" techBorder glow><div className="flex items-center justify-between mb-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+      <h3 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground">
         Exploitable
       </h3>
       <Link
@@ -133,7 +133,7 @@ function ExploitableWidget() {
     </p>
     <div className="text-xs text-text-muted mt-1 flex flex-wrap gap-1">
       {critical > 0 && (
-        <span className="text-red-500 font-semibold">
+        <span className="text-critical font-semibold">
           {critical} critical
         </span>
       )}
@@ -171,7 +171,7 @@ function FuzzingCoverageWidget() {
 
   return (
     <AilaCard className="h-full" techBorder glow><div className="flex items-center justify-between mb-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+      <h3 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground">
         Fuzzing Coverage
       </h3>
       <Link
@@ -247,7 +247,7 @@ function PendingFuzzProposalsWidget() {
   const proposals = data?.data ?? [];
   return (
     <AilaCard className="h-full flex flex-col" techBorder glow><div className="flex items-center justify-between mb-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
+      <h3 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground">
         Pending Fuzz Proposals
       </h3>
       <Link
@@ -268,7 +268,7 @@ function PendingFuzzProposalsWidget() {
         {proposals.slice(0, 5).map((p) => (
           <li
             key={p.id}
-            className="border border-border-default rounded px-2 py-1 flex items-center justify-between gap-2"
+            className="border border-border rounded px-2 py-1 flex items-center justify-between gap-2"
           >
             <span className="text-foreground truncate">{p.profile}</span>
             <AilaBadge

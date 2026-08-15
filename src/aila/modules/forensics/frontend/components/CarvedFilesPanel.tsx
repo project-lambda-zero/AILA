@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { Button } from "@/components/ui/button";
 
 import { useProjectArtifacts } from "../queries";
@@ -146,16 +146,13 @@ export function CarvedFilesPanel({ projectId }: { projectId: string }) {
 
   if (files.length === 0) {
     return (
-      <AilaCard  techBorder glow>
-        <h3 className="text-sm font-semibold text-foreground mb-1">
-          Files carved from PCAP
-        </h3>
+      <WindowPanel title="files carved from pcap" tone="muted" status="forensics ; nothing carved">
         <p className="text-xs text-text-muted">
           No files were carved. This typically means the pcap carried no
           reconstructible file transfers, or Zeek is not installed on the
           analyzer -- check the worker log for a <code>zeek_skipped</code> event.
         </p>
-      </AilaCard>
+      </WindowPanel>
     );
   }
 
@@ -180,10 +177,10 @@ export function CarvedFilesPanel({ projectId }: { projectId: string }) {
           <button
             type="button"
             onClick={() => setMimeFilter(null)}
-            className={`px-2 py-0.5 text-2xs rounded-full font-medium ${
+            className={`px-2 py-0.5 text-2xs rounded-[3px] font-mono uppercase tracking-cyber-sm ${
               mimeFilter === null
-                ? "bg-primary text-white"
-                : "bg-surface-secondary text-text-muted hover:text-foreground"
+                ? "bg-primary text-badge-text"
+                : "bg-elevated text-text-muted hover:text-foreground"
             }`}
           >
             All ({files.length})
@@ -197,10 +194,10 @@ export function CarvedFilesPanel({ projectId }: { projectId: string }) {
                   curr === mc.mime_type ? null : mc.mime_type,
                 )
               }
-              className={`px-2 py-0.5 text-2xs rounded-full font-mono ${
+              className={`px-2 py-0.5 text-2xs rounded-[3px] font-mono ${
                 mimeFilter === mc.mime_type
-                  ? "bg-primary text-white"
-                  : "bg-surface-secondary text-text-muted hover:text-foreground"
+                  ? "bg-primary text-badge-text"
+                  : "bg-elevated text-text-muted hover:text-foreground"
               }`}
               title={mc.mime_type}
             >
@@ -225,7 +222,7 @@ export function CarvedFilesPanel({ projectId }: { projectId: string }) {
         <div className="overflow-y-auto" style={{ maxHeight: 500 }}>
           <table className="w-full text-xs" aria-label="Zeek-carved files">
             <caption className="sr-only">Files carved out of network captures by Zeek during pcap analysis.</caption>
-            <thead className="bg-surface-secondary sticky top-0 z-10">
+            <thead className="bg-elevated sticky top-0 z-10">
               <tr>
                 <th className="text-left px-3 py-2 text-text-muted font-medium w-72">
                   Filename
@@ -257,7 +254,7 @@ export function CarvedFilesPanel({ projectId }: { projectId: string }) {
                 return (
                   <tr
                     key={f.sha256}
-                    className="border-t border-border hover:bg-surface-secondary/30"
+                    className="border-t border-border hover:bg-elevated/30"
                   >
                     <td
                       className="px-3 py-1.5 text-foreground truncate max-w-xs"

@@ -249,7 +249,7 @@ export function TeamsPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Teams
         </p>
         <div className="mt-1 min-h-[2rem]">
@@ -259,7 +259,7 @@ export function TeamsPage() {
             <p className="font-mono text-2xl font-semibold text-text">{teams.length}</p>
           )}
         </div></AilaCard>
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Members
         </p>
         <div className="mt-1 min-h-[2rem]">
@@ -269,7 +269,7 @@ export function TeamsPage() {
             <p className="font-mono text-2xl font-semibold text-text">{totalMembers}</p>
           )}
         </div></AilaCard>
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Systems
         </p>
         <div className="mt-1 min-h-[2rem]">
@@ -279,7 +279,7 @@ export function TeamsPage() {
             <p className="font-mono text-2xl font-semibold text-text">{totalSystems}</p>
           )}
         </div></AilaCard>
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Workflow runs
         </p>
         <div className="mt-1 min-h-[2rem]">
@@ -298,7 +298,7 @@ export function TeamsPage() {
       )}
 
       {teamsQuery.isLoading && (
-        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={6} /></AilaCard>
+        <AilaCard variant="default" padding="md"><LoadingSkeletonGroup lines={6} /></AilaCard>
       )}
 
       {!teamsQuery.isLoading && !teamsQuery.isError && teams.length === 0 && (
@@ -376,7 +376,7 @@ function CrossTeamComparison({ rows }: CrossTeamComparisonProps) {
   );
 
   return (
-    <AilaCard variant="default" padding="md" techBorder glow>
+    <AilaCard variant="default" padding="md">
       <div className="flex items-center justify-between mb-4">
         <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Cross-team comparison

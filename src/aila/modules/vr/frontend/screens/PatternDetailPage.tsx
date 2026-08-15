@@ -101,7 +101,7 @@ export function PatternDetailPage() {
       </div>
 
       {/* Lifecycle actions */}
-      <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+      <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
         Review actions
       </h2>
       <div className="flex flex-wrap gap-2">
@@ -110,7 +110,7 @@ export function PatternDetailPage() {
             type="button"
             onClick={() => patchMut.mutate({ status: "active" })}
             disabled={patchMut.isPending}
-            className="px-3 py-1.5 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
+            className="px-3 py-1.5 text-sm font-medium rounded-md bg-accent text-background hover:bg-accent/90 disabled:opacity-50"
           >
             Approve (→ active)
           </button>
@@ -120,7 +120,7 @@ export function PatternDetailPage() {
             type="button"
             onClick={() => patchMut.mutate({ status: "archived" })}
             disabled={patchMut.isPending}
-            className="px-3 py-1.5 text-sm font-medium rounded-md bg-surface border border-border-default hover:bg-surface-hover disabled:opacity-50"
+            className="px-3 py-1.5 text-sm font-medium rounded-md bg-surface border border-border hover:bg-elevated disabled:opacity-50"
           >
             Archive
           </button>
@@ -130,7 +130,7 @@ export function PatternDetailPage() {
             type="button"
             onClick={() => patchMut.mutate({ status: "active" })}
             disabled={patchMut.isPending}
-            className="px-3 py-1.5 text-sm font-medium rounded-md bg-surface border border-border-default hover:bg-surface-hover disabled:opacity-50"
+            className="px-3 py-1.5 text-sm font-medium rounded-md bg-surface border border-border hover:bg-elevated disabled:opacity-50"
           >
             Reactivate (→ active)
           </button>
@@ -140,7 +140,7 @@ export function PatternDetailPage() {
             type="button"
             onClick={() => patchMut.mutate({ scope: promote })}
             disabled={patchMut.isPending}
-            className="px-3 py-1.5 text-sm font-medium rounded-md bg-accent/80 text-white hover:bg-accent/90 disabled:opacity-50"
+            className="px-3 py-1.5 text-sm font-medium rounded-md bg-accent/80 text-background hover:bg-accent/90 disabled:opacity-50"
           >
             Promote scope → {promote}
           </button>
@@ -153,7 +153,7 @@ export function PatternDetailPage() {
 
       {/* Body */}
       <AilaCard  techBorder glow><div className="flex items-center justify-between mb-2">
-        <h2 className="text-sm font-semibold text-foreground">Body</h2>
+        <h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground">Body</h2>
         {!editMode ? (
           <button
             type="button"
@@ -163,7 +163,7 @@ export function PatternDetailPage() {
               setConfidence(pattern.confidence);
               setEditMode(true);
             }}
-            className="text-xs px-2 py-1 rounded-md bg-surface border border-border-default hover:bg-surface-hover"
+            className="text-xs px-2 py-1 rounded-md bg-surface border border-border hover:bg-elevated"
           >
             Edit
           </button>
@@ -172,7 +172,7 @@ export function PatternDetailPage() {
             <button
               type="button"
               onClick={() => setEditMode(false)}
-              className="text-xs px-2 py-1 rounded-md bg-surface border border-border-default"
+              className="text-xs px-2 py-1 rounded-md bg-surface border border-border"
             >
               Cancel
             </button>
@@ -185,7 +185,7 @@ export function PatternDetailPage() {
                   { onSuccess: () => setEditMode(false) },
                 );
               }}
-              className="text-xs px-3 py-1 rounded-md bg-accent text-white"
+              className="text-xs px-3 py-1 rounded-md bg-accent text-background"
             >
               {patchMut.isPending ? "Saving…" : "Save"}
             </button>
@@ -198,7 +198,7 @@ export function PatternDetailPage() {
             value={summary}
             onChange={(e) => setSummary(e.target.value)}
             aria-label="Pattern summary"
-            className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default"
+            className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border"
             placeholder="One-sentence summary"
           />
           <textarea
@@ -206,14 +206,14 @@ export function PatternDetailPage() {
             onChange={(e) => setBody(e.target.value)}
             rows={12}
             aria-label="Pattern body"
-            className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default"
+            className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border"
             placeholder="Full body with code/queries/output"
           />
           <select
             value={confidence}
             onChange={(e) => setConfidence(e.target.value as PatternConfidence)}
             aria-label="Pattern confidence"
-            className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
+            className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border"
           >
             {(["exact", "strong", "medium", "caveated", "unknown"] as PatternConfidence[]).map(
               (c) => (
@@ -231,7 +231,7 @@ export function PatternDetailPage() {
       )}</AilaCard>
 
       {/* Applicability */}
-      <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+      <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
         Applicability
       </h2>
       <pre className="text-xs font-mono text-text-muted whitespace-pre-wrap">
@@ -239,7 +239,7 @@ export function PatternDetailPage() {
       </pre></AilaCard>
 
       {/* Evidence refs */}
-      <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+      <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
         Evidence refs ({pattern.evidence_refs.length})
       </h2>
       {pattern.evidence_refs.length > 0 ? (

@@ -88,7 +88,7 @@ export function FindingRowSkeleton() {
   return (
     <li
       aria-hidden="true"
-      className="rounded-md border border-red-900/40 bg-red-950/20 p-3 space-y-2"
+      className="rounded-md border border-critical/40 bg-critical/10 p-3 space-y-2"
     >
       <div className="flex items-center justify-between gap-3">
         <LoadingSkeleton size="md" width="half" />

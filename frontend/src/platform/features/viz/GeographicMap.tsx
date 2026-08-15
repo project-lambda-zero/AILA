@@ -106,7 +106,7 @@ export function GeographicMap({ className }: GeographicMapProps) {
 
   if (isLoading) {
     return (
-      <AilaCard className={className} techBorder glow><div className="p-4 flex flex-col gap-2">
+      <AilaCard className={className}><div className="p-4 flex flex-col gap-2">
         <p className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
           System Geographic Map
         </p>
@@ -132,7 +132,7 @@ export function GeographicMap({ className }: GeographicMapProps) {
   }
 
   return (
-    <AilaCard className={className} techBorder glow><div className="p-4">
+    <AilaCard className={className}><div className="p-4">
       <div className="flex items-center justify-between mb-3">
         <p className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
           System Geographic Map

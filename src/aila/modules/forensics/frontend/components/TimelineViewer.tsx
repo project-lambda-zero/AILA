@@ -2,8 +2,9 @@ import { useState } from "react";
 
 import { Clock } from "@phosphor-icons/react/dist/csr/Clock";
 
-import { AilaCard } from "@/components/aila/AilaCard";
 import { EmptyState } from "@/components/aila/EmptyState";
+import { PixelIcon } from "@/components/aila/PixelIcon";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 import { useOccurrences, useTimeline } from "../queries";
 import { PanelBoundary } from "./PanelBoundary";
@@ -14,16 +15,16 @@ import { TimelineTrack } from "./TimelineTrack";
 type Confidence = "low" | "medium" | "high";
 
 const SOURCE_COLORS: Record<string, string> = {
-  dissect: "bg-blue-500/20 text-blue-400",
-  volatility: "bg-purple-500/20 text-purple-400",
-  tshark: "bg-green-500/20 text-green-400",
-  strings: "bg-orange-500/20 text-orange-400",
-  capa: "bg-red-500/20 text-red-400",
-  yara: "bg-yellow-500/20 text-yellow-400",
-  ghidra: "bg-pink-500/20 text-pink-400",
-  script: "bg-cyan-500/20 text-cyan-400",
-  investigator: "bg-emerald-500/20 text-emerald-400",
-  unknown: "bg-gray-500/20 text-gray-400",
+  dissect: "bg-lavender/15 text-lavender",
+  volatility: "bg-medium/15 text-medium",
+  tshark: "bg-mint/15 text-mint",
+  strings: "bg-amber-400/15 text-amber-400",
+  capa: "bg-critical/15 text-critical",
+  yara: "bg-amber-400/15 text-amber-400",
+  ghidra: "bg-peach/15 text-peach",
+  script: "bg-mint/15 text-mint",
+  investigator: "bg-mint/15 text-mint",
+  unknown: "bg-elevated text-text-muted",
 };
 
 function timestampOriginLabel(origin?: string): { text: string; tone: string } | null {
@@ -34,7 +35,7 @@ function timestampOriginLabel(origin?: string): { text: string; tone: string } |
     // (e.g. `obs:lnk_modified` vs `obs:first_seen`).
     return {
       text: origin.replace("observable:", "obs:"),
-      tone: "bg-blue-500/20 text-blue-300",
+      tone: "bg-lavender/15 text-lavender",
     };
   }
   // data:timestamp / data:time / data:created -- canonical, no badge
@@ -58,8 +59,8 @@ function ConfidenceSelector({
           className={
             "px-2 py-1 transition-colors capitalize " +
             (value === c
-              ? "bg-blue-600 text-white"
-              : "bg-surface text-foreground hover:bg-surface-secondary")
+              ? "bg-accent text-badge-text"
+              : "bg-surface text-foreground hover:bg-elevated")
           }
           title={
             c === "low"
@@ -122,7 +123,7 @@ function InspectRow({
     );
   }
   return (
-    <div className="px-3 py-2 bg-black/20 border-t border-border">
+    <div className="px-3 py-2 bg-elevated border-t border-border">
       <table className="w-full text-2xs" aria-label="Investigation timeline">
         <caption className="sr-only">Chronological timeline of forensics events, one row per timestamped record.</caption>
         <tbody>
@@ -163,9 +164,9 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
 
   if (isError) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow>
-        <p className="text-sm text-text-danger">Failed to load timeline.</p>
-      </AilaCard>
+      <WindowPanel title="timeline" tone="warn" status="forensics ; timeline unavailable">
+        <p className="text-sm text-critical">Failed to load timeline.</p>
+      </WindowPanel>
     );
   }
 
@@ -210,10 +211,10 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
           <button
             type="button"
             onClick={() => setSourceFilter(null)}
-            className={`px-2.5 py-1 text-3xs rounded-full font-medium ${
+            className={`px-2.5 py-1 text-3xs rounded-[3px] font-mono uppercase tracking-cyber-sm ${
               !sourceFilter
-                ? "bg-primary text-white"
-                : "bg-surface-secondary text-text-muted hover:text-foreground"
+                ? "bg-primary text-badge-text"
+                : "bg-elevated text-text-muted hover:text-foreground"
             }`}
           >
             All sources
@@ -223,9 +224,9 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
               key={src}
               type="button"
               onClick={() => setSourceFilter(sourceFilter === src ? null : src)}
-              className={`px-2.5 py-1 text-3xs rounded-full font-medium ${
+              className={`px-2.5 py-1 text-3xs rounded-[3px] font-mono uppercase tracking-cyber-sm ${
                 sourceFilter === src
-                  ? "bg-primary text-white"
+                  ? "bg-primary text-badge-text"
                   : SOURCE_COLORS[src] || SOURCE_COLORS.unknown
               }`}
             >
@@ -240,7 +241,8 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
         <PanelBoundary label="Visual timeline">
           <div className="space-y-3">
             <div className="flex items-baseline justify-between">
-              <h3 className="text-sm font-semibold text-foreground">
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                <PixelIcon name="status" size={12} className="text-accent" />
                 Visual timeline
                 <span className="ml-2 text-xs font-normal text-text-muted">
                   {safeEntries.length} event
@@ -278,7 +280,8 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
       {/* Section 1 -- Timeline (event-time correlation) */}
       <div className="space-y-1">
         <div className="flex items-baseline justify-between">
-          <h3 className="text-sm font-semibold text-foreground">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <PixelIcon name="status" size={12} className="text-accent" />
             Timeline
             <span className="ml-2 text-xs font-normal text-text-muted">
               when it happened -- {filteredEntries.length} event
@@ -287,18 +290,18 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
           </h3>
         </div>
         {filteredEntries.length === 0 ? (
-          <AilaCard  techBorder glow>
+          <WindowPanel tone="muted" status={`timeline ; ${confidence} confidence`}>
             <p className="text-sm text-text-muted text-center py-4">
               No event-time entries at <code>{confidence}</code> confidence.
               Try lowering the bar or check the Occurrences table below.
             </p>
-          </AilaCard>
+          </WindowPanel>
         ) : (
           <div className="border border-border rounded-lg overflow-hidden bg-surface text-foreground">
             <div className="overflow-y-auto" style={{ maxHeight: 500 }}>
               <table className="w-full text-xs" aria-label="Timeline events">
                 <caption className="sr-only">Per-event timeline rows for the current confidence level.</caption>
-                <thead className="bg-surface-secondary sticky top-0 z-10">
+                <thead className="bg-elevated sticky top-0 z-10">
                   <tr>
                     <th className="text-left px-3 py-2 text-text-muted font-medium w-44">Timestamp</th>
                     <th className="text-left px-3 py-2 text-text-muted font-medium w-32">Source</th>
@@ -315,7 +318,7 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
                     const isOpen = inspectIdx === rowKey;
                     return (
                       <>
-                        <tr key={rowKey} className="border-t border-border hover:bg-surface-secondary/30">
+                        <tr key={rowKey} className="border-t border-border hover:bg-elevated/30">
                           <td className="px-3 py-1.5 font-mono text-text-muted whitespace-nowrap align-top">
                             <div className="flex items-center gap-1.5">
                               <span>{entry.timestamp}</span>
@@ -338,7 +341,7 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
                               </span>
                               {entry.source_investigation_id && (
                                 <span
-                                  className="px-1 py-0 rounded text-4xs font-medium bg-emerald-500/20 text-emerald-300"
+                                  className="px-1 py-0 rounded-[2px] text-4xs font-medium bg-mint/15 text-mint"
                                   title={`from investigation ${entry.source_investigation_id.slice(0, 8)}`}
                                 >
                                   I
@@ -394,7 +397,8 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
       {/* Section 2 -- Occurrences (no event-time) */}
       <div className="space-y-1">
         <div className="flex items-baseline justify-between">
-          <h3 className="text-sm font-semibold text-foreground">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <PixelIcon name="status" size={12} className="text-accent" />
             Occurrences
             <span className="ml-2 text-xs font-normal text-text-muted">
               what we found, no event-time -- {filteredOcc.length} finding
@@ -403,17 +407,17 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
           </h3>
         </div>
         {filteredOcc.length === 0 ? (
-          <AilaCard  techBorder glow>
+          <WindowPanel tone="muted" status={`occurrences ; ${confidence} confidence`}>
             <p className="text-sm text-text-muted text-center py-4">
               No untimed findings at <code>{confidence}</code> confidence.
             </p>
-          </AilaCard>
+          </WindowPanel>
         ) : (
           <div className="border border-border rounded-lg overflow-hidden bg-surface text-foreground">
             <div className="overflow-y-auto" style={{ maxHeight: 500 }}>
               <table className="w-full text-xs" aria-label="Occurrences">
                 <caption className="sr-only">Untimed findings and artifacts discovered during the investigation.</caption>
-                <thead className="bg-surface-secondary sticky top-0 z-10">
+                <thead className="bg-elevated sticky top-0 z-10">
                   <tr>
                     <th className="text-left px-3 py-2 text-text-muted font-medium w-32">Source</th>
                     <th className="text-left px-3 py-2 text-text-muted font-medium w-28">Type</th>
@@ -429,7 +433,7 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
                     const isOpen = inspectIdx === rowKey;
                     return (
                       <>
-                        <tr key={rowKey} className="border-t border-border hover:bg-surface-secondary/30">
+                        <tr key={rowKey} className="border-t border-border hover:bg-elevated/30">
                           <td className="px-3 py-1.5 align-top">
                             <div className="flex items-center gap-1">
                               <span
@@ -439,7 +443,7 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
                               </span>
                               {occ.source_investigation_id && (
                                 <span
-                                  className="px-1 py-0 rounded text-4xs font-medium bg-emerald-500/20 text-emerald-300"
+                                  className="px-1 py-0 rounded-[2px] text-4xs font-medium bg-mint/15 text-mint"
                                   title={`from investigation ${occ.source_investigation_id.slice(0, 8)}`}
                                 >
                                   I

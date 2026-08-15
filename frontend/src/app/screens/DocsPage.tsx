@@ -19,7 +19,7 @@ export function DocsPage() {
       </header>
 
       <div className="flex flex-col gap-4">
-        <AilaCard variant="default" padding="md" techBorder glow><h2 className="font-mono text-base font-semibold text-foreground">
+        <AilaCard variant="default" padding="md"><h2 className="font-mono text-base font-semibold text-foreground">
           What this tool does
         </h2>
         <p className="mt-2 font-mono text-sm text-text-muted">
@@ -31,7 +31,7 @@ export function DocsPage() {
           Dashboard surfaces recent activity across all modules.
         </p></AilaCard>
 
-        <AilaCard variant="default" padding="md" techBorder glow><h2 className="font-mono text-base font-semibold text-foreground">
+        <AilaCard variant="default" padding="md"><h2 className="font-mono text-base font-semibold text-foreground">
           How to register a system
         </h2>
         <p className="mt-2 font-mono text-sm text-text-muted">
@@ -44,7 +44,7 @@ export function DocsPage() {
           before opening a ticket.
         </p></AilaCard>
 
-        <AilaCard variant="default" padding="md" techBorder glow><h2 className="font-mono text-base font-semibold text-foreground">
+        <AilaCard variant="default" padding="md"><h2 className="font-mono text-base font-semibold text-foreground">
           How to run a scan
         </h2>
         <p className="mt-2 font-mono text-sm text-text-muted">
@@ -56,7 +56,7 @@ export function DocsPage() {
           the detail panel; completed runs surface an "Open Report" button.
         </p></AilaCard>
 
-        <AilaCard variant="default" padding="md" techBorder glow><h2 className="font-mono text-base font-semibold text-foreground">
+        <AilaCard variant="default" padding="md"><h2 className="font-mono text-base font-semibold text-foreground">
           How to read results
         </h2>
         <p className="mt-2 font-mono text-sm text-text-muted">
@@ -69,7 +69,7 @@ export function DocsPage() {
           JSON, CSV, and PDF are available on the detail sidebar.
         </p></AilaCard>
 
-        <AilaCard variant="default" padding="md" techBorder glow><h2 className="font-mono text-base font-semibold text-foreground">
+        <AilaCard variant="default" padding="md"><h2 className="font-mono text-base font-semibold text-foreground">
           Where to set the API key
         </h2>
         <p className="mt-2 font-mono text-sm text-text-muted">

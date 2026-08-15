@@ -143,9 +143,9 @@ function tokenize(source: string, lang: Lang): Token[] {
 }
 
 const STYLE: Record<Token["type"], string> = {
-  kw: "text-violet-300",
-  str: "text-amber-300",
-  num: "text-cyan-300",
+  kw: "text-lavender",
+  str: "text-mint",
+  num: "text-peach",
   comment: "text-text-muted italic",
   text: "text-foreground",
 };
@@ -165,7 +165,7 @@ export function SyntaxHighlighter({
     <pre
       className={
         "text-xs font-mono whitespace-pre overflow-x-auto p-2 "
-        + "rounded bg-surface/60 border border-border-default "
+        + "rounded bg-surface/60 border border-border "
         + (className ?? "")
       }
       data-language={lang}

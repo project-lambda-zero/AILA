@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 
-import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { Button } from "@/components/ui/button";
 
 import { useProjectEvidence } from "../queries";
@@ -42,13 +42,7 @@ export function FetchRawFilePanel({ projectId, compact = false }: Props) {
   const heading = compact ? "Fetch Raw File" : "Fetch File from Raw Directory";
 
   return (
-    <AilaCard  techBorder glow><div className="flex items-center justify-between mb-3">
-      <h3 className="text-sm font-semibold text-foreground">{heading}</h3>
-      <span className="text-xs text-text-muted">
-        {items.length} file{items.length === 1 ? "" : "s"} catalogued
-      </span>
-    </div>
-    
+    <WindowPanel title={heading} status={`raw ; ${items.length} file${items.length === 1 ? "" : "s"} catalogued`}>
     <form onSubmit={onSubmit} className="space-y-2">
       <select
         aria-label="Select evidence source"
@@ -81,7 +75,7 @@ export function FetchRawFilePanel({ projectId, compact = false }: Props) {
     </form>
     
     {evidenceQ.isError && (
-      <p className="text-xs text-status-critical mt-2">
+      <p className="text-xs text-critical mt-2">
         Failed to load evidence list.
       </p>
     )}
@@ -90,6 +84,6 @@ export function FetchRawFilePanel({ projectId, compact = false }: Props) {
         No files catalogued yet -- wait for intake to complete or
         re-run readiness.
       </p>
-    )}</AilaCard>
+    )}</WindowPanel>
   );
 }

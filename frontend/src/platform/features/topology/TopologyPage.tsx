@@ -129,7 +129,7 @@ export function TopologyPage() {
           <AilaCard
             padding="none"
             className="flex flex-col min-h-0 overflow-hidden"
-            decorations={["tech-border"]}
+           
           >
             <TopologyBody
               full={full}
@@ -288,7 +288,7 @@ function SubnetSidebar({
     <AilaCard
       padding="none"
       className="flex flex-col min-h-0 overflow-hidden"
-      decorations={["tech-border"]}
+     
     >
       <div className="flex items-center justify-between px-3 py-2 border-b border-border">
         <span className="font-mono text-[10px] uppercase tracking-wider text-text-muted">

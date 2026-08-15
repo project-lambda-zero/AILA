@@ -1,7 +1,7 @@
 import { useNavigate, useSearchParams } from "react-router";
 import { ClipboardText } from "@phosphor-icons/react/dist/csr/ClipboardText";
 
-import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { AilaBadge, type TaskStatus as BadgeTaskStatus } from "@/components/aila/AilaBadge";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { EmptyState } from "@/components/aila/EmptyState";
@@ -83,23 +83,23 @@ function TaskDetailPanel({ taskId }: { taskId: string }) {
 
   if (!taskId) {
     return (
-      <AilaCard variant="default" padding="md" techBorder glow><p className="font-mono text-xs text-text-muted">
+      <WindowPanel title="Task Detail" tone="muted"><p className="font-mono text-xs text-text-muted">
         Select a task row to inspect its lifecycle details.
-      </p></AilaCard>
+      </p></WindowPanel>
     );
   }
 
   if (taskDetailQuery.isLoading) {
     return (
-      <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={6} /></AilaCard>
+      <WindowPanel title="Task Detail" status="LOADING" tone="muted"><LoadingSkeletonGroup lines={6} /></WindowPanel>
     );
   }
 
   if (taskDetailQuery.isError) {
     return (
-      <AilaCard variant="default" padding="md" techBorder glow><div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
+      <WindowPanel title="Task Detail" tone="warn"><div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
         {(taskDetailQuery.error as Error).message}
-      </div></AilaCard>
+      </div></WindowPanel>
     );
   }
 
@@ -107,9 +107,7 @@ function TaskDetailPanel({ taskId }: { taskId: string }) {
   if (!task) return null;
 
   return (
-    <AilaCard variant="elevated" padding="md" techBorder glow><h2 className="font-mono text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">
-      Task Detail
-    </h2>
+    <WindowPanel title="Task Detail">
     <div className="flex flex-col gap-2">
       {[
         { label: "Status", value: <AilaBadge severity={statusSeverity(task.status)} size="sm">{task.status}</AilaBadge> },
@@ -144,7 +142,7 @@ function TaskDetailPanel({ taskId }: { taskId: string }) {
         label="Task"
         live={task.status === "running" || task.status === "queued" || task.status === "waiting"}
       />
-    </div></AilaCard>
+    </div></WindowPanel>
   );
 }
 
@@ -239,7 +237,7 @@ export function TasksPage() {
       {/* Page header */}
 
       {/* Filters */}
-      <AilaCard variant="default" padding="md" techBorder glow><div className="flex flex-wrap items-center gap-3">
+      <WindowPanel title="Filters" tone="muted"><div className="flex flex-wrap items-center gap-3">
         <div className="flex flex-col gap-1 min-w-[140px]">
           <label className="font-mono text-xs text-text-muted" htmlFor="task-track">Track</label>
           <input
@@ -306,7 +304,7 @@ export function TasksPage() {
             }}
           />
         </div>
-      </div></AilaCard>
+      </div></WindowPanel>
 
       {/* Error */}
       {tasksQuery.isError && (
@@ -317,7 +315,7 @@ export function TasksPage() {
 
       {/* Loading */}
       {tasksQuery.isLoading && (
-        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={6} /></AilaCard>
+        <WindowPanel title="Task Queue" status="LOADING" tone="muted"><LoadingSkeletonGroup lines={6} /></WindowPanel>
       )}
 
       {/* Split layout: table + detail */}
@@ -333,15 +331,15 @@ export function TasksPage() {
                 action={{ label: "Go to Console", href: "/console" }}
               />
             ) : (
-              <AilaCard variant="default" padding="none" techBorder glow><div className="overflow-x-auto">
-                <table aria-label="Task queue" className="w-full">
+              <WindowPanel title="Task Queue" status={`${tasks.length} TASK${tasks.length === 1 ? "" : "S"}`} tone="muted" flush><div className="overflow-x-auto">
+                <table aria-label="Task queue" className="w-full border-collapse [&_th]:border [&_th]:border-border [&_td]:border [&_td]:border-border">
                   <thead>
-                    <tr className="border-b border-border">
-                      <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Task ID</th>
-                      <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Track</th>
-                      <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Status</th>
-                      <th className="py-2 px-3 text-left font-mono text-xs text-text-muted hidden sm:table-cell">Module</th>
-                      <th className="py-2 px-3 text-left font-mono text-xs text-text-muted hidden lg:table-cell">Created</th>
+                    <tr className="border-b border-border bg-elevated">
+                      <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted">Task ID</th>
+                      <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted">Track</th>
+                      <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted">Status</th>
+                      <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted hidden sm:table-cell">Module</th>
+                      <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted hidden lg:table-cell">Created</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -363,7 +361,7 @@ export function TasksPage() {
                     ))}
                   </tbody>
                 </table>
-              </div></AilaCard>
+              </div></WindowPanel>
             )}
           </div>
 

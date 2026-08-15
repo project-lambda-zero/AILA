@@ -36,7 +36,21 @@ function NavItem({ item }: { item: SidebarItem }) {
         tooltip={item.label}
         isActive={isActive}
         render={<Link to={item.to} />}
+        style={isActive ? { boxShadow: "inset 2px 0 0 var(--color-accent)" } : undefined}
       >
+        {/* Square status marker: pink when active, faint otherwise. Hidden in
+            the icon-collapsed rail so only the Phosphor glyph shows. */}
+        <span
+          aria-hidden
+          className="group-data-[collapsible=icon]:hidden"
+          style={{
+            width: 5,
+            height: 5,
+            flex: "0 0 auto",
+            background: isActive ? "var(--color-accent)" : "var(--color-text-faint)",
+            boxShadow: isActive ? "0 0 6px var(--color-accent)" : "none",
+          }}
+        />
         {Icon && <Icon size={20} weight="regular" />}
         <span>{item.label}</span>
       </SidebarMenuButton>
@@ -59,7 +73,6 @@ function BrandLogo() {
 
 export function AppSidebar({ moduleSpecs }: AppSidebarProps) {
   const { role } = useAuthStore();
-  const location = useLocation();
   const sections = getSidebarSections(moduleSpecs);
 
   return (
@@ -90,7 +103,16 @@ export function AppSidebar({ moduleSpecs }: AppSidebarProps) {
               return (
                 <div key={section.id}>
                   <SidebarGroup>
-                    <SidebarGroupLabel>{section.label}</SidebarGroupLabel>
+                    <SidebarGroupLabel
+                      className="font-mono uppercase"
+                      style={{
+                        fontSize: "9px",
+                        letterSpacing: "0.16em",
+                        color: "var(--color-text-muted)",
+                      }}
+                    >
+                      {section.label}
+                    </SidebarGroupLabel>
                     <SidebarGroupContent>
                       {section.subgroups && section.subgroups.length > 0 ? (
                         // Subgroups render as separate <ul>s with header spans between them.
@@ -101,7 +123,14 @@ export function AppSidebar({ moduleSpecs }: AppSidebarProps) {
                         <div className="flex flex-col gap-1">
                           {section.subgroups.map((subgroup) => (
                             <div key={subgroup.moduleId}>
-                              <span className="font-mono text-[10px] uppercase tracking-wider text-text-muted px-2 py-1 block">
+                              <span
+                                className="font-mono uppercase px-2 py-1 block"
+                                style={{
+                                  fontSize: "9px",
+                                  letterSpacing: "0.16em",
+                                  color: "var(--color-text-muted)",
+                                }}
+                              >
                                 {subgroup.label}
                               </span>
                               {/*
@@ -114,22 +143,9 @@ export function AppSidebar({ moduleSpecs }: AppSidebarProps) {
                                 while preventing nested-<li> hydration bugs.
                               */}
                               <SidebarMenu>
-                                {subgroup.items.map((item) => {
-                                  const isActive = item.to === "/" ? location.pathname === "/" : location.pathname.startsWith(item.to);
-                                  const Icon = item.icon;
-                                  return (
-                                    <SidebarMenuItem key={item.id}>
-                                      <SidebarMenuButton
-                                        tooltip={item.label}
-                                        isActive={isActive}
-                                        render={<Link to={item.to} />}
-                                      >
-                                        {Icon && <Icon size={20} weight="regular" />}
-                                        <span>{item.label}</span>
-                                      </SidebarMenuButton>
-                                    </SidebarMenuItem>
-                                  );
-                                })}
+                                {subgroup.items.map((item) => (
+                                  <NavItem key={item.id} item={item} />
+                                ))}
                               </SidebarMenu>
                             </div>
                           ))}

@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { Button } from "@/components/ui/button";
 
 import { useProjectInvestigations, useProjectWriteups } from "../queries";
@@ -83,10 +84,10 @@ export function WriteUpViewer({ projectId }: { projectId: string }) {
 
   if (!writeups || writeups.length === 0) {
     return (
-      <AilaCard  techBorder glow><p className="text-sm text-text-muted text-center py-8">
+      <WindowPanel title="write-ups" tone="muted" status="forensics ; no reports generated"><p className="text-sm text-text-muted text-center py-8">
         No write-ups generated yet. Complete an investigation to generate a
         professional report.
-      </p></AilaCard>
+      </p></WindowPanel>
     );
   }
 
@@ -127,9 +128,9 @@ export function WriteUpViewer({ projectId }: { projectId: string }) {
       </div>
 
       {items.length === 0 ? (
-        <AilaCard  techBorder glow><p className="text-xs text-text-muted text-center py-6">
+        <WindowPanel tone="muted" status="write-ups ; filter matched nothing"><p className="text-xs text-text-muted text-center py-6">
           No write-ups match the current filter.
-        </p></AilaCard>
+        </p></WindowPanel>
       ) : (
         <div className="space-y-3">
           {items.map((w) => {
@@ -293,7 +294,7 @@ function WriteUpCard({
                   onDelete();
                 }}
                 disabled={deleting}
-                className="bg-red-600 hover:bg-red-500 text-white"
+                className="bg-critical text-badge-text hover:brightness-110"
               >
                 {deleting ? "…" : "Yes"}
               </Button>
@@ -316,7 +317,7 @@ function WriteUpCard({
       {open && (
         <div className="space-y-3 pl-5 border-l-2 border-border/60">
           {writeup.methodology && (
-            <div className="rounded-md bg-surface-secondary px-3 py-2">
+            <div className="rounded-md bg-elevated px-3 py-2">
               <h4 className="text-2xs font-medium text-text-muted uppercase tracking-wide mb-1">
                 Methodology
               </h4>
@@ -341,7 +342,7 @@ function WriteUpCard({
               {writeup.artifacts_referenced.map((id) => (
                 <span
                   key={id}
-                  className="px-1.5 py-0.5 text-2xs bg-surface-secondary rounded font-mono text-text-muted"
+                  className="px-1.5 py-0.5 text-2xs bg-elevated rounded font-mono text-text-muted"
                   title={id}
                 >
                   {id.slice(0, 8)}
@@ -376,7 +377,7 @@ function renderMarkdown(md: string): string {
     (_, _lang, body) => {
       const idx = codeBlocks.length;
       codeBlocks.push(
-        `<pre class="px-3 py-2 bg-surface-secondary rounded-md overflow-x-auto text-xs font-mono my-2"><code>${body}</code></pre>`,
+        `<pre class="px-3 py-2 bg-elevated rounded-md overflow-x-auto text-xs font-mono my-2"><code>${body}</code></pre>`,
       );
       return `\u0000CODEBLOCK_${idx}\u0000`;
     },
@@ -477,7 +478,7 @@ function inline(text: string): string {
   return text
     .replace(
       /`([^`]+)`/g,
-      '<code class="px-1 py-0.5 bg-surface-secondary rounded text-2xs font-mono">$1</code>',
+      '<code class="px-1 py-0.5 bg-elevated rounded text-2xs font-mono">$1</code>',
     )
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>")

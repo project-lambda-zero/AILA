@@ -43,26 +43,31 @@ export function NdayStageView({ stages }: { stages: ReadonlyArray<StageData> }) 
         <li key={stage.id} className="relative">
           {idx < stages.length - 1 && (
             <div
-              className="absolute left-3 top-8 bottom-0 w-px bg-border-default"
+              className="absolute left-3 top-8 bottom-0 w-px bg-border"
               aria-hidden
             />
           )}
           <div className="flex items-start gap-3">
             <div
               className={
-                "w-6 h-6 rounded-full flex items-center justify-center text-3xs font-bold border-2 relative z-10 bg-base " +
+                "w-6 h-6 rounded-[2px] flex items-center justify-center text-3xs font-bold border-2 relative z-10 bg-base " +
                 (stage.status === "complete"
-                  ? "border-green-500 text-green-500"
+                  ? "border-mint text-mint"
                   : stage.status === "failed"
-                    ? "border-red-500 text-red-500"
+                    ? "border-critical text-critical"
                     : stage.status === "in_progress"
-                      ? "border-amber-500 text-amber-500"
-                      : "border-border-default text-text-muted")
+                      ? ""
+                      : "border-border text-text-muted")
+              }
+              style={
+                stage.status === "in_progress"
+                  ? { borderColor: "var(--color-amber)", color: "var(--color-amber)" }
+                  : undefined
               }
             >
               {STATUS_ICON[stage.status]}
             </div>
-            <div className="flex-1 min-w-0 border border-border-default rounded-md p-3 bg-surface/40">
+            <div className="flex-1 min-w-0 border border-border rounded-md p-3 bg-surface/40">
               <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
                 <h3 className="text-sm font-semibold text-foreground">
                   {idx + 1}. {stage.title}
@@ -83,7 +88,7 @@ export function NdayStageView({ stages }: { stages: ReadonlyArray<StageData> }) 
                           stage.onRewind!();
                         }
                       }}
-                      className="text-3xs font-mono px-2 py-0.5 rounded bg-surface border border-border-default hover:bg-surface-hover"
+                      className="text-3xs font-mono px-2 py-0.5 rounded bg-surface border border-border hover:bg-elevated"
                     >
                       ↶ rewind
                     </button>
@@ -92,7 +97,7 @@ export function NdayStageView({ stages }: { stages: ReadonlyArray<StageData> }) 
               </div>
               <p className="text-xs text-text-muted">{stage.description}</p>
               {stage.evidence && (
-                <div className="mt-2 pt-2 border-t border-border-default">
+                <div className="mt-2 pt-2 border-t border-border">
                   {stage.evidence}
                 </div>
               )}

@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 
-import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaChart } from "@/components/aila/AilaChart";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { useThemeChartColors } from "@platform/features/viz/chartColors";
 
 import type { TimelineEntry } from "../types";
@@ -69,10 +69,7 @@ export function TimelineDistribution({
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-      <AilaCard techBorder glow padding="sm">
-        <h3 className="text-xs font-mono uppercase tracking-wider text-text-muted mb-2">
-          Events by source
-        </h3>
+      <WindowPanel title="events by source">
         {hasSources ? (
           <>
             <AilaChart
@@ -109,12 +106,9 @@ export function TimelineDistribution({
             ))}
           </tbody>
         </table>
-      </AilaCard>
+      </WindowPanel>
 
-      <AilaCard techBorder glow padding="sm">
-        <h3 className="text-xs font-mono uppercase tracking-wider text-text-muted mb-2">
-          Top event types
-        </h3>
+      <WindowPanel title="top event types">
         {hasTypes ? (
           <>
             <AilaChart
@@ -150,7 +144,7 @@ export function TimelineDistribution({
             ))}
           </tbody>
         </table>
-      </AilaCard>
+      </WindowPanel>
     </div>
   );
 }

@@ -112,8 +112,8 @@ const PERSONA_STYLES: Record<string, PersonaStyle> = {
   halvar: { color: "#f0a8c7", initial: "H" },
   maddie: { color: "#af87d7", initial: "M" },
   renzo: { color: "#97dbbe", initial: "R" },
-  noor: { color: "#f0c97a", initial: "N" },
-  yuki: { color: "#8ec5ff", initial: "Y" },
+  noor: { color: "#ffb85f", initial: "N" },
+  yuki: { color: "#b092ff", initial: "Y" },
   wei: { color: "#7bdfd3", initial: "W" },
 };
 
@@ -138,22 +138,22 @@ function payloadStyle(
     case "text":
       return { Icon: null, label: null, iconClass: "" };
     case "tool_call":
-      return { Icon: Terminal, label: "Tool Call", iconClass: "text-emerald-400" };
+      return { Icon: Terminal, label: "Tool Call", iconClass: "text-mint" };
     case "tool_result": {
       const isError = isToolError(payload);
       return isError
-        ? { Icon: XCircle, label: "Error", iconClass: "text-red-400" }
-        : { Icon: CheckCircle, label: "Result", iconClass: "text-emerald-400" };
+        ? { Icon: XCircle, label: "Error", iconClass: "text-critical" }
+        : { Icon: CheckCircle, label: "Result", iconClass: "text-mint" };
     }
     case "observation":
-      return { Icon: Eye, label: "Observation", iconClass: "text-cyan-400" };
+      return { Icon: Eye, label: "Observation", iconClass: "text-lavender" };
     case "user_message":
-      return { Icon: ChatCentered, label: "Operator", iconClass: "text-amber-400" };
+      return { Icon: ChatCentered, label: "Operator", iconClass: "text-peach" };
     case "hypothesis_update":
-      return { Icon: Lightbulb, label: "Hypothesis", iconClass: "text-yellow-400" };
+      return { Icon: Lightbulb, label: "Hypothesis", iconClass: "text-lavender" };
     case "outcome_draft":
     case "outcome_pending":
-      return { Icon: Flag, label: "Draft Finding", iconClass: "text-orange-400" };
+      return { Icon: Flag, label: "Draft Finding", iconClass: "text-peach" };
     case "decompiled_function": {
       // Every DECOMPILED_FUNCTION payload carries `source_provenance.mcp_tool`
       // stamped by the adapter (see aila.platform.mcp.adapters._shared.
@@ -178,10 +178,10 @@ function payloadStyle(
         const isSource = /\.(go|py|c|cpp|h|rs|js|ts|java|rb|php)\b/i.test(addr);
         label = isSource ? "Read" : "Decompiled";
       }
-      return { Icon: FileCode, label, iconClass: "text-violet-400" };
+      return { Icon: FileCode, label, iconClass: "text-lavender" };
     }
     case "code_pointer":
-      return { Icon: FileCode, label: "Code", iconClass: "text-violet-400" };
+      return { Icon: FileCode, label: "Code", iconClass: "text-lavender" };
     default:
       return payloadKind
         ? { Icon: null, label: prettyKind(payloadKind), iconClass: "" }
@@ -376,7 +376,7 @@ export function TurnCard({
   return (
     <article
       id={`turn-${index}`}
-      className="relative rounded-md border border-border-default overflow-hidden"
+      className="relative rounded-md border border-border overflow-hidden"
       style={{
         borderLeftWidth: 4,
         borderLeftColor: senderStyle.accent,
@@ -465,7 +465,7 @@ export function TurnCard({
       </header>
 
       {bodyOpen && (
-        <div className="px-3 pb-3 pt-2 space-y-2 border-t border-border-default/60 bg-surface/20">
+        <div className="px-3 pb-3 pt-2 space-y-2 border-t border-border/60 bg-surface/20">
           {/* Structured tool_call rendering */}
           {showStructuredToolCall ? (
             <ToolCallBody name={toolName!} args={toolArgs} reasoning={toolReasoning} />
@@ -491,9 +491,9 @@ export function TurnCard({
 
           {/* Error message -- styled error box */}
           {fellBackToJson && !payload.pseudocode && Boolean(payload.is_error) && (
-            <div className="flex items-start gap-2 px-3 py-2 rounded-md border border-red-500/30 bg-red-500/8">
-              <XCircle size={14} weight="fill" className="text-red-400 shrink-0 mt-0.5" />
-              <p className="text-xs text-red-300/90 break-words">{String(payload.text || payload.error || rawJson)}</p>
+            <div className="flex items-start gap-2 px-3 py-2 rounded-md border border-critical/30 bg-critical/8">
+              <XCircle size={14} weight="fill" className="text-critical shrink-0 mt-0.5" />
+              <p className="text-xs text-critical/90 break-words">{String(payload.text || payload.error || rawJson)}</p>
             </div>
           )}
 
@@ -502,7 +502,7 @@ export function TurnCard({
             <div className="space-y-1.5">
               {Boolean(payload.tool) && (
                 <div className="flex items-center gap-2 text-xs">
-                  <Terminal size={14} weight="fill" className="text-emerald-400" />
+                  <Terminal size={14} weight="fill" className="text-mint" />
                   <span className="font-mono text-foreground font-medium">{humanToolName(String(payload.tool))}</span>
                   {payload.match_count != null && (
                     <span className="text-text-muted font-mono text-3xs">{String(payload.match_count)} matches</span>
@@ -518,7 +518,7 @@ export function TurnCard({
 
           {/* Generic fallback -- only for payloads that don't match any structured pattern */}
           {fellBackToJson && !payload.pseudocode && !payload.is_error && !payload.chunks_text && payload.match_count == null && (
-            <pre className="text-xs font-mono whitespace-pre-wrap text-foreground leading-relaxed break-words bg-surface/40 rounded p-2 border border-border-default/50">
+            <pre className="text-xs font-mono whitespace-pre-wrap text-foreground leading-relaxed break-words bg-surface/40 rounded p-2 border border-border/50">
               {expanded || rawJson.length <= COLLAPSE_THRESHOLD_CHARS
                 ? rawJson
                 : rawJson.slice(0, COLLAPSE_THRESHOLD_CHARS) + "\n…"}
@@ -540,7 +540,7 @@ export function TurnCard({
               <summary className="cursor-pointer text-3xs font-mono uppercase tracking-wider text-text-muted hover:text-foreground select-none">
                 Raw payload
               </summary>
-              <pre className="mt-1 text-2xs font-mono whitespace-pre-wrap text-text-muted leading-relaxed break-words bg-surface/40 rounded p-2 border border-border-default/50">
+              <pre className="mt-1 text-2xs font-mono whitespace-pre-wrap text-text-muted leading-relaxed break-words bg-surface/40 rounded p-2 border border-border/50">
                 {rawJson}
               </pre>
             </details>
@@ -555,7 +555,7 @@ export function TurnCard({
               {message.evidence_refs.map((ref) => (
                 <span
                   key={ref}
-                  className="text-3xs font-mono px-1.5 py-0.5 rounded bg-surface border border-border-default text-text-muted"
+                  className="text-3xs font-mono px-1.5 py-0.5 rounded bg-surface border border-border text-text-muted"
                 >
                   {ref}
                 </span>
@@ -580,10 +580,10 @@ interface VoiceSection {
 }
 
 const VOICE_COLORS: Record<string, { border: string; label: string; bg: string }> = {
-  researcher: { border: "border-l-violet-400/60", label: "text-violet-300", bg: "bg-violet-500/5" },
-  critic:     { border: "border-l-pink-400/60", label: "text-pink-300", bg: "bg-pink-500/5" },
-  implementer:{ border: "border-l-sky-400/60", label: "text-sky-300", bg: "bg-sky-500/5" },
-  unknown:    { border: "border-l-gray-500/40", label: "text-gray-400", bg: "bg-gray-500/5" },
+  researcher: { border: "border-l-lavender/60", label: "text-lavender", bg: "bg-lavender/5" },
+  critic:     { border: "border-l-peach/60", label: "text-peach", bg: "bg-peach/5" },
+  implementer:{ border: "border-l-mint/60", label: "text-mint", bg: "bg-mint/5" },
+  unknown:    { border: "border-l-border", label: "text-text-muted", bg: "bg-elevated/40" },
 };
 
 function parseVoiceSections(text: string): VoiceSection[] | null {

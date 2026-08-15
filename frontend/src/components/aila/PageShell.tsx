@@ -66,10 +66,10 @@ const STATUS_LABEL: Record<NonNullable<PageShellProps["status"]>, string> = {
 }
 
 const STATUS_COLOR: Record<NonNullable<PageShellProps["status"]>, string> = {
-  live: "bg-status-running",
-  ready: "bg-status-completed",
-  paused: "bg-status-paused",
-  error: "bg-status-failed",
+  live: "var(--status-running)",
+  ready: "var(--status-completed)",
+  paused: "var(--status-paused)",
+  error: "var(--status-failed)",
 }
 
 function PageShellInner({
@@ -79,8 +79,6 @@ function PageShellInner({
   status,
   actions,
   children,
-  hideCornerAccents = false,
-  hideTechBorder = false,
   className,
   contentClassName,
 }: PageShellProps) {
@@ -98,91 +96,36 @@ function PageShellInner({
   icon = resolve(ov.icon, icon)
   status = resolve(ov.status, status)
   actions = resolve(ov.actions, actions)
-  // L-shaped 16x16 corner brackets in accent colour at 50% opacity.
-  // Same shape as AilaCard.cornerAccents but rendered at page scope.
-  const cornerColor = "color-mix(in srgb, var(--color-accent) 50%, transparent)"
-  const corners = !hideCornerAccents ? (
-    <>
-      <span
-        aria-hidden
-        className="pointer-events-none fixed top-2 left-2 z-50 h-4 w-4 border-t-2 border-l-2"
-        style={{ borderColor: cornerColor }}
-      />
-      <span
-        aria-hidden
-        className="pointer-events-none fixed top-2 right-2 z-50 h-4 w-4 border-t-2 border-r-2"
-        style={{ borderColor: cornerColor }}
-      />
-      <span
-        aria-hidden
-        className="pointer-events-none fixed bottom-2 left-2 z-50 h-4 w-4 border-b-2 border-l-2"
-        style={{ borderColor: cornerColor }}
-      />
-      <span
-        aria-hidden
-        className="pointer-events-none fixed bottom-2 right-2 z-50 h-4 w-4 border-b-2 border-r-2"
-        style={{ borderColor: cornerColor }}
-      />
-    </>
-  ) : null
-
-  // Top hairline -- same treatment as AilaCard.techBorder, page scope.
-  const hairline = !hideTechBorder ? (
-    <span
-      aria-hidden
-      className="pointer-events-none absolute inset-x-0 top-0 h-px"
-      style={{
-        background:
-          "linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-accent) 60%, transparent), transparent)",
-      }}
-    />
-  ) : null
-
   return (
     <div className={cn("relative min-h-screen", className)}>
-      {hairline}
-      {corners}
-      <header className="sticky top-0 z-20 backdrop-blur-sm bg-base/80 border-b border-border">
+      <header className="sticky top-0 z-20 border-b border-border bg-base/80 backdrop-blur-sm">
         <div className="flex items-center gap-4 px-6 py-4">
           {icon && (
             <div
               className={cn(
                 "flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-[4px]",
-                "border border-border",
-                "bg-[linear-gradient(180deg,var(--color-elevated),var(--color-surface))]",
-                "text-accent",
+                "border border-[var(--color-border-bright)] bg-elevated text-accent",
               )}
-              style={{
-                boxShadow:
-                  "0 0 12px color-mix(in srgb, var(--color-accent) 22%, transparent)",
-              }}
+              style={{ boxShadow: "var(--bevel-raised)" }}
             >
               <span className="[&_svg]:h-5 [&_svg]:w-5">{icon}</span>
             </div>
           )}
           <div className="min-w-0 flex-1">
-            <h1
-              className="font-display text-xl font-bold text-foreground tracking-tight truncate"
-              style={{
-                textShadow:
-                  "0 0 1px color-mix(in srgb, var(--color-accent) 40%, transparent)",
-              }}
-            >
+            <h1 className="truncate font-display text-xl font-bold tracking-tight text-foreground">
               {title}
             </h1>
             {(subtitle || status) && (
-              <div className="mt-0.5 flex items-center gap-2 text-xs text-text-muted font-mono">
+              <div className="mt-0.5 flex items-center gap-2 font-mono text-xs text-muted-foreground">
                 {status && (
                   <span className="inline-flex items-center gap-1.5">
                     <span
                       aria-hidden
-                      className={cn(
-                        "inline-block size-1.5 rounded-full animate-pulse",
-                        STATUS_COLOR[status],
-                      )}
+                      className="inline-block size-1.5 rounded-full animate-pulse"
+                      style={{ background: STATUS_COLOR[status] }}
                     />
                     <span className="uppercase tracking-wider">{STATUS_LABEL[status]}</span>
-                    {subtitle && <span className="text-text-muted/50">·</span>}
+                    {subtitle && <span className="text-muted-foreground/50">·</span>}
                   </span>
                 )}
                 {subtitle && <span className="truncate">{subtitle}</span>}

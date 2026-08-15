@@ -7,6 +7,8 @@ import { GitBranch } from "@phosphor-icons/react/dist/csr/GitBranch";
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { EmptyState } from "@/components/aila/EmptyState";
+import { PixelIcon } from "@/components/aila/PixelIcon";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -70,7 +72,7 @@ function CaseModelPanel({ step }: { step: AgentStep }) {
   if (!hasAnything) return null;
 
   return (
-    <div className="border-t border-border px-4 py-2 space-y-2 bg-surface-secondary/40">
+    <div className="border-t border-border px-4 py-2 space-y-2 bg-elevated/40">
       {contract && (
         <div className="text-xs">
           <span className="font-mono text-text-muted">contract:</span>{" "}
@@ -167,16 +169,16 @@ function StepCard({ step }: { step: AgentStep }) {
   return (
     <div
       className={`rounded-md border bg-surface transition-colors ${
-        failed ? "border-border-danger bg-red-950/10" : "border-border"
+        failed ? "border-critical bg-critical/10" : "border-border"
       }`}
     >
       {/* Header row */}
       <div className="flex items-start gap-3 px-4 py-3">
         <span
-          className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold font-mono ${
+          className={`shrink-0 w-7 h-7 rounded-[4px] border flex items-center justify-center text-xs font-bold font-mono ${
             failed
-              ? "bg-red-900/40 text-red-400"
-              : "bg-surface-secondary text-text-muted"
+              ? "bg-critical/20 text-critical border-critical/40"
+              : "bg-elevated text-text-muted border-border"
           }`}
         >
           {step.step_number}
@@ -190,8 +192,8 @@ function StepCard({ step }: { step: AgentStep }) {
               <span
                 className={`px-1.5 py-0.5 rounded text-xs font-mono ${
                   failed
-                    ? "bg-red-900/40 text-red-400"
-                    : "bg-green-900/30 text-green-400"
+                    ? "bg-critical/20 text-critical"
+                    : "bg-mint/15 text-mint"
                 }`}
               >
                 exit {step.exit_code}
@@ -202,7 +204,7 @@ function StepCard({ step }: { step: AgentStep }) {
             <p className="text-xs text-text-muted">{step.reasoning}</p>
           )}
           {step.command && (
-            <code className="block text-xs font-mono text-text-muted bg-surface-secondary px-2 py-1 rounded truncate">
+            <code className="block text-xs font-mono text-text-muted bg-elevated px-2 py-1 rounded truncate">
               {step.command}
             </code>
           )}
@@ -217,13 +219,13 @@ function StepCard({ step }: { step: AgentStep }) {
           <button
             type="button"
             onClick={() => setScriptOpen((v) => !v)}
-            className="w-full flex items-center justify-between px-4 py-2 text-xs text-text-muted hover:text-foreground hover:bg-surface-secondary transition-colors"
+            className="w-full flex items-center justify-between px-4 py-2 text-xs text-text-muted hover:text-foreground hover:bg-elevated transition-colors"
           >
             <span className="font-mono">script content</span>
             <span>{scriptOpen ? "▲" : "▼"}</span>
           </button>
           {scriptOpen && (
-            <pre className="px-4 pb-3 text-xs font-mono text-foreground bg-surface-secondary overflow-x-auto whitespace-pre-wrap">
+            <pre className="px-4 pb-3 text-xs font-mono text-foreground bg-elevated overflow-x-auto whitespace-pre-wrap">
               {step.script_content}
             </pre>
           )}
@@ -236,13 +238,13 @@ function StepCard({ step }: { step: AgentStep }) {
           <button
             type="button"
             onClick={() => setStdoutOpen((v) => !v)}
-            className="w-full flex items-center justify-between px-4 py-2 text-xs text-text-muted hover:text-foreground hover:bg-surface-secondary transition-colors"
+            className="w-full flex items-center justify-between px-4 py-2 text-xs text-text-muted hover:text-foreground hover:bg-elevated transition-colors"
           >
             <span className="font-mono">stdout</span>
             <span>{stdoutOpen ? "▲" : "▼"}</span>
           </button>
           {stdoutOpen && (
-            <pre className="px-4 pb-3 text-xs font-mono text-foreground bg-surface-secondary overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap">
+            <pre className="px-4 pb-3 text-xs font-mono text-foreground bg-elevated overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap">
               {step.stdout}
             </pre>
           )}
@@ -251,12 +253,12 @@ function StepCard({ step }: { step: AgentStep }) {
 
       {/* Expandable stderr */}
       {hasStderr && (
-        <div className={`border-t ${failed ? "border-border-danger" : "border-border"}`}>
+        <div className={`border-t ${failed ? "border-critical" : "border-border"}`}>
           <button
             type="button"
             onClick={() => setStderrOpen((v) => !v)}
-            className={`w-full flex items-center justify-between px-4 py-2 text-xs transition-colors hover:bg-surface-secondary ${
-              failed ? "text-red-400 hover:text-red-300" : "text-text-muted hover:text-foreground"
+            className={`w-full flex items-center justify-between px-4 py-2 text-xs transition-colors hover:bg-elevated ${
+              failed ? "text-critical hover:text-critical" : "text-text-muted hover:text-foreground"
             }`}
           >
             <span className="font-mono">stderr</span>
@@ -264,8 +266,8 @@ function StepCard({ step }: { step: AgentStep }) {
           </button>
           {stderrOpen && (
             <pre
-              className={`px-4 pb-3 text-xs font-mono overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap bg-surface-secondary ${
-                failed ? "text-red-300" : "text-foreground"
+              className={`px-4 pb-3 text-xs font-mono overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap bg-elevated ${
+                failed ? "text-critical" : "text-foreground"
               }`}
             >
               {step.stderr}
@@ -297,7 +299,7 @@ function AnswerCard({ answer }: { answer: AnswerCandidate }) {
           {answer.corroboration.map((c, i) => (
             <span
               key={i}
-              className="px-1.5 py-0.5 text-xs bg-surface-secondary rounded font-mono text-text-muted"
+              className="px-1.5 py-0.5 text-xs bg-elevated rounded font-mono text-text-muted"
             >
               {c}
             </span>
@@ -409,7 +411,7 @@ function InvestigationControls({
             <Button
               size="sm"
               variant="default"
-              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+              className="bg-mint text-badge-text hover:brightness-110"
               onClick={() => openTagForm("true")}
               disabled={isDisabledTag || tag.isPending}
               title={isDisabledTag ? "Only completed investigations can be tagged" : undefined}
@@ -419,7 +421,7 @@ function InvestigationControls({
             <Button
               size="sm"
               variant="outline"
-              className="border-amber-600 text-amber-500 hover:bg-amber-950/20"
+              className="border-amber-400/60 text-amber-400 hover:bg-amber-400/10"
               onClick={() => openTagForm("false")}
               disabled={isDisabledTag || tag.isPending}
               title={isDisabledTag ? "Only completed investigations can be tagged" : undefined}
@@ -430,12 +432,12 @@ function InvestigationControls({
         )}
       </div>
       {tagForm && (
-        <AilaCard className="w-full max-w-md border-border" techBorder glow><div className="space-y-2">
+        <WindowPanel title="tag finding" tone={tagForm === "true" ? "ok" : "warn"} className="w-full max-w-md"><div className="space-y-2">
           <p className="text-sm font-medium text-foreground">
             Tag as{" "}
             <span
               className={
-                tagForm === "true" ? "text-emerald-400" : "text-amber-400"
+                tagForm === "true" ? "text-mint" : "text-amber-400"
               }
             >
               {tagForm === "true" ? "TRUE" : "FALSE"}
@@ -496,14 +498,14 @@ function InvestigationControls({
               disabled={tag.isPending}
               className={
                 tagForm === "true"
-                  ? "bg-emerald-600 hover:bg-emerald-700 text-white"
-                  : "bg-amber-600 hover:bg-amber-700 text-white"
+                  ? "bg-mint text-badge-text hover:brightness-110"
+                  : "bg-amber-400 text-badge-text hover:brightness-110"
               }
             >
               {tag.isPending ? "Saving…" : "Confirm"}
             </Button>
           </div>
-        </div></AilaCard>
+        </div></WindowPanel>
       )}
     </div>
   );
@@ -533,12 +535,9 @@ function ZombieReapBanner({ projectId, investigationId, reason }: ZombieReapBann
     reap.mutate(investigationId);
   };
   return (
-    <AilaCard className="border-amber-700/50 bg-amber-950/20" techBorder glow>
+    <WindowPanel title="zombie investigation detected" tone="warn" status="investigation ; needs reap">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="space-y-1 flex-1" style={{ minWidth: "16rem" }}>
-          <p className="text-xs font-mono text-amber-300 uppercase tracking-wide">
-            Zombie investigation detected
-          </p>
           <p className="text-sm text-foreground">
             The backing task has settled but this row was never flipped to a
             terminal status. Reaping records an audit-friendly failure so
@@ -560,7 +559,7 @@ function ZombieReapBanner({ projectId, investigationId, reason }: ZombieReapBann
           {reap.isPending ? "Reaping…" : "Reap (force-fail zombie)"}
         </Button>
       </div>
-    </AilaCard>
+    </WindowPanel>
   );
 }
 
@@ -607,7 +606,9 @@ export function InvestigationDetailPage() {
 
   if (!projectId || !investigationId) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Invalid investigation URL.</p></AilaCard>
+      <WindowPanel title="investigation" tone="warn" status="forensics ; invalid investigation url">
+        <p className="text-sm text-critical">Invalid investigation URL.</p>
+      </WindowPanel>
     );
   }
 
@@ -615,7 +616,9 @@ export function InvestigationDetailPage() {
 
   if (isError || !investigation) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load investigation.</p></AilaCard>
+      <WindowPanel title="investigation" tone="warn" status="forensics ; investigation unavailable">
+        <p className="text-sm text-critical">Failed to load investigation.</p>
+      </WindowPanel>
     );
   }
 
@@ -633,18 +636,15 @@ export function InvestigationDetailPage() {
       <button
         type="button"
         onClick={() => navigate(`/forensics/projects/${projectId}`)}
-        className="flex items-center gap-1 text-xs text-text-muted hover:text-foreground transition-colors"
+        className="flex items-center gap-1 font-mono text-xs uppercase tracking-cyber-sm text-text-muted hover:text-foreground transition-colors"
       >
         ← Back to project
       </button>
 
       {/* Previous-attempt banner (enriched rerun) */}
       {investigation.parent_investigation_id && (
-        <AilaCard className="border-blue-700/40 bg-blue-950/20" techBorder glow><div className="flex items-center justify-between gap-3 flex-wrap">
+        <WindowPanel title="enriched rerun" tone="info"><div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="space-y-0.5">
-            <p className="text-xs font-mono text-blue-300">
-              ENRICHED RERUN
-            </p>
             <p className="text-sm text-foreground">
               This investigation carries findings forward from a prior
               attempt. Confirmed observables are pre-loaded into the
@@ -659,11 +659,11 @@ export function InvestigationDetailPage() {
                 `/forensics/projects/${projectId}/investigations/${investigation.parent_investigation_id}`,
               )
             }
-            className="text-xs px-2 py-1 rounded border border-blue-600 text-blue-300 hover:bg-blue-700 hover:text-white transition-colors shrink-0"
+            className="font-mono text-xs uppercase tracking-cyber-sm px-2 py-1 rounded-[3px] border border-lavender/50 text-lavender hover:bg-lavender/15 transition-colors shrink-0"
           >
             View parent ({investigation.parent_investigation_id.slice(0, 8)}) →
           </button>
-        </div></AilaCard>
+        </div></WindowPanel>
       )}
 
       {/* Zombie-reap banner (§49). Shown only when the backend flags the
@@ -679,14 +679,17 @@ export function InvestigationDetailPage() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="space-y-1 flex-1" style={{ minWidth: "16rem" }}>
+          <p className="font-mono text-2xs uppercase tracking-cyber-sm text-muted-foreground">
+            case ; {investigationId.slice(0, 8)}
+          </p>
           <p className="text-sm text-text-muted font-mono">{investigation.question}</p>
-          <div className="flex gap-4 text-xs text-text-muted">
+          <div className="flex gap-4 font-mono text-xs text-text-muted">
             <span>
-              {investigation.attempts_used}
+              <span className="text-foreground">{investigation.attempts_used}</span>
               {investigation.max_attempts ? `/${investigation.max_attempts}` : ""} attempts
             </span>
             {investigation.confidence && (
-              <span>Confidence: {investigation.confidence}</span>
+              <span>confidence ; <span className="text-foreground">{investigation.confidence}</span></span>
             )}
           </div>
           <div>
@@ -697,10 +700,10 @@ export function InvestigationDetailPage() {
                   `/forensics/projects/${projectId}/investigations/${investigationId}/reasoning-replay`,
                 )
               }
-              className="text-xs px-2 py-1 rounded border border-border text-text-muted hover:text-foreground hover:bg-surface-secondary transition-colors"
+              className="inline-flex items-center gap-1 font-mono text-xs uppercase tracking-cyber-sm px-2 py-1 rounded-[3px] border border-border text-text-muted hover:text-foreground hover:bg-elevated hover:border-border-hover transition-colors"
               title="Step through the reasoning-graph snapshots this investigation recorded"
             >
-              Reasoning replay {"\u2192"}
+              Reasoning replay <PixelIcon name="arrow" size={12} />
             </button>
           </div>
         </div>
@@ -716,12 +719,9 @@ export function InvestigationDetailPage() {
 
       {/* Final answer banner */}
       {investigation.final_answer && (
-        <AilaCard className="border-border-accent bg-accent/5" techBorder glow><div className="space-y-1">
-          <p className="text-xs font-medium text-text-muted uppercase tracking-wide">
-            Final Answer
-          </p>
+        <WindowPanel title="final answer" tone="accent" status="investigation ; resolved">
           <p className="text-sm text-foreground">{investigation.final_answer}</p>
-        </div></AilaCard>
+        </WindowPanel>
       )}
 
       {/* Additive live run panel -- surfaces streaming status, attempts
@@ -754,21 +754,22 @@ export function InvestigationDetailPage() {
       <RetrieveFilePanel projectId={projectId} />
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-border">
+      <div className="flex flex-wrap gap-1 border-b border-border">
         {TABS.map((tab) => (
           <button
             key={tab.id}
             type="button"
             onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2 text-sm font-medium rounded-t-md transition-colors ${
+            className={`px-4 py-2 font-mono text-xs uppercase tracking-cyber-sm rounded-t-[4px] transition-colors ${
               activeTab === tab.id
                 ? "bg-surface border border-b-0 border-border text-foreground"
-                : "text-text-muted hover:text-foreground hover:bg-surface-secondary"
+                : "text-text-muted hover:text-foreground hover:bg-elevated"
             }`}
+            style={activeTab === tab.id ? { boxShadow: "inset 0 2px 0 var(--color-accent)" } : undefined}
           >
             {tab.label}
             {tab.count !== undefined && (
-              <span className="ml-1.5 px-1.5 py-0.5 text-xs rounded-full bg-surface-secondary">
+              <span className="ml-1.5 px-1.5 py-0.5 text-3xs rounded-[3px] bg-elevated">
                 {tab.count}
               </span>
             )}
@@ -784,8 +785,8 @@ export function InvestigationDetailPage() {
               <span
                 className={`inline-block w-2 h-2 rounded-full ${
                   feedStatus === "live" ? "bg-amber-400 animate-pulse" :
-                  feedStatus === "connecting" ? "bg-blue-400 animate-pulse" :
-                  "bg-surface-secondary"
+                  feedStatus === "connecting" ? "bg-lavender animate-pulse" :
+                  "bg-elevated"
                 }`}
               />
               <span className="font-mono">{feedStatus}</span>
@@ -808,10 +809,10 @@ export function InvestigationDetailPage() {
                   }
                 }
                 const color =
-                  stage.includes("error") || stage.includes("failed") ? "text-red-400" :
-                  stage.includes("done") || stage === "completed" || stage.includes("detected") ? "text-green-400" :
+                  stage.includes("error") || stage.includes("failed") ? "text-critical" :
+                  stage.includes("done") || stage === "completed" || stage.includes("detected") ? "text-mint" :
                   stage.includes("start") || stage.includes("begin") ? "text-amber-400" :
-                  stage === "artifact_added" ? "text-blue-400" :
+                  stage === "artifact_added" ? "text-lavender" :
                   stage === "heartbeat" ? "text-text-muted" :
                   "text-accent";
                 const lane = typeof payload.lane === "string" ? payload.lane : undefined;
@@ -861,14 +862,14 @@ export function InvestigationDetailPage() {
                       <div className="pl-14 text-3xs text-text-muted break-all">↳ {path}</div>
                     )}
                     {err && (
-                      <div className="pl-14 text-3xs text-red-300/80 break-all whitespace-pre-wrap">✗ {err}</div>
+                      <div className="pl-14 text-3xs text-critical/80 break-all whitespace-pre-wrap">✗ {err}</div>
                     )}
                     {reasoning && (
                       <details className="pl-14 mt-0.5" open>
                         <summary className="cursor-pointer text-3xs text-text-muted/80 hover:text-foreground">
                           reasoning ({reasoning.length} chars)
                         </summary>
-                        <div className="mt-1 text-2xs text-text-muted whitespace-pre-wrap italic bg-black/20 border border-border rounded px-2 py-1">
+                        <div className="mt-1 text-2xs text-text-muted whitespace-pre-wrap italic bg-elevated border border-border rounded px-2 py-1">
                           {reasoning}
                         </div>
                       </details>
@@ -878,7 +879,7 @@ export function InvestigationDetailPage() {
                         <summary className="cursor-pointer text-3xs text-amber-400/80 hover:text-amber-300">
                           shell command ({command.length} chars) -- click to expand
                         </summary>
-                        <pre className="mt-1 text-2xs bg-black/40 border border-amber-900/30 rounded px-2 py-1 whitespace-pre-wrap break-all text-amber-200">
+                        <pre className="mt-1 text-2xs bg-elevated border border-amber-400/30 rounded px-2 py-1 whitespace-pre-wrap break-all text-amber-200">
                           {command}
                         </pre>
                       </details>
@@ -888,14 +889,14 @@ export function InvestigationDetailPage() {
                         <summary className="cursor-pointer text-3xs text-amber-400/80 hover:text-amber-300">
                           python script ({script.length} chars) -- click to expand
                         </summary>
-                        <pre className="mt-1 text-2xs bg-black/40 border border-amber-900/30 rounded px-2 py-1 whitespace-pre-wrap break-all text-amber-200">
+                        <pre className="mt-1 text-2xs bg-elevated border border-amber-400/30 rounded px-2 py-1 whitespace-pre-wrap break-all text-amber-200">
                           {script}
                         </pre>
                       </details>
                     )}
                     {(stdout || stderr) && (
                       <details className="pl-14 mt-1" open>
-                        <summary className="cursor-pointer text-3xs text-green-400/80 hover:text-green-300">
+                        <summary className="cursor-pointer text-3xs text-mint/80 hover:text-mint">
                           output {exitCode !== undefined ? `(exit=${exitCode})` : ""}
                           {stdoutBytes !== undefined && stdout && stdoutBytes > stdout.length
                             ? ` -- showing last ${stdout.length.toLocaleString()} of ${stdoutBytes.toLocaleString()} bytes`
@@ -903,14 +904,14 @@ export function InvestigationDetailPage() {
                         </summary>
                         {stdout && (
                           <pre
-                            className="mt-1 text-2xs bg-black/40 border border-green-900/30 rounded px-2 py-1 whitespace-pre-wrap break-all text-green-200 overflow-auto"
+                            className="mt-1 text-2xs bg-elevated border border-mint/30 rounded px-2 py-1 whitespace-pre-wrap break-all text-mint overflow-auto"
                             style={{ maxHeight: "32rem" }}
                           >
                             {stdout}
                           </pre>
                         )}
                         {stderr && (
-                          <pre className="mt-1 text-2xs bg-black/40 border border-red-900/30 rounded px-2 py-1 whitespace-pre-wrap break-all text-red-200 max-h-80 overflow-auto">
+                          <pre className="mt-1 text-2xs bg-elevated border border-critical/30 rounded px-2 py-1 whitespace-pre-wrap break-all text-critical max-h-80 overflow-auto">
                             {stderr}
                           </pre>
                         )}

@@ -336,7 +336,7 @@ function NamespaceGroup({
   );
 
   return (
-    <AilaCard variant="elevated" padding="md" techBorder glow><div className="flex items-center gap-2 mb-3">
+    <AilaCard variant="elevated" padding="md"><div className="flex items-center gap-2 mb-3">
       <h2 className="font-mono text-sm font-semibold text-text capitalize">
         {namespace}
       </h2>
@@ -421,7 +421,7 @@ export function PlatformConfigPage() {
 
       {/* Metric cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Total Entries
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
@@ -431,7 +431,7 @@ export function PlatformConfigPage() {
           All namespaces
         </p></AilaCard>
 
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Namespaces
         </p>
         <div className="mt-1 min-h-[2rem]">
@@ -455,7 +455,7 @@ export function PlatformConfigPage() {
 
       {/* Loading skeleton */}
       {configQuery.isLoading && (
-        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={6} /></AilaCard>
+        <AilaCard variant="default" padding="md"><LoadingSkeletonGroup lines={6} /></AilaCard>
       )}
 
       {/* Empty state */}

@@ -151,13 +151,46 @@ export function AppHeader() {
   }, []);
 
   return (
-    <header className="flex h-14 min-w-0 w-full shrink-0 items-center justify-between gap-3 border-b border-border bg-background px-4 overflow-hidden">
-      {/* Left side: hamburger toggle + separator + breadcrumbs */}
-      <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
-        <SidebarTrigger className="-ml-1" />
-        <Separator orientation="vertical" className="mx-1 h-4" />
+    <header
+      className="flex w-full min-w-0 shrink-0 items-center gap-2 px-2"
+      style={{
+        height: "var(--menubar-h)",
+        backgroundColor: "var(--color-chrome)",
+        borderBottom: "2px solid var(--color-border-bright)",
+      }}
+    >
+      {/* Left side: system mark + AILA wordmark + sidebar toggle + breadcrumbs */}
+      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+        {/* Glowing system light + AILA wordmark (OS-frame brand) */}
+        <div
+          className="flex shrink-0 items-center gap-2 self-stretch pl-1 pr-3"
+          style={{ borderRight: "1px solid var(--color-border)" }}
+        >
+          <span
+            aria-hidden
+            style={{
+              width: 9,
+              height: 9,
+              flex: "0 0 auto",
+              background: "var(--color-accent)",
+              boxShadow: "0 0 8px var(--color-accent)",
+            }}
+          />
+          <span
+            className="select-none font-mono font-bold"
+            style={{ fontSize: "11px", letterSpacing: "0.2em", color: "var(--color-text)" }}
+          >
+            AILA
+          </span>
+        </div>
+
+        <SidebarTrigger className="size-7 shrink-0" />
+        <Separator orientation="vertical" className="h-4 shrink-0" />
         <Breadcrumb className="min-w-0 flex-1 overflow-hidden">
-          <BreadcrumbList className="flex-nowrap overflow-hidden">
+          <BreadcrumbList
+            className="flex-nowrap overflow-hidden font-mono uppercase"
+            style={{ fontSize: "10.5px", letterSpacing: "0.12em" }}
+          >
             {crumbs.map((crumb, index) => (
               <BreadcrumbItem key={crumb.path} className="min-w-0 shrink truncate">
                 {index > 0 && <BreadcrumbSeparator className="shrink-0" />}
@@ -179,12 +212,12 @@ export function AppHeader() {
         <Button
           variant="outline"
           size="sm"
-          className="touch-target hidden sm:flex items-center gap-2 text-muted-foreground h-9 min-h-[44px] sm:min-h-0 sm:h-8 px-3"
+          className="touch-target hidden sm:flex items-center gap-2 text-muted-foreground h-9 min-h-[44px] sm:min-h-0 sm:h-7 px-2.5 font-mono uppercase"
           onClick={openCommandPalette}
           aria-label="Open command palette"
         >
-          <MagnifyingGlass size={14} />
-          <span className="text-sm">Search...</span>
+          <MagnifyingGlass size={13} />
+          <span style={{ fontSize: "10.5px", letterSpacing: "0.12em" }}>Search</span>
           <kbd className="pointer-events-none ml-1 hidden select-none rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-xs opacity-70 sm:inline-flex">
             Ctrl K
           </kbd>

@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 
-import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 import { ReadinessStreamPanel } from "../components/ReadinessStreamPanel";
 import { useCreateProject } from "../mutations";
@@ -65,46 +65,34 @@ export function NewProjectPage() {
       <div className="space-y-1">
         <div
           aria-hidden="true"
-          className="h-px w-24 rounded-full"
-          style={{
-            background:
-              "linear-gradient(90deg, transparent 0%, #ff71ce 20%, #b967ff 55%, #05ffa1 100%)",
-          }}
+          className="h-px w-24"
+          style={{ background: "linear-gradient(90deg, var(--color-accent) 0%, transparent 100%)" }}
         />
         <p
-          className="text-2xs uppercase text-text-muted"
-          style={{ fontFamily: "var(--font-mono)", letterSpacing: "0.32em" }}
+          className="font-mono text-2xs uppercase text-muted-foreground"
+          style={{ letterSpacing: "0.18em" }}
         >
-          // forensics / new case init
+          forensics ; new case init
         </p>
         <h2
-          className="text-2xl leading-tight"
-          style={{
-            fontFamily: "var(--font-display)",
-            fontWeight: 700,
-            letterSpacing: "-0.01em",
-            background:
-              "linear-gradient(90deg, var(--color-foreground, #f5f5ff) 0%, #ff71ce 70%, #b967ff 100%)",
-            WebkitBackgroundClip: "text",
-            WebkitTextFillColor: "transparent",
-            backgroundClip: "text",
-          }}
+          className="text-2xl leading-tight text-foreground"
+          style={{ fontFamily: "var(--font-display)", fontWeight: 300, letterSpacing: "-0.02em" }}
         >
-          spin up a forensic scene
+          Spin up a forensic scene
         </h2>
         <p className="text-sm text-text-muted">
-          pick an analyzer, point at evidence, watch tools come online.
+          Pick an analyzer, point at evidence, watch tools come online.
         </p>
       </div>
 
-      <div className="flex gap-2 text-sm">
+      <div className="flex gap-2">
         {(["select", "readiness", "confirm"] as const).map((s, i) => (
           <div
             key={s}
-            className={`px-3 py-1 rounded-full ${
+            className={`px-3 py-1 font-mono text-xs uppercase tracking-cyber-sm rounded-[3px] border ${
               step === s
-                ? "bg-accent text-white"
-                : "bg-surface-secondary text-text-muted"
+                ? "bg-accent text-badge-text border-accent"
+                : "bg-elevated text-text-muted border-border"
             }`}
           >
             {i + 1}. {s === "select" ? "Configure" : s === "readiness" ? "Readiness" : "Confirm"}
@@ -113,7 +101,7 @@ export function NewProjectPage() {
       </div>
 
       {step === "select" && (
-        <AilaCard  techBorder glow><div className="space-y-4">
+        <WindowPanel title="configure case"><div className="space-y-4">
           <div>
             <label htmlFor="nproj-name" className="block text-sm font-medium text-foreground mb-1">Project Name</label>
             <input
@@ -123,10 +111,10 @@ export function NewProjectPage() {
               onChange={(e) => setName(e.target.value)}
               onBlur={() => setTouched((t) => ({ ...t, name: true }))}
               placeholder="Project name"
-              className={`w-full px-3 py-2 text-sm rounded-md border bg-surface text-foreground ${touched.name && errors.name ? "border-border-danger" : "border-border"}`}
+              className={`w-full px-3 py-2 text-sm rounded-md border bg-surface text-foreground ${touched.name && errors.name ? "border-critical" : "border-border"}`}
             />
             {touched.name && errors.name && (
-              <p className="mt-1 text-xs text-text-danger">{errors.name}</p>
+              <p className="mt-1 text-xs text-critical">{errors.name}</p>
             )}
           </div>
         
@@ -152,7 +140,7 @@ export function NewProjectPage() {
                 value={systemId ?? ""}
                 onChange={(e) => setSystemId(e.target.value ? Number(e.target.value) : null)}
                 onBlur={() => setTouched((t) => ({ ...t, systemId: true }))}
-                className={`w-full px-3 py-2 text-sm rounded-md border bg-surface text-foreground ${touched.systemId && errors.systemId ? "border-border-danger" : "border-border"}`}
+                className={`w-full px-3 py-2 text-sm rounded-md border bg-surface text-foreground ${touched.systemId && errors.systemId ? "border-critical" : "border-border"}`}
               >
                 <option value="">Select a system...</option>
                 {(systems ?? []).map((sys: RegisteredSystem) => (
@@ -163,7 +151,7 @@ export function NewProjectPage() {
               </select>
             )}
             {touched.systemId && errors.systemId && (
-              <p className="mt-1 text-xs text-text-danger">{errors.systemId}</p>
+              <p className="mt-1 text-xs text-critical">{errors.systemId}</p>
             )}
           </div>
         
@@ -181,7 +169,7 @@ export function NewProjectPage() {
                   className={`flex-1 px-4 py-3 text-sm font-medium rounded-md border transition-colors text-left ${
                     projectKind === k.id
                       ? "border-accent bg-accent/10 text-accent"
-                      : "border-border bg-surface text-text-muted hover:bg-surface-secondary"
+                      : "border-border bg-surface text-text-muted hover:bg-elevated"
                   }`}
                 >
                   <span className="block text-sm font-semibold">{k.label}</span>
@@ -214,10 +202,9 @@ export function NewProjectPage() {
                   className={`flex-1 px-4 py-3 text-sm font-medium rounded-md border transition-colors ${
                     analyzerOs === os
                       ? "border-accent bg-accent/10 text-accent"
-                      : "border-border bg-surface text-text-muted hover:bg-surface-secondary"
+                      : "border-border bg-surface text-text-muted hover:bg-elevated"
                   }`}
                 >
-                  <span className="block text-base mb-0.5">{os === "linux" ? "🐧" : "🪟"}</span>
                   {os === "linux" ? "Linux" : "Windows"}
                 </button>
               ))}
@@ -238,10 +225,10 @@ export function NewProjectPage() {
               onChange={(e) => setEvidenceDir(e.target.value)}
               onBlur={() => setTouched((t) => ({ ...t, evidenceDir: true }))}
               placeholder="Absolute path on the analyzer"
-              className={`w-full px-3 py-2 text-sm rounded-md border bg-surface text-foreground ${touched.evidenceDir && errors.evidenceDir ? "border-border-danger" : "border-border"}`}
+              className={`w-full px-3 py-2 text-sm rounded-md border bg-surface text-foreground ${touched.evidenceDir && errors.evidenceDir ? "border-critical" : "border-border"}`}
             />
             {touched.evidenceDir && errors.evidenceDir && (
-              <p className="mt-1 text-xs text-text-danger">{errors.evidenceDir}</p>
+              <p className="mt-1 text-xs text-critical">{errors.evidenceDir}</p>
             )}
           </div>
         
@@ -249,7 +236,7 @@ export function NewProjectPage() {
             <button
               type="button"
               onClick={() => navigate("/forensics")}
-              className="px-4 py-2 text-sm rounded-md border border-border text-foreground hover:bg-surface-secondary"
+              className="px-4 py-2 font-mono text-xs uppercase tracking-cyber-sm rounded-[3px] border border-border text-foreground hover:bg-elevated hover:border-border-hover transition-colors"
             >
               Cancel
             </button>
@@ -257,18 +244,19 @@ export function NewProjectPage() {
               type="button"
               onClick={handleCreateAndCheck}
               disabled={createProject.isPending}
-              className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-2 font-mono text-xs uppercase tracking-cyber-sm rounded-[3px] bg-accent text-badge-text hover:brightness-110 transition-[filter] disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ boxShadow: "var(--bevel-key)" }}
             >
               {createProject.isPending ? "Creating..." : "Create & Check Readiness"}
             </button>
           </div>
         
           {createProject.isError && (
-            <p className="text-sm text-text-danger">
+            <p className="text-sm text-critical">
               Failed to create project. Please check your inputs.
             </p>
           )}
-        </div></AilaCard>
+        </div></WindowPanel>
       )}
 
       {step === "readiness" && projectId && (
@@ -278,14 +266,15 @@ export function NewProjectPage() {
             <button
               type="button"
               onClick={() => navigate(`/forensics/projects/${projectId}`)}
-              className="px-4 py-2 text-sm rounded-md border border-border text-foreground hover:bg-surface-secondary"
+              className="px-4 py-2 font-mono text-xs uppercase tracking-cyber-sm rounded-[3px] border border-border text-foreground hover:bg-elevated hover:border-border-hover transition-colors"
             >
               Skip -- Go to Dashboard
             </button>
             <button
               type="button"
               onClick={() => setStep("confirm")}
-              className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90"
+              className="px-4 py-2 font-mono text-xs uppercase tracking-cyber-sm rounded-[3px] bg-accent text-badge-text hover:brightness-110 transition-[filter]"
+              style={{ boxShadow: "var(--bevel-key)" }}
             >
               Continue →
             </button>
@@ -294,21 +283,20 @@ export function NewProjectPage() {
       )}
 
       {step === "confirm" && projectId && (
-        <AilaCard  techBorder glow><div className="space-y-4">
-          <h2 className="text-lg font-semibold font-mono text-foreground">Project Created</h2>
-          <dl className="grid grid-cols-2 gap-2 text-sm">
-            <dt className="text-text-muted">Name</dt>
+        <WindowPanel title="project created" tone="ok" status="forensics ; case initialised"><div className="space-y-4">
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+            <dt className="font-mono text-2xs uppercase tracking-cyber-sm text-muted-foreground self-center">Name</dt>
             <dd className="text-foreground">{name}</dd>
-            <dt className="text-text-muted">Machine</dt>
+            <dt className="font-mono text-2xs uppercase tracking-cyber-sm text-muted-foreground self-center">Machine</dt>
             <dd className="text-foreground">{selectedSystem?.name ?? "--"}</dd>
-            <dt className="text-text-muted">OS</dt>
-            <dd className="text-foreground capitalize">{analyzerOs === "windows" ? "🪟 Windows" : "🐧 Linux"}</dd>
-            <dt className="text-text-muted">Kind</dt>
+            <dt className="font-mono text-2xs uppercase tracking-cyber-sm text-muted-foreground self-center">OS</dt>
+            <dd className="text-foreground capitalize">{analyzerOs === "windows" ? "Windows" : "Linux"}</dd>
+            <dt className="font-mono text-2xs uppercase tracking-cyber-sm text-muted-foreground self-center">Kind</dt>
             <dd className="text-foreground">{projectKind === "raw_directory" ? "Raw Directory (intake only)" : "Disk Evidence"}</dd>
-            <dt className="text-text-muted">Evidence Dir</dt>
+            <dt className="font-mono text-2xs uppercase tracking-cyber-sm text-muted-foreground self-center">Evidence Dir</dt>
             <dd className="text-foreground font-mono text-xs">{evidenceDir}</dd>
-            <dt className="text-text-muted">Readiness</dt>
-            <dd className="text-foreground text-xs text-text-muted">
+            <dt className="font-mono text-2xs uppercase tracking-cyber-sm text-muted-foreground self-center">Readiness</dt>
+            <dd className="text-xs text-text-muted">
               Checked -- see dashboard Readiness tab for status
             </dd>
           </dl>
@@ -316,19 +304,20 @@ export function NewProjectPage() {
             <button
               type="button"
               onClick={() => navigate(`/forensics/projects/${projectId}/details`)}
-              className="px-4 py-2 text-sm rounded-md border border-border text-foreground hover:bg-surface-secondary"
+              className="px-4 py-2 font-mono text-xs uppercase tracking-cyber-sm rounded-[3px] border border-border text-foreground hover:bg-elevated hover:border-border-hover transition-colors"
             >
               View Details
             </button>
             <button
               type="button"
               onClick={() => navigate(`/forensics/projects/${projectId}`)}
-              className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90"
+              className="px-4 py-2 font-mono text-xs uppercase tracking-cyber-sm rounded-[3px] bg-accent text-badge-text hover:brightness-110 transition-[filter]"
+              style={{ boxShadow: "var(--bevel-key)" }}
             >
               Go to Dashboard
             </button>
           </div>
-        </div></AilaCard>
+        </div></WindowPanel>
       )}
     </div>
   );

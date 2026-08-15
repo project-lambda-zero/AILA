@@ -5,6 +5,7 @@ import { Trash } from "@phosphor-icons/react/dist/csr/Trash";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { Button } from "@/components/ui/button";
@@ -212,7 +213,7 @@ export function TagVocabularyPage() {
 
       {/* Metric cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Total Keys
         </p>
         <div className="mt-1 min-h-[2rem]">
@@ -225,7 +226,7 @@ export function TagVocabularyPage() {
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Defaults + custom
         </p></AilaCard>
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Custom Keys
         </p>
         <div className="mt-1 min-h-[2rem]">
@@ -238,7 +239,7 @@ export function TagVocabularyPage() {
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Added by admins
         </p></AilaCard>
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Keys In Use
         </p>
         <div className="mt-1 min-h-[2rem]">
@@ -254,9 +255,7 @@ export function TagVocabularyPage() {
       </div>
 
       {/* Add tag key form */}
-      <AilaCard variant="elevated" padding="md" techBorder glow><h2 className="font-mono text-sm font-semibold text-text mb-3">
-        Add Tag Key
-      </h2>
+      <WindowPanel title="Add Tag Key" tone="accent">
       <form
         onSubmit={handleCreate}
         className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,200px)_1fr_auto] sm:items-end"
@@ -309,7 +308,7 @@ export function TagVocabularyPage() {
         <div className="mt-3 rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
           {createError}
         </div>
-      )}</AilaCard>
+      )}</WindowPanel>
 
       {/* Error banner */}
       {vocabQuery.isError && (
@@ -320,7 +319,7 @@ export function TagVocabularyPage() {
 
       {/* Loading skeleton */}
       {vocabQuery.isLoading && (
-        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={5} /></AilaCard>
+        <WindowPanel title="Tag Vocabulary" status="LOADING" tone="muted"><LoadingSkeletonGroup lines={5} /></WindowPanel>
       )}
 
       {/* Empty state */}
@@ -334,8 +333,8 @@ export function TagVocabularyPage() {
 
       {/* Vocabulary table */}
       {!vocabQuery.isLoading && vocabulary.length > 0 && (
-        <AilaCard variant="default" padding="none" techBorder glow><div className="overflow-x-auto">
-          <table aria-label="Tag vocabulary entries" className="w-full">
+        <WindowPanel title="Tag Vocabulary" status={`${vocabulary.length} KEY${vocabulary.length === 1 ? "" : "S"}`} tone="muted" flush><div className="overflow-x-auto">
+          <table aria-label="Tag vocabulary entries" className="w-full border-collapse [&_th]:border [&_th]:border-border [&_td]:border [&_td]:border-border">
             <thead className="border-b border-border bg-elevated">
               <tr>
                 <th className="px-4 py-2 text-left font-mono text-xs uppercase tracking-wider text-text-muted">
@@ -427,7 +426,7 @@ export function TagVocabularyPage() {
             systems. Counts may understate global usage when the fleet exceeds
             the page cap.
           </p>
-        )}</AilaCard>
+        )}</WindowPanel>
       )}
 
       <DeleteVocabDialog

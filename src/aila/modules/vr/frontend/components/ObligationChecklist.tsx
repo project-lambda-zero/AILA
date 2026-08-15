@@ -43,8 +43,8 @@ const STATE_ICON: Record<ObligationState, string> = {
 };
 
 const STATE_TEXT_CLASS: Record<ObligationState, string> = {
-  met: "text-green-500",
-  unmet: "text-red-500",
+  met: "text-mint",
+  unmet: "text-critical",
   waived: "text-text-muted italic",
 };
 
@@ -99,7 +99,7 @@ export function ObligationChecklist({
         {sorted.map((o) => (
           <li
             key={o.id}
-            className="flex items-start gap-2 border border-border-default rounded px-2 py-1.5"
+            className="flex items-start gap-2 border border-border rounded px-2 py-1.5"
             title={o.description ?? undefined}
           >
             <span

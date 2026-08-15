@@ -1,7 +1,7 @@
 import { useState } from "react";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -75,7 +75,7 @@ export function SystemTags({ systemId }: SystemTagsProps) {
 
   if (tagsQuery.isLoading) {
     return (
-      <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={4} /></AilaCard>
+      <WindowPanel title="Tags" status="LOADING" tone="muted"><LoadingSkeletonGroup lines={4} /></WindowPanel>
     );
   }
 
@@ -90,9 +90,7 @@ export function SystemTags({ systemId }: SystemTagsProps) {
   return (
     <div className="flex flex-col gap-4">
       {/* Current tags */}
-      <AilaCard variant="default" padding="md" techBorder glow><h3 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">
-        Assigned Tags
-      </h3>
+      <WindowPanel title="Assigned Tags" tone="muted">
       {tags.length === 0 ? (
         <p className="font-mono text-sm text-text-muted">
           No tags assigned. {canOperate ? "Add a tag below to organize this system." : ""}
@@ -118,13 +116,11 @@ export function SystemTags({ systemId }: SystemTagsProps) {
             </span>
           ))}
         </div>
-      )}</AilaCard>
+      )}</WindowPanel>
 
       {/* Add tag form -- operator+ only */}
       {canOperate && (
-        <AilaCard variant="elevated" padding="md" techBorder glow><h3 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">
-          Add Tag
-        </h3>
+        <WindowPanel title="Add Tag" tone="accent">
         <form onSubmit={handleAdd} className="flex flex-col gap-3">
           <div className="flex flex-wrap gap-2 items-end">
             <div className="flex flex-col gap-1 min-w-[160px]">
@@ -173,7 +169,7 @@ export function SystemTags({ systemId }: SystemTagsProps) {
               {formError}
             </div>
           )}
-        </form></AilaCard>
+        </form></WindowPanel>
       )}
     </div>
   );

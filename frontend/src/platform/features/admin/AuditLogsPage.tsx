@@ -321,7 +321,7 @@ function FilterForm({
   isFetching,
 }: FilterFormProps) {
   return (
-    <AilaCard variant="elevated" padding="md" techBorder glow><h2 className="font-mono text-sm font-semibold text-text mb-3">
+    <AilaCard variant="elevated" padding="md"><h2 className="font-mono text-sm font-semibold text-text mb-3">
       Filters
     </h2>
     <form
@@ -566,7 +566,7 @@ function AdvancedFilterBuilder({
   }
 
   return (
-    <AilaCard variant="elevated" padding="md" techBorder glow>
+    <AilaCard variant="elevated" padding="md">
       <div className="flex items-center justify-between mb-3">
         <h2 className="font-mono text-sm font-semibold text-text">
           Advanced Filter Builder
@@ -962,7 +962,7 @@ export function AuditLogsPage() {
 
       {/* Metric cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Total Events
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
@@ -972,7 +972,7 @@ export function AuditLogsPage() {
           Matching active filters
         </p></AilaCard>
 
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Loaded Events
         </p>
         <p className="font-mono text-2xl font-semibold text-text mt-1">
@@ -982,7 +982,7 @@ export function AuditLogsPage() {
           This page (max {SERVER_PAGE_SIZE})
         </p></AilaCard>
 
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Date Range
         </p>
         <p className="font-mono text-sm font-semibold text-text mt-1 truncate" title={dateRangeLabel}>
@@ -1003,7 +1003,7 @@ export function AuditLogsPage() {
 
       {/* Loading skeleton */}
       {auditQuery.isLoading && (
-        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={8} /></AilaCard>
+        <AilaCard variant="default" padding="md"><LoadingSkeletonGroup lines={8} /></AilaCard>
       )}
 
       {/* Empty state */}
@@ -1058,7 +1058,7 @@ export function AuditLogsPage() {
           </p>
 
           {selectedEvent && (
-            <AilaCard variant="elevated" padding="md" className="mt-4 relative" techBorder glow><div className="flex items-start justify-between gap-2 mb-3">
+            <AilaCard variant="elevated" padding="md" className="mt-4 relative"><div className="flex items-start justify-between gap-2 mb-3">
               <div>
                 <h3 className="font-mono text-sm font-semibold text-text">
                   {selectedEvent.stage} · {selectedEvent.action}

@@ -153,7 +153,7 @@ function PinnedChip({ view, canUnpin, onApply, onUnpin, testId }: PinnedChipProp
   const sharedLabel = view.shared_with_team ? " (team)" : "";
   return (
     <span
-      className="group flex items-center gap-1 pl-2 pr-1 py-0.5 text-xs rounded-md border border-border bg-surface-elevated hover:border-accent motion-safe:transition-colors"
+      className="group flex items-center gap-1 pl-2 pr-1 py-0.5 text-xs rounded-md border border-border bg-elevated hover:border-accent motion-safe:transition-colors"
       data-testid={testId}
     >
       <button
@@ -282,7 +282,7 @@ function SaveViewDialog({ onClose, onSubmit, testIdPrefix }: SaveViewDialogProps
           </label>
         </div>
 
-        {error && <p className="text-xs text-text-danger" role="alert">{error}</p>}
+        {error && <p className="text-xs text-critical" role="alert">{error}</p>}
 
         <div className="flex justify-end gap-2">
           <button
@@ -296,7 +296,7 @@ function SaveViewDialog({ onClose, onSubmit, testIdPrefix }: SaveViewDialogProps
             type="submit"
             disabled={!name.trim() || submitting}
             data-testid={`${testIdPrefix}-save-submit`}
-            className="px-3 py-1.5 text-xs rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none motion-safe:transition-colors"
+            className="px-3 py-1.5 text-xs rounded-md bg-accent text-badge-text hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none motion-safe:transition-colors"
           >
             {submitting ? "Saving…" : "Save view"}
           </button>
@@ -371,7 +371,7 @@ function SavedViewsDialog({
               return (
                 <li
                   key={view.id}
-                  className="group flex items-center justify-between gap-2 px-2 py-1.5 rounded-md hover:bg-surface-elevated focus-within:bg-surface-elevated motion-safe:transition-colors"
+                  className="group flex items-center justify-between gap-2 px-2 py-1.5 rounded-md hover:bg-elevated focus-within:bg-elevated motion-safe:transition-colors"
                   data-testid={`${testIdPrefix}-row-${view.id}`}
                 >
                   <button
@@ -419,7 +419,7 @@ function SavedViewsDialog({
                       disabled={!owned}
                       aria-label={`Delete ${view.name}`}
                       title={owned ? "Delete" : "Only the owner can delete"}
-                      className="p-1 rounded text-text-muted hover:text-text-danger focus:outline-none focus-visible:text-text-danger disabled:opacity-30 disabled:cursor-not-allowed"
+                      className="p-1 rounded text-text-muted hover:text-critical focus:outline-none focus-visible:text-critical disabled:opacity-30 disabled:cursor-not-allowed"
                     >
                       <Trash size={12} />
                     </button>
@@ -474,7 +474,7 @@ function ModalShell({ onClose, labelledBy, width = 360, children }: ModalShellPr
         aria-labelledby={labelledBy}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}
-        className="bg-surface-elevated border border-border rounded-lg p-5 mx-4"
+        className="bg-elevated border border-border rounded-lg p-5 mx-4"
         style={{ width, maxWidth: "calc(100vw - 2rem)" }}
       >
         {children}

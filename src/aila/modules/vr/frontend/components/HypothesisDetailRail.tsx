@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
@@ -179,18 +179,11 @@ export function HypothesisDetailRail({
   }, [items, isRowExpanded]);
 
   return (
-    <AilaCard techBorder glow>
-      <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-        <button
-          type="button"
-          onClick={toggleRail}
-          className="flex items-center gap-1.5 text-sm font-semibold text-foreground hover:text-text-accent transition-colors"
-          aria-expanded={state.railOpen}
-          aria-controls={`hypotheses-list-${investigationId}`}
-          title={state.railOpen ? "Hide hypotheses list" : "Show hypotheses list"}
-        >
-          <Chevron open={state.railOpen} />
-          <span>Hypotheses</span>
+    <WindowPanel
+      title="hypotheses"
+      tone={counts.live > 0 ? "accent" : "muted"}
+      actions={
+        <div className="flex items-center gap-2">
           <span className="text-3xs text-text-muted font-mono font-normal tabular-nums">
             ({items.length}
             {items.length > 0 ? (
@@ -208,18 +201,30 @@ export function HypothesisDetailRail({
             ) : null}
             )
           </span>
-        </button>
-        {state.railOpen && items.length > 1 ? (
+          {state.railOpen && items.length > 1 ? (
+            <button
+              type="button"
+              onClick={allExpanded ? collapseAll : expandAll}
+              className="text-3xs text-text-muted hover:text-accent font-mono transition-colors"
+              title={allExpanded ? "Collapse every hypothesis row" : "Expand every hypothesis row"}
+            >
+              {allExpanded ? "collapse all" : "expand all"}
+            </button>
+          ) : null}
           <button
             type="button"
-            onClick={allExpanded ? collapseAll : expandAll}
-            className="text-3xs text-text-muted hover:text-text-accent font-mono transition-colors"
-            title={allExpanded ? "Collapse every hypothesis row" : "Expand every hypothesis row"}
+            onClick={toggleRail}
+            className="flex items-center text-text-muted hover:text-accent transition-colors"
+            aria-expanded={state.railOpen}
+            aria-controls={`hypotheses-list-${investigationId}`}
+            title={state.railOpen ? "Hide hypotheses list" : "Show hypotheses list"}
           >
-            {allExpanded ? "collapse all" : "expand all"}
+            <Chevron open={state.railOpen} />
           </button>
-        ) : null}
-      </div>
+        </div>
+      }
+    >
+      <h2 className="sr-only">Hypotheses</h2>
       {state.railOpen ? (
         isLoading ? (
           // Content-shaped skeleton mirrors the hypothesis-row layout so
@@ -232,7 +237,7 @@ export function HypothesisDetailRail({
             {[0, 1, 2].map((i) => (
               <li
                 key={i}
-                className="rounded border border-border-default/60 px-2 py-2 space-y-1.5"
+                className="rounded border border-border/60 px-2 py-2 space-y-1.5"
               >
                 <LoadingSkeleton size="sm" width="half" />
                 <LoadingSkeleton size="sm" width="full" />
@@ -260,7 +265,7 @@ export function HypothesisDetailRail({
           </ul>
         )
       ) : null}
-    </AilaCard>
+    </WindowPanel>
   );
 }
 
@@ -307,7 +312,7 @@ function HypothesisRow({
 
   return (
     <li
-      className="border border-border-default rounded bg-surface/40 break-words"
+      className="border border-border rounded bg-surface/40 break-words"
       style={{ borderLeftColor: stateAccent, borderLeftWidth: 3 }}
     >
       <button
@@ -345,7 +350,7 @@ function HypothesisRow({
             </p>
           ) : null}
           {h.rejection_reason ? (
-            <p className="text-xs text-text-danger mt-1">
+            <p className="text-xs text-critical mt-1">
               <span className="font-mono">rejected:</span> {h.rejection_reason}
             </p>
           ) : null}

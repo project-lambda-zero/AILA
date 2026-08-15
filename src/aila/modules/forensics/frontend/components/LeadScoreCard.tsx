@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 import { useProjectLeads } from "../queries";
 import type { PromotedLead } from "../types";
@@ -120,7 +120,7 @@ function LeadRow({ lead }: { lead: PromotedLead }) {
             {parsed.meta.map((m, i) => (
               <span
                 key={i}
-                className="px-1.5 py-0.5 text-3xs rounded bg-surface-secondary text-text-muted font-mono"
+                className="px-1.5 py-0.5 text-3xs rounded bg-elevated text-text-muted font-mono"
               >
                 {m}
               </span>
@@ -141,7 +141,7 @@ function LeadRow({ lead }: { lead: PromotedLead }) {
       </div>
 
       {open && expandable && (
-        <div className="border-t border-border bg-black/10 px-3 py-2.5 space-y-2">
+        <div className="border-t border-border bg-elevated px-3 py-2.5 space-y-2">
           {parsed.question && (
             <div>
               <div className="text-3xs font-mono text-text-muted uppercase tracking-wide mb-0.5">
@@ -174,7 +174,7 @@ function LeadRow({ lead }: { lead: PromotedLead }) {
                     className="font-mono text-2xs leading-relaxed border-l-2 border-border-muted pl-2"
                   >
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="px-1.5 py-0.5 rounded bg-surface-secondary text-foreground text-3xs shrink-0">
+                      <span className="px-1.5 py-0.5 rounded bg-elevated text-foreground text-3xs shrink-0">
                         {e.keyword}
                       </span>
                       <span className="text-text-muted">{e.path}</span>
@@ -210,7 +210,7 @@ function LeadRow({ lead }: { lead: PromotedLead }) {
                 {(lead.related_artifact_ids ?? []).slice(0, 8).map((id) => (
                   <span
                     key={id}
-                    className="px-1.5 py-0.5 text-3xs rounded bg-surface-secondary text-text-muted font-mono"
+                    className="px-1.5 py-0.5 text-3xs rounded bg-elevated text-text-muted font-mono"
                     title={id}
                   >
                     {id.slice(0, 8)}
@@ -253,10 +253,10 @@ export function LeadScoreCard({ projectId }: { projectId: string }) {
         </span>
       </div>
       {items.length === 0 ? (
-        <AilaCard  techBorder glow><p className="text-sm text-text-muted text-center py-4">
+        <WindowPanel tone="muted" status="forensics ; no leads promoted"><p className="text-sm text-text-muted text-center py-4">
           No leads promoted yet. Leads are the investigator&apos;s own
           conclusions -- run an investigation turn to populate this panel.
-        </p></AilaCard>
+        </p></WindowPanel>
       ) : (
         <>
           <div className="space-y-1.5">

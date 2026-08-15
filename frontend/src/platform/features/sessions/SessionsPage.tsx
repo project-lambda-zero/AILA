@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 // ---------------------------------------------------------------------------
 // User-agent parsing
@@ -113,7 +114,7 @@ function SessionRow({ session, isCurrent, onRevoke, isRevoking }: SessionRowProp
       {/* Status */}
       <td className="px-4 py-3">
         {isCurrent ? (
-          <Badge className="bg-amber-500/20 text-amber-400 border border-amber-500/40 font-mono text-xs">
+          <Badge className="bg-accent/15 text-accent border border-accent/40 font-mono text-xs">
             Current Session
           </Badge>
         ) : (
@@ -194,13 +195,15 @@ export function SessionsPage() {
 
       {/* Loading state -- content-shaped skeleton mirrors the sessions table rows */}
       {sessionsQuery.isLoading && (
-        <div
-          className="rounded-lg border border-border bg-surface p-6"
+        <WindowPanel
+          title="Active Sessions"
+          status="LOADING"
+          tone="muted"
           aria-label="Loading sessions"
           aria-busy="true"
         >
           <LoadingSkeletonGroup lines={4} />
-        </div>
+        </WindowPanel>
       )}
 
       {/* Revoke error */}
@@ -213,7 +216,12 @@ export function SessionsPage() {
 
       {/* Sessions table */}
       {!sessionsQuery.isLoading && (
-        <div className="rounded-lg border border-border bg-surface overflow-hidden">
+        <WindowPanel
+          title="Active Sessions"
+          status={sessions.length > 0 ? `${sessions.length} ACTIVE` : undefined}
+          tone="muted"
+          flush
+        >
           {sessions.length === 0 ? (
             <EmptyState
               icon={<Monitor className="h-10 w-10" />}
@@ -221,22 +229,22 @@ export function SessionsPage() {
               description="Your account has no active browser sessions. Sign in from another device to see it listed here."
             />
           ) : (
-            <table aria-label="Active sessions" className="w-full text-left">
+            <table aria-label="Active sessions" className="w-full text-left border-collapse [&_th]:border [&_th]:border-border [&_td]:border [&_td]:border-border">
               <thead>
-                <tr className="border-b border-border bg-surface-raised">
-                  <th className="px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">
+                <tr className="border-b border-border bg-elevated">
+                  <th className="px-4 py-3 font-mono text-xs font-medium text-text-muted uppercase tracking-wider">
                     Device / Browser
                   </th>
-                  <th className="px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="px-4 py-3 font-mono text-xs font-medium text-text-muted uppercase tracking-wider">
                     IP Address
                   </th>
-                  <th className="px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="px-4 py-3 font-mono text-xs font-medium text-text-muted uppercase tracking-wider">
                     Last Active
                   </th>
-                  <th className="px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider">
+                  <th className="px-4 py-3 font-mono text-xs font-medium text-text-muted uppercase tracking-wider">
                     Status
                   </th>
-                  <th className="px-4 py-3 text-xs font-medium text-text-muted uppercase tracking-wider text-right">
+                  <th className="px-4 py-3 font-mono text-xs font-medium text-text-muted uppercase tracking-wider text-right">
                     Actions
                   </th>
                 </tr>
@@ -254,7 +262,7 @@ export function SessionsPage() {
               </tbody>
             </table>
           )}
-        </div>
+        </WindowPanel>
       )}
     </div>
   );

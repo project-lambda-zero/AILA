@@ -371,7 +371,7 @@ export function AuditSealsTab() {
   return (
     <div className="flex flex-col gap-4">
       {/* Filter card */}
-      <AilaCard variant="elevated" padding="md" techBorder glow>
+      <AilaCard variant="elevated" padding="md">
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-2 lg:flex-row lg:items-end">
             <div className="flex flex-1 flex-col gap-1">
@@ -516,7 +516,7 @@ export function AuditSealsTab() {
       )}
 
       {activeRunId && sealsQuery.isLoading && (
-        <AilaCard variant="default" padding="md" techBorder glow>
+        <AilaCard variant="default" padding="md">
           <LoadingSkeletonGroup lines={6} />
         </AilaCard>
       )}
@@ -541,7 +541,7 @@ export function AuditSealsTab() {
 
       {activeRunId && items.length > 0 && (
         <div className="overflow-x-auto rounded-[4px] border border-border">
-          <table aria-label="Seal events" className="w-full font-mono text-xs">
+          <table aria-label="Seal events" className="w-full font-mono text-xs border-collapse [&_th]:border [&_th]:border-border [&_th]:uppercase [&_th]:tracking-wider [&_td]:border [&_td]:border-border">
             <thead>
               <tr className="border-b border-border bg-elevated text-left">
                 <th className="w-6 px-2 py-2" />

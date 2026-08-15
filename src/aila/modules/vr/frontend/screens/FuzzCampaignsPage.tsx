@@ -106,14 +106,14 @@ export function FuzzCampaignsPage() {
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Filter campaigns (name / engine / strategy)…"
           aria-label="Filter fuzz campaigns"
-          className="flex-1 min-w-[220px] max-w-md px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+          className="flex-1 min-w-[220px] max-w-md px-3 py-1.5 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
         />
         <label className="text-sm text-text-muted">Workspace:</label>
         <select
           value={workspaceFilter}
           onChange={(e) => setWorkspaceFilter(e.target.value)}
           aria-label="Filter by workspace"
-          className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
+          className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border"
         >
           <option value="">-- all --</option>
           {workspaces.map((ws) => (
@@ -128,7 +128,7 @@ export function FuzzCampaignsPage() {
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as CampaignStatus | "")}
           aria-label="Filter by status"
-          className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
+          className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border"
         >
           <option value="">-- all --</option>
           {STATUSES.map((s) => (
@@ -148,7 +148,7 @@ export function FuzzCampaignsPage() {
       {isLoading && <LoadingSkeleton size="lg" width="full" />}
 
       {isError && (
-        <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load campaigns.</p></AilaCard>
+        <AilaCard className="border-critical" techBorder glow><p className="text-sm text-critical">Failed to load campaigns.</p></AilaCard>
       )}
 
       {!isLoading && !isError && rows.length === 0 && (
@@ -162,7 +162,7 @@ export function FuzzCampaignsPage() {
         <AilaCard className="overflow-x-auto p-0" techBorder glow><table className="w-full text-sm">
           <caption className="sr-only">Fuzz campaigns</caption>
           <thead>
-            <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
+            <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-muted">
               <SortHeader columnKey="name" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Name</SortHeader>
               <SortHeader columnKey="engine_id" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Engine</SortHeader>
               <SortHeader columnKey="strategy_id" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Strategy</SortHeader>
@@ -184,7 +184,7 @@ export function FuzzCampaignsPage() {
                 {...rowProps}
                 onClick={() => navigate(`/vr/fuzz/campaigns/${c.id}`)}
                 className={
-                  "border-b border-border-default last:border-b-0 cursor-pointer hover:bg-surface transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset " +
+                  "border-b border-border last:border-b-0 cursor-pointer hover:bg-surface transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset " +
                   (rowProps["data-row-active"] ? "bg-elevated" : "")
                 }
               >

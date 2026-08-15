@@ -62,7 +62,7 @@ export function SystemHeatmap({ className, exportRef }: SystemHeatmapProps) {
 
   if (isLoading) {
     return (
-      <AilaCard className={className} techBorder glow><div className="p-4 flex flex-col gap-2">
+      <AilaCard className={className}><div className="p-4 flex flex-col gap-2">
         <p className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
           System Risk Heatmap
         </p>
@@ -75,7 +75,7 @@ export function SystemHeatmap({ className, exportRef }: SystemHeatmapProps) {
   const allNullSeverity = nodes.every((n) => n.severity_counts === null);
 
   return (
-    <AilaCard className={className} techBorder glow><div ref={chartRef} className="p-4">
+    <AilaCard className={className}><div ref={chartRef} className="p-4">
       <div className="flex items-center justify-between mb-3">
         <p className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
           System Risk Heatmap

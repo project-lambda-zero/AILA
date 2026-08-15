@@ -42,6 +42,11 @@ export function AppShell({ children, moduleSpecs }: AppShellProps) {
     <SidebarProvider
       open={!sidebarCollapsed}
       onOpenChange={(open) => setSidebarCollapsed(!open)}
+      // Definite viewport height so the content <main> scrolls internally
+      // and the menubar/statusbar stay pinned as an OS-frame (the base
+      // wrapper is only min-h-svh, which lets the column grow past the
+      // viewport and push the statusbar below the fold).
+      className="h-svh"
     >
       {/*
         Skip-to-main-content link (B8). First focusable element in the
@@ -66,7 +71,11 @@ export function AppShell({ children, moduleSpecs }: AppShellProps) {
           tabIndex={-1}
           className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 lg:p-6 focus:outline-none focus-visible:outline-none"
         >
-          {children}
+          {/* Workbench content measure -- centered, capped at the DS content-max
+              so the OS-frame keeps a readable column on wide displays. */}
+          <div className="mx-auto w-full" style={{ maxWidth: "var(--content-max)" }}>
+            {children}
+          </div>
         </main>
         {/*
           Issue #211 -- pinned 24px console status bar. Renders the
@@ -93,44 +102,6 @@ export function AppShell({ children, moduleSpecs }: AppShellProps) {
       */}
       <KeyboardShortcutsController />
       <ShortcutsCheatsheet />
-
-      {/*
-        App-level cyber-tech overlay -- corner brackets + top hairline
-        rendered ONCE here so every route gets the treatment without
-        each page having to opt in. All decoration uses
-        --color-accent so it theme-adapts (synthwave pink, vaporwave
-        teal, ps2 cyan, vendetta red, midnight-cloud-8 hot pink).
-        Fixed-positioned + z-50 + pointer-events-none so they sit
-        above content but don't intercept clicks.
-      */}
-      <span
-        aria-hidden
-        className="pointer-events-none fixed inset-x-0 top-0 h-px z-50"
-        style={{
-          background:
-            "linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-accent) 60%, transparent), transparent)",
-        }}
-      />
-      <span
-        aria-hidden
-        className="pointer-events-none fixed top-2 left-2 z-50 h-4 w-4 border-t-2 border-l-2"
-        style={{ borderColor: "color-mix(in srgb, var(--color-accent) 50%, transparent)" }}
-      />
-      <span
-        aria-hidden
-        className="pointer-events-none fixed top-2 right-2 z-50 h-4 w-4 border-t-2 border-r-2"
-        style={{ borderColor: "color-mix(in srgb, var(--color-accent) 50%, transparent)" }}
-      />
-      <span
-        aria-hidden
-        className="pointer-events-none fixed bottom-2 left-2 z-50 h-4 w-4 border-b-2 border-l-2"
-        style={{ borderColor: "color-mix(in srgb, var(--color-accent) 50%, transparent)" }}
-      />
-      <span
-        aria-hidden
-        className="pointer-events-none fixed bottom-2 right-2 z-50 h-4 w-4 border-b-2 border-r-2"
-        style={{ borderColor: "color-mix(in srgb, var(--color-accent) 50%, transparent)" }}
-      />
     </SidebarProvider>
   );
 }

@@ -145,7 +145,7 @@ export function SavedViews({
     return (
       <div
         ref={rootRef}
-        className="flex items-center gap-2 text-xs text-text-danger"
+        className="flex items-center gap-2 text-xs text-critical"
         role="alert"
       >
         <BookmarkSimple className="h-3.5 w-3.5" weight="regular" aria-hidden />
@@ -190,7 +190,7 @@ export function SavedViews({
                 "touch-target inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-mono rounded-l-md border uppercase tracking-wider focus:outline-none focus-visible:ring-2 focus-visible:ring-accent " +
                 (active
                   ? "border-accent bg-elevated text-foreground"
-                  : "border-border-default bg-surface text-text-muted hover:text-foreground")
+                  : "border-border bg-surface text-text-muted hover:text-foreground")
               }
               style={{ transition }}
             >
@@ -220,7 +220,7 @@ export function SavedViews({
                 "inline-flex items-center px-1.5 py-1.5 text-xs rounded-r-md border border-l-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent " +
                 (active
                   ? "border-accent bg-elevated text-foreground"
-                  : "border-border-default bg-surface text-text-muted hover:text-foreground") +
+                  : "border-border bg-surface text-text-muted hover:text-foreground") +
                 (owned ? "" : " opacity-50 cursor-not-allowed")
               }
               style={{ transition }}
@@ -265,7 +265,7 @@ export function SavedViews({
         aria-label="Save current filters as a new view"
         aria-expanded={saveOpen}
         aria-haspopup="dialog"
-        className="touch-target inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-mono uppercase tracking-wider rounded-md border border-dashed border-border-default bg-transparent text-text-muted hover:text-foreground hover:border-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        className="touch-target inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-mono uppercase tracking-wider rounded-md border border-dashed border-border bg-transparent text-text-muted hover:text-foreground hover:border-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         style={{ transition }}
       >
         <FloppyDisk className="h-3.5 w-3.5" weight="regular" aria-hidden />
@@ -343,7 +343,7 @@ function ViewMenu({
     <div
       role="menu"
       aria-label={`Options for '${view.name}'`}
-      className="absolute z-20 top-full left-0 mt-1 min-w-[15rem] rounded-md border border-border-default bg-elevated shadow-lg p-1"
+      className="absolute z-20 top-full left-0 mt-1 min-w-[15rem] rounded-md border border-border bg-elevated shadow-lg p-1"
     >
       <button
         type="button"
@@ -380,21 +380,21 @@ function ViewMenu({
         <FloppyDisk className="h-3.5 w-3.5" weight="regular" aria-hidden />
         Overwrite with current
       </button>
-      <div className="h-px bg-border-default my-1" role="separator" />
+      <div className="h-px bg-border my-1" role="separator" />
       {!confirmDelete ? (
         <button
           type="button"
           role="menuitem"
           onClick={() => setConfirmDelete(true)}
           disabled={busy}
-          className="flex w-full items-center gap-2 px-3 py-1.5 text-xs rounded hover:bg-surface text-text-danger focus:outline-none focus-visible:bg-surface disabled:opacity-50"
+          className="flex w-full items-center gap-2 px-3 py-1.5 text-xs rounded hover:bg-surface text-critical focus:outline-none focus-visible:bg-surface disabled:opacity-50"
         >
           <Trash className="h-3.5 w-3.5" weight="regular" aria-hidden />
           Delete
         </button>
       ) : (
         <div className="flex flex-col gap-1 px-3 py-2">
-          <span className="text-xs text-text-danger">
+          <span className="text-xs text-critical">
             Delete '{view.name}'?
           </span>
           <div className="flex gap-1">
@@ -411,14 +411,14 @@ function ViewMenu({
               type="button"
               onClick={() => setConfirmDelete(false)}
               disabled={busy}
-              className="flex-1 px-2 py-1 text-xs rounded border border-border-default text-text-muted hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
+              className="flex-1 px-2 py-1 text-xs rounded border border-border text-text-muted hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
             >
               Cancel
             </button>
           </div>
         </div>
       )}
-      <div className="h-px bg-border-default my-1" role="separator" />
+      <div className="h-px bg-border my-1" role="separator" />
       <button
         type="button"
         role="menuitem"
@@ -490,7 +490,7 @@ function SaveDialog({
               placeholder="e.g. Running variant hunts"
               aria-label="View name"
               maxLength={128}
-              className="mt-1 w-full px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+              className="mt-1 w-full px-3 py-1.5 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
             />
           </label>
           <label className="flex items-center gap-2 text-xs text-text-muted cursor-pointer">
@@ -512,7 +512,7 @@ function SaveDialog({
             Share with my team
           </label>
           {error && (
-            <p className="text-xs text-text-danger" role="alert">
+            <p className="text-xs text-critical" role="alert">
               {error}
             </p>
           )}
@@ -521,7 +521,7 @@ function SaveDialog({
               type="button"
               onClick={onCancel}
               disabled={busy}
-              className="px-3 py-1 text-xs rounded border border-border-default text-text-muted hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
+              className="px-3 py-1 text-xs rounded border border-border text-text-muted hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
             >
               Cancel
             </button>
@@ -529,7 +529,7 @@ function SaveDialog({
               type="button"
               onClick={onSubmit}
               disabled={busy || name.trim().length === 0}
-              className="px-3 py-1 text-xs rounded bg-accent text-white hover:bg-accent/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
+              className="px-3 py-1 text-xs rounded bg-accent text-background hover:bg-accent/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
             >
               {busy ? "Saving…" : "Save view"}
             </button>

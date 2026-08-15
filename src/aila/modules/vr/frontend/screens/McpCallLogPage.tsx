@@ -30,7 +30,7 @@ export function McpCallLogPage() {
           value={serverFilter}
           onChange={(e) => setServerFilter(e.target.value)}
           aria-label="Filter by MCP server"
-          className="px-2 py-1 text-xs rounded-md bg-surface border border-border-default"
+          className="px-2 py-1 text-xs rounded-md bg-surface border border-border"
         >
           <option value="">all</option>
           <option value="audit_mcp">audit-mcp</option>
@@ -41,7 +41,7 @@ export function McpCallLogPage() {
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
           aria-label="Filter by status"
-          className="px-2 py-1 text-xs rounded-md bg-surface border border-border-default"
+          className="px-2 py-1 text-xs rounded-md bg-surface border border-border"
         >
           <option value="">all</option>
           <option value="ready">ready</option>
@@ -55,7 +55,7 @@ export function McpCallLogPage() {
 
       {isLoading && <AilaCard  techBorder glow><p className="text-sm text-text-muted">Loading…</p></AilaCard>}
       {isError && (
-        <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load call log.</p></AilaCard>
+        <AilaCard className="border-critical" techBorder glow><p className="text-sm text-critical">Failed to load call log.</p></AilaCard>
       )}
       {!isLoading && rows.length === 0 && (
         <AilaCard  techBorder glow><p className="text-sm text-text-muted text-center py-4">
@@ -69,7 +69,7 @@ export function McpCallLogPage() {
           <table className="w-full text-xs">
             <caption className="sr-only">MCP call log</caption>
             <thead>
-              <tr className="border-b border-border-default text-left text-text-muted">
+              <tr className="border-b border-border text-left text-text-muted">
                 <th className="px-2 py-1 font-semibold">When</th>
                 <th className="px-2 py-1 font-semibold">Server</th>
                 <th className="px-2 py-1 font-semibold">Action</th>
@@ -83,7 +83,7 @@ export function McpCallLogPage() {
               {rows.map((r) => (
                 <tr
                   key={r.id}
-                  className="border-b border-border-default last:border-b-0"
+                  className="border-b border-border last:border-b-0"
                 >
                   <td className="px-2 py-1 font-mono text-text-muted whitespace-nowrap">
                     {new Date(r.called_at).toLocaleTimeString()}
@@ -114,7 +114,7 @@ export function McpCallLogPage() {
                   <td className="px-2 py-1 font-mono text-right text-text-muted">
                     {r.latency_ms != null ? `${r.latency_ms}ms` : "--"}
                   </td>
-                  <td className="px-2 py-1 font-mono text-text-danger truncate" style={{ maxWidth: "28ch" }} title={r.error_excerpt ?? ""}>
+                  <td className="px-2 py-1 font-mono text-critical truncate" style={{ maxWidth: "28ch" }} title={r.error_excerpt ?? ""}>
                     {r.error_excerpt ?? ""}
                   </td>
                 </tr>

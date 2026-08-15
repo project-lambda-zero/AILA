@@ -20,6 +20,7 @@ import { Skull } from "@phosphor-icons/react/dist/csr/Skull";
 import { Broom } from "@phosphor-icons/react/dist/csr/Broom";
 
 import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { EmptyState } from "@/components/aila/EmptyState";
@@ -530,7 +531,7 @@ export function TaskQueueAdminPage() {
 
       {/* Top metrics */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Total Tasks
         </p>
         <div className="mt-1 min-h-[2rem]">
@@ -544,7 +545,7 @@ export function TaskQueueAdminPage() {
           Across all statuses
         </p></AilaCard>
 
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Running
         </p>
         <div className="mt-1 min-h-[2rem]">
@@ -558,7 +559,7 @@ export function TaskQueueAdminPage() {
           In-flight workers
         </p></AilaCard>
 
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Dead-lettered
         </p>
         <div className="mt-1 min-h-[2rem]">
@@ -574,21 +575,21 @@ export function TaskQueueAdminPage() {
       </div>
 
       {/* Queue depth detail */}
-      <AilaCard variant="default" padding="md" techBorder glow><div className="flex items-center justify-between mb-3">
-        <h2 className="font-mono text-xs font-semibold uppercase tracking-wider text-text-muted">
-          Queue Depth by Status
-        </h2>
-        <Button
-          size="xs"
-          variant="outline"
-          onClick={() => void queueDepthQuery.refetch()}
-          disabled={queueDepthQuery.isFetching}
-        >
-          <ArrowsCounterClockwise className="h-3 w-3" />
-          Refresh
-        </Button>
-      </div>
-      
+      <WindowPanel
+        title="Queue Depth by Status"
+        tone="muted"
+        actions={
+          <Button
+            size="xs"
+            variant="outline"
+            onClick={() => void queueDepthQuery.refetch()}
+            disabled={queueDepthQuery.isFetching}
+          >
+            <ArrowsCounterClockwise className="h-3 w-3" />
+            Refresh
+          </Button>
+        }
+      >
       {queueDepthQuery.isLoading && <LoadingSkeletonGroup lines={3} />}
       
       {queueDepthQuery.isError && (
@@ -619,12 +620,10 @@ export function TaskQueueAdminPage() {
             </div>
           ))}
         </div>
-      )}</AilaCard>
+      )}</WindowPanel>
 
       {/* Admin actions */}
-      <AilaCard variant="default" padding="md" techBorder glow><h2 className="font-mono text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">
-        Admin Actions
-      </h2>
+      <WindowPanel title="Admin Actions" tone="muted">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div className="rounded-[4px] border border-border p-3 flex flex-col gap-2">
           <div className="flex items-center gap-2">
@@ -685,25 +684,24 @@ export function TaskQueueAdminPage() {
             Reconcile...
           </Button>
         </div>
-      </div></AilaCard>
+      </div></WindowPanel>
 
       {/* Dead-letter queue */}
-      <AilaCard variant="default" padding="md" techBorder glow><div className="flex items-center justify-between mb-3">
-        <h2 className="font-mono text-xs font-semibold uppercase tracking-wider text-text-muted flex items-center gap-1.5">
-          <Skull className="h-3.5 w-3.5 text-critical" />
-          Dead Letter Queue
-        </h2>
-        <Button
-          size="xs"
-          variant="outline"
-          onClick={() => void deadLetterQuery.refetch()}
-          disabled={deadLetterQuery.isFetching}
-        >
-          <ArrowsCounterClockwise className="h-3 w-3" />
-          Refresh
-        </Button>
-      </div>
-      
+      <WindowPanel
+        title="Dead Letter Queue"
+        tone="warn"
+        actions={
+          <Button
+            size="xs"
+            variant="outline"
+            onClick={() => void deadLetterQuery.refetch()}
+            disabled={deadLetterQuery.isFetching}
+          >
+            <ArrowsCounterClockwise className="h-3 w-3" />
+            Refresh
+          </Button>
+        }
+      >
       {deadLetterQuery.isLoading && <LoadingSkeletonGroup lines={3} />}
       
       {deadLetterQuery.isError && (
@@ -722,9 +720,9 @@ export function TaskQueueAdminPage() {
       
       {!deadLetterQuery.isLoading && deadLetterEntries.length > 0 && (
         <div className="overflow-x-auto">
-          <table aria-label="Queued tasks" className="w-full">
+          <table aria-label="Queued tasks" className="w-full border-collapse [&_th]:border [&_th]:border-border [&_th]:uppercase [&_th]:tracking-wider [&_td]:border [&_td]:border-border">
             <thead>
-              <tr className="border-b border-border">
+              <tr className="border-b border-border bg-elevated">
                 <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Task ID</th>
                 <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Track</th>
                 <th className="py-2 px-3 text-left font-mono text-xs text-text-muted hidden md:table-cell">Function</th>
@@ -793,7 +791,7 @@ export function TaskQueueAdminPage() {
         <div className="mt-3 rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
           Requeue failed: {(requeueDeadLetterMutation.error as Error).message}
         </div>
-      )}</AilaCard>
+      )}</WindowPanel>
 
       {/* Dialogs */}
       <DrainConfirmDialog

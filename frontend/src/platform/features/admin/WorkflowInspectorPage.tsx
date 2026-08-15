@@ -164,7 +164,7 @@ function RunTable({
 
   return (
     <div className="overflow-x-auto rounded-[4px] border border-border">
-      <table aria-label="Workflow states" className="w-full font-mono text-xs">
+      <table aria-label="Workflow states" className="w-full font-mono text-xs border-collapse [&_th]:border [&_th]:border-border [&_th]:uppercase [&_th]:tracking-wider [&_td]:border [&_td]:border-border">
         <thead>
           <tr className="border-b border-border bg-elevated">
             <th className="text-left px-3 py-2 text-muted-foreground font-semibold whitespace-nowrap">
@@ -267,7 +267,7 @@ function RunDetailPanel({ run }: RunDetailPanelProps) {
     useState<TransitionView | null>(null);
 
   return (
-    <AilaCard variant="elevated" padding="md" className="flex flex-col gap-4" techBorder glow>{/* Run metadata header */}
+    <AilaCard variant="elevated" padding="md" className="flex flex-col gap-4">{/* Run metadata header */}
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
         <span className="font-mono text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -667,7 +667,7 @@ export function WorkflowInspectorPage() {
       {/* Two-column split: run table + detail panel */}
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_420px] gap-4 min-h-0 flex-1">
         {/* Left: run table */}
-        <AilaCard variant="default" padding="md" className="overflow-hidden min-w-0" techBorder glow><div className="flex flex-col gap-3 h-full">
+        <AilaCard variant="default" padding="md" className="overflow-hidden min-w-0"><div className="flex flex-col gap-3 h-full">
           <div className="flex items-center justify-between gap-2">
             <h2 className="font-mono text-sm font-semibold text-foreground">
               Runs

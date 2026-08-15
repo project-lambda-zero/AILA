@@ -1,6 +1,6 @@
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 import { useProjectLeads } from "../queries";
 import type { PromotedLead } from "../types";
@@ -22,11 +22,11 @@ export function VIATable({ projectId }: { projectId: string }) {
 
   if (items.length === 0) {
     return (
-      <AilaCard  techBorder glow>
+      <WindowPanel title="v.i.a." tone="muted" status="forensics ; no artifacts identified">
         <p className="text-sm text-text-muted text-center py-8">
           No Very Important Artifacts identified yet.
         </p>
-      </AilaCard>
+      </WindowPanel>
     );
   }
 
@@ -34,7 +34,7 @@ export function VIATable({ projectId }: { projectId: string }) {
     <div className="border border-border rounded-md bg-surface text-foreground overflow-x-auto">
       <table className="w-full text-sm" aria-label="Verified-in-action rows">
         <caption className="sr-only">Analyst-verified indicators of activity, one row per confirmed action.</caption>
-        <thead className="bg-surface-secondary">
+        <thead className="bg-elevated">
           <tr>
             <th className="text-left px-3 py-2 text-text-muted font-medium">Score</th>
             <th className="text-left px-3 py-2 text-text-muted font-medium">Family</th>
@@ -44,7 +44,7 @@ export function VIATable({ projectId }: { projectId: string }) {
         </thead>
         <tbody>
           {items.map((lead: PromotedLead) => (
-            <tr key={lead.id} className="border-t border-border hover:bg-surface-secondary">
+            <tr key={lead.id} className="border-t border-border hover:bg-elevated">
               <td className="px-3 py-2">
                 <AilaBadge severity={scoreSeverity(lead.score)} size="sm">
                   {lead.score.toFixed(1)}
@@ -55,7 +55,7 @@ export function VIATable({ projectId }: { projectId: string }) {
               <td className="px-3 py-2">
                 <div className="flex flex-wrap gap-1">
                   {lead.question_families.map((qf) => (
-                    <span key={qf} className="px-1.5 py-0.5 text-xs bg-surface-secondary rounded text-text-muted">
+                    <span key={qf} className="px-1.5 py-0.5 text-xs bg-elevated rounded text-text-muted">
                       {qf}
                     </span>
                   ))}

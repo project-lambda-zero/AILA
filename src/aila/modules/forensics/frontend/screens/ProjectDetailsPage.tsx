@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
-import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 import { CarvedFilesPanel } from "../components/CarvedFilesPanel";
 import { NetworkAnalysisPanel } from "../components/NetworkAnalysisPanel";
@@ -39,7 +39,9 @@ export function ProjectDetailsPage() {
 
   if (!projectId) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Invalid project ID.</p></AilaCard>
+      <WindowPanel title="project details" tone="warn" status="forensics ; invalid project id">
+        <p className="text-sm text-critical">Invalid project ID.</p>
+      </WindowPanel>
     );
   }
 
@@ -47,7 +49,9 @@ export function ProjectDetailsPage() {
 
   if (isError || !project) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load project details.</p></AilaCard>
+      <WindowPanel title="project details" tone="warn" status="forensics ; details unavailable">
+        <p className="text-sm text-critical">Failed to load project details.</p>
+      </WindowPanel>
     );
   }
 
@@ -57,23 +61,24 @@ export function ProjectDetailsPage() {
         <button
           type="button"
           onClick={() => navigate(`/forensics/projects/${projectId}`)}
-          className="px-4 py-2 text-sm rounded-md border border-border text-foreground hover:bg-surface-secondary"
+          className="px-4 py-2 font-mono text-xs uppercase tracking-cyber-sm rounded-[3px] border border-border text-foreground hover:bg-elevated hover:border-border-hover transition-colors"
         >
           Back to Dashboard
         </button>
       </div>
 
-      <div className="flex gap-1 border-b border-border pb-0">
+      <div className="flex flex-wrap gap-1 border-b border-border pb-0">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             type="button"
             onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2 text-sm font-medium rounded-t-md transition-colors ${
+            className={`px-4 py-2 font-mono text-xs uppercase tracking-cyber-sm rounded-t-[4px] transition-colors ${
               activeTab === tab.id
                 ? "bg-surface border border-b-0 border-border text-foreground"
-                : "text-text-muted hover:text-foreground hover:bg-surface-secondary"
+                : "text-text-muted hover:text-foreground hover:bg-elevated"
             }`}
+            style={activeTab === tab.id ? { boxShadow: "inset 0 2px 0 var(--color-accent)" } : undefined}
           >
             {tab.label}
           </button>

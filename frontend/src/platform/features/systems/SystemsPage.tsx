@@ -5,7 +5,7 @@ import { Monitor, Plus, Upload } from "lucide-react";
 import { SystemCSVImport } from "./SystemCSVImport";
 import { SystemTags } from "./SystemTags";
 
-import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { AilaTable } from "@/components/aila/AilaTable";
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
@@ -228,17 +228,20 @@ export function SystemsPage() {
 
       {/* Metric cards (D-02) */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">Registered Systems</p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">
-          {systemsQuery.data?.total ?? "--"}
-        </p>
-        <p className="font-mono text-xs text-text-muted mt-0.5">Total in fleet</p></AilaCard>
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">Visible Systems</p>
-        <p className="font-mono text-2xl font-semibold text-text mt-1">{filteredSystems.length}</p>
-        <p className="font-mono text-xs text-text-muted mt-0.5">Matching active filters</p></AilaCard>
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">Unreachable</p>
-        <p className="font-mono text-2xl font-semibold text-critical mt-1">{unreachableCount}</p>
-        <p className="font-mono text-xs text-text-muted mt-0.5">SSH connectivity offline</p></AilaCard>
+        <WindowPanel title="Registered Systems" tone="muted">
+          <p className="font-mono text-2xl font-semibold text-text">
+            {systemsQuery.data?.total ?? "--"}
+          </p>
+          <p className="font-mono text-xs text-text-muted mt-0.5">Total in fleet</p>
+        </WindowPanel>
+        <WindowPanel title="Visible Systems" tone="info">
+          <p className="font-mono text-2xl font-semibold text-text">{filteredSystems.length}</p>
+          <p className="font-mono text-xs text-text-muted mt-0.5">Matching active filters</p>
+        </WindowPanel>
+        <WindowPanel title="Unreachable" tone={unreachableCount > 0 ? "warn" : "muted"}>
+          <p className="font-mono text-2xl font-semibold text-critical">{unreachableCount}</p>
+          <p className="font-mono text-xs text-text-muted mt-0.5">SSH connectivity offline</p>
+        </WindowPanel>
       </div>
 
       {/* Error banner (D-15) */}
@@ -250,7 +253,7 @@ export function SystemsPage() {
 
       {/* Register System form */}
       {showCreateForm && (
-        <AilaCard variant="elevated" padding="md" techBorder glow><h2 className="font-mono text-sm font-semibold text-text mb-4">Register a New System</h2>
+        <WindowPanel title="Register a New System" tone="accent">
         <form
           className="flex flex-col gap-4"
           onSubmit={(e) => {
@@ -313,7 +316,7 @@ export function SystemsPage() {
             </div>
           </div>
         
-          <h3 className="font-mono text-xs font-semibold text-text-muted mt-2 border-t border-border pt-3">SSH Credentials</h3>
+          <h3 className="font-mono text-xs font-semibold uppercase text-text-muted mt-2 border-t border-border pt-3" style={{ letterSpacing: "0.14em" }}>SSH Credentials</h3>
           <div className="flex flex-col gap-1">
             <label className="font-mono text-xs text-text-muted" htmlFor="sys-privkey">Private Key (PEM)</label>
             <textarea
@@ -384,7 +387,7 @@ export function SystemsPage() {
               {(createSystem.error as Error).message}
             </div>
           )}
-        </form></AilaCard>
+        </form></WindowPanel>
       )}
 
       {/* Saved views -- persists the current search, tag filter, and default
@@ -449,7 +452,7 @@ export function SystemsPage() {
       {/* Tag filter bar */}
       {vocabulary.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-mono text-xs text-text-muted">Filter by tag:</span>
+          <span className="font-mono uppercase text-muted-foreground" style={{ fontSize: "11px", letterSpacing: "0.14em" }}>Filter by tag</span>
           {vocabulary.map((entry) => {
             const active = selectedTagKeys.includes(entry.tag_key);
             return (
@@ -479,7 +482,7 @@ export function SystemsPage() {
 
       {/* Loading skeleton (D-13) */}
       {systemsQuery.isLoading && (
-        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={8} /></AilaCard>
+        <WindowPanel title="Systems ; Fleet" status="LOADING" tone="muted"><LoadingSkeletonGroup lines={8} /></WindowPanel>
       )}
 
       {/* Empty state -- no systems at all (D-14) */}
@@ -504,6 +507,12 @@ export function SystemsPage() {
 
       {/* Systems table (D-01) */}
       {!systemsQuery.isLoading && filteredSystems.length > 0 && (
+        <WindowPanel
+          title="Systems ; Fleet"
+          status={`${filteredSystems.length} VISIBLE ; ${systemsQuery.data?.total ?? filteredSystems.length} TOTAL`}
+          tone="muted"
+          flush
+        >
         <div className="overflow-x-auto">
           <AilaTable
             data={filteredSystems}
@@ -526,6 +535,7 @@ export function SystemsPage() {
             <AilaTable.Pagination pageSizeOptions={[10, 25, 50, 100]} />
           </AilaTable>
         </div>
+        </WindowPanel>
       )}
 
       {/* Bulk action stub notice (D-19) */}

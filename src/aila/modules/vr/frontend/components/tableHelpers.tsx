@@ -186,9 +186,9 @@ export function SortHeader({
         type="button"
         onClick={() => onSort(columnKey)}
         className={
-          "inline-flex items-center gap-1 uppercase tracking-wide font-semibold text-inherit rounded-sm " +
+          "inline-flex items-center gap-1 font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground rounded-sm " +
           "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent hover:text-foreground transition-colors " +
-          (active ? "text-foreground" : "")
+          (active ? "!text-foreground" : "")
         }
       >
         <span>{children}</span>

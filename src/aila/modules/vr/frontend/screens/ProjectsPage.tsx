@@ -415,8 +415,8 @@ export function ProjectsPage() {
       {isLoading && <LoadingSkeleton size="lg" width="full" />}
 
       {isError && (
-        <AilaCard className="border-border-danger" techBorder glow>
-          <p className="text-sm text-text-danger">Failed to load VR projects.</p>
+        <AilaCard className="border-critical" techBorder glow>
+          <p className="text-sm text-critical">Failed to load VR projects.</p>
         </AilaCard>
       )}
 
@@ -428,7 +428,7 @@ export function ProjectsPage() {
           }}
         >
           <div
-            className="inline-flex h-14 w-14 items-center justify-center rounded-full mb-4"
+            className="inline-flex h-14 w-14 items-center justify-center rounded-[6px] mb-4"
             style={{
               background: "color-mix(in srgb, var(--color-accent) 12%, transparent)",
               color: "var(--color-accent)",

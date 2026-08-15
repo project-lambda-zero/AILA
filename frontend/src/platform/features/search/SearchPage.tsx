@@ -15,6 +15,7 @@ import { CaretLeft } from "@phosphor-icons/react/dist/csr/CaretLeft";
 import { CaretRight } from "@phosphor-icons/react/dist/csr/CaretRight";
 
 import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
@@ -112,7 +113,6 @@ function ResultCard({
       <AilaCard
         variant="default"
         padding="md"
-        decorations={["tech-border"]}
         className="transition-colors group-hover:border-accent/60"
       >
         <div className="flex items-start justify-between gap-3">
@@ -273,7 +273,7 @@ export function SearchPage() {
   return (
     <div className="flex flex-col gap-6">
       {/* Query input */}
-      <AilaCard variant="default" padding="md" decorations={["tech-border"]}>
+      <WindowPanel title="Search" tone="muted">
         <div className="flex flex-col gap-3">
           <div className="relative">
             <MagnifyingGlass
@@ -315,7 +315,7 @@ export function SearchPage() {
             )}
           </div>
         </div>
-      </AilaCard>
+      </WindowPanel>
 
       {/* Results */}
       {!hasQuery ? (

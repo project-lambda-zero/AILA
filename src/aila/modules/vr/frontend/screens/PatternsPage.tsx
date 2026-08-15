@@ -125,14 +125,14 @@ export function PatternsPage() {
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Filter patterns (summary / kind)…"
           aria-label="Filter patterns"
-          className="flex-1 min-w-[220px] max-w-md px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+          className="flex-1 min-w-[220px] max-w-md px-3 py-1.5 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
         />
         <label className="text-sm text-text-muted">Workspace:</label>
         <select
           value={workspaceFilter}
           onChange={(e) => setWorkspaceFilter(e.target.value)}
           aria-label="Filter by workspace"
-          className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
+          className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border"
         >
           <option value="">-- all --</option>
           {workspaces.map((ws) => (
@@ -147,7 +147,7 @@ export function PatternsPage() {
           value={kindFilter}
           onChange={(e) => setKindFilter(e.target.value as PatternKind | "")}
           aria-label="Filter by kind"
-          className="px-3 py-1.5 text-sm font-mono rounded-md bg-surface border border-border-default"
+          className="px-3 py-1.5 text-sm font-mono rounded-md bg-surface border border-border"
         >
           <option value="">-- all --</option>
           {KINDS.map((k) => (
@@ -162,7 +162,7 @@ export function PatternsPage() {
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as PatternStatus | "")}
           aria-label="Filter by status"
-          className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
+          className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border"
         >
           <option value="">-- all --</option>
           {STATUSES.map((s) => (
@@ -177,7 +177,7 @@ export function PatternsPage() {
           value={scopeFilter}
           onChange={(e) => setScopeFilter(e.target.value as PatternScope | "")}
           aria-label="Filter by scope"
-          className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
+          className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border"
         >
           <option value="">-- all --</option>
           {SCOPES.map((s) => (
@@ -197,7 +197,7 @@ export function PatternsPage() {
       {isLoading && <LoadingSkeleton size="lg" width="full" />}
 
       {isError && (
-        <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load patterns.</p></AilaCard>
+        <AilaCard className="border-critical" techBorder glow><p className="text-sm text-critical">Failed to load patterns.</p></AilaCard>
       )}
 
       {!isLoading && !isError && patterns.length === 0 && (
@@ -212,7 +212,7 @@ export function PatternsPage() {
         <AilaCard className="overflow-x-auto p-0" techBorder glow><table className="w-full text-sm">
           <caption className="sr-only">Reusable investigation patterns</caption>
           <thead>
-            <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
+            <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-muted">
               <SortHeader columnKey="summary" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Summary</SortHeader>
               <SortHeader columnKey="kind" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Kind</SortHeader>
               <SortHeader columnKey="status" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Status</SortHeader>
@@ -232,7 +232,7 @@ export function PatternsPage() {
                 {...rowProps}
                 onClick={() => navigate(`/vr/patterns/${p.id}`)}
                 className={
-                  "border-b border-border-default last:border-b-0 cursor-pointer hover:bg-surface transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset " +
+                  "border-b border-border last:border-b-0 cursor-pointer hover:bg-surface transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset " +
                   (rowProps["data-row-active"] ? "bg-elevated" : "")
                 }
               >

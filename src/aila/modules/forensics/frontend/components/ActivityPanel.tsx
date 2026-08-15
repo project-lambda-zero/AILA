@@ -1,9 +1,9 @@
 import { Clock } from "@phosphor-icons/react/dist/csr/Clock";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 import { useAuditEvents, type AuditEvent } from "../hooks/useAuditEvents";
 
@@ -74,15 +74,11 @@ export function ActivityPanel({ runId }: ActivityPanelProps) {
   const { data, isLoading, isError } = useAuditEvents(runId);
 
   return (
-    <AilaCard padding="md" className="space-y-3" techBorder glow>
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <h2 className="text-sm font-semibold text-foreground">Activity</h2>
-        {data && data.total > 0 && (
-          <span className="text-3xs font-mono text-text-muted">
-            {data.items.length} of {data.total} events
-          </span>
-        )}
-      </div>
+    <WindowPanel
+      title="activity"
+      status={data && data.total > 0 ? `audit ; ${data.items.length} of ${data.total} events` : "forensics ; audit trail"}
+    >
+      <div className="space-y-3">
       {!enabled && (
         <p className="font-mono text-xs text-text-muted">
           No run id bound to this investigation yet -- audit trail unavailable.
@@ -118,6 +114,7 @@ export function ActivityPanel({ runId }: ActivityPanelProps) {
           ))}
         </ul>
       )}
-    </AilaCard>
+      </div>
+    </WindowPanel>
   );
 }

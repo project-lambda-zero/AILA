@@ -4,9 +4,10 @@ import { useNavigate, useParams } from "react-router";
 import { GitBranch } from "@phosphor-icons/react/dist/csr/GitBranch";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { PixelIcon } from "@/components/aila/PixelIcon";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
 import { PanelBoundary } from "../components/PanelBoundary";
@@ -34,10 +35,10 @@ function formatTs(ts: string | null): string {
 function NodeRow({ node }: { node: ReasoningGraphNode }) {
   return (
     <li className="flex items-baseline gap-2 font-mono text-xs">
-      <span className="text-text-muted uppercase tracking-wide shrink-0" style={{ minWidth: "9rem" }}>
+      <span className="text-muted-foreground uppercase tracking-cyber-sm shrink-0" style={{ minWidth: "9rem" }}>
         {node.kind}
       </span>
-      <span className="text-text-muted shrink-0" style={{ minWidth: "10rem" }}>
+      <span className="text-muted-foreground shrink-0" style={{ minWidth: "10rem" }}>
         {node.id}
       </span>
       <span className="text-foreground break-all">{node.label}</span>
@@ -48,11 +49,11 @@ function NodeRow({ node }: { node: ReasoningGraphNode }) {
 function EdgeRow({ edge }: { edge: ReasoningGraphEdge }) {
   return (
     <li className="flex items-baseline gap-2 font-mono text-xs">
-      <span className="text-text-muted uppercase tracking-wide shrink-0" style={{ minWidth: "9rem" }}>
+      <span className="text-muted-foreground uppercase tracking-cyber-sm shrink-0" style={{ minWidth: "9rem" }}>
         {edge.kind}
       </span>
       <span className="text-foreground break-all">
-        {edge.source} <span className="text-text-muted">-&gt;</span> {edge.target}
+        {edge.source} <PixelIcon name="arrow" size={12} className="inline-block align-middle text-muted-foreground" /> {edge.target}
       </span>
     </li>
   );
@@ -75,21 +76,21 @@ function DiffPanel({ projectId, investigationId, fromStep, toStep }: DiffPanelPr
 
   if (fromStep === null || toStep === null) {
     return (
-      <AilaCard className="border-border" techBorder glow>
+      <WindowPanel title="graph diff" tone="muted" status="reasoning ; select a range">
         <p className="text-xs text-text-muted">
           Pick a from-step and a to-step above to see the diff.
         </p>
-      </AilaCard>
+      </WindowPanel>
     );
   }
   if (isLoading) return <LoadingSkeleton size="md" width="full" />;
   if (isError || !data) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow>
-        <p className="text-sm text-text-danger">
+      <WindowPanel title="graph diff" tone="warn" status="reasoning ; diff unavailable">
+        <p className="text-sm text-critical">
           Failed to load diff{error instanceof Error ? `: ${error.message}` : "."}
         </p>
-      </AilaCard>
+      </WindowPanel>
     );
   }
 
@@ -102,8 +103,8 @@ function DiffPanel({ projectId, investigationId, fromStep, toStep }: DiffPanelPr
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap gap-2 items-center text-xs text-text-muted font-mono">
-        <span>
-          step {diff.from_step} <span className="text-foreground">-&gt;</span> step {diff.to_step}
+        <span className="inline-flex items-center gap-1">
+          step {diff.from_step} <PixelIcon name="arrow" size={12} className="text-foreground" /> step {diff.to_step}
         </span>
         <AilaBadge severity="low" size="sm">+{addedN} nodes</AilaBadge>
         <AilaBadge severity="high" size="sm">-{removedN} nodes</AilaBadge>
@@ -112,70 +113,50 @@ function DiffPanel({ projectId, investigationId, fromStep, toStep }: DiffPanelPr
       </div>
 
       <div className="grid gap-3 md:grid-cols-2">
-        <AilaCard className="border-emerald-700/40 bg-emerald-950/10" techBorder glow>
-          <div className="space-y-2">
-            <p className="text-xs font-mono uppercase tracking-wide text-emerald-300">
-              Added nodes ({addedN})
-            </p>
-            {addedN === 0 ? (
-              <p className="text-xs text-text-muted">None.</p>
-            ) : (
-              <ul className="space-y-1">
-                {diff.added_nodes.map((n) => (
-                  <NodeRow key={`add-n-${n.id}`} node={n} />
-                ))}
-              </ul>
-            )}
-          </div>
-        </AilaCard>
-        <AilaCard className="border-rose-700/40 bg-rose-950/10" techBorder glow>
-          <div className="space-y-2">
-            <p className="text-xs font-mono uppercase tracking-wide text-rose-300">
-              Removed nodes ({removedN})
-            </p>
-            {removedN === 0 ? (
-              <p className="text-xs text-text-muted">None.</p>
-            ) : (
-              <ul className="space-y-1">
-                {diff.removed_nodes.map((n) => (
-                  <NodeRow key={`rem-n-${n.id}`} node={n} />
-                ))}
-              </ul>
-            )}
-          </div>
-        </AilaCard>
-        <AilaCard className="border-emerald-700/40 bg-emerald-950/10" techBorder glow>
-          <div className="space-y-2">
-            <p className="text-xs font-mono uppercase tracking-wide text-emerald-300">
-              Added edges ({addedE})
-            </p>
-            {addedE === 0 ? (
-              <p className="text-xs text-text-muted">None.</p>
-            ) : (
-              <ul className="space-y-1">
-                {diff.added_edges.map((e, i) => (
-                  <EdgeRow key={`add-e-${i}-${e.source}-${e.target}`} edge={e} />
-                ))}
-              </ul>
-            )}
-          </div>
-        </AilaCard>
-        <AilaCard className="border-rose-700/40 bg-rose-950/10" techBorder glow>
-          <div className="space-y-2">
-            <p className="text-xs font-mono uppercase tracking-wide text-rose-300">
-              Removed edges ({removedE})
-            </p>
-            {removedE === 0 ? (
-              <p className="text-xs text-text-muted">None.</p>
-            ) : (
-              <ul className="space-y-1">
-                {diff.removed_edges.map((e, i) => (
-                  <EdgeRow key={`rem-e-${i}-${e.source}-${e.target}`} edge={e} />
-                ))}
-              </ul>
-            )}
-          </div>
-        </AilaCard>
+        <WindowPanel title={`added nodes (${addedN})`} tone="ok">
+          {addedN === 0 ? (
+            <p className="text-xs text-text-muted">None.</p>
+          ) : (
+            <ul className="space-y-1">
+              {diff.added_nodes.map((n) => (
+                <NodeRow key={`add-n-${n.id}`} node={n} />
+              ))}
+            </ul>
+          )}
+        </WindowPanel>
+        <WindowPanel title={`removed nodes (${removedN})`} tone="warn">
+          {removedN === 0 ? (
+            <p className="text-xs text-text-muted">None.</p>
+          ) : (
+            <ul className="space-y-1">
+              {diff.removed_nodes.map((n) => (
+                <NodeRow key={`rem-n-${n.id}`} node={n} />
+              ))}
+            </ul>
+          )}
+        </WindowPanel>
+        <WindowPanel title={`added edges (${addedE})`} tone="ok">
+          {addedE === 0 ? (
+            <p className="text-xs text-text-muted">None.</p>
+          ) : (
+            <ul className="space-y-1">
+              {diff.added_edges.map((e, i) => (
+                <EdgeRow key={`add-e-${i}-${e.source}-${e.target}`} edge={e} />
+              ))}
+            </ul>
+          )}
+        </WindowPanel>
+        <WindowPanel title={`removed edges (${removedE})`} tone="warn">
+          {removedE === 0 ? (
+            <p className="text-xs text-text-muted">None.</p>
+          ) : (
+            <ul className="space-y-1">
+              {diff.removed_edges.map((e, i) => (
+                <EdgeRow key={`rem-e-${i}-${e.source}-${e.target}`} edge={e} />
+              ))}
+            </ul>
+          )}
+        </WindowPanel>
       </div>
     </div>
   );
@@ -189,30 +170,22 @@ function SnapshotDetail({ snapshot }: SnapshotDetailProps) {
   const nodeCount = snapshot.graph.nodes.length;
   const edgeCount = snapshot.graph.edges.length;
   return (
-    <AilaCard className="border-border" techBorder glow>
-      <div className="space-y-2">
-        <div className="flex flex-wrap items-baseline gap-3">
-          <p className="text-sm font-mono text-foreground">
-            step {snapshot.step_number}
-          </p>
-          <p className="text-xs font-mono text-text-muted">
-            {snapshot.strategy_family}
-          </p>
-          <p className="text-xs text-text-muted">
-            {formatTs(snapshot.created_at)}
-          </p>
-          <AilaBadge severity="info" size="sm">
-            {nodeCount} nodes
-          </AilaBadge>
-          <AilaBadge severity="info" size="sm">
-            {edgeCount} edges
-          </AilaBadge>
-        </div>
-        <p className="text-xs text-text-muted font-mono break-all">
-          snapshot {snapshot.id}
+    <WindowPanel
+      title={`step ${snapshot.step_number} -- ${snapshot.strategy_family}`}
+      status={`snapshot ; ${snapshot.id}`}
+    >
+      <div className="flex flex-wrap items-baseline gap-3">
+        <p className="text-xs text-text-muted font-mono">
+          {formatTs(snapshot.created_at)}
         </p>
+        <AilaBadge severity="info" size="sm">
+          {nodeCount} nodes
+        </AilaBadge>
+        <AilaBadge severity="info" size="sm">
+          {edgeCount} edges
+        </AilaBadge>
       </div>
-    </AilaCard>
+    </WindowPanel>
   );
 }
 
@@ -262,9 +235,9 @@ export function ReasoningReplayPage() {
 
   if (!projectId || !investigationId) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow>
-        <p className="text-sm text-text-danger">Invalid replay URL.</p>
-      </AilaCard>
+      <WindowPanel title="reasoning replay" tone="warn" status="reasoning ; invalid replay url">
+        <p className="text-sm text-critical">Invalid replay URL.</p>
+      </WindowPanel>
     );
   }
 
@@ -272,11 +245,11 @@ export function ReasoningReplayPage() {
 
   if (isError) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow>
-        <p className="text-sm text-text-danger">
+      <WindowPanel title="reasoning replay" tone="warn" status="reasoning ; snapshots unavailable">
+        <p className="text-sm text-critical">
           Failed to load reasoning-graph snapshots.
         </p>
-      </AilaCard>
+      </WindowPanel>
     );
   }
 
@@ -288,7 +261,7 @@ export function ReasoningReplayPage() {
           onClick={() =>
             navigate(`/forensics/projects/${projectId}/investigations/${investigationId}`)
           }
-          className="flex items-center gap-1 text-xs text-text-muted hover:text-foreground transition-colors"
+          className="flex items-center gap-1 font-mono text-xs uppercase tracking-cyber-sm text-text-muted hover:text-foreground transition-colors"
         >
           {"\u2190"} Back to investigation
         </button>
@@ -343,11 +316,8 @@ export function ReasoningReplayPage() {
       </button>
 
       {/* Timeline */}
-      <AilaCard className="border-border" techBorder glow>
+      <WindowPanel title={`snapshots (${sorted.length})`} status="reasoning ; one snapshot per turn">
         <div className="space-y-2">
-          <p className="text-xs font-mono uppercase tracking-wide text-text-muted">
-            Snapshots ({sorted.length})
-          </p>
           <ul className="space-y-1 overflow-y-auto" style={{ maxHeight: "18rem" }}>
             {sorted.map((snap) => {
               const isSelected = snap.step_number === selectedStep;
@@ -356,12 +326,13 @@ export function ReasoningReplayPage() {
                   <button
                     type="button"
                     onClick={() => setSelectedStep(snap.step_number)}
-                    className={`w-full text-left px-2 py-1 rounded-md border transition-colors font-mono text-xs flex items-center gap-3 flex-wrap ${
+                    className={`w-full text-left px-2 py-1 rounded-[3px] border transition-colors font-mono text-xs flex items-center gap-3 flex-wrap ${
                       isSelected
-                        ? "border-border-accent bg-accent/10 text-foreground"
-                        : "border-border bg-surface hover:bg-surface-secondary text-text-muted hover:text-foreground"
+                        ? "border-accent bg-accent/10 text-foreground"
+                        : "border-border bg-surface hover:bg-elevated text-text-muted hover:text-foreground"
                     }`}
                   >
+                    <PixelIcon name="cycle" size={12} className="shrink-0" style={isSelected ? { color: "var(--color-accent)" } : undefined} />
                     <span className="shrink-0" style={{ minWidth: "4rem" }}>
                       step {snap.step_number}
                     </span>
@@ -378,17 +349,14 @@ export function ReasoningReplayPage() {
             })}
           </ul>
         </div>
-      </AilaCard>
+      </WindowPanel>
 
       {/* Selected snapshot */}
       {selectedSnapshot && <SnapshotDetail snapshot={selectedSnapshot} />}
 
       {/* Range controls */}
-      <AilaCard className="border-border" techBorder glow>
+      <WindowPanel title={`diff range (step ${minStep} .. step ${maxStep})`}>
         <div className="space-y-3">
-          <p className="text-xs font-mono uppercase tracking-wide text-text-muted">
-            Diff range (step {minStep} .. step {maxStep})
-          </p>
           <div className="grid gap-3 md:grid-cols-2">
             <div className="space-y-1">
               <label className="text-xs text-text-muted font-mono flex items-baseline justify-between gap-2">
@@ -444,7 +412,7 @@ export function ReasoningReplayPage() {
             </div>
           </div>
         </div>
-      </AilaCard>
+      </WindowPanel>
 
       {/* Diff */}
       <PanelBoundary label="Reasoning graph diff">

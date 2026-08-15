@@ -4,7 +4,7 @@ import type { Layout } from "react-grid-layout";
 import { GripHorizontal, X } from "lucide-react";
 import "react-grid-layout/css/styles.css";
 
-import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { FeatureBoundary } from "@app/FeatureBoundary";
 import { getWidgetById } from "./widgetRegistry";
 import type { DashboardLayoutItem } from "./types";
@@ -120,14 +120,20 @@ export function DashboardGrid({
                 <div key={item.i} className="relative flex flex-col overflow-hidden">
                   {/* Edit mode drag handle bar */}
                   {editMode && (
-                    <div className="widget-drag-handle flex items-center justify-between px-2 py-1 bg-elevated border-b border-border cursor-grab active:cursor-grabbing shrink-0">
+                    <div
+                      className="widget-drag-handle flex items-center justify-between px-2 py-1 border-b border-border cursor-grab active:cursor-grabbing shrink-0"
+                      style={{ backgroundColor: "var(--color-chrome)", backgroundImage: "var(--hatch)" }}
+                    >
                       <GripHorizontal className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-xs text-muted-foreground truncate px-2">
+                      <span
+                        className="font-mono uppercase text-muted-foreground truncate px-2"
+                        style={{ fontSize: "10.5px", letterSpacing: "0.14em" }}
+                      >
                         {widgetDef?.name ?? item.i}
                       </span>
                       <button
                         onClick={() => onRemoveWidget(item.i)}
-                        className="flex items-center justify-center h-5 w-5 rounded hover:bg-destructive/20 hover:text-destructive text-muted-foreground transition-colors"
+                        className="flex items-center justify-center h-5 w-5 rounded-[2px] hover:bg-destructive/20 hover:text-destructive text-muted-foreground transition-colors"
                         aria-label={`Remove ${widgetDef?.name ?? item.i} widget`}
                       >
                         <X className="h-3 w-3" />
@@ -138,8 +144,8 @@ export function DashboardGrid({
                   {/* Widget content -- per-widget FeatureBoundary so one
                       failed widget renders a scoped retry surface instead
                       of blanking the entire grid (V-24 resilience). */}
-                  <AilaCard padding="none"
-                  className="flex-1 overflow-auto min-h-0" techBorder glow>{WidgetComponent ? (
+                  <WindowPanel flush
+                  className="flex-1 overflow-auto min-h-0">{WidgetComponent ? (
                     <FeatureBoundary label={widgetDef?.name ?? "Widget"}>
                       <WidgetComponent />
                     </FeatureBoundary>
@@ -147,7 +153,7 @@ export function DashboardGrid({
                     <div className="flex items-center justify-center h-full p-4 text-sm text-muted-foreground">
                       Widget not available
                     </div>
-                  )}</AilaCard>
+                  )}</WindowPanel>
                 </div>
               );
             })}

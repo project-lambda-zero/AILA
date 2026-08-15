@@ -40,7 +40,7 @@ export function CVSSCalculator({
     return (
       <div className="space-y-3">
         <VersionTabs version={version} setVersion={setVersion} />
-        <div className="border border-dashed border-border-default rounded p-3 bg-surface/40">
+        <div className="border border-dashed border-border rounded p-3 bg-surface/40">
           <p className="text-xs text-text-muted">
             <strong>CVSS v4.0 calculator -- backend pending.</strong>
           </p>
@@ -82,8 +82,8 @@ export function CVSSCalculator({
                   className={
                     "px-2 py-1 text-xs font-mono rounded border transition-colors " +
                     (active
-                      ? "bg-accent text-white border-accent"
-                      : "bg-surface text-foreground border-border-default hover:bg-surface-hover")
+                      ? "bg-accent text-background border-accent"
+                      : "bg-surface text-foreground border-border hover:bg-elevated")
                   }
                 >
                   {v.label} ({v.id})
@@ -94,7 +94,7 @@ export function CVSSCalculator({
         </div>
       ))}
 
-      <div className="pt-3 border-t border-border-default flex items-center gap-2 flex-wrap">
+      <div className="pt-3 border-t border-border flex items-center gap-2 flex-wrap">
         <CVSSBadge score={score} vector={vector} />
         <code className="text-3xs font-mono text-text-muted break-all">
           {vector || "fill all 8 metrics →"}
@@ -179,7 +179,7 @@ function VersionTabs({
   setVersion: (v: "v3.1" | "v4.0") => void;
 }) {
   return (
-    <div className="flex gap-1 text-xs font-mono border-b border-border-default pb-1">
+    <div className="flex gap-1 text-xs font-mono border-b border-border pb-1">
       {(["v3.1", "v4.0"] as const).map((v) => (
         <button
           key={v}
@@ -188,8 +188,8 @@ function VersionTabs({
           className={
             "px-2 py-1 rounded " +
             (version === v
-              ? "bg-accent text-white"
-              : "text-text-muted hover:text-foreground hover:bg-surface-hover")
+              ? "bg-accent text-background"
+              : "text-text-muted hover:text-foreground hover:bg-elevated")
           }
         >
           CVSS {v}

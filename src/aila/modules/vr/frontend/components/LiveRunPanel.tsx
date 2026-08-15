@@ -31,7 +31,7 @@ import { Clock } from "@phosphor-icons/react/dist/csr/Clock";
 import { CurrencyDollar } from "@phosphor-icons/react/dist/csr/CurrencyDollar";
 import { TreeStructure } from "@phosphor-icons/react/dist/csr/TreeStructure";
 
-import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 import { LiveDot, type LiveStatus } from "./LiveDot";
 import { WorkflowStepper } from "./WorkflowStepper";
@@ -199,11 +199,11 @@ export function LiveRunPanel({
   const budget = inv.cost_budget_usd;
   const actual = inv.cost_actual_usd;
   const costPct = budget > 0 ? Math.min(100, (actual / budget) * 100) : 0;
-  const costTone = costPct >= 90 ? "#f0a8c7" : costPct >= 60 ? "#f0c97a" : "#97dbbe";
+  const costTone = costPct >= 90 ? "#ff5f87" : costPct >= 60 ? "#ffb85f" : "#97dbbe";
   const showLivePulse = !reduced && inv.status === "running";
 
   return (
-    <AilaCard techBorder glow aria-label="Live run status">
+    <WindowPanel title="live run" tone="accent" aria-label="Live run status">
       {/* Row 1 -- status badge + SSE indicator + wall-clock ticker */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3 flex-wrap min-w-0">
@@ -244,7 +244,7 @@ export function LiveRunPanel({
       </div>
 
       {/* Row 3 -- live counters (turns / branches / cost accrual) */}
-      <div className="mt-3 pt-3 border-t border-border-default/60 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs font-mono text-text-muted">
+      <div className="mt-3 pt-3 border-t border-border/60 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs font-mono text-text-muted">
         <span className="inline-flex items-center gap-1.5">
           <ChatCircleText weight="fill" size={13} className="text-text-muted" />
           <span className="text-foreground font-semibold tabular-nums">
@@ -252,7 +252,7 @@ export function LiveRunPanel({
           </span>
           turns
         </span>
-        <span className="w-px h-3 bg-border-default" aria-hidden />
+        <span className="w-px h-3 bg-border" aria-hidden />
         <span className="inline-flex items-center gap-1.5">
           <TreeStructure weight="fill" size={13} className="text-text-muted" />
           <span className="text-foreground font-semibold tabular-nums">
@@ -262,7 +262,7 @@ export function LiveRunPanel({
         </span>
         {budget > 0 && (
           <>
-            <span className="w-px h-3 bg-border-default" aria-hidden />
+            <span className="w-px h-3 bg-border" aria-hidden />
             <span
               className="inline-flex items-center gap-2 flex-1"
               style={{ minWidth: 220 }}
@@ -294,7 +294,7 @@ export function LiveRunPanel({
       </div>
 
       {/* Row 4 -- compact activity ticker (last N turns, newest first) */}
-      <div className="mt-3 pt-3 border-t border-border-default/60">
+      <div className="mt-3 pt-3 border-t border-border/60">
         <div className="flex items-center gap-2 mb-1.5 text-2xs font-mono uppercase tracking-cyber-sm text-text-muted">
           <span>Latest activity</span>
           {recent.length > 0 && (
@@ -335,7 +335,7 @@ export function LiveRunPanel({
                   </span>
                   {persona ? (
                     <span
-                      className="text-accent text-2xs shrink-0 truncate"
+                      className="text-lavender text-2xs shrink-0 truncate"
                       style={{ width: 80 }}
                       title={persona}
                     >
@@ -356,6 +356,6 @@ export function LiveRunPanel({
           </ul>
         )}
       </div>
-    </AilaCard>
+    </WindowPanel>
   );
 }

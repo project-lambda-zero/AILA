@@ -64,10 +64,10 @@ export function UploadDropzone({
       className={
         "border-2 border-dashed rounded p-4 text-center transition-colors " +
         (disabled
-          ? "border-border-default opacity-40 cursor-not-allowed"
+          ? "border-border opacity-40 cursor-not-allowed"
           : dragging
             ? "border-accent bg-accent/5"
-            : "border-border-default bg-surface hover:bg-surface-hover")
+            : "border-border bg-surface hover:bg-elevated")
       }
       role="region"
       aria-label="Upload file by drag and drop or click to pick"

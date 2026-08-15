@@ -50,7 +50,7 @@ export function AilaProgress({
         aria-valuemin={0}
         aria-valuemax={100}
         aria-label={label}
-        className="relative h-1.5 flex-1 overflow-hidden rounded-[2px] border border-border bg-elevated"
+        className="relative h-1.5 flex-1 overflow-hidden rounded-[2px] border border-border bg-[var(--surface-sunk)]"
       >
         <div
           className="relative h-full transition-[width] duration-300 ease-out"
@@ -75,7 +75,7 @@ export function AilaProgress({
         </div>
       </div>
       {showValue && (
-        <span className="font-mono text-xs text-text-muted tabular-nums">
+        <span className="font-mono text-xs text-muted-foreground tabular-nums">
           {clamped.toFixed(0)}%
         </span>
       )}

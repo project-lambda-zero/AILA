@@ -272,10 +272,10 @@ export function TimelineTrack({
                 type="button"
                 onClick={() => onSourceClick?.(src)}
                 className={
-                  "flex items-center gap-1 px-2 py-0.5 rounded-full text-3xs font-medium border transition-colors " +
+                  "flex items-center gap-1 px-2 py-0.5 rounded-[3px] text-3xs font-mono uppercase tracking-cyber-sm border transition-colors " +
                   (isActive
                     ? "border-primary bg-primary/20 text-foreground"
-                    : "border-border bg-surface-secondary/60 text-text-muted hover:text-foreground")
+                    : "border-border bg-elevated/60 text-text-muted hover:text-foreground")
                 }
                 aria-pressed={isActive}
               >
@@ -296,7 +296,7 @@ export function TimelineTrack({
       </div>
       {selectedEntry && (
         <div
-          className="border border-border rounded-md bg-surface-secondary/40 p-3 text-xs"
+          className="border border-border rounded-md bg-elevated/40 p-3 text-xs"
           role="region"
           aria-label="Selected timeline entry"
         >

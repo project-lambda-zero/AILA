@@ -125,7 +125,7 @@ export function FuzzCrashDetailPage() {
         )}
       </div>
 
-      <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+      <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
         Triage
       </h2>
       <dl className="grid grid-cols-2 gap-3 text-sm">
@@ -153,11 +153,11 @@ export function FuzzCrashDetailPage() {
           triage_chain on the crash row itself: every verdict change with
           actor, timestamp, reason, and free-form notes (migration 053 +
           POST /vr/fuzz/crashes/:id/triage). */}
-      <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+      <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
         Triage chain
       </h2>
       <ol className="space-y-2 text-xs">
-        <li className="border border-border-default rounded px-3 py-2">
+        <li className="border border-border rounded px-3 py-2">
           <div className="flex items-center gap-2 flex-wrap">
             <AilaBadge severity="info" size="sm">
               step 1
@@ -193,7 +193,7 @@ export function FuzzCrashDetailPage() {
           return (
             <li
               key={`triage-${i}`}
-              className="border border-border-default rounded px-3 py-2"
+              className="border border-border rounded px-3 py-2"
             >
               <div className="flex items-center gap-2 flex-wrap">
                 <AilaBadge severity={sev} size="sm">
@@ -229,7 +229,7 @@ export function FuzzCrashDetailPage() {
           );
         })}
         {crash.promoted_to_finding_id && (
-          <li className="border border-border-default rounded px-3 py-2">
+          <li className="border border-border rounded px-3 py-2">
             <div className="flex items-center gap-2 flex-wrap">
               <AilaBadge severity="low" size="sm">
                 step {2 + (crash.triage_chain?.length ?? 0)}
@@ -249,13 +249,13 @@ export function FuzzCrashDetailPage() {
         hypothesis_create / exploitability_assess from §2.4) still
         require a crash → reasoning-turn join table -- backend pending.
       </p>
-      <div className="mt-4 pt-4 border-t border-border-default">
+      <div className="mt-4 pt-4 border-t border-border">
         <TriageEventForm crashId={cid} />
       </div></AilaCard>
 
       {/* LLM one-line summary (§1.6) -- derived from the structured
           report; placeholder when not present. */}
-      <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+      <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
         LLM summary
       </h2>
       {crash.triage_reason ? (
@@ -271,14 +271,14 @@ export function FuzzCrashDetailPage() {
           (and size); the bytes themselves require a future
           GET /vr/fuzz/crashes/{id}/reproducer endpoint. */}
       <AilaCard  techBorder glow><div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-        <h2 className="text-sm font-semibold text-foreground">
+        <h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground">
           Minimised input
         </h2>
         <button
           type="button"
           disabled
           title="Re-run reproducer on workstation -- backend pending"
-          className="text-xs px-2 py-1 rounded bg-accent text-white opacity-50 cursor-not-allowed"
+          className="text-xs px-2 py-1 rounded bg-accent text-background opacity-50 cursor-not-allowed"
         >
           Re-run (pending)
         </button>
@@ -304,7 +304,7 @@ export function FuzzCrashDetailPage() {
       {/* Stack trace -- clickable frames per §1.6. Each frame jumps to
           the target's functions-of-interest tab scrolled to that
           function. Frame click is a no-op when no target_id is known. */}
-      <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+      <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
         Stack trace
       </h2>
       {crash.stack_trace ? (
@@ -317,7 +317,7 @@ export function FuzzCrashDetailPage() {
       )}</AilaCard>
 
       {/* Linked artefacts (§1.6 step 6) */}
-      <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+      <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
         Linked artefacts
       </h2>
       <ul className="text-xs space-y-1">
@@ -352,7 +352,7 @@ export function FuzzCrashDetailPage() {
       </ul></AilaCard>
 
       {Object.keys(crash.extra).length > 0 && (
-        <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+        <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
           Extra fields
         </h2>
         <pre className="text-xs font-mono text-text-muted whitespace-pre-wrap">
@@ -417,7 +417,7 @@ function TriageEventForm({ crashId }: { crashId: string }) {
         <select
           value={verdict}
           onChange={(e) => setVerdict(e.target.value as CrashTriageVerdict)}
-          className="text-xs px-2 py-1 rounded bg-surface border border-border-default"
+          className="text-xs px-2 py-1 rounded bg-surface border border-border"
           aria-label="Triage verdict"
         >
           {TRIAGE_VERDICT_VALUES.map((v) => (
@@ -432,7 +432,7 @@ function TriageEventForm({ crashId }: { crashId: string }) {
         onChange={(e) => setReason(e.target.value)}
         placeholder="Reason (required) — one-liner justifying the verdict change"
         rows={2}
-        className="w-full text-xs font-mono p-2 rounded bg-surface border border-border-default focus:border-accent focus:outline-none"
+        className="w-full text-xs font-mono p-2 rounded bg-surface border border-border focus:border-accent focus:outline-none"
         aria-label="Triage reason"
       />
       <textarea
@@ -440,7 +440,7 @@ function TriageEventForm({ crashId }: { crashId: string }) {
         onChange={(e) => setNotes(e.target.value)}
         placeholder="Notes (optional) — free-form context, links, follow-ups"
         rows={2}
-        className="w-full text-xs font-mono p-2 rounded bg-surface border border-border-default focus:border-accent focus:outline-none"
+        className="w-full text-xs font-mono p-2 rounded bg-surface border border-border focus:border-accent focus:outline-none"
         aria-label="Triage notes"
       />
       <div className="flex items-center justify-end gap-2">
@@ -450,7 +450,7 @@ function TriageEventForm({ crashId }: { crashId: string }) {
         <button
           type="submit"
           disabled={disabled}
-          className="text-xs px-3 py-1 rounded bg-accent text-white disabled:opacity-50 disabled:cursor-not-allowed"
+          className="text-xs px-3 py-1 rounded bg-accent text-background disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {triageMut.isPending ? "Appending…" : "Append event"}
         </button>

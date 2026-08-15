@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 import { useStartInvestigation } from "../mutations";
 import { useProjectInvestigations } from "../queries";
@@ -9,9 +9,9 @@ import type { InvestigationSummary } from "../types";
 const statusColors: Record<string, string> = {
   pending: "text-text-muted",
   running: "text-accent",
-  completed: "text-green-400",
-  exhausted: "text-yellow-400",
-  failed: "text-red-400",
+  completed: "text-mint",
+  exhausted: "text-amber-400",
+  failed: "text-critical",
 };
 
 export function FreeFlowChat({ projectId }: { projectId: string }) {
@@ -32,9 +32,7 @@ export function FreeFlowChat({ projectId }: { projectId: string }) {
 
   return (
     <div className="space-y-4">
-      <h3 className="text-sm font-semibold text-foreground">Free-Flow Investigator</h3>
-
-      <AilaCard  techBorder glow><div className="space-y-3">
+      <WindowPanel title="free-flow investigator"><div className="space-y-3">
         <textarea
           aria-label="Question for the investigator"
           value={question}
@@ -60,15 +58,16 @@ export function FreeFlowChat({ projectId }: { projectId: string }) {
             type="button"
             onClick={handleSubmit}
             disabled={!question.trim() || startInvestigation.isPending}
-            className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
+            className="px-4 py-2 font-mono text-xs uppercase tracking-cyber-sm rounded-[3px] bg-accent text-badge-text hover:brightness-110 transition-[filter] disabled:opacity-50"
+            style={{ boxShadow: "var(--bevel-key)" }}
           >
             {startInvestigation.isPending ? "Starting..." : "Investigate"}
           </button>
         </div>
-      </div></AilaCard>
+      </div></WindowPanel>
 
       <div className="space-y-2">
-        <h4 className="text-xs font-medium text-text-muted uppercase tracking-wide">
+        <h4 className="font-mono text-2xs uppercase tracking-cyber-sm text-muted-foreground">
           Investigations ({investigations?.length ?? 0})
         </h4>
         {isLoading && <p className="text-xs text-text-muted">Loading...</p>}
@@ -88,7 +87,7 @@ export function FreeFlowChat({ projectId }: { projectId: string }) {
               {inv.confidence && <span>Confidence: {inv.confidence}</span>}
             </div>
             {inv.final_answer && (
-              <div className="mt-2 px-2 py-1 bg-green-900/20 border border-green-700/30 rounded text-xs text-green-300 font-mono">
+              <div className="mt-2 px-2 py-1 bg-mint/10 border border-mint/30 rounded text-xs text-mint font-mono">
                 {inv.final_answer}
               </div>
             )}

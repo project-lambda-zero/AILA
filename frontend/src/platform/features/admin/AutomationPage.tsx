@@ -493,7 +493,7 @@ export function AutomationPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Total Schedules
         </p>
         <div className="mt-1 min-h-[2rem]">
@@ -506,7 +506,7 @@ export function AutomationPage() {
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Across your team
         </p></AilaCard>
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Enabled
         </p>
         <div className="mt-1 min-h-[2rem]">
@@ -519,7 +519,7 @@ export function AutomationPage() {
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Currently firing on cron
         </p></AilaCard>
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Available Actions
         </p>
         <div className="mt-1 min-h-[2rem]">
@@ -547,7 +547,7 @@ export function AutomationPage() {
       )}
 
       {schedulesQuery.isLoading && (
-        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={6} /></AilaCard>
+        <AilaCard variant="default" padding="md"><LoadingSkeletonGroup lines={6} /></AilaCard>
       )}
 
       {!schedulesQuery.isLoading &&

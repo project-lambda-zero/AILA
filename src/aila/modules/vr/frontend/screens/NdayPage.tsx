@@ -157,7 +157,7 @@ export function NdayPage() {
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <Link
           to={`/vr/projects/${projectId}`}
-          className="text-xs px-3 py-1.5 rounded bg-surface border border-border-default hover:bg-surface-hover"
+          className="text-xs px-3 py-1.5 rounded bg-surface border border-border hover:bg-elevated"
         >
           ← project dashboard
         </Link>

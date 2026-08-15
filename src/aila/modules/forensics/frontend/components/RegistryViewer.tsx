@@ -1,7 +1,7 @@
 import { useState } from "react";
 
-import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 import { useRegistryAnalysis } from "../queries";
 
@@ -22,22 +22,21 @@ type RegTab =
 interface RegTabDef {
   id: RegTab;
   label: string;
-  icon: string;
 }
 
 const REG_TABS: RegTabDef[] = [
-  { id: "autoruns", label: "Autoruns", icon: "▶" },
-  { id: "services", label: "Services", icon: "⚙" },
-  { id: "software", label: "Software", icon: "📦" },
-  { id: "users", label: "User Accounts", icon: "👤" },
-  { id: "usb", label: "USB History", icon: "🔌" },
-  { id: "recent", label: "Recent Docs", icon: "📋" },
-  { id: "network", label: "Network", icon: "🌐" },
-  { id: "shellbags", label: "ShellBags", icon: "📂" },
-  { id: "amcache", label: "AmCache", icon: "💾" },
-  { id: "shimcache", label: "ShimCache", icon: "🔄" },
-  { id: "bam", label: "BAM", icon: "📊" },
-  { id: "security", label: "Security Pkgs", icon: "🔒" },
+  { id: "autoruns", label: "Autoruns" },
+  { id: "services", label: "Services" },
+  { id: "software", label: "Software" },
+  { id: "users", label: "User Accounts" },
+  { id: "usb", label: "USB History" },
+  { id: "recent", label: "Recent Docs" },
+  { id: "network", label: "Network" },
+  { id: "shellbags", label: "ShellBags" },
+  { id: "amcache", label: "AmCache" },
+  { id: "shimcache", label: "ShimCache" },
+  { id: "bam", label: "BAM" },
+  { id: "security", label: "Security Pkgs" },
 ];
 
 export function RegistryViewer({ projectId }: { projectId: string }) {
@@ -48,9 +47,9 @@ export function RegistryViewer({ projectId }: { projectId: string }) {
 
   if (isError) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow>
-        <p className="text-sm text-text-danger">Failed to load registry analysis.</p>
-      </AilaCard>
+      <WindowPanel title="registry" tone="warn" status="forensics ; registry unavailable">
+        <p className="text-sm text-critical">Failed to load registry analysis.</p>
+      </WindowPanel>
     );
   }
 
@@ -75,11 +74,11 @@ export function RegistryViewer({ projectId }: { projectId: string }) {
 
   if (totalItems === 0) {
     return (
-      <AilaCard  techBorder glow>
+      <WindowPanel title="registry" tone="muted" status="forensics ; no windows hive">
         <p className="text-sm text-text-muted text-center py-8">
           No registry data available. This project may not contain a Windows disk image.
         </p>
-      </AilaCard>
+      </WindowPanel>
     );
   }
 
@@ -88,7 +87,7 @@ export function RegistryViewer({ projectId }: { projectId: string }) {
   return (
     <div className="space-y-0">
       {/* Sub-tab bar */}
-      <div className="flex flex-wrap gap-0.5 bg-surface-secondary rounded-t-lg p-1 border border-b-0 border-border">
+      <div className="flex flex-wrap gap-0.5 bg-elevated rounded-t-lg p-1 border border-b-0 border-border">
         {REG_TABS.map((tab) => {
           const count = dataMap[tab.id].length;
           return (
@@ -96,19 +95,19 @@ export function RegistryViewer({ projectId }: { projectId: string }) {
               key={tab.id}
               type="button"
               onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 font-mono text-xs uppercase tracking-cyber-sm rounded-[4px] transition-colors ${
                 activeTab === tab.id
-                  ? "bg-surface text-foreground shadow-sm border border-border"
+                  ? "bg-surface text-foreground border border-border"
                   : "text-text-muted hover:text-foreground hover:bg-surface/50"
               }`}
+              style={activeTab === tab.id ? { boxShadow: "inset 0 2px 0 var(--color-accent)" } : undefined}
             >
-              <span>{tab.icon}</span>
               <span>{tab.label}</span>
               {count > 0 && (
-                <span className={`ml-1 px-1.5 py-0.5 rounded-full text-3xs font-bold ${
+                <span className={`ml-1 px-1.5 py-0.5 rounded-[3px] text-3xs font-bold ${
                   activeTab === tab.id
-                    ? "bg-primary/10 text-primary"
-                    : "bg-surface-secondary text-text-muted"
+                    ? "bg-accent/15 text-accent"
+                    : "bg-elevated text-text-muted"
                 }`}>
                   {count}
                 </span>
@@ -152,7 +151,7 @@ function RegistryTable({ rows }: { rows: Record<string, unknown>[] }) {
 
   return (
     <div>
-      <div className="px-3 py-2 border-b border-border bg-surface-secondary/50">
+      <div className="px-3 py-2 border-b border-border bg-elevated/50">
         <input
           aria-label="Search registry data"
           type="text"
@@ -168,7 +167,7 @@ function RegistryTable({ rows }: { rows: Record<string, unknown>[] }) {
       <div className="overflow-x-auto overflow-y-auto" style={{ maxHeight: 600 }}>
         <table className="w-full text-xs" aria-label="Registry entries">
           <caption className="sr-only">Windows registry keys and values recovered from the evidence hive.</caption>
-          <thead className="bg-surface-secondary sticky top-0 z-10">
+          <thead className="bg-elevated sticky top-0 z-10">
             <tr>
               <th className="text-left px-3 py-2 text-text-muted font-medium w-8">#</th>
               {columns.map((col) => (
@@ -184,7 +183,7 @@ function RegistryTable({ rows }: { rows: Record<string, unknown>[] }) {
                 <tr
                   key={i}
                   onClick={() => setExpandedRow(expandedRow === i ? null : i)}
-                  className="border-t border-border hover:bg-surface-secondary/30 cursor-pointer"
+                  className="border-t border-border hover:bg-elevated/30 cursor-pointer"
                 >
                   <td className="px-3 py-1.5 text-text-muted font-mono">{i + 1}</td>
                   {columns.map((col) => (
@@ -199,7 +198,7 @@ function RegistryTable({ rows }: { rows: Record<string, unknown>[] }) {
                 </tr>
                 {expandedRow === i && (
                   <tr key={`${i}-detail`} className="border-t border-border/50">
-                    <td colSpan={columns.length + 1} className="px-4 py-3 bg-surface-secondary/20">
+                    <td colSpan={columns.length + 1} className="px-4 py-3 bg-elevated/20">
                       <pre className="text-3xs font-mono text-foreground whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
                         {JSON.stringify(row, null, 2)}
                       </pre>

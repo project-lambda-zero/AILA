@@ -1,6 +1,6 @@
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 import { useProjectAnswers } from "../queries";
 import type { AnswerCandidate } from "../types";
@@ -21,11 +21,11 @@ export function QuestionsTable({ projectId }: { projectId: string }) {
 
   if (items.length === 0) {
     return (
-      <AilaCard  techBorder glow>
+      <WindowPanel title="questions & answers" tone="muted" status="forensics ; no answers yet">
         <p className="text-sm text-text-muted text-center py-8">
           No questions answered yet. Use the free-flow investigator to ask questions.
         </p>
-      </AilaCard>
+      </WindowPanel>
     );
   }
 
@@ -33,7 +33,7 @@ export function QuestionsTable({ projectId }: { projectId: string }) {
     <div className="border border-border rounded-md bg-surface text-foreground overflow-x-auto">
       <table className="w-full text-sm" aria-label="Investigation questions">
         <caption className="sr-only">Investigator-authored questions with their current status and assigned owner.</caption>
-        <thead className="bg-surface-secondary">
+        <thead className="bg-elevated">
           <tr>
             <th className="text-left px-3 py-2 text-text-muted font-medium">Question</th>
             <th className="text-left px-3 py-2 text-text-muted font-medium">Answer</th>
@@ -43,11 +43,11 @@ export function QuestionsTable({ projectId }: { projectId: string }) {
         </thead>
         <tbody>
           {items.map((answer: AnswerCandidate) => (
-            <tr key={answer.id} className="border-t border-border hover:bg-surface-secondary">
+            <tr key={answer.id} className="border-t border-border hover:bg-elevated">
               <td className="px-3 py-2 text-foreground max-w-sm">
                 <p className="truncate">{answer.question_text}</p>
               </td>
-              <td className="px-3 py-2 text-green-300 font-mono text-xs max-w-xs">
+              <td className="px-3 py-2 text-mint font-mono text-xs max-w-xs">
                 {answer.answer_text || "--"}
               </td>
               <td className="px-3 py-2">

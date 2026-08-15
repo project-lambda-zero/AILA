@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 
-import { PageFrame } from "@app/layout/PageFrame";
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
+import { PixelIcon } from "@/components/aila/PixelIcon";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 import { fetchHelloWorldStatus } from "./api";
 
@@ -12,21 +12,53 @@ export default function HelloWorldPage() {
     queryFn: fetchHelloWorldStatus,
   });
 
+  const footer = isLoading
+    ? "status ; polling module"
+    : error
+      ? "status ; unreachable"
+      : data
+        ? `module ; ${data.module}`
+        : "status ; idle";
+
   return (
-    <PageFrame title="Hello World">
-      <AilaCard  techBorder glow><div className="space-y-4">
-        <h2 className="text-lg font-semibold text-text">Module Status</h2>
-        {isLoading && <p className="text-text-muted">Loading...</p>}
-        {error && <p className="text-critical">Failed to load status</p>}
-        {data && (
-          <div className="flex items-center gap-2">
-            <AilaBadge status="completed">Active</AilaBadge>
-            <span className="text-text-muted">
-              {data.module} reports status: {data.status}
-            </span>
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
+      <WindowPanel
+        title="module status"
+        tone={error ? "warn" : data ? "ok" : "accent"}
+        status={footer}
+      >
+        <div className="flex flex-col gap-4">
+          <div
+            className="font-mono uppercase text-muted-foreground"
+            style={{ fontSize: "10.5px", letterSpacing: "0.14em" }}
+          >
+            reference module &middot; contract proof
           </div>
-        )}
-      </div></AilaCard>
-    </PageFrame>
+
+          {isLoading && (
+            <p className="font-mono text-sm text-muted-foreground">Loading...</p>
+          )}
+
+          {error && (
+            <p className="font-mono text-sm" style={{ color: "var(--color-critical)" }}>
+              Failed to load status
+            </p>
+          )}
+
+          {data && (
+            <div className="flex flex-wrap items-center gap-3">
+              <PixelIcon name="ok" size={16} style={{ color: "var(--color-mint)" }} />
+              <AilaBadge status="completed">Active</AilaBadge>
+              <span className="text-sm text-foreground">
+                {data.module} reports status:{" "}
+                <span className="font-mono" style={{ color: "var(--color-mint)" }}>
+                  {data.status}
+                </span>
+              </span>
+            </div>
+          )}
+        </div>
+      </WindowPanel>
+    </div>
   );
 }

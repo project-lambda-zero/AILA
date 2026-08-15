@@ -251,13 +251,13 @@ function ToolDetailPanel({ toolKey, canInvoke }: ToolDetailPanelProps) {
 
   if (detailQuery.isLoading) {
     return (
-      <AilaCard variant="elevated" padding="md" className="h-full" techBorder glow><LoadingSkeletonGroup lines={8} /></AilaCard>
+      <AilaCard variant="elevated" padding="md" className="h-full"><LoadingSkeletonGroup lines={8} /></AilaCard>
     );
   }
 
   if (detailQuery.isError) {
     return (
-      <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs text-destructive">
+      <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs text-destructive">
         Failed to load tool detail: {(detailQuery.error as Error).message}
       </p></AilaCard>
     );
@@ -272,7 +272,7 @@ function ToolDetailPanel({ toolKey, canInvoke }: ToolDetailPanelProps) {
   return (
     <div className="flex flex-col gap-4">
       {/* Tool header */}
-      <AilaCard variant="elevated" padding="md" techBorder glow><div className="flex items-start justify-between gap-4">
+      <AilaCard variant="elevated" padding="md"><div className="flex items-start justify-between gap-4">
         <div className="flex flex-col gap-1 min-w-0">
           <h2 className="font-mono text-base font-semibold text-foreground">
             {detail.name}
@@ -295,7 +295,7 @@ function ToolDetailPanel({ toolKey, canInvoke }: ToolDetailPanelProps) {
       </div></AilaCard>
 
       {/* Invoke form */}
-      <AilaCard variant="elevated" padding="md" techBorder glow><h3 className="font-mono text-sm font-semibold text-foreground mb-3">
+      <AilaCard variant="elevated" padding="md"><h3 className="font-mono text-sm font-semibold text-foreground mb-3">
         Inputs
       </h3>
       
@@ -363,7 +363,7 @@ function ToolDetailPanel({ toolKey, canInvoke }: ToolDetailPanelProps) {
           invokeResult.error
             ? "border-destructive/40 bg-destructive/5"
             : "border-border"
-        } techBorder glow><h3 className="font-mono text-sm font-semibold text-foreground mb-2">
+        }><h3 className="font-mono text-sm font-semibold text-foreground mb-2">
           {invokeResult.error ? "Invocation Error" : "Result"}
         </h3>
         
@@ -410,7 +410,7 @@ export function ToolsConsolePage() {
       {/* Two-column split */}
       <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-4 min-h-0 flex-1">
         {/* Left: tool list */}
-        <AilaCard variant="default" padding="md" className="overflow-hidden" techBorder glow><ToolListPanel
+        <AilaCard variant="default" padding="md" className="overflow-hidden"><ToolListPanel
           tools={tools}
           selectedKey={selectedToolKey}
           onSelect={handleSelectTool}

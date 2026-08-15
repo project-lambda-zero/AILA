@@ -17,6 +17,7 @@ import { FilePdf } from "@phosphor-icons/react/dist/csr/FilePdf";
 import { FileArrowDown } from "@phosphor-icons/react/dist/csr/FileArrowDown";
 
 import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaChart } from "@/components/aila/AilaChart";
 import { LoadingSkeleton, LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
@@ -185,9 +186,6 @@ export function ExecutivePage() {
         <AilaCard
           variant="elevated"
           padding="none"
-          cornerAccents
-          techBorder
-          glow
           className="lg:col-span-7"
         >
           <div className="flex h-full flex-col justify-between gap-6 px-6 py-8 lg:px-10 lg:py-12">
@@ -228,7 +226,6 @@ export function ExecutivePage() {
           <AilaCard
             variant="default"
             padding="md"
-            techBorder
             className="flex items-center gap-4"
           >
             <span aria-hidden className="h-12 w-1 shrink-0 bg-accent" />
@@ -256,8 +253,6 @@ export function ExecutivePage() {
           <AilaCard
             variant="default"
             padding="md"
-            techBorder
-            glow={immediateCount > 0}
             className="flex items-center gap-4"
           >
             <span
@@ -292,7 +287,6 @@ export function ExecutivePage() {
           <AilaCard
             variant="default"
             padding="md"
-            techBorder
             className="flex items-center gap-4"
           >
             <span aria-hidden className="h-12 w-1 shrink-0 bg-border" />
@@ -329,16 +323,10 @@ export function ExecutivePage() {
         resetKeys={[health?.total_findings ?? -1]}
         onReset={() => void healthQuery.refetch()}
       >
-      <AilaCard
-        variant="default"
-        padding="md"
-        techBorder
-        glow
+      <WindowPanel
+        title="Risk posture"
         className="lg:ml-12 lg:mr-4"
       >
-        <h2 className="font-mono text-sm font-semibold text-text mb-3">
-          Risk posture
-        </h2>
         {healthQuery.isLoading && <LoadingSkeletonGroup lines={2} />}
         {!healthQuery.isLoading &&
           !healthQuery.isError &&
@@ -370,7 +358,7 @@ export function ExecutivePage() {
             ))}
           </div>
         )}
-      </AilaCard>
+      </WindowPanel>
       </FeatureBoundary>
 
       {/* Severity distribution pie -- additive visual of the same
@@ -386,16 +374,10 @@ export function ExecutivePage() {
             resetKeys={[severityPieData.length, totalFindings]}
             onReset={() => void healthQuery.refetch()}
           >
-          <AilaCard
-            variant="default"
-            padding="md"
-            techBorder
-            glow
+          <WindowPanel
+            title="Severity distribution"
             className="lg:ml-12 lg:mr-4"
           >
-            <h2 className="font-mono text-sm font-semibold text-text mb-3">
-              Severity distribution
-            </h2>
             <p className="font-mono text-xs text-text-muted mb-3">
               Share of the {totalFindings} active finding
               {totalFindings === 1 ? "" : "s"} by risk tier.
@@ -409,19 +391,13 @@ export function ExecutivePage() {
               size="md"
               ariaLabel="Severity distribution pie chart"
             />
-          </AilaCard>
+          </WindowPanel>
           </FeatureBoundary>
         )}
 
       {/* Downloads */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <AilaCard variant="default" padding="md" techBorder glow>
-          <div className="flex items-center gap-2 mb-3">
-            <FilePdf className="h-4 w-4 text-accent" />
-            <h2 className="font-mono text-sm font-semibold text-text">
-              Risk summary PDF
-            </h2>
-          </div>
+        <WindowPanel title="Risk summary PDF">
           <p className="font-mono text-xs text-text-muted mb-4">
             Stream a fleet-wide executive risk summary as PDF. Includes severity
             cards, top-25 findings, and posture commentary.
@@ -439,15 +415,9 @@ export function ExecutivePage() {
           {pdfError && (
             <p className="font-mono text-xs text-destructive mt-2">{pdfError}</p>
           )}
-        </AilaCard>
+        </WindowPanel>
 
-        <AilaCard variant="default" padding="md" techBorder glow>
-          <div className="flex items-center gap-2 mb-3">
-            <FileArrowDown className="h-4 w-4 text-accent" />
-            <h2 className="font-mono text-sm font-semibold text-text">
-              System evidence package
-            </h2>
-          </div>
+        <WindowPanel title="System evidence package">
           <p className="font-mono text-xs text-text-muted mb-4">
             ZIP archive of findings, compliance tags, and scan metadata for a
             specific system. Useful for audit handoff.
@@ -485,7 +455,7 @@ export function ExecutivePage() {
           {zipError && (
             <p className="font-mono text-xs text-destructive mt-2">{zipError}</p>
           )}
-        </AilaCard>
+        </WindowPanel>
       </div>
     </div>
   );

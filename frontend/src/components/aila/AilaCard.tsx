@@ -10,20 +10,23 @@ import { useReducedMotion } from "@/hooks/useReducedMotion"
  * Implements border-based surface elevation (D-06) with 4px radius (D-05).
  */
 const ailaCardVariants = cva(
-  "rounded-[4px] border transition-colors duration-150",
+  // WindowPanel language: 1px --color-border-bright hairline, sharp
+  // --radius-md (4px), --bevel-raised applied inline on the root so it
+  // beats the unlayered [data-theme] .bg-surface box-shadow.
+  "rounded-[4px] border border-[var(--color-border-bright)] transition-colors duration-150",
   {
     variants: {
       /**
        * Visual variant controlling background and hover behavior.
-       * - `default`: surface background, static border
-       * - `elevated`: elevated background, static border
-       * - `interactive`: surface background with amber border glow on hover
+       * - `default`: surface background, static bright border
+       * - `elevated`: elevated background, static bright border
+       * - `interactive`: surface background, border brightens to accent on hover
        */
       variant: {
-        default: "bg-surface border-border",
-        elevated: "bg-elevated border-border",
+        default: "bg-surface",
+        elevated: "bg-elevated",
         interactive:
-          "bg-surface border-border hover:border-border-hover cursor-pointer",
+          "bg-surface hover:border-border-hover cursor-pointer",
       },
       /**
        * Internal padding size.
@@ -148,6 +151,7 @@ function AilaCard({
   cornerAccents,
   techBorder,
   glow,
+  style,
   children,
   ...props
 }: AilaCardProps) {
@@ -246,7 +250,12 @@ function AilaCard({
 
   if (!animate) {
     return (
-      <div ref={ref} className={baseClass} {...props}>
+      <div
+        ref={ref}
+        className={baseClass}
+        style={{ boxShadow: "var(--bevel-raised)", ...style }}
+        {...props}
+      >
         {decorationLayer}
         {children}
       </div>
@@ -268,6 +277,7 @@ function AilaCard({
         ease: "easeOut",
         delay: prefersReducedMotion ? 0 : delay,
       }}
+      style={{ boxShadow: "var(--bevel-raised)", ...style }}
       {...(props as React.ComponentPropsWithoutRef<typeof motion.div>)}
     >
       {decorationLayer}

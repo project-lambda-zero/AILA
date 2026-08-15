@@ -352,7 +352,7 @@ export function TargetsPage() {
           onClick={() => setShowForm((v) => !v)}
           disabled={workspaces.length === 0}
           title={workspaces.length === 0 ? "Create a workspace first" : ""}
-          className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 transition-colors disabled:opacity-50"
+          className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-background hover:bg-accent/90 transition-colors disabled:opacity-50"
         >
           {showForm ? "Cancel" : "New Target"}
         </button>
@@ -360,7 +360,7 @@ export function TargetsPage() {
 
       {showForm && workspaces.length > 0 && (
         <AilaCard techBorder glow>
-          <h2 className="text-sm font-semibold text-foreground mb-2">
+          <h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
             Create target
           </h2>
           <p className="text-xs text-text-muted mb-3">
@@ -373,7 +373,7 @@ export function TargetsPage() {
               value={formWorkspaceId}
               onChange={(e) => setFormWorkspaceId(e.target.value)}
               aria-label="Workspace"
-              className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default"
+              className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border"
             >
               <option value="">-- select workspace --</option>
               {workspaces.map((ws) => (
@@ -388,7 +388,7 @@ export function TargetsPage() {
               onChange={(e) => setFormDisplayName(e.target.value)}
               placeholder="Display name"
               aria-label="Display name"
-              className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+              className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
             />
             <select
               value={formKind}
@@ -399,7 +399,7 @@ export function TargetsPage() {
                 setPickedFile(null);
               }}
               aria-label="Target kind"
-              className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default"
+              className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border"
             >
               {TARGET_KINDS.map((k) => (
                 <option key={k} value={k}>
@@ -448,7 +448,7 @@ export function TargetsPage() {
                           }
                         }}
                         aria-label={field.label}
-                        className="w-full text-xs text-text-muted file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-sm file:bg-accent file:text-white hover:file:bg-accent/90 file:cursor-pointer"
+                        className="w-full text-xs text-text-muted file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-sm file:bg-accent file:text-background hover:file:bg-accent/90 file:cursor-pointer"
                       />
                       {pickedFile && (
                         <p className="text-xs text-text-muted">
@@ -474,7 +474,7 @@ export function TargetsPage() {
                       }
                       placeholder={field.placeholder}
                       aria-label={field.label}
-                      className="w-full px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+                      className="w-full px-3 py-2 text-xs font-mono rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
                     />
                   </div>
                 );
@@ -569,7 +569,7 @@ export function TargetsPage() {
                     );
                   }
                 }}
-                className="ml-auto px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 transition-colors disabled:opacity-50"
+                className="ml-auto px-4 py-2 text-sm font-medium rounded-md bg-accent text-background hover:bg-accent/90 transition-colors disabled:opacity-50"
               >
                 {uploadApkMut.isPending
                   ? "Uploading APK…"
@@ -602,14 +602,14 @@ export function TargetsPage() {
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Filter targets (name / kind / language)…"
           aria-label="Filter targets"
-          className="flex-1 min-w-[220px] max-w-md px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+          className="flex-1 min-w-[220px] max-w-md px-3 py-1.5 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
         />
         <label htmlFor="target-workspace-filter" className="text-sm text-text-muted">Filter workspace:</label>
         <select
           id="target-workspace-filter"
           value={workspaceFilter}
           onChange={(e) => setWorkspaceFilter(e.target.value)}
-          className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
+          className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border"
         >
           <option value="">-- all --</option>
           {workspaces.map((ws) => (
@@ -628,7 +628,7 @@ export function TargetsPage() {
       {isLoading && <LoadingSkeleton size="lg" width="full" />}
 
       {isError && (
-        <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load targets.</p></AilaCard>
+        <AilaCard className="border-critical" techBorder glow><p className="text-sm text-critical">Failed to load targets.</p></AilaCard>
       )}
 
       {!isLoading && !isError && targets.length === 0 && (
@@ -655,7 +655,7 @@ export function TargetsPage() {
         <AilaCard className="overflow-x-auto p-0" techBorder glow><table className="w-full text-sm">
           <caption className="sr-only">Targets in the selected workspace</caption>
           <thead>
-            <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
+            <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-muted">
               <SortHeader columnKey="name" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Name</SortHeader>
               <SortHeader columnKey="kind" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Kind</SortHeader>
               <SortHeader columnKey="primary_language" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Language</SortHeader>
@@ -675,7 +675,7 @@ export function TargetsPage() {
                 {...rowProps}
                 onClick={() => navigate(`/vr/targets/${t.id}`)}
                 className={
-                  "border-b border-border-default last:border-b-0 cursor-pointer hover:bg-surface transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset " +
+                  "border-b border-border last:border-b-0 cursor-pointer hover:bg-surface transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset " +
                   (rowProps["data-row-active"] ? "bg-elevated" : "")
                 }
               >
@@ -811,7 +811,7 @@ function RefreshSourceButton({
       }}
       className={[
         "inline-flex items-center justify-center",
-        "h-6 w-6 rounded border border-border-default",
+        "h-6 w-6 rounded border border-border",
         "text-text-muted transition-colors",
         eligible
           ? "hover:border-accent hover:text-accent cursor-pointer"

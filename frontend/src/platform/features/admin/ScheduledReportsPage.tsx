@@ -530,7 +530,7 @@ export function ScheduledReportsPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Total Reports
         </p>
         <div className="mt-1 min-h-[2rem]">
@@ -541,7 +541,7 @@ export function ScheduledReportsPage() {
           )}
         </div>
         <p className="font-mono text-xs text-text-muted mt-0.5">All configured</p></AilaCard>
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Active
         </p>
         <div className="mt-1 min-h-[2rem]">
@@ -554,7 +554,7 @@ export function ScheduledReportsPage() {
         <p className="font-mono text-xs text-text-muted mt-0.5">
           Firing on schedule
         </p></AilaCard>
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Paused
         </p>
         <div className="mt-1 min-h-[2rem]">
@@ -576,7 +576,7 @@ export function ScheduledReportsPage() {
       )}
 
       {reportsQuery.isLoading && (
-        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={6} /></AilaCard>
+        <AilaCard variant="default" padding="md"><LoadingSkeletonGroup lines={6} /></AilaCard>
       )}
 
       {!reportsQuery.isLoading &&

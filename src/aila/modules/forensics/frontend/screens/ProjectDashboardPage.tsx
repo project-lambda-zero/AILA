@@ -6,9 +6,10 @@ import { Detective } from "@phosphor-icons/react/dist/csr/Detective";
 import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import { PixelIcon } from "@/components/aila/PixelIcon";
 
 import { InvestigationRowSkeletonList, InvestigationDetailSkeleton } from "../components/skeletons";
 import { AnalystDirectivesPanel } from "../components/AnalystDirectivesPanel";
@@ -253,7 +254,7 @@ function InvestigationRow({
       }}
       data-power-row="investigation"
       aria-label={`Open investigation: ${display.question}`}
-      className="px-4 py-3 border border-border rounded-md bg-surface hover:bg-surface-secondary cursor-pointer transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2"
+      className="px-4 py-3 border border-border rounded-md bg-surface hover:bg-elevated cursor-pointer transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2"
     >
       <div className="flex items-start justify-between gap-3">
         <p className="text-sm text-foreground font-medium line-clamp-2 flex-1">
@@ -278,13 +279,13 @@ function InvestigationRow({
                 ? "Wait for the current run to finish"
                 : "Rerun this investigation, carrying findings forward"
             }
-            className="text-xs px-2 py-0.5 rounded border border-border bg-surface hover:bg-blue-600 hover:text-white hover:border-blue-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            className="font-mono text-xs uppercase tracking-cyber-sm px-2 py-0.5 rounded-[3px] border border-border bg-surface hover:bg-accent hover:text-badge-text hover:border-accent disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             {rerun.isPending ? "..." : "Rerun"}
           </button>
         </div>
       </div>
-      <div className="flex gap-3 mt-1 text-xs text-text-muted">
+      <div className="flex gap-3 mt-1 font-mono text-xs text-text-muted">
         <span>
           {display.attempts_used}
           {display.max_attempts ? `/${display.max_attempts}` : ""} attempts
@@ -349,10 +350,9 @@ function FullAnalysisButton({ projectId }: { projectId: string }) {
   }
 
   return (
-    <AilaCard  techBorder glow><div className="flex items-center justify-between">
-      <div>
-        <h2 className="text-sm font-semibold text-foreground">Pre-populate artifacts</h2>
-        <p className="text-xs text-text-muted mt-0.5">
+    <WindowPanel title="pre-populate artifacts" tone="info"><div className="flex items-center justify-between gap-3">
+      <div className="min-w-0">
+        <p className="text-xs text-text-muted">
           Runs intake → collection → deep_analysis so the freeflow agent can answer questions
           instantly from cached evidence instead of re-scanning.
         </p>
@@ -361,7 +361,8 @@ function FullAnalysisButton({ projectId }: { projectId: string }) {
         type="button"
         onClick={handleClick}
         disabled={trigger.isPending || status === "streaming"}
-        className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+        className="px-4 py-2 font-mono text-xs uppercase tracking-cyber-sm rounded-[3px] bg-accent text-badge-text hover:brightness-110 transition-[filter] disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+        style={{ boxShadow: "var(--bevel-key)" }}
       >
         {status === "streaming" ? "Running..." : trigger.isPending ? "Queueing..." : "Run Full Analysis"}
       </button>
@@ -371,17 +372,17 @@ function FullAnalysisButton({ projectId }: { projectId: string }) {
         <div className="flex items-center gap-2 text-3xs text-text-muted font-mono">
           <span className={`inline-block w-1.5 h-1.5 rounded-full ${
             status === "streaming" ? "bg-amber-400 animate-pulse"
-            : status === "done" ? "bg-green-400"
-            : status === "error" ? "bg-red-400" : "bg-surface-secondary"
+            : status === "done" ? "bg-mint"
+            : status === "error" ? "bg-critical" : "bg-elevated"
           }`} />
           <span>task:{taskId.slice(0, 8)} · {status} · {events.length} event(s)</span>
         </div>
-        <div className="max-h-64 overflow-y-auto rounded border border-border bg-black/30 p-2 font-mono text-3xs space-y-0.5">
+        <div className="max-h-64 overflow-y-auto rounded-[4px] border border-border p-2 font-mono text-3xs space-y-0.5" style={{ background: "var(--surface-sunk)" }}>
           {events.length === 0 && <p className="text-text-muted italic">Waiting for first event…</p>}
           {events.map((ev, i) => {
             const stage = ev.stage ?? "event";
-            const color = stage.includes("failed") || stage.includes("crashed") ? "text-red-400"
-              : stage.includes("done") || stage.includes("succeeded") ? "text-green-400"
+            const color = stage.includes("failed") || stage.includes("crashed") ? "text-critical"
+              : stage.includes("done") || stage.includes("succeeded") ? "text-mint"
               : stage.includes("start") || stage.includes("begin") ? "text-amber-400"
               : "text-accent";
             return (
@@ -393,7 +394,7 @@ function FullAnalysisButton({ projectId }: { projectId: string }) {
           })}
         </div>
       </div>
-    )}</AilaCard>
+    )}</WindowPanel>
   );
 }
 
@@ -416,7 +417,7 @@ function StartInvestigationForm({ projectId }: { projectId: string }) {
       <button
         type="button"
         onClick={() => setExpanded(true)}
-        className="w-full px-4 py-3 text-sm font-medium rounded-md border-2 border-dashed border-border text-text-muted hover:border-accent hover:text-accent transition-colors"
+        className="w-full px-4 py-3 font-mono text-xs uppercase tracking-cyber-sm rounded-[4px] border border-dashed border-border text-text-muted hover:border-accent hover:text-accent transition-colors"
       >
         + Start New Investigation
       </button>
@@ -453,20 +454,21 @@ function StartInvestigationForm({ projectId }: { projectId: string }) {
         <button
           type="button"
           onClick={() => setExpanded(false)}
-          className="px-3 py-1.5 text-sm rounded-md border border-border text-foreground hover:bg-surface-secondary"
+          className="px-3 py-1.5 font-mono text-xs uppercase tracking-cyber-sm rounded-[3px] border border-border text-foreground hover:bg-elevated hover:border-border-hover transition-colors"
         >
           Cancel
         </button>
         <button
           type="submit"
           disabled={!question.trim() || startInvestigation.isPending}
-          className="px-3 py-1.5 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="px-3 py-1.5 font-mono text-xs uppercase tracking-cyber-sm rounded-[3px] bg-accent text-badge-text hover:brightness-110 transition-[filter] disabled:opacity-50 disabled:cursor-not-allowed"
+          style={{ boxShadow: "var(--bevel-key)" }}
         >
           {startInvestigation.isPending ? "Starting..." : "Start"}
         </button>
       </div>
       {startInvestigation.isError && (
-        <p className="text-xs text-text-danger">Failed to start investigation.</p>
+        <p className="text-xs text-critical">Failed to start investigation.</p>
       )}
     </form>
   );
@@ -475,19 +477,18 @@ function StartInvestigationForm({ projectId }: { projectId: string }) {
 // ----- Investigations tab -----
 function RawDirectoryNotice() {
   return (
-    <AilaCard  techBorder glow><div className="flex items-start justify-between gap-3">
+    <WindowPanel title="raw directory -- intake only" tone="muted"><div className="flex items-start justify-between gap-3">
       <div>
-        <h2 className="text-sm font-semibold text-foreground">Raw Directory -- intake only</h2>
-        <p className="text-xs text-text-muted mt-0.5">
+        <p className="text-xs text-text-muted">
           This project treats the evidence directory as a real filesystem on the analyzer.
           The pre/full-analysis pipeline (disk, memory, network, log lanes) is skipped --
           ask questions directly and the investigator will read files off the analyzer.
         </p>
       </div>
-      <span className="shrink-0 px-2 py-0.5 text-2xs rounded border border-border text-text-muted">
+      <span className="shrink-0 px-2 py-0.5 font-mono text-2xs uppercase tracking-cyber-sm rounded-[3px] border border-border text-text-muted">
         raw_directory
       </span>
-    </div></AilaCard>
+    </div></WindowPanel>
   );
 }
 
@@ -577,7 +578,9 @@ function InvestigationsTab({
       {isLoading && <InvestigationRowSkeletonList count={4} />}
 
       {isError && (
-        <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load investigations.</p></AilaCard>
+        <WindowPanel title="investigations" tone="warn" status="forensics ; investigations unavailable">
+          <p className="text-sm text-critical">Failed to load investigations.</p>
+        </WindowPanel>
       )}
 
       {!isLoading && !isError && (investigations ?? []).length > 0 && (
@@ -592,7 +595,7 @@ function InvestigationsTab({
             className="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-foreground placeholder:text-text-muted focus:outline-none focus:border-accent flex-1 min-w-[220px]"
           />
           <label className="flex items-center gap-1.5 text-xs text-text-muted">
-            <span>Sort</span>
+            <span className="font-mono uppercase tracking-wider">Sort</span>
             <select
               value={sortKey}
               onChange={(e) => setSortKey(e.target.value as InvestigationSortKey)}
@@ -658,8 +661,8 @@ function InvestigationsTab({
 
 // ----- Readiness stream display -----
 const TOOL_STATUS_COLOR: Record<string, string> = {
-  installed: "text-green-400",
-  missing: "text-red-400",
+  installed: "text-mint",
+  missing: "text-critical",
   skipped: "text-text-muted",
 };
 
@@ -674,19 +677,22 @@ function ReadinessStreamPanel({ projectId }: { projectId: string }) {
 
   return (
     <div className="space-y-4">
-      <AilaCard  techBorder glow><div className="flex items-center justify-between mb-4">
-        <div>
-          <h2 className="text-sm font-semibold font-mono text-foreground">Machine Readiness Check</h2>
+      <WindowPanel
+        title="machine readiness"
+        tone={result ? (result.ready ? "ok" : "warn") : "accent"}
+        status={running ? "readiness ; checking tools" : result ? (result.ready ? "readiness ; machine ready" : "readiness ; tools missing") : "readiness ; idle"}
+      ><div className="flex items-center justify-between gap-2 mb-4">
+        <div className="min-w-0">
           {startEvent && (
-            <p className="text-xs text-text-muted mt-0.5">{startEvent.message}</p>
+            <p className="text-xs text-text-muted truncate">{startEvent.message}</p>
           )}
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 shrink-0">
           {result && (
             <button
               type="button"
               onClick={reset}
-              className="px-3 py-1.5 text-xs rounded-md border border-border text-text-muted hover:text-foreground"
+              className="px-3 py-1.5 font-mono text-xs uppercase tracking-cyber-sm rounded-[3px] border border-border text-text-muted hover:text-foreground hover:border-border-hover transition-colors"
             >
               Reset
             </button>
@@ -695,9 +701,10 @@ function ReadinessStreamPanel({ projectId }: { projectId: string }) {
             type="button"
             onClick={start}
             disabled={running}
-            className="px-3 py-1.5 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            className="px-3 py-1.5 font-mono text-xs uppercase tracking-cyber-sm rounded-[3px] bg-accent text-badge-text hover:brightness-110 transition-[filter] disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            style={{ boxShadow: "var(--bevel-key)" }}
           >
-            {running && <span className="inline-block w-2 h-2 rounded-full bg-white/70 animate-pulse" />}
+            {running && <span className="inline-block w-2 h-2 rounded-full bg-badge-text/70 animate-pulse" />}
             {running ? "Running..." : result ? "Re-run Check" : "Run Check"}
           </button>
         </div>
@@ -705,7 +712,7 @@ function ReadinessStreamPanel({ projectId }: { projectId: string }) {
       
       {/* Current action */}
       {currentAction && (
-        <div className="mb-3 px-3 py-2 rounded-md bg-surface-secondary border border-border text-xs text-text-muted font-mono flex items-center gap-2">
+        <div className="mb-3 px-3 py-2 rounded-md bg-elevated border border-border text-xs text-text-muted font-mono flex items-center gap-2">
           <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
           {currentAction.message}
         </div>
@@ -717,7 +724,7 @@ function ReadinessStreamPanel({ projectId }: { projectId: string }) {
           {toolEvents.map((e, i) => (
             <div
               key={i}
-              className="flex items-center justify-between px-3 py-1.5 rounded text-xs font-mono hover:bg-surface-secondary"
+              className="flex items-center justify-between px-3 py-1.5 rounded text-xs font-mono hover:bg-elevated"
             >
               <div className="flex items-center gap-2 min-w-0">
                 <span className={TOOL_STATUS_COLOR[e.status ?? ""] ?? "text-text-muted"}>
@@ -732,7 +739,7 @@ function ReadinessStreamPanel({ projectId }: { projectId: string }) {
                 )}
               </div>
               {e.required && e.status === "missing" && (
-                <span className="text-red-400 shrink-0 ml-2">REQUIRED</span>
+                <span className="text-critical shrink-0 ml-2">REQUIRED</span>
               )}
             </div>
           ))}
@@ -745,15 +752,15 @@ function ReadinessStreamPanel({ projectId }: { projectId: string }) {
           <summary className="text-xs font-mono text-text-muted cursor-pointer select-none hover:text-foreground">
             xray log ({events.length} events) -- expand for full stream
           </summary>
-          <div className="mt-2 max-h-96 overflow-y-auto rounded border border-border bg-black/40">
+          <div className="mt-2 max-h-96 overflow-y-auto rounded-[4px] border border-border" style={{ background: "var(--surface-sunk)" }}>
             {events.map((e, i) => {
               const stage = e.stage ?? "event";
               const color =
-                stage.includes("failed") ? "text-red-400" :
-                stage === "tool_done" && e.status === "installed" ? "text-green-400" :
-                stage === "install_verified" ? "text-green-400" :
+                stage.includes("failed") ? "text-critical" :
+                stage === "tool_done" && e.status === "installed" ? "text-mint" :
+                stage === "install_verified" ? "text-mint" :
                 stage === "installing" || stage === "install_exec" ? "text-amber-400" :
-                stage === "checking" ? "text-blue-400" :
+                stage === "checking" ? "text-lavender" :
                 stage === "heartbeat" ? "text-text-muted/60" :
                 "text-text-muted";
               return (
@@ -765,7 +772,7 @@ function ReadinessStreamPanel({ projectId }: { projectId: string }) {
                     <div className="text-text-muted/70 text-4xs ml-6 mt-0.5 break-all">$ {e.command}</div>
                   )}
                   {e.error && (
-                    <div className="text-red-300/80 text-4xs ml-6 mt-0.5 break-all whitespace-pre-wrap">{e.error}</div>
+                    <div className="text-critical/80 text-4xs ml-6 mt-0.5 break-all whitespace-pre-wrap">{e.error}</div>
                   )}
                   {e.output_tail && (
                     <div className="text-text-muted/70 text-4xs ml-6 mt-0.5 break-all whitespace-pre-wrap">{e.output_tail}</div>
@@ -779,12 +786,13 @@ function ReadinessStreamPanel({ projectId }: { projectId: string }) {
       
       {/* Summary */}
       {result && (
-        <div className={`mt-4 px-4 py-3 rounded-md border text-sm font-medium ${
+        <div className={`mt-4 flex items-center gap-2 px-4 py-3 rounded-[4px] border text-sm font-mono ${
           result.ready
-            ? "border-green-800 bg-green-950/30 text-green-400"
-            : "border-red-800 bg-red-950/30 text-red-400"
+            ? "border-mint/40 bg-mint/10 text-mint"
+            : "border-critical/40 bg-critical/10 text-critical"
         }`}>
-          {result.ready ? "✓ Machine is ready" : "✗ Some required tools are missing"}
+          <PixelIcon name={result.ready ? "ok" : "close"} size={16} />
+          {result.ready ? "Machine is ready" : "Some required tools are missing"}
         </div>
       )}
       
@@ -792,7 +800,7 @@ function ReadinessStreamPanel({ projectId }: { projectId: string }) {
         <p className="text-sm text-text-muted text-center py-6">
           Run a readiness check to verify forensic tools on the analyzer machine.
         </p>
-      )}</AilaCard>
+      )}</WindowPanel>
 
       {/* Legacy result view if needed */}
       {result && (
@@ -822,7 +830,9 @@ export function ProjectDashboardPage() {
 
   if (!projectId) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Invalid project ID.</p></AilaCard>
+      <WindowPanel title="project" tone="warn" status="forensics ; invalid project id">
+        <p className="text-sm text-critical">Invalid project ID.</p>
+      </WindowPanel>
     );
   }
 
@@ -830,7 +840,9 @@ export function ProjectDashboardPage() {
 
   if (isError || !project) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load project.</p></AilaCard>
+      <WindowPanel title="project" tone="warn" status="forensics ; project unavailable">
+        <p className="text-sm text-critical">Failed to load project.</p>
+      </WindowPanel>
     );
   }
 
@@ -841,40 +853,41 @@ export function ProjectDashboardPage() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1 min-w-0">
-          <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-text-muted">
-            <span>Machine: {project.system_name ?? "Unknown"}</span>
-            <span className="font-mono">{project.evidence_directory}</span>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5 font-mono text-xs text-text-muted">
+            <span>machine ; {project.system_name ?? "Unknown"}</span>
+            <span style={{ color: "var(--color-text-faint)" }}>{project.evidence_directory}</span>
             {project.created_at && (
-              <span>{new Date(project.created_at).toLocaleDateString()}</span>
+              <span style={{ color: "var(--color-text-faint)" }}>{new Date(project.created_at).toLocaleDateString()}</span>
             )}
           </div>
-          <div className="flex gap-4 text-xs text-text-muted">
-            <span>{project.artifact_count} artifacts</span>
-            <span>{project.lead_count} leads</span>
-            <span>{project.investigation_count} investigations</span>
+          <div className="flex flex-wrap gap-x-4 gap-y-0.5 font-mono text-xs text-text-muted">
+            <span><span className="text-foreground">{project.artifact_count}</span> artifacts</span>
+            <span><span className="text-foreground">{project.lead_count}</span> leads</span>
+            <span><span className="text-foreground">{project.investigation_count}</span> investigations</span>
           </div>
         </div>
         <button
           type="button"
           onClick={() => navigate(`/forensics/projects/${projectId}/details`)}
-          className="shrink-0 px-3 py-1.5 text-xs rounded-md border border-border text-foreground hover:bg-surface-secondary"
+          className="shrink-0 px-3 py-1.5 font-mono text-xs uppercase tracking-cyber-sm rounded-[3px] border border-border text-foreground hover:border-border-hover hover:bg-elevated transition-colors"
         >
           Full Details
         </button>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-border">
+      <div className="flex flex-wrap gap-1 border-b border-border">
         {TABS.map((tab) => (
           <button
             key={tab.id}
             type="button"
             onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2 text-sm font-medium rounded-t-md transition-colors ${
+            className={`px-4 py-2 font-mono text-xs uppercase tracking-cyber-sm rounded-t-[4px] transition-colors ${
               activeTab === tab.id
                 ? "bg-surface border border-b-0 border-border text-foreground"
-                : "text-text-muted hover:text-foreground hover:bg-surface-secondary"
+                : "text-text-muted hover:text-foreground hover:bg-elevated"
             }`}
+            style={activeTab === tab.id ? { boxShadow: "inset 0 2px 0 var(--color-accent)" } : undefined}
           >
             {tab.label}
           </button>

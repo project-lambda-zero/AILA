@@ -175,13 +175,13 @@ export function FindingDetailSheet({ findingId, open, onOpenChange }: FindingDet
             </div>
 
             {/* Triage workflow actions */}
-            <AilaCard variant="default" padding="sm" techBorder glow><WorkflowActions
+            <AilaCard variant="default" padding="sm"><WorkflowActions
               findingId={finding.id}
               fallbackState={finding.workflow_state}
             /></AilaCard>
 
             {/* CVE description */}
-            <AilaCard variant="default" padding="sm" techBorder glow><SectionLabel>CVE Description</SectionLabel>
+            <AilaCard variant="default" padding="sm"><SectionLabel>CVE Description</SectionLabel>
             {intelQuery.isLoading && <LoadingSkeletonGroup lines={3} />}
             {!intelQuery.isLoading && (
               <TextBlock text={intel?.description || (isCve ? undefined : "Advisory-only finding -- no CVE description available.")} />
@@ -199,7 +199,7 @@ export function FindingDetailSheet({ findingId, open, onOpenChange }: FindingDet
 
             {/* CVSS breakdown */}
             {intel?.cvss_breakdown && intel.cvss_breakdown.length > 0 && (
-              <AilaCard variant="default" padding="sm" techBorder glow><SectionLabel>
+              <AilaCard variant="default" padding="sm"><SectionLabel>
                 CVSS {intel.cvss_score !== null ? intel.cvss_score?.toFixed(1) : "--"} · {intel.base_severity ?? "--"}
               </SectionLabel>
               {intel.cvss_vector && (
@@ -244,7 +244,7 @@ export function FindingDetailSheet({ findingId, open, onOpenChange }: FindingDet
             )}
 
             {/* Package + version */}
-            <AilaCard variant="default" padding="sm" techBorder glow><SectionLabel>Package</SectionLabel>
+            <AilaCard variant="default" padding="sm"><SectionLabel>Package</SectionLabel>
             <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 font-mono text-xs">
               <dt className="text-text-muted">Package</dt>
               <dd className="text-text">{finding.package}</dd>
@@ -263,7 +263,7 @@ export function FindingDetailSheet({ findingId, open, onOpenChange }: FindingDet
             </dl></AilaCard>
 
             {/* Rationale */}
-            <AilaCard variant="default" padding="sm" techBorder glow><SectionLabel>
+            <AilaCard variant="default" padding="sm"><SectionLabel>
               <CheckCircle size={11} className="inline mr-1" weight="fill" />
               Rationale
             </SectionLabel>
@@ -271,7 +271,7 @@ export function FindingDetailSheet({ findingId, open, onOpenChange }: FindingDet
 
             {/* Facts */}
             {finding.details.facts && (
-              <AilaCard variant="default" padding="sm" techBorder glow><SectionLabel>
+              <AilaCard variant="default" padding="sm"><SectionLabel>
                 <Tag size={11} className="inline mr-1" />
                 Facts
               </SectionLabel>
@@ -280,7 +280,7 @@ export function FindingDetailSheet({ findingId, open, onOpenChange }: FindingDet
 
             {/* Inference */}
             {finding.details.inference && (
-              <AilaCard variant="default" padding="sm" techBorder glow><SectionLabel>
+              <AilaCard variant="default" padding="sm"><SectionLabel>
                 <Lightbulb size={11} className="inline mr-1" />
                 Inference
               </SectionLabel>
@@ -289,7 +289,7 @@ export function FindingDetailSheet({ findingId, open, onOpenChange }: FindingDet
 
             {/* Recommended action */}
             {finding.details.recommended_action && (
-              <AilaCard variant="elevated" padding="sm" techBorder glow><SectionLabel>
+              <AilaCard variant="elevated" padding="sm"><SectionLabel>
                 <Wrench size={11} className="inline mr-1" />
                 Recommended Action
               </SectionLabel>
@@ -298,7 +298,7 @@ export function FindingDetailSheet({ findingId, open, onOpenChange }: FindingDet
 
             {/* Uncertainty */}
             {finding.details.uncertainty && (
-              <AilaCard variant="default" padding="sm" techBorder glow><SectionLabel>
+              <AilaCard variant="default" padding="sm"><SectionLabel>
                 <Question size={11} className="inline mr-1" />
                 Uncertainty
               </SectionLabel>
@@ -309,7 +309,7 @@ export function FindingDetailSheet({ findingId, open, onOpenChange }: FindingDet
             {(finding.details.vendor_statuses?.length ||
               finding.details.vendor_urgencies?.length ||
               finding.details.vendor_fix_states?.length) ? (
-              <AilaCard variant="default" padding="sm" techBorder glow><SectionLabel>Vendor Signals</SectionLabel>
+              <AilaCard variant="default" padding="sm"><SectionLabel>Vendor Signals</SectionLabel>
               <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 font-mono text-xs">
                 {!!finding.details.vendor_statuses?.length && (
                   <>
@@ -334,7 +334,7 @@ export function FindingDetailSheet({ findingId, open, onOpenChange }: FindingDet
 
             {/* Compliance tags */}
             {finding.compliance_tags.length > 0 && (
-              <AilaCard variant="default" padding="sm" techBorder glow><SectionLabel>Compliance Tags</SectionLabel>
+              <AilaCard variant="default" padding="sm"><SectionLabel>Compliance Tags</SectionLabel>
               <div className="flex flex-wrap gap-1.5">
                 {finding.compliance_tags.map((tag) => (
                   <span

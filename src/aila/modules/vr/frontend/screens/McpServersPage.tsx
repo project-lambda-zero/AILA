@@ -27,7 +27,7 @@ export function McpServersPage() {
   if (isLoading) return <LoadingSkeleton size="lg" width="full" />;
   if (isError) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load MCP servers.</p></AilaCard>
+      <AilaCard className="border-critical" techBorder glow><p className="text-sm text-critical">Failed to load MCP servers.</p></AilaCard>
     );
   }
 
@@ -50,7 +50,7 @@ function ServerCard({ server }: { server: McpServerSummary }) {
   const reachable = server.status === "reachable";
 
   return (
-    <AilaCard className={!reachable ? "border-border-danger" : undefined} techBorder glow><div className="flex items-start justify-between gap-3 flex-wrap">
+    <AilaCard className={!reachable ? "border-critical" : undefined} techBorder glow><div className="flex items-start justify-between gap-3 flex-wrap">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
           <h2 className="text-sm font-semibold text-foreground font-mono">
@@ -105,7 +105,7 @@ function ServerCard({ server }: { server: McpServerSummary }) {
     </div>
     
     {server.error && (
-      <div className="mt-3 p-2 bg-surface-danger/10 border border-border-danger rounded text-xs text-text-danger font-mono break-all">
+      <div className="mt-3 p-2 bg-surface-danger/10 border border-critical rounded text-xs text-critical font-mono break-all">
         {server.error}
       </div>
     )}
@@ -118,7 +118,7 @@ function ServerCard({ server }: { server: McpServerSummary }) {
             setDraftUrl(server.base_url);
             setEditing(true);
           }}
-          className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border-default hover:bg-surface-hover"
+          className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border hover:bg-elevated"
         >
           Retarget
         </button>
@@ -141,19 +141,19 @@ function ServerCard({ server }: { server: McpServerSummary }) {
             onChange={(e) => setDraftUrl(e.target.value)}
             placeholder="https://workstation.local:18822"
             aria-label="MCP server URL"
-            className="flex-1 px-3 py-1.5 text-xs font-mono rounded-md bg-surface border border-border-default focus:outline-none focus:border-accent"
+            className="flex-1 px-3 py-1.5 text-xs font-mono rounded-md bg-surface border border-border focus:outline-none focus:border-accent"
           />
           <button
             type="submit"
             disabled={update.isPending || !draftUrl.trim()}
-            className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
+            className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-background hover:bg-accent/90 disabled:opacity-50"
           >
             {update.isPending ? "Saving…" : "Save"}
           </button>
           <button
             type="button"
             onClick={() => setEditing(false)}
-            className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border-default hover:bg-surface-hover"
+            className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border hover:bg-elevated"
           >
             Cancel
           </button>
@@ -166,7 +166,7 @@ function ServerCard({ server }: { server: McpServerSummary }) {
             update.mutate({ serverId: server.id, baseUrl: server.default_url })
           }
           disabled={update.isPending}
-          className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border-default hover:bg-surface-hover disabled:opacity-50"
+          className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border hover:bg-elevated disabled:opacity-50"
           title={`Reset to ${server.default_url}`}
         >
           Reset to default
@@ -176,7 +176,7 @@ function ServerCard({ server }: { server: McpServerSummary }) {
         <button
           type="button"
           onClick={() => setShowTools((v) => !v)}
-          className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border-default hover:bg-surface-hover"
+          className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border hover:bg-elevated"
         >
           {showTools ? "Hide tools" : `Show ${server.tool_count} tools`}
         </button>

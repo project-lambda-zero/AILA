@@ -60,7 +60,7 @@ export function DisclosureDetailPage() {
 
   return (
     <div className="space-y-4">
-      <div className="sticky top-0 z-10 bg-base/95 backdrop-blur-sm border-b border-border-default -mx-4 px-4 py-2 flex items-start justify-between gap-3 flex-wrap">
+      <div className="sticky top-0 z-10 bg-base/95 backdrop-blur-sm border-b border-border -mx-4 px-4 py-2 flex items-start justify-between gap-3 flex-wrap">
         <DeleteButton
           id={sid}
           label={`disclosure to ${sub.track_id}`}
@@ -89,7 +89,7 @@ export function DisclosureDetailPage() {
       </div>
 
       {/* State transitions */}
-      <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+      <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
         State transitions
       </h2>
       {transitions.length === 0 ? (
@@ -104,7 +104,7 @@ export function DisclosureDetailPage() {
               type="button"
               onClick={() => patchMut.mutate({ status: t })}
               disabled={patchMut.isPending}
-              className="px-3 py-1.5 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
+              className="px-3 py-1.5 text-sm font-medium rounded-md bg-accent text-background hover:bg-accent/90 disabled:opacity-50"
             >
               → {t}
             </button>
@@ -113,7 +113,7 @@ export function DisclosureDetailPage() {
       )}</AilaCard>
 
       {/* Vendor reference + bounty */}
-      <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+      <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
         Vendor + bounty
       </h2>
       <div className="space-y-2 text-sm">
@@ -130,7 +130,7 @@ export function DisclosureDetailPage() {
             }}
             placeholder="e.g. CVE-2026-NNNN or VRP-XXXX"
             aria-label="Vendor reference"
-            className="ml-2 px-2 py-1 text-xs font-mono rounded-md bg-surface border border-border-default"
+            className="ml-2 px-2 py-1 text-xs font-mono rounded-md bg-surface border border-border"
           />
         </div>
         <div>
@@ -146,19 +146,19 @@ export function DisclosureDetailPage() {
             }}
             placeholder="0"
             aria-label="Bounty awarded (USD)"
-            className="ml-2 px-2 py-1 w-32 text-xs font-mono rounded-md bg-surface border border-border-default"
+            className="ml-2 px-2 py-1 w-32 text-xs font-mono rounded-md bg-surface border border-border"
           />
         </div>
       </div></AilaCard>
 
       {/* Validation errors */}
       {sub.validation_errors.length > 0 && (
-        <AilaCard className="border-border-danger" techBorder glow><h2 className="text-sm font-semibold text-text-danger mb-2">
+        <AilaCard className="border-critical" techBorder glow><h2 className="text-sm font-semibold text-critical mb-2">
           Validation errors ({sub.validation_errors.length})
         </h2>
         <ul className="text-xs space-y-1">
           {sub.validation_errors.map((err, i) => (
-            <li key={i} className="text-text-danger">
+            <li key={i} className="text-critical">
               · {err}
             </li>
           ))}
@@ -167,7 +167,7 @@ export function DisclosureDetailPage() {
 
       {/* Re-render */}
       <AilaCard  techBorder glow><div className="flex items-center justify-between mb-2 flex-wrap gap-2">
-        <h2 className="text-sm font-semibold text-foreground">
+        <h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground">
           Rendered submission body
         </h2>
         <div className="flex items-center gap-1">
@@ -180,7 +180,7 @@ export function DisclosureDetailPage() {
                     renderMut.data!.data.body,
                   );
                 }}
-                className="text-xs px-2 py-1 rounded bg-surface border border-border-default hover:bg-surface-hover"
+                className="text-xs px-2 py-1 rounded bg-surface border border-border hover:bg-elevated"
                 title="Copy as Markdown"
               >
                 Copy MD
@@ -199,7 +199,7 @@ export function DisclosureDetailPage() {
                   a.click();
                   URL.revokeObjectURL(url);
                 }}
-                className="text-xs px-2 py-1 rounded bg-surface border border-border-default hover:bg-surface-hover"
+                className="text-xs px-2 py-1 rounded bg-surface border border-border hover:bg-elevated"
                 title="Download as JSON (machine-readable)"
               >
                 Download JSON
@@ -218,7 +218,7 @@ export function DisclosureDetailPage() {
                   a.click();
                   URL.revokeObjectURL(url);
                 }}
-                className="text-xs px-2 py-1 rounded bg-surface border border-border-default hover:bg-surface-hover"
+                className="text-xs px-2 py-1 rounded bg-surface border border-border hover:bg-elevated"
                 title="Download as Markdown (for emails)"
               >
                 Download MD
@@ -262,7 +262,7 @@ export function DisclosureDetailPage() {
                   a.click();
                   URL.revokeObjectURL(url);
                 }}
-                className="text-xs px-2 py-1 rounded bg-surface border border-border-default hover:bg-surface-hover"
+                className="text-xs px-2 py-1 rounded bg-surface border border-border hover:bg-elevated"
                 title="Download as MITRE CVE 5.1 JSON skeleton"
               >
                 MITRE template
@@ -276,7 +276,7 @@ export function DisclosureDetailPage() {
                   // already strips chrome.
                   window.print();
                 }}
-                className="text-xs px-2 py-1 rounded bg-surface border border-border-default hover:bg-surface-hover"
+                className="text-xs px-2 py-1 rounded bg-surface border border-border hover:bg-elevated"
                 title="Use browser 'Save as PDF' from the print dialog"
               >
                 PDF (print)
@@ -287,7 +287,7 @@ export function DisclosureDetailPage() {
             type="button"
             onClick={() => renderMut.mutate()}
             disabled={renderMut.isPending}
-            className="text-xs px-3 py-1 rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
+            className="text-xs px-3 py-1 rounded-md bg-accent text-background hover:bg-accent/90 disabled:opacity-50"
           >
             {renderMut.isPending ? "Rendering…" : "Re-render"}
           </button>
@@ -306,7 +306,7 @@ export function DisclosureDetailPage() {
       )}</AilaCard>
 
       {/* CVSS calculator -- interactive scoring per 08_FRONTEND_UX.md §1.8.2 */}
-      <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+      <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
         CVSS v3.1 score
       </h2>
       <p className="text-xs text-text-muted mb-3">
@@ -319,7 +319,7 @@ export function DisclosureDetailPage() {
 
       {/* Track info */}
       {sub.track_info && (
-        <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+        <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
           Track metadata
         </h2>
         <dl className="grid grid-cols-2 gap-2 text-xs">
@@ -360,7 +360,7 @@ export function DisclosureDetailPage() {
           what the contract exposes: drafted → submitted (= created_at)
           → current_status (= updated_at) plus embargo + bounty events.
           A real per-event log requires VRDisclosureTransitionRecord. */}
-      <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+      <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
         Disclosure timeline
       </h2>
       <ol className="space-y-2 text-xs">
@@ -391,7 +391,7 @@ export function DisclosureDetailPage() {
           />
         )}
       </ol>
-      <div className="mt-2 border border-dashed border-border-default rounded p-2 bg-surface/40 text-3xs text-text-muted">
+      <div className="mt-2 border border-dashed border-border rounded p-2 bg-surface/40 text-3xs text-text-muted">
         Per-transition rows (who advanced status / when / why) require a
         VRDisclosureTransitionRecord on the backend. Currently only
         first + most-recent transitions render.
@@ -410,7 +410,7 @@ function TimelineRow({
   note?: string;
 }) {
   return (
-    <li className="flex items-start gap-2 border border-border-default rounded px-2 py-1.5">
+    <li className="flex items-start gap-2 border border-border rounded px-2 py-1.5">
       <span className="w-2 h-2 rounded-full bg-accent mt-1.5 flex-shrink-0" />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
@@ -453,7 +453,7 @@ function DisclosureSectionsEditor({
   return (
     <AilaCard  techBorder glow><div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
       <div>
-        <h2 className="text-sm font-semibold text-foreground">
+        <h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground">
           Structured advisory editor
         </h2>
         <p className="text-3xs text-text-muted mt-0.5">
@@ -487,7 +487,7 @@ function DisclosureSectionsEditor({
               });
             }
           }}
-          className="px-3 py-1.5 text-xs font-medium rounded bg-surface border border-border-default hover:bg-surface-hover disabled:opacity-40"
+          className="px-3 py-1.5 text-xs font-medium rounded bg-surface border border-border hover:bg-elevated disabled:opacity-40"
         >
           {regenMut.isPending ? "Regenerating…" : "Regenerate from finding"}
         </button>
@@ -495,7 +495,7 @@ function DisclosureSectionsEditor({
           type="button"
           disabled={patchMut.isPending}
           onClick={() => patchMut.mutate(draft)}
-          className="px-3 py-1.5 text-xs font-medium rounded bg-accent text-white hover:bg-accent/90 disabled:opacity-40"
+          className="px-3 py-1.5 text-xs font-medium rounded bg-accent text-background hover:bg-accent/90 disabled:opacity-40"
         >
           {patchMut.isPending ? "Saving…" : "Save sections"}
         </button>
@@ -517,7 +517,7 @@ function DisclosureSectionsEditor({
               setDraft({ ...draft, [key]: e.target.value })
             }
             rows={key === "summary" || key === "references" ? 3 : 6}
-            className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
+            className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border"
           />
         </div>
       ))}

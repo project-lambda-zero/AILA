@@ -61,9 +61,9 @@ export function CodeBlock({ code: rawCode, filePath = "", address, className = "
   const height = lineCount(displayCode) * 19 + 10;
 
   return (
-    <div className={`rounded-md border border-border-default/40 overflow-hidden ${className}`}>
+    <div className={`rounded-md border border-border/40 overflow-hidden ${className}`}>
       {(filePath || address) && (
-        <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-elevated/80 border-b border-border-default/40">
+        <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-elevated/80 border-b border-border/40">
           <span className="text-2xs font-mono text-foreground/80 truncate">
             {filePath || address}
           </span>
@@ -113,7 +113,7 @@ export function CodeBlock({ code: rawCode, filePath = "", address, className = "
         <button
           type="button"
           onClick={() => setCollapsed((v) => !v)}
-          className="w-full py-1 text-3xs font-mono uppercase tracking-wider text-text-muted hover:text-foreground bg-elevated/60 border-t border-border-default/40"
+          className="w-full py-1 text-3xs font-mono uppercase tracking-wider text-text-muted hover:text-foreground bg-elevated/60 border-t border-border/40"
         >
           {collapsed ? `expand (+${(code.length - 2000).toLocaleString()} chars)` : "collapse"}
         </button>

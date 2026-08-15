@@ -22,20 +22,20 @@ export interface AdjudicationResult {
 
 const TONE: Record<
   AdjudicationVerdict,
-  { container: string; badge: "low" | "medium" | "critical"; icon: string }
+  { hue: string; badge: "low" | "medium" | "critical"; icon: string }
 > = {
   accepted: {
-    container: "border-green-500 bg-green-500/10",
+    hue: "var(--color-mint)",
     badge: "low",
     icon: "✓",
   },
   downgraded: {
-    container: "border-amber-500 bg-amber-500/10",
+    hue: "var(--color-amber)",
     badge: "medium",
     icon: "△",
   },
   blocked: {
-    container: "border-red-500 bg-red-500/10",
+    hue: "var(--color-critical)",
     badge: "critical",
     icon: "✗",
   },
@@ -44,7 +44,13 @@ const TONE: Record<
 export function AdjudicationBanner({ result }: { result: AdjudicationResult }) {
   const tone = TONE[result.verdict];
   return (
-    <div className={`border-l-4 rounded px-3 py-2 ${tone.container}`}>
+    <div
+      className="border-l-4 rounded px-3 py-2"
+      style={{
+        borderColor: tone.hue,
+        background: `color-mix(in srgb, ${tone.hue} 10%, transparent)`,
+      }}
+    >
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-lg leading-none" aria-hidden>
           {tone.icon}
@@ -70,7 +76,7 @@ export function AdjudicationBanner({ result }: { result: AdjudicationResult }) {
       {result.hedge_phrases && result.hedge_phrases.length > 0 && (
         <p className="text-3xs text-text-muted mt-1">
           Hedge phrases:{" "}
-          <code className="text-amber-300">
+          <code style={{ color: "var(--color-amber)" }}>
             {result.hedge_phrases.join(", ")}
           </code>
         </p>

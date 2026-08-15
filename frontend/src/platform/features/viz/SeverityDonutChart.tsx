@@ -36,7 +36,7 @@ export function SeverityDonutChart({ className, exportRef }: SeverityDonutChartP
 
   if (isLoading) {
     return (
-      <AilaCard className={className} techBorder glow><div className="p-4 flex flex-col gap-2">
+      <AilaCard className={className}><div className="p-4 flex flex-col gap-2">
         <p className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
           Severity Distribution
         </p>
@@ -62,7 +62,7 @@ export function SeverityDonutChart({ className, exportRef }: SeverityDonutChartP
   const total = slices.reduce((sum, s) => sum + s.value, 0);
 
   return (
-    <AilaCard className={className} techBorder glow><div ref={chartRef} className="p-4">
+    <AilaCard className={className}><div ref={chartRef} className="p-4">
       <div className="flex items-center justify-between mb-3">
         <p className="font-mono text-xs text-muted-foreground uppercase tracking-wider">
           Severity Distribution

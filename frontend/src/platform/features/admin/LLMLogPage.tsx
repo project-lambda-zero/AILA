@@ -265,7 +265,7 @@ interface DetailPanelProps {
 
 function DetailPanel({ entry, onClose }: DetailPanelProps) {
   return (
-    <AilaCard variant="elevated" padding="md" className="relative" techBorder glow><div className="flex items-start justify-between gap-2 mb-3">
+    <AilaCard variant="elevated" padding="md" className="relative"><div className="flex items-start justify-between gap-2 mb-3">
       <div>
         <h3 className="font-mono text-sm font-semibold text-text">
           {entry.model}
@@ -357,7 +357,7 @@ export function LLMLogPage() {
     <div className="flex flex-col gap-6 p-4 lg:p-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
-          <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-[10px] uppercase tracking-wider text-text-muted flex items-center gap-1">
+          <AilaCard variant="elevated" padding="md"><p className="font-mono text-[10px] uppercase tracking-wider text-text-muted flex items-center gap-1">
             <Coins className="h-3 w-3" /> Total Cost
           </p>
           <p className="font-mono text-lg font-semibold text-text tabular-nums">
@@ -382,7 +382,7 @@ export function LLMLogPage() {
       )}
 
       {logQuery.isLoading && (
-        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={8} /></AilaCard>
+        <AilaCard variant="default" padding="md"><LoadingSkeletonGroup lines={8} /></AilaCard>
       )}
 
       {!logQuery.isLoading && !logQuery.isError && items.length === 0 && (

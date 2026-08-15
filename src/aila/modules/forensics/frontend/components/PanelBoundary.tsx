@@ -1,5 +1,5 @@
 import { AppErrorBoundary } from "@app/ErrorBoundary";
-import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { Button } from "@/components/ui/button";
 
 interface PanelBoundaryProps {
@@ -35,16 +35,16 @@ export function PanelBoundary({ label, onRetry, children }: PanelBoundaryProps) 
             ? error.message
             : "An unexpected error occurred.";
         return (
-          <AilaCard
+          <WindowPanel
             role="alert"
             aria-live="polite"
-            className="border-border-danger"
+            tone="warn"
+            title="render error"
+            status="forensics ; panel failed to render"
             data-testid="forensics-panel-boundary-fallback"
-            techBorder
-            glow
           >
             <div className="space-y-2">
-              <p className="text-sm font-semibold text-text-danger">
+              <p className="text-sm font-semibold text-critical">
                 {label} could not render.
               </p>
               <p className="text-xs text-text-muted break-words">{message}</p>
@@ -69,7 +69,7 @@ export function PanelBoundary({ label, onRetry, children }: PanelBoundaryProps) 
                 Retry
               </Button>
             </div>
-          </AilaCard>
+          </WindowPanel>
         );
       }}
     >

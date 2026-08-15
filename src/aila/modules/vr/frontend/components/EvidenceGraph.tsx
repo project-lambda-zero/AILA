@@ -72,34 +72,34 @@ const NODE_TONE: Record<
   GraphNodeKind,
   { bg: string; border: string; tone: "info" | "low" | "medium" | "high" | "critical" }
 > = {
-  investigation: { bg: "#0f172a", border: "#38bdf8", tone: "info" }, // teal-blue root
-  branch:     { bg: "#0e7490", border: "#22d3ee", tone: "info" },     // cyan persona-thread
-  hypothesis: { bg: "#1e3a8a", border: "#3b82f6", tone: "info" },     // blue
-  evidence:   { bg: "#14532d", border: "#22c55e", tone: "low" },      // green
-  crash:      { bg: "#7f1d1d", border: "#ef4444", tone: "critical" }, // red
-  exploit:    { bg: "#7c2d12", border: "#f97316", tone: "high" },     // orange
-  advisory:   { bg: "#581c87", border: "#a855f7", tone: "medium" },   // purple
-  obligation: { bg: "#374151", border: "#9ca3af", tone: "info" },     // gray
-  outcome:    { bg: "#78350f", border: "#f59e0b", tone: "medium" },   // amber terminal artifact
-  finding:    { bg: "#4a1d96", border: "#c084fc", tone: "medium" },   // violet dispatched finding
+  investigation: { bg: "color-mix(in srgb, #f0a8c7 16%, #121212)", border: "#f0a8c7", tone: "info" },     // signal root
+  branch:     { bg: "color-mix(in srgb, #af87d7 16%, #121212)", border: "#af87d7", tone: "info" },         // lavender persona-thread
+  hypothesis: { bg: "color-mix(in srgb, #b092ff 16%, #121212)", border: "#b092ff", tone: "info" },         // medium -- thinking
+  evidence:   { bg: "color-mix(in srgb, #97dbbe 16%, #121212)", border: "#97dbbe", tone: "low" },          // mint -- fact
+  crash:      { bg: "color-mix(in srgb, #ff5f87 16%, #121212)", border: "#ff5f87", tone: "critical" },     // critical
+  exploit:    { bg: "color-mix(in srgb, #ffb85f 16%, #121212)", border: "#ffb85f", tone: "high" },         // amber runtime proof
+  advisory:   { bg: "color-mix(in srgb, #af87d7 16%, #121212)", border: "#af87d7", tone: "medium" },       // lavender doc
+  obligation: { bg: "color-mix(in srgb, #af8c6c 16%, #121212)", border: "#af8c6c", tone: "info" },         // muted
+  outcome:    { bg: "color-mix(in srgb, #ff5f87 16%, #121212)", border: "#ff5f87", tone: "medium" },       // accent terminal artifact
+  finding:    { bg: "color-mix(in srgb, #b092ff 16%, #121212)", border: "#b092ff", tone: "medium" },       // medium dispatched finding
 };
 
 const EDGE_STYLE: Record<
   GraphEdgeKind,
   { stroke: string; dashed?: boolean; label: string }
 > = {
-  supports:         { stroke: "#22c55e", label: "supports" },
-  refutes:          { stroke: "#ef4444", label: "refutes" },
-  found_by:         { stroke: "#9ca3af", label: "found_by" },
-  exploits:         { stroke: "#f97316", label: "exploits" },
-  derived_from:     { stroke: "#9ca3af", dashed: true, label: "derived_from" },
-  spawned:          { stroke: "#22d3ee", label: "spawned" },
-  produced:         { stroke: "#f59e0b", label: "produced" },
-  raises:           { stroke: "#3b82f6", label: "raises" },
-  rejects:          { stroke: "#ef4444", dashed: true, label: "rejects" },
-  resolves:         { stroke: "#22c55e", dashed: true, label: "resolves" },
-  linked:           { stroke: "#c084fc", dashed: true, label: "linked" },
-  produced_finding: { stroke: "#c084fc", label: "produced_finding" },
+  supports:         { stroke: "#97dbbe", label: "supports" },
+  refutes:          { stroke: "#ff5f87", label: "refutes" },
+  found_by:         { stroke: "#af8c6c", label: "found_by" },
+  exploits:         { stroke: "#ffb85f", label: "exploits" },
+  derived_from:     { stroke: "#af8c6c", dashed: true, label: "derived_from" },
+  spawned:          { stroke: "#af87d7", label: "spawned" },
+  produced:         { stroke: "#ffb85f", label: "produced" },
+  raises:           { stroke: "#b092ff", label: "raises" },
+  rejects:          { stroke: "#ff5f87", dashed: true, label: "rejects" },
+  resolves:         { stroke: "#97dbbe", dashed: true, label: "resolves" },
+  linked:           { stroke: "#b092ff", dashed: true, label: "linked" },
+  produced_finding: { stroke: "#b092ff", label: "produced_finding" },
 };
 
 /** Lay out nodes in concentric tiers by kind. Cheap dagre alternative
@@ -330,7 +330,7 @@ export function EvidenceGraph({
             label: (
               <div
                 className="text-left"
-                style={{ color: "white" }}
+                style={{ color: "#ffd7af" }}
                 aria-label={`${n.kind} ${n.label}${n.state ? ` (${n.state})` : ""}`}
                 role="article"
               >
@@ -347,11 +347,10 @@ export function EvidenceGraph({
           style: {
             background: tone.bg,
             border: `2px ${n.kind === "obligation" && n.state === "open" ? "dashed" : "solid"} ${tone.border}`,
-            borderRadius:
-              n.kind === "crash" || n.kind === "exploit" ? 999 : 6,
+            borderRadius: 4,
             padding: 6,
             width: 210,
-            color: "white",
+            color: "#ffd7af",
           },
         };
       }),
@@ -367,8 +366,8 @@ export function EvidenceGraph({
           source: e.source,
           target: e.target,
           label: edgeLabels ? s.label : undefined,
-          labelStyle: { fontSize: 10, fill: "#9ca3af" },
-          labelBgStyle: { fill: "#1f2937" },
+          labelStyle: { fontSize: 10, fill: "#af8c6c" },
+          labelBgStyle: { fill: "#1f1f1f" },
           style: {
             stroke: s.stroke,
             strokeWidth: 1.5,
@@ -406,8 +405,8 @@ export function EvidenceGraph({
             className={
               "px-2 py-0.5 rounded font-mono " +
               (filter === f
-                ? "bg-accent text-white"
-                : "bg-surface border border-border-default text-text-muted hover:bg-surface-hover")
+                ? "bg-accent text-background"
+                : "bg-surface border border-border text-text-muted hover:bg-elevated")
             }
           >
             {f}
@@ -419,12 +418,12 @@ export function EvidenceGraph({
           onChange={(e) => setSearchText(e.target.value)}
           placeholder="search labels…"
           aria-label="Search evidence graph"
-          className="ml-auto px-2 py-0.5 text-xs font-mono rounded bg-surface border border-border-default"
+          className="ml-auto px-2 py-0.5 text-xs font-mono rounded bg-surface border border-border"
         />
         <button
           type="button"
           onClick={() => setEdgeLabels((v) => !v)}
-          className="px-2 py-0.5 text-xs font-mono rounded bg-surface border border-border-default hover:bg-surface-hover"
+          className="px-2 py-0.5 text-xs font-mono rounded bg-surface border border-border hover:bg-elevated"
           title="Edge labels become unreadable past ~40 nodes"
         >
           {edgeLabels ? "Labels: on" : "Labels: off"}
@@ -432,7 +431,7 @@ export function EvidenceGraph({
         <select
           value={layoutAlgo}
           onChange={(e) => setLayoutAlgo(e.target.value as LayoutAlgo)}
-          className="px-2 py-0.5 text-xs font-mono rounded bg-surface border border-border-default"
+          className="px-2 py-0.5 text-xs font-mono rounded bg-surface border border-border"
           aria-label="Layout algorithm"
           title="Layout algorithm -- concentric tiers, single radial ring, or kind-grouped grid"
         >
@@ -443,7 +442,7 @@ export function EvidenceGraph({
       </div>
 
       <div
-        className="border border-border-default rounded-md overflow-hidden bg-surface/30"
+        className="border border-border rounded-md overflow-hidden bg-surface/30"
         style={{ height }}
       >
         {filteredNodes.length === 0 ? (
@@ -461,7 +460,7 @@ export function EvidenceGraph({
             }}
             proOptions={{ hideAttribution: true }}
           >
-            <Background gap={20} color="#374151" />
+            <Background gap={20} color="#2a2a2a" />
             <Controls position="bottom-right" showInteractive={false} />
           </ReactFlow>
         )}

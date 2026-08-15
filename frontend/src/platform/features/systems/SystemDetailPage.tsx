@@ -2,7 +2,7 @@ import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
-import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -132,7 +132,7 @@ export function SystemDetailPage() {
 
       {/* Loading skeleton for entire page while first load */}
       {systemQuery.isLoading && (
-        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={6} /></AilaCard>
+        <WindowPanel title="System" status="LOADING" tone="muted"><LoadingSkeletonGroup lines={6} /></WindowPanel>
       )}
 
       {/* Tabbed layout (D-05) */}
@@ -155,7 +155,7 @@ export function SystemDetailPage() {
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               {/* Left: connectivity + tags */}
               <div className="flex flex-col gap-4">
-                <AilaCard variant="default" padding="md" techBorder glow><h2 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">SSH Connectivity</h2>
+                <WindowPanel title="SSH Connectivity" tone="muted">
                 {connectivityQuery.isLoading ? (
                   <LoadingSkeletonGroup lines={2} />
                 ) : (
@@ -167,17 +167,17 @@ export function SystemDetailPage() {
                       </p>
                     )}
                   </div>
-                )}</AilaCard>
+                )}</WindowPanel>
 
-                <AilaCard variant="default" padding="md" techBorder glow><h2 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">Tags</h2>
+                <WindowPanel title="Tags" tone="muted">
                 <p className="font-mono text-xs text-text-muted">
                   Manage tags in the <button type="button" onClick={() => setTab("tags")} className="text-accent hover:underline">Tags tab</button>.
-                </p></AilaCard>
+                </p></WindowPanel>
               </div>
 
               {/* Right: metadata + edit form */}
               <div className="flex flex-col gap-4">
-                <AilaCard variant="default" padding="md" techBorder glow><h2 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">System Metadata</h2>
+                <WindowPanel title="System Metadata" tone="muted">
                 <dl className="grid grid-cols-2 gap-x-4 gap-y-2 font-mono text-sm">
                   <dt className="text-text-muted">Host</dt>
                   <dd className="text-text">{system.host}:{system.port}</dd>
@@ -196,11 +196,11 @@ export function SystemDetailPage() {
                   <p className="font-mono text-xs text-text-muted mt-3 border-t border-border pt-3">
                     {system.description}
                   </p>
-                )}</AilaCard>
+                )}</WindowPanel>
 
                 {/* Edit form */}
                 {canOperate && (
-                  <AilaCard variant="elevated" padding="md" techBorder glow><h2 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">Edit System</h2>
+                  <WindowPanel title="Edit System" tone="accent">
                   <form
                     className="flex flex-col gap-3"
                     onSubmit={(e) => {
@@ -274,12 +274,12 @@ export function SystemDetailPage() {
                         {(updateSystem.error as Error).message}
                       </div>
                     )}
-                  </form></AilaCard>
+                  </form></WindowPanel>
                 )}
 
                 {/* Delete */}
                 {canOperate && (
-                  <AilaCard variant="default" padding="md" techBorder glow><h2 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">Danger Zone</h2>
+                  <WindowPanel title="Danger Zone" tone="warn">
                   <Button
                     variant="destructive"
                     size="sm"
@@ -297,7 +297,7 @@ export function SystemDetailPage() {
                     <div className="mt-2 rounded-[4px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
                       {(deleteSystem.error as Error).message}
                     </div>
-                  )}</AilaCard>
+                  )}</WindowPanel>
                 )}
               </div>
             </div>

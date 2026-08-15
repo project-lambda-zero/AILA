@@ -1,6 +1,6 @@
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 import type { MachineReadinessResult } from "../types";
 
@@ -28,42 +28,42 @@ const statusSeverity: Record<string, "low" | "critical" | "high" | "medium" | "i
 export function MachineReadinessCheck({ readinessResult, isLoading, onRetry, onContinue }: Props) {
   if (isLoading) {
     return (
-      <AilaCard  techBorder glow>
+      <WindowPanel title="machine readiness" status="readiness ; checking tools">
         <div className="space-y-3">
-          <h2 className="text-lg font-semibold font-mono text-foreground">Checking Readiness...</h2>
           <LoadingSkeleton size="md" width="full" />
           <p className="text-sm text-text-muted">
             Connecting to analyzer machine and checking installed tools.
           </p>
         </div>
-      </AilaCard>
+      </WindowPanel>
     );
   }
 
   if (!readinessResult) {
     return (
-      <AilaCard  techBorder glow>
+      <WindowPanel title="machine readiness" tone="muted" status="readiness ; no result">
         <p className="text-sm text-text-muted">No readiness check result available.</p>
-      </AilaCard>
+      </WindowPanel>
     );
   }
 
   return (
-    <AilaCard  techBorder glow>
+    <WindowPanel
+      title="machine readiness"
+      tone={readinessResult.ready ? "ok" : "warn"}
+      actions={
+        <AilaBadge severity={readinessResult.ready ? "low" : "high"} size="sm">
+          {readinessResult.ready ? "Ready" : "Not Ready"}
+        </AilaBadge>
+      }
+    >
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold font-mono text-foreground">Machine Readiness</h2>
-          <AilaBadge severity={readinessResult.ready ? "low" : "high"} size="sm">
-            {readinessResult.ready ? "Ready" : "Not Ready"}
-          </AilaBadge>
-        </div>
-    
         <p className="text-sm text-text-muted">{readinessResult.message}</p>
     
         <div className="border border-border rounded-md bg-surface text-foreground overflow-hidden">
           <table className="w-full text-sm" aria-label="Machine readiness checks">
             <caption className="sr-only">Prerequisite checks for the analyzer host, with status and remediation notes.</caption>
-            <thead className="bg-surface-secondary">
+            <thead className="bg-elevated">
               <tr>
                 <th className="text-left px-3 py-2 text-text-muted font-medium">Tool</th>
                 <th className="text-left px-3 py-2 text-text-muted font-medium">Required</th>
@@ -94,19 +94,20 @@ export function MachineReadinessCheck({ readinessResult, isLoading, onRetry, onC
           <button
             type="button"
             onClick={onRetry}
-            className="px-4 py-2 text-sm rounded-md border border-border text-foreground hover:bg-surface-secondary"
+            className="px-4 py-2 font-mono text-xs uppercase tracking-cyber-sm rounded-[3px] border border-border text-foreground hover:bg-elevated hover:border-border-hover transition-colors"
           >
             Retry Check
           </button>
           <button
             type="button"
             onClick={onContinue}
-            className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90"
+            className="px-4 py-2 font-mono text-xs uppercase tracking-cyber-sm rounded-[3px] bg-accent text-badge-text hover:brightness-110 transition-[filter]"
+            style={{ boxShadow: "var(--bevel-key)" }}
           >
             Continue
           </button>
         </div>
       </div>
-    </AilaCard>
+    </WindowPanel>
   );
 }

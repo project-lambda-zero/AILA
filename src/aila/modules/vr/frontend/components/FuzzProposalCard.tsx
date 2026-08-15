@@ -1,7 +1,7 @@
 import { useState } from "react";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
@@ -42,20 +42,20 @@ export function FuzzProposalsPanel({
   const proposals: VRFuzzCampaignProposalSummary[] = data?.data ?? [];
 
   return (
-    <AilaCard  techBorder glow><div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-      <div>
-        <h2 className="text-sm font-semibold text-foreground">
-          Fuzz proposals
-        </h2>
-        <p className="text-3xs text-text-muted mt-0.5">
-          Agent-authored -- operator decides. Accept ships the harness,
-          builds it on the workstation, and launches the fuzzer.
-        </p>
-      </div>
-      <span className="text-3xs text-text-muted font-mono">
-        {proposals.length} pending
-      </span>
-    </div>
+    <WindowPanel
+      title="fuzz proposals"
+      tone="muted"
+      actions={
+        <span className="text-3xs text-text-muted font-mono">
+          {proposals.length} pending
+        </span>
+      }
+    >
+      <h2 className="sr-only">Fuzz proposals</h2>
+      <p className="text-3xs text-text-muted mb-2">
+        Agent-authored -- operator decides. Accept ships the harness,
+        builds it on the workstation, and launches the fuzzer.
+      </p>
     {isLoading ? (
       // Content-shaped skeleton: three proposal-row placeholders so the
       // rail keeps its footprint (avoids layout shift when the real
@@ -68,7 +68,7 @@ export function FuzzProposalsPanel({
         {[0, 1, 2].map((i) => (
           <li
             key={i}
-            className="rounded border border-border-default/60 p-3 space-y-2"
+            className="rounded border border-border/60 p-3 space-y-2"
           >
             <LoadingSkeleton size="sm" width="third" />
             <LoadingSkeleton size="sm" width="full" />
@@ -89,7 +89,7 @@ export function FuzzProposalsPanel({
           </li>
         ))}
       </ul>
-    )}</AilaCard>
+    )}</WindowPanel>
   );
 }
 
@@ -123,7 +123,7 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
           : "high";
 
   return (
-    <div className="border border-border-default rounded p-3 bg-surface/40 space-y-2">
+    <div className="border border-border rounded p-3 bg-surface/40 space-y-2">
       <div className="flex items-start justify-between gap-2 flex-wrap">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1 flex-wrap mb-1">
@@ -159,7 +159,7 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
                 ? "Run the prepared harness build + create campaign + auto-launch"
                 : "Proposal is missing harness_source or harness_build_command -- agent must complete the prep"
             }
-            className="px-3 py-1.5 text-xs font-medium rounded bg-green-600 text-white hover:bg-green-500 disabled:opacity-40"
+            className="px-3 py-1.5 text-xs font-medium rounded bg-mint text-background hover:brightness-110 disabled:opacity-40"
           >
             {acceptMut.isPending ? "Accepting…" : "Accept"}
           </button>
@@ -174,7 +174,7 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
               if (!reason) return;
               rejectMut.mutate({ decision_reason: reason });
             }}
-            className="px-3 py-1.5 text-xs font-medium rounded bg-surface border border-border-default hover:bg-surface-hover disabled:opacity-40"
+            className="px-3 py-1.5 text-xs font-medium rounded bg-surface border border-border hover:bg-elevated disabled:opacity-40"
           >
             Reject
           </button>
@@ -214,7 +214,7 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
       </div>
 
       {expanded && (
-        <div className="space-y-2 pt-2 border-t border-border-default">
+        <div className="space-y-2 pt-2 border-t border-border">
           <div className="flex items-center gap-2 flex-wrap text-xs">
             <label className="flex items-center gap-1">
               <span className="text-text-muted">engine override:</span>
@@ -223,7 +223,7 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
                 value={overrideEngine}
                 onChange={(e) => setOverrideEngine(e.target.value)}
                 placeholder={proposal.suggested_engine_id ?? "default"}
-                className="px-2 py-1 rounded bg-surface border border-border-default font-mono w-32"
+                className="px-2 py-1 rounded bg-surface border border-border font-mono w-32"
               />
             </label>
             <label className="flex items-center gap-1">
@@ -233,7 +233,7 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
                 value={overrideDuration}
                 onChange={(e) => setOverrideDuration(e.target.value)}
                 placeholder={String(proposal.suggested_duration_hours ?? "")}
-                className="px-2 py-1 rounded bg-surface border border-border-default font-mono w-20"
+                className="px-2 py-1 rounded bg-surface border border-border font-mono w-20"
               />
             </label>
             <fieldset className="border-0 p-0 m-0 min-w-0">
@@ -259,7 +259,7 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
                   auto_launch: autoLaunch,
                 })
               }
-              className="px-2 py-1 text-xs font-medium rounded bg-accent text-white hover:bg-accent/90 disabled:opacity-40"
+              className="px-2 py-1 text-xs font-medium rounded bg-accent text-background hover:bg-accent/90 disabled:opacity-40"
             >
               Accept with overrides
             </button>
@@ -284,7 +284,7 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
                   />
                 </div>
               ) : (
-                <p className="text-3xs text-amber-500 font-mono">
+                <p className="text-3xs font-mono" style={{ color: "var(--color-amber)" }}>
                   Agent did not author a harness -- proposal cannot be
                   accepted until harness_source is filled.
                 </p>
@@ -294,7 +294,7 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
                   <p className="text-3xs text-text-muted mb-1">
                     Build command
                   </p>
-                  <pre className="text-xs font-mono p-2 rounded bg-surface border border-border-default overflow-x-auto">
+                  <pre className="text-xs font-mono p-2 rounded bg-surface border border-border overflow-x-auto">
                     {proposal.harness_build_command}
                   </pre>
                 </div>
@@ -327,7 +327,7 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
                   <p className="text-3xs text-text-muted mb-1">
                     Dictionary
                   </p>
-                  <pre className="text-xs font-mono p-2 rounded bg-surface border border-border-default overflow-x-auto max-h-32">
+                  <pre className="text-xs font-mono p-2 rounded bg-surface border border-border overflow-x-auto max-h-32">
                     {proposal.dictionary_content}
                   </pre>
                 </div>

@@ -7,6 +7,7 @@ import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass"
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { EmptyState } from "@/components/aila/EmptyState";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 import { ProjectCardSkeletonGrid } from "../components/skeletons";
 import { useForensicsProjects } from "../queries";
@@ -87,11 +88,11 @@ function ProjectCard({
       tabIndex={0}
       aria-label={`Open forensics project ${project.name}`}
       data-power-row="project"
-      className="cursor-pointer hover:ring-1 hover:ring-border-accent transition-shadow relative group focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2"
+      className="cursor-pointer hover:ring-1 hover:ring-accent transition-shadow relative group focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:-outline-offset-2"
       techBorder
       glow
     ><div className="space-y-2">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <h2 className="text-base font-semibold font-mono text-foreground truncate">{project.name}</h2>
         <div className="flex items-center gap-2">
           <AilaBadge severity={statusColor[project.status] ?? "info"} size="sm">
@@ -101,7 +102,7 @@ function ProjectCard({
             type="button"
             onClick={onDelete}
             title="Delete project"
-            className="p-1 rounded text-text-muted hover:text-text-danger hover:bg-surface-danger/20 transition-colors"
+            className="p-1 rounded-[2px] text-muted-foreground hover:text-critical hover:bg-critical/15 transition-colors"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="3 6 5 6 21 6" />
@@ -115,14 +116,14 @@ function ProjectCard({
       {project.description && (
         <p className="text-sm text-text-muted line-clamp-2">{project.description}</p>
       )}
-      <div className="flex gap-4 text-xs text-text-muted">
-        <span>{project.evidence_count} evidence</span>
-        <span>{project.artifact_count} artifacts</span>
-        <span>{project.lead_count} leads</span>
-        <span>{project.investigation_count} investigations</span>
+      <div className="flex flex-wrap gap-x-3 gap-y-1 font-mono text-xs text-text-muted">
+        <span><span className="text-foreground">{project.evidence_count}</span> evidence</span>
+        <span><span className="text-foreground">{project.artifact_count}</span> artifacts</span>
+        <span><span className="text-foreground">{project.lead_count}</span> leads</span>
+        <span><span className="text-foreground">{project.investigation_count}</span> investigations</span>
       </div>
-      <div className="flex items-center justify-between text-xs text-text-muted">
-        {project.system_name && <span>Machine: {project.system_name}</span>}
+      <div className="flex items-center justify-between font-mono text-xs" style={{ color: "var(--color-text-faint)" }}>
+        {project.system_name && <span>machine ; {project.system_name}</span>}
         {project.created_at && (
           <span>{new Date(project.created_at).toLocaleDateString()}</span>
         )}
@@ -154,31 +155,34 @@ function ConfirmDeleteDialog({
         }
       }}
     >
-      <div
-        className="bg-surface-elevated border border-border-default rounded-lg p-6 max-w-sm w-full mx-4 space-y-4"
+      <WindowPanel
+        title="delete project"
+        tone="warn"
+        className="max-w-sm w-full mx-4"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 className="text-base font-semibold font-mono text-foreground">Delete Project</h2>
-        <p className="text-sm text-text-muted">
-          Delete <span className="text-foreground font-medium">"{projectName}"</span>? This will permanently remove all evidence records, artifacts, leads, investigations, and write-ups.
-        </p>
-        <div className="flex justify-end gap-3">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="px-3 py-1.5 text-sm rounded-md border border-border-default text-text-muted hover:text-foreground transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            className="px-3 py-1.5 text-sm rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors"
-          >
-            Delete
-          </button>
+        <div className="space-y-4">
+          <p className="text-sm text-text-muted">
+            Delete <span className="text-foreground font-medium">"{projectName}"</span>? This will permanently remove all evidence records, artifacts, leads, investigations, and write-ups.
+          </p>
+          <div className="flex justify-end gap-3">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="px-3 py-1.5 font-mono text-xs uppercase tracking-wider rounded-[3px] border border-border text-text-muted hover:text-foreground hover:border-border-hover transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={onConfirm}
+              className="px-3 py-1.5 font-mono text-xs uppercase tracking-wider rounded-[3px] bg-critical text-badge-text hover:brightness-110 transition-[filter]"
+            >
+              Delete
+            </button>
+          </div>
         </div>
-      </div>
+      </WindowPanel>
     </div>
   );
 }
@@ -286,7 +290,7 @@ export function ProjectsPage() {
             className="px-3 py-1.5 text-sm rounded-md border border-border bg-surface text-foreground placeholder:text-text-muted focus:outline-none focus:border-accent min-w-[220px]"
           />
           <label className="flex items-center gap-1.5 text-xs text-text-muted">
-            <span>Sort</span>
+            <span className="font-mono uppercase tracking-wider">Sort</span>
             <select
               value={sortKey}
               onChange={(e) => setSortKey(e.target.value as ProjectSortKey)}
@@ -318,7 +322,8 @@ export function ProjectsPage() {
         <button
           type="button"
           onClick={() => navigate("/forensics/projects/new")}
-          className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 transition-colors"
+          className="px-4 py-2 font-mono text-xs uppercase tracking-wider rounded-[3px] bg-accent text-badge-text hover:brightness-110 transition-[filter]"
+          style={{ boxShadow: "var(--bevel-key)" }}
         >
           New Project
         </button>
@@ -327,7 +332,9 @@ export function ProjectsPage() {
       {isLoading && <ProjectCardSkeletonGrid count={6} />}
 
       {isError && (
-        <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load forensics projects.</p></AilaCard>
+        <WindowPanel title="load error" tone="warn" status="forensics ; projects unavailable">
+          <p className="text-sm text-critical">Failed to load forensics projects.</p>
+        </WindowPanel>
       )}
 
       {!isLoading && !isError && projects.length === 0 && (

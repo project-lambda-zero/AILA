@@ -242,7 +242,7 @@ function RunBreakdownTable({ data }: { data: CostBreakdownResponse }) {
   }
   return (
     <div className="overflow-x-auto">
-      <table aria-label="Cost aggregates" className="w-full font-mono text-xs">
+      <table aria-label="Cost aggregates" className="w-full font-mono text-xs border-collapse [&_th]:border [&_th]:border-border [&_th]:uppercase [&_th]:tracking-wider [&_td]:border [&_td]:border-border">
         <thead>
           <tr className="text-left text-text-muted">
             <th className="py-1.5 pr-4 font-normal uppercase tracking-wider">
@@ -489,7 +489,7 @@ export function CostPage() {
     <div className="flex flex-col gap-6 p-4 lg:p-6">
       {/* Top metric cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <AilaCard variant="elevated" padding="md" techBorder glow>
+        <AilaCard variant="elevated" padding="md">
           <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
             Total Cost ({historyMonths}m)
           </p>
@@ -507,7 +507,7 @@ export function CostPage() {
           </p>
         </AilaCard>
 
-        <AilaCard variant="elevated" padding="md" techBorder glow>
+        <AilaCard variant="elevated" padding="md">
           <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
             Cost / Scan
           </p>
@@ -525,7 +525,7 @@ export function CostPage() {
           </p>
         </AilaCard>
 
-        <AilaCard variant="elevated" padding="md" techBorder glow>
+        <AilaCard variant="elevated" padding="md">
           <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
             MoM Trend
           </p>
@@ -551,7 +551,7 @@ export function CostPage() {
           </p>
         </AilaCard>
 
-        <AilaCard variant="elevated" padding="md" techBorder glow>
+        <AilaCard variant="elevated" padding="md">
           <p className="font-mono text-xs uppercase tracking-wider text-text-muted">
             ROI ({roiMonths}m)
           </p>
@@ -583,7 +583,7 @@ export function CostPage() {
         resetKeys={[historyMonths]}
         onReset={() => void historyQuery.refetch()}
       >
-      <AilaCard variant="default" padding="md" techBorder glow>
+      <AilaCard variant="default" padding="md">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <ChartLineUp className="h-4 w-4 text-accent" />
@@ -645,7 +645,7 @@ export function CostPage() {
             resetKeys={[historyMonths, months.length]}
             onReset={() => void historyQuery.refetch()}
           >
-          <AilaCard variant="default" padding="md" techBorder glow>
+          <AilaCard variant="default" padding="md">
             <div className="flex items-center gap-2 mb-3">
               <ChartLineUp className="h-4 w-4 text-accent" />
               <h2 className="font-mono text-sm font-semibold text-text">
@@ -664,7 +664,7 @@ export function CostPage() {
             resetKeys={[historyMonths, modelRollup.length]}
             onReset={() => void historyQuery.refetch()}
           >
-          <AilaCard variant="default" padding="md" techBorder glow>
+          <AilaCard variant="default" padding="md">
             <div className="flex items-center gap-2 mb-3">
               <CurrencyDollar className="h-4 w-4 text-accent" />
               <h2 className="font-mono text-sm font-semibold text-text">
@@ -690,7 +690,7 @@ export function CostPage() {
         resetKeys={[roiMonths]}
         onReset={() => void roiQuery.refetch()}
       >
-      <AilaCard variant="default" padding="md" techBorder glow>
+      <AilaCard variant="default" padding="md">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <TrendUp className="h-4 w-4 text-accent" />
@@ -764,7 +764,7 @@ export function CostPage() {
         resetKeys={[activeRunId]}
         onReset={() => void runQuery.refetch()}
       >
-      <AilaCard variant="default" padding="md" techBorder glow>
+      <AilaCard variant="default" padding="md">
         <div className="flex items-center gap-2 mb-3">
           <MagnifyingGlass className="h-4 w-4 text-accent" />
           <h2 className="font-mono text-sm font-semibold text-text">
@@ -832,7 +832,7 @@ export function CostPage() {
       </FeatureBoundary>
 
       {/* Pre-scan estimate -- POST /cost/estimate */}
-      <AilaCard variant="default" padding="md" techBorder glow>
+      <AilaCard variant="default" padding="md">
         <div className="flex items-center gap-2 mb-3">
           <Calculator className="h-4 w-4 text-accent" />
           <h2 className="font-mono text-sm font-semibold text-text">
@@ -915,7 +915,7 @@ export function CostPage() {
             </div>
             {estResult.breakdown.length > 0 && (
               <div className="overflow-x-auto">
-                <table aria-label="Cost breakdown" className="w-full font-mono text-xs">
+                <table aria-label="Cost breakdown" className="w-full font-mono text-xs border-collapse [&_th]:border [&_th]:border-border [&_th]:uppercase [&_th]:tracking-wider [&_td]:border [&_td]:border-border">
                   <thead>
                     <tr className="text-left text-text-muted">
                       <th className="py-1.5 pr-4 font-normal uppercase tracking-wider">
@@ -955,7 +955,7 @@ export function CostPage() {
       </AilaCard>
 
       {/* Human-equivalent estimate -- POST /cost/estimate-human */}
-      <AilaCard variant="default" padding="md" techBorder glow>
+      <AilaCard variant="default" padding="md">
         <div className="flex items-center gap-2 mb-3">
           <UsersThree className="h-4 w-4 text-accent" />
           <h2 className="font-mono text-sm font-semibold text-text">

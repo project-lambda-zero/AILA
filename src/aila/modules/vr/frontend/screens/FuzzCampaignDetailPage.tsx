@@ -154,7 +154,7 @@ export function FuzzCampaignDetailPage() {
           starts the fuzzer per its engine_id. Idempotent -- clicking
           while running returns the existing PID. */}
       <AilaCard  techBorder glow><div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-        <h2 className="text-sm font-semibold text-foreground">
+        <h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground">
           State control
         </h2>
         <div className="flex items-center gap-2">
@@ -169,7 +169,7 @@ export function FuzzCampaignDetailPage() {
                 ? "Enqueue the launcher ARQ task -- SSHes to the workstation and starts the fuzzer"
                 : "Set analysis_system_id on the campaign before launching"
             }
-            className="px-3 py-1.5 text-sm font-medium rounded-md bg-green-600 text-white hover:bg-green-500 disabled:opacity-40"
+            className="px-3 py-1.5 text-sm font-medium rounded-md bg-mint text-background hover:brightness-110 disabled:opacity-40"
           >
             {launchMut.isPending
               ? "Launching…"
@@ -200,7 +200,7 @@ export function FuzzCampaignDetailPage() {
               type="button"
               onClick={() => patchMut.mutate({ status: s })}
               disabled={patchMut.isPending}
-              className="px-3 py-1.5 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
+              className="px-3 py-1.5 text-sm font-medium rounded-md bg-accent text-background hover:bg-accent/90 disabled:opacity-50"
             >
               → {s}
             </button>
@@ -215,13 +215,13 @@ export function FuzzCampaignDetailPage() {
           engine_config + strategy_config (the schemas exist on the
           summary contract, the endpoint is partial). */}
       <AilaCard  techBorder glow><div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-        <h2 className="text-sm font-semibold text-foreground">
+        <h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground">
           Rebuild + tune
         </h2>
         <AilaBadge severity="info" size="sm">backend pending</AilaBadge>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div className="border border-dashed border-border-default rounded p-3 bg-surface/40">
+        <div className="border border-dashed border-border rounded p-3 bg-surface/40">
           <h3 className="text-xs font-semibold text-foreground">Rebuild harness</h3>
           <p className="text-3xs text-text-muted mt-1">
             Re-runs harness generation with the last spec. Spec §1.5
@@ -232,12 +232,12 @@ export function FuzzCampaignDetailPage() {
           <button
             type="button"
             disabled
-            className="mt-2 px-3 py-1 text-xs font-medium rounded bg-accent text-white opacity-50 cursor-not-allowed"
+            className="mt-2 px-3 py-1 text-xs font-medium rounded bg-accent text-background opacity-50 cursor-not-allowed"
           >
             Rebuild harness
           </button>
         </div>
-        <div className="border border-dashed border-border-default rounded p-3 bg-surface/40">
+        <div className="border border-dashed border-border rounded p-3 bg-surface/40">
           <h3 className="text-xs font-semibold text-foreground">Tune</h3>
           <p className="text-3xs text-text-muted mt-1">
             Adjust timeout / dictionary / mutation rate. Reads
@@ -257,7 +257,7 @@ export function FuzzCampaignDetailPage() {
         </div>
       </div></AilaCard>
       {/* Metrics */}
-      <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">Metrics</h2>
+      <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">Metrics</h2>
       <dl className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
         <div>
           <dt className="text-text-muted text-xs">Total execs</dt>
@@ -321,7 +321,7 @@ export function FuzzCampaignDetailPage() {
           v0.5: derived from scalar metrics + crash discovery timestamps.
           Real time-series telemetry stream is backend pending. */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <AilaCard  techBorder glow><h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
+        <AilaCard  techBorder glow><h3 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
           Crashes over time
         </h3>
         {crashes.length === 0 ? (
@@ -360,17 +360,17 @@ export function FuzzCampaignDetailPage() {
           </table>
         )}</AilaCard>
 
-        <AilaCard  techBorder glow><h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
+        <AilaCard  techBorder glow><h3 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
           Coverage / corpus / stability
         </h3>
         <CoverageChart campaignId={cid} /></AilaCard>
       </div>
 
       {/* Resource band (§1.5 -- per-instance CPU/mem/IO from workstation polls) */}
-      <AilaCard  techBorder glow><h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
+      <AilaCard  techBorder glow><h3 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
         Workstation resources
       </h3>
-      <div className="border border-dashed border-border-default rounded p-3 bg-surface/40">
+      <div className="border border-dashed border-border rounded p-3 bg-surface/40">
         <AilaBadge severity="info" size="sm">
           backend pending
         </AilaBadge>
@@ -385,7 +385,7 @@ export function FuzzCampaignDetailPage() {
 
       {/* Crashes */}
       <AilaCard  techBorder glow><div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-        <h2 className="text-sm font-semibold text-foreground">
+        <h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground">
           Crashes ({filteredCrashes.length}
           {filteredCrashes.length !== crashes.length && ` of ${crashes.length}`})
         </h2>
@@ -399,8 +399,8 @@ export function FuzzCampaignDetailPage() {
               className={
                 "px-2 py-0.5 rounded font-mono border " +
                 (crashFilter === chip
-                  ? "bg-accent text-white border-accent"
-                  : "bg-surface border-border-default text-text-muted hover:text-foreground hover:bg-surface-hover")
+                  ? "bg-accent text-background border-accent"
+                  : "bg-surface border-border text-text-muted hover:text-foreground hover:bg-elevated")
               }
             >
               {chip}
@@ -417,7 +417,7 @@ export function FuzzCampaignDetailPage() {
           <table className="w-full text-xs">
             <caption className="sr-only">Registered crashes for this campaign</caption>
             <thead>
-              <tr className="border-b border-border-default text-left text-text-muted">
+              <tr className="border-b border-border text-left text-text-muted">
                 <th className="px-2 py-1 font-semibold">Stack hash</th>
                 <th className="px-2 py-1 font-semibold">Type</th>
                 <th className="px-2 py-1 font-semibold">Verdict</th>
@@ -431,7 +431,7 @@ export function FuzzCampaignDetailPage() {
                 <tr
                   key={c.id}
                   onClick={() => navigate(`/vr/fuzz/crashes/${c.id}`)}
-                  className="border-b border-border-default last:border-b-0 cursor-pointer hover:bg-surface transition-colors"
+                  className="border-b border-border last:border-b-0 cursor-pointer hover:bg-surface transition-colors"
                 >
                   <td className="px-2 py-1 font-mono">
                     {c.stack_hash.slice(0, 16)}…
@@ -472,7 +472,7 @@ function CoverageChart({ campaignId }: { campaignId: string }) {
   const points = data?.data ?? [];
   if (points.length === 0) {
     return (
-      <div className="border border-dashed border-border-default rounded p-3 bg-surface/40">
+      <div className="border border-dashed border-border rounded p-3 bg-surface/40">
         <p className="text-xs text-text-muted">
           No telemetry samples recorded yet. Workers POST to{" "}
           <code className="font-mono">
@@ -643,10 +643,8 @@ function WorkstationBadge({ systemId }: { systemId: number | null | undefined })
   return (
     <span className="inline-flex items-center gap-1" title={tooltip}>
       <span
-        className={
-          "inline-block w-1.5 h-1.5 rounded-full "
-          + (live ? "bg-green-500" : "bg-amber-500")
-        }
+        className="inline-block w-1.5 h-1.5 rounded-full"
+        style={{ background: live ? "var(--color-mint)" : "var(--color-amber)" }}
         aria-label={live ? "reachable" : "unreachable"}
       />
       <AilaBadge severity={sev} size="sm">

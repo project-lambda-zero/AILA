@@ -125,7 +125,7 @@ function SandboxTab() {
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_1fr]">
       {/* Left: form */}
-      <AilaCard variant="default" padding="md" decorations={["tech-border"]}>
+      <AilaCard variant="default" padding="md">
         <h2 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-4">
           Execute command
         </h2>
@@ -224,7 +224,7 @@ function SandboxTab() {
       </AilaCard>
 
       {/* Right: result */}
-      <AilaCard variant="default" padding="md" decorations={["tech-border"]}>
+      <AilaCard variant="default" padding="md">
         <h2 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-4">
           Result
         </h2>
@@ -350,7 +350,7 @@ function CorpusTab() {
   return (
     <div className="flex flex-col gap-6">
       {/* Action row */}
-      <AilaCard variant="default" padding="md" decorations={["tech-border"]}>
+      <AilaCard variant="default" padding="md">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-col gap-1">
             <h2 className="font-mono text-xs uppercase tracking-wider text-text-muted">
@@ -376,7 +376,7 @@ function CorpusTab() {
 
       {/* Stats */}
       {statsQuery.isLoading && (
-        <AilaCard variant="default" padding="md" decorations={["tech-border"]}>
+        <AilaCard variant="default" padding="md">
           <LoadingSkeletonGroup lines={6} />
         </AilaCard>
       )}
@@ -429,7 +429,7 @@ function CorpusTab() {
             />
           </div>
 
-          <AilaCard variant="default" padding="md" decorations={["tech-border"]}>
+          <AilaCard variant="default" padding="md">
             <h3 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">
               Manifest
             </h3>
@@ -461,7 +461,7 @@ function CorpusTab() {
             </dl>
           </AilaCard>
 
-          <AilaCard variant="default" padding="md" decorations={["tech-border"]}>
+          <AilaCard variant="default" padding="md">
             <h3 className="font-mono text-xs uppercase tracking-wider text-text-muted mb-3">
               Module breakdown
             </h3>
@@ -470,7 +470,7 @@ function CorpusTab() {
                 Manifest carried no per-module counts.
               </p>
             ) : (
-              <table aria-label="Sandbox runs" className="w-full font-mono text-xs">
+              <table aria-label="Sandbox runs" className="w-full font-mono text-xs border-collapse [&_th]:border [&_th]:border-border [&_th]:uppercase [&_th]:tracking-wider [&_td]:border [&_td]:border-border">
                 <thead>
                   <tr className="text-left text-text-muted">
                     <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">
@@ -589,7 +589,7 @@ function JournalReplayTab() {
 
   return (
     <div className="flex flex-col gap-6">
-      <AilaCard variant="default" padding="md" decorations={["tech-border"]}>
+      <AilaCard variant="default" padding="md">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-col gap-1">
             <h2 className="font-mono text-xs uppercase tracking-wider text-text-muted">

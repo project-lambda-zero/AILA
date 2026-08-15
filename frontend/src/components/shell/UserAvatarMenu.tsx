@@ -1,12 +1,8 @@
 import { useNavigate } from "react-router";
-import { Palette } from "@phosphor-icons/react/dist/csr/Palette";
 import { SignOut } from "@phosphor-icons/react/dist/csr/SignOut";
 import { User } from "@phosphor-icons/react/dist/csr/User";
-import { Sun } from "@phosphor-icons/react/dist/csr/Sun";
-import { Moon } from "@phosphor-icons/react/dist/csr/Moon";
 
 import { useAuthStore } from "@platform/auth/useAuthStore";
-import { useTheme } from "@/providers/ThemeProvider";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -23,25 +19,8 @@ function getUserInitials(username: string | null | undefined): string {
   return username.charAt(0).toUpperCase();
 }
 
-const THEME_LABELS: Record<string, string> = {
-  "midnight-cloud-8": "Midnight Cloud 8",
-  "frutiger-aero": "Frutiger Aero",
-  synthwave: "Synthwave",
-  vaporwave: "Vaporwave",
-  ps1: "PlayStation 1",
-  ps2: "PlayStation 2",
-  "cyberpunk-2077": "Cyberpunk 2077",
-  matrix: "The Matrix",
-  "truman-show": "Truman Show",
-  "half-life-1": "Half-Life 1",
-  "y2k-fever": "Y2K Fever",
-  vendetta: "Vendetta",
-  "specimen-index": "Specimen Index",
-};
-
 export function UserAvatarMenu() {
   const { username, role, logout } = useAuthStore();
-  const { theme, mode, cycleTheme, toggleMode, isDark } = useTheme();
   const navigate = useNavigate();
 
   function handleSignOut() {
@@ -88,16 +67,6 @@ export function UserAvatarMenu() {
         <DropdownMenuItem onClick={handleSettings} className="gap-2 cursor-pointer">
           <User size={14} />
           Profile &amp; Settings
-        </DropdownMenuItem>
-
-        <DropdownMenuItem onClick={cycleTheme} className="gap-2 cursor-pointer">
-          <Palette size={14} />
-          {THEME_LABELS[theme] ?? theme}
-        </DropdownMenuItem>
-
-        <DropdownMenuItem onClick={toggleMode} className="gap-2 cursor-pointer">
-          {isDark ? <Sun size={14} /> : <Moon size={14} />}
-          {isDark ? "Light mode" : "Dark mode"}
         </DropdownMenuItem>
 
         <DropdownMenuSeparator />

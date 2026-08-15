@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 
-import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { buildApiUrl } from "@platform/api/http";
 import { getAuthTokenStandalone } from "@platform/auth/useAuthStore";
 
@@ -26,8 +26,8 @@ export interface ReadinessEvent {
 }
 
 const TOOL_STATUS_COLOR: Record<string, string> = {
-  installed: "text-green-400",
-  missing: "text-red-400",
+  installed: "text-mint",
+  missing: "text-critical",
   skipped: "text-text-muted",
 };
 
@@ -158,11 +158,10 @@ export function ReadinessStreamPanel({
   const startEvent = events.find((e) => e.stage === "start");
 
   return (
-    <AilaCard  techBorder glow><div className="flex items-center justify-between mb-4">
-      <div>
-        <h3 className="text-sm font-semibold font-mono text-foreground">Machine Readiness Check</h3>
+    <WindowPanel title="machine readiness" tone={result ? (result.ready ? "ok" : "warn") : "accent"}><div className="flex items-center justify-between mb-4">
+      <div className="min-w-0">
         {startEvent?.message && (
-          <p className="text-xs text-text-muted mt-0.5">{startEvent.message}</p>
+          <p className="text-xs text-text-muted truncate">{startEvent.message}</p>
         )}
       </div>
       <div className="flex gap-2">
@@ -179,16 +178,16 @@ export function ReadinessStreamPanel({
           type="button"
           onClick={start}
           disabled={running}
-          className="px-3 py-1.5 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          className="px-3 py-1.5 text-sm font-medium rounded-md bg-accent text-badge-text hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
         >
-          {running && <span className="inline-block w-2 h-2 rounded-full bg-white/70 animate-pulse" />}
+          {running && <span className="inline-block w-2 h-2 rounded-full bg-badge-text/70 animate-pulse" />}
           {running ? "Running..." : result ? "Re-run Check" : "Run Check"}
         </button>
       </div>
     </div>
     
     {currentAction && (
-      <div className="mb-3 px-3 py-2 rounded-md bg-surface-secondary border border-border text-xs text-text-muted font-mono flex items-center gap-2">
+      <div className="mb-3 px-3 py-2 rounded-md bg-elevated border border-border text-xs text-text-muted font-mono flex items-center gap-2">
         <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
         {currentAction.message}
       </div>
@@ -199,7 +198,7 @@ export function ReadinessStreamPanel({
         {toolEvents.map((e, i) => (
           <div
             key={i}
-            className="flex items-center justify-between px-3 py-1.5 rounded text-xs font-mono hover:bg-surface-secondary"
+            className="flex items-center justify-between px-3 py-1.5 rounded text-xs font-mono hover:bg-elevated"
           >
             <div className="flex items-center gap-2 min-w-0">
               <span className={TOOL_STATUS_COLOR[e.status ?? ""] ?? "text-text-muted"}>
@@ -212,7 +211,7 @@ export function ReadinessStreamPanel({
               )}
             </div>
             {e.required && e.status === "missing" && (
-              <span className="text-red-400 shrink-0 ml-2">REQUIRED</span>
+              <span className="text-critical shrink-0 ml-2">REQUIRED</span>
             )}
           </div>
         ))}
@@ -224,20 +223,20 @@ export function ReadinessStreamPanel({
         <summary className="text-xs font-mono text-text-muted cursor-pointer select-none hover:text-foreground">
           xray log ({events.length} events) -- expand for full stream
         </summary>
-        <div className="mt-2 max-h-96 overflow-y-auto rounded border border-border bg-black/40">
+        <div className="mt-2 max-h-96 overflow-y-auto rounded border border-border bg-elevated">
           {events.map((e, i) => {
             const stage = e.stage ?? "event";
             const color =
               stage.includes("failed")
-                ? "text-red-400"
+                ? "text-critical"
                 : stage === "tool_done" && e.status === "installed"
-                ? "text-green-400"
+                ? "text-mint"
                 : stage === "install_verified"
-                ? "text-green-400"
+                ? "text-mint"
                 : stage === "installing" || stage === "install_exec"
                 ? "text-amber-400"
                 : stage === "checking"
-                ? "text-blue-400"
+                ? "text-lavender"
                 : stage === "heartbeat"
                 ? "text-text-muted/60"
                 : "text-text-muted";
@@ -250,7 +249,7 @@ export function ReadinessStreamPanel({
                   <div className="text-text-muted/70 text-4xs ml-6 mt-0.5 break-all">$ {e.command}</div>
                 )}
                 {e.error && (
-                  <div className="text-red-300/80 text-4xs ml-6 mt-0.5 break-all whitespace-pre-wrap">{e.error}</div>
+                  <div className="text-critical/80 text-4xs ml-6 mt-0.5 break-all whitespace-pre-wrap">{e.error}</div>
                 )}
                 {e.output_tail && (
                   <div className="text-text-muted/70 text-4xs ml-6 mt-0.5 break-all whitespace-pre-wrap">{e.output_tail}</div>
@@ -266,8 +265,8 @@ export function ReadinessStreamPanel({
       <div
         className={`mt-4 px-4 py-3 rounded-md border text-sm font-medium ${
           result.ready
-            ? "border-green-800 bg-green-950/30 text-green-400"
-            : "border-red-800 bg-red-950/30 text-red-400"
+            ? "border-mint/50 bg-mint/10 text-mint"
+            : "border-critical/50 bg-critical/15 text-critical"
         }`}
       >
         {result.ready ? "✓ Machine is ready" : "✗ Some required tools are missing"}
@@ -278,6 +277,6 @@ export function ReadinessStreamPanel({
       <p className="text-sm text-text-muted text-center py-6">
         Run a readiness check to verify forensic tools on the analyzer machine.
       </p>
-    )}</AilaCard>
+    )}</WindowPanel>
   );
 }

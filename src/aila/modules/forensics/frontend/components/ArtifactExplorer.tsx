@@ -1,8 +1,8 @@
 import { Fragment, useMemo, useState } from "react";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 import { useProjectArtifacts } from "../queries";
 
@@ -134,7 +134,7 @@ function RecordTable({
       >
         <table className="min-w-full text-xs font-mono" aria-label="Forensics artifacts">
           <caption className="sr-only">Collected forensics artifacts filtered by the controls above.</caption>
-          <thead className="bg-surface-secondary sticky top-0 z-10">
+          <thead className="bg-elevated sticky top-0 z-10">
             <tr>
               <th className="px-2 py-1.5 text-left text-text-muted font-semibold w-6" />
               {cols.map((c) => (
@@ -156,7 +156,7 @@ function RecordTable({
                   <tr
                     onClick={() => setOpenRow((prev) => (prev === i ? null : i))}
                     className={`border-t border-border/40 cursor-pointer ${
-                      sus ? "bg-red-950/30 hover:bg-red-950/50" : "hover:bg-surface-secondary/50"
+                      sus ? "bg-critical/15 hover:bg-critical/25" : "hover:bg-elevated/50"
                     }`}
                     title={sus ? `Suspicious: ${(rec.suspicious_reasons as string[]).join(", ")}` : undefined}
                   >
@@ -173,7 +173,7 @@ function RecordTable({
                           (rec[c] as string[]).map((r, j) => (
                             <span
                               key={j}
-                              className="inline-block mr-1 mb-0.5 px-1.5 py-0.5 rounded bg-red-900/60 text-red-200 text-3xs"
+                              className="inline-block mr-1 mb-0.5 px-1.5 py-0.5 rounded bg-critical/20 text-critical text-3xs"
                             >
                               {r}
                             </span>
@@ -185,7 +185,7 @@ function RecordTable({
                     ))}
                   </tr>
                   {expanded && (
-                    <tr className="bg-black/40 border-t border-border/30">
+                    <tr className="bg-elevated border-t border-border/30">
                       <td colSpan={cols.length + 1} className="px-3 py-2">
                         <dl className="grid gap-x-4 gap-y-1 text-xs" style={{ gridTemplateColumns: "min-content 1fr" }}>
                           {Object.entries(rec).map(([k, v]) => (
@@ -271,7 +271,7 @@ function ArtifactRow({ a }: { a: ArtifactWithData }) {
   const body = (
     <div className="space-y-3">
       {truncated && totalRecordCount != null && (
-        <div className="px-2 py-1 rounded border border-amber-800 bg-amber-950/30 text-amber-300 text-xs">
+        <div className="px-2 py-1 rounded border border-amber-400/40 bg-amber-400/10 text-amber-400 text-xs">
           ⚠ truncated: showing first {records.length} of {totalRecordCount.toLocaleString()} record(s).
         </div>
       )}
@@ -279,7 +279,7 @@ function ArtifactRow({ a }: { a: ArtifactWithData }) {
         <RecordTable records={records} fullscreen={fullscreen} />
       ) : rawOutput ? (
         <pre
-          className="text-xs font-mono whitespace-pre-wrap text-foreground bg-black/30 p-3 rounded border border-border overflow-auto"
+          className="text-xs font-mono whitespace-pre-wrap text-foreground bg-elevated p-3 rounded border border-border overflow-auto"
           style={{ maxHeight: "32rem" }}
         >
           {rawOutput}
@@ -293,7 +293,7 @@ function ArtifactRow({ a }: { a: ArtifactWithData }) {
                 <tbody>
                   {structuredEntries.map(([k, v]) => (
                     <tr key={k} className="border-b border-border last:border-b-0">
-                      <th scope="row" className="px-3 py-1.5 font-mono text-text-muted bg-surface-secondary align-top whitespace-nowrap w-1/4 text-left font-normal">
+                      <th scope="row" className="px-3 py-1.5 font-mono text-text-muted bg-elevated align-top whitespace-nowrap w-1/4 text-left font-normal">
                         {k}
                       </th>
                       <td className="px-3 py-1.5 font-mono text-foreground break-all">
@@ -319,7 +319,7 @@ function ArtifactRow({ a }: { a: ArtifactWithData }) {
           )}
           {nestedObservables && Object.keys(nestedObservables).length > 0 && (
             <div className="rounded border border-border bg-surface text-foreground overflow-hidden">
-              <div className="px-3 py-1.5 bg-surface-secondary text-xs font-mono text-text-muted border-b border-border">
+              <div className="px-3 py-1.5 bg-elevated text-xs font-mono text-text-muted border-b border-border">
                 observables ({Object.keys(nestedObservables).length})
               </div>
               <table className="w-full text-xs" aria-label="Artifact nested observables">
@@ -327,7 +327,7 @@ function ArtifactRow({ a }: { a: ArtifactWithData }) {
                 <tbody>
                   {Object.entries(nestedObservables).map(([k, v]) => (
                     <tr key={k} className="border-b border-border last:border-b-0">
-                      <th scope="row" className="px-3 py-1.5 font-mono text-blue-400 align-top whitespace-nowrap w-1/4 text-left font-normal">
+                      <th scope="row" className="px-3 py-1.5 font-mono text-lavender align-top whitespace-nowrap w-1/4 text-left font-normal">
                         {k}
                       </th>
                       <td className="px-3 py-1.5 font-mono text-foreground break-all">
@@ -354,7 +354,7 @@ function ArtifactRow({ a }: { a: ArtifactWithData }) {
         <button
           type="button"
           onClick={() => setOpen((p) => !p)}
-          className="w-full px-3 py-2 flex items-center justify-between hover:bg-surface-secondary transition-colors text-left"
+          className="w-full px-3 py-2 flex items-center justify-between hover:bg-elevated transition-colors text-left"
         >
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-text-muted shrink-0 w-3">{open ? "▾" : "▸"}</span>
@@ -384,12 +384,12 @@ function ArtifactRow({ a }: { a: ArtifactWithData }) {
           )}
         </button>
         {open && (
-          <div className="border-t border-border bg-black/20 px-3 py-3 space-y-2">
+          <div className="border-t border-border bg-elevated px-3 py-3 space-y-2">
             <div className="flex items-center gap-2 flex-wrap">
               <button
                 type="button"
                 onClick={() => setFullscreen(true)}
-                className="text-xs px-2 py-1 rounded border border-border bg-surface hover:bg-surface-secondary"
+                className="text-xs px-2 py-1 rounded border border-border bg-surface hover:bg-elevated"
               >
                 maximize
               </button>
@@ -399,7 +399,7 @@ function ArtifactRow({ a }: { a: ArtifactWithData }) {
                   onClick={() =>
                     downloadCsv(records, `${a.artifact_family}-${a.artifact_type}-${a.id.slice(0, 8)}.csv`)
                   }
-                  className="text-xs px-2 py-1 rounded border border-border bg-surface hover:bg-surface-secondary"
+                  className="text-xs px-2 py-1 rounded border border-border bg-surface hover:bg-elevated"
                 >
                   download csv
                 </button>
@@ -409,7 +409,7 @@ function ArtifactRow({ a }: { a: ArtifactWithData }) {
                 onClick={() =>
                   downloadJson(parsed ?? {}, `${a.artifact_family}-${a.artifact_type}-${a.id.slice(0, 8)}.json`)
                 }
-                className="text-xs px-2 py-1 rounded border border-border bg-surface hover:bg-surface-secondary"
+                className="text-xs px-2 py-1 rounded border border-border bg-surface hover:bg-elevated"
               >
                 download json
               </button>
@@ -418,7 +418,7 @@ function ArtifactRow({ a }: { a: ArtifactWithData }) {
                   <summary className="cursor-pointer text-xs text-text-muted hover:text-foreground">
                     raw output
                   </summary>
-                  <pre className="mt-2 text-xs font-mono whitespace-pre-wrap text-foreground bg-black/30 p-3 rounded border border-border max-h-80 overflow-auto">
+                  <pre className="mt-2 text-xs font-mono whitespace-pre-wrap text-foreground bg-elevated p-3 rounded border border-border max-h-80 overflow-auto">
                     {rawOutput}
                   </pre>
                 </details>
@@ -450,7 +450,7 @@ function ArtifactRow({ a }: { a: ArtifactWithData }) {
               <button
                 type="button"
                 onClick={() => setFullscreen(false)}
-                className="text-sm px-2 py-1 rounded border border-border hover:bg-surface-secondary"
+                className="text-sm px-2 py-1 rounded border border-border hover:bg-elevated"
               >
                 close ✕
               </button>
@@ -499,8 +499,8 @@ export function ArtifactExplorer({ projectId }: { projectId: string }) {
                 className={
                   "px-2 py-1 transition-colors " +
                   (sourceFilter === b.key
-                    ? "bg-blue-600 text-white"
-                    : "bg-surface text-foreground hover:bg-surface-secondary")
+                    ? "bg-accent text-badge-text"
+                    : "bg-surface text-foreground hover:bg-elevated")
                 }
               >
                 {b.label}
@@ -523,11 +523,11 @@ export function ArtifactExplorer({ projectId }: { projectId: string }) {
       </div>
 
       {artifacts.length === 0 ? (
-        <AilaCard  techBorder glow>
+        <WindowPanel tone="muted" status="forensics ; no artifacts">
           <p className="text-sm text-text-muted text-center py-4">
             No artifacts {familyFilter ? `in ${familyFilter} family` : "collected yet"}.
           </p>
-        </AilaCard>
+        </WindowPanel>
       ) : (
         <div className="space-y-1.5">
           {artifacts.map((a) => (

@@ -22,11 +22,10 @@ import {
   ReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { TreeStructure } from "@phosphor-icons/react/dist/csr/TreeStructure";
 import { ArrowsOutLineVertical } from "@phosphor-icons/react/dist/csr/ArrowsOutLineVertical";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 import { useInvestigation, useInvestigations } from "../queries";
 import type {
@@ -39,22 +38,22 @@ import type {
 // Match InvestigationDetailPage's STATUS_META intent -- lifecycle hue,
 // not danger ramp -- but keep the local subset small (parent/self/child).
 const STATUS_FILL: Record<string, string> = {
-  running: "#10b981",
-  completed: "#3b82f6",
-  paused: "#f59e0b",
-  failed: "#ef4444",
-  abandoned: "#6b7280",
-  stalled: "#a855f7",
-  created: "#64748b",
+  running: "#b092ff",
+  completed: "#97dbbe",
+  paused: "#ffb85f",
+  failed: "#ff5f87",
+  abandoned: "#6b563f",
+  stalled: "#af87d7",
+  created: "#af8c6c",
 };
 const STATUS_BORDER: Record<string, string> = {
-  running: "#059669",
-  completed: "#1d4ed8",
-  paused: "#d97706",
-  failed: "#b91c1c",
-  abandoned: "#4b5563",
-  stalled: "#7e22ce",
-  created: "#475569",
+  running: "#8f6fd0",
+  completed: "#6fb89a",
+  paused: "#d99a4a",
+  failed: "#c43b65",
+  abandoned: "#4a3c2b",
+  stalled: "#8f6fb0",
+  created: "#8a7256",
 };
 
 const KIND_LABEL: Record<InvestigationKind, string> = {
@@ -77,13 +76,15 @@ interface NodeInput {
 }
 
 function nodeStyle(role: "parent" | "self" | "child", status?: string | null) {
-  const fill = status ? (STATUS_FILL[status] ?? "#64748b") : "#334155";
-  const border = status ? (STATUS_BORDER[status] ?? "#475569") : "#475569";
+  const hasStatus = Boolean(status && STATUS_FILL[status]);
+  const fill = hasStatus ? STATUS_FILL[status as string] : "#1f1f1f";
+  const border = hasStatus ? STATUS_BORDER[status as string] : "#3a3a3a";
+  const text = hasStatus ? "#1a0a12" : "#ffd7af";
   return {
     background: fill,
-    color: "white",
-    border: `${role === "self" ? 3 : 2}px solid ${role === "self" ? "#f8fafc" : border}`,
-    borderRadius: 6,
+    color: text,
+    border: `${role === "self" ? 3 : 2}px solid ${role === "self" ? "#ff5f87" : border}`,
+    borderRadius: 4,
     width: 260,
     padding: 8,
   };
@@ -126,7 +127,8 @@ function buildLineageGraph(
         label: (
           <Link
             to={`/vr/investigations/${c.inv.id}`}
-            className="block text-left no-underline text-white focus:outline focus:outline-2 focus:outline-white"
+            className="no-theme-link block text-left no-underline focus:outline focus:outline-2"
+            style={{ color: "inherit" }}
             aria-label={`Open ${c.role === "self" ? "current" : c.role} investigation: ${full.title ?? c.inv.id}`}
             // Prevent xyflow from swallowing the click when the label
             // sits inside a "default" node.
@@ -174,8 +176,8 @@ function buildLineageGraph(
       target: self.id,
       type: "smoothstep",
       label: "spawned",
-      labelStyle: { fontSize: 10, fill: "#64748b" },
-      style: { stroke: "#64748b", strokeWidth: 1.5 },
+      labelStyle: { fontSize: 10, fill: "#af8c6c" },
+      style: { stroke: "#3a3a3a", strokeWidth: 1.5 },
     });
   }
   for (const c of children) {
@@ -185,8 +187,8 @@ function buildLineageGraph(
       target: c.id,
       type: "smoothstep",
       label: c.kind === "variant_hunt" ? "variant hunt" : "spawned",
-      labelStyle: { fontSize: 10, fill: "#64748b" },
-      style: { stroke: "#64748b", strokeWidth: 1.5 },
+      labelStyle: { fontSize: 10, fill: "#af8c6c" },
+      style: { stroke: "#3a3a3a", strokeWidth: 1.5 },
     });
   }
   return { nodes, edges };
@@ -233,25 +235,29 @@ export function InvestigationLineagePanel({
   if (!hasParent && !hasChildren) return null;
 
   return (
-    <AilaCard techBorder glow>
-      <div className="flex items-center gap-2 mb-2">
-        <TreeStructure weight="fill" size={14} className="text-accent" />
-        <h2 className="text-sm font-semibold text-foreground">Lineage</h2>
-        {hasParent && (
-          <AilaBadge severity="info" size="sm">
-            parent
-          </AilaBadge>
-        )}
-        {hasChildren && (
-          <AilaBadge severity="low" size="sm">
-            {children.length} child{children.length === 1 ? "" : "ren"}
-          </AilaBadge>
-        )}
-        <span className="ml-auto inline-flex items-center gap-1 text-3xs font-mono text-text-muted">
-          <ArrowsOutLineVertical weight="regular" size={11} />
-          click any node to open
-        </span>
-      </div>
+    <WindowPanel
+      title="lineage"
+      tone="info"
+      actions={
+        <div className="flex items-center gap-2">
+          {hasParent && (
+            <AilaBadge severity="info" size="sm">
+              parent
+            </AilaBadge>
+          )}
+          {hasChildren && (
+            <AilaBadge severity="low" size="sm">
+              {children.length} child{children.length === 1 ? "" : "ren"}
+            </AilaBadge>
+          )}
+          <span className="inline-flex items-center gap-1 text-3xs font-mono text-text-muted">
+            <ArrowsOutLineVertical weight="regular" size={11} />
+            click any node to open
+          </span>
+        </div>
+      }
+    >
+      <h2 className="sr-only">Lineage</h2>
       <p className="text-3xs text-text-muted mb-2 font-mono">
         Derived from parent_investigation_id + reverse lookup. Each node
         deep-links to that investigation's detail page.
@@ -272,7 +278,7 @@ export function InvestigationLineagePanel({
           proOptions={{ hideAttribution: true }}
           aria-label="Investigation lineage graph"
         >
-          <Background gap={20} size={1} color="#1e293b" />
+          <Background gap={20} size={1} color="#2a2a2a" />
           <Controls showInteractive={false} />
         </ReactFlow>
       </div>
@@ -297,7 +303,7 @@ export function InvestigationLineagePanel({
           </li>
         ))}
       </ul>
-    </AilaCard>
+    </WindowPanel>
   );
 }
 

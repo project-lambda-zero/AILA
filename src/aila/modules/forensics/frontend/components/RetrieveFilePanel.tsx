@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 
-import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -53,13 +53,7 @@ export function RetrieveFilePanel({ projectId, compact = false }: Props) {
   const heading = compact ? "Retrieve File" : "Retrieve File from Image";
 
   return (
-    <AilaCard  techBorder glow><div className="flex items-center justify-between mb-3">
-      <h3 className="text-sm font-semibold text-foreground">{heading}</h3>
-      <span className="text-xs text-text-muted">
-        {diskImages.length} disk image{diskImages.length === 1 ? "" : "s"}
-      </span>
-    </div>
-    
+    <WindowPanel title={heading} status={`image ; ${diskImages.length} disk image${diskImages.length === 1 ? "" : "s"}`}>
     <form onSubmit={onSubmit} className="space-y-2">
       <Input
         aria-label="Virtual file path"
@@ -104,7 +98,7 @@ export function RetrieveFilePanel({ projectId, compact = false }: Props) {
     </form>
     
     {evidenceQ.isError && (
-      <p className="text-xs text-status-critical mt-2">
+      <p className="text-xs text-critical mt-2">
         Failed to load evidence list.
       </p>
     )}
@@ -112,6 +106,6 @@ export function RetrieveFilePanel({ projectId, compact = false }: Props) {
       <p className="text-xs text-text-muted mt-2">
         No disk images on this project -- run intake first.
       </p>
-    )}</AilaCard>
+    )}</WindowPanel>
   );
 }

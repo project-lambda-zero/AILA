@@ -41,7 +41,7 @@ export function DeleteButton({
         onClick={handleClick}
         disabled={mutation.isPending}
         title={`Delete ${label}`}
-        className="px-2 py-0.5 text-xs font-mono text-text-muted hover:text-text-danger hover:bg-surface-hover rounded transition-colors disabled:opacity-50"
+        className="px-2 py-0.5 text-xs font-mono text-text-muted hover:text-critical hover:bg-elevated rounded transition-colors disabled:opacity-50"
       >
         ✕
       </button>
@@ -53,7 +53,7 @@ export function DeleteButton({
       type="button"
       onClick={handleClick}
       disabled={mutation.isPending}
-      className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border-danger text-text-danger hover:bg-surface-danger/10 disabled:opacity-50"
+      className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-critical text-critical hover:bg-surface-danger/10 disabled:opacity-50"
     >
       {mutation.isPending ? "Deleting…" : "Delete"}
     </button>

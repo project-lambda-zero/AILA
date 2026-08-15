@@ -390,7 +390,7 @@ function McpToolsPanel({ instanceId }: McpToolsPanelProps) {
       )}
       {data && data.tools.length > 0 && (
         <div className="overflow-x-auto">
-          <table aria-label="MCP instances" className="w-full">
+          <table aria-label="MCP instances" className="w-full border-collapse [&_th]:border [&_th]:border-border [&_th]:uppercase [&_th]:tracking-wider [&_td]:border [&_td]:border-border">
             <thead>
               <tr className="border-b border-border">
                 <th className="py-1.5 px-2 text-left font-mono text-xs text-text-muted">Name</th>
@@ -439,7 +439,7 @@ function McpRegistryTab() {
 
   return (
     <div className="flex flex-col gap-4">
-      <AilaCard variant="default" padding="md" techBorder glow>
+      <AilaCard variant="default" padding="md">
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-mono text-xs font-semibold uppercase tracking-wider text-text-muted">
             MCP Server Catalog
@@ -475,7 +475,7 @@ function McpRegistryTab() {
         )}
         {!instancesQuery.isLoading && rows.length > 0 && (
           <div className="overflow-x-auto">
-            <table aria-label="MCP capability audit" className="w-full">
+            <table aria-label="MCP capability audit" className="w-full border-collapse [&_th]:border [&_th]:border-border [&_th]:uppercase [&_th]:tracking-wider [&_td]:border [&_td]:border-border">
               <thead>
                 <tr className="border-b border-border">
                   <th className="w-6"></th>
@@ -826,7 +826,7 @@ function SpecialistsTab() {
 
   return (
     <div className="flex flex-col gap-4">
-      <AilaCard variant="default" padding="md" techBorder glow>
+      <AilaCard variant="default" padding="md">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
           <div className="flex items-center gap-2">
             <span className="font-mono text-xs uppercase tracking-wider text-text-muted">

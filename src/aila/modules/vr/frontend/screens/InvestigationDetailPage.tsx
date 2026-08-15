@@ -24,6 +24,8 @@ import { ShieldCheck } from "@phosphor-icons/react/dist/csr/ShieldCheck";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import { PixelIcon } from "@/components/aila/PixelIcon";
 import { KpiTile } from "@/components/aila/KpiTile";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
@@ -105,31 +107,31 @@ const dispatchColor: Record<
 // should pulse. Tones echo the dashboard's success/warn/crit/info hues
 // rather than the generic AilaBadge severity ramp so the dot reads as
 // "lifecycle phase", not "danger level".
-const _STATUS_FALLBACK = { color: "#9aa0a6", label: "Unknown", pulse: false };
+const _STATUS_FALLBACK = { color: "#af8c6c", label: "Unknown", pulse: false };
 const STATUS_META: Record<
   string,
   { color: string; label: string; pulse: boolean }
 > = {
-  created:   { color: "#9aa0a6", label: "Created",   pulse: false },
+  created:   { color: "#af8c6c", label: "Created",   pulse: false },
   running:   { color: "#97dbbe", label: "Running",   pulse: true  },
-  paused:    { color: "#f0c97a", label: "Paused",    pulse: false },
-  completed: { color: "#8ec5ff", label: "Completed", pulse: false },
+  paused:    { color: "#ffb85f", label: "Paused",    pulse: false },
+  completed: { color: "#af87d7", label: "Completed", pulse: false },
   failed:    { color: "#f0a8c7", label: "Failed",    pulse: false },
-  abandoned: { color: "#9aa0a6", label: "Abandoned", pulse: false },
-  stalled:   { color: "#9aa0a6", label: "Stalled",   pulse: false },
+  abandoned: { color: "#af8c6c", label: "Abandoned", pulse: false },
+  stalled:   { color: "#af8c6c", label: "Stalled",   pulse: false },
 };
 
-const _BRANCH_STATUS_FALLBACK = { color: "#9aa0a6", label: "Unknown" };
+const _BRANCH_STATUS_FALLBACK = { color: "#af8c6c", label: "Unknown" };
 const BRANCH_STATUS_META: Record<
   string,
   { color: string; label: string }
 > = {
   active:    { color: "#97dbbe", label: "Active"    },
-  paused:    { color: "#f0c97a", label: "Paused"    },
-  merged:    { color: "#8ec5ff", label: "Merged"    },
+  paused:    { color: "#ffb85f", label: "Paused"    },
+  merged:    { color: "#af87d7", label: "Merged"    },
   promoted:  { color: "#97dbbe", label: "Promoted"  },
-  completed: { color: "#8ec5ff", label: "Completed" },
-  abandoned: { color: "#9aa0a6", label: "Abandoned" },
+  completed: { color: "#af87d7", label: "Completed" },
+  abandoned: { color: "#af8c6c", label: "Abandoned" },
 };
 
 // Persona visual identity -- each researcher persona gets a stable
@@ -154,8 +156,8 @@ const PERSONA_META: Partial<
   halvar:  { color: "#f0a8c7", bg: "color-mix(in srgb, #f0a8c7 16%, transparent)", initial: "H", label: "Halvar" },
   maddie:  { color: "#af87d7", bg: "color-mix(in srgb, #af87d7 16%, transparent)", initial: "M", label: "Maddie" },
   renzo:   { color: "#97dbbe", bg: "color-mix(in srgb, #97dbbe 16%, transparent)", initial: "R", label: "Renzo"  },
-  yuki:    { color: "#8ec5ff", bg: "color-mix(in srgb, #8ec5ff 16%, transparent)", initial: "Y", label: "Yuki"   },
-  noor:    { color: "#f0c97a", bg: "color-mix(in srgb, #f0c97a 16%, transparent)", initial: "N", label: "Noor"   },
+  yuki:    { color: "#b092ff", bg: "color-mix(in srgb, #b092ff 16%, transparent)", initial: "Y", label: "Yuki"   },
+  noor:    { color: "#ffb85f", bg: "color-mix(in srgb, #ffb85f 16%, transparent)", initial: "N", label: "Noor"   },
   wei:     { color: "#7bdfd3", bg: "color-mix(in srgb, #7bdfd3 16%, transparent)", initial: "W", label: "Wei"    },
   // On-demand specialist agents (specialist_registry _BUILTINS "vr"):
   // named panelists spawned when a case needs an expert eye.
@@ -163,7 +165,7 @@ const PERSONA_META: Partial<
   jak:     { color: "#e0a86a", bg: "color-mix(in srgb, #e0a86a 16%, transparent)", initial: "J", label: "Jak"    },
   kratos:  { color: "#d97a7a", bg: "color-mix(in srgb, #d97a7a 16%, transparent)", initial: "K", label: "Kratos" },
   lara:    { color: "#c7a25c", bg: "color-mix(in srgb, #c7a25c 16%, transparent)", initial: "L", label: "Lara"   },
-  default: { color: "#9aa0a6", bg: "color-mix(in srgb, #9aa0a6 16%, transparent)", initial: "?", label: "Branch" },
+  default: { color: "#af8c6c", bg: "color-mix(in srgb, #af8c6c 16%, transparent)", initial: "?", label: "Branch" },
 };
 
 function personaMeta(voice?: PersonaVoice | string | null) {
@@ -262,7 +264,7 @@ function PayloadPreview({
   const shown = expanded || !truncated ? json : json.slice(0, 320) + "…";
   return (
     <div className="text-3xs text-text-muted font-mono">
-      <pre className="whitespace-pre-wrap break-words bg-elevated/40 rounded px-2 py-1.5 border border-border-default/60">
+      <pre className="whitespace-pre-wrap break-words bg-elevated/40 rounded px-2 py-1.5 border border-border/60">
         {shown}
       </pre>
       {truncated && (
@@ -284,13 +286,13 @@ function PayloadPreview({
 function CostProgressBar({ actual, budget }: { actual: number; budget: number }) {
   if (budget <= 0) {
     return (
-      <div className="h-1.5 rounded-sharp bg-elevated border border-border-default/60">
+      <div className="h-1.5 rounded-sharp bg-elevated border border-border/60">
         <span className="sr-only">No budget set</span>
       </div>
     );
   }
   const pct = Math.max(0, Math.min(100, (actual / budget) * 100));
-  const color = pct >= 80 ? "#f0a8c7" : pct >= 50 ? "#f0c97a" : "#97dbbe";
+  const color = pct >= 80 ? "#f0a8c7" : pct >= 50 ? "#ffb85f" : "#97dbbe";
   return (
     <div
       role="progressbar"
@@ -298,7 +300,7 @@ function CostProgressBar({ actual, budget }: { actual: number; budget: number })
       aria-valuemin={0}
       aria-valuemax={100}
       aria-label={`Cost ${fmtUsd(actual)} of ${fmtUsd(budget)} (${pct.toFixed(0)}%)`}
-      className="relative h-1.5 rounded-sharp overflow-hidden border border-border-default/60 bg-elevated"
+      className="relative h-1.5 rounded-sharp overflow-hidden border border-border/60 bg-elevated"
     >
       <div
         className="h-full"
@@ -390,10 +392,10 @@ function ToolbarButton({
 }) {
   const tone =
     variant === "primary"
-      ? "bg-accent text-white border-accent hover:bg-accent/90"
+      ? "bg-accent text-background border-accent hover:bg-accent/90"
       : variant === "danger"
-        ? "bg-surface border-orange-500/60 text-orange-300 hover:border-orange-400 hover:bg-orange-500/10"
-        : "bg-surface border-border-default text-foreground hover:bg-surface/80 hover:border-accent/60";
+        ? "bg-surface border-critical/60 text-critical hover:border-critical hover:bg-critical/10"
+        : "bg-surface border-border text-foreground hover:bg-surface/80 hover:border-accent/60";
   return (
     <button
       type="button"
@@ -418,7 +420,7 @@ function ToolbarLink({
   return (
     <Link
       to={to}
-      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border-default text-foreground hover:bg-surface/80 hover:border-accent/60 transition-colors"
+      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border text-foreground hover:bg-surface/80 hover:border-accent/60 transition-colors"
     >
       <span className="[&_svg]:h-4 [&_svg]:w-4">{icon}</span>
       <span>{label}</span>
@@ -695,10 +697,10 @@ export function InvestigationDetailPage() {
   return (
     <div className="space-y-3 max-w-full min-w-0 overflow-x-hidden break-words">
       {/* Header toolbar -- utility command bar */}
-      <div className="flex items-center justify-between gap-3 flex-wrap rounded-md border border-border-default/60 bg-surface/40 px-2.5 py-2">
+      <div className="flex items-center justify-between gap-3 flex-wrap rounded-md border border-border/60 bg-surface/40 px-2.5 py-2">
         <div className="flex items-center gap-2 flex-wrap">
           <LiveDot status={liveStatus} />
-          <span className="w-px h-5 bg-border-default mx-1" aria-hidden />
+          <span className="w-px h-5 bg-border mx-1" aria-hidden />
           <ToolbarLink
             to={`/vr/investigations/${invId}/tree`}
             icon={<TreeStructure weight="regular" />}
@@ -718,7 +720,7 @@ export function InvestigationDetailPage() {
             onClick={() => setSteeringOpen(true)}
           />
           <ExportReportButton invId={invId} title={inv.title} />
-          <span className="w-px h-5 bg-border-default mx-1" aria-hidden />
+          <span className="w-px h-5 bg-border mx-1" aria-hidden />
           {/* §47 -- Reset button. Deferred to Phase B (Cursor SSOT
               pause/resume rewrite, prior design notes). The button
               currently calls the v1 reset endpoint; when Phase B
@@ -819,7 +821,8 @@ export function InvestigationDetailPage() {
       {/* Command console -- phase progress, run state, live metrics and
           run controls unified into one strip so the operator reads the
           whole situation without scrolling past stacked cards. */}
-      <AilaCard techBorder glow>
+      <WindowPanel title="run state" tone="muted">
+        <h2 className="sr-only">Run state</h2>
         <WorkflowStepper
         flow="investigate"
         currentState={
@@ -840,11 +843,11 @@ export function InvestigationDetailPage() {
         />
 
         {/* Run state + controls */}
-        <div className="mt-3 pt-3 border-t border-border-default/60 flex items-start justify-between gap-4 flex-wrap">
+        <div className="mt-3 pt-3 border-t border-border/60 flex items-start justify-between gap-4 flex-wrap">
           <div className="flex flex-col gap-1 min-w-0">
             <StatusIndicator status={inv.status} pauseReason={inv.pause_reason} />
             {inv.status === "failed" && inv.failure_reason && (
-              <p className="text-xs text-red-400 font-mono">
+              <p className="text-xs text-critical font-mono">
                 {inv.failure_reason}
               </p>
             )}
@@ -924,36 +927,36 @@ export function InvestigationDetailPage() {
             <TreeStructure weight="fill" size={13} className="text-accent" />
             <span className="text-foreground font-semibold tabular-nums">{inv.branch_count}</span> branches
           </span>
-          <span className="w-px h-3 bg-border-default" />
+          <span className="w-px h-3 bg-border" />
           <span className="inline-flex items-center gap-1.5">
             <ChatCircleText weight="fill" size={13} className="text-text-muted" />
             <span className="text-foreground font-semibold tabular-nums">{inv.message_count.toLocaleString()}</span> turns
           </span>
-          <span className="w-px h-3 bg-border-default" />
+          <span className="w-px h-3 bg-border" />
           <span className="inline-flex items-center gap-1.5">
             <Lightning weight="fill" size={13} className="text-text-muted" />
             ~<span className="text-foreground font-semibold tabular-nums">{((inv.message_count * 28000) / 1_000_000).toFixed(1)}M</span> tokens
           </span>
-          <span className="w-px h-3 bg-border-default" />
+          <span className="w-px h-3 bg-border" />
           <span className="inline-flex items-center gap-1.5">
-            <Target weight="fill" size={13} className={inv.outcome_count > 0 ? "text-emerald-400" : "text-text-muted"} />
+            <Target weight="fill" size={13} className={inv.outcome_count > 0 ? "text-mint" : "text-text-muted"} />
             <span className="text-foreground font-semibold tabular-nums">{inv.outcome_count}</span> outcomes
           </span>
         </div>
-      </AilaCard>
+      </WindowPanel>
 
       {/* ── Outcomes (hero position -- first content after status) ─── */}
       {outcomes.length > 0 && (
-        <AilaCard techBorder glow>
-          <div className="flex items-center gap-2 mb-3">
-            <Target weight="fill" size={16} className="text-accent" />
-            <h2 className="text-sm font-semibold text-foreground">
-              Outcomes
-            </h2>
+        <WindowPanel
+          title="outcomes"
+          tone="accent"
+          actions={
             <span className="text-xs font-mono text-text-muted tabular-nums">
               {outcomes.length}
             </span>
-          </div>
+          }
+        >
+          <h2 className="sr-only">Outcomes</h2>
           <div className="space-y-3">
             {primaryOutcome && (
               <PrimaryOutcomeCard
@@ -992,7 +995,7 @@ export function InvestigationDetailPage() {
               </ul>
             )}
           </div>
-        </AilaCard>
+        </WindowPanel>
       )}
 
       {/* Lineage -- ancestry + variant-hunt descendants derived from
@@ -1025,7 +1028,7 @@ export function InvestigationDetailPage() {
               <select
                 value={senderFilter}
                 onChange={(e) => updateParam("sender", e.target.value)}
-                className="px-2 py-1 rounded-md bg-elevated border border-border-default font-mono text-foreground hover:border-accent/50 focus:border-accent focus:outline-none"
+                className="px-2 py-1 rounded-md bg-elevated border border-border font-mono text-foreground hover:border-accent/50 focus:border-accent focus:outline-none"
                 aria-label="Filter by sender kind"
               >
                 <option value="">all senders</option>
@@ -1038,7 +1041,7 @@ export function InvestigationDetailPage() {
               <select
                 value={payloadFilter}
                 onChange={(e) => updateParam("kind", e.target.value)}
-                className="px-2 py-1 rounded-md bg-elevated border border-border-default font-mono text-foreground hover:border-accent/50 focus:border-accent focus:outline-none"
+                className="px-2 py-1 rounded-md bg-elevated border border-border font-mono text-foreground hover:border-accent/50 focus:border-accent focus:outline-none"
                 aria-label="Filter by payload kind"
               >
                 <option value="">all kinds</option>
@@ -1052,7 +1055,7 @@ export function InvestigationDetailPage() {
                 <select
                   value={branchFilter}
                   onChange={(e) => updateParam("branch", e.target.value)}
-                  className="px-2 py-1 rounded-md bg-elevated border border-border-default font-mono text-foreground hover:border-accent/50 focus:border-accent focus:outline-none"
+                  className="px-2 py-1 rounded-md bg-elevated border border-border font-mono text-foreground hover:border-accent/50 focus:border-accent focus:outline-none"
                   aria-label="Filter by branch"
                 >
                   <option value="">all branches</option>
@@ -1068,7 +1071,7 @@ export function InvestigationDetailPage() {
                   ))}
                 </select>
               )}
-              <span className="ml-auto inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-elevated/60 border border-border-default/60 text-text-muted font-mono">
+              <span className="ml-auto inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-elevated/60 border border-border/60 text-text-muted font-mono">
                 <Hash weight="bold" size={12} />
                 <span className="text-foreground tabular-nums">{filtered.length}</span>
                 <span>/ {messages.length}</span>
@@ -1082,7 +1085,7 @@ export function InvestigationDetailPage() {
                   className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md border cursor-pointer transition-colors focus-within:outline focus-within:outline-2 focus-within:outline-accent focus-within:outline-offset-2 ${
                     liveTail
                       ? "bg-accent/15 border-accent/50 text-foreground"
-                      : "bg-elevated/60 border-border-default/60 text-text-muted hover:border-accent/40"
+                      : "bg-elevated/60 border-border/60 text-text-muted hover:border-accent/40"
                   }`}
                   title={liveTail ? "Auto-scroll new turns into view" : "Frozen -- won't auto-scroll"}
                 >
@@ -1099,7 +1102,7 @@ export function InvestigationDetailPage() {
                   <span
                     className="w-1.5 h-1.5 rounded-full"
                     style={{
-                      background: liveTail ? "#97dbbe" : "#9aa0a6",
+                      background: liveTail ? "#97dbbe" : "#af8c6c",
                       boxShadow: liveTail ? "0 0 6px #97dbbe" : "none",
                     }}
                   />
@@ -1122,7 +1125,7 @@ export function InvestigationDetailPage() {
                       }
                     }
                   }}
-                  className="w-16 px-2 py-1 rounded-md bg-elevated border border-border-default font-mono text-foreground focus:border-accent focus:outline-none"
+                  className="w-16 px-2 py-1 rounded-md bg-elevated border border-border font-mono text-foreground focus:border-accent focus:outline-none"
                   aria-label="Jump to turn number"
                 />
               </div>
@@ -1148,13 +1151,8 @@ export function InvestigationDetailPage() {
 
           {/* Operator composer (bottom of stream, like a chat input) */}
           {operatorComposerOpen && (
-            <AilaCard techBorder glow>
-              <div className="flex items-center gap-2 mb-3">
-                <PaperPlaneRight weight="fill" size={14} className="text-accent" />
-                <h2 className="text-3xs font-mono uppercase tracking-cyber-sm text-text-muted">
-                  Operator Input · Inject context for next turn
-                </h2>
-              </div>
+            <WindowPanel title="operator input" tone="accent">
+              <h2 className="sr-only">Operator Input · Inject context for next turn</h2>
               <p className="text-xs text-text-muted mb-3 leading-relaxed">
                 The engine sees this verbatim as an operator note on its next turn.
                 Pick an <span className="font-mono text-foreground">intent</span>{" "}
@@ -1170,10 +1168,10 @@ export function InvestigationDetailPage() {
                       key={it.value || "auto"}
                       type="button"
                       onClick={() => setMessageIntent(it.value)}
-                      className={`px-2.5 py-1 text-2xs font-mono rounded-full border transition-colors ${
+                      className={`px-2.5 py-1 text-2xs font-mono rounded-[4px] border transition-colors ${
                         active
                           ? "bg-accent/20 border-accent text-foreground"
-                          : "bg-elevated/60 border-border-default/60 text-text-muted hover:border-accent/40 hover:text-foreground"
+                          : "bg-elevated/60 border-border/60 text-text-muted hover:border-accent/40 hover:text-foreground"
                       }`}
                       aria-pressed={active}
                     >
@@ -1184,7 +1182,7 @@ export function InvestigationDetailPage() {
               </div>
 
               {/* Chat-style input with embedded send button */}
-              <div className="relative flex items-end gap-0 rounded-lg border border-border-default bg-elevated focus-within:border-accent transition-colors">
+              <div className="relative flex items-end gap-0 rounded-lg border border-border bg-elevated focus-within:border-accent transition-colors">
                 <textarea
                   value={messageText}
                   onChange={(e) => setMessageText(e.target.value)}
@@ -1220,7 +1218,7 @@ export function InvestigationDetailPage() {
                       },
                     );
                   }}
-                  className="m-2 inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-xs font-medium flex-shrink-0"
+                  className="m-2 inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-md bg-accent text-background hover:bg-accent/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-xs font-medium flex-shrink-0"
                   aria-label="Send operator message"
                 >
                   {sendMut.isPending ? (
@@ -1233,7 +1231,7 @@ export function InvestigationDetailPage() {
                   )}
                 </button>
               </div>
-            </AilaCard>
+            </WindowPanel>
           )}
         </div>
 
@@ -1265,16 +1263,16 @@ export function InvestigationDetailPage() {
 
 
           {/* Branches summary */}
-          <AilaCard techBorder glow>
-            <div className="flex items-center gap-2 mb-3">
-              <TreeStructure weight="fill" size={14} className="text-accent" />
-              <h3 className="text-3xs font-mono uppercase tracking-cyber-sm text-text-muted">
-                Branches
-              </h3>
+          <WindowPanel
+            title="branches"
+            tone="info"
+            actions={
               <span className="text-xs font-mono text-foreground tabular-nums">
                 {branches.length}
               </span>
-            </div>
+            }
+          >
+            <h3 className="sr-only">Branches</h3>
             {(() => {
               const activeBranches = branches.filter((b) => b.turn_count > 0);
               const queuedBranches = branches.filter((b) => b.turn_count === 0);
@@ -1291,7 +1289,7 @@ export function InvestigationDetailPage() {
                       return (
                         <li
                           key={b.id}
-                          className="flex items-center gap-3 rounded-md border border-border-default/60 bg-elevated/40 p-2 hover:border-accent/40 transition-colors"
+                          className="flex items-center gap-3 rounded-md border border-border/60 bg-elevated/40 p-2 hover:border-accent/40 transition-colors"
                           style={{ borderLeftColor: statusMeta.color, borderLeftWidth: 3 }}
                         >
                           <PersonaAvatar voice={b.persona_voice} size={32} />
@@ -1304,11 +1302,20 @@ export function InvestigationDetailPage() {
                                 {formatBranchDisplayName(b)}
                               </span>
                               <span className="inline-flex items-center gap-1 text-3xs font-mono uppercase tracking-wide text-text-muted">
-                                <span
-                                  className="w-1.5 h-1.5 rounded-full"
+                                <PixelIcon
+                                  name={
+                                    b.status === "active"
+                                      ? "cycle"
+                                      : b.status === "merged"
+                                        ? "merge"
+                                        : b.status === "promoted"
+                                          ? "emit"
+                                          : "status"
+                                  }
+                                  size={11}
                                   style={{
-                                    background: statusMeta.color,
-                                    boxShadow: isActive ? `0 0 6px ${statusMeta.color}` : "none",
+                                    color: statusMeta.color,
+                                    filter: isActive ? `drop-shadow(0 0 4px ${statusMeta.color})` : undefined,
                                   }}
                                 />
                                 {statusMeta.label}
@@ -1353,7 +1360,7 @@ export function InvestigationDetailPage() {
                 </>
               );
             })()}
-          </AilaCard>
+          </WindowPanel>
 
           {/* Outcomes moved to hero position above -- see line ~818 */}
         </aside>
@@ -1376,7 +1383,7 @@ export function InvestigationDetailPage() {
               <button
                 type="button"
                 onClick={jumpToLatest}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-accent/95 text-white shadow-lg hover:bg-accent text-xs font-medium transition-colors"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[4px] bg-accent/95 text-background shadow-lg hover:bg-accent text-xs font-medium transition-colors"
                 title="Jump to latest turn"
               >
                 <Lightning weight="fill" size={12} />
@@ -1395,7 +1402,7 @@ export function InvestigationDetailPage() {
             <button
               type="button"
               onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-              className="w-10 h-10 rounded-full bg-surface/95 border border-border-default text-foreground shadow-lg hover:bg-surface hover:border-accent transition-colors flex items-center justify-center text-base"
+              className="w-10 h-10 rounded-[6px] bg-surface/95 border border-border text-foreground shadow-lg hover:bg-surface hover:border-accent transition-colors flex items-center justify-center text-base"
               aria-label="Scroll to top"
               title="Scroll to top"
             >
@@ -1404,7 +1411,7 @@ export function InvestigationDetailPage() {
             <button
               type="button"
               onClick={() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" })}
-              className="w-10 h-10 rounded-full bg-surface/95 border border-border-default text-foreground shadow-lg hover:bg-surface hover:border-accent transition-colors flex items-center justify-center text-base"
+              className="w-10 h-10 rounded-[6px] bg-surface/95 border border-border text-foreground shadow-lg hover:bg-surface hover:border-accent transition-colors flex items-center justify-center text-base"
               aria-label="Scroll to bottom"
               title="Scroll to bottom"
             >
@@ -1470,7 +1477,7 @@ function SiblingReviewForm({
           e.stopPropagation();
           setOpen(true);
         }}
-        className="inline-flex items-center gap-1.5 px-2 py-0.5 text-3xs rounded border border-border-default text-text-muted hover:text-foreground hover:border-accent transition-colors"
+        className="inline-flex items-center gap-1.5 px-2 py-0.5 text-3xs rounded border border-border text-text-muted hover:text-foreground hover:border-accent transition-colors"
         title="Cast a sibling review — approve quorum flips this outcome to APPROVED and fires the dispatcher."
       >
         ⚖ Review
@@ -1483,7 +1490,7 @@ function SiblingReviewForm({
 
   return (
     <form
-      className="w-full mt-2 space-y-2 rounded border border-border-default/60 bg-elevated/40 p-2"
+      className="w-full mt-2 space-y-2 rounded border border-border/60 bg-elevated/40 p-2"
       onSubmit={(e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -1515,7 +1522,7 @@ function SiblingReviewForm({
             value={reviewerBranchId}
             onChange={(e) => setReviewerBranchId(e.target.value)}
             onClick={(e) => e.stopPropagation()}
-            className="text-2xs font-mono px-2 py-0.5 rounded bg-surface border border-border-default"
+            className="text-2xs font-mono px-2 py-0.5 rounded bg-surface border border-border"
           >
             {branches.map((b) => (
               <option key={b.id} value={b.id}>
@@ -1533,7 +1540,7 @@ function SiblingReviewForm({
             value={vote}
             onChange={(e) => setVote(e.target.value as OutcomeReviewVote)}
             onClick={(e) => e.stopPropagation()}
-            className="text-2xs font-mono px-2 py-0.5 rounded bg-surface border border-border-default"
+            className="text-2xs font-mono px-2 py-0.5 rounded bg-surface border border-border"
           >
             {REVIEW_VOTES.map((v) => (
               <option key={v} value={v}>{v}</option>
@@ -1548,7 +1555,7 @@ function SiblingReviewForm({
         placeholder="Comment (optional). For not_ready, state the blocker."
         rows={2}
         maxLength={4096}
-        className="w-full text-2xs font-mono p-1.5 rounded bg-surface border border-border-default focus:border-accent focus:outline-none"
+        className="w-full text-2xs font-mono p-1.5 rounded bg-surface border border-border focus:border-accent focus:outline-none"
       />
       <div className="flex justify-end gap-1">
         <button
@@ -1557,14 +1564,14 @@ function SiblingReviewForm({
             e.stopPropagation();
             setOpen(false);
           }}
-          className="text-3xs px-2 py-0.5 rounded border border-border-default text-text-muted hover:bg-surface-hover"
+          className="text-3xs px-2 py-0.5 rounded border border-border text-text-muted hover:bg-elevated"
         >
           Cancel
         </button>
         <button
           type="submit"
           disabled={disabled}
-          className="text-3xs px-2 py-0.5 rounded bg-accent text-white disabled:opacity-50"
+          className="text-3xs px-2 py-0.5 rounded bg-accent text-background disabled:opacity-50"
         >
           {reviewMut.isPending ? "…" : "Submit review"}
         </button>
@@ -1614,7 +1621,7 @@ function VerifierBanner({ vr }: { vr: ReturnType<typeof readVerifier> }) {
   if (!vr?.verdict) return null;
   const isConfirmed = vr.verdict === "confirmed";
   const isRefuted = vr.verdict === "refuted";
-  const color = isConfirmed ? "#97dbbe" : isRefuted ? "#f0a8c7" : "#f0c97a";
+  const color = isConfirmed ? "#97dbbe" : isRefuted ? "#f0a8c7" : "#ffb85f";
   const Icon = isConfirmed ? CheckCircle : isRefuted ? XCircle : WarningCircle;
   const conf = typeof vr.confidence === "number" ? ` (${vr.confidence.toFixed(2)})` : "";
   return (
@@ -1657,7 +1664,7 @@ function PrimaryOutcomeCard({
       ? "#97dbbe"
       : vr?.verdict === "refuted"
         ? "#f0a8c7"
-        : "#f0c97a";
+        : "#ffb85f";
   return (
     <div
       className="relative rounded-lg border bg-elevated/30 p-4 overflow-hidden"
@@ -1699,7 +1706,7 @@ function PrimaryOutcomeCard({
           <span className="text-xs font-medium">{outcomeKindLabel(o.outcome_kind)}</span>
         </div>
         {persona && (
-          <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-elevated/60 border border-border-default/60">
+          <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-elevated/60 border border-border/60">
             <PersonaAvatar voice={persona} size={18} />
             <span className="text-2xs font-mono text-text-muted">{persMeta.label}</span>
           </span>
@@ -1722,7 +1729,7 @@ function PrimaryOutcomeCard({
       </div>
 
       {/* Actions */}
-      <div className="flex items-center gap-2 flex-wrap pt-3 border-t border-border-default/60">
+      <div className="flex items-center gap-2 flex-wrap pt-3 border-t border-border/60">
         <button
           type="button"
           disabled={reverifyMut.isPending}
@@ -1730,7 +1737,7 @@ function PrimaryOutcomeCard({
             e.stopPropagation();
             reverifyMut.mutate(invId);
           }}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-2xs rounded-md border border-border-default text-text-muted hover:text-foreground hover:border-accent disabled:opacity-50 transition-colors"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 text-2xs rounded-md border border-border text-text-muted hover:text-foreground hover:border-accent disabled:opacity-50 transition-colors"
           title={
             vr?.verdict
               ? "Clear current verifier_report and re-run the verifier on this finding"
@@ -1767,8 +1774,8 @@ function PrimaryOutcomeCard({
             }}
             className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-2xs rounded-md border transition-colors disabled:opacity-50 ${
               vr?.verdict === "confirmed"
-                ? "border-emerald-500/60 text-emerald-300 hover:border-emerald-400 hover:bg-emerald-500/10"
-                : "border-border-default text-text-muted hover:text-foreground hover:border-accent"
+                ? "border-mint/60 text-mint hover:border-mint hover:bg-mint/10"
+                : "border-border text-text-muted hover:text-foreground hover:border-accent"
             }`}
             title={
               vr?.verdict === "confirmed"
@@ -1807,11 +1814,11 @@ function CompactOutcomeRow({
       : vr?.verdict === "refuted"
         ? "#f0a8c7"
         : vr?.verdict
-          ? "#f0c97a"
+          ? "#ffb85f"
           : "var(--color-border)";
   return (
     <li
-      className="rounded-md border border-border-default/60 bg-elevated/30 overflow-hidden"
+      className="rounded-md border border-border/60 bg-elevated/30 overflow-hidden"
       style={{ borderLeftColor: verdictStripe, borderLeftWidth: 3 }}
     >
       <button
@@ -1850,7 +1857,7 @@ function CompactOutcomeRow({
                     ? "#97dbbe"
                     : vr.verdict === "refuted"
                       ? "#f0a8c7"
-                      : "#f0c97a",
+                      : "#ffb85f",
               }}
             >
               {vr.verdict === "confirmed" && <CheckCircle weight="fill" size={10} />}
@@ -1870,7 +1877,7 @@ function CompactOutcomeRow({
         </span>
       </button>
       {expanded && (
-        <div className="px-2.5 pb-2.5 pt-1 space-y-2 border-t border-border-default/40">
+        <div className="px-2.5 pb-2.5 pt-1 space-y-2 border-t border-border/40">
           {persona && (
             <p className="text-3xs font-mono text-text-muted">
               Voice: <span style={{ color: persMeta.color }}>{persMeta.label}</span>
@@ -1908,8 +1915,8 @@ function CompactOutcomeRow({
                 }}
                 className={`px-2 py-0.5 text-3xs rounded border transition-colors disabled:opacity-50 ${
                   vr?.verdict === "confirmed"
-                    ? "border-emerald-500/60 text-emerald-300 hover:border-emerald-400 hover:bg-emerald-500/10"
-                    : "border-border-default text-text-muted hover:text-foreground hover:border-accent"
+                    ? "border-mint/60 text-mint hover:border-mint hover:bg-mint/10"
+                    : "border-border text-text-muted hover:text-foreground hover:border-accent"
                 }`}
               >
                 {promoteMut.isPending ? "…" : "↗ Promote to finding"}
@@ -1927,10 +1934,10 @@ function outcomeKindSeverityColor(kind: string): string {
   const sev = outcomeKindSeverity(kind);
   switch (sev) {
     case "critical": return "#f0a8c7";
-    case "high":     return "#f0c97a";
+    case "high":     return "#ffb85f";
     case "medium":   return "#af87d7";
     case "low":      return "#97dbbe";
-    case "info":     return "#8ec5ff";
-    default:         return "#9aa0a6";
+    case "info":     return "#af87d7";
+    default:         return "#af8c6c";
   }
 }

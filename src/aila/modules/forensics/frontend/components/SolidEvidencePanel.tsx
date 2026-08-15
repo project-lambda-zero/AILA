@@ -1,8 +1,8 @@
 import { useNavigate } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { Button } from "@/components/ui/button";
 
 import { useUntagSolidEvidence } from "../mutations";
@@ -34,7 +34,9 @@ export function SolidEvidencePanel({ projectId }: Props) {
   if (isLoading) return <LoadingSkeleton size="lg" width="full" />;
   if (isError) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load solid evidence.</p></AilaCard>
+      <WindowPanel title="solid evidence" tone="warn" status="forensics ; solid evidence unavailable">
+        <p className="text-sm text-critical">Failed to load solid evidence.</p>
+      </WindowPanel>
     );
   }
 
@@ -42,19 +44,19 @@ export function SolidEvidencePanel({ projectId }: Props) {
 
   if (rows.length === 0) {
     return (
-      <AilaCard  techBorder glow><div className="py-6 text-center space-y-1">
+      <WindowPanel title="solid evidence" tone="muted" status="forensics ; no tagged findings"><div className="py-6 text-center space-y-1">
         <p className="text-sm text-text-muted">
           No analyst-tagged findings yet.
         </p>
         <p className="text-xs text-text-muted">
           Open a completed investigation and hit{" "}
-          <span className="font-mono text-emerald-400">Tag as TRUE</span> or{" "}
+          <span className="font-mono text-mint">Tag as TRUE</span> or{" "}
           <span className="font-mono text-amber-400">Tag as FALSE</span> to
           promote its answer to solid evidence. Tagged findings are injected
           into every future investigation's prompt so the agent treats them
           as ground truth / known dead-ends.
         </p>
-      </div></AilaCard>
+      </div></WindowPanel>
     );
   }
 
@@ -74,16 +76,11 @@ export function SolidEvidencePanel({ projectId }: Props) {
   };
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-3 text-xs text-text-muted">
-        <span>Total: {rows.length}</span>
-        <span className="text-emerald-400">TRUE: {trueCount}</span>
-        <span className="text-amber-400">FALSE: {falseCount}</span>
-      </div>
+    <WindowPanel title="solid evidence" status={`total ${rows.length} ; true ${trueCount} ; false ${falseCount}`}>
       <div className="rounded-md border border-border overflow-hidden bg-surface text-foreground">
         <table className="w-full text-sm" aria-label="Solid-evidence tags">
           <caption className="sr-only">Analyst-confirmed and disproved findings tagged as solid evidence.</caption>
-          <thead className="bg-surface-secondary text-xs text-text-muted">
+          <thead className="bg-elevated text-xs text-text-muted">
             <tr>
               <th className="text-left px-3 py-2 font-semibold w-20">Verdict</th>
               <th className="text-left px-3 py-2 font-semibold">Question</th>
@@ -98,7 +95,7 @@ export function SolidEvidencePanel({ projectId }: Props) {
             {rows.map((r) => (
               <tr
                 key={r.id}
-                className="border-t border-border align-top hover:bg-surface-secondary/30"
+                className="border-t border-border align-top hover:bg-elevated/30"
               >
                 <td className="px-3 py-2">
                   <AilaBadge
@@ -172,6 +169,6 @@ export function SolidEvidencePanel({ projectId }: Props) {
           </tbody>
         </table>
       </div>
-    </div>
+    </WindowPanel>
   );
 }

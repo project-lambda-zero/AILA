@@ -263,7 +263,7 @@ export function DeadLetterPage() {
 
       {/* Metric cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Dead-Lettered Tasks
         </p>
         <div className="mt-1 min-h-[2rem]">
@@ -276,7 +276,7 @@ export function DeadLetterPage() {
         <p className="font-mono text-xs text-text-muted mt-0.5">
           {trackFilter ? `Track: ${trackFilter}` : "All tracks"}
         </p></AilaCard>
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Distinct Tracks
         </p>
         <div className="mt-1 min-h-[2rem]">
@@ -289,7 +289,7 @@ export function DeadLetterPage() {
         <p className="font-mono text-xs text-text-muted mt-0.5">
           With at least one dead-lettered task
         </p></AilaCard>
-        <AilaCard variant="elevated" padding="md" techBorder glow><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
+        <AilaCard variant="elevated" padding="md"><p className="font-mono text-xs uppercase tracking-wider text-text-muted">
           Track Filter
         </p>
         <input
@@ -314,7 +314,7 @@ export function DeadLetterPage() {
 
       {/* Loading */}
       {entriesQuery.isLoading && (
-        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={6} /></AilaCard>
+        <AilaCard variant="default" padding="md"><LoadingSkeletonGroup lines={6} /></AilaCard>
       )}
 
       {/* Empty */}

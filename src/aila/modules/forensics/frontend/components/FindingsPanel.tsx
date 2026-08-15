@@ -2,8 +2,8 @@ import { useMemo, useState } from "react";
 
 import { Warning } from "@phosphor-icons/react/dist/csr/Warning";
 
-import { AilaCard } from "@/components/aila/AilaCard";
 import { EmptyState } from "@/components/aila/EmptyState";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { Button } from "@/components/ui/button";
 
 import { FindingRowSkeletonList } from "./skeletons";
@@ -142,37 +142,37 @@ function FindingRow({
   const occ = f.occurrences ?? 1;
 
   return (
-    <li className="rounded-md border border-red-900/40 bg-red-950/20 overflow-hidden">
+    <li className="rounded-[4px] border border-border bg-surface overflow-hidden" style={{ borderLeft: "2px solid var(--color-critical)" }}>
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={expanded}
-        className="w-full px-4 py-2.5 flex items-center gap-3 text-left hover:bg-red-950/40 transition-colors"
+        className="w-full px-4 py-2.5 flex items-center gap-3 text-left hover:bg-elevated transition-colors"
       >
-        <span className="text-3xs font-mono text-red-300/80 shrink-0 w-6">#{index + 1}</span>
-        <span className="text-xs font-mono text-red-300/70 shrink-0 select-none">
+        <span className="text-3xs font-mono text-critical/80 shrink-0 w-6">#{index + 1}</span>
+        <span className="text-xs font-mono text-critical/70 shrink-0 select-none">
           {expanded ? "▾" : "▸"}
         </span>
         <h4 className="text-sm font-semibold text-foreground flex-1 truncate">{n.title}</h4>
         {occ > 1 && (
-          <span className="shrink-0 px-1.5 py-0.5 rounded bg-red-900/60 text-red-200 text-3xs font-mono">
+          <span className="shrink-0 px-1.5 py-0.5 rounded bg-critical/20 text-critical text-3xs font-mono">
             ×{occ}
           </span>
         )}
-        <span className="shrink-0 text-3xs font-mono text-red-300/70">
+        <span className="shrink-0 text-3xs font-mono text-critical/70">
           {f.suspicious_reasons.length} reason{f.suspicious_reasons.length === 1 ? "" : "s"}
         </span>
       </button>
 
       {expanded && (
-        <div className="px-4 pb-3 pt-1 space-y-2 border-t border-red-900/30">
+        <div className="px-4 pb-3 pt-1 space-y-2 border-t border-critical/30">
           <p className="text-sm text-text-muted leading-relaxed">{n.body}</p>
 
           <div className="flex flex-wrap gap-1">
             {f.suspicious_reasons.map((r, j) => (
               <span
                 key={j}
-                className="px-1.5 py-0.5 rounded bg-red-900/60 text-red-200 text-3xs font-mono"
+                className="px-1.5 py-0.5 rounded bg-critical/20 text-critical text-3xs font-mono"
               >
                 {r}
               </span>
@@ -180,14 +180,14 @@ function FindingRow({
           </div>
 
           {commandFields.length > 0 && (
-            <div className="rounded border border-red-900/30 bg-black/30 p-2">
-              <div className="text-3xs font-mono text-red-300/70 mb-1 uppercase tracking-wide">
+            <div className="rounded border border-critical/30 bg-elevated p-2">
+              <div className="text-3xs font-mono text-critical/70 mb-1 uppercase tracking-wide">
                 Exact parameters
               </div>
               <dl className="grid gap-x-3 gap-y-1 text-xs font-mono" style={{ gridTemplateColumns: "min-content 1fr" }}>
                 {commandFields.map(([k, v]) => (
                   <div key={k} className="contents">
-                    <dt className="text-red-300/80">{k}</dt>
+                    <dt className="text-critical/80">{k}</dt>
                     <dd className="text-foreground break-all whitespace-pre-wrap">{v}</dd>
                   </div>
                 ))}
@@ -196,8 +196,8 @@ function FindingRow({
           )}
 
           {f.raw_record && (
-            <details className="rounded border border-red-900/30 bg-black/30">
-              <summary className="cursor-pointer px-2 py-1 text-3xs font-mono text-red-300/70 uppercase tracking-wide hover:text-red-200">
+            <details className="rounded border border-critical/30 bg-elevated">
+              <summary className="cursor-pointer px-2 py-1 text-3xs font-mono text-critical/70 uppercase tracking-wide hover:text-critical">
                 Full raw record
               </summary>
               <pre className="p-2 text-2xs font-mono text-foreground/80 overflow-x-auto max-h-96">
@@ -207,7 +207,7 @@ function FindingRow({
           )}
 
           <div className="flex items-center justify-between gap-2">
-            <div className="flex gap-2 text-3xs font-mono text-red-300/60">
+            <div className="flex gap-2 text-3xs font-mono text-critical/60">
               <span>family: {f.artifact_family}</span>
               <span>·</span>
               <span>type: {f.artifact_type}</span>
@@ -221,7 +221,7 @@ function FindingRow({
             <Button
               size="sm"
               variant="outline"
-              className="h-7 px-2 text-3xs border-amber-600 text-amber-400 hover:bg-amber-950/30"
+              className="h-7 px-2 text-3xs border-amber-400/60 text-amber-400 hover:bg-amber-400/10"
               disabled={suppress.isPending || !f.fingerprint}
               onClick={() => {
                 if (!f.fingerprint) return;
@@ -269,7 +269,9 @@ export function FindingsPanel({ projectId }: { projectId: string }) {
   if (isLoading) return <FindingRowSkeletonList count={5} />;
   if (isError) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load findings.</p></AilaCard>
+      <WindowPanel title="auto-findings" tone="warn" status="forensics ; findings unavailable">
+        <p className="text-sm text-critical">Failed to load findings.</p>
+      </WindowPanel>
     );
   }
 
@@ -295,32 +297,28 @@ export function FindingsPanel({ projectId }: { projectId: string }) {
   };
 
   return (
-    <AilaCard  techBorder glow><div className="flex items-start justify-between gap-3 mb-3">
+    <WindowPanel title="auto-findings" tone="accent" status={`forensics ; ${findings.length} suspicious row${findings.length === 1 ? "" : "s"}`}><div className="flex items-start justify-between gap-3 mb-3">
       <div className="min-w-0">
-        <h3 className="text-sm font-semibold text-foreground">Auto-findings</h3>
-        <p className="text-xs text-text-muted mt-0.5">
+        <p className="text-xs text-text-muted">
           Rows the collector heuristics flagged as suspicious (LOLBAS, AppData/Temp execution,
           double-extension…). Click a row to see the exact command parameters, or mark as false
           positive to hide it and teach future runs it's benign.
         </p>
       </div>
       <div className="flex items-center gap-2 shrink-0">
-        <span className="text-xs text-text-muted font-mono">
-          {findings.length}
-        </span>
         {findings.length > 0 && (
           <>
             <button
               type="button"
               onClick={toggleAll}
-              className="text-3xs font-mono px-2 py-1 rounded border border-red-900/40 bg-red-950/20 text-red-200 hover:bg-red-900/40"
+              className="text-3xs font-mono px-2 py-1 rounded border border-critical/40 bg-critical/10 text-critical hover:bg-critical/20"
             >
               {expandAll ? "collapse all" : "expand all"}
             </button>
             <button
               type="button"
               onClick={() => downloadFindings(findings, projectId)}
-              className="text-3xs font-mono px-2 py-1 rounded border border-red-900/40 bg-red-950/20 text-red-200 hover:bg-red-900/40"
+              className="text-3xs font-mono px-2 py-1 rounded border border-critical/40 bg-critical/10 text-critical hover:bg-critical/20"
               title="Download all findings as JSON"
             >
               download json
@@ -349,6 +347,6 @@ export function FindingsPanel({ projectId }: { projectId: string }) {
           />
         ))}
       </ol>
-    )}</AilaCard>
+    )}</WindowPanel>
   );
 }

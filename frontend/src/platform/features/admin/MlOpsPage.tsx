@@ -196,7 +196,7 @@ function KeyPicker({ activeKey, onCommit }: KeyPickerProps) {
   }
 
   return (
-    <AilaCard variant="default" padding="md" decorations={["tech-border"]}>
+    <AilaCard variant="default" padding="md">
       <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-1.5">
           <label htmlFor="ml-ops-key" className="font-mono text-xs uppercase tracking-wider text-text-muted">
@@ -431,7 +431,7 @@ function LifecycleTab({ activeKey }: LifecycleTabProps) {
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,1fr)]">
       {/* Left column: metrics table + shadow panel */}
       <div className="flex flex-col gap-6">
-        <AilaCard variant="default" padding="md" decorations={["tech-border"]}>
+        <AilaCard variant="default" padding="md">
           <div className="mb-4 flex items-center justify-between">
             <h2 className="font-mono text-xs uppercase tracking-wider text-text-muted">
               Per-version metrics
@@ -509,7 +509,7 @@ function LifecycleTab({ activeKey }: LifecycleTabProps) {
 
           {rows.length > 0 && (
             <div className="overflow-x-auto">
-              <table aria-label="Prompt versions" className="w-full font-mono text-[11px]">
+              <table aria-label="Prompt versions" className="w-full font-mono text-[11px] border-collapse [&_th]:border [&_th]:border-border [&_th]:uppercase [&_th]:tracking-wider [&_td]:border [&_td]:border-border">
                 <thead>
                   <tr className="text-left text-text-muted">
                     <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">Version</th>
@@ -586,7 +586,7 @@ function LifecycleTab({ activeKey }: LifecycleTabProps) {
       </div>
 
       {/* Right column: transitions timeline */}
-      <AilaCard variant="default" padding="md" decorations={["tech-border"]}>
+      <AilaCard variant="default" padding="md">
         <h2 className="mb-4 font-mono text-xs uppercase tracking-wider text-text-muted">
           Transitions
         </h2>
@@ -789,7 +789,7 @@ function ShadowPanel({ activeKey, rows, sampleN, setSampleN, runPending, onRun }
   const selectedRow = shadowRows.find((r) => r.version === selectedVersion);
 
   return (
-    <AilaCard variant="default" padding="md" decorations={["tech-border"]}>
+    <AilaCard variant="default" padding="md">
       <div className="mb-4 flex items-center justify-between">
         <h3 className="font-mono text-xs uppercase tracking-wider text-text-muted">Shadow run + report</h3>
         <Flask className="h-4 w-4 text-text-muted" />
@@ -1047,7 +1047,7 @@ function EvalsTab({ activeKey }: EvalsTabProps) {
   return (
     <div className="flex flex-col gap-6">
       {/* Eval runs */}
-      <AilaCard variant="default" padding="md" decorations={["tech-border"]}>
+      <AilaCard variant="default" padding="md">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <h2 className="font-mono text-xs uppercase tracking-wider text-text-muted">Eval runs</h2>
           <Button type="button" size="sm" onClick={() => setScoreOpen(true)} className="gap-1.5">
@@ -1070,7 +1070,7 @@ function EvalsTab({ activeKey }: EvalsTabProps) {
         )}
         {runs.length > 0 && (
           <div className="overflow-x-auto">
-            <table aria-label="Traffic split" className="w-full font-mono text-[11px]">
+            <table aria-label="Traffic split" className="w-full font-mono text-[11px] border-collapse [&_th]:border [&_th]:border-border [&_th]:uppercase [&_th]:tracking-wider [&_td]:border [&_td]:border-border">
               <thead>
                 <tr className="text-left text-text-muted">
                   <th className="pb-2 w-4"></th>
@@ -1100,7 +1100,7 @@ function EvalsTab({ activeKey }: EvalsTabProps) {
       </AilaCard>
 
       {/* Calibrators */}
-      <AilaCard variant="default" padding="md" decorations={["tech-border"]}>
+      <AilaCard variant="default" padding="md">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <h2 className="font-mono text-xs uppercase tracking-wider text-text-muted">Calibrators</h2>
           <div className="flex flex-wrap items-center gap-2">
@@ -1156,7 +1156,7 @@ function EvalsTab({ activeKey }: EvalsTabProps) {
         )}
         {calibrators.length > 0 && (
           <div className="overflow-x-auto">
-            <table aria-label="Version metrics" className="w-full font-mono text-[11px]">
+            <table aria-label="Version metrics" className="w-full font-mono text-[11px] border-collapse [&_th]:border [&_th]:border-border [&_th]:uppercase [&_th]:tracking-wider [&_td]:border [&_td]:border-border">
               <thead>
                 <tr className="text-left text-text-muted">
                   <th className="pb-2 font-normal uppercase tracking-wider text-[10px]">Task type</th>
@@ -1447,7 +1447,7 @@ function PromptsTab({ activeKey }: PromptsTabProps) {
   return (
     <div className="flex flex-col gap-6">
       {/* Aliases bar */}
-      <AilaCard variant="default" padding="md" decorations={["tech-border"]}>
+      <AilaCard variant="default" padding="md">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-3">
             <h2 className="font-mono text-xs uppercase tracking-wider text-text-muted">Aliases</h2>
@@ -1492,7 +1492,7 @@ function PromptsTab({ activeKey }: PromptsTabProps) {
       {/* Split pane: timeline + diff */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
         {/* Versions timeline */}
-        <AilaCard variant="default" padding="md" decorations={["tech-border"]}>
+        <AilaCard variant="default" padding="md">
           <div className="mb-4 flex items-center justify-between">
             <h2 className="font-mono text-xs uppercase tracking-wider text-text-muted">Versions</h2>
             <Button type="button" size="sm" onClick={() => setNewOpen(true)}>New version</Button>
@@ -1526,7 +1526,7 @@ function PromptsTab({ activeKey }: PromptsTabProps) {
         </AilaCard>
 
         {/* Diff view */}
-        <AilaCard variant="default" padding="md" decorations={["tech-border"]}>
+        <AilaCard variant="default" padding="md">
           <h2 className="mb-4 font-mono text-xs uppercase tracking-wider text-text-muted">
             Body diff
           </h2>

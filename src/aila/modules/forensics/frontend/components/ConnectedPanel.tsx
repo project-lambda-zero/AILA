@@ -1,11 +1,10 @@
 import { useMemo } from "react";
 import { Link } from "react-router";
-import { GitBranch } from "@phosphor-icons/react/dist/csr/GitBranch";
 import { FolderOpen } from "@phosphor-icons/react/dist/csr/FolderOpen";
 import { CaretRight } from "@phosphor-icons/react/dist/csr/CaretRight";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 import {
   useForensicsProject,
@@ -135,7 +134,7 @@ function LineageRow({ projectId, inv, depth, self }: LineageRowProps) {
       ) : (
         <Link
           to={`/forensics/projects/${projectId}/investigations/${inv.id}`}
-          className="flex-1 min-w-0 py-0.5 px-1 rounded hover:bg-surface-secondary focus:outline focus:outline-2 focus:outline-accent"
+          className="flex-1 min-w-0 py-0.5 px-1 rounded hover:bg-elevated focus:outline focus:outline-2 focus:outline-accent"
         >
           {inner}
         </Link>
@@ -188,12 +187,7 @@ export function ConnectedPanel({ projectId, investigation }: ConnectedPanelProps
   const hasLineage = ancestors.length > 0 || children.length > 0;
 
   return (
-    <AilaCard padding="md" className="space-y-4" techBorder glow>
-      <div className="flex items-center gap-2">
-        <GitBranch className="h-4 w-4 text-text-muted" aria-hidden="true" />
-        <h2 className="text-sm font-semibold text-foreground">Connected</h2>
-      </div>
-
+    <WindowPanel title="connected"><div className="space-y-4">
       {/* Project link */}
       <div className="flex items-start gap-3">
         <FolderOpen
@@ -273,7 +267,7 @@ export function ConnectedPanel({ projectId, investigation }: ConnectedPanelProps
               <li key={inv.id}>
                 <Link
                   to={`/forensics/projects/${projectId}/investigations/${inv.id}`}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border bg-surface hover:bg-surface-secondary transition-colors focus:outline focus:outline-2 focus:outline-accent"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border bg-surface hover:bg-elevated transition-colors focus:outline focus:outline-2 focus:outline-accent"
                   title={inv.question}
                 >
                   <AilaBadge
@@ -327,6 +321,6 @@ export function ConnectedPanel({ projectId, investigation }: ConnectedPanelProps
           </ul>
         )}
       </div>
-    </AilaCard>
+    </div></WindowPanel>
   );
 }

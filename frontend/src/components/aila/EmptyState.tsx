@@ -83,20 +83,23 @@ export function EmptyState({
   className,
 }: EmptyStateProps) {
   return (
-    <AilaCard variant="default"
-    padding="lg"
-    className={`flex flex-col items-center gap-4 text-center ${className ?? ""}`} techBorder glow>{icon && (
-      <div className="text-text-muted opacity-40" aria-hidden="true">
-        {icon}
-      </div>
-    )}
-    
-    <div className="flex flex-col gap-1">
-      <h2 className="font-mono text-sm font-semibold text-text">{title}</h2>
-      {description && (
-        <p className="font-mono text-xs text-text-muted max-w-sm">{description}</p>
+    <AilaCard
+      variant="default"
+      padding="lg"
+      className={`flex flex-col items-center gap-4 text-center ${className ?? ""}`}
+    >
+      {icon && (
+        <div style={{ color: "var(--color-text-faint)" }} aria-hidden="true">
+          {icon}
+        </div>
       )}
-    </div>
+
+      <div className="flex flex-col gap-1">
+        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+        {description && (
+          <p className="max-w-sm font-mono text-xs text-muted-foreground">{description}</p>
+        )}
+      </div>
     
     {(action || secondaryAction) && (
       <div className="flex flex-col sm:flex-row items-center gap-2">

@@ -212,7 +212,7 @@ interface CheckCardProps {
 
 function CheckCard({ name, check }: CheckCardProps) {
   return (
-    <AilaCard variant="elevated" padding="md" className="flex flex-col gap-3" techBorder glow><div className="flex items-center justify-between gap-2">
+    <AilaCard variant="elevated" padding="md" className="flex flex-col gap-3"><div className="flex items-center justify-between gap-2">
       <div className="flex items-center gap-2 min-w-0">
         <span
           className={`inline-block h-2.5 w-2.5 rounded-full shrink-0 ${checkDotClass(check.status)}`}
@@ -279,7 +279,7 @@ function SubsystemCard({ subsystem }: SubsystemCardProps) {
   })();
 
   return (
-    <AilaCard variant="elevated" padding="md" className="flex flex-col gap-3" techBorder glow><div className="flex items-center justify-between gap-2">
+    <AilaCard variant="elevated" padding="md" className="flex flex-col gap-3"><div className="flex items-center justify-between gap-2">
       <div className="flex items-center gap-2 min-w-0">
         <span
           className={`inline-block h-2.5 w-2.5 rounded-full shrink-0 ${subsystemDotClass(subsystem.status)}`}
@@ -454,7 +454,7 @@ export function SystemHealthPage() {
 
       {/* Loading skeleton */}
       {healthQuery.isLoading && (
-        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={4} /></AilaCard>
+        <AilaCard variant="default" padding="md"><LoadingSkeletonGroup lines={4} /></AilaCard>
       )}
 
       {/* Overall status banner */}

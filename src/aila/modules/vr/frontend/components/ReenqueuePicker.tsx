@@ -49,7 +49,7 @@ export function ReenqueuePicker({
         value={picked}
         onChange={(e) => setPicked(e.target.value as InvestigationKindOverride | "")}
         disabled={mutation.isPending}
-        className="text-xs px-2 py-1.5 rounded-md bg-surface border border-border-default text-foreground disabled:opacity-50 truncate"
+        className="text-xs px-2 py-1.5 rounded-md bg-surface border border-border text-foreground disabled:opacity-50 truncate"
         style={{ maxWidth: "10rem" }}
         title="Optionally convert to a different kind before re-enqueueing"
       >
@@ -64,7 +64,7 @@ export function ReenqueuePicker({
         type="button"
         onClick={() => mutation.mutate(picked ? { kind: picked } : undefined)}
         disabled={mutation.isPending}
-        className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border-default hover:bg-surface-hover disabled:opacity-50 whitespace-nowrap"
+        className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border hover:bg-elevated disabled:opacity-50 whitespace-nowrap"
         title={tooltip}
       >
         {label}

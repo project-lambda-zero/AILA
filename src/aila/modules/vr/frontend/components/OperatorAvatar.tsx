@@ -6,9 +6,10 @@
  * profile-image source today (the user record doesn't carry one);
  * this avatar identifies the operator at-a-glance on dense lists.
  */
+// DS warm categorical hues hashed to an operator id (dark text on top).
 const PALETTE = [
-  "bg-violet-600", "bg-emerald-600", "bg-amber-600", "bg-pink-600",
-  "bg-cyan-600", "bg-rose-600", "bg-indigo-600", "bg-teal-600",
+  "#af87d7", "#97dbbe", "#f0a8c7", "#ff5f87",
+  "#b092ff", "#ffb85f", "#7bdfd3", "#c43b65",
 ];
 
 function hashString(s: string): number {
@@ -30,7 +31,7 @@ export function OperatorAvatar({
     return (
       <span
         title="No operator recorded"
-        className="inline-flex items-center justify-center rounded-full bg-surface border border-border-default text-text-muted font-mono"
+        className="inline-flex items-center justify-center rounded-full bg-surface border border-border text-text-muted font-mono"
         style={{ width: size, height: size, fontSize: Math.floor(size * 0.42) }}
         aria-label="No operator"
       >
@@ -43,8 +44,8 @@ export function OperatorAvatar({
   return (
     <span
       title={`Operator: ${operatorId}`}
-      className={`inline-flex items-center justify-center rounded-full text-white font-mono ${colour}`}
-      style={{ width: size, height: size, fontSize: Math.floor(size * 0.42) }}
+      className="inline-flex items-center justify-center rounded-full font-mono"
+      style={{ width: size, height: size, fontSize: Math.floor(size * 0.42), background: colour, color: "#1a0a12" }}
       aria-label={`Operator ${operatorId}`}
     >
       {initial}

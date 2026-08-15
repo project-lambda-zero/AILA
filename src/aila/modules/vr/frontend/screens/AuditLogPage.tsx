@@ -2,6 +2,7 @@ import { Link } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 
@@ -57,17 +58,19 @@ export function AuditLogPage() {
       </p></AilaCard>
 
       {/* MCP calls -- direct read from the log */}
-      <AilaCard  techBorder glow><div className="flex items-center justify-between gap-2 mb-2">
-        <h2 className="text-sm font-semibold text-foreground">
-          Delegated MCP calls
-        </h2>
-        <Link
-          to="/vr/mcp/calls"
-          className="text-xs text-accent hover:underline"
-        >
-          full log →
-        </Link>
-      </div>
+      <WindowPanel
+        title="delegated mcp calls"
+        tone="info"
+        actions={
+          <Link
+            to="/vr/mcp/calls"
+            className="text-xs text-accent hover:underline"
+          >
+            full log →
+          </Link>
+        }
+      >
+        <h2 className="sr-only">Delegated MCP calls</h2>
       {callsLoading ? (
         <LoadingSkeleton size="md" width="full" />
       ) : calls.length === 0 ? (
@@ -80,7 +83,7 @@ export function AuditLogPage() {
           {calls.slice(0, 20).map((c) => (
             <li
               key={c.id}
-              className="flex items-center gap-2 border border-border-default rounded px-2 py-1"
+              className="flex items-center gap-2 border border-border rounded px-2 py-1"
             >
               <span className="text-text-muted whitespace-nowrap">
                 {new Date(c.called_at).toLocaleTimeString()}
@@ -107,12 +110,19 @@ export function AuditLogPage() {
             </li>
           ))}
         </ul>
-      )}</AilaCard>
+      )}</WindowPanel>
 
       {/* Operator events -- investigation state changes */}
-      <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
-        Operator events ({operatorEvents.length})
-      </h2>
+      <WindowPanel
+        title="operator events"
+        tone="muted"
+        actions={
+          <span className="text-xs font-mono text-text-muted tabular-nums">
+            {operatorEvents.length}
+          </span>
+        }
+      >
+        <h2 className="sr-only">Operator events ({operatorEvents.length})</h2>
       {invsLoading ? (
         <LoadingSkeleton size="md" width="full" />
       ) : operatorEvents.length === 0 ? (
@@ -125,7 +135,7 @@ export function AuditLogPage() {
           {operatorEvents.map((e) => (
             <li
               key={e.id}
-              className="flex items-start gap-2 border border-border-default rounded px-2 py-1.5"
+              className="flex items-start gap-2 border border-border rounded px-2 py-1.5"
             >
               <span className="w-2 h-2 rounded-full bg-accent mt-1.5 flex-shrink-0" />
               <div className="flex-1 min-w-0">
@@ -144,7 +154,7 @@ export function AuditLogPage() {
             </li>
           ))}
         </ul>
-      )}</AilaCard>
+      )}</WindowPanel>
     </div>
   );
 }

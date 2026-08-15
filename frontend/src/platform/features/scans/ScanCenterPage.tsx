@@ -4,6 +4,7 @@ import { Crosshair } from "@phosphor-icons/react/dist/csr/Crosshair";
 import { Play } from "@phosphor-icons/react/dist/csr/Play";
 
 import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { AilaBadge, type TaskStatus as BadgeTaskStatus } from "@/components/aila/AilaBadge";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
@@ -120,14 +121,16 @@ function ScanForm({ queryText, targetsText, onQueryChange, onTargetsChange, onCl
   }
 
   return (
-    <AilaCard variant="elevated" padding="md" techBorder glow><div className="flex items-center gap-2 mb-4">
-      <h2 className="font-mono text-sm font-semibold text-text">Launch a Scan</h2>
-      <HelpTip
-        title="Vulnerability Scan"
-        description="Scans the target system for installed packages with known CVEs using NVD and GHSA advisory databases."
-      />
-    </div>
-    
+    <WindowPanel
+      title="Launch a Scan"
+      tone="accent"
+      actions={
+        <HelpTip
+          title="Vulnerability Scan"
+          description="Scans the target system for installed packages with known CVEs using NVD and GHSA advisory databases."
+        />
+      }
+    >
     <form onSubmit={handleSubmit} className="flex flex-col gap-3">
       <div className="flex flex-col gap-1">
         <label className="font-mono text-xs text-text-muted" htmlFor="scan-query">
@@ -176,7 +179,7 @@ function ScanForm({ queryText, targetsText, onQueryChange, onTargetsChange, onCl
           Clear
         </Button>
       </div>
-    </form></AilaCard>
+    </form></WindowPanel>
   );
 }
 
@@ -232,15 +235,15 @@ function RunDetailPanel({ runId }: { runId: string }) {
 
   if (!runId) {
     return (
-      <AilaCard variant="default" padding="md" techBorder glow><p className="font-mono text-xs text-text-muted">
+      <WindowPanel title="Run Detail" tone="muted"><p className="font-mono text-xs text-text-muted">
         Select a run row to inspect its live state and progress stream.
-      </p></AilaCard>
+      </p></WindowPanel>
     );
   }
 
   const isLoading = taskDetailQuery.isLoading || scanStatusQuery.isLoading;
   if (isLoading) {
-    return <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={5} /></AilaCard>;
+    return <WindowPanel title="Run Detail" status="LOADING" tone="muted"><LoadingSkeletonGroup lines={5} /></WindowPanel>;
   }
 
   const task = taskDetailQuery.data;
@@ -249,10 +252,7 @@ function RunDetailPanel({ runId }: { runId: string }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <AilaCard variant="elevated" padding="md" techBorder glow><h2 className="font-mono text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">
-        Selected Run
-      </h2>
-      
+      <WindowPanel title="Selected Run">
       {task ? (
         <div className="flex flex-col gap-2">
           {[
@@ -297,13 +297,10 @@ function RunDetailPanel({ runId }: { runId: string }) {
         <p className="font-mono text-xs text-text-muted">
           Run detail not found. The run may have been deleted or never existed.
         </p>
-      )}</AilaCard>
+      )}</WindowPanel>
 
       {/* Live event stream */}
-      <AilaCard variant="default" padding="md" techBorder glow><h2 className="font-mono text-xs font-semibold uppercase tracking-wider text-text-muted mb-3">
-        Live Progress
-      </h2>
-      
+      <WindowPanel title="Live Progress" tone="ok">
       {scanEvents.status === "connecting" && (
         <p className="font-mono text-xs text-text-muted">Connecting to stream…</p>
       )}
@@ -343,15 +340,15 @@ function RunDetailPanel({ runId }: { runId: string }) {
             </div>
           ))}
         </div>
-      )}</AilaCard>
+      )}</WindowPanel>
 
       {connectedEntities.length > 0 && (
-        <AilaCard variant="default" padding="md" techBorder glow>
+        <AilaCard variant="default" padding="md">
           <ConnectedEntities entities={connectedEntities} heading="Connected" />
         </AilaCard>
       )}
 
-      <AilaCard variant="default" padding="md" techBorder glow>
+      <AilaCard variant="default" padding="md">
         <ActivityTimeline runId={runId} label="Scan Run" live={isTaskLive} />
       </AilaCard>
     </div>
@@ -406,9 +403,8 @@ export function ScanCenterPage() {
           </div>
 
           {/* Task list */}
-          <AilaCard variant="default" padding="md" techBorder glow><div className="flex flex-col gap-3">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <h2 className="font-mono text-sm font-semibold text-text">Recent Runs</h2>
+          <WindowPanel title="Recent Runs" tone="muted"><div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
               <div className="flex flex-wrap gap-1.5">
                 {STATUS_FILTERS.map((status) => (
                   <button
@@ -491,12 +487,12 @@ export function ScanCenterPage() {
           
             {tasks.length > 0 && (
               <div className="overflow-x-auto">
-                <table aria-label="Scan runs" className="w-full">
+                <table aria-label="Scan runs" className="w-full border-collapse [&_th]:border [&_th]:border-border [&_td]:border [&_td]:border-border">
                   <thead>
-                    <tr className="border-b border-border">
-                      <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Run ID</th>
-                      <th className="py-2 px-3 text-left font-mono text-xs text-text-muted">Status</th>
-                      <th className="py-2 px-3 text-left font-mono text-xs text-text-muted hidden sm:table-cell">Created</th>
+                    <tr className="border-b border-border bg-elevated">
+                      <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted">Run ID</th>
+                      <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted">Status</th>
+                      <th className="py-2 px-3 text-left font-mono text-xs uppercase tracking-wider text-text-muted hidden sm:table-cell">Created</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -559,7 +555,7 @@ export function ScanCenterPage() {
                 </table>
               </div>
             )}
-          </div></AilaCard>
+          </div></WindowPanel>
         </div>
 
         {/* Right: run detail panel */}

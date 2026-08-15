@@ -138,7 +138,7 @@ export function RadarInspectPanel({ node, open, onClose }: RadarInspectPanelProp
           <div>
             <SectionHeading>Risk Summary</SectionHeading>
             {hasSeverityCounts ? (
-              <AilaCard  techBorder glow><div className="p-3">
+              <AilaCard ><div className="p-3">
                 {hasSeverityData ? (
                   <>
                     <div className="h-40">
@@ -179,7 +179,7 @@ export function RadarInspectPanel({ node, open, onClose }: RadarInspectPanelProp
                 )}
               </div></AilaCard>
             ) : (
-              <AilaCard  techBorder glow><div className="p-3">
+              <AilaCard ><div className="p-3">
                 <p className="font-mono text-xs text-muted-foreground">
                   No vulnerability scan data yet. Run a vulnerability scan to populate severity data.
                 </p>
@@ -190,7 +190,7 @@ export function RadarInspectPanel({ node, open, onClose }: RadarInspectPanelProp
           {/* Running Services */}
           <div>
             <SectionHeading>Running Services ({node.services.length})</SectionHeading>
-            <AilaCard  techBorder glow><div className="p-3">
+            <AilaCard ><div className="p-3">
               {node.services.length > 0 ? (
                 <div className="flex flex-col gap-1">
                   {node.services.slice(0, 10).map((svc, i) => (
@@ -218,7 +218,7 @@ export function RadarInspectPanel({ node, open, onClose }: RadarInspectPanelProp
           {/* Open Ports */}
           <div>
             <SectionHeading>Open Ports ({node.ports.length})</SectionHeading>
-            <AilaCard  techBorder glow><div className="p-3">
+            <AilaCard ><div className="p-3">
               {node.ports.length > 0 ? (
                 <div className="flex flex-col gap-1">
                   {node.ports.slice(0, 10).map((port, i) => (
@@ -248,7 +248,7 @@ export function RadarInspectPanel({ node, open, onClose }: RadarInspectPanelProp
           {/* Network Metadata */}
           <div>
             <SectionHeading>Network Metadata</SectionHeading>
-            <AilaCard  techBorder glow><div className="p-3 flex flex-col gap-2">
+            <AilaCard ><div className="p-3 flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <span className="font-mono text-[10px] text-muted-foreground uppercase">Subnet</span>
                 <span className="font-mono text-xs">{node.subnet ?? "unresolved"}</span>
@@ -302,7 +302,7 @@ function SystemInfoSection({
   return (
     <div>
       <SectionHeading>System Info</SectionHeading>
-      <AilaCard  techBorder glow><div className="p-3 flex flex-col gap-2">
+      <AilaCard ><div className="p-3 flex flex-col gap-2">
         {hasNetwork && (
           <>
             {metadata.gateway_ip && (

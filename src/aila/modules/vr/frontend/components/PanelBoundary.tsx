@@ -50,7 +50,7 @@ export function PanelBoundary({
   return (
     <AppErrorBoundary
       fallback={({ error, traceId, timestamp, reset }) => (
-        <AilaCard className="border-border-danger" techBorder glow>
+        <AilaCard className="border-critical" techBorder glow>
           <div
             role="alert"
             aria-live="polite"
@@ -60,7 +60,7 @@ export function PanelBoundary({
             <p className="text-xs uppercase tracking-wide text-text-muted font-mono">
               {label} failed to render
             </p>
-            <p className="text-sm text-text-danger break-words">
+            <p className="text-sm text-critical break-words">
               {error.message || "Unexpected panel error."}
             </p>
             <p className="text-3xs text-text-muted font-mono">

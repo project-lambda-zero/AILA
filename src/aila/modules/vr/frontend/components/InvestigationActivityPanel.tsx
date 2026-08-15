@@ -15,14 +15,13 @@
  */
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ClockCounterClockwise } from "@phosphor-icons/react/dist/csr/ClockCounterClockwise";
 import { Funnel } from "@phosphor-icons/react/dist/csr/Funnel";
 import { ArrowClockwise } from "@phosphor-icons/react/dist/csr/ArrowClockwise";
 
 import { authorizedRequestJson } from "@platform/api/http";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 
 // Local wire types. Kept private -- the shell defines the same shape
@@ -126,35 +125,35 @@ export function InvestigationActivityPanel({
   const shown = items.length;
 
   return (
-    <AilaCard techBorder glow>
-      <div className="flex items-center gap-2 mb-3 flex-wrap">
-        <ClockCounterClockwise
-          weight="fill"
-          size={14}
-          className="text-accent"
-        />
-        <h2 className="text-sm font-semibold text-foreground">Activity</h2>
-        {hasTaskId && (
-          <span className="text-3xs font-mono text-text-muted tabular-nums">
-            {shown} shown{totalReported > shown ? ` / ${totalReported}` : ""}
-          </span>
-        )}
-        <button
-          type="button"
-          onClick={() => query.refetch()}
-          className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 text-3xs font-mono rounded border border-border-default text-text-muted hover:border-accent hover:text-foreground transition-colors"
-          disabled={query.isFetching || !hasTaskId}
-          aria-label="Refresh activity log"
-          title="Refresh audit trail"
-        >
-          <ArrowClockwise
-            weight="bold"
-            size={11}
-            className={query.isFetching ? "animate-spin motion-reduce:animate-none" : undefined}
-          />
-          refresh
-        </button>
-      </div>
+    <WindowPanel
+      title="activity"
+      tone="info"
+      actions={
+        <div className="flex items-center gap-2">
+          {hasTaskId && (
+            <span className="text-3xs font-mono text-text-muted tabular-nums">
+              {shown} shown{totalReported > shown ? ` / ${totalReported}` : ""}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => query.refetch()}
+            className="inline-flex items-center gap-1 px-2 py-0.5 text-3xs font-mono rounded border border-border text-text-muted hover:border-accent hover:text-foreground transition-colors"
+            disabled={query.isFetching || !hasTaskId}
+            aria-label="Refresh activity log"
+            title="Refresh audit trail"
+          >
+            <ArrowClockwise
+              weight="bold"
+              size={11}
+              className={query.isFetching ? "animate-spin motion-reduce:animate-none" : undefined}
+            />
+            refresh
+          </button>
+        </div>
+      }
+    >
+      <h2 className="sr-only">Activity</h2>
 
       {hasTaskId && (
         <div className="flex items-center gap-2 mb-3 flex-wrap text-xs">
@@ -170,7 +169,7 @@ export function InvestigationActivityPanel({
               onChange={(e) => setActionFilter(e.target.value)}
               placeholder="scan.start,ssh.execute"
               aria-label="Filter activity events by action (comma-separated)"
-              className="w-40 text-2xs font-mono px-2 py-0.5 rounded bg-elevated border border-border-default focus:border-accent focus:outline-none"
+              className="w-40 text-2xs font-mono px-2 py-0.5 rounded bg-elevated border border-border focus:border-accent focus:outline-none"
             />
           </label>
           <label className="inline-flex items-center gap-1 text-3xs">
@@ -181,7 +180,7 @@ export function InvestigationActivityPanel({
               onChange={(e) => setStatusFilter(e.target.value)}
               placeholder="completed,failed"
               aria-label="Filter activity events by status (comma-separated)"
-              className="w-36 text-2xs font-mono px-2 py-0.5 rounded bg-elevated border border-border-default focus:border-accent focus:outline-none"
+              className="w-36 text-2xs font-mono px-2 py-0.5 rounded bg-elevated border border-border focus:border-accent focus:outline-none"
             />
           </label>
           {(actionFilter || statusFilter) && (
@@ -207,7 +206,7 @@ export function InvestigationActivityPanel({
       ) : query.isLoading ? (
         <LoadingSkeletonGroup lines={4} />
       ) : query.isError ? (
-        <p className="text-xs text-text-danger font-mono">
+        <p className="text-xs text-critical font-mono">
           Failed to load audit trail. Retry above.
         </p>
       ) : items.length === 0 ? (
@@ -224,7 +223,7 @@ export function InvestigationActivityPanel({
           {items.map((ev) => (
             <li
               key={`${ev.id ?? ""}:${ev.created_at ?? ""}:${ev.action}`}
-              className="flex items-start gap-2 rounded-md border border-border-default/60 bg-elevated/40 p-2 hover:border-accent/40 transition-colors"
+              className="flex items-start gap-2 rounded-md border border-border/60 bg-elevated/40 p-2 hover:border-accent/40 transition-colors"
             >
               <AilaBadge severity={statusSeverity(ev.status)} size="sm">
                 {ev.status || "--"}
@@ -257,6 +256,6 @@ export function InvestigationActivityPanel({
           ))}
         </ol>
       )}
-    </AilaCard>
+    </WindowPanel>
   );
 }

@@ -196,7 +196,7 @@ export function FindingsListPage() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Filter findings (function / crash / CWE / CVE)…"
             aria-label="Filter findings"
-            className="flex-1 min-w-[220px] max-w-md px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+            className="flex-1 min-w-[220px] max-w-md px-3 py-1.5 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
           />
           <label className="text-sm text-text-muted">Disclosure:</label>
           <select
@@ -205,7 +205,7 @@ export function FindingsListPage() {
               setStatusFilter(e.target.value as DisclosureStatus | "")
             }
             aria-label="Filter by disclosure status"
-            className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
+            className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border"
           >
             <option value="">-- all --</option>
             {distinctStatuses.map((s) => (
@@ -220,7 +220,7 @@ export function FindingsListPage() {
             value={crashFilter}
             onChange={(e) => setCrashFilter(e.target.value)}
             aria-label="Filter by crash type"
-            className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
+            className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border"
           >
             <option value="">-- all --</option>
             {distinctCrashes.map((c) => (
@@ -249,8 +249,8 @@ export function FindingsListPage() {
       {isLoading && <LoadingSkeleton size="lg" width="full" />}
 
       {isError && (
-        <AilaCard className="border-border-danger" techBorder glow>
-          <p className="text-sm text-text-danger">Failed to load findings.</p>
+        <AilaCard className="border-critical" techBorder glow>
+          <p className="text-sm text-critical">Failed to load findings.</p>
         </AilaCard>
       )}
 
@@ -267,7 +267,7 @@ export function FindingsListPage() {
           <table className="w-full text-sm">
             <caption className="sr-only">Team-wide vulnerability findings</caption>
             <thead>
-              <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
+              <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-muted">
                 <SortHeader columnKey="vulnerable_function" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Vulnerable function</SortHeader>
                 <SortHeader columnKey="crash_type" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Crash</SortHeader>
                 <SortHeader columnKey="cwe_id" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>CWE</SortHeader>
@@ -303,7 +303,7 @@ export function FindingsListPage() {
                     {...rowProps}
                     onClick={() => navigate(target)}
                     className={
-                      "border-b border-border-default last:border-b-0 cursor-pointer hover:bg-surface transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset " +
+                      "border-b border-border last:border-b-0 cursor-pointer hover:bg-surface transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset " +
                       (rowProps["data-row-active"] ? "bg-elevated" : "")
                     }
                   >
@@ -409,7 +409,7 @@ function FindingsDistributionPanel({
     <AilaCard techBorder glow>
       <div className="space-y-3">
         <div className="flex items-baseline justify-between flex-wrap gap-2">
-          <h2 className="text-sm font-semibold text-foreground">
+          <h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground">
             Distribution
           </h2>
           <span className="text-3xs text-text-muted font-mono">

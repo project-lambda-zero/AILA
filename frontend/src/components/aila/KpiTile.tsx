@@ -68,9 +68,9 @@ export function KpiTile({
     <Element
       type={onClick ? "button" : undefined}
       onClick={onClick}
-      className={`group relative overflow-hidden rounded-md border border-border bg-surface px-5 py-4 text-left ${onClick ? "transition-all hover:border-accent/40 hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent" : ""} ${className ?? ""}`}
+      className={`group relative overflow-hidden rounded-[4px] border border-[var(--color-border-bright)] bg-surface px-5 py-4 text-left ${onClick ? "transition-all duration-150 ease-out hover:border-border-hover hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring" : ""} ${className ?? ""}`}
       style={{
-        boxShadow: "inset 0 1px 0 0 color-mix(in srgb, var(--color-text) 6%, transparent)",
+        boxShadow: "var(--bevel-raised)",
       }}
     >
       {/* Left accent stripe -- vertical 3px bar */}
@@ -81,7 +81,7 @@ export function KpiTile({
       />
       <div className="flex items-start gap-3">
         <div
-          className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded"
+          className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-[3px]"
           style={{ background: s.iconBg, color: s.iconText }}
         >
           <span className="[&_svg]:h-5 [&_svg]:w-5">{icon}</span>

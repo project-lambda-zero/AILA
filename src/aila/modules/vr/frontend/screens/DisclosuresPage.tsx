@@ -235,7 +235,7 @@ export function DisclosuresPage() {
         <button
           type="button"
           onClick={() => setShowForm((v) => !v)}
-          className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 transition-colors"
+          className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-background hover:bg-accent/90 transition-colors"
         >
           {showForm ? "Cancel" : "New Disclosure"}
         </button>
@@ -243,7 +243,7 @@ export function DisclosuresPage() {
 
       {showForm && (
         <AilaCard techBorder glow>
-          <h2 className="text-sm font-semibold text-foreground mb-2">
+          <h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
             Create disclosure submission
           </h2>
           <p className="text-xs text-text-muted mb-3">
@@ -258,7 +258,7 @@ export function DisclosuresPage() {
               value={formInvestigationId}
               onChange={(e) => pickInvestigation(e.target.value)}
               aria-label="Investigation"
-              className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+              className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
             >
               <option value="">-- pick an investigation --</option>
               {investigations.map((inv) => {
@@ -280,7 +280,7 @@ export function DisclosuresPage() {
               <p
                 className={
                   findingHint.tone === "danger"
-                    ? "text-xs text-text-danger"
+                    ? "text-xs text-critical"
                     : findingHint.tone === "warn"
                       ? "text-xs text-text-warning"
                       : "text-xs text-text-muted"
@@ -294,7 +294,7 @@ export function DisclosuresPage() {
                 value={formTrackId}
                 onChange={(e) => setFormTrackId(e.target.value)}
                 aria-label="Disclosure track"
-                className="px-3 py-2 text-sm rounded-md bg-surface border border-border-default"
+                className="px-3 py-2 text-sm rounded-md bg-surface border border-border"
               >
                 <option value="">-- pick a track --</option>
                 {tracks.map((t) => (
@@ -307,7 +307,7 @@ export function DisclosuresPage() {
                 value={formWorkspaceId}
                 onChange={(e) => setFormWorkspaceId(e.target.value)}
                 aria-label="Workspace"
-                className="px-3 py-2 text-sm rounded-md bg-surface border border-border-default"
+                className="px-3 py-2 text-sm rounded-md bg-surface border border-border"
               >
                 <option value="">-- pick a workspace --</option>
                 {workspaces.map((w) => (
@@ -324,7 +324,7 @@ export function DisclosuresPage() {
                   setFormPocTier(e.target.value as ArtifactTier | "")
                 }
                 aria-label="Proof-of-concept tier"
-                className="px-3 py-2 text-sm rounded-md bg-surface border border-border-default"
+                className="px-3 py-2 text-sm rounded-md bg-surface border border-border"
               >
                 <option value="">-- PoC tier (auto) --</option>
                 {POC_TIERS.map((t) => (
@@ -339,7 +339,7 @@ export function DisclosuresPage() {
                 onChange={(e) => setFormSeverity(e.target.value)}
                 placeholder="Severity rating (e.g. CVSS 8.1)"
                 aria-label="Severity rating"
-                className="px-3 py-2 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+                className="px-3 py-2 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
               />
               <input
                 type="number"
@@ -348,7 +348,7 @@ export function DisclosuresPage() {
                 onChange={(e) => setFormEmbargo(e.target.value)}
                 placeholder="Embargo days override"
                 aria-label="Embargo days override"
-                className="px-3 py-2 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+                className="px-3 py-2 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
               />
             </div>
             <textarea
@@ -357,14 +357,14 @@ export function DisclosuresPage() {
               placeholder="Notes (optional)"
               rows={2}
               aria-label="Notes"
-              className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+              className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
             />
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 disabled={!canSubmit}
                 onClick={submitCreate}
-                className="ml-auto px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 transition-colors disabled:opacity-50"
+                className="ml-auto px-4 py-2 text-sm font-medium rounded-md bg-accent text-background hover:bg-accent/90 transition-colors disabled:opacity-50"
               >
                 {createMut.isPending ? "Creating…" : "Create"}
               </button>
@@ -380,14 +380,14 @@ export function DisclosuresPage() {
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Filter disclosures (track / vendor / severity)…"
           aria-label="Filter disclosures"
-          className="flex-1 min-w-[220px] max-w-md px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+          className="flex-1 min-w-[220px] max-w-md px-3 py-1.5 text-sm rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
         />
         <label className="text-sm text-text-muted">Track:</label>
         <select
           value={trackFilter}
           onChange={(e) => setTrackFilter(e.target.value)}
           aria-label="Filter by track"
-          className="px-3 py-1.5 text-sm font-mono rounded-md bg-surface border border-border-default"
+          className="px-3 py-1.5 text-sm font-mono rounded-md bg-surface border border-border"
         >
           <option value="">-- all --</option>
           {tracks.map((t) => (
@@ -404,7 +404,7 @@ export function DisclosuresPage() {
             setStatusFilter(e.target.value as DisclosureSubmissionStatus | "")
           }
           aria-label="Filter by status"
-          className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
+          className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border"
         >
           <option value="">-- all --</option>
           {STATUSES.map((s) => (
@@ -424,7 +424,7 @@ export function DisclosuresPage() {
       {isLoading && <LoadingSkeleton size="lg" width="full" />}
 
       {isError && (
-        <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load disclosures.</p></AilaCard>
+        <AilaCard className="border-critical" techBorder glow><p className="text-sm text-critical">Failed to load disclosures.</p></AilaCard>
       )}
 
       {!isLoading && !isError && rows.length === 0 && (
@@ -443,7 +443,7 @@ export function DisclosuresPage() {
         <AilaCard className="overflow-x-auto p-0" techBorder glow><table className="w-full text-sm">
           <caption className="sr-only">Disclosure submissions</caption>
           <thead>
-            <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
+            <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-muted">
               <SortHeader columnKey="track" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Track</SortHeader>
               <SortHeader columnKey="status" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>Status</SortHeader>
               <SortHeader columnKey="poc_tier" currentKey={sortKey} currentDir={sortDir} onSort={cycleSort}>PoC tier</SortHeader>
@@ -463,7 +463,7 @@ export function DisclosuresPage() {
                 {...rowProps}
                 onClick={() => navigate(`/vr/disclosures/${r.id}`)}
                 className={
-                  "border-b border-border-default last:border-b-0 cursor-pointer hover:bg-surface transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset " +
+                  "border-b border-border last:border-b-0 cursor-pointer hover:bg-surface transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-inset " +
                   (rowProps["data-row-active"] ? "bg-elevated" : "")
                 }
               >

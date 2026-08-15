@@ -106,7 +106,7 @@ function SessionsSidebar({
         {isCreating ? "Creating…" : "New chat"}
       </Button>
 
-      <AilaCard variant="default" padding="none" className="flex flex-col" techBorder glow><div className="border-b border-border px-3 py-2">
+      <AilaCard variant="default" padding="none" className="flex flex-col"><div className="border-b border-border px-3 py-2">
         <h2 className="font-mono text-xs font-semibold uppercase tracking-wider text-text-muted">
           Conversations
         </h2>
@@ -409,7 +409,7 @@ function ThreadPanel({
   if (messagesQuery.isLoading) {
     return (
       <div className="flex-1 min-w-0">
-        <AilaCard variant="default" padding="md" techBorder glow><LoadingSkeletonGroup lines={6} /></AilaCard>
+        <AilaCard variant="default" padding="md"><LoadingSkeletonGroup lines={6} /></AilaCard>
       </div>
     );
   }
@@ -417,7 +417,7 @@ function ThreadPanel({
   if (messagesQuery.isError) {
     return (
       <div className="flex-1 min-w-0">
-        <AilaCard variant="default" padding="md" techBorder glow><div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
+        <AilaCard variant="default" padding="md"><div className="rounded-[2px] border border-destructive bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
           <div className="flex items-center gap-2 font-semibold">
             <Warning size={14} weight="bold" />
             {describeError(messagesQuery.error)}

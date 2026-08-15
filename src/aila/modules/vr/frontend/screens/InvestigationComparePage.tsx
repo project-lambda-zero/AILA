@@ -41,13 +41,13 @@ const MAX_COLUMNS = 4;
 const IDS_PARAM = "ids";
 
 const STATUS_DOT: Record<InvestigationStatus, string> = {
-  created: "#9aa0a6",
+  created: "#af8c6c",
   running: "#97dbbe",
-  paused: "#f0c97a",
-  completed: "#8ec5ff",
+  paused: "#ffb85f",
+  completed: "#af87d7",
   failed: "#f0a8c7",
-  abandoned: "#9aa0a6",
-  stalled: "#9aa0a6",
+  abandoned: "#af8c6c",
+  stalled: "#af8c6c",
 };
 
 function fmtUsd(n: number | null | undefined): string {
@@ -220,7 +220,7 @@ function InvestigationPicker({
               aria-hidden
               className="inline-block h-2 w-2 rounded-full shrink-0"
               style={{
-                background: STATUS_DOT[current.status] ?? "#9aa0a6",
+                background: STATUS_DOT[current.status] ?? "#af8c6c",
                 boxShadow:
                   current.status === "running"
                     ? `0 0 6px ${STATUS_DOT.running}`
@@ -256,7 +256,7 @@ function InvestigationPicker({
               onChange={(e) => setQ(e.target.value)}
               onFocus={() => setOpen(true)}
               placeholder="Find investigation…"
-              className="min-w-0 flex-1 bg-transparent border-b border-border-default focus:border-accent outline-none font-mono text-xs py-1"
+              className="min-w-0 flex-1 bg-transparent border-b border-border focus:border-accent outline-none font-mono text-xs py-1"
               aria-label="Search investigations"
             />
           </div>
@@ -274,7 +274,7 @@ function InvestigationPicker({
 
       {open && (
         <ul
-          className="mt-1 max-h-64 overflow-y-auto flex flex-col gap-0.5 border-t border-border-default pt-2"
+          className="mt-1 max-h-64 overflow-y-auto flex flex-col gap-0.5 border-t border-border pt-2"
           role="listbox"
           aria-label={`Slot ${slotIndex + 1} candidates`}
         >
@@ -298,7 +298,7 @@ function InvestigationPicker({
                   aria-hidden
                   className="inline-block h-1.5 w-1.5 rounded-full shrink-0"
                   style={{
-                    background: STATUS_DOT[inv.status] ?? "#9aa0a6",
+                    background: STATUS_DOT[inv.status] ?? "#af8c6c",
                   }}
                 />
                 <span className="flex-1 min-w-0 flex flex-col">
@@ -357,7 +357,7 @@ function CompareRow({
 
   return (
     <div
-      className="grid items-start gap-3 border-b border-border-default/60 py-2 px-2"
+      className="grid items-start gap-3 border-b border-border/60 py-2 px-2"
       style={gridStyle}
     >
       <div className="flex flex-col gap-0.5 min-w-0">
@@ -409,7 +409,7 @@ function statusCell(b: Bundle): CellSpec | null {
   if (!b.id) return null;
   if (b.invLoading) return { key: "__loading__", render: <LoadingSkeleton size="sm" width="half" /> };
   if (b.invError || !b.inv)
-    return { key: "__error__", render: <span className="text-2xs text-text-danger font-mono">failed</span> };
+    return { key: "__error__", render: <span className="text-2xs text-critical font-mono">failed</span> };
   const inv = b.inv;
   const live = isInvestigationLive(inv.status);
   return {
@@ -420,7 +420,7 @@ function statusCell(b: Bundle): CellSpec | null {
           aria-hidden
           className="inline-block h-2 w-2 rounded-full"
           style={{
-            background: STATUS_DOT[inv.status] ?? "#9aa0a6",
+            background: STATUS_DOT[inv.status] ?? "#af8c6c",
             boxShadow: live ? `0 0 6px ${STATUS_DOT[inv.status]}` : "none",
           }}
         />
@@ -835,7 +835,7 @@ export function InvestigationComparePage() {
               <button
                 type="button"
                 onClick={addSlot}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-sm font-mono text-xs border border-border-default hover:border-accent hover:text-accent"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-sm font-mono text-xs border border-border hover:border-accent hover:text-accent"
               >
                 <Plus className="h-3.5 w-3.5" /> Add column
               </button>
@@ -869,7 +869,7 @@ export function InvestigationComparePage() {
               <button
                 type="button"
                 onClick={() => removeSlot(i)}
-                className="self-end text-2xs font-mono text-text-muted hover:text-text-danger inline-flex items-center gap-1"
+                className="self-end text-2xs font-mono text-text-muted hover:text-critical inline-flex items-center gap-1"
                 aria-label={`Remove slot ${i + 1}`}
               >
                 <X className="h-3 w-3" /> Remove column
@@ -888,8 +888,8 @@ export function InvestigationComparePage() {
           action={{ label: "Browse investigations", href: "/vr/investigations" }}
         />
       ) : listQuery.isError && populatedCount === 0 ? (
-        <AilaCard className="border-border-danger" techBorder>
-          <p className="text-sm text-text-danger font-mono">
+        <AilaCard className="border-critical" techBorder>
+          <p className="text-sm text-critical font-mono">
             Failed to load the investigations list.
           </p>
         </AilaCard>
@@ -898,7 +898,7 @@ export function InvestigationComparePage() {
           <div className="min-w-full flex flex-col">
             {/* Header row -- column titles for context. */}
             <div
-              className="grid gap-3 border-b border-border-default pb-2 px-2 items-end"
+              className="grid gap-3 border-b border-border pb-2 px-2 items-end"
               style={{
                 gridTemplateColumns: `160px repeat(${slots.length}, minmax(0, 1fr))`,
               }}

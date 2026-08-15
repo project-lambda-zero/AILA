@@ -190,7 +190,7 @@ function AttackSurfaceTab({
       {items.map((it, i) => (
         <li
           key={`${it.kind}-${it.name}-${i}`}
-          className="border border-border-default rounded px-2 py-1 flex items-center justify-between gap-2"
+          className="border border-border rounded px-2 py-1 flex items-center justify-between gap-2"
         >
           <div>
             <span className="text-text-muted">{it.kind}</span>{" "}
@@ -290,7 +290,7 @@ function HypothesesTab({ targetId }: { targetId: string }) {
                 "px-2 py-1 text-xs rounded-md border transition-colors " +
                 (filter === f
                   ? "border-accent bg-accent/10 text-foreground"
-                  : "border-border-default text-text-muted hover:text-foreground")
+                  : "border-border text-text-muted hover:text-foreground")
               }
             >
               {f} ({counts[f]})
@@ -299,7 +299,7 @@ function HypothesesTab({ targetId }: { targetId: string }) {
         </div>
       </div>
       {isError && (
-        <p className="mt-2 text-xs text-text-danger">
+        <p className="mt-2 text-xs text-critical">
           One or more per-investigation fetches failed; partial data shown.
         </p>
       )}</AilaCard>
@@ -307,7 +307,7 @@ function HypothesesTab({ targetId }: { targetId: string }) {
       <AilaCard className="p-0 overflow-x-auto" techBorder glow><table className="w-full text-sm">
         <caption className="sr-only">Cross-investigation hypotheses for this target</caption>
         <thead>
-          <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
+          <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-muted">
             <th className="px-3 py-2 font-semibold">State</th>
             <th className="px-3 py-2 font-semibold">Investigation</th>
             <th className="px-3 py-2 font-semibold">Hypothesis</th>
@@ -318,7 +318,7 @@ function HypothesesTab({ targetId }: { targetId: string }) {
           {sorted.map((r, i) => (
             <tr
               key={`${r.investigation_id}:${r.id}:${i}`}
-              className="border-b border-border-default last:border-b-0 align-top hover:bg-surface transition-colors"
+              className="border-b border-border last:border-b-0 align-top hover:bg-surface transition-colors"
             >
               <td className="px-3 py-2 whitespace-nowrap">
                 <AilaBadge
@@ -354,12 +354,12 @@ function HypothesesTab({ targetId }: { targetId: string }) {
               <td className="px-3 py-2 min-w-0 break-words text-xs">
                 {r.rejection_reason ? (
                   <div className="text-text-muted">
-                    <span className="text-text-danger">rejected:</span>{" "}
+                    <span className="text-critical">rejected:</span>{" "}
                     {r.rejection_reason}
                   </div>
                 ) : r.resolution_note ? (
                   <div className="text-text-muted">
-                    <span className="text-amber-400">resolved:</span>{" "}
+                    <span style={{ color: "var(--color-amber)" }}>resolved:</span>{" "}
                     {r.resolution_note}
                   </div>
                 ) : r.why_plausible ? (
@@ -398,7 +398,7 @@ function ImportsExportsTab({
   }
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-      <AilaCard  techBorder glow><h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
+      <AilaCard  techBorder glow><h3 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
         Imports ({imports.length})
       </h3>
       <ul className="text-xs font-mono space-y-1 max-h-96 overflow-y-auto">
@@ -407,9 +407,12 @@ function ImportsExportsTab({
             key={im.name}
             className={
               "px-2 py-1 rounded border " +
-              (im.dangerous
-                ? "border-amber-500 text-amber-300"
-                : "border-border-default text-foreground")
+              (im.dangerous ? "" : "border-border text-foreground")
+            }
+            style={
+              im.dangerous
+                ? { borderColor: "var(--color-amber)", color: "var(--color-amber)" }
+                : undefined
             }
           >
             {im.name}
@@ -417,14 +420,14 @@ function ImportsExportsTab({
           </li>
         ))}
       </ul></AilaCard>
-      <AilaCard  techBorder glow><h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
+      <AilaCard  techBorder glow><h3 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
         Exports ({exports_.length})
       </h3>
       <ul className="text-xs font-mono space-y-1 max-h-96 overflow-y-auto">
         {exports_.map((ex) => (
           <li
             key={ex.name}
-            className="px-2 py-1 rounded border border-border-default text-foreground flex items-center justify-between gap-2"
+            className="px-2 py-1 rounded border border-border text-foreground flex items-center justify-between gap-2"
           >
             <span>{ex.name}</span>
             {ex.reachable && (
@@ -452,7 +455,7 @@ function NotesTab({ targetId }: { targetId: string }) {
     }
   }
   return (
-    <AilaCard  techBorder glow><h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
+    <AilaCard  techBorder glow><h3 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
       Operator notes
     </h3>
     <textarea
@@ -462,7 +465,7 @@ function NotesTab({ targetId }: { targetId: string }) {
       rows={10}
       placeholder="Free-text notes about this target. Stays in your browser until the backend per-target notes API ships."
       aria-label="Operator notes"
-      className="w-full px-3 py-2 text-sm font-mono rounded bg-surface border border-border-default focus:border-accent focus:outline-none"
+      className="w-full px-3 py-2 text-sm font-mono rounded bg-surface border border-border focus:border-accent focus:outline-none"
     />
     <p className="text-3xs text-text-muted mt-1">
       Saved locally in your browser ({savedAt ?? "not saved yet"}). Spec §1.4
@@ -648,7 +651,7 @@ function AndroidApkOverview({ overview }: { overview: ApkOverview }) {
             {certificates.map((cert, idx) => (
               <li
                 key={`${(cert.sha256 as string) ?? idx}`}
-                className="border-l-2 border-border-default pl-2"
+                className="border-l-2 border-border pl-2"
               >
                 <div className="font-mono text-foreground">
                   {(cert.subject as string) ?? (cert.issuer as string) ?? "--"}
@@ -853,7 +856,7 @@ function ApkStaticAuditCard({
           type="button"
           onClick={handleClick}
           disabled={apkMut.isPending}
-          className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 shrink-0"
+          className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-background hover:bg-accent/90 disabled:opacity-50 shrink-0"
         >
           {apkMut.isPending
             ? "Dispatching\u2026"
@@ -989,7 +992,7 @@ function MasvsProgressCard({
 
         {/* Linear progress bar -- terminalCount/total. */}
         <div
-          className="w-full h-2 bg-surface rounded overflow-hidden border border-border-default"
+          className="w-full h-2 bg-surface rounded overflow-hidden border border-border"
           role="progressbar"
           aria-valuenow={percentComplete}
           aria-valuemin={0}
@@ -1032,7 +1035,7 @@ function MasvsProgressCard({
 
         {/* Timing block -- separated by a divider so the operator's
             eye groups counts vs estimates. */}
-        <dl className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs border-t border-border-default pt-3">
+        <dl className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs border-t border-border pt-3">
           <div>
             <dt className="text-text-muted">
               Median wall-time per child
@@ -1218,7 +1221,7 @@ function MasvsReportCard({
                 : " · in progress"}
           </p>
           {error && (
-            <p className="text-xs text-text-danger mt-2 break-all">
+            <p className="text-xs text-critical mt-2 break-all">
               {error}
             </p>
           )}
@@ -1228,7 +1231,7 @@ function MasvsReportCard({
           onClick={handleClick}
           disabled={!canDownload || busy}
           title={buttonTitle}
-          className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 shrink-0"
+          className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-background hover:bg-accent/90 disabled:opacity-50 shrink-0"
         >
           {buttonLabel}
         </button>
@@ -1321,7 +1324,7 @@ function MasvsControlTable({
         {isLoadingAgg && verdicts.length === 0 ? (
           <p className="text-xs text-text-muted">Loading aggregate…</p>
         ) : aggError ? (
-          <p className="text-xs text-text-danger break-all">
+          <p className="text-xs text-critical break-all">
             Aggregate fetch failed:{" "}
             {aggError instanceof Error
               ? aggError.message.slice(0, 200)
@@ -1338,7 +1341,7 @@ function MasvsControlTable({
             <table className="w-full text-xs">
               <caption className="sr-only">MASVS control verdicts</caption>
               <thead>
-                <tr className="border-b border-border-default text-left text-text-muted">
+                <tr className="border-b border-border text-left text-text-muted">
                   <th className="px-2 py-1 font-semibold">Control</th>
                   <th className="px-2 py-1 font-semibold w-20">Group</th>
                   <th className="px-2 py-1 font-semibold w-24">Status</th>
@@ -1385,7 +1388,7 @@ function MasvsControlTable({
                         className={
                           hasPanelSummary
                             ? ""
-                            : "border-b border-border-default last:border-b-0"
+                            : "border-b border-border last:border-b-0"
                         }
                       >
                         <td className="px-2 py-1 font-mono text-foreground break-all">
@@ -1429,7 +1432,7 @@ function MasvsControlTable({
                         </td>
                       </tr>
                       {hasPanelSummary && (
-                        <tr className="border-b border-border-default last:border-b-0">
+                        <tr className="border-b border-border last:border-b-0">
                           <td
                             colSpan={6}
                             className="px-2 pb-2 pt-0 align-top"
@@ -1860,7 +1863,7 @@ export function TargetDetailPage() {
       {/* Status banner */}
       <AilaCard className={
         target.analysis_state === "failed"
-          ? "border-border-danger"
+          ? "border-critical"
           : undefined
       } techBorder glow><div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2 flex-wrap">
@@ -1883,7 +1886,7 @@ export function TargetDetailPage() {
               onClick={() => resumeAnalysisMut.mutate()}
               disabled={resumeAnalysisMut.isPending}
               title="Reset any FAILED stages back to PENDING and re-enqueue the ingest → profile → ranking pipeline. Stages already DONE are skipped (StageTracker idempotence). Distinct from Re-analyze, which resubmits everything unconditionally."
-              className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border-default hover:bg-surface-hover disabled:opacity-50"
+              className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border hover:bg-elevated disabled:opacity-50"
             >
               {resumeAnalysisMut.isPending ? "Resuming…" : "Resume analysis"}
             </button>
@@ -1894,7 +1897,7 @@ export function TargetDetailPage() {
               type="button"
               onClick={() => analyzeMut.mutate()}
               disabled={analyzeMut.isPending}
-              className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border-default hover:bg-surface-hover disabled:opacity-50"
+              className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border hover:bg-elevated disabled:opacity-50"
             >
               {analyzeMut.isPending ? "Re-analyzing…" : "Re-analyze"}
             </button>
@@ -1904,7 +1907,7 @@ export function TargetDetailPage() {
               type="button"
               onClick={() => rankMut.mutate()}
               disabled={rankMut.isPending}
-              className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
+              className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-background hover:bg-accent/90 disabled:opacity-50"
             >
               {rankMut.isPending ? "Ranking…" : "Rank functions"}
             </button>
@@ -1915,7 +1918,7 @@ export function TargetDetailPage() {
         <p
           className={`text-xs mt-2 ${
             target.analysis_state === "failed"
-              ? "text-text-danger"
+              ? "text-critical"
               : "text-text-muted"
           }`}
         >
@@ -1981,7 +1984,7 @@ export function TargetDetailPage() {
       )}
 
       {/* Capability profile */}
-      <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+      <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
         Capability profile
       </h2>
       {target.analysis_state !== "ready" ? (
@@ -2155,7 +2158,7 @@ export function TargetDetailPage() {
 
       {/* Mitigations -- uses shared MitigationsRibbon (§1.4 promise) */}
       {target.analysis_state === "ready" && (
-        <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+        <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
           Mitigations
         </h2>
         <MitigationsRibbon mitigations={mitigations} /></AilaCard>
@@ -2165,7 +2168,7 @@ export function TargetDetailPage() {
           operator can deep-link a teammate to "look at this tab." */}
       {target.analysis_state === "ready" && (
         <>
-          <div className="border-b border-border-default flex gap-1 overflow-x-auto">
+          <div className="border-b border-border flex gap-1 overflow-x-auto">
             {TARGET_TABS.map((tab) => {
               const isActive = activeTab === tab.id;
               return (
@@ -2198,7 +2201,7 @@ export function TargetDetailPage() {
 
       {/* Functions of interest tab content */}
       {target.analysis_state === "ready" && activeTab === "functions" && (
-        <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
+        <AilaCard  techBorder glow><h2 className="font-mono uppercase tracking-cyber-sm text-2xs text-muted-foreground mb-2 pb-1.5 border-b border-border">
           Function ranking ({ranking.top_k?.length ?? 0} of{" "}
           {ranking.total_candidates ?? 0})
         </h2>
@@ -2211,7 +2214,7 @@ export function TargetDetailPage() {
             <table className="w-full text-xs">
               <caption className="sr-only">Top-ranked candidate functions</caption>
               <thead>
-                <tr className="border-b border-border-default text-left text-text-muted">
+                <tr className="border-b border-border text-left text-text-muted">
                   <th className="px-2 py-1 font-semibold w-10">#</th>
                   <th className="px-2 py-1 font-semibold">Function</th>
                   <th className="px-2 py-1 font-semibold w-20 text-right">Score</th>
@@ -2222,7 +2225,7 @@ export function TargetDetailPage() {
                 {ranking.top_k.slice(0, 50).map((f, i) => (
                   <tr
                     key={`${f.address ?? f.file_path ?? "_"}-${i}`}
-                    className="border-b border-border-default last:border-b-0"
+                    className="border-b border-border last:border-b-0"
                   >
                     <td className="px-2 py-1 font-mono text-text-muted">
                       {f.rank ?? i + 1}

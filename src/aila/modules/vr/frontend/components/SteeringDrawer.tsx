@@ -69,8 +69,8 @@ export function SteeringDrawer({
         className="flex-1 bg-black/40 backdrop-blur-sm"
       />
       {/* Drawer */}
-      <aside className="w-full h-full bg-base border-l border-border-default overflow-y-auto" style={{ maxWidth: 480 }}>
-        <header className="sticky top-0 z-10 px-4 py-3 bg-base border-b border-border-default flex items-center justify-between">
+      <aside className="w-full h-full bg-base border-l border-border overflow-y-auto" style={{ maxWidth: 480 }}>
+        <header className="sticky top-0 z-10 px-4 py-3 bg-base border-b border-border flex items-center justify-between">
           <div>
             <h2 className="text-sm font-bold font-mono text-foreground">
               Steering
@@ -115,7 +115,7 @@ export function SteeringDrawer({
                 type="button"
                 onClick={() => pauseMut.mutate()}
                 disabled={status !== "running" || pauseMut.isPending}
-                className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border-default hover:bg-surface-hover disabled:opacity-40"
+                className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border hover:bg-elevated disabled:opacity-40"
               >
                 {pauseMut.isPending ? "Pausing…" : "Pause"}
               </button>
@@ -131,7 +131,7 @@ export function SteeringDrawer({
                   (status !== "paused" && !resumeMut.isResuming) ||
                   resumeMut.isResuming
                 }
-                className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-40"
+                className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-background hover:bg-accent/90 disabled:opacity-40"
               >
                 {resumeMut.isResuming ? "Resuming…" : "Resume"}
               </button>
@@ -159,7 +159,7 @@ export function SteeringDrawer({
               placeholder="e.g. 'try the JSPI base address path' or 'H4 is wrong -- the leak is not reliable.'"
               rows={4}
               aria-label="Steering context"
-              className="w-full px-2 py-1.5 text-xs font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
+              className="w-full px-2 py-1.5 text-xs font-mono rounded-md bg-surface border border-border focus:border-accent focus:outline-none"
             />
             <div className="flex items-center gap-2 mt-2">
               <select
@@ -168,7 +168,7 @@ export function SteeringDrawer({
                   setContextIntent(e.target.value as OperatorIntent)
                 }
                 aria-label="Context intent"
-                className="px-2 py-1 text-xs font-mono rounded-md bg-surface border border-border-default"
+                className="px-2 py-1 text-xs font-mono rounded-md bg-surface border border-border"
               >
                 <option value="steering">steering</option>
                 <option value="correction">correction</option>
@@ -191,7 +191,7 @@ export function SteeringDrawer({
                     },
                   )
                 }
-                className="ml-auto px-3 py-1 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-40"
+                className="ml-auto px-3 py-1 text-xs font-medium rounded-md bg-accent text-background hover:bg-accent/90 disabled:opacity-40"
               >
                 {sendMut.isPending ? "Sending…" : "Inject"}
               </button>
@@ -244,11 +244,11 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <div className="border border-border-default rounded-md overflow-hidden">
+    <div className="border border-border rounded-md overflow-hidden">
       <button
         type="button"
         onClick={onToggle}
-        className="w-full px-3 py-2 flex items-center justify-between gap-2 hover:bg-surface-hover transition-colors"
+        className="w-full px-3 py-2 flex items-center justify-between gap-2 hover:bg-elevated transition-colors"
         aria-expanded={open}
         aria-controls={`steering-${id}`}
       >
@@ -260,7 +260,7 @@ function Section({
       {open && (
         <div
           id={`steering-${id}`}
-          className="px-3 pb-3 border-t border-border-default"
+          className="px-3 pb-3 border-t border-border"
         >
           {children}
         </div>
@@ -279,7 +279,7 @@ function ComingSection({
   description: string;
 }) {
   return (
-    <div className="border border-dashed border-border-default rounded-md px-3 py-2 opacity-70">
+    <div className="border border-dashed border-border rounded-md px-3 py-2 opacity-70">
       <div className="flex items-center justify-between gap-2 mb-1">
         <span className="text-xs font-semibold text-text-muted">{label}</span>
         <AilaBadge severity="info" size="sm">

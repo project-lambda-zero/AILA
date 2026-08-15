@@ -62,14 +62,14 @@ export function ExportReportButton({
         type="button"
         onClick={handleClick}
         disabled={busy}
-        className="text-xs px-3 py-1.5 rounded-md bg-surface border border-border-default hover:bg-surface-hover text-foreground disabled:opacity-50"
+        className="text-xs px-3 py-1.5 rounded-md bg-surface border border-border hover:bg-elevated text-foreground disabled:opacity-50"
         title="Generate enterprise PDF report (writer agent + ReportLab)"
       >
         {busy ? "Generating…" : "Export PDF ↓"}
       </button>
       {error && (
         <span
-          className="text-xs text-red-500 max-w-xs truncate"
+          className="text-xs text-critical max-w-xs truncate"
           title={error}
         >
           {error}

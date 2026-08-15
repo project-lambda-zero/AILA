@@ -34,8 +34,11 @@ import { useReducedMotion } from "@/hooks/useReducedMotion"
 
 const STAGGER_INTERVAL_S = 0.04
 const STAGGER_LEAD_S = 0.02
-const ITEM_DURATION_S = 0.22
+const ITEM_DURATION_S = 0.2
 const ITEM_Y_OFFSET_PX = 8
+// DS signature easing -- mirrors --ease-out (cubic-bezier(0.22,1,0.36,1))
+// in globals.css so shared list cascades feel identical to chrome motion.
+const DS_EASE_OUT: [number, number, number, number] = [0.22, 1, 0.36, 1]
 
 interface StaggerSpec {
   container: Variants
@@ -67,7 +70,7 @@ function useStaggerSpec(): StaggerSpec {
         hidden: { opacity: 0, y: ITEM_Y_OFFSET_PX },
         show: { opacity: 1, y: 0 },
       },
-      transition: { duration: ITEM_DURATION_S, ease: "easeOut" },
+      transition: { duration: ITEM_DURATION_S, ease: DS_EASE_OUT },
     }
   }, [reducedMotion])
 }

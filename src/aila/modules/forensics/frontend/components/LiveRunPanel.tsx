@@ -24,7 +24,7 @@
 import { useEffect, useState } from "react";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 import type {
   InvestigationEvent,
@@ -98,16 +98,16 @@ function formatElapsed(ms: number): string {
 }
 
 function stageColorClass(stage: string): string {
-  if (stage.includes("error") || stage.includes("failed")) return "text-red-400";
+  if (stage.includes("error") || stage.includes("failed")) return "text-critical";
   if (
     stage === "completed" ||
     stage.includes("done") ||
     stage.includes("detected")
   ) {
-    return "text-green-400";
+    return "text-mint";
   }
   if (stage.includes("start") || stage.includes("begin")) return "text-amber-400";
-  if (stage === "artifact_added") return "text-blue-400";
+  if (stage === "artifact_added") return "text-lavender";
   return "text-accent";
 }
 
@@ -163,7 +163,7 @@ export function LiveRunPanel({
     .reverse();
 
   return (
-    <AilaCard techBorder glow>
+    <WindowPanel title="live run" tone="accent" status="investigation ; streaming">
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
@@ -221,7 +221,7 @@ export function LiveRunPanel({
               </span>
             </div>
             <div
-              className="h-1.5 w-full overflow-hidden rounded-full bg-surface-secondary"
+              className="h-1.5 w-full overflow-hidden rounded-full bg-elevated"
               role="progressbar"
               aria-valuemin={0}
               aria-valuemax={maxAttempts ?? undefined}
@@ -270,6 +270,6 @@ export function LiveRunPanel({
           )}
         </div>
       </div>
-    </AilaCard>
+    </WindowPanel>
   );
 }
