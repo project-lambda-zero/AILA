@@ -64,10 +64,7 @@ export function HealthStatusWidget() {
 
   return (
     <div className="h-full w-full p-4 flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <p className="text-xs font-mono text-text-muted uppercase tracking-wider">
-          Platform Health
-        </p>
+      <div className="flex items-center justify-end">
         <AilaBadge severity={statusBadgeSeverity(overallStatus)} size="sm">
           {overallStatus.toUpperCase()}
         </AilaBadge>

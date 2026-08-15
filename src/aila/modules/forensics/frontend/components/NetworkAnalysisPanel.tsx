@@ -92,30 +92,30 @@ const ipFlag = (ip: unknown, isInternal: unknown): React.ReactNode => {
 
 const classificationBadge = (v: unknown): React.ReactNode => {
   const k = String(v ?? "common");
-  const map: Record<string, string> = {
-    common: "bg-elevated text-text-muted border-border",
-    suspicious: "bg-amber-400/10 text-amber-400 border-amber-400/40",
-    dga_shape: "bg-critical/10 text-critical border-critical/40",
-    empty: "bg-surface text-text-muted border-border",
+  const map: Record<string, React.CSSProperties> = {
+    common: { background: "var(--color-elevated)", color: "var(--color-text-muted)", borderColor: "var(--color-border)" },
+    suspicious: { background: "color-mix(in srgb, var(--color-amber) 10%, transparent)", color: "var(--color-amber)", borderColor: "color-mix(in srgb, var(--color-amber) 40%, transparent)" },
+    dga_shape: { background: "color-mix(in srgb, var(--color-critical) 10%, transparent)", color: "var(--color-critical)", borderColor: "color-mix(in srgb, var(--color-critical) 40%, transparent)" },
+    empty: { background: "var(--color-surface)", color: "var(--color-text-muted)", borderColor: "var(--color-border)" },
   };
-  const cls = map[k] ?? map.common;
+  const style = map[k] ?? map.common;
   return (
-    <span className={`inline-block px-2 py-0.5 text-3xs font-semibold uppercase rounded border ${cls}`}>
+    <span className="inline-block px-2 py-0.5 text-3xs font-semibold uppercase rounded border" style={style}>
       {k}
     </span>
   );
 };
 
 const severityBadge = (s: string): React.ReactNode => {
-  const map: Record<string, string> = {
-    info: "bg-lavender/10 text-lavender border-lavender/40",
-    low: "bg-mint/10 text-mint border-mint/40",
-    medium: "bg-amber-400/10 text-amber-400 border-amber-400/40",
-    high: "bg-critical/10 text-critical border-critical/40",
+  const map: Record<string, React.CSSProperties> = {
+    info: { background: "color-mix(in srgb, var(--color-lavender) 10%, transparent)", color: "var(--color-lavender)", borderColor: "color-mix(in srgb, var(--color-lavender) 40%, transparent)" },
+    low: { background: "color-mix(in srgb, var(--color-mint) 10%, transparent)", color: "var(--color-mint)", borderColor: "color-mix(in srgb, var(--color-mint) 40%, transparent)" },
+    medium: { background: "color-mix(in srgb, var(--color-amber) 10%, transparent)", color: "var(--color-amber)", borderColor: "color-mix(in srgb, var(--color-amber) 40%, transparent)" },
+    high: { background: "color-mix(in srgb, var(--color-critical) 10%, transparent)", color: "var(--color-critical)", borderColor: "color-mix(in srgb, var(--color-critical) 40%, transparent)" },
   };
-  const cls = map[s] ?? map.info;
+  const style = map[s] ?? map.info;
   return (
-    <span className={`inline-block px-2 py-0.5 text-3xs font-semibold uppercase rounded border ${cls}`}>
+    <span className="inline-block px-2 py-0.5 text-3xs font-semibold uppercase rounded border" style={style}>
       {s}
     </span>
   );
@@ -145,7 +145,7 @@ const COLS_SESSIONS: ColumnDef[] = [
   {
     key: "is_long_lived",
     header: "Flag",
-    render: (r) => (r.is_long_lived ? <span className="text-amber-400 text-3xs font-semibold uppercase">long-lived</span> : ""),
+    render: (r) => (r.is_long_lived ? <span className="text-3xs font-semibold uppercase" style={{ color: "var(--color-amber)" }}>long-lived</span> : ""),
   },
 ];
 
@@ -199,8 +199,8 @@ const COLS_HTTP_RESP: ColumnDef[] = [
     header: "Status",
     render: (r) => {
       const s = Number(r.status) || 0;
-      const cls = s >= 500 ? "text-critical" : s >= 400 ? "text-amber-400" : "text-mint";
-      return <span className={`font-mono font-semibold ${cls}`}>{s || "?"}</span>;
+      const color = s >= 500 ? "var(--color-critical)" : s >= 400 ? "var(--color-amber)" : "var(--color-mint)";
+      return <span className="font-mono font-semibold" style={{ color }}>{s || "?"}</span>;
     },
   },
   { key: "content_type", header: "Type", mono: true },
@@ -260,8 +260,8 @@ const COLS_BEACONS: ColumnDef[] = [
     align: "right",
     render: (r) => {
       const v = Number(r.regularity ?? 0);
-      const cls = v >= 0.9 ? "text-critical" : v >= 0.75 ? "text-amber-400" : "text-text-muted";
-      return <span className={`font-mono font-semibold ${cls}`}>{v.toFixed(3)}</span>;
+      const color = v >= 0.9 ? "var(--color-critical)" : v >= 0.75 ? "var(--color-amber)" : "var(--color-text-muted)";
+      return <span className="font-mono font-semibold" style={{ color }}>{v.toFixed(3)}</span>;
     },
   },
   {

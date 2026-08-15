@@ -41,13 +41,13 @@ const MAX_COLUMNS = 4;
 const IDS_PARAM = "ids";
 
 const STATUS_DOT: Record<InvestigationStatus, string> = {
-  created: "#af8c6c",
-  running: "#97dbbe",
-  paused: "#ffb85f",
-  completed: "#af87d7",
-  failed: "#f0a8c7",
-  abandoned: "#af8c6c",
-  stalled: "#af8c6c",
+  created: "var(--color-text-muted)",
+  running: "var(--color-mint)",
+  paused: "var(--color-amber)",
+  completed: "var(--color-lavender)",
+  failed: "var(--color-peach)",
+  abandoned: "var(--color-text-muted)",
+  stalled: "var(--color-text-muted)",
 };
 
 function fmtUsd(n: number | null | undefined): string {
@@ -220,7 +220,7 @@ function InvestigationPicker({
               aria-hidden
               className="inline-block h-2 w-2 rounded-full shrink-0"
               style={{
-                background: STATUS_DOT[current.status] ?? "#af8c6c",
+                background: STATUS_DOT[current.status] ?? "var(--color-text-muted)",
                 boxShadow:
                   current.status === "running"
                     ? `0 0 6px ${STATUS_DOT.running}`
@@ -298,7 +298,7 @@ function InvestigationPicker({
                   aria-hidden
                   className="inline-block h-1.5 w-1.5 rounded-full shrink-0"
                   style={{
-                    background: STATUS_DOT[inv.status] ?? "#af8c6c",
+                    background: STATUS_DOT[inv.status] ?? "var(--color-text-muted)",
                   }}
                 />
                 <span className="flex-1 min-w-0 flex flex-col">
@@ -420,7 +420,7 @@ function statusCell(b: Bundle): CellSpec | null {
           aria-hidden
           className="inline-block h-2 w-2 rounded-full"
           style={{
-            background: STATUS_DOT[inv.status] ?? "#af8c6c",
+            background: STATUS_DOT[inv.status] ?? "var(--color-text-muted)",
             boxShadow: live ? `0 0 6px ${STATUS_DOT[inv.status]}` : "none",
           }}
         />

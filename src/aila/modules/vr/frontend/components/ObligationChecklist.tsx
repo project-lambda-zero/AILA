@@ -1,4 +1,5 @@
 import { AilaBadge } from "@/components/aila/AilaBadge";
+import { PixelIcon, type PixelIconName } from "@/components/aila/PixelIcon";
 
 /** Obligation checklist (08_FRONTEND_UX.md §Topic 8).
  *
@@ -36,10 +37,10 @@ const SEVERITY_TONE: Record<
   recommended: "info",
 };
 
-const STATE_ICON: Record<ObligationState, string> = {
-  met: "✓",
-  unmet: "✗",
-  waived: "--",
+const STATE_ICON: Record<ObligationState, PixelIconName | null> = {
+  met: "ok",
+  unmet: "close",
+  waived: null,
 };
 
 const STATE_TEXT_CLASS: Record<ObligationState, string> = {
@@ -103,10 +104,14 @@ export function ObligationChecklist({
             title={o.description ?? undefined}
           >
             <span
-              className={`text-base leading-none w-4 ${STATE_TEXT_CLASS[o.state]}`}
+              className={`inline-flex items-center leading-none w-4 ${STATE_TEXT_CLASS[o.state]}`}
               aria-label={`state: ${o.state}`}
             >
-              {STATE_ICON[o.state]}
+              {STATE_ICON[o.state] ? (
+                <PixelIcon name={STATE_ICON[o.state]!} size={12} />
+              ) : (
+                "--"
+              )}
             </span>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
@@ -125,9 +130,10 @@ export function ObligationChecklist({
               {o.evidence_ref && (
                 <a
                   href={o.evidence_ref}
-                  className="text-3xs font-mono text-text-muted hover:text-foreground hover:underline"
+                  className="inline-flex items-center gap-1 text-3xs font-mono text-text-muted hover:text-foreground hover:underline"
                 >
-                  ↪ evidence
+                  <PixelIcon name="arrow" size={10} />
+                  evidence
                 </a>
               )}
             </div>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type CSSProperties, useState } from "react";
 
 import { Clock } from "@phosphor-icons/react/dist/csr/Clock";
 
@@ -14,17 +14,17 @@ import { TimelineTrack } from "./TimelineTrack";
 
 type Confidence = "low" | "medium" | "high";
 
-const SOURCE_COLORS: Record<string, string> = {
-  dissect: "bg-lavender/15 text-lavender",
-  volatility: "bg-medium/15 text-medium",
-  tshark: "bg-mint/15 text-mint",
-  strings: "bg-amber-400/15 text-amber-400",
-  capa: "bg-critical/15 text-critical",
-  yara: "bg-amber-400/15 text-amber-400",
-  ghidra: "bg-peach/15 text-peach",
-  script: "bg-mint/15 text-mint",
-  investigator: "bg-mint/15 text-mint",
-  unknown: "bg-elevated text-text-muted",
+const SOURCE_COLORS: Record<string, CSSProperties> = {
+  dissect: { background: "color-mix(in srgb, var(--color-lavender) 15%, transparent)", color: "var(--color-lavender)" },
+  volatility: { background: "color-mix(in srgb, var(--color-medium) 15%, transparent)", color: "var(--color-medium)" },
+  tshark: { background: "color-mix(in srgb, var(--color-mint) 15%, transparent)", color: "var(--color-mint)" },
+  strings: { background: "color-mix(in srgb, var(--color-amber) 15%, transparent)", color: "var(--color-amber)" },
+  capa: { background: "color-mix(in srgb, var(--color-critical) 15%, transparent)", color: "var(--color-critical)" },
+  yara: { background: "color-mix(in srgb, var(--color-amber) 15%, transparent)", color: "var(--color-amber)" },
+  ghidra: { background: "color-mix(in srgb, var(--color-peach) 15%, transparent)", color: "var(--color-peach)" },
+  script: { background: "color-mix(in srgb, var(--color-mint) 15%, transparent)", color: "var(--color-mint)" },
+  investigator: { background: "color-mix(in srgb, var(--color-mint) 15%, transparent)", color: "var(--color-mint)" },
+  unknown: { background: "var(--color-elevated)", color: "var(--color-text-muted)" },
 };
 
 function timestampOriginLabel(origin?: string): { text: string; tone: string } | null {
@@ -225,10 +225,9 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
               type="button"
               onClick={() => setSourceFilter(sourceFilter === src ? null : src)}
               className={`px-2.5 py-1 text-3xs rounded-[3px] font-mono uppercase tracking-cyber-sm ${
-                sourceFilter === src
-                  ? "bg-primary text-badge-text"
-                  : SOURCE_COLORS[src] || SOURCE_COLORS.unknown
+                sourceFilter === src ? "bg-primary text-badge-text" : ""
               }`}
+              style={sourceFilter === src ? undefined : SOURCE_COLORS[src] || SOURCE_COLORS.unknown}
             >
               {src}
             </button>
@@ -311,7 +310,7 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
                 </thead>
                 <tbody className="scroll-virtual-row">
                   {filteredEntries.slice(0, 1000).map((entry, i) => {
-                    const colorClass =
+                    const colorStyle =
                       SOURCE_COLORS[entry.source] || SOURCE_COLORS.unknown;
                     const originBadge = timestampOriginLabel(entry.timestamp_origin);
                     const rowKey = `t-${i}`;
@@ -335,7 +334,8 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
                           <td className="px-3 py-1.5 align-top">
                             <div className="flex items-center gap-1">
                               <span
-                                className={`px-1.5 py-0.5 rounded text-3xs font-medium ${colorClass}`}
+                                className="px-1.5 py-0.5 rounded text-3xs font-medium"
+                                style={colorStyle}
                               >
                                 {entry.source}
                               </span>
@@ -427,7 +427,7 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
                 </thead>
                 <tbody className="scroll-virtual-row">
                   {filteredOcc.slice(0, 1000).map((occ, i) => {
-                    const colorClass =
+                    const colorStyle =
                       SOURCE_COLORS[occ.source] || SOURCE_COLORS.unknown;
                     const rowKey = `o-${i}`;
                     const isOpen = inspectIdx === rowKey;
@@ -437,7 +437,8 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
                           <td className="px-3 py-1.5 align-top">
                             <div className="flex items-center gap-1">
                               <span
-                                className={`px-1.5 py-0.5 rounded text-3xs font-medium ${colorClass}`}
+                                className="px-1.5 py-0.5 rounded text-3xs font-medium"
+                                style={colorStyle}
                               >
                                 {occ.source}
                               </span>

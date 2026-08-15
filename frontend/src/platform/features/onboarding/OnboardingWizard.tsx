@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { useCreateSystem, type SystemMutationInput } from "@platform/features/systems/api";
 import { useSubmitScan, type ScanSubmissionRequest } from "@platform/features/scans/api";
 
@@ -143,19 +144,15 @@ function StepRegisterSystem({
   }
 
   return (
-    <div className="flex flex-col gap-5">
-      <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-full border border-border bg-accent/10">
-          <Desktop size={20} className="text-accent" />
-        </div>
-        <div>
-          <h2 className="font-mono text-sm font-semibold text-text">Register a System</h2>
-          <p className="font-mono text-xs text-text-muted">
-            Add your first SSH-reachable target to start scanning.
-          </p>
-        </div>
-      </div>
-
+    <WindowPanel
+      title="register a system"
+      tone="accent"
+      status="step 2 · target"
+      actions={<Desktop size={14} className="text-text-muted" aria-hidden="true" />}
+    >
+      <p className="mb-4 font-mono text-xs text-text-muted">
+        Add your first SSH-reachable target to start scanning.
+      </p>
       <form onSubmit={handleSubmit} className="flex flex-col gap-3">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="flex flex-col gap-1">
@@ -231,7 +228,7 @@ function StepRegisterSystem({
           </div>
         </div>
       </form>
-    </div>
+    </WindowPanel>
   );
 }
 
@@ -274,19 +271,15 @@ function StepLaunchScan({
   }
 
   return (
-    <div className="flex flex-col gap-5">
-      <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-full border border-border bg-accent/10">
-          <Crosshair size={20} className="text-accent" />
-        </div>
-        <div>
-          <h2 className="font-mono text-sm font-semibold text-text">Launch Your First Scan</h2>
-          <p className="font-mono text-xs text-text-muted">
-            Run a vulnerability scan to discover CVEs on your system.
-          </p>
-        </div>
-      </div>
-
+    <WindowPanel
+      title="launch your first scan"
+      tone="accent"
+      status="step 3 · run"
+      actions={<Crosshair size={14} className="text-text-muted" aria-hidden="true" />}
+    >
+      <p className="mb-4 font-mono text-xs text-text-muted">
+        Run a vulnerability scan to discover CVEs on your system.
+      </p>
       <form onSubmit={handleSubmit} className="flex flex-col gap-3">
         <div className="flex flex-col gap-1">
           <label className="font-mono text-xs text-text-muted" htmlFor="ob-target">
@@ -335,7 +328,7 @@ function StepLaunchScan({
           </div>
         </div>
       </form>
-    </div>
+    </WindowPanel>
   );
 }
 

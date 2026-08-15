@@ -43,21 +43,21 @@ const PERSONA_VOICES: readonly PersonaVoice[] = [
 // Colour-code branches by status. Aligns with the AilaBadge palette so
 // the tree + list views look consistent.
 const STATUS_COLORS: Record<BranchStatus, string> = {
-  active: "#b092ff",        // running
-  paused: "#ffb85f",        // amber -- paused
-  merged: "#af87d7",        // lavender -- merged in
-  promoted: "#97dbbe",      // mint -- promoted to outcome
-  completed: "#97dbbe",     // mint -- completed
-  abandoned: "#6b563f",     // faint -- abandoned
+  active: "var(--color-medium)",        // running
+  paused: "var(--color-amber)",        // amber -- paused
+  merged: "var(--color-lavender)",        // lavender -- merged in
+  promoted: "var(--color-mint)",      // mint -- promoted to outcome
+  completed: "var(--color-mint)",     // mint -- completed
+  abandoned: "var(--color-text-faint)",     // faint -- abandoned
 };
 
 const STATUS_BORDER: Record<BranchStatus, string> = {
-  active: "#8f6fd0",
-  paused: "#d99a4a",
-  merged: "#8f6fb0",
-  promoted: "#6fb89a",
-  completed: "#6fb89a",
-  abandoned: "#4a3c2b",
+  active: "color-mix(in srgb, var(--color-medium) 68%, var(--surface-sunk))",
+  paused: "color-mix(in srgb, var(--color-amber) 68%, var(--surface-sunk))",
+  merged: "color-mix(in srgb, var(--color-lavender) 68%, var(--surface-sunk))",
+  promoted: "color-mix(in srgb, var(--color-mint) 68%, var(--surface-sunk))",
+  completed: "color-mix(in srgb, var(--color-mint) 68%, var(--surface-sunk))",
+  abandoned: "color-mix(in srgb, var(--color-text-faint) 78%, var(--surface-sunk))",
 };
 
 // Spacing between strategy-family clusters + within a cluster.
@@ -110,7 +110,7 @@ function layoutNodes(clustered: ClusteredBranch[]): Node[] {
       style: {
         background: "transparent",
         border: "none",
-        color: "#af8c6c",
+        color: "var(--color-text-muted)",
         fontSize: 11,
         fontFamily: "monospace",
         width: 240,
@@ -120,15 +120,15 @@ function layoutNodes(clustered: ClusteredBranch[]): Node[] {
     });
 
     branches.forEach((b, rowIdx) => {
-      const colour = STATUS_COLORS[b.status] ?? "#af8c6c";
-      const border = STATUS_BORDER[b.status] ?? "#8a7256";
+      const colour = STATUS_COLORS[b.status] ?? "var(--color-text-muted)";
+      const border = STATUS_BORDER[b.status] ?? "color-mix(in srgb, var(--color-text-muted) 60%, var(--surface-sunk))";
       nodes.push({
         id: b.id,
         type: "default",
         position: { x, y: rowIdx * BRANCH_Y_GAP },
         data: {
           label: (
-            <div style={{ textAlign: "left", color: "#1a0a12", fontSize: 11 }}>
+            <div style={{ textAlign: "left", color: "var(--text-on-accent)", fontSize: 11 }}>
               <div style={{ fontWeight: 600 }}>
                 {formatBranchDisplayName(b)}
                 {b.fork_at_turn != null ? ` @t${b.fork_at_turn}` : ""}
@@ -144,7 +144,7 @@ function layoutNodes(clustered: ClusteredBranch[]): Node[] {
         },
         style: {
           background: colour,
-          color: "#1a0a12",
+          color: "var(--text-on-accent)",
           border: `2px solid ${border}`,
           borderRadius: 6,
           width: 240,
@@ -170,8 +170,8 @@ function buildEdges(branches: VRBranchSummary[]): Edge[] {
         target: b.id,
         type: "smoothstep",
         label: "fork",
-        labelStyle: { fontSize: 10, fill: "#af8c6c" },
-        style: { stroke: "#3a3a3a", strokeWidth: 1.5 },
+        labelStyle: { fontSize: 10, fill: "var(--color-text-muted)" },
+        style: { stroke: "var(--color-border-bright)", strokeWidth: 1.5 },
       });
     }
     if (b.merged_into_branch_id && ids.has(b.merged_into_branch_id)) {
@@ -182,8 +182,8 @@ function buildEdges(branches: VRBranchSummary[]): Edge[] {
         type: "smoothstep",
         animated: true,
         label: "merge",
-        labelStyle: { fontSize: 10, fill: "#af87d7" },
-        style: { stroke: "#af87d7", strokeDasharray: "4 4" },
+        labelStyle: { fontSize: 10, fill: "var(--color-lavender)" },
+        style: { stroke: "var(--color-lavender)", strokeDasharray: "4 4" },
       });
     }
   }
@@ -279,7 +279,7 @@ export function BranchTreePage() {
             elementsSelectable
             proOptions={{ hideAttribution: true }}
           >
-            <Background gap={20} size={1} color="#2a2a2a" />
+            <Background gap={20} size={1} color="var(--color-border)" />
             <Controls showInteractive={false} />
           </ReactFlow>
         </div></WindowPanel>

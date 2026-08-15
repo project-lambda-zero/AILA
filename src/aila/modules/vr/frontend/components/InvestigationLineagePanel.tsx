@@ -38,22 +38,22 @@ import type {
 // Match InvestigationDetailPage's STATUS_META intent -- lifecycle hue,
 // not danger ramp -- but keep the local subset small (parent/self/child).
 const STATUS_FILL: Record<string, string> = {
-  running: "#b092ff",
-  completed: "#97dbbe",
-  paused: "#ffb85f",
-  failed: "#ff5f87",
-  abandoned: "#6b563f",
-  stalled: "#af87d7",
-  created: "#af8c6c",
+  running: "var(--color-medium)",
+  completed: "var(--color-mint)",
+  paused: "var(--color-amber)",
+  failed: "var(--color-accent)",
+  abandoned: "var(--color-text-faint)",
+  stalled: "var(--color-lavender)",
+  created: "var(--color-text-muted)",
 };
 const STATUS_BORDER: Record<string, string> = {
-  running: "#8f6fd0",
-  completed: "#6fb89a",
-  paused: "#d99a4a",
-  failed: "#c43b65",
-  abandoned: "#4a3c2b",
-  stalled: "#8f6fb0",
-  created: "#8a7256",
+  running: "color-mix(in srgb, var(--color-medium) 68%, var(--surface-sunk))",
+  completed: "color-mix(in srgb, var(--color-mint) 68%, var(--surface-sunk))",
+  paused: "color-mix(in srgb, var(--color-amber) 68%, var(--surface-sunk))",
+  failed: "var(--color-accent-deep)",
+  abandoned: "color-mix(in srgb, var(--color-text-faint) 78%, var(--surface-sunk))",
+  stalled: "color-mix(in srgb, var(--color-lavender) 68%, var(--surface-sunk))",
+  created: "color-mix(in srgb, var(--color-text-muted) 60%, var(--surface-sunk))",
 };
 
 const KIND_LABEL: Record<InvestigationKind, string> = {
@@ -77,13 +77,13 @@ interface NodeInput {
 
 function nodeStyle(role: "parent" | "self" | "child", status?: string | null) {
   const hasStatus = Boolean(status && STATUS_FILL[status]);
-  const fill = hasStatus ? STATUS_FILL[status as string] : "#1f1f1f";
-  const border = hasStatus ? STATUS_BORDER[status as string] : "#3a3a3a";
-  const text = hasStatus ? "#1a0a12" : "#ffd7af";
+  const fill = hasStatus ? STATUS_FILL[status as string] : "var(--color-elevated)";
+  const border = hasStatus ? STATUS_BORDER[status as string] : "var(--color-border-bright)";
+  const text = hasStatus ? "var(--text-on-accent)" : "var(--color-text)";
   return {
     background: fill,
     color: text,
-    border: `${role === "self" ? 3 : 2}px solid ${role === "self" ? "#ff5f87" : border}`,
+    border: `${role === "self" ? 3 : 2}px solid ${role === "self" ? "var(--color-accent)" : border}`,
     borderRadius: 4,
     width: 260,
     padding: 8,
@@ -176,8 +176,8 @@ function buildLineageGraph(
       target: self.id,
       type: "smoothstep",
       label: "spawned",
-      labelStyle: { fontSize: 10, fill: "#af8c6c" },
-      style: { stroke: "#3a3a3a", strokeWidth: 1.5 },
+      labelStyle: { fontSize: 10, fill: "var(--color-text-muted)" },
+      style: { stroke: "var(--color-border-bright)", strokeWidth: 1.5 },
     });
   }
   for (const c of children) {
@@ -187,8 +187,8 @@ function buildLineageGraph(
       target: c.id,
       type: "smoothstep",
       label: c.kind === "variant_hunt" ? "variant hunt" : "spawned",
-      labelStyle: { fontSize: 10, fill: "#af8c6c" },
-      style: { stroke: "#3a3a3a", strokeWidth: 1.5 },
+      labelStyle: { fontSize: 10, fill: "var(--color-text-muted)" },
+      style: { stroke: "var(--color-border-bright)", strokeWidth: 1.5 },
     });
   }
   return { nodes, edges };
@@ -278,7 +278,7 @@ export function InvestigationLineagePanel({
           proOptions={{ hideAttribution: true }}
           aria-label="Investigation lineage graph"
         >
-          <Background gap={20} size={1} color="#2a2a2a" />
+          <Background gap={20} size={1} color="var(--color-border)" />
           <Controls showInteractive={false} />
         </ReactFlow>
       </div>

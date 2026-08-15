@@ -102,7 +102,6 @@ export function TopFindingsWidget() {
   if (items.length === 0) {
     return (
       <div className="h-full w-full p-4 flex flex-col justify-center gap-1">
-        <p className="text-sm font-mono font-semibold text-text">Top Critical Findings</p>
         <p className="text-xs font-mono text-text-muted">No findings recorded</p>
       </div>
     );
@@ -117,9 +116,6 @@ export function TopFindingsWidget() {
 
   return (
     <div className="h-full w-full p-4 flex flex-col gap-2 overflow-hidden">
-      <p className="text-xs font-mono text-text-muted uppercase tracking-wider shrink-0">
-        Top Critical Findings
-      </p>
       <div className="overflow-auto flex-1 min-h-0">
         <table aria-label="Top findings" className="w-full text-xs font-mono border-collapse" data-table>
           <thead>

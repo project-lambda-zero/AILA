@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { PixelIcon } from "@/components/aila/PixelIcon";
 import { WindowPanel } from "@/components/aila/WindowPanel";
 import { Button } from "@/components/ui/button";
 
@@ -308,7 +309,7 @@ function WriteUpCard({
               title={`Delete "${writeup.title}"`}
               aria-label="Delete write-up"
             >
-              {deleting ? "…" : "✕"}
+              {deleting ? "…" : <PixelIcon name="close" size={12} />}
             </Button>
           )}
         </div>

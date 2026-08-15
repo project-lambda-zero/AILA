@@ -1,5 +1,7 @@
 import type { UseMutationResult } from "@tanstack/react-query";
 
+import { PixelIcon } from "@/components/aila/PixelIcon";
+
 /** Reusable destructive-action button.
  *
  *  Pops a native ``window.confirm`` so we don't drag in a dialog library
@@ -41,9 +43,10 @@ export function DeleteButton({
         onClick={handleClick}
         disabled={mutation.isPending}
         title={`Delete ${label}`}
-        className="px-2 py-0.5 text-xs font-mono text-text-muted hover:text-critical hover:bg-elevated rounded transition-colors disabled:opacity-50"
+        aria-label={`Delete ${label}`}
+        className="inline-flex items-center justify-center px-2 py-0.5 text-xs font-mono text-text-muted hover:text-critical hover:bg-elevated rounded transition-colors disabled:opacity-50"
       >
-        ✕
+        <PixelIcon name="close" size={12} />
       </button>
     );
   }

@@ -123,7 +123,6 @@ export function RiskScoreWidget() {
         </text>
       </svg>
 
-      <p className="text-sm font-mono font-semibold text-text">Risk Score</p>
       <p className="text-xs font-mono text-text-muted">
         Updated {formatTimestamp(data.generated_at)}
       </p>

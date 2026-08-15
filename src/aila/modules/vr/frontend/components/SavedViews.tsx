@@ -343,7 +343,8 @@ function ViewMenu({
     <div
       role="menu"
       aria-label={`Options for '${view.name}'`}
-      className="absolute z-20 top-full left-0 mt-1 min-w-[15rem] rounded-md border border-border bg-elevated shadow-lg p-1"
+      className="absolute z-20 top-full left-0 mt-1 min-w-[15rem] rounded-md border bg-elevated p-1"
+      style={{ borderColor: "var(--color-border-bright)", boxShadow: "var(--bevel-raised)" }}
     >
       <button
         type="button"

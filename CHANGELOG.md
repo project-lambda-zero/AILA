@@ -7,6 +7,46 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.28] - 2026-08-14 -- Design system: console + investigation workbench, zero legacy
+
+### Added
+
+- Console composer parity with the design mockup: a mono prompt glyph, a
+  persistent suggestion-lane chip row above the input, an auto/focus mode
+  toggle, and a `send` button with an arrow glyph. The chat thread now sits in
+  a `console` titled panel (hatched bar + turn-count signature).
+- Investigation detail workbench: the VR, malware, and forensics investigation
+  pages are reworked from a single stacked column to the mockup tiled layout --
+  a main transcript/run column plus a 320px right rail of WindowPanel panes
+  (engine vitals, hypotheses, activity ledger, branches), built only from data
+  the page already fetches.
+
+### Changed
+
+- Bare screens now render design-system surfaces: settings, dashboard widgets,
+  onboarding, and the 404 / 500 / 403 and placeholder pages are wrapped in
+  WindowPanel / AilaCard.
+
+### Removed
+
+- All remaining off-brand color usage across the frontend: raw Tailwind palette
+  utilities (cyan / emerald / amber / violet / slate / red and friends), raw hex
+  in inline styles (about 200 occurrences in the vr module alone),
+  `text-white` / `bg-white` on colored fills, drop shadows on FABs and menus, and
+  pill radii on action buttons -- each mapped to a design-system token or icon.
+  Rendered emoji were replaced with PixelIcon / Phosphor glyphs, and the dead
+  `ui/breadcrumb.tsx` component was deleted.
+
+### Fixed
+
+- Persona and voice identity colors now use distinct design-system hues instead
+  of raw Tailwind classes.
+
+Workspace type-check (0 errors across all packages) and shell production build
+pass. Verified live: the console composer, the VR investigation tiled right rail
+(real data, eight panels), and every module page render with zero console errors.
+
+
 ## [0.5.27] - 2026-08-14 -- AILA design system: workbench shell + single midnight-cloud-8 identity
 
 ### Added

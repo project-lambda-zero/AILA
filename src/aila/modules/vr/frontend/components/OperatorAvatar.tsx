@@ -8,8 +8,8 @@
  */
 // DS warm categorical hues hashed to an operator id (dark text on top).
 const PALETTE = [
-  "#af87d7", "#97dbbe", "#f0a8c7", "#ff5f87",
-  "#b092ff", "#ffb85f", "#7bdfd3", "#c43b65",
+  "var(--color-lavender)", "var(--color-mint)", "var(--color-peach)", "var(--color-accent)",
+  "var(--color-medium)", "var(--color-amber)", "var(--color-accent-hover)", "var(--color-accent-deep)",
 ];
 
 function hashString(s: string): number {
@@ -45,7 +45,7 @@ export function OperatorAvatar({
     <span
       title={`Operator: ${operatorId}`}
       className="inline-flex items-center justify-center rounded-full font-mono"
-      style={{ width: size, height: size, fontSize: Math.floor(size * 0.42), background: colour, color: "#1a0a12" }}
+      style={{ width: size, height: size, fontSize: Math.floor(size * 0.42), background: colour, color: "var(--text-on-accent)" }}
       aria-label={`Operator ${operatorId}`}
     >
       {initial}

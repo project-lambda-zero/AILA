@@ -53,9 +53,11 @@ export function ActiveScansWidget() {
     <div className="h-full w-full p-4 flex flex-col justify-center gap-2">
       <div className="flex items-center gap-2">
         <Activity className="h-5 w-5 text-accent" aria-hidden="true" />
-        <p className="text-xs font-mono text-text-muted uppercase tracking-wider">
-          {hasActiveScanData ? "Active Scans" : "Total Findings"}
-        </p>
+        {!hasActiveScanData && (
+          <span className="font-mono text-[10px] uppercase tracking-widest text-text-muted">
+            fallback · total
+          </span>
+        )}
       </div>
 
       <p className="text-4xl font-mono font-bold text-text">

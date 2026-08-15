@@ -421,7 +421,7 @@ function InvestigationControls({
             <Button
               size="sm"
               variant="outline"
-              className="border-amber-400/60 text-amber-400 hover:bg-amber-400/10"
+              style={{ borderColor: "color-mix(in srgb, var(--color-amber) 60%, transparent)", color: "var(--color-amber)" }}
               onClick={() => openTagForm("false")}
               disabled={isDisabledTag || tag.isPending}
               title={isDisabledTag ? "Only completed investigations can be tagged" : undefined}
@@ -436,9 +436,7 @@ function InvestigationControls({
           <p className="text-sm font-medium text-foreground">
             Tag as{" "}
             <span
-              className={
-                tagForm === "true" ? "text-mint" : "text-amber-400"
-              }
+              style={{ color: tagForm === "true" ? "var(--color-mint)" : "var(--color-amber)" }}
             >
               {tagForm === "true" ? "TRUE" : "FALSE"}
             </span>{" "}
@@ -496,11 +494,8 @@ function InvestigationControls({
               size="sm"
               onClick={submitTag}
               disabled={tag.isPending}
-              className={
-                tagForm === "true"
-                  ? "bg-mint text-badge-text hover:brightness-110"
-                  : "bg-amber-400 text-badge-text hover:brightness-110"
-              }
+              className="text-badge-text hover:brightness-110"
+              style={{ background: tagForm === "true" ? "var(--color-mint)" : "var(--color-amber)" }}
             >
               {tag.isPending ? "Saving…" : "Confirm"}
             </Button>
@@ -630,6 +625,82 @@ export function InvestigationDetailPage() {
     { id: "activity", label: "Activity" },
   ];
 
+  // ----- Right-rail overview panes (built only from already-fetched data) -----
+  const vitalsTone: "ok" | "warn" | "info" | "accent" =
+    investigation.status === "completed"
+      ? "ok"
+      : investigation.status === "failed" ||
+          investigation.status === "exhausted" ||
+          investigation.status === "cancelled"
+        ? "warn"
+        : isRunning
+          ? "info"
+          : "accent";
+
+  const vitalsRows: Array<{ k: string; v: string | number }> = [
+    { k: "status", v: investigation.status },
+    {
+      k: "attempts",
+      v: `${investigation.attempts_used}${investigation.max_attempts ? `/${investigation.max_attempts}` : ""}`,
+    },
+    ...(investigation.confidence ? [{ k: "confidence", v: investigation.confidence }] : []),
+    ...(isRunning ? [{ k: "feed", v: feedStatus }] : []),
+    ...(isRunning && latestStage ? [{ k: "stage", v: latestStage }] : []),
+    { k: "steps", v: investigation.steps.length },
+    { k: "answers", v: answers?.length ?? 0 },
+    { k: "resolved", v: investigation.final_answer ? "yes" : "no" },
+  ];
+
+  // Aggregate hypotheses across every recorded step; a later `rejected`
+  // entry supersedes a live one carrying the same id/claim.
+  const railHypotheses: Array<{ key: string; claim: string; state: "live" | "rejected" }> = (() => {
+    const m = new Map<string, { key: string; claim: string; state: "live" | "rejected" }>();
+    for (const step of investigation.steps) {
+      for (const h of step.hypotheses ?? []) {
+        const key = h.id || h.claim || "";
+        if (!key) continue;
+        m.set(key, { key, claim: h.claim || h.id || key, state: "live" });
+      }
+      for (const r of step.rejected ?? []) {
+        const key = r.id || r.claim || "";
+        if (!key) continue;
+        m.set(key, { key, claim: r.claim || r.id || key, state: "rejected" });
+      }
+    }
+    return [...m.values()];
+  })();
+
+  // Append-only activity ticker: the live stream while running, else the
+  // durable reasoning-step ledger.
+  const railLedger: Array<{ key: string; kind: string; payload: string; color: string }> =
+    isRunning && liveEvents.length > 0
+      ? liveEvents.map((ev, i) => {
+          const s = ev.stage ?? "";
+          return {
+            key: `ev-${i}`,
+            kind: ev.stage ?? "event",
+            payload: ev.message ?? "",
+            color:
+              s.includes("error") || s.includes("failed")
+                ? "var(--color-critical)"
+                : s.includes("done") || s === "completed"
+                  ? "var(--color-mint)"
+                  : "var(--color-lavender)",
+          };
+        })
+      : investigation.steps
+          .slice()
+          .sort((a, b) => a.step_number - b.step_number)
+          .map((s) => ({
+            key: s.id,
+            kind: s.action || `#${s.step_number}`,
+            payload: s.reasoning || s.command || "",
+            color:
+              s.exit_code !== null && s.exit_code !== 0
+                ? "var(--color-critical)"
+                : "var(--color-mint)",
+          }));
+
   return (
     <div className="space-y-4">
       {/* Back link */}
@@ -724,6 +795,12 @@ export function InvestigationDetailPage() {
         </WindowPanel>
       )}
 
+      {/* Tiled workbench -- main reasoning column + a right rail of DFIR
+          overview panes (engine vitals / hypotheses / ledger). The rail
+          stacks under the main column below xl. */}
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
+        <div className="min-w-0 flex-1 space-y-4">
+
       {/* Additive live run panel -- surfaces streaming status, attempts
           progress, elapsed time and the latest events without the
           operator having to open the Live tab. Only mounted while the
@@ -784,10 +861,14 @@ export function InvestigationDetailPage() {
             <div className="flex items-center gap-2 text-xs text-text-muted">
               <span
                 className={`inline-block w-2 h-2 rounded-full ${
-                  feedStatus === "live" ? "bg-amber-400 animate-pulse" :
-                  feedStatus === "connecting" ? "bg-lavender animate-pulse" :
-                  "bg-elevated"
+                  feedStatus === "live" || feedStatus === "connecting" ? "animate-pulse" : ""
                 }`}
+                style={{
+                  background:
+                    feedStatus === "live" ? "var(--color-amber)" :
+                    feedStatus === "connecting" ? "var(--color-lavender)" :
+                    "var(--color-elevated)",
+                }}
               />
               <span className="font-mono">{feedStatus}</span>
             </div>
@@ -809,12 +890,12 @@ export function InvestigationDetailPage() {
                   }
                 }
                 const color =
-                  stage.includes("error") || stage.includes("failed") ? "text-critical" :
-                  stage.includes("done") || stage === "completed" || stage.includes("detected") ? "text-mint" :
-                  stage.includes("start") || stage.includes("begin") ? "text-amber-400" :
-                  stage === "artifact_added" ? "text-lavender" :
-                  stage === "heartbeat" ? "text-text-muted" :
-                  "text-accent";
+                  stage.includes("error") || stage.includes("failed") ? "var(--color-critical)" :
+                  stage.includes("done") || stage === "completed" || stage.includes("detected") ? "var(--color-mint)" :
+                  stage.includes("start") || stage.includes("begin") ? "var(--color-amber)" :
+                  stage === "artifact_added" ? "var(--color-lavender)" :
+                  stage === "heartbeat" ? "var(--color-text-muted)" :
+                  "var(--color-accent)";
                 const lane = typeof payload.lane === "string" ? payload.lane : undefined;
                 const path = typeof payload.path === "string" ? payload.path : undefined;
                 const err = typeof payload.error === "string" ? payload.error : undefined;
@@ -851,7 +932,7 @@ export function InvestigationDetailPage() {
                       {ev.percent !== null && ev.percent !== undefined && ev.percent > 0 && (
                         <span className="shrink-0 text-text-muted w-9 text-right">{ev.percent}%</span>
                       )}
-                      <span className={`shrink-0 font-semibold ${color}`}>[{stage}]</span>
+                      <span className="shrink-0 font-semibold" style={{ color }}>[{stage}]</span>
                       {lane && <span className="shrink-0 text-text-muted">{lane}</span>}
                       {typeof inner === "string" && inner && (
                         <span className="shrink-0 text-text-muted">{inner as string}</span>
@@ -862,7 +943,10 @@ export function InvestigationDetailPage() {
                       <div className="pl-14 text-3xs text-text-muted break-all">↳ {path}</div>
                     )}
                     {err && (
-                      <div className="pl-14 text-3xs text-critical/80 break-all whitespace-pre-wrap">✗ {err}</div>
+                      <div className="pl-14 text-3xs text-critical/80 break-all whitespace-pre-wrap flex gap-1">
+                        <PixelIcon name="close" size={11} className="shrink-0 mt-[1px]" />
+                        <span>{err}</span>
+                      </div>
                     )}
                     {reasoning && (
                       <details className="pl-14 mt-0.5" open>
@@ -876,20 +960,32 @@ export function InvestigationDetailPage() {
                     )}
                     {command && (
                       <details className="pl-14 mt-1">
-                        <summary className="cursor-pointer text-3xs text-amber-400/80 hover:text-amber-300">
+                        <summary
+                          className="cursor-pointer text-3xs hover:brightness-110"
+                          style={{ color: "color-mix(in srgb, var(--color-amber) 80%, transparent)" }}
+                        >
                           shell command ({command.length} chars) -- click to expand
                         </summary>
-                        <pre className="mt-1 text-2xs bg-elevated border border-amber-400/30 rounded px-2 py-1 whitespace-pre-wrap break-all text-amber-200">
+                        <pre
+                          className="mt-1 text-2xs bg-elevated rounded px-2 py-1 whitespace-pre-wrap break-all border"
+                          style={{ borderColor: "color-mix(in srgb, var(--color-amber) 30%, transparent)", color: "var(--color-amber)" }}
+                        >
                           {command}
                         </pre>
                       </details>
                     )}
                     {script && (
                       <details className="pl-14 mt-1">
-                        <summary className="cursor-pointer text-3xs text-amber-400/80 hover:text-amber-300">
+                        <summary
+                          className="cursor-pointer text-3xs hover:brightness-110"
+                          style={{ color: "color-mix(in srgb, var(--color-amber) 80%, transparent)" }}
+                        >
                           python script ({script.length} chars) -- click to expand
                         </summary>
-                        <pre className="mt-1 text-2xs bg-elevated border border-amber-400/30 rounded px-2 py-1 whitespace-pre-wrap break-all text-amber-200">
+                        <pre
+                          className="mt-1 text-2xs bg-elevated rounded px-2 py-1 whitespace-pre-wrap break-all border"
+                          style={{ borderColor: "color-mix(in srgb, var(--color-amber) 30%, transparent)", color: "var(--color-amber)" }}
+                        >
                           {script}
                         </pre>
                       </details>
@@ -978,6 +1074,79 @@ export function InvestigationDetailPage() {
             ))}
           </div>
         )}
+      </div>
+        </div>
+
+        <aside className="w-full space-y-4 xl:w-80 xl:flex-none" aria-label="Investigation overview">
+          <WindowPanel title="engine vitals" tone={vitalsTone} status={`investigation ; ${investigation.status}`}>
+            <dl className="flex flex-col">
+              {vitalsRows.map((r) => (
+                <div
+                  key={r.k}
+                  className="flex items-baseline justify-between gap-3 border-b border-border/60 py-1.5 last:border-b-0"
+                >
+                  <dt className="shrink-0 font-mono text-2xs uppercase tracking-cyber-sm text-text-muted">{r.k}</dt>
+                  <dd
+                    className="min-w-0 flex-1 truncate text-right font-mono text-xs text-foreground"
+                    title={String(r.v)}
+                  >
+                    {r.v}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </WindowPanel>
+
+          <WindowPanel title="hypotheses" tone="info" status={`${railHypotheses.length} tracked`} flush>
+            {railHypotheses.length === 0 ? (
+              <p className="p-4 text-xs text-text-muted">No hypotheses recorded yet.</p>
+            ) : (
+              <ul className="max-h-80 overflow-y-auto">
+                {railHypotheses.map((h) => (
+                  <li
+                    key={h.key}
+                    className="flex items-center gap-2 px-3 py-2 border-b border-border/60 last:border-b-0"
+                  >
+                    <span
+                      className="shrink-0 font-mono text-2xs uppercase tracking-cyber-sm"
+                      style={{ color: h.state === "rejected" ? "var(--color-text-faint)" : "var(--color-lavender)" }}
+                    >
+                      {h.state}
+                    </span>
+                    <span
+                      className={`min-w-0 flex-1 truncate text-xs ${
+                        h.state === "rejected" ? "text-text-muted line-through" : "text-foreground"
+                      }`}
+                      title={h.claim}
+                    >
+                      {h.claim}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </WindowPanel>
+
+          <WindowPanel title="ledger" tone="muted" status="append-only" flush>
+            {railLedger.length === 0 ? (
+              <p className="p-4 text-xs text-text-muted">
+                {isRunning ? "Waiting for the first activity frame\u2026" : "No reasoning steps recorded yet."}
+              </p>
+            ) : (
+              <ol className="max-h-96 overflow-y-auto font-mono">
+                {railLedger.map((e) => (
+                  <li
+                    key={e.key}
+                    className="px-3 py-1.5 text-3xs border-b border-border/40 last:border-b-0"
+                  >
+                    <span className="font-semibold" style={{ color: e.color }}>[{e.kind}]</span>
+                    {e.payload && <span className="ml-2 text-text-muted break-all">{e.payload}</span>}
+                  </li>
+                ))}
+              </ol>
+            )}
+          </WindowPanel>
+        </aside>
       </div>
     </div>
   );

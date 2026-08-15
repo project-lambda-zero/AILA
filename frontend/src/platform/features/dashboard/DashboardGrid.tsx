@@ -84,9 +84,9 @@ export function DashboardGrid({
       {/* Cyberpunk grid-placeholder override */}
       <style>{`
         .react-grid-placeholder {
-          background: var(--color-accent, #d97706) !important;
+          background: var(--color-accent) !important;
           opacity: 0.15;
-          border: 1px dashed var(--color-accent, #d97706);
+          border: 1px dashed var(--color-accent);
           border-radius: 4px;
         }
         .react-grid-item {
@@ -143,9 +143,17 @@ export function DashboardGrid({
 
                   {/* Widget content -- per-widget FeatureBoundary so one
                       failed widget renders a scoped retry surface instead
-                      of blanking the entire grid (V-24 resilience). */}
-                  <WindowPanel flush
-                  className="flex-1 overflow-auto min-h-0">{WidgetComponent ? (
+                      of blanking the entire grid (V-24 resilience).
+                      Non-edit mode carries the widget's display name in the
+                      panel title bar; edit mode hoists the name into the
+                      drag-handle strip above and leaves the panel flush so
+                      the OS-window chrome doesn't compete with the grip. */}
+                  <WindowPanel
+                    flush
+                    title={editMode ? undefined : widgetDef?.name}
+                    tone="muted"
+                    className="flex-1 overflow-auto min-h-0"
+                  >{WidgetComponent ? (
                     <FeatureBoundary label={widgetDef?.name ?? "Widget"}>
                       <WidgetComponent />
                     </FeatureBoundary>

@@ -309,7 +309,8 @@ function NarrativeViewer({
       : narrative.body.split(/\s+/).filter(Boolean).length;
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm p-4"
+      style={{ background: "color-mix(in srgb, var(--surface-sunk) 78%, transparent)" }}
       onClick={onClose}
       role="dialog"
       aria-modal="true"

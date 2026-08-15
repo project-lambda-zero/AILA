@@ -17,14 +17,14 @@ import { Fingerprint } from "@phosphor-icons/react/dist/csr/Fingerprint";
 import { Pulse } from "@phosphor-icons/react/dist/csr/Pulse";
 import { Compass } from "@phosphor-icons/react/dist/csr/Compass";
 
-type LauncherChip = {
+export type LauncherChip = {
   label: string;
   hint: string;
   prompt: string;
   Icon: typeof Terminal;
 };
 
-const LAUNCHER_CHIPS: readonly LauncherChip[] = [
+export const LAUNCHER_CHIPS: readonly LauncherChip[] = [
   {
     label: "Scan a host",
     hint: "Vulnerability scan",

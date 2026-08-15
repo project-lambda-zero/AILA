@@ -66,7 +66,6 @@ export function SeverityChartWidget() {
   if (chartData.length === 0) {
     return (
       <div className="h-full w-full p-4 flex flex-col items-center justify-center gap-1">
-        <p className="text-sm font-mono font-semibold text-text">Severity Distribution</p>
         <p className="text-xs font-mono text-text-muted">No findings recorded</p>
       </div>
     );
@@ -74,9 +73,6 @@ export function SeverityChartWidget() {
 
   return (
     <div className="h-full w-full p-2 flex flex-col">
-      <p className="text-xs font-mono text-text-muted uppercase tracking-wider px-2 pb-1">
-        Severity Distribution
-      </p>
       <div className="flex-1 min-h-0">
         <AilaChart
           type="pie"

@@ -60,13 +60,13 @@ import type {
 // ─────────────────────────────────────────────────────────────────────
 
 const STATUS_DOT: Record<InvestigationStatus, string> = {
-  created: "#af8c6c",
-  running: "#97dbbe",
-  paused: "#ffb85f",
-  completed: "#af87d7",
-  failed: "#f0a8c7",
-  abandoned: "#af8c6c",
-  stalled: "#af8c6c",
+  created: "var(--color-text-muted)",
+  running: "var(--color-mint)",
+  paused: "var(--color-amber)",
+  completed: "var(--color-lavender)",
+  failed: "var(--color-peach)",
+  abandoned: "var(--color-text-muted)",
+  stalled: "var(--color-text-muted)",
 };
 
 // Priority for the default "Smart" sort: live and actionable first.
@@ -117,8 +117,8 @@ function verifierBadgeTone(verdict?: string | null): VerifierTone {
 }
 
 function verdictTextColor(verdict?: string | null): string {
-  if (verdict === "confirmed") return "#97dbbe";
-  if (verdict === "refuted") return "#f0a8c7";
+  if (verdict === "confirmed") return "var(--color-mint)";
+  if (verdict === "refuted") return "var(--color-peach)";
   return "var(--color-text-muted)";
 }
 
@@ -131,9 +131,9 @@ const POLARITY_INLINE: Record<
   "finding" | "no_finding" | "inconclusive",
   { label: string; color: string }
 > = {
-  finding: { label: "finding", color: "#f0a8c7" },
-  no_finding: { label: "no finding", color: "#97dbbe" },
-  inconclusive: { label: "inconclusive", color: "#ffb85f" },
+  finding: { label: "finding", color: "var(--color-peach)" },
+  no_finding: { label: "no finding", color: "var(--color-mint)" },
+  inconclusive: { label: "inconclusive", color: "var(--color-amber)" },
 };
 
 // ─────────────────────────────────────────────────────────────────────
@@ -171,7 +171,7 @@ function InvestigationCard({
 }) {
   const isRunning = inv.status === "running";
   const isCreated = inv.status === "created";
-  const dotColor = STATUS_DOT[inv.status] ?? "#af8c6c";
+  const dotColor = STATUS_DOT[inv.status] ?? "var(--color-text-muted)";
   const KindIcon = KIND_ICON[inv.kind] ?? MagnifyingGlass;
 
   const verifierTone = verifierBadgeTone(inv.verifier_verdict);
@@ -195,16 +195,16 @@ function InvestigationCard({
       style={{
         opacity: dim ? 0.55 : 1,
         borderColor: isRunning
-          ? "color-mix(in srgb, #97dbbe 45%, var(--color-border))"
+          ? "color-mix(in srgb, var(--color-mint) 45%, var(--color-border))"
           : hasFindings && inv.verifier_verdict === "confirmed"
-            ? "color-mix(in srgb, #97dbbe 30%, var(--color-border))"
+            ? "color-mix(in srgb, var(--color-mint) 30%, var(--color-border))"
             : "var(--color-border)",
         boxShadow: isRunning
-          ? "inset 3px 0 0 #97dbbe, 0 0 12px color-mix(in srgb, #97dbbe 18%, transparent)"
+          ? "inset 3px 0 0 var(--color-mint), 0 0 12px color-mix(in srgb, var(--color-mint) 18%, transparent)"
           : hasFindings && inv.verifier_verdict === "confirmed"
-            ? "inset 3px 0 0 #97dbbe"
+            ? "inset 3px 0 0 var(--color-mint)"
             : inv.verifier_verdict === "refuted"
-              ? "inset 3px 0 0 #f0a8c7"
+              ? "inset 3px 0 0 var(--color-peach)"
               : isCreated
                 ? "inset 3px 0 0 transparent"
                 : "inset 3px 0 0 color-mix(in srgb, var(--color-text-muted) 30%, transparent)",
@@ -244,7 +244,7 @@ function InvestigationCard({
             <Star
               className="h-3.5 w-3.5 shrink-0"
               weight="fill"
-              style={{ color: "#ffb85f" }}
+              style={{ color: "var(--color-amber)" }}
               aria-label="favorite"
             />
           )}
@@ -301,8 +301,8 @@ function InvestigationCard({
             className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-mono font-semibold"
             title={`${findingsCount} linked findings`}
             style={{
-              background: "color-mix(in srgb, #97dbbe 14%, transparent)",
-              color: "#97dbbe",
+              background: "color-mix(in srgb, var(--color-mint) 14%, transparent)",
+              color: "var(--color-mint)",
             }}
           >
             <Bug className="h-3 w-3" weight="bold" />
@@ -345,7 +345,7 @@ function InvestigationCard({
           }}
           className="flex transition-colors"
           style={{
-            color: inv.is_favorite ? "#ffb85f" : "var(--color-text-muted)",
+            color: inv.is_favorite ? "var(--color-amber)" : "var(--color-text-muted)",
           }}
           title={inv.is_favorite ? "Unfavorite" : "Favorite"}
           aria-label={inv.is_favorite ? "Unfavorite" : "Favorite"}
@@ -709,8 +709,8 @@ export function InvestigationsListPage() {
               <span
                 className="w-2 h-2 rounded-full"
                 style={{
-                  background: kpis.running > 0 ? "#97dbbe" : "#af8c6c",
-                  boxShadow: kpis.running > 0 ? "0 0 6px #97dbbe" : "none",
+                  background: kpis.running > 0 ? "var(--color-mint)" : "var(--color-text-muted)",
+                  boxShadow: kpis.running > 0 ? "0 0 6px var(--color-mint)" : "none",
                 }}
               />
               <span className="font-mono font-semibold text-foreground">{kpis.running}</span>
@@ -736,9 +736,9 @@ export function InvestigationsListPage() {
                 <span className="inline-flex items-center gap-1.5 text-sm">
                   <ShieldCheck weight="fill" size={14} className="text-mint" />
                   <span className="font-mono text-xs">
-                    <span style={{ color: "#97dbbe" }}>{kpis.confirmed}</span>
+                    <span style={{ color: "var(--color-mint)" }}>{kpis.confirmed}</span>
                     <span className="text-text-muted/60"> / </span>
-                    <span style={{ color: "#f0a8c7" }}>{kpis.refuted}</span>
+                    <span style={{ color: "var(--color-peach)" }}>{kpis.refuted}</span>
                   </span>
                   <span className="text-text-muted text-xs">verdicts</span>
                 </span>
@@ -1105,10 +1105,10 @@ export function InvestigationsListPage() {
           style={
             favoritesOnly
               ? {
-                  borderColor: "#ffb85f",
+                  borderColor: "var(--color-amber)",
                   background:
-                    "color-mix(in srgb, #ffb85f 12%, transparent)",
-                  color: "#ffb85f",
+                    "color-mix(in srgb, var(--color-amber) 12%, transparent)",
+                  color: "var(--color-amber)",
                 }
               : {
                   borderColor: "var(--color-border)",

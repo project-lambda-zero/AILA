@@ -143,7 +143,8 @@ function ConfirmDeleteDialog({
 }) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: "color-mix(in srgb, var(--surface-sunk) 60%, transparent)" }}
       role="button"
       tabIndex={0}
       aria-label="Close delete confirmation"

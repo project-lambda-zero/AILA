@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 
+import { PixelIcon } from "@/components/aila/PixelIcon";
 import { WindowPanel } from "@/components/aila/WindowPanel";
 import { buildApiUrl } from "@platform/api/http";
 import { getAuthTokenStandalone } from "@platform/auth/useAuthStore";
@@ -188,7 +189,7 @@ export function ReadinessStreamPanel({
     
     {currentAction && (
       <div className="mb-3 px-3 py-2 rounded-md bg-elevated border border-border text-xs text-text-muted font-mono flex items-center gap-2">
-        <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+        <span className="inline-block w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "var(--color-amber)" }} />
         {currentAction.message}
       </div>
     )}
@@ -201,8 +202,14 @@ export function ReadinessStreamPanel({
             className="flex items-center justify-between px-3 py-1.5 rounded text-xs font-mono hover:bg-elevated"
           >
             <div className="flex items-center gap-2 min-w-0">
-              <span className={TOOL_STATUS_COLOR[e.status ?? ""] ?? "text-text-muted"}>
-                {e.status === "installed" ? "✓" : e.status === "missing" ? "✗" : "--"}
+              <span className={`inline-flex items-center ${TOOL_STATUS_COLOR[e.status ?? ""] ?? "text-text-muted"}`}>
+                {e.status === "installed" ? (
+                  <PixelIcon name="ok" size={12} />
+                ) : e.status === "missing" ? (
+                  <PixelIcon name="close" size={12} />
+                ) : (
+                  "--"
+                )}
               </span>
               <span className="text-foreground truncate">{e.tool}</span>
               {e.version && <span className="text-text-muted shrink-0">{e.version}</span>}
@@ -228,21 +235,21 @@ export function ReadinessStreamPanel({
             const stage = e.stage ?? "event";
             const color =
               stage.includes("failed")
-                ? "text-critical"
+                ? "var(--color-critical)"
                 : stage === "tool_done" && e.status === "installed"
-                ? "text-mint"
+                ? "var(--color-mint)"
                 : stage === "install_verified"
-                ? "text-mint"
+                ? "var(--color-mint)"
                 : stage === "installing" || stage === "install_exec"
-                ? "text-amber-400"
+                ? "var(--color-amber)"
                 : stage === "checking"
-                ? "text-lavender"
+                ? "var(--color-lavender)"
                 : stage === "heartbeat"
-                ? "text-text-muted/60"
-                : "text-text-muted";
+                ? "color-mix(in srgb, var(--color-text-muted) 60%, transparent)"
+                : "var(--color-text-muted)";
             return (
               <div key={i} className="px-2 py-1 text-3xs font-mono border-b border-border/40 last:border-b-0">
-                <span className={`${color} font-semibold`}>[{stage}]</span>
+                <span className="font-semibold" style={{ color }}>[{stage}]</span>
                 {e.tool && <span className="text-foreground ml-2">{e.tool}</span>}
                 {e.message && <span className="text-text-muted ml-2">-- {e.message}</span>}
                 {e.command && (
@@ -263,13 +270,14 @@ export function ReadinessStreamPanel({
     
     {result && (
       <div
-        className={`mt-4 px-4 py-3 rounded-md border text-sm font-medium ${
+        className={`mt-4 px-4 py-3 rounded-md border text-sm font-medium flex items-center gap-2 ${
           result.ready
             ? "border-mint/50 bg-mint/10 text-mint"
             : "border-critical/50 bg-critical/15 text-critical"
         }`}
       >
-        {result.ready ? "✓ Machine is ready" : "✗ Some required tools are missing"}
+        {result.ready ? <PixelIcon name="ok" size={14} /> : <PixelIcon name="close" size={14} />}
+        <span>{result.ready ? "Machine is ready" : "Some required tools are missing"}</span>
       </div>
     )}
     

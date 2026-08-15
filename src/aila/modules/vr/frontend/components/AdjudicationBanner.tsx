@@ -1,4 +1,5 @@
 import { AilaBadge } from "@/components/aila/AilaBadge";
+import { PixelIcon, type PixelIconName } from "@/components/aila/PixelIcon";
 
 /** Adjudication banner Topic 8.
  *
@@ -22,22 +23,22 @@ export interface AdjudicationResult {
 
 const TONE: Record<
   AdjudicationVerdict,
-  { hue: string; badge: "low" | "medium" | "critical"; icon: string }
+  { hue: string; badge: "low" | "medium" | "critical"; icon: PixelIconName }
 > = {
   accepted: {
     hue: "var(--color-mint)",
     badge: "low",
-    icon: "✓",
+    icon: "ok",
   },
   downgraded: {
     hue: "var(--color-amber)",
     badge: "medium",
-    icon: "△",
+    icon: "status",
   },
   blocked: {
     hue: "var(--color-critical)",
     badge: "critical",
-    icon: "✗",
+    icon: "close",
   },
 };
 
@@ -52,8 +53,8 @@ export function AdjudicationBanner({ result }: { result: AdjudicationResult }) {
       }}
     >
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-lg leading-none" aria-hidden>
-          {tone.icon}
+        <span className="inline-flex leading-none" aria-hidden style={{ color: tone.hue }}>
+          <PixelIcon name={tone.icon} size={16} />
         </span>
         <AilaBadge severity={tone.badge} size="sm">
           {result.verdict}

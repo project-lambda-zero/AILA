@@ -43,19 +43,19 @@ interface RadarToolbarProps {
 
 const SEVERITY_CHIP_STYLES: Record<string, { active: string; inactive: string }> = {
   critical: {
-    active: "bg-[var(--color-critical)] text-white border-[var(--color-critical)]",
+    active: "bg-[var(--color-critical)] text-[color:var(--text-on-accent)] border-[var(--color-critical)]",
     inactive: "border-border text-muted-foreground hover:border-[var(--color-critical)] hover:text-[var(--color-critical)]",
   },
   high: {
-    active: "bg-[var(--color-high)] text-white border-[var(--color-high)]",
+    active: "bg-[var(--color-high)] text-[color:var(--text-on-accent)] border-[var(--color-high)]",
     inactive: "border-border text-muted-foreground hover:border-[var(--color-high)] hover:text-[var(--color-high)]",
   },
   medium: {
-    active: "bg-[var(--color-medium)] text-white border-[var(--color-medium)]",
+    active: "bg-[var(--color-medium)] text-[color:var(--text-on-accent)] border-[var(--color-medium)]",
     inactive: "border-border text-muted-foreground hover:border-[var(--color-medium)] hover:text-[var(--color-medium)]",
   },
   low: {
-    active: "bg-[var(--color-low)] text-white border-[var(--color-low)]",
+    active: "bg-[var(--color-low)] text-[color:var(--text-on-accent)] border-[var(--color-low)]",
     inactive: "border-border text-muted-foreground hover:border-[var(--color-low)] hover:text-[var(--color-low)]",
   },
 };
@@ -102,11 +102,18 @@ function SubnetToggle({ enabled, onChange }: SubnetToggleProps) {
       className={cn(
         "flex items-center gap-1.5 px-2 py-0.5 rounded border font-mono text-[10px] transition-colors",
         enabled
-          ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
+          ? "bg-[var(--color-accent)] text-[color:var(--text-on-accent)] border-[var(--color-accent)]"
           : "border-border text-muted-foreground hover:border-[var(--color-accent)]",
       )}
     >
-      <span className={cn("w-3 h-3 rounded-sm border", enabled ? "bg-white border-white" : "border-border")} />
+      <span
+        className={cn(
+          "w-3 h-3 rounded-sm border",
+          enabled
+            ? "bg-[color:var(--text-on-accent)] border-[color:var(--text-on-accent)]"
+            : "border-border",
+        )}
+      />
       Subnet groups
     </button>
   );

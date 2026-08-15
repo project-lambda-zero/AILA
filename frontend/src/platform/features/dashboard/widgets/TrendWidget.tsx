@@ -61,7 +61,6 @@ export function TrendWidget() {
   if (!hasTrend) {
     return (
       <div className="h-full w-full p-4 flex flex-col justify-center gap-1">
-        <p className="text-sm font-mono font-semibold text-text">Findings Trend</p>
         <p className="text-xs font-mono text-text-muted">Trend data not available</p>
       </div>
     );
@@ -69,9 +68,6 @@ export function TrendWidget() {
 
   return (
     <div className="h-full w-full p-2 flex flex-col">
-      <p className="text-xs font-mono text-text-muted uppercase tracking-wider px-2 pb-1">
-        Findings Trend
-      </p>
       <div className="flex-1 min-h-0">
         <AilaChart
           type="area"

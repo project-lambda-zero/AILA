@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
+import { PixelIcon } from "@/components/aila/PixelIcon";
 
 import {
   usePauseInvestigation,
@@ -66,7 +67,8 @@ export function SteeringDrawer({
         type="button"
         aria-label="Close steering drawer"
         onClick={onClose}
-        className="flex-1 bg-black/40 backdrop-blur-sm"
+        className="flex-1 backdrop-blur-sm"
+        style={{ background: "color-mix(in srgb, var(--surface-sunk) 55%, transparent)" }}
       />
       {/* Drawer */}
       <aside className="w-full h-full bg-base border-l border-border overflow-y-auto" style={{ maxWidth: 480 }}>
@@ -82,10 +84,10 @@ export function SteeringDrawer({
           <button
             type="button"
             onClick={onClose}
-            className="text-text-muted hover:text-foreground text-xl leading-none"
+            className="inline-flex items-center text-text-muted hover:text-foreground leading-none"
             aria-label="Close drawer"
           >
-            ✕
+            <PixelIcon name="close" size={16} />
           </button>
         </header>
 

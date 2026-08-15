@@ -265,7 +265,7 @@ function InvestigationRow({
             <AilaBadge severity="info" size="sm">enriched</AilaBadge>
           )}
           {isRunning && (
-            <span className="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+            <span className="inline-block w-2 h-2 rounded-full animate-pulse" style={{ background: "var(--color-amber)" }} />
           )}
           <AilaBadge severity={STATUS_SEVERITY[display.status] ?? "info"} size="sm">
             {display.status}
@@ -370,24 +370,28 @@ function FullAnalysisButton({ projectId }: { projectId: string }) {
     {taskId && (
       <div className="mt-3 space-y-1">
         <div className="flex items-center gap-2 text-3xs text-text-muted font-mono">
-          <span className={`inline-block w-1.5 h-1.5 rounded-full ${
-            status === "streaming" ? "bg-amber-400 animate-pulse"
-            : status === "done" ? "bg-mint"
-            : status === "error" ? "bg-critical" : "bg-elevated"
-          }`} />
+          <span
+            className={`inline-block w-1.5 h-1.5 rounded-full ${status === "streaming" ? "animate-pulse" : ""}`}
+            style={{
+              background:
+                status === "streaming" ? "var(--color-amber)"
+                : status === "done" ? "var(--color-mint)"
+                : status === "error" ? "var(--color-critical)" : "var(--color-elevated)",
+            }}
+          />
           <span>task:{taskId.slice(0, 8)} · {status} · {events.length} event(s)</span>
         </div>
         <div className="max-h-64 overflow-y-auto rounded-[4px] border border-border p-2 font-mono text-3xs space-y-0.5" style={{ background: "var(--surface-sunk)" }}>
           {events.length === 0 && <p className="text-text-muted italic">Waiting for first event…</p>}
           {events.map((ev, i) => {
             const stage = ev.stage ?? "event";
-            const color = stage.includes("failed") || stage.includes("crashed") ? "text-critical"
-              : stage.includes("done") || stage.includes("succeeded") ? "text-mint"
-              : stage.includes("start") || stage.includes("begin") ? "text-amber-400"
-              : "text-accent";
+            const color = stage.includes("failed") || stage.includes("crashed") ? "var(--color-critical)"
+              : stage.includes("done") || stage.includes("succeeded") ? "var(--color-mint)"
+              : stage.includes("start") || stage.includes("begin") ? "var(--color-amber)"
+              : "var(--color-accent)";
             return (
               <div key={i}>
-                <span className={color}>[{stage}]</span>
+                <span style={{ color }}>[{stage}]</span>
                 <span className="text-text-muted ml-2">{ev.message ?? ""}</span>
               </div>
             );
@@ -713,7 +717,7 @@ function ReadinessStreamPanel({ projectId }: { projectId: string }) {
       {/* Current action */}
       {currentAction && (
         <div className="mb-3 px-3 py-2 rounded-md bg-elevated border border-border text-xs text-text-muted font-mono flex items-center gap-2">
-          <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+          <span className="inline-block w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: "var(--color-amber)" }} />
           {currentAction.message}
         </div>
       )}
@@ -727,8 +731,14 @@ function ReadinessStreamPanel({ projectId }: { projectId: string }) {
               className="flex items-center justify-between px-3 py-1.5 rounded text-xs font-mono hover:bg-elevated"
             >
               <div className="flex items-center gap-2 min-w-0">
-                <span className={TOOL_STATUS_COLOR[e.status ?? ""] ?? "text-text-muted"}>
-                  {e.status === "installed" ? "✓" : e.status === "missing" ? "✗" : "--"}
+                <span className={`inline-flex items-center ${TOOL_STATUS_COLOR[e.status ?? ""] ?? "text-text-muted"}`}>
+                  {e.status === "installed" ? (
+                    <PixelIcon name="ok" size={12} />
+                  ) : e.status === "missing" ? (
+                    <PixelIcon name="close" size={12} />
+                  ) : (
+                    "--"
+                  )}
                 </span>
                 <span className="text-foreground truncate">{e.tool}</span>
                 {e.version && (
@@ -756,16 +766,16 @@ function ReadinessStreamPanel({ projectId }: { projectId: string }) {
             {events.map((e, i) => {
               const stage = e.stage ?? "event";
               const color =
-                stage.includes("failed") ? "text-critical" :
-                stage === "tool_done" && e.status === "installed" ? "text-mint" :
-                stage === "install_verified" ? "text-mint" :
-                stage === "installing" || stage === "install_exec" ? "text-amber-400" :
-                stage === "checking" ? "text-lavender" :
-                stage === "heartbeat" ? "text-text-muted/60" :
-                "text-text-muted";
+                stage.includes("failed") ? "var(--color-critical)" :
+                stage === "tool_done" && e.status === "installed" ? "var(--color-mint)" :
+                stage === "install_verified" ? "var(--color-mint)" :
+                stage === "installing" || stage === "install_exec" ? "var(--color-amber)" :
+                stage === "checking" ? "var(--color-lavender)" :
+                stage === "heartbeat" ? "color-mix(in srgb, var(--color-text-muted) 60%, transparent)" :
+                "var(--color-text-muted)";
               return (
                 <div key={i} className="px-2 py-1 text-3xs font-mono border-b border-border/40 last:border-b-0">
-                  <span className={`${color} font-semibold`}>[{stage}]</span>
+                  <span className="font-semibold" style={{ color }}>[{stage}]</span>
                   {e.tool && <span className="text-foreground ml-2">{e.tool}</span>}
                   {e.message && <span className="text-text-muted ml-2">-- {e.message}</span>}
                   {e.command && (

@@ -38,17 +38,10 @@ export function MttrWidget() {
 
   return (
     <div className="h-full w-full p-4 flex flex-col justify-center gap-2">
-      <div className="flex items-center gap-2">
-        <Clock className="h-4 w-4 text-accent" aria-hidden="true" />
-        <p className="text-xs font-mono text-text-muted uppercase tracking-wider">
-          Findings Closed (30d)
-        </p>
-      </div>
-
+      <Clock className="h-4 w-4 text-accent" aria-hidden="true" />
       <p className="text-4xl font-mono font-bold text-text">
         {closedLast30d !== null ? closedLast30d : "--"}
       </p>
-
       <p className="text-xs font-mono text-text-muted">Last 30 days</p>
     </div>
   );

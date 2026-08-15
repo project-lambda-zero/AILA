@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { type CSSProperties, useMemo, useState } from "react";
 
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { PixelIcon } from "@/components/aila/PixelIcon";
@@ -10,13 +10,13 @@ import type { EvidenceItem } from "../types";
 type SortKey = "name" | "type" | "size" | "path";
 type SortDir = "asc" | "desc";
 
-const TYPE_TONE: Record<string, string> = {
-  disk_image: "bg-lavender/15 text-lavender",
-  memory_dump: "bg-medium/15 text-medium",
-  pcap: "bg-mint/15 text-mint",
-  log_file: "bg-amber-400/15 text-amber-400",
-  extracted_dir: "bg-peach/15 text-peach",
-  unknown: "bg-elevated text-text-muted",
+const TYPE_TONE: Record<string, CSSProperties> = {
+  disk_image: { background: "color-mix(in srgb, var(--color-lavender) 15%, transparent)", color: "var(--color-lavender)" },
+  memory_dump: { background: "color-mix(in srgb, var(--color-medium) 15%, transparent)", color: "var(--color-medium)" },
+  pcap: { background: "color-mix(in srgb, var(--color-mint) 15%, transparent)", color: "var(--color-mint)" },
+  log_file: { background: "color-mix(in srgb, var(--color-amber) 15%, transparent)", color: "var(--color-amber)" },
+  extracted_dir: { background: "color-mix(in srgb, var(--color-peach) 15%, transparent)", color: "var(--color-peach)" },
+  unknown: { background: "var(--color-elevated)", color: "var(--color-text-muted)" },
 };
 
 function formatBytes(bytes: number | null): string {
@@ -195,10 +195,9 @@ export function EvidenceTree({ projectId }: { projectId: string }) {
             type="button"
             onClick={() => setTypeFilter(typeFilter === t ? null : t)}
             className={`px-2.5 py-1 text-3xs rounded-[3px] font-mono uppercase tracking-cyber-sm ${
-              typeFilter === t
-                ? "bg-primary text-badge-text"
-                : TYPE_TONE[t] || TYPE_TONE.unknown
+              typeFilter === t ? "bg-primary text-badge-text" : ""
             }`}
+            style={typeFilter === t ? undefined : TYPE_TONE[t] || TYPE_TONE.unknown}
           >
             {t.replace(/_/g, " ")} ({n})
           </button>
@@ -278,7 +277,8 @@ export function EvidenceTree({ projectId }: { projectId: string }) {
                       </td>
                       <td className="px-3 py-1.5 align-top">
                         <span
-                          className={`px-1.5 py-0.5 rounded text-3xs font-medium whitespace-nowrap ${tone}`}
+                          className="px-1.5 py-0.5 rounded text-3xs font-medium whitespace-nowrap"
+                          style={tone}
                         >
                           {type.replace(/_/g, " ")}
                         </span>

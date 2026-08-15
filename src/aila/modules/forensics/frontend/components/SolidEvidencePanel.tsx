@@ -51,7 +51,7 @@ export function SolidEvidencePanel({ projectId }: Props) {
         <p className="text-xs text-text-muted">
           Open a completed investigation and hit{" "}
           <span className="font-mono text-mint">Tag as TRUE</span> or{" "}
-          <span className="font-mono text-amber-400">Tag as FALSE</span> to
+          <span className="font-mono" style={{ color: "var(--color-amber)" }}>Tag as FALSE</span> to
           promote its answer to solid evidence. Tagged findings are injected
           into every future investigation's prompt so the agent treats them
           as ground truth / known dead-ends.

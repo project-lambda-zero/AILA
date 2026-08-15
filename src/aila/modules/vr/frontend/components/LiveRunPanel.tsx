@@ -60,7 +60,7 @@ export const LIVE_PANEL_STATUSES: Partial<Record<InvestigationStatus, true>> = {
  *  swatch on the panel is drawn from the shared status/cost palette
  *  so this one accent reads unambiguously as "this thing is ticking
  *  right now." */
-const LIVE_INDICATOR = "#ff5f87";
+const LIVE_INDICATOR = "var(--color-accent)";
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 
@@ -199,7 +199,7 @@ export function LiveRunPanel({
   const budget = inv.cost_budget_usd;
   const actual = inv.cost_actual_usd;
   const costPct = budget > 0 ? Math.min(100, (actual / budget) * 100) : 0;
-  const costTone = costPct >= 90 ? "#ff5f87" : costPct >= 60 ? "#ffb85f" : "#97dbbe";
+  const costTone = costPct >= 90 ? "var(--color-accent)" : costPct >= 60 ? "var(--color-amber)" : "var(--color-mint)";
   const showLivePulse = !reduced && inv.status === "running";
 
   return (

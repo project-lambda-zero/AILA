@@ -87,8 +87,8 @@ function SaveViewDialog({
         }}
       />
       <div
-        className="relative z-10 bg-elevated border border-border rounded-sharp-md p-5 shadow-xl"
-        style={{ width: 380 }}
+        className="relative z-10 bg-elevated rounded-sharp-md p-5"
+        style={{ width: 380, border: "1px solid var(--color-border-bright)" }}
       >
         <div className="flex items-center justify-between mb-4">
           <h3
@@ -279,8 +279,8 @@ function SavedViewsMenu<TState>({
   return (
     <div
       ref={panelRef}
-      className="absolute right-0 mt-1 z-50 bg-elevated border border-border rounded-sharp-md shadow-xl"
-      style={{ minWidth: 280, maxWidth: 360 }}
+      className="absolute right-0 mt-1 z-50 bg-elevated rounded-sharp-md"
+      style={{ minWidth: 280, maxWidth: 360, border: "1px solid var(--color-border-bright)" }}
       role="menu"
     >
       <div className="max-h-72 overflow-y-auto py-1">

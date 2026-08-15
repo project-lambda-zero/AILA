@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type CSSProperties, useState } from "react";
 
 import { WindowPanel } from "@/components/aila/WindowPanel";
 
@@ -6,12 +6,12 @@ import { useStartInvestigation } from "../mutations";
 import { useProjectInvestigations } from "../queries";
 import type { InvestigationSummary } from "../types";
 
-const statusColors: Record<string, string> = {
-  pending: "text-text-muted",
-  running: "text-accent",
-  completed: "text-mint",
-  exhausted: "text-amber-400",
-  failed: "text-critical",
+const statusColors: Record<string, CSSProperties> = {
+  pending: { color: "var(--color-text-muted)" },
+  running: { color: "var(--color-accent)" },
+  completed: { color: "var(--color-mint)" },
+  exhausted: { color: "var(--color-amber)" },
+  failed: { color: "var(--color-critical)" },
 };
 
 export function FreeFlowChat({ projectId }: { projectId: string }) {
@@ -78,7 +78,7 @@ export function FreeFlowChat({ projectId }: { projectId: string }) {
           >
             <div className="flex items-center justify-between">
               <p className="text-foreground font-medium truncate mr-2">{inv.question}</p>
-              <span className={`text-xs font-mono ${statusColors[inv.status] ?? "text-text-muted"}`}>
+              <span className="text-xs font-mono" style={statusColors[inv.status] ?? { color: "var(--color-text-muted)" }}>
                 {inv.status}
               </span>
             </div>

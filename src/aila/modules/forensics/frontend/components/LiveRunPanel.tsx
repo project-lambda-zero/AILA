@@ -64,12 +64,12 @@ interface FeedVisual {
 }
 
 const FEED_VISUAL: Record<InvestigationFeedStatus, FeedVisual> = {
-  idle: { label: "idle", color: "#6b7280", pulse: false },
-  connecting: { label: "connecting", color: "#f59e0b", pulse: true },
-  live: { label: "streaming", color: "#22c55e", pulse: false },
-  unavailable: { label: "no stream", color: "#6b7280", pulse: false },
-  closed: { label: "closed", color: "#ef4444", pulse: false },
-  error: { label: "error", color: "#ef4444", pulse: false },
+  idle: { label: "idle", color: "var(--color-text-muted)", pulse: false },
+  connecting: { label: "connecting", color: "var(--color-amber)", pulse: true },
+  live: { label: "streaming", color: "var(--color-mint)", pulse: false },
+  unavailable: { label: "no stream", color: "var(--color-text-muted)", pulse: false },
+  closed: { label: "closed", color: "var(--color-critical)", pulse: false },
+  error: { label: "error", color: "var(--color-critical)", pulse: false },
 };
 
 const FALLBACK_STATUS_VISUAL: StatusVisual = {
@@ -97,18 +97,18 @@ function formatElapsed(ms: number): string {
   return `${s}s`;
 }
 
-function stageColorClass(stage: string): string {
-  if (stage.includes("error") || stage.includes("failed")) return "text-critical";
+function stageColor(stage: string): string {
+  if (stage.includes("error") || stage.includes("failed")) return "var(--color-critical)";
   if (
     stage === "completed" ||
     stage.includes("done") ||
     stage.includes("detected")
   ) {
-    return "text-mint";
+    return "var(--color-mint)";
   }
-  if (stage.includes("start") || stage.includes("begin")) return "text-amber-400";
-  if (stage === "artifact_added") return "text-lavender";
-  return "text-accent";
+  if (stage.includes("start") || stage.includes("begin")) return "var(--color-amber)";
+  if (stage === "artifact_added") return "var(--color-lavender)";
+  return "var(--color-accent)";
 }
 
 export interface LiveRunPanelProps {
@@ -188,7 +188,7 @@ export function LiveRunPanel({
                   width: 6,
                   height: 6,
                   backgroundColor: feed.color,
-                  boxShadow: `0 0 4px ${feed.color}80`,
+                  boxShadow: `0 0 4px color-mix(in srgb, ${feed.color} 50%, transparent)`,
                 }}
               />
               <span className="text-text-muted">{feed.label}</span>
@@ -248,7 +248,7 @@ export function LiveRunPanel({
             <ul className="space-y-1 text-xs font-mono">
               {recent.map((ev, i) => {
                 const stage = ev.stage ?? "--";
-                const color = stageColorClass(stage);
+                const color = stageColor(stage);
                 const pct = ev.percent;
                 return (
                   <li key={i} className="flex items-baseline gap-2">
@@ -257,7 +257,7 @@ export function LiveRunPanel({
                         {pct}%
                       </span>
                     )}
-                    <span className={`shrink-0 font-semibold ${color}`}>
+                    <span className="shrink-0 font-semibold" style={{ color }}>
                       [{stage}]
                     </span>
                     <span className="break-all text-foreground">

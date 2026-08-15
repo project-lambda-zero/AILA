@@ -180,7 +180,7 @@ export function GeographicMap({ className }: GeographicMapProps) {
                 {item.node.is_stale && (
                   <>
                     <br />
-                    <span style={{ color: "#9ca3af", fontSize: "10px" }}>[stale]</span>
+                    <span style={{ color: "var(--color-text-muted)", fontSize: "10px" }}>[stale]</span>
                   </>
                 )}
               </Popup>

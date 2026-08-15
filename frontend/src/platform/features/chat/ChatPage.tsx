@@ -19,12 +19,13 @@ import { Warning } from "@phosphor-icons/react/dist/csr/Warning";
 
 import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaBadge } from "@/components/aila/AilaBadge";
+import { PixelIcon } from "@/components/aila/PixelIcon";
 import { LoadingSkeletonGroup } from "@/components/aila/LoadingSkeleton";
 import { EmptyState } from "@/components/aila/EmptyState";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiHttpError } from "@platform/api/http";
-import { ChatLauncher } from "./ChatLauncher";
+import { ChatLauncher, LAUNCHER_CHIPS } from "./ChatLauncher";
 import {
   useCreateSession,
   useSendMessage,
@@ -267,19 +268,39 @@ function MessageBubble({
 // Composer
 // ---------------------------------------------------------------------------
 
+/**
+ * Console composer.
+ *
+ * Layout matches the design-system console mockup: a persistent one-line
+ * chip rail above the input bay for seeding common prompts (present during
+ * an active conversation too, not only on the empty launcher), a mono `>`
+ * prompt glyph at the left edge of the textarea, a segmented mode toggle
+ * (presentational -- routing/streaming behaviour is unchanged) and a send
+ * key carrying an explicit `send` label + arrow glyph.
+ *
+ * The toggle carries local UI state only; it does not steer routing or
+ * hit any hook. It is a hinted affordance the operator can flip while
+ * chatting, in line with the mockup.
+ */
+type ComposerMode = "auto" | "focus";
+
 function Composer({
   value,
   onValueChange,
   onSend,
   disabled,
   textareaRef,
+  onPickChip,
 }: {
   value: string;
   onValueChange: (next: string) => void;
   onSend: (content: string) => void;
   disabled: boolean;
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
+  onPickChip: (prompt: string) => void;
 }) {
+  const [mode, setMode] = useState<ComposerMode>("auto");
+
   const submit = () => {
     const trimmed = value.trim();
     if (!trimmed || disabled) return;
@@ -291,27 +312,66 @@ function Composer({
 
   return (
     <div className="border-t border-border bg-surface p-3">
+      {/* Persistent suggestion chip rail. Mirrors ChatLauncher's prompt
+          list so the operator keeps quick lanes reachable even after the
+          conversation is under way. */}
+      <div
+        className="mb-2 flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1"
+        data-testid="chat-composer-chips"
+        aria-label="Prompt suggestions"
+      >
+        <span
+          className="shrink-0 font-mono uppercase text-text-muted"
+          style={{ fontSize: "9.5px", letterSpacing: "0.14em" }}
+        >
+          lanes
+        </span>
+        {LAUNCHER_CHIPS.map((chip) => {
+          const ChipIcon = chip.Icon;
+          return (
+            <button
+              key={chip.label}
+              type="button"
+              onClick={() => onPickChip(chip.prompt)}
+              disabled={disabled}
+              className="shrink-0 inline-flex items-center gap-1 rounded-[3px] border border-border bg-elevated px-2 py-0.5 font-mono text-[10px] text-text-muted transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+            >
+              <ChipIcon size={11} weight="bold" aria-hidden="true" />
+              {chip.label}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Input bay -- a recessed console well that lifts to the hot-pink
           accent on focus. The textarea's own frame + ring are neutralised
           so the bay owns a single, clear focus affordance. */}
       <div className="rounded-[4px] border border-border bg-base transition-colors focus-within:border-accent/60">
-        <Textarea
-          aria-label="Message composer"
-          ref={textareaRef}
-          value={value}
-          onChange={(e) => onValueChange(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              submit();
-            }
-          }}
-          placeholder="Ask the platform anything -- Enter to send, Shift+Enter for newline."
-          disabled={disabled}
-          rows={3}
-          data-testid="chat-composer"
-          className="resize-none border-transparent bg-transparent font-mono text-xs focus-visible:border-transparent focus-visible:ring-0"
-        />
+        <div className="flex items-start gap-2 px-2 pt-1.5">
+          <span
+            aria-hidden="true"
+            className="mt-1.5 shrink-0 font-mono text-xs font-bold text-accent"
+          >
+            &gt;
+          </span>
+          <Textarea
+            aria-label="Message composer"
+            ref={textareaRef}
+            value={value}
+            onChange={(e) => onValueChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            placeholder="Ask the platform anything -- Enter to send, Shift+Enter for newline."
+            disabled={disabled}
+            rows={3}
+            data-testid="chat-composer"
+            className="flex-1 resize-none border-transparent bg-transparent px-0 font-mono text-xs focus-visible:border-transparent focus-visible:ring-0"
+          />
+        </div>
         <div className="flex items-center justify-between gap-2 border-t border-border px-2.5 py-1.5">
           <span className="flex items-center gap-1.5 font-mono text-[10px] text-text-muted">
             {disabled ? (
@@ -326,7 +386,37 @@ function Composer({
               `${value.length} characters`
             )}
           </span>
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2">
+            {/* Mode toggle -- presentational segmented control. Flips a
+                local UI state only; routing/streaming behaviour is not
+                gated on `mode`. Kept in-shell so the mockup pattern
+                (label + two segments beside the send key) reads. */}
+            <div
+              role="radiogroup"
+              aria-label="Composer mode"
+              data-testid="chat-composer-mode"
+              className="hidden items-center rounded-[3px] border border-border bg-elevated font-mono text-[10px] sm:inline-flex"
+            >
+              {(["auto", "focus"] as const).map((m) => {
+                const active = mode === m;
+                return (
+                  <button
+                    key={m}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => setMode(m)}
+                    className={`px-1.5 py-0.5 uppercase tracking-widest transition-colors ${
+                      active
+                        ? "bg-accent/15 text-accent"
+                        : "text-text-muted hover:text-text"
+                    }`}
+                  >
+                    {m}
+                  </button>
+                );
+              })}
+            </div>
             <span className="hidden items-center gap-1 font-mono text-[10px] text-text-muted sm:inline-flex">
               <kbd className="rounded-[2px] border border-border bg-elevated px-1 py-px text-text">
                 Enter
@@ -339,10 +429,11 @@ function Composer({
               onClick={submit}
               disabled={disabled || value.trim().length === 0}
               data-testid="chat-send"
-              className="gap-2"
+              className="gap-1.5"
             >
               <PaperPlaneRight size={14} weight="bold" />
-              Send
+              <span>send</span>
+              <PixelIcon name="arrow" size={12} aria-hidden="true" />
             </Button>
           </div>
         </div>
@@ -438,7 +529,43 @@ function ThreadPanel({
     (!lastPersisted || lastPersisted.role !== "user");
 
   return (
-    <div className="flex-1 min-w-0 flex flex-col border border-border rounded-[4px] bg-surface overflow-hidden">
+    <div
+      className="flex-1 min-w-0 flex flex-col border rounded-[4px] overflow-hidden"
+      style={{
+        borderColor: "var(--color-border-bright)",
+        background: "var(--color-surface)",
+        boxShadow: "var(--bevel-raised)",
+      }}
+    >
+      {/* console title bar -- the mockup panel chrome: pink light + mono
+          label + hatched grip + a turn-count sig. */}
+      <div
+        className="flex flex-none items-center gap-2 border-b px-3"
+        style={{
+          height: "var(--panel-title-h)",
+          borderColor: "var(--color-border)",
+          backgroundColor: "var(--color-chrome)",
+          backgroundImage: "var(--hatch)",
+        }}
+      >
+        <span
+          aria-hidden="true"
+          style={{ width: 7, height: 7, flex: "0 0 auto", background: "var(--color-accent)", boxShadow: "0 0 7px var(--color-accent)" }}
+        />
+        <span
+          className="font-mono uppercase"
+          style={{ fontSize: "10.5px", letterSpacing: "0.14em", color: "var(--color-text)" }}
+        >
+          console
+        </span>
+        <span aria-hidden="true" className="flex-1" style={{ height: 2, backgroundImage: "var(--hatch)" }} />
+        <span
+          className="font-mono"
+          style={{ fontSize: "9.5px", letterSpacing: "0.05em", color: "var(--color-text-faint)" }}
+        >
+          {persistedMessages.length} turns
+        </span>
+      </div>
       <div
         ref={scrollRef}
         className="flex-1 overflow-y-auto p-4 flex flex-col gap-5"
@@ -500,6 +627,7 @@ function ThreadPanel({
         }}
         disabled={state.isStreaming}
         textareaRef={composerRef}
+        onPickChip={seedComposer}
       />
     </div>
   );

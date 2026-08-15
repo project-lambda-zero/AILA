@@ -33,12 +33,13 @@ function intensityStyle(count: number, hexColor: string): CellStyle {
   return { backgroundColor: hexColor, opacity };
 }
 
-// Severity column definitions -- using inline hex to avoid CSS var in backgroundColor
+// Severity column definitions -- inline `background-color` CSS resolves
+// var() at runtime, so we route through the DS tokens rather than raw hex.
 const SEVERITY_COLS = [
-  { key: "critical" as const, label: "C", color: "#ef4444" }, // --color-critical dark
-  { key: "high" as const, label: "H", color: "#f97316" },     // --color-high dark
-  { key: "medium" as const, label: "M", color: "#eab308" },   // --color-medium dark
-  { key: "low" as const, label: "L", color: "#9ca3af" },      // --color-low dark
+  { key: "critical" as const, label: "C", color: "var(--color-critical)" },
+  { key: "high" as const, label: "H", color: "var(--color-high)" },
+  { key: "medium" as const, label: "M", color: "var(--color-medium)" },
+  { key: "low" as const, label: "L", color: "var(--color-text-muted)" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -150,8 +151,11 @@ export function SystemHeatmap({ className, exportRef }: SystemHeatmapProps) {
                     >
                       {count > 0 && (
                         <span
-                          className="font-mono text-[10px] text-white font-medium"
-                          style={{ opacity: 1 / style.opacity }} // Ensure text is always readable
+                          className="font-mono text-[10px] font-medium"
+                          style={{
+                            color: "var(--text-on-accent)",
+                            opacity: 1 / style.opacity, // ensure text stays readable
+                          }}
                         >
                           {count}
                         </span>

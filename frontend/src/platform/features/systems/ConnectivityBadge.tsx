@@ -18,7 +18,7 @@ export function ConnectivityBadge({ status }: { status: ConnectivityStatus | nul
       <span className="inline-flex items-center gap-1.5">
         <span
           className="inline-block h-1.5 w-1.5 rounded-full flex-shrink-0"
-          style={{ backgroundColor: "var(--color-connectivity-online, #97dbbe)" }}
+          style={{ backgroundColor: "var(--color-connectivity-online)" }}
           aria-hidden="true"
         />
         <AilaBadge severity="info" size="sm">ONLINE</AilaBadge>

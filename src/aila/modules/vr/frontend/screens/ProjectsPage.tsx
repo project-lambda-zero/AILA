@@ -77,8 +77,8 @@ function ProjectCard({
   // Tone the card top edge by status severity.
   const topEdgeColor: Record<typeof sev, string> = {
     info: "var(--color-text-muted)",
-    low: "#97dbbe",
-    medium: "#f0a8c7",
+    low: "var(--color-mint)",
+    medium: "var(--color-peach)",
     high: "var(--color-accent)",
     critical: "var(--color-accent)",
   };
@@ -170,7 +170,7 @@ function ProjectCard({
             style={{
               color:
                 project.latest_disclosure_status === "patched"
-                  ? "#97dbbe"
+                  ? "var(--color-mint)"
                   : project.latest_disclosure_status
                     ? "var(--color-accent)"
                     : "var(--color-text-muted)",

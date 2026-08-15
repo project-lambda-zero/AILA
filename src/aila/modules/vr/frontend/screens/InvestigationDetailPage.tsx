@@ -107,31 +107,31 @@ const dispatchColor: Record<
 // should pulse. Tones echo the dashboard's success/warn/crit/info hues
 // rather than the generic AilaBadge severity ramp so the dot reads as
 // "lifecycle phase", not "danger level".
-const _STATUS_FALLBACK = { color: "#af8c6c", label: "Unknown", pulse: false };
+const _STATUS_FALLBACK = { color: "var(--color-text-muted)", label: "Unknown", pulse: false };
 const STATUS_META: Record<
   string,
   { color: string; label: string; pulse: boolean }
 > = {
-  created:   { color: "#af8c6c", label: "Created",   pulse: false },
-  running:   { color: "#97dbbe", label: "Running",   pulse: true  },
-  paused:    { color: "#ffb85f", label: "Paused",    pulse: false },
-  completed: { color: "#af87d7", label: "Completed", pulse: false },
-  failed:    { color: "#f0a8c7", label: "Failed",    pulse: false },
-  abandoned: { color: "#af8c6c", label: "Abandoned", pulse: false },
-  stalled:   { color: "#af8c6c", label: "Stalled",   pulse: false },
+  created:   { color: "var(--color-text-muted)", label: "Created",   pulse: false },
+  running:   { color: "var(--color-mint)", label: "Running",   pulse: true  },
+  paused:    { color: "var(--color-amber)", label: "Paused",    pulse: false },
+  completed: { color: "var(--color-lavender)", label: "Completed", pulse: false },
+  failed:    { color: "var(--color-peach)", label: "Failed",    pulse: false },
+  abandoned: { color: "var(--color-text-muted)", label: "Abandoned", pulse: false },
+  stalled:   { color: "var(--color-text-muted)", label: "Stalled",   pulse: false },
 };
 
-const _BRANCH_STATUS_FALLBACK = { color: "#af8c6c", label: "Unknown" };
+const _BRANCH_STATUS_FALLBACK = { color: "var(--color-text-muted)", label: "Unknown" };
 const BRANCH_STATUS_META: Record<
   string,
   { color: string; label: string }
 > = {
-  active:    { color: "#97dbbe", label: "Active"    },
-  paused:    { color: "#ffb85f", label: "Paused"    },
-  merged:    { color: "#af87d7", label: "Merged"    },
-  promoted:  { color: "#97dbbe", label: "Promoted"  },
-  completed: { color: "#af87d7", label: "Completed" },
-  abandoned: { color: "#af8c6c", label: "Abandoned" },
+  active:    { color: "var(--color-mint)", label: "Active"    },
+  paused:    { color: "var(--color-amber)", label: "Paused"    },
+  merged:    { color: "var(--color-lavender)", label: "Merged"    },
+  promoted:  { color: "var(--color-mint)", label: "Promoted"  },
+  completed: { color: "var(--color-lavender)", label: "Completed" },
+  abandoned: { color: "var(--color-text-muted)", label: "Abandoned" },
 };
 
 // Persona visual identity -- each researcher persona gets a stable
@@ -153,19 +153,19 @@ const PERSONA_META: Partial<
 > & {
   default: { color: string; bg: string; initial: string; label: string };
 } = {
-  halvar:  { color: "#f0a8c7", bg: "color-mix(in srgb, #f0a8c7 16%, transparent)", initial: "H", label: "Halvar" },
-  maddie:  { color: "#af87d7", bg: "color-mix(in srgb, #af87d7 16%, transparent)", initial: "M", label: "Maddie" },
-  renzo:   { color: "#97dbbe", bg: "color-mix(in srgb, #97dbbe 16%, transparent)", initial: "R", label: "Renzo"  },
-  yuki:    { color: "#b092ff", bg: "color-mix(in srgb, #b092ff 16%, transparent)", initial: "Y", label: "Yuki"   },
-  noor:    { color: "#ffb85f", bg: "color-mix(in srgb, #ffb85f 16%, transparent)", initial: "N", label: "Noor"   },
-  wei:     { color: "#7bdfd3", bg: "color-mix(in srgb, #7bdfd3 16%, transparent)", initial: "W", label: "Wei"    },
+  halvar:  { color: "var(--color-peach)", bg: "color-mix(in srgb, var(--color-peach) 16%, transparent)", initial: "H", label: "Halvar" },
+  maddie:  { color: "var(--color-lavender)", bg: "color-mix(in srgb, var(--color-lavender) 16%, transparent)", initial: "M", label: "Maddie" },
+  renzo:   { color: "var(--color-mint)", bg: "color-mix(in srgb, var(--color-mint) 16%, transparent)", initial: "R", label: "Renzo"  },
+  yuki:    { color: "var(--color-medium)", bg: "color-mix(in srgb, var(--color-medium) 16%, transparent)", initial: "Y", label: "Yuki"   },
+  noor:    { color: "var(--color-amber)", bg: "color-mix(in srgb, var(--color-amber) 16%, transparent)", initial: "N", label: "Noor"   },
+  wei:     { color: "var(--color-accent)", bg: "color-mix(in srgb, var(--color-accent) 16%, transparent)", initial: "W", label: "Wei"    },
   // On-demand specialist agents (specialist_registry _BUILTINS "vr"):
   // named panelists spawned when a case needs an expert eye.
-  snake:   { color: "#8faf6a", bg: "color-mix(in srgb, #8faf6a 16%, transparent)", initial: "S", label: "Snake"  },
-  jak:     { color: "#e0a86a", bg: "color-mix(in srgb, #e0a86a 16%, transparent)", initial: "J", label: "Jak"    },
-  kratos:  { color: "#d97a7a", bg: "color-mix(in srgb, #d97a7a 16%, transparent)", initial: "K", label: "Kratos" },
-  lara:    { color: "#c7a25c", bg: "color-mix(in srgb, #c7a25c 16%, transparent)", initial: "L", label: "Lara"   },
-  default: { color: "#af8c6c", bg: "color-mix(in srgb, #af8c6c 16%, transparent)", initial: "?", label: "Branch" },
+  snake:   { color: "var(--color-mint)", bg: "color-mix(in srgb, var(--color-mint) 16%, transparent)", initial: "S", label: "Snake"  },
+  jak:     { color: "var(--color-amber)", bg: "color-mix(in srgb, var(--color-amber) 16%, transparent)", initial: "J", label: "Jak"    },
+  kratos:  { color: "var(--color-peach)", bg: "color-mix(in srgb, var(--color-peach) 16%, transparent)", initial: "K", label: "Kratos" },
+  lara:    { color: "var(--color-accent-deep)", bg: "color-mix(in srgb, var(--color-accent-deep) 16%, transparent)", initial: "L", label: "Lara"   },
+  default: { color: "var(--color-text-muted)", bg: "color-mix(in srgb, var(--color-text-muted) 16%, transparent)", initial: "?", label: "Branch" },
 };
 
 function personaMeta(voice?: PersonaVoice | string | null) {
@@ -292,7 +292,7 @@ function CostProgressBar({ actual, budget }: { actual: number; budget: number })
     );
   }
   const pct = Math.max(0, Math.min(100, (actual / budget) * 100));
-  const color = pct >= 80 ? "#f0a8c7" : pct >= 50 ? "#ffb85f" : "#97dbbe";
+  const color = pct >= 80 ? "var(--color-peach)" : pct >= 50 ? "var(--color-amber)" : "var(--color-mint)";
   return (
     <div
       role="progressbar"
@@ -779,245 +779,244 @@ export function InvestigationDetailPage() {
         </div>
       </div>
 
-      {/* Live run panel -- additive card shown ONLY while the
-          investigation is non-terminal. Consolidates status, workflow
-          stage, wall-clock elapsed (ticker gated on reduced motion),
-          live cost accrual and a 5-turn activity ticker sourced from
-          the existing ["vr","investigation-messages",...] cache. On
-          completed / failed / abandoned the existing outcome hero and
-          final banners cover the same surface, so we render nothing. */}
-      {LIVE_PANEL_STATUSES[inv.status] === true && (
-        <PanelBoundary
-          label="Live run"
-          invalidateKeyPrefix={["vr", "investigation-messages", inv.id]}
-        >
-          <LiveRunPanel
-            investigation={inv}
-            messages={messages}
-            branches={branches}
-            liveStatus={liveStatus}
-          />
-        </PanelBoundary>
-      )}
-
-      {/* §9 / §25 / §82 -- WorkflowStepper currentState. The real source
-          of truth is workflow_state_cursor.current_state, which is not
-          yet exposed via the API.
-
-          TODO: once
-          /vr/investigations/{id}/cursor exposes cursor.current_state on
-          the wire, replace this domain-status mapping with the cursor
-          read. The Phase B contract: GET returns
-          `{ current_state: WorkflowStateKey, archived_state: ... | null }`
-          and the mapping below collapses to
-          `currentState={cursor.current_state}` with
-          `cursor.current_state === '__paused__'` rendered as null below
-          the stepper (StatusIndicator already labels it).
-
-          Until then this mapping is best-effort: it collapses
-          investigation_setup / loop / emit into one display when
-          inv.status === 'running'. The paused branch below is the §9
-          explicit case so the UI does NOT mis-render setup. */}
-      {/* Command console -- phase progress, run state, live metrics and
-          run controls unified into one strip so the operator reads the
-          whole situation without scrolling past stacked cards. */}
-      <WindowPanel title="run state" tone="muted">
-        <h2 className="sr-only">Run state</h2>
-        <WorkflowStepper
-        flow="investigate"
-        currentState={
-          // fix §9 -- explicit paused mapping: pass null so the stepper
-          // dims every stage. The StatusIndicator owns the 'Paused'
-          // label; the stepper just stops claiming a wrong stage.
-          inv.status === "paused"
-            ? null
-            : inv.status === "running"
-              ? "investigation_loop"
-              : inv.status === "completed"
-                ? "investigation_emit"
-                : inv.status === "failed"
-                  ? "investigation_loop"
-                  : "investigation_setup"
-        }
-        failedAt={inv.status === "failed" ? "investigation_loop" : null}
-        />
-
-        {/* Run state + controls */}
-        <div className="mt-3 pt-3 border-t border-border/60 flex items-start justify-between gap-4 flex-wrap">
-          <div className="flex flex-col gap-1 min-w-0">
-            <StatusIndicator status={inv.status} pauseReason={inv.pause_reason} />
-            {inv.status === "failed" && inv.failure_reason && (
-              <p className="text-xs text-critical font-mono">
-                {inv.failure_reason}
-              </p>
-            )}
-            <p className="text-2xs text-text-muted font-mono uppercase tracking-cyber-sm">
-              {humanize(inv.strategy_family)} strategy
-            </p>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap min-w-0">
-            {inv.status === "running" && (
-              <ToolbarButton
-                icon={<Pause weight="fill" />}
-                label={pauseMut.isPending ? "Pausing…" : "Pause"}
-                onClick={() => pauseMut.mutate()}
-                disabled={pauseMut.isPending}
-              />
-            )}
-            {(inv.status === "paused" || resumeMut.isResuming) && (
-              <ToolbarButton
-                icon={<Play weight="fill" />}
-                // fix §54 -- `isResuming` covers the API call AND a 2s
-                // post-success hold so the button shows "Resuming…" until
-                // the worker has plausibly picked up the task. Without
-                // this the label flipped back to "Resume" before the
-                // refetch landed, looking like the click did nothing.
-                label={resumeMut.isResuming ? "Resuming…" : "Resume"}
-                variant="primary"
-                onClick={() => resumeMut.mutate()}
-                disabled={resumeMut.isResuming}
-              />
-            )}
-            {inv.status === "created" && (
-              <ToolbarButton
-                icon={<Play weight="fill" />}
-                label={reenqueueMut.isPending ? "Starting…" : "Start"}
-                variant="primary"
-                onClick={() => reenqueueMut.mutate(undefined)}
-                disabled={reenqueueMut.isPending}
-                title="Start this investigation (enqueue run_vr_investigate task)"
-              />
-            )}
-            {(inv.status === "completed" ||
-              inv.status === "failed" ||
-              inv.status === "stalled") && (
-              <ReenqueuePicker
-                currentKind={inv.kind}
-                mutation={reenqueueMut}
-              />
-            )}
-            {/* §9 -- Reopen button. Consumer of the reopen endpoint
-                that Phase B rebuilds as a phase-handoff dispatcher.
-                The URL stays the same; the
-                server-side rewrite swaps the imperative spawn for a
-                cursor-driven re-dispatch. No frontend change here
-                until Phase B lands. */}
-            {(inv.status === "completed" || inv.status === "failed" || inv.status === "abandoned") && (
-              <ToolbarButton
-                icon={<Play weight="fill" />}
-                label={reopenMut.isPending ? "Reopening…" : "Reopen"}
-                variant="primary"
-                onClick={() => reopenMut.mutate()}
-                disabled={reopenMut.isPending}
-                title={
-                  "Push this terminal investigation back into the " +
-                  "workflow. Spawns a fresh primary branch on top of " +
-                  "the existing history (non-destructive -- old branches " +
-                  "+ outcomes preserved as audit trail). Use when an " +
-                  "audit closed prematurely and you want another pass."
-                }
-              />
-            )}
-          </div>
-        </div>
-
-        {/* Compact stats row -- no giant KPI boxes, no duplication */}
-        <div className="mt-3 flex items-center gap-x-4 gap-y-1.5 flex-wrap text-xs font-mono text-text-muted">
-          <span className="inline-flex items-center gap-1.5">
-            <TreeStructure weight="fill" size={13} className="text-accent" />
-            <span className="text-foreground font-semibold tabular-nums">{inv.branch_count}</span> branches
-          </span>
-          <span className="w-px h-3 bg-border" />
-          <span className="inline-flex items-center gap-1.5">
-            <ChatCircleText weight="fill" size={13} className="text-text-muted" />
-            <span className="text-foreground font-semibold tabular-nums">{inv.message_count.toLocaleString()}</span> turns
-          </span>
-          <span className="w-px h-3 bg-border" />
-          <span className="inline-flex items-center gap-1.5">
-            <Lightning weight="fill" size={13} className="text-text-muted" />
-            ~<span className="text-foreground font-semibold tabular-nums">{((inv.message_count * 28000) / 1_000_000).toFixed(1)}M</span> tokens
-          </span>
-          <span className="w-px h-3 bg-border" />
-          <span className="inline-flex items-center gap-1.5">
-            <Target weight="fill" size={13} className={inv.outcome_count > 0 ? "text-mint" : "text-text-muted"} />
-            <span className="text-foreground font-semibold tabular-nums">{inv.outcome_count}</span> outcomes
-          </span>
-        </div>
-      </WindowPanel>
-
-      {/* ── Outcomes (hero position -- first content after status) ─── */}
-      {outcomes.length > 0 && (
-        <WindowPanel
-          title="outcomes"
-          tone="accent"
-          actions={
-            <span className="text-xs font-mono text-text-muted tabular-nums">
-              {outcomes.length}
-            </span>
-          }
-        >
-          <h2 className="sr-only">Outcomes</h2>
-          <div className="space-y-3">
-            {primaryOutcome && (
-              <PrimaryOutcomeCard
-                outcome={primaryOutcome}
-                persona={branches.find((b) => b.id === primaryOutcome.branch_id)?.persona_voice ?? null}
-                invId={invId}
+      {/* Tiled workbench: main content column + right rail (~320px on
+          xl, stacked below on narrow). */}
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-3 items-start">
+        {/* Main content column -- live-run panel, run state, outcomes,
+            lineage, then the turn timeline + operator composer. The right
+            rail sits alongside on xl and stacks below on narrow. */}
+        <div className="space-y-3 min-w-0">
+          {/* Live run panel -- additive card shown ONLY while the
+              investigation is non-terminal. Consolidates status, workflow
+              stage, wall-clock elapsed (ticker gated on reduced motion),
+              live cost accrual and a 5-turn activity ticker sourced from
+              the existing ["vr","investigation-messages",...] cache. On
+              completed / failed / abandoned the existing outcome hero and
+              final banners cover the same surface, so we render nothing. */}
+          {LIVE_PANEL_STATUSES[inv.status] === true && (
+            <PanelBoundary
+              label="Live run"
+              invalidateKeyPrefix={["vr", "investigation-messages", inv.id]}
+            >
+              <LiveRunPanel
+                investigation={inv}
+                messages={messages}
                 branches={branches}
-                reverifyMut={reverifyMut}
-                promoteMut={promoteMut}
-                reviewMut={reviewMut}
+                liveStatus={liveStatus}
               />
-            )}
-            {primaryOutcome && (
-              <VRNarrativeControls
-                investigationId={invId}
-                narrative={readNarrative(primaryOutcome.payload)}
-              />
-            )}
-            {otherOutcomes.length > 0 && (
-              <ul className="space-y-1.5">
-                {otherOutcomes.map((o) => {
-                  const oPers = branches.find((b) => b.id === o.branch_id)?.persona_voice ?? null;
-                  return (
-                    <CompactOutcomeRow
-                      key={o.id}
-                      outcome={o}
-                      persona={oPers}
-                      invId={invId}
-                      branches={branches}
-                      reverifyMut={reverifyMut}
-                      promoteMut={promoteMut}
-                      reviewMut={reviewMut}
-                    />
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        </WindowPanel>
-      )}
+            </PanelBoundary>
+          )}
 
-      {/* Lineage -- ancestry + variant-hunt descendants derived from
-          parent_investigation_id + a client-side reverse lookup. The
-          panel self-hides when the investigation is standalone (no
-          parent, no children), so nothing changes on the historical
-          detail pages that lack lineage. */}
-      <PanelBoundary
-        label="Lineage"
-        invalidateKeyPrefix={["vr", "investigations"]}
-      >
-        <InvestigationLineagePanel investigation={inv} />
-      </PanelBoundary>
+          {/* §9 / §25 / §82 -- WorkflowStepper currentState. The real source
+              of truth is workflow_state_cursor.current_state, which is not
+              yet exposed via the API.
 
-      {/* Main layout -- aside (order-1 = above) + timeline (order-2 = below) */}
-      <div className="grid grid-cols-1 gap-3">
-        {/* Timeline column -- order-2 so it renders BELOW the aside.
-            Default scroll-to-bottom lands operator at the latest turn
-            (page bottom = last turn in timeline). To see hypotheses /
-            branches / outcomes / fuzz proposals, operator scrolls up
-            past the timeline to the aside section. */}
-        <div className="space-y-3 min-w-0 order-2">
+              TODO: once
+              /vr/investigations/{id}/cursor exposes cursor.current_state on
+              the wire, replace this domain-status mapping with the cursor
+              read. The Phase B contract: GET returns
+              `{ current_state: WorkflowStateKey, archived_state: ... | null }`
+              and the mapping below collapses to
+              `currentState={cursor.current_state}` with
+              `cursor.current_state === '__paused__'` rendered as null below
+              the stepper (StatusIndicator already labels it).
+
+              Until then this mapping is best-effort: it collapses
+              investigation_setup / loop / emit into one display when
+              inv.status === 'running'. The paused branch below is the §9
+              explicit case so the UI does NOT mis-render setup. */}
+          {/* Command console -- phase progress, run state, live metrics and
+              run controls unified into one strip so the operator reads the
+              whole situation without scrolling past stacked cards. */}
+          <WindowPanel title="run state" tone="muted">
+            <h2 className="sr-only">Run state</h2>
+            <WorkflowStepper
+            flow="investigate"
+            currentState={
+              // fix §9 -- explicit paused mapping: pass null so the stepper
+              // dims every stage. The StatusIndicator owns the 'Paused'
+              // label; the stepper just stops claiming a wrong stage.
+              inv.status === "paused"
+                ? null
+                : inv.status === "running"
+                  ? "investigation_loop"
+                  : inv.status === "completed"
+                    ? "investigation_emit"
+                    : inv.status === "failed"
+                      ? "investigation_loop"
+                      : "investigation_setup"
+            }
+            failedAt={inv.status === "failed" ? "investigation_loop" : null}
+            />
+
+            {/* Run state + controls */}
+            <div className="mt-3 pt-3 border-t border-border/60 flex items-start justify-between gap-4 flex-wrap">
+              <div className="flex flex-col gap-1 min-w-0">
+                <StatusIndicator status={inv.status} pauseReason={inv.pause_reason} />
+                {inv.status === "failed" && inv.failure_reason && (
+                  <p className="text-xs text-critical font-mono">
+                    {inv.failure_reason}
+                  </p>
+                )}
+                <p className="text-2xs text-text-muted font-mono uppercase tracking-cyber-sm">
+                  {humanize(inv.strategy_family)} strategy
+                </p>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap min-w-0">
+                {inv.status === "running" && (
+                  <ToolbarButton
+                    icon={<Pause weight="fill" />}
+                    label={pauseMut.isPending ? "Pausing…" : "Pause"}
+                    onClick={() => pauseMut.mutate()}
+                    disabled={pauseMut.isPending}
+                  />
+                )}
+                {(inv.status === "paused" || resumeMut.isResuming) && (
+                  <ToolbarButton
+                    icon={<Play weight="fill" />}
+                    // fix §54 -- `isResuming` covers the API call AND a 2s
+                    // post-success hold so the button shows "Resuming…" until
+                    // the worker has plausibly picked up the task. Without
+                    // this the label flipped back to "Resume" before the
+                    // refetch landed, looking like the click did nothing.
+                    label={resumeMut.isResuming ? "Resuming…" : "Resume"}
+                    variant="primary"
+                    onClick={() => resumeMut.mutate()}
+                    disabled={resumeMut.isResuming}
+                  />
+                )}
+                {inv.status === "created" && (
+                  <ToolbarButton
+                    icon={<Play weight="fill" />}
+                    label={reenqueueMut.isPending ? "Starting…" : "Start"}
+                    variant="primary"
+                    onClick={() => reenqueueMut.mutate(undefined)}
+                    disabled={reenqueueMut.isPending}
+                    title="Start this investigation (enqueue run_vr_investigate task)"
+                  />
+                )}
+                {(inv.status === "completed" ||
+                  inv.status === "failed" ||
+                  inv.status === "stalled") && (
+                  <ReenqueuePicker
+                    currentKind={inv.kind}
+                    mutation={reenqueueMut}
+                  />
+                )}
+                {/* §9 -- Reopen button. Consumer of the reopen endpoint
+                    that Phase B rebuilds as a phase-handoff dispatcher.
+                    The URL stays the same; the
+                    server-side rewrite swaps the imperative spawn for a
+                    cursor-driven re-dispatch. No frontend change here
+                    until Phase B lands. */}
+                {(inv.status === "completed" || inv.status === "failed" || inv.status === "abandoned") && (
+                  <ToolbarButton
+                    icon={<Play weight="fill" />}
+                    label={reopenMut.isPending ? "Reopening…" : "Reopen"}
+                    variant="primary"
+                    onClick={() => reopenMut.mutate()}
+                    disabled={reopenMut.isPending}
+                    title={
+                      "Push this terminal investigation back into the " +
+                      "workflow. Spawns a fresh primary branch on top of " +
+                      "the existing history (non-destructive -- old branches " +
+                      "+ outcomes preserved as audit trail). Use when an " +
+                      "audit closed prematurely and you want another pass."
+                    }
+                  />
+                )}
+              </div>
+            </div>
+
+            {/* Compact stats row -- no giant KPI boxes, no duplication */}
+            <div className="mt-3 flex items-center gap-x-4 gap-y-1.5 flex-wrap text-xs font-mono text-text-muted">
+              <span className="inline-flex items-center gap-1.5">
+                <TreeStructure weight="fill" size={13} className="text-accent" />
+                <span className="text-foreground font-semibold tabular-nums">{inv.branch_count}</span> branches
+              </span>
+              <span className="w-px h-3 bg-border" />
+              <span className="inline-flex items-center gap-1.5">
+                <ChatCircleText weight="fill" size={13} className="text-text-muted" />
+                <span className="text-foreground font-semibold tabular-nums">{inv.message_count.toLocaleString()}</span> turns
+              </span>
+              <span className="w-px h-3 bg-border" />
+              <span className="inline-flex items-center gap-1.5">
+                <Lightning weight="fill" size={13} className="text-text-muted" />
+                ~<span className="text-foreground font-semibold tabular-nums">{((inv.message_count * 28000) / 1_000_000).toFixed(1)}M</span> tokens
+              </span>
+              <span className="w-px h-3 bg-border" />
+              <span className="inline-flex items-center gap-1.5">
+                <Target weight="fill" size={13} className={inv.outcome_count > 0 ? "text-mint" : "text-text-muted"} />
+                <span className="text-foreground font-semibold tabular-nums">{inv.outcome_count}</span> outcomes
+              </span>
+            </div>
+          </WindowPanel>
+
+          {/* ── Outcomes (hero position -- first content after status) ─── */}
+          {outcomes.length > 0 && (
+            <WindowPanel
+              title="outcomes"
+              tone="accent"
+              actions={
+                <span className="text-xs font-mono text-text-muted tabular-nums">
+                  {outcomes.length}
+                </span>
+              }
+            >
+              <h2 className="sr-only">Outcomes</h2>
+              <div className="space-y-3">
+                {primaryOutcome && (
+                  <PrimaryOutcomeCard
+                    outcome={primaryOutcome}
+                    persona={branches.find((b) => b.id === primaryOutcome.branch_id)?.persona_voice ?? null}
+                    invId={invId}
+                    branches={branches}
+                    reverifyMut={reverifyMut}
+                    promoteMut={promoteMut}
+                    reviewMut={reviewMut}
+                  />
+                )}
+                {primaryOutcome && (
+                  <VRNarrativeControls
+                    investigationId={invId}
+                    narrative={readNarrative(primaryOutcome.payload)}
+                  />
+                )}
+                {otherOutcomes.length > 0 && (
+                  <ul className="space-y-1.5">
+                    {otherOutcomes.map((o) => {
+                      const oPers = branches.find((b) => b.id === o.branch_id)?.persona_voice ?? null;
+                      return (
+                        <CompactOutcomeRow
+                          key={o.id}
+                          outcome={o}
+                          persona={oPers}
+                          invId={invId}
+                          branches={branches}
+                          reverifyMut={reverifyMut}
+                          promoteMut={promoteMut}
+                          reviewMut={reviewMut}
+                        />
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            </WindowPanel>
+          )}
+
+          {/* Lineage -- ancestry + variant-hunt descendants derived from
+              parent_investigation_id + a client-side reverse lookup. The
+              panel self-hides when the investigation is standalone (no
+              parent, no children), so nothing changes on the historical
+              detail pages that lack lineage. */}
+          <PanelBoundary
+            label="Lineage"
+            invalidateKeyPrefix={["vr", "investigations"]}
+          >
+            <InvestigationLineagePanel investigation={inv} />
+          </PanelBoundary>
+
           {/* Filter bar */}
           <AilaCard padding="sm" techBorder glow>
             <div className="flex items-center gap-2 flex-wrap text-xs">
@@ -1102,8 +1101,8 @@ export function InvestigationDetailPage() {
                   <span
                     className="w-1.5 h-1.5 rounded-full"
                     style={{
-                      background: liveTail ? "#97dbbe" : "#af8c6c",
-                      boxShadow: liveTail ? "0 0 6px #97dbbe" : "none",
+                      background: liveTail ? "var(--color-mint)" : "var(--color-text-muted)",
+                      boxShadow: liveTail ? "0 0 6px var(--color-mint)" : "none",
                     }}
                   />
                 </label>
@@ -1196,7 +1195,7 @@ export function InvestigationDetailPage() {
                       );
                     }
                   }}
-                  placeholder="e.g. 'try the JSPI base address path' or 'that hypothesis is wrong because…'  (⌘↵ to send)"
+                  placeholder="e.g. 'try the JSPI base address path' or 'that hypothesis is wrong because…'  (Ctrl/Cmd+Enter to send)"
                   rows={3}
                   aria-label="Operator message composer"
                   className="flex-1 px-3 py-2.5 text-sm font-mono bg-transparent text-foreground placeholder-text-muted/60 focus:outline-none resize-none rounded-lg"
@@ -1235,13 +1234,78 @@ export function InvestigationDetailPage() {
           )}
         </div>
 
-        {/* Side rail -- order-1 so it renders ABOVE the timeline.
-            Operator default-scrolls to page bottom (latest turn in
-            timeline below); to see hypotheses / branches / outcomes,
-            scroll up past the timeline to here. */}
-        <aside className="space-y-3 min-w-0 order-1">
+        {/* Right rail -- engine vitals, hypotheses, and the activity
+            ledger, then supporting panels. ~320px on xl; stacks below the
+            main content column on narrow. */}
+        <aside className="space-y-3 min-w-0">
+          {/* Engine / vitals -- run state, cost, and counts read straight
+              from the investigation summary already fetched (no request). */}
+          <WindowPanel
+            title="engine ; vitals"
+            tone={
+              inv.status === "running"
+                ? "ok"
+                : inv.status === "failed"
+                  ? "accent"
+                  : inv.status === "paused"
+                    ? "warn"
+                    : "info"
+            }
+            status={`${humanize(inv.strategy_family)} strategy`}
+          >
+            <h3 className="sr-only">Engine vitals</h3>
+            <div className="space-y-3">
+              <StatusIndicator status={inv.status} pauseReason={inv.pause_reason} />
+              {(inv.cost_actual_usd > 0 || inv.cost_budget_usd > 0) && (
+                <div className="space-y-1.5">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="font-mono text-lg text-accent tabular-nums leading-none">
+                      {fmtUsd(inv.cost_actual_usd)}
+                    </span>
+                    {inv.cost_budget_usd > 0 && (
+                      <span className="text-2xs font-mono text-text-muted whitespace-nowrap">
+                        / {fmtUsd(inv.cost_budget_usd)}
+                      </span>
+                    )}
+                  </div>
+                  <CostProgressBar actual={inv.cost_actual_usd} budget={inv.cost_budget_usd} />
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                {[
+                  { k: "turns", v: inv.message_count.toLocaleString() },
+                  { k: "branches", v: String(inv.branch_count) },
+                  { k: "outcomes", v: String(inv.outcome_count) },
+                  { k: "llm cost", v: fmtUsd(inv.llm_tokens_cost_usd) },
+                  { k: "mcp cost", v: fmtUsd(inv.mcp_calls_cost_usd) },
+                  { k: "fuzz cost", v: fmtUsd(inv.fuzz_infra_cost_usd) },
+                ].map((r) => (
+                  <div
+                    key={r.k}
+                    className="flex flex-col min-w-0 border-b border-border/50 pb-1"
+                  >
+                    <span className="text-3xs font-mono uppercase tracking-wide text-text-muted truncate">
+                      {r.k}
+                    </span>
+                    <span className="text-sm font-mono text-foreground tabular-nums truncate">
+                      {r.v}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </WindowPanel>
           {/* Hypothesis projection (08_FRONTEND_UX.md §2.3) */}
           <HypothesisDetailRail investigationId={invId} live={isLive} />
+          {/* Activity ledger -- append-only workflow audit ticker for this
+              run. Uses investigation.id as run_id; empty state when the
+              backend has no rows under that key. */}
+          <PanelBoundary
+            label="Activity"
+            invalidateKeyPrefix={["vr", "investigation-audit", invId]}
+          >
+            <InvestigationActivityPanel investigationId={invId} />
+          </PanelBoundary>
           {/* Fuzz proposals queue (operator-in-the-loop) */}
           <FuzzProposalsPanel investigationId={invId} live={isLive} />
 
@@ -1250,17 +1314,6 @@ export function InvestigationDetailPage() {
               campaigns. Purely derived from the summary; hides itself
               when nothing is set. */}
           <InvestigationConnectedCard investigation={inv} />
-
-          {/* Activity trail -- workflow audit events for this run,
-              chronological. Uses investigation.id as run_id; empty
-              state when the backend has no rows under that key. */}
-          <PanelBoundary
-            label="Activity"
-            invalidateKeyPrefix={["vr", "investigation-audit", invId]}
-          >
-            <InvestigationActivityPanel investigationId={invId} />
-          </PanelBoundary>
-
 
           {/* Branches summary */}
           <WindowPanel
@@ -1383,7 +1436,7 @@ export function InvestigationDetailPage() {
               <button
                 type="button"
                 onClick={jumpToLatest}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[4px] bg-accent/95 text-background shadow-lg hover:bg-accent text-xs font-medium transition-colors"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[var(--radius-md)] bg-accent/95 text-[color:var(--text-on-accent)] border border-accent hover:bg-accent text-xs font-medium transition-colors"
                 title="Jump to latest turn"
               >
                 <Lightning weight="fill" size={12} />
@@ -1402,20 +1455,20 @@ export function InvestigationDetailPage() {
             <button
               type="button"
               onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-              className="w-10 h-10 rounded-[6px] bg-surface/95 border border-border text-foreground shadow-lg hover:bg-surface hover:border-accent transition-colors flex items-center justify-center text-base"
+              className="w-10 h-10 rounded-[6px] bg-surface/95 border border-border text-foreground hover:bg-surface hover:border-accent transition-colors flex items-center justify-center"
               aria-label="Scroll to top"
               title="Scroll to top"
             >
-              ↑
+              <PixelIcon name="down" size={16} style={{ transform: "rotate(180deg)" }} />
             </button>
             <button
               type="button"
               onClick={() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" })}
-              className="w-10 h-10 rounded-[6px] bg-surface/95 border border-border text-foreground shadow-lg hover:bg-surface hover:border-accent transition-colors flex items-center justify-center text-base"
+              className="w-10 h-10 rounded-[6px] bg-surface/95 border border-border text-foreground hover:bg-surface hover:border-accent transition-colors flex items-center justify-center"
               aria-label="Scroll to bottom"
               title="Scroll to bottom"
             >
-              ↓
+              <PixelIcon name="down" size={16} />
             </button>
           </div>
         </>,
@@ -1480,7 +1533,8 @@ function SiblingReviewForm({
         className="inline-flex items-center gap-1.5 px-2 py-0.5 text-3xs rounded border border-border text-text-muted hover:text-foreground hover:border-accent transition-colors"
         title="Cast a sibling review — approve quorum flips this outcome to APPROVED and fires the dispatcher."
       >
-        ⚖ Review
+        <ChatCircleText weight="regular" size={12} />
+        Review
       </button>
     );
   }
@@ -1621,7 +1675,7 @@ function VerifierBanner({ vr }: { vr: ReturnType<typeof readVerifier> }) {
   if (!vr?.verdict) return null;
   const isConfirmed = vr.verdict === "confirmed";
   const isRefuted = vr.verdict === "refuted";
-  const color = isConfirmed ? "#97dbbe" : isRefuted ? "#f0a8c7" : "#ffb85f";
+  const color = isConfirmed ? "var(--color-mint)" : isRefuted ? "var(--color-peach)" : "var(--color-amber)";
   const Icon = isConfirmed ? CheckCircle : isRefuted ? XCircle : WarningCircle;
   const conf = typeof vr.confidence === "number" ? ` (${vr.confidence.toFixed(2)})` : "";
   return (
@@ -1661,10 +1715,10 @@ function PrimaryOutcomeCard({
   const persMeta = personaMeta(persona);
   const verdictColor =
     vr?.verdict === "confirmed"
-      ? "#97dbbe"
+      ? "var(--color-mint)"
       : vr?.verdict === "refuted"
-        ? "#f0a8c7"
-        : "#ffb85f";
+        ? "var(--color-peach)"
+        : "var(--color-amber)";
   return (
     <div
       className="relative rounded-lg border bg-elevated/30 p-4 overflow-hidden"
@@ -1785,7 +1839,7 @@ function PrimaryOutcomeCard({
                   : "Promote this assessment_report to direct_finding (creates vr_finding row + dispatches downstream)."
             }
           >
-            {promoteMut.isPending ? "…" : "↗ Promote to finding"}
+            {promoteMut.isPending ? "…" : (<><PixelIcon name="emit" size={11} />Promote to finding</>)}
           </button>
         )}
       </div>
@@ -1810,11 +1864,11 @@ function CompactOutcomeRow({
   // any-other verdict=amber, unverified=neutral border.
   const verdictStripe =
     vr?.verdict === "confirmed"
-      ? "#97dbbe"
+      ? "var(--color-mint)"
       : vr?.verdict === "refuted"
-        ? "#f0a8c7"
+        ? "var(--color-peach)"
         : vr?.verdict
-          ? "#ffb85f"
+          ? "var(--color-amber)"
           : "var(--color-border)";
   return (
     <li
@@ -1854,10 +1908,10 @@ function CompactOutcomeRow({
               style={{
                 color:
                   vr.verdict === "confirmed"
-                    ? "#97dbbe"
+                    ? "var(--color-mint)"
                     : vr.verdict === "refuted"
-                      ? "#f0a8c7"
-                      : "#ffb85f",
+                      ? "var(--color-peach)"
+                      : "var(--color-amber)",
               }}
             >
               {vr.verdict === "confirmed" && <CheckCircle weight="fill" size={10} />}
@@ -1913,13 +1967,13 @@ function CompactOutcomeRow({
                         : "operator promote -- no verifier verdict";
                   promoteMut.mutate({ outcomeId: o.id, reason: note });
                 }}
-                className={`px-2 py-0.5 text-3xs rounded border transition-colors disabled:opacity-50 ${
+                className={`inline-flex items-center gap-1 px-2 py-0.5 text-3xs rounded border transition-colors disabled:opacity-50 ${
                   vr?.verdict === "confirmed"
                     ? "border-mint/60 text-mint hover:border-mint hover:bg-mint/10"
                     : "border-border text-text-muted hover:text-foreground hover:border-accent"
                 }`}
               >
-                {promoteMut.isPending ? "…" : "↗ Promote to finding"}
+                {promoteMut.isPending ? "…" : (<><PixelIcon name="emit" size={11} />Promote to finding</>)}
               </button>
             </div>
           )}
@@ -1933,11 +1987,11 @@ function CompactOutcomeRow({
 function outcomeKindSeverityColor(kind: string): string {
   const sev = outcomeKindSeverity(kind);
   switch (sev) {
-    case "critical": return "#f0a8c7";
-    case "high":     return "#ffb85f";
-    case "medium":   return "#af87d7";
-    case "low":      return "#97dbbe";
-    case "info":     return "#af87d7";
-    default:         return "#af8c6c";
+    case "critical": return "var(--color-peach)";
+    case "high":     return "var(--color-amber)";
+    case "medium":   return "var(--color-lavender)";
+    case "low":      return "var(--color-mint)";
+    case "info":     return "var(--color-lavender)";
+    default:         return "var(--color-text-muted)";
   }
 }

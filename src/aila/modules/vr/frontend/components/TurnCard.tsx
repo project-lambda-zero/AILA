@@ -60,22 +60,22 @@ interface SenderStyle {
 //   system     -> muted tan (low-key notes)
 const SENDER_STYLES: Record<string, SenderStyle> = {
   engine: {
-    accent: "#af87d7",
+    accent: "var(--color-lavender)",
     Icon: Brain,
     label: "Researcher",
   },
   operator: {
-    accent: "#ff5f87",
+    accent: "var(--color-accent)",
     Icon: User,
     label: "Operator",
   },
   tool: {
-    accent: "#97dbbe",
+    accent: "var(--color-mint)",
     Icon: Wrench,
     label: "Tool",
   },
   system: {
-    accent: "#af8c6c",
+    accent: "var(--color-text-muted)",
     Icon: GearSix,
     label: "System",
   },
@@ -109,12 +109,12 @@ interface PersonaStyle {
 // a researcher reads the same colour in the turn stream, branch list, and
 // outcome cards (the "mirror this scheme in TurnCard" note, now honoured).
 const PERSONA_STYLES: Record<string, PersonaStyle> = {
-  halvar: { color: "#f0a8c7", initial: "H" },
-  maddie: { color: "#af87d7", initial: "M" },
-  renzo: { color: "#97dbbe", initial: "R" },
-  noor: { color: "#ffb85f", initial: "N" },
-  yuki: { color: "#b092ff", initial: "Y" },
-  wei: { color: "#7bdfd3", initial: "W" },
+  halvar: { color: "var(--color-peach)", initial: "H" },
+  maddie: { color: "var(--color-lavender)", initial: "M" },
+  renzo: { color: "var(--color-mint)", initial: "R" },
+  noor: { color: "var(--color-amber)", initial: "N" },
+  yuki: { color: "var(--color-medium)", initial: "Y" },
+  wei: { color: "var(--color-accent)", initial: "W" },
 };
 
 function personaStyle(senderId: string | null): PersonaStyle | null {
@@ -647,11 +647,11 @@ function ToolCallBody({
       <div
         className="flex items-center gap-2 flex-wrap px-2 py-1.5 rounded border"
         style={{
-          background: "color-mix(in srgb, #97dbbe 8%, transparent)",
-          borderColor: "color-mix(in srgb, #97dbbe 25%, transparent)",
+          background: "color-mix(in srgb, var(--color-mint) 8%, transparent)",
+          borderColor: "color-mix(in srgb, var(--color-mint) 25%, transparent)",
         }}
       >
-        <Terminal size={14} weight="fill" className="shrink-0" style={{ color: "#97dbbe" }} />
+        <Terminal size={14} weight="fill" className="shrink-0" style={{ color: "var(--color-mint)" }} />
         <code className="font-mono text-sm text-foreground font-medium break-all">
           {name}
         </code>

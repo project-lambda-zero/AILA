@@ -512,7 +512,7 @@ function DeleteProviderDialog({
               <Button
                 type="button"
                 size="sm"
-                className="flex-1 bg-destructive hover:bg-destructive/90 text-white"
+                className="flex-1 bg-destructive text-[color:var(--text-on-accent)] hover:bg-destructive/90"
                 onClick={handleConfirm}
                 disabled={isPending}
               >

@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 
+import { DownloadSimple } from "@phosphor-icons/react/dist/csr/DownloadSimple";
+
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
 import { WindowPanel } from "@/components/aila/WindowPanel";
@@ -290,8 +292,9 @@ export function CarvedFilesPanel({ projectId }: { projectId: string }) {
                           })
                         }
                         disabled={download.isPending}
+                        aria-label={`Download ${fname}`}
                       >
-                        ⬇
+                        <DownloadSimple size={14} />
                       </Button>
                     </td>
                   </tr>

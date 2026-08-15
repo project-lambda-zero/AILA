@@ -1,7 +1,10 @@
 import { Fragment, useMemo, useState } from "react";
 
+import { Warning } from "@phosphor-icons/react/dist/csr/Warning";
+
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { PixelIcon } from "@/components/aila/PixelIcon";
 import { WindowPanel } from "@/components/aila/WindowPanel";
 
 import { useProjectArtifacts } from "../queries";
@@ -271,8 +274,16 @@ function ArtifactRow({ a }: { a: ArtifactWithData }) {
   const body = (
     <div className="space-y-3">
       {truncated && totalRecordCount != null && (
-        <div className="px-2 py-1 rounded border border-amber-400/40 bg-amber-400/10 text-amber-400 text-xs">
-          ⚠ truncated: showing first {records.length} of {totalRecordCount.toLocaleString()} record(s).
+        <div
+          className="px-2 py-1 rounded border text-xs flex items-center gap-1.5"
+          style={{
+            borderColor: "color-mix(in srgb, var(--color-amber) 40%, transparent)",
+            background: "color-mix(in srgb, var(--color-amber) 10%, transparent)",
+            color: "var(--color-amber)",
+          }}
+        >
+          <Warning size={13} weight="fill" className="shrink-0" />
+          <span>truncated: showing first {records.length} of {totalRecordCount.toLocaleString()} record(s).</span>
         </div>
       )}
       {records.length > 0 ? (
@@ -431,7 +442,8 @@ function ArtifactRow({ a }: { a: ArtifactWithData }) {
 
       {fullscreen && (
         <div
-          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6"
+          className="fixed inset-0 z-50 flex items-center justify-center p-6"
+          style={{ background: "color-mix(in srgb, var(--surface-sunk) 88%, transparent)" }}
           onClick={() => setFullscreen(false)}
         >
           <div
@@ -450,9 +462,9 @@ function ArtifactRow({ a }: { a: ArtifactWithData }) {
               <button
                 type="button"
                 onClick={() => setFullscreen(false)}
-                className="text-sm px-2 py-1 rounded border border-border hover:bg-elevated"
+                className="text-sm px-2 py-1 rounded border border-border hover:bg-elevated inline-flex items-center gap-1"
               >
-                close ✕
+                close <PixelIcon name="close" size={12} />
               </button>
             </div>
             <div className="flex-1 overflow-auto p-4">{body}</div>

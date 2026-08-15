@@ -3,6 +3,7 @@ import { useNavigate } from "react-router";
 
 import { AilaBadge } from "@/components/aila/AilaBadge";
 import { AilaCard } from "@/components/aila/AilaCard";
+import { PixelIcon } from "@/components/aila/PixelIcon";
 
 import { useCreateVRProject } from "../mutations";
 import { useRegisteredSystems, useWorkspaces } from "../queries";
@@ -288,7 +289,7 @@ export function NewProjectWizard() {
             onClick={() => setStep(2)}
             className="px-3 py-1.5 text-sm font-medium rounded bg-accent text-background hover:bg-accent/90 disabled:opacity-40"
           >
-            Continue →
+            Continue <PixelIcon name="arrow" size={11} className="align-middle" />
           </button>
         </div></AilaCard>
       )}
@@ -354,7 +355,7 @@ export function NewProjectWizard() {
             onClick={() => setStep(1)}
             className="px-3 py-1.5 text-sm font-medium rounded bg-surface border border-border hover:bg-elevated"
           >
-            ← Back
+            <PixelIcon name="arrow" size={11} className="align-middle" style={{ transform: "rotate(180deg)" }} /> Back
           </button>
           <button
             type="button"
@@ -362,7 +363,7 @@ export function NewProjectWizard() {
             onClick={() => setStep(3)}
             className="px-3 py-1.5 text-sm font-medium rounded bg-accent text-background hover:bg-accent/90 disabled:opacity-40"
           >
-            Continue →
+            Continue <PixelIcon name="arrow" size={11} className="align-middle" />
           </button>
         </div></AilaCard>
       )}
@@ -435,7 +436,7 @@ export function NewProjectWizard() {
             onClick={() => setStep(2)}
             className="px-3 py-1.5 text-sm font-medium rounded bg-surface border border-border hover:bg-elevated"
           >
-            ← Back
+            <PixelIcon name="arrow" size={11} className="align-middle" style={{ transform: "rotate(180deg)" }} /> Back
           </button>
           <button
             type="button"
@@ -488,7 +489,7 @@ function WizardStepper({ step }: { step: Step }) {
                     : "bg-surface border-border text-text-muted opacity-60")
               }
             >
-              {done ? "✓" : num}
+              {done ? <PixelIcon name="ok" size={12} /> : num}
             </div>
             <span
               className={

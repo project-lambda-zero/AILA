@@ -19,6 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 // ---------------------------------------------------------------------------
 // Section card wrapper
@@ -34,15 +35,14 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-lg border border-border bg-surface p-6 space-y-4">
-      <div className="flex items-center gap-2">
-        <span className="text-accent">{icon}</span>
-        <h2 className="text-base font-semibold font-mono tracking-tight text-foreground">
-          {title}
-        </h2>
-      </div>
-      {children}
-    </div>
+    <WindowPanel
+      title={title}
+      tone="accent"
+      actions={<span className="inline-flex items-center text-text-muted">{icon}</span>}
+      className="w-full"
+    >
+      <div className="space-y-4">{children}</div>
+    </WindowPanel>
   );
 }
 

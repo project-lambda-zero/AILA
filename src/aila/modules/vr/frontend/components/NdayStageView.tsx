@@ -1,4 +1,5 @@
 import { AilaBadge } from "@/components/aila/AilaBadge";
+import { PixelIcon, type PixelIconName } from "@/components/aila/PixelIcon";
 
 /** N-day 4-stage view from 08_FRONTEND_UX.md §1.11.
  *
@@ -29,11 +30,11 @@ const STATUS_TONE: Record<
   failed: "critical",
 };
 
-const STATUS_ICON: Record<StageStatus, string> = {
-  pending: "○",
-  in_progress: "◐",
-  complete: "✓",
-  failed: "!",
+const STATUS_ICON: Record<StageStatus, PixelIconName> = {
+  pending: "status",
+  in_progress: "cycle",
+  complete: "ok",
+  failed: "close",
 };
 
 export function NdayStageView({ stages }: { stages: ReadonlyArray<StageData> }) {
@@ -65,7 +66,7 @@ export function NdayStageView({ stages }: { stages: ReadonlyArray<StageData> }) 
                   : undefined
               }
             >
-              {STATUS_ICON[stage.status]}
+              <PixelIcon name={STATUS_ICON[stage.status]} size={12} />
             </div>
             <div className="flex-1 min-w-0 border border-border rounded-md p-3 bg-surface/40">
               <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
@@ -88,9 +89,10 @@ export function NdayStageView({ stages }: { stages: ReadonlyArray<StageData> }) 
                           stage.onRewind!();
                         }
                       }}
-                      className="text-3xs font-mono px-2 py-0.5 rounded bg-surface border border-border hover:bg-elevated"
+                      className="inline-flex items-center gap-1 text-3xs font-mono px-2 py-0.5 rounded bg-surface border border-border hover:bg-elevated"
                     >
-                      ↶ rewind
+                      <PixelIcon name="cycle" size={11} />
+                      rewind
                     </button>
                   )}
                 </div>

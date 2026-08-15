@@ -221,7 +221,8 @@ function FindingRow({
             <Button
               size="sm"
               variant="outline"
-              className="h-7 px-2 text-3xs border-amber-400/60 text-amber-400 hover:bg-amber-400/10"
+              className="h-7 px-2 text-3xs"
+              style={{ borderColor: "color-mix(in srgb, var(--color-amber) 60%, transparent)", color: "var(--color-amber)" }}
               disabled={suppress.isPending || !f.fingerprint}
               onClick={() => {
                 if (!f.fingerprint) return;

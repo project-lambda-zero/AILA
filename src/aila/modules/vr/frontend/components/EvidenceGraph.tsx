@@ -72,34 +72,34 @@ const NODE_TONE: Record<
   GraphNodeKind,
   { bg: string; border: string; tone: "info" | "low" | "medium" | "high" | "critical" }
 > = {
-  investigation: { bg: "color-mix(in srgb, #f0a8c7 16%, #121212)", border: "#f0a8c7", tone: "info" },     // signal root
-  branch:     { bg: "color-mix(in srgb, #af87d7 16%, #121212)", border: "#af87d7", tone: "info" },         // lavender persona-thread
-  hypothesis: { bg: "color-mix(in srgb, #b092ff 16%, #121212)", border: "#b092ff", tone: "info" },         // medium -- thinking
-  evidence:   { bg: "color-mix(in srgb, #97dbbe 16%, #121212)", border: "#97dbbe", tone: "low" },          // mint -- fact
-  crash:      { bg: "color-mix(in srgb, #ff5f87 16%, #121212)", border: "#ff5f87", tone: "critical" },     // critical
-  exploit:    { bg: "color-mix(in srgb, #ffb85f 16%, #121212)", border: "#ffb85f", tone: "high" },         // amber runtime proof
-  advisory:   { bg: "color-mix(in srgb, #af87d7 16%, #121212)", border: "#af87d7", tone: "medium" },       // lavender doc
-  obligation: { bg: "color-mix(in srgb, #af8c6c 16%, #121212)", border: "#af8c6c", tone: "info" },         // muted
-  outcome:    { bg: "color-mix(in srgb, #ff5f87 16%, #121212)", border: "#ff5f87", tone: "medium" },       // accent terminal artifact
-  finding:    { bg: "color-mix(in srgb, #b092ff 16%, #121212)", border: "#b092ff", tone: "medium" },       // medium dispatched finding
+  investigation: { bg: "color-mix(in srgb, var(--color-peach) 16%, var(--color-base))", border: "var(--color-peach)", tone: "info" },     // signal root
+  branch:     { bg: "color-mix(in srgb, var(--color-lavender) 16%, var(--color-base))", border: "var(--color-lavender)", tone: "info" },         // lavender persona-thread
+  hypothesis: { bg: "color-mix(in srgb, var(--color-medium) 16%, var(--color-base))", border: "var(--color-medium)", tone: "info" },         // medium -- thinking
+  evidence:   { bg: "color-mix(in srgb, var(--color-mint) 16%, var(--color-base))", border: "var(--color-mint)", tone: "low" },          // mint -- fact
+  crash:      { bg: "color-mix(in srgb, var(--color-accent) 16%, var(--color-base))", border: "var(--color-accent)", tone: "critical" },     // critical
+  exploit:    { bg: "color-mix(in srgb, var(--color-amber) 16%, var(--color-base))", border: "var(--color-amber)", tone: "high" },         // amber runtime proof
+  advisory:   { bg: "color-mix(in srgb, var(--color-lavender) 16%, var(--color-base))", border: "var(--color-lavender)", tone: "medium" },       // lavender doc
+  obligation: { bg: "color-mix(in srgb, var(--color-text-muted) 16%, var(--color-base))", border: "var(--color-text-muted)", tone: "info" },         // muted
+  outcome:    { bg: "color-mix(in srgb, var(--color-accent) 16%, var(--color-base))", border: "var(--color-accent)", tone: "medium" },       // accent terminal artifact
+  finding:    { bg: "color-mix(in srgb, var(--color-medium) 16%, var(--color-base))", border: "var(--color-medium)", tone: "medium" },       // medium dispatched finding
 };
 
 const EDGE_STYLE: Record<
   GraphEdgeKind,
   { stroke: string; dashed?: boolean; label: string }
 > = {
-  supports:         { stroke: "#97dbbe", label: "supports" },
-  refutes:          { stroke: "#ff5f87", label: "refutes" },
-  found_by:         { stroke: "#af8c6c", label: "found_by" },
-  exploits:         { stroke: "#ffb85f", label: "exploits" },
-  derived_from:     { stroke: "#af8c6c", dashed: true, label: "derived_from" },
-  spawned:          { stroke: "#af87d7", label: "spawned" },
-  produced:         { stroke: "#ffb85f", label: "produced" },
-  raises:           { stroke: "#b092ff", label: "raises" },
-  rejects:          { stroke: "#ff5f87", dashed: true, label: "rejects" },
-  resolves:         { stroke: "#97dbbe", dashed: true, label: "resolves" },
-  linked:           { stroke: "#b092ff", dashed: true, label: "linked" },
-  produced_finding: { stroke: "#b092ff", label: "produced_finding" },
+  supports:         { stroke: "var(--color-mint)", label: "supports" },
+  refutes:          { stroke: "var(--color-accent)", label: "refutes" },
+  found_by:         { stroke: "var(--color-text-muted)", label: "found_by" },
+  exploits:         { stroke: "var(--color-amber)", label: "exploits" },
+  derived_from:     { stroke: "var(--color-text-muted)", dashed: true, label: "derived_from" },
+  spawned:          { stroke: "var(--color-lavender)", label: "spawned" },
+  produced:         { stroke: "var(--color-amber)", label: "produced" },
+  raises:           { stroke: "var(--color-medium)", label: "raises" },
+  rejects:          { stroke: "var(--color-accent)", dashed: true, label: "rejects" },
+  resolves:         { stroke: "var(--color-mint)", dashed: true, label: "resolves" },
+  linked:           { stroke: "var(--color-medium)", dashed: true, label: "linked" },
+  produced_finding: { stroke: "var(--color-medium)", label: "produced_finding" },
 };
 
 /** Lay out nodes in concentric tiers by kind. Cheap dagre alternative
@@ -330,7 +330,7 @@ export function EvidenceGraph({
             label: (
               <div
                 className="text-left"
-                style={{ color: "#ffd7af" }}
+                style={{ color: "var(--color-text)" }}
                 aria-label={`${n.kind} ${n.label}${n.state ? ` (${n.state})` : ""}`}
                 role="article"
               >
@@ -350,7 +350,7 @@ export function EvidenceGraph({
             borderRadius: 4,
             padding: 6,
             width: 210,
-            color: "#ffd7af",
+            color: "var(--color-text)",
           },
         };
       }),
@@ -366,8 +366,8 @@ export function EvidenceGraph({
           source: e.source,
           target: e.target,
           label: edgeLabels ? s.label : undefined,
-          labelStyle: { fontSize: 10, fill: "#af8c6c" },
-          labelBgStyle: { fill: "#1f1f1f" },
+          labelStyle: { fontSize: 10, fill: "var(--color-text-muted)" },
+          labelBgStyle: { fill: "var(--color-elevated)" },
           style: {
             stroke: s.stroke,
             strokeWidth: 1.5,
@@ -460,7 +460,7 @@ export function EvidenceGraph({
             }}
             proOptions={{ hideAttribution: true }}
           >
-            <Background gap={20} color="#2a2a2a" />
+            <Background gap={20} color="var(--color-border)" />
             <Controls position="bottom-right" showInteractive={false} />
           </ReactFlow>
         )}

@@ -44,7 +44,6 @@ export function FleetCoverageWidget() {
   if (total_systems === 0) {
     return (
       <div className="h-full w-full p-4 flex flex-col justify-center gap-1">
-        <p className="text-sm font-mono font-semibold text-text">Fleet Coverage</p>
         <p className="text-xs font-mono text-text-muted">No systems registered</p>
       </div>
     );
@@ -54,10 +53,7 @@ export function FleetCoverageWidget() {
 
   return (
     <div className="h-full w-full p-4 flex flex-col justify-center gap-3">
-      <div>
-        <p className="text-3xl font-mono font-bold text-text">{pct}%</p>
-        <p className="text-xs font-mono text-text-muted mt-0.5">Fleet Coverage</p>
-      </div>
+      <p className="text-3xl font-mono font-bold text-text">{pct}%</p>
 
       {/* Progress bar */}
       <div className="w-full h-2 bg-elevated rounded-[4px] overflow-hidden border border-border">
