@@ -2,16 +2,15 @@ import { useCallback } from "react";
 import type { ReactNode } from "react";
 
 import { type ModuleFrontendSpec } from "@platform/extension-registry/types";
-import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { CommandPalette } from "@/components/shell/CommandPalette";
 import { KeyboardShortcutsController } from "@/components/shell/KeyboardShortcutsController";
 import { OfflineBanner } from "@/components/shell/OfflineBanner";
 import { ShortcutsCheatsheet } from "@/components/shell/ShortcutsCheatsheet";
 import { StatusBar } from "@/components/shell/StatusBar";
-import { OnboardingWizard } from "@platform/features/onboarding";
 import { useAuthStore } from "@platform/auth/useAuthStore";
 import { useIdleTimeout } from "@/hooks/useIdleTimeout";
 import { usePreferences } from "@/providers/PreferencesProvider";
+import { FaultyTerminal } from "@/components/aila/FaultyTerminal";
 import { AppSidebar } from "./AppSidebar";
 import { AppHeader } from "./AppHeader";
 
@@ -20,88 +19,91 @@ interface AppShellProps {
   moduleSpecs: ModuleFrontendSpec[];
 }
 
+/**
+ * AppShell -- the AILA workbench OS-frame.
+ *
+ * A fixed full-viewport frame drawn directly from the design system mockup:
+ * a FaultyTerminal CRT hero behind everything, a 32px MenuBar on top, a left
+ * module/investigation rail, the routed content in the center, and a 24px
+ * status strip pinned to the bottom. The former shadcn SidebarProvider
+ * dashboard is gone -- this is the mockup architecture, not a reskin.
+ */
 export function AppShell({ children, moduleSpecs }: AppShellProps) {
-  // Sidebar open/collapsed state now flows through PreferencesProvider so
-  // the operator's choice survives reloads and is settable from the
-  // Settings page. The tablet-breakpoint default (D-08) is preserved by
-  // PreferencesProvider.getInitialSidebarCollapsed when no explicit
-  // preference is stored.
+  // Rail open/collapsed flows through PreferencesProvider so the operator's
+  // choice survives reloads and is settable from Settings.
   const { sidebarCollapsed, setSidebarCollapsed } = usePreferences();
-  // #47 -- clear the session after 15 minutes of inactivity so a signed-in
-  // console left open on a shared workstation does not stay authenticated
-  // indefinitely. The shell only renders behind ProtectedRoute, so once
-  // logout() sets status="unauthenticated" the routing layer immediately
-  // redirects to /login. Any presence event (pointer, keyboard, scroll,
-  // visibilitychange) resets the timer.
+
+  // #47 -- clear the session after 15 minutes of inactivity. The shell only
+  // renders behind ProtectedRoute, so logout() -> unauthenticated redirects
+  // to /login. Any presence event resets the timer.
   const onIdle = useCallback(() => {
     useAuthStore.getState().logout();
   }, []);
   useIdleTimeout({ onIdle });
 
   return (
-    <SidebarProvider
-      open={!sidebarCollapsed}
-      onOpenChange={(open) => setSidebarCollapsed(!open)}
-      // Definite viewport height so the content <main> scrolls internally
-      // and the menubar/statusbar stay pinned as an OS-frame (the base
-      // wrapper is only min-h-svh, which lets the column grow past the
-      // viewport and push the statusbar below the fold).
-      className="h-svh"
-    >
+    <>
       {/*
-        Skip-to-main-content link (B8). First focusable element in the
-        DOM so a keyboard user lands here on initial Tab. Visually
-        hidden until focused (sr-only → focus:not-sr-only). The href
-        target -- <main id="main" tabIndex={-1}> below -- is made
-        programmatically focusable so activation moves focus into the
-        content region, not just the scroll position.
+        AILA hero motif -- the FaultyTerminal CRT digit-rain behind the whole
+        workbench, screen-blended over the midnight page so it reads in the
+        content negative space while the opaque chrome (menubar, rail,
+        statusbar) and panels float on top. One instance, fixed, inert;
+        honors prefers-reduced-motion (single static frame).
       */}
-      <a
-        href="#main"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:rounded-md focus:border focus:border-border focus:bg-elevated focus:px-4 focus:py-2 focus:font-sans focus:text-sm focus:font-medium focus:text-text focus:shadow-lg"
-      >
-        Skip to main content
-      </a>
-      <AppSidebar moduleSpecs={moduleSpecs} />
-      <SidebarInset>
-        <AppHeader />
-        <OfflineBanner />
-        <main
-          id="main"
-          tabIndex={-1}
-          className="flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 lg:p-6 focus:outline-none focus-visible:outline-none"
-        >
-          {/* Workbench content measure -- centered, capped at the DS content-max
-              so the OS-frame keeps a readable column on wide displays. */}
-          <div className="mx-auto w-full" style={{ maxWidth: "var(--content-max)" }}>
-            {children}
-          </div>
-        </main>
-        {/*
-          Issue #211 -- pinned 24px console status bar. Renders the
-          live engine dot (from GET /health), queue depth (from
-          GET /tasks/queue-depth, hidden on 4xx/5xx), active module,
-          online/offline, build tag (v<version> <short-sha>), and a
-          ticking clock. Replaces the earlier `<footer>` that only
-          showed the build identity -- the version+SHA now lives in
-          the status bar's build-tag segment.
-        */}
-        <StatusBar />
-      </SidebarInset>
-      {/* CommandPalette renders via portal -- outside layout flow (D-09, D-10) */}
-      <CommandPalette />
+      <div aria-hidden="true" className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
+        <FaultyTerminal
+          style={{ position: "absolute", inset: 0, mixBlendMode: "screen", opacity: 0.55 }}
+          options={{ brightness: 0.32, scanline: 0.4, glitch: 1, flicker: 0.22, chroma: 1.2, curvature: 0.12 }}
+        />
+        <div
+          style={{
+            position: "absolute",
+            left: "50%",
+            top: "-12%",
+            width: "80%",
+            height: "60%",
+            transform: "translateX(-50%)",
+            background:
+              "radial-gradient(ellipse at center, color-mix(in srgb, var(--color-accent) 12%, transparent), transparent 68%)",
+          }}
+        />
+      </div>
 
-      {/*
-        Platform-wide keyboard shortcut layer. The controller attaches
-        the document keydown listener and calls `useNavigate` (so it
-        MUST live inside the RouterProvider tree -- AppShell qualifies);
-        the cheatsheet is a portalled dialog driven by the shared
-        KeyboardShortcutsProvider context. Mounted here (not in
-        providers.tsx) so shortcuts only fire behind ProtectedRoute
-        and never on /login, /auth/callback, /403, or /500.
-      */}
+      {/* OS-frame: menubar / [rail | content] / statusbar. Transparent so the
+          hero shows through the content negative space; chrome tiers are opaque. */}
+      <div className="fixed inset-0 z-10 flex flex-col" style={{ fontFamily: "var(--font-mono)" }}>
+        <a
+          href="#main"
+          className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:rounded focus:border focus:border-border focus:bg-elevated focus:px-4 focus:py-2 focus:font-sans focus:text-sm focus:font-medium focus:text-text"
+        >
+          Skip to main content
+        </a>
+
+        <AppHeader onToggleRail={() => setSidebarCollapsed(!sidebarCollapsed)} />
+        <OfflineBanner />
+
+        <div className="flex min-h-0 flex-1">
+          {!sidebarCollapsed && <AppSidebar moduleSpecs={moduleSpecs} />}
+          <main
+            id="main"
+            tabIndex={-1}
+            className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-3 focus:outline-none focus-visible:outline-none sm:p-4 lg:p-6"
+          >
+            {/* Workbench content measure -- centered, capped at content-max. */}
+            <div className="mx-auto w-full" style={{ maxWidth: "var(--content-max)" }}>
+              {children}
+            </div>
+          </main>
+        </div>
+
+        <StatusBar />
+      </div>
+
+      {/* CommandPalette renders via portal -- outside layout flow. */}
+      <CommandPalette />
+      {/* Platform-wide keyboard shortcut layer + cheatsheet (behind ProtectedRoute). */}
       <KeyboardShortcutsController />
       <ShortcutsCheatsheet />
-    </SidebarProvider>
+    </>
   );
 }

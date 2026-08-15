@@ -1,72 +1,76 @@
+import { type ReactNode } from "react";
 import { Link, useLocation } from "react-router";
 
 import { useAuthStore } from "@platform/auth/useAuthStore";
 import { isAllowedRole } from "@platform/auth/roles";
 import { type ModuleFrontendSpec } from "@platform/extension-registry/types";
 import { getSidebarSections, type SidebarItem } from "@platform/navigation";
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarSeparator,
-  useSidebar,
-} from "@/components/ui/sidebar";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { RecentlyViewed } from "@/components/shell/RecentlyViewed";
 
+/**
+ * AppSidebar -- the AILA workbench module/investigation rail.
+ *
+ * The OS-frame left rail from the design system: mono uppercase section
+ * labels, square status-dot markers, a hot-pink active indicator with an
+ * inset left bar. Navigates the same routes as before (via
+ * getSidebarSections). This is the mockup rail, not a restyled shadcn
+ * sidebar.
+ */
 interface AppSidebarProps {
   moduleSpecs: ModuleFrontendSpec[];
 }
 
-function NavItem({ item }: { item: SidebarItem }) {
-  const Icon = item.icon;
+function useIsActive(to: string): boolean {
   const location = useLocation();
-  const isActive = item.to === "/" ? location.pathname === "/" : location.pathname.startsWith(item.to);
+  return to === "/" ? location.pathname === "/" : location.pathname.startsWith(to);
+}
 
+function RailItem({ item }: { item: SidebarItem }) {
+  const Icon = item.icon;
+  const active = useIsActive(item.to);
   return (
-    <SidebarMenuItem>
-      <SidebarMenuButton
-        tooltip={item.label}
-        isActive={isActive}
-        render={<Link to={item.to} />}
-        style={isActive ? { boxShadow: "inset 2px 0 0 var(--color-accent)" } : undefined}
-      >
-        {/* Square status marker: pink when active, faint otherwise. Hidden in
-            the icon-collapsed rail so only the Phosphor glyph shows. */}
-        <span
-          aria-hidden
-          className="group-data-[collapsible=icon]:hidden"
-          style={{
-            width: 5,
-            height: 5,
-            flex: "0 0 auto",
-            background: isActive ? "var(--color-accent)" : "var(--color-text-faint)",
-            boxShadow: isActive ? "0 0 6px var(--color-accent)" : "none",
-          }}
-        />
-        {Icon && <Icon size={20} weight="regular" />}
-        <span>{item.label}</span>
-      </SidebarMenuButton>
-    </SidebarMenuItem>
+    <Link
+      to={item.to}
+      data-active={active ? "true" : undefined}
+      className="flex items-center gap-2 px-3 py-1.5 font-mono transition-colors"
+      style={{
+        fontSize: "11.5px",
+        letterSpacing: "0.02em",
+        color: active ? "var(--color-text)" : "var(--color-text-muted)",
+        background: active
+          ? "color-mix(in srgb, var(--color-accent) 12%, transparent)"
+          : "transparent",
+        boxShadow: active ? "inset 2px 0 0 var(--color-accent)" : "none",
+      }}
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          width: 5,
+          height: 5,
+          flex: "0 0 auto",
+          background: active ? "var(--color-accent)" : "var(--color-text-faint)",
+          boxShadow: active ? "0 0 6px var(--color-accent)" : "none",
+        }}
+      />
+      {Icon ? <Icon size={15} weight="regular" /> : null}
+      <span className="truncate">{item.label}</span>
+    </Link>
   );
 }
 
-function BrandLogo() {
-  const { state } = useSidebar();
-  const isCollapsed = state === "collapsed";
-
+function SectionLabel({ children }: { children: ReactNode }) {
   return (
-    <div className="flex items-center h-10 px-2">
-      <span className="font-mono font-bold text-accent tracking-widest text-sm select-none">
-        {isCollapsed ? "A" : "AILA"}
-      </span>
+    <div
+      className="font-mono uppercase"
+      style={{
+        fontSize: "9px",
+        letterSpacing: "0.16em",
+        color: "var(--color-text-muted)",
+        padding: "10px 12px 5px",
+      }}
+    >
+      {children}
     </div>
   );
 }
@@ -76,100 +80,54 @@ export function AppSidebar({ moduleSpecs }: AppSidebarProps) {
   const sections = getSidebarSections(moduleSpecs);
 
   return (
-    <Sidebar collapsible="icon">
-      <SidebarHeader>
-        <BrandLogo />
-      </SidebarHeader>
-
-      <SidebarContent>
-        {/*
-          B13 -- wrap the primary navigation rail in a `<nav>` landmark
-          so assistive tech can jump straight to it via the rotor and
-          axe-core's `landmark-one-main` / `region` rules see the menu
-          tree as a recognized navigation region (not orphan list
-          markup inside a generic <div>). The label distinguishes this
-          from the AppHeader's breadcrumb <nav>.
-        */}
-        <nav aria-label="Primary" className="flex min-h-0 flex-1 flex-col">
-          <ScrollArea className="flex-1">
-            {sections.map((section, index) => {
-              // Admin section -- hidden from non-admin users (D-14, T-140-10)
-              if (section.id === "admin" && !isAllowedRole(role, "admin")) {
-                return null;
-              }
-
-              const isLast = index === sections.length - 1;
-
-              return (
-                <div key={section.id}>
-                  <SidebarGroup>
-                    <SidebarGroupLabel
-                      className="font-mono uppercase"
-                      style={{
-                        fontSize: "9px",
-                        letterSpacing: "0.16em",
-                        color: "var(--color-text-muted)",
-                      }}
-                    >
-                      {section.label}
-                    </SidebarGroupLabel>
-                    <SidebarGroupContent>
-                      {section.subgroups && section.subgroups.length > 0 ? (
-                        // Subgroups render as separate <ul>s with header spans between them.
-                        // D-02 / D-27 fix: a <li> wrapping a <ul> (nested SidebarMenuSub inside
-                        // SidebarMenuItem) produced a nested-<li> hydration warning because the
-                        // subgroup header was semantically a grouping, not a menu item. Split each
-                        // subgroup into: header <span> + its own <ul> of menu items.
-                        <div className="flex flex-col gap-1">
-                          {section.subgroups.map((subgroup) => (
-                            <div key={subgroup.moduleId}>
-                              <span
-                                className="font-mono uppercase px-2 py-1 block"
-                                style={{
-                                  fontSize: "9px",
-                                  letterSpacing: "0.16em",
-                                  color: "var(--color-text-muted)",
-                                }}
-                              >
-                                {subgroup.label}
-                              </span>
-                              {/*
-                                C-M3: subgroup is rendered as a flat <ul> of
-                                menu items. Using SidebarMenuSubItem without a
-                                SidebarMenuSub parent produced a semantically
-                                wrong tree (SubItem expects the Sub's
-                                role="group" <ul>); falling back to the plain
-                                SidebarMenuItem keeps the visual indentation
-                                while preventing nested-<li> hydration bugs.
-                              */}
-                              <SidebarMenu>
-                                {subgroup.items.map((item) => (
-                                  <NavItem key={item.id} item={item} />
-                                ))}
-                              </SidebarMenu>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <SidebarMenu>
-                          {section.items.map((item) => (
-                            <NavItem key={item.id} item={item} />
-                          ))}
-                        </SidebarMenu>
-                      )}
-                    </SidebarGroupContent>
-                  </SidebarGroup>
-                  {!isLast && <SidebarSeparator />}
+    <aside
+      aria-label="Primary"
+      className="flex min-h-0 flex-none flex-col"
+      style={{
+        width: 236,
+        background: "var(--color-chrome)",
+        borderRight: "1px solid var(--color-border-bright)",
+      }}
+    >
+      <nav className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden py-1">
+        {sections.map((section) => {
+          if (section.id === "admin" && !isAllowedRole(role, "admin")) return null;
+          return (
+            <div key={section.id}>
+              <SectionLabel>{section.label}</SectionLabel>
+              {section.subgroups && section.subgroups.length > 0 ? (
+                <div className="flex flex-col">
+                  {section.subgroups.map((subgroup) => (
+                    <div key={subgroup.moduleId} className="flex flex-col">
+                      <span
+                        className="font-mono uppercase"
+                        style={{
+                          fontSize: "8.5px",
+                          letterSpacing: "0.16em",
+                          color: "var(--color-text-faint)",
+                          padding: "6px 12px 3px",
+                        }}
+                      >
+                        {subgroup.label}
+                      </span>
+                      {subgroup.items.map((item) => (
+                        <RailItem key={item.to} item={item} />
+                      ))}
+                    </div>
+                  ))}
                 </div>
-              );
-            })}
-          </ScrollArea>
-        </nav>
-      </SidebarContent>
-
-      <SidebarFooter>
+              ) : (
+                <div className="flex flex-col">
+                  {section.items.map((item) => (
+                    <RailItem key={item.to} item={item} />
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
         <RecentlyViewed />
-      </SidebarFooter>
-    </Sidebar>
+      </nav>
+    </aside>
   );
 }

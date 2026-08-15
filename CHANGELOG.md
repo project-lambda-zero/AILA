@@ -7,7 +7,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [0.6.0] - 2026-08-14 -- AILA design system: single midnight-cloud-8 identity
+## [0.5.27] - 2026-08-14 -- AILA design system: workbench shell + single midnight-cloud-8 identity
 
 ### Added
 
@@ -18,18 +18,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   spawn, cycle, emit, merge, folder, terminal).
 - Self-hosted Apoc Revelations (display) and Monaspace Neon (mono) webfonts,
   with Familjen Grotesk (body) plus Newsreader and JetBrains Mono fallbacks.
+- FaultyTerminal hero (`frontend/src/components/aila/FaultyTerminal.tsx` +
+  `/faulty-terminal.js`): the CRT "digit rain" WebGL motif, tinted by the
+  accent and screen-blended behind the whole workbench. Honors
+  `prefers-reduced-motion` (single static frame).
 
 ### Changed
 
-- The frontend is restyled end to end to the midnight-cloud-8 design system.
-  OS-frame chrome: a 32px menubar (brand mark plus mono navigation), a module
-  rail with mono uppercase section labels and an accent active marker, and a
-  24px status strip. WindowPanel surfaces now carry titled content across the
-  shell and every module (vulnerability, vr, forensics, malware, hello_world).
-  Labels, ids, and status read as mono uppercase; headings use the display
-  serif; the palette is warm cream on midnight charcoal with a restrained
-  hot-pink accent; radii are sharp (2-6px) with inset bevels instead of drop
-  shadows.
+- The application shell is rebuilt to the design-system workbench: a fixed
+  OS-frame drawn from the mockup with a 32px menubar (glowing brand mark, rail
+  toggle, mono breadcrumb, search, notifications, account, clock), a 236px left
+  module/investigation rail with mono uppercase section labels and a hot-pink
+  active marker, the routed content in the center, and a 24px status strip --
+  all layered over the FaultyTerminal hero. WindowPanel surfaces carry titled
+  content across every page (vulnerability, vr, forensics, malware,
+  hello_world). Labels, ids, and status read as mono uppercase; headings use
+  the display serif; the palette is warm cream on midnight charcoal with a
+  restrained hot-pink accent; radii are sharp (2-6px) with inset bevels instead
+  of drop shadows.
 - Shared components (buttons, badges, inputs, select, tabs, dialogs, sheets,
   dropdowns, tooltips, scroll areas) follow the design-system aesthetic. Button
   styling is component-owned: primary is a hot-pink fill, ghost is a cream
@@ -45,6 +51,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the command palette. AILA now ships a single canonical design. `globals.css`
   drops from 5074 lines to under 1000, and `theme-init.js` and the theme
   provider are pinned to the one theme.
+- The shadcn `SidebarProvider` dashboard shell (sidebar plus header layout).
+  The workbench OS-frame replaces it wholesale; no old shell layout remains.
 
 ### Fixed
 
