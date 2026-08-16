@@ -650,6 +650,12 @@ def create_app() -> FastAPI:
     from aila.api.routers.platform_corpus import router as platform_corpus_router
     application.include_router(platform_corpus_router)
 
+    # RAG knowledge-store admin surface (god-tier admin): stats + entry pager
+    # + routed retrieval against KnowledgeService.retrieve_routed. No new
+    # tables -- reads KnowledgeEntryRecord + KnowledgeEntryEdge in place.
+    from aila.api.routers.knowledge import router as knowledge_router
+    application.include_router(knowledge_router)
+
     # RFC-10: Admin agent-lifecycle router (god-tier admin -- evaluate/promote/rollback + journal)
     from aila.api.routers.admin_lifecycle import router as admin_lifecycle_router
     application.include_router(admin_lifecycle_router)

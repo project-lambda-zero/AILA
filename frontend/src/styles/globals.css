@@ -1,90 +1,267 @@
-/* AILA -- design-system tokens (Midnight / Cloud8). Rebuilt from scratch for the
-   windowing-desktop frontend. Single theme; mock semantic token names. */
+/* AILA global stylesheet -- ported verbatim from the design system
+   (_ds/aila-design-system) tokens + the AILA Console mock <style> block.
+   Plain CSS + CSS custom properties. No Tailwind, no utility framework. */
+
+/* ---- webfonts ---- */
+@import url("https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,300;1,6..72,400&family=Familjen+Grotesk:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=JetBrains+Mono:wght@400;500;700&display=swap");
 
 @font-face {
   font-family: "Apoc Revelations";
-  src: url("/fonts/Apoc-Revelations-Trial-Light.otf") format("opentype");
-  font-weight: 300; font-style: normal; font-display: swap;
+  src: url("/fonts/Apoc-Revelations-Trial-Regular.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
 }
 @font-face {
   font-family: "Apoc Revelations";
   src: url("/fonts/Apoc-Revelations-Trial-Regular.otf") format("opentype");
-  font-weight: 400; font-style: normal; font-display: swap;
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Apoc Revelations";
+  src: url("/fonts/Apoc-Revelations-Trial-Light.otf") format("opentype");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Apoc Revelations";
+  src: url("/fonts/Apoc-Revelations-Trial-Light.otf") format("opentype");
+  font-weight: 300;
+  font-style: italic;
+  font-display: swap;
 }
 @font-face {
   font-family: "Monaspace Neon";
   src: url("/fonts/MonaspaceNeon-Regular.otf") format("opentype");
-  font-weight: 400 700; font-style: normal; font-display: swap;
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
 }
 
 :root {
-  /* surfaces */
-  --surface-page: #121212;
-  --surface-sunk: #0d0d0d;
-  --surface-card: #181818;
-  --surface-chrome: #1f1f1f;
-  --surface-hover: #262626;
-  /* foreground (warm cream) */
-  --text-primary: #ffd7af;
-  --text-muted: #af8c6c;
-  --text-faint: #6b563f;
-  /* accent (hot pink) */
-  --accent: #ff5f87;
-  --accent-hover: #ff7a9c;
-  --accent-active: #c8487a;
-  --text-on-accent: #1a0a12;
-  /* semantic hues */
-  --status-ok: #97dbbe;
-  --status-info: #af87d7;
-  --status-signal: #f0a8c7;
-  --status-warn: #ffb85f;
-  /* borders */
-  --border: #3a3a3a;
-  --border-soft: #2a2a2a;
-  --border-faint: #1f1f1f;
-  /* fonts */
+  /* --- Base surfaces (midnight stack) --- */
+  --aila-bg: #121212;
+  --aila-bg-sunk: #0d0d0d;
+  --aila-bg-raised: #181818;
+  --aila-bg-chrome: #1f1f1f;
+  --aila-bg-hover: #262626;
+
+  /* --- Foreground (warm cream ramp) --- */
+  --aila-cream: #ffd7af;
+  --aila-cream-muted: #af8c6c;
+  --aila-cream-faint: #6b563f;
+
+  /* --- Accent (hot pink) --- */
+  --aila-pink: #ff5f87;
+  --aila-pink-bright: #ff7a9c;
+  --aila-pink-sunk: #c8487a;
+  --aila-pink-fg: #1a0a12;
+
+  /* --- Secondary / semantic hues --- */
+  --aila-mint: #97dbbe;
+  --aila-lavender: #af87d7;
+  --aila-soft-pink: #f0a8c7;
+  --aila-amber: #ffb85f;
+
+  /* --- Rules & borders --- */
+  --aila-rule: #2a2a2a;
+  --aila-rule-bright: #3a3a3a;
+  --aila-rule-faint: #1f1f1f;
+
+  /* --- Semantic aliases --- */
+  --surface-page: var(--aila-bg);
+  --surface-sunk: var(--aila-bg-sunk);
+  --surface-card: var(--aila-bg-raised);
+  --surface-chrome: var(--aila-bg-chrome);
+  --surface-hover: var(--aila-bg-hover);
+
+  --text-primary: var(--aila-cream);
+  --text-muted: var(--aila-cream-muted);
+  --text-faint: var(--aila-cream-faint);
+  --text-on-accent: var(--aila-pink-fg);
+
+  --accent: var(--aila-pink);
+  --accent-hover: var(--aila-pink-bright);
+  --accent-active: var(--aila-pink-sunk);
+
+  --status-ok: var(--aila-mint);
+  --status-info: var(--aila-lavender);
+  --status-warn: var(--aila-amber);
+  --status-signal: var(--aila-soft-pink);
+
+  --border: var(--aila-rule-bright);
+  --border-soft: var(--aila-rule);
+  --border-faint: var(--aila-rule-faint);
+
+  /* --- Families --- */
   --font-display: "Apoc Revelations", "Newsreader", ui-serif, Georgia, serif;
+  --font-emphasis: "Apoc Revelations", "Newsreader", ui-serif, Georgia, serif;
   --font-sans: "Familjen Grotesk", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Monaspace Neon", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
-  /* chrome metrics */
+
+  /* --- Weights --- */
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* --- Chrome metrics --- */
   --menubar-h: 32px;
   --statusbar-h: 24px;
   --panel-title-h: 26px;
-  --content-max: 1320px;
-  /* radii */
+  --panel-status-h: 22px;
+
+  /* --- Radii --- */
   --radius-xs: 2px;
   --radius-sm: 3px;
   --radius-md: 4px;
   --radius-lg: 6px;
-  /* bevels */
-  --bevel-raised: inset 1px 1px 0 rgba(255,255,255,0.04), inset -1px -1px 0 rgba(0,0,0,0.55);
-  --bevel-key: inset 1px 1px 0 rgba(255,255,255,0.32), inset -1px -1px 0 rgba(0,0,0,0.32);
-  --shadow-window: 0 18px 50px rgba(0,0,0,0.55), 0 2px 0 rgba(0,0,0,0.6);
-  /* title-bar grip hatch */
+  --radius-pill: 999px;
+
+  /* --- Bevels & shadows --- */
+  --bevel-raised: inset 1px 1px 0 rgba(255, 255, 255, 0.04),
+                  inset -1px -1px 0 rgba(0, 0, 0, 0.55);
+  --bevel-pressed: inset -1px -1px 0 rgba(255, 255, 255, 0.06),
+                   inset 1px 1px 0 rgba(0, 0, 0, 0.5);
+  --bevel-key: inset 1px 1px 0 rgba(255, 255, 255, 0.32),
+               inset -1px -1px 0 rgba(0, 0, 0, 0.32);
+  --shadow-chrome: 0 2px 0 rgba(0, 0, 0, 0.6);
+  --shadow-panel: 0 1px 0 rgba(0, 0, 0, 0.5);
+
+  /* --- Motion --- */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 100ms;
+  --dur-base: 150ms;
+  --dur-slow: 200ms;
+
+  /* --- Texture: diagonal hatch --- */
   --hatch: repeating-linear-gradient(135deg, var(--border) 0 1px, transparent 1px 3px);
 }
 
-* { box-sizing: border-box; }
+/* ---- themes ----
+   Each block overrides only the base palette vars. Every semantic alias
+   (--surface-*, --text-*, --accent*, --border*, --status-*, --text-on-accent)
+   is defined in :root as var(--aila-*), so it resolves to the themed value at
+   use time -- overriding the base layer restyles the whole app coherently.
+   Slugs mirror slugifyTheme() in ../theme. :root == Midnight Cloud 8. */
 
-html, body, #root {
-  margin: 0;
-  height: 100%;
-  background: var(--surface-page);
-  color: var(--text-primary);
-  font-family: var(--font-sans);
+[data-theme="midnight-cloud-8"] {
+  --aila-bg: #121212; --aila-bg-sunk: #0d0d0d; --aila-bg-raised: #181818; --aila-bg-chrome: #1f1f1f; --aila-bg-hover: #262626;
+  --aila-cream: #ffd7af; --aila-cream-muted: #af8c6c; --aila-cream-faint: #6b563f;
+  --aila-pink: #ff5f87; --aila-pink-bright: #ff7a9c; --aila-pink-sunk: #c8487a; --aila-pink-fg: #1a0a12;
+  --aila-mint: #97dbbe; --aila-lavender: #af87d7; --aila-amber: #ffb85f; --aila-soft-pink: #f0a8c7;
+  --aila-rule: #2a2a2a; --aila-rule-bright: #3a3a3a; --aila-rule-faint: #1f1f1f;
 }
 
-body { overflow: hidden; }
+[data-theme="frutiger-aero"] {
+  --aila-bg: #eef6fc; --aila-bg-sunk: #dbe9f3; --aila-bg-raised: #f8fcff; --aila-bg-chrome: #e3eff8; --aila-bg-hover: #cfe4f2;
+  --aila-cream: #10303a; --aila-cream-muted: #3d6470; --aila-cream-faint: #6f96a2;
+  --aila-pink: #0a7d99; --aila-pink-bright: #0e93b4; --aila-pink-sunk: #075f76; --aila-pink-fg: #ffffff;
+  --aila-mint: #1f8a57; --aila-lavender: #3f74c9; --aila-amber: #b26a00; --aila-soft-pink: #c05f95;
+  --aila-rule: #c6dcea; --aila-rule-bright: #a6c8dc; --aila-rule-faint: #dce9f3;
+}
 
+[data-theme="synthwave"] {
+  --aila-bg: #150a24; --aila-bg-sunk: #0d0518; --aila-bg-raised: #1e0f33; --aila-bg-chrome: #281545; --aila-bg-hover: #331b57;
+  --aila-cream: #f5d6ff; --aila-cream-muted: #b78fd6; --aila-cream-faint: #7a5aa0;
+  --aila-pink: #ff2f87; --aila-pink-bright: #ff5fa2; --aila-pink-sunk: #d11e6a; --aila-pink-fg: #1a0410;
+  --aila-mint: #46e0c0; --aila-lavender: #8a6bff; --aila-amber: #ffb347; --aila-soft-pink: #ff7ac0;
+  --aila-rule: #3a1f5e; --aila-rule-bright: #4d2b78; --aila-rule-faint: #241040;
+}
+
+[data-theme="vaporwave"] {
+  --aila-bg: #241a38; --aila-bg-sunk: #191026; --aila-bg-raised: #2e2246; --aila-bg-chrome: #392a55; --aila-bg-hover: #453466;
+  --aila-cream: #ffe0f0; --aila-cream-muted: #c2a5d6; --aila-cream-faint: #8570a3;
+  --aila-pink: #6ee7d6; --aila-pink-bright: #8ff0e2; --aila-pink-sunk: #47c2b2; --aila-pink-fg: #06231f;
+  --aila-mint: #a0e8c8; --aila-lavender: #b39ddb; --aila-amber: #ffcf8a; --aila-soft-pink: #ffb3d9;
+  --aila-rule: #3d2f5a; --aila-rule-bright: #4f3f70; --aila-rule-faint: #2a2043;
+}
+
+[data-theme="playstation-1"] {
+  --aila-bg: #d6d7db; --aila-bg-sunk: #c2c3c9; --aila-bg-raised: #e4e5e9; --aila-bg-chrome: #cccdd3; --aila-bg-hover: #b9bac2;
+  --aila-cream: #26272e; --aila-cream-muted: #55575f; --aila-cream-faint: #797b84;
+  --aila-pink: #b0122a; --aila-pink-bright: #cc2440; --aila-pink-sunk: #8a0c20; --aila-pink-fg: #ffffff;
+  --aila-mint: #1f8a4c; --aila-lavender: #1257c4; --aila-amber: #a87400; --aila-soft-pink: #b0122a;
+  --aila-rule: #b3b4bb; --aila-rule-bright: #9c9da6; --aila-rule-faint: #c8c9cf;
+}
+
+[data-theme="playstation-2"] {
+  --aila-bg: #05060d; --aila-bg-sunk: #020309; --aila-bg-raised: #0b0d18; --aila-bg-chrome: #111524; --aila-bg-hover: #1a2035;
+  --aila-cream: #dfe8ff; --aila-cream-muted: #93a4cc; --aila-cream-faint: #5d6a90;
+  --aila-pink: #2472ee; --aila-pink-bright: #4f93ff; --aila-pink-sunk: #0d52cc; --aila-pink-fg: #ffffff;
+  --aila-mint: #35d0c0; --aila-lavender: #6c8cff; --aila-amber: #ffb545; --aila-soft-pink: #6fd0ff;
+  --aila-rule: #1c2338; --aila-rule-bright: #2a3350; --aila-rule-faint: #12172a;
+}
+
+[data-theme="cyberpunk-2077"] {
+  --aila-bg: #0c0c0a; --aila-bg-sunk: #060604; --aila-bg-raised: #14140f; --aila-bg-chrome: #1c1c14; --aila-bg-hover: #26261a;
+  --aila-cream: #f4efb8; --aila-cream-muted: #b8ac57; --aila-cream-faint: #7a7134;
+  --aila-pink: #fcee0a; --aila-pink-bright: #fff64d; --aila-pink-sunk: #cbc000; --aila-pink-fg: #0c0c0a;
+  --aila-mint: #00e5c0; --aila-lavender: #00b8d4; --aila-amber: #ff5a3c; --aila-soft-pink: #ff3860;
+  --aila-rule: #2a2a1c; --aila-rule-bright: #3a3a26; --aila-rule-faint: #1c1c12;
+}
+
+[data-theme="the-matrix"] {
+  --aila-bg: #020602; --aila-bg-sunk: #000300; --aila-bg-raised: #061006; --aila-bg-chrome: #0a180a; --aila-bg-hover: #103010;
+  --aila-cream: #b8ffb8; --aila-cream-muted: #5fc95f; --aila-cream-faint: #2f7a2f;
+  --aila-pink: #00e000; --aila-pink-bright: #33ff33; --aila-pink-sunk: #00a800; --aila-pink-fg: #001800;
+  --aila-mint: #55ff88; --aila-lavender: #8affc0; --aila-amber: #d4ff5a; --aila-soft-pink: #00ff9a;
+  --aila-rule: #124512; --aila-rule-bright: #1c5f1c; --aila-rule-faint: #0a2a0a;
+}
+
+[data-theme="truman-show"] {
+  --aila-bg: #e9efe6; --aila-bg-sunk: #d7e0d2; --aila-bg-raised: #f4f7f1; --aila-bg-chrome: #dde5d8; --aila-bg-hover: #cddac6;
+  --aila-cream: #26302a; --aila-cream-muted: #55625a; --aila-cream-faint: #79857b;
+  --aila-pink: #216fae; --aila-pink-bright: #2f86c9; --aila-pink-sunk: #185a8f; --aila-pink-fg: #ffffff;
+  --aila-mint: #2f8a54; --aila-lavender: #2f74c0; --aila-amber: #b0730f; --aila-soft-pink: #c07597;
+  --aila-rule: #bcc9b6; --aila-rule-bright: #a3b39c; --aila-rule-faint: #d3ddcf;
+}
+
+[data-theme="half-life-1"] {
+  --aila-bg: #101010; --aila-bg-sunk: #080808; --aila-bg-raised: #181410; --aila-bg-chrome: #201a12; --aila-bg-hover: #2c2418;
+  --aila-cream: #f0e6d6; --aila-cream-muted: #b09a7c; --aila-cream-faint: #6e5f47;
+  --aila-pink: #ff8a00; --aila-pink-bright: #ffa333; --aila-pink-sunk: #cc6f00; --aila-pink-fg: #1a0e00;
+  --aila-mint: #8fd694; --aila-lavender: #6fb7d6; --aila-amber: #ffd24a; --aila-soft-pink: #ff6a3d;
+  --aila-rule: #2e2820; --aila-rule-bright: #3f372b; --aila-rule-faint: #201b15;
+}
+
+[data-theme="y2k-fever"] {
+  --aila-bg: #eef0f8; --aila-bg-sunk: #dde0ee; --aila-bg-raised: #f8f9fd; --aila-bg-chrome: #e4e7f3; --aila-bg-hover: #d2d7ec;
+  --aila-cream: #202436; --aila-cream-muted: #4d5470; --aila-cream-faint: #7f85a0;
+  --aila-pink: #4a5ce0; --aila-pink-bright: #6072ff; --aila-pink-sunk: #3746c0; --aila-pink-fg: #ffffff;
+  --aila-mint: #1f8a5f; --aila-lavender: #7048d0; --aila-amber: #b0680f; --aila-soft-pink: #c057a5;
+  --aila-rule: #c3c7dd; --aila-rule-bright: #a9aecd; --aila-rule-faint: #dce0ee;
+}
+
+[data-theme="vendetta"] {
+  --aila-bg: #0c0505; --aila-bg-sunk: #050202; --aila-bg-raised: #150808; --aila-bg-chrome: #1e0b0b; --aila-bg-hover: #2a1010;
+  --aila-cream: #f2d8d8; --aila-cream-muted: #c08a8a; --aila-cream-faint: #7d4f4f;
+  --aila-pink: #e0182a; --aila-pink-bright: #ff3346; --aila-pink-sunk: #b00d1c; --aila-pink-fg: #ffffff;
+  --aila-mint: #7fd6a0; --aila-lavender: #d68ad0; --aila-amber: #ffb04a; --aila-soft-pink: #ff6a7a;
+  --aila-rule: #3a1414; --aila-rule-bright: #4d1c1c; --aila-rule-faint: #260d0d;
+}
+
+/* ---- base (from mock <style>) ---- */
+html, body, #root { margin: 0; padding: 0; height: 100%; background: var(--surface-page); overflow: hidden; }
+* { box-sizing: border-box; }
 a { color: var(--accent); text-decoration: none; }
+a:hover { color: var(--accent-hover); }
+input, textarea, select, button { font-family: inherit; }
 
-button { font-family: inherit; }
-
-::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar { width: 7px; height: 7px; }
 ::-webkit-scrollbar-track { background: var(--surface-sunk); }
-::-webkit-scrollbar-thumb { background: #33292b; border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: #33292b; }
 ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
 
+@keyframes acin { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes acblink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+@keyframes acbreathe { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
+@keyframes acglow { 0%, 100% { text-shadow: 0 0 18px rgba(255, 95, 135, 0.36); } 50% { text-shadow: 0 0 30px rgba(255, 95, 135, 0.62); } }
+@keyframes acsweep { from { transform: translateX(-120%); } to { transform: translateX(320%); } }
+
 @media (prefers-reduced-motion: reduce) {
-  * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
 }

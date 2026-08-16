@@ -1,196 +1,190 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
+import { useAuth } from "./api/auth";
+import { useInvestigations } from "./api/hooks";
+import type { BoundInvestigation, ModulePageProps } from "./console/contract";
+import { shortCaseId } from "./console/ids";
+import IntakeWizard from "./console/IntakeWizard";
+import LeftRail from "./console/LeftRail";
+import Login from "./console/Login";
+import { MODULES } from "./console/nav";
+import { resolvePage } from "./console/pages/registry";
+import SettingsOverlay from "./console/SettingsOverlay";
+import ChatConsole from "./console/ChatConsole";
 import { FaultyTerminal } from "./desktop/FaultyTerminal";
 
-// ---------------------------------------------------------------------------
-// Navigation model -- the left pane. Each module owns pages; opening a page
-// spawns a window on the desktop. (Window content is wired to real module
-// screens + data in the next build phase.)
-// ---------------------------------------------------------------------------
+// Faithful port of the `AILA Console` design page. Two modes: basic (console
+// tab -- general assistant, rail collapsed) and advanced (workspace tab -- full
+// left rail + bound investigation). The right rail is display:none in the mock;
+// module pages / x-ray open as an overlay in the center column. All data is live.
 
-interface PageDef {
-  id: string;
-  label: string;
-}
-interface ModuleDef {
-  id: string;
-  label: string;
-  tone: string;
-  pages: PageDef[];
-}
+const pad = (n: number): string => (n < 10 ? "0" : "") + n;
 
-const MODULES: ModuleDef[] = [
-  {
-    id: "vr",
-    label: "vr",
-    tone: "var(--accent)",
-    pages: [
-      { id: "investigations", label: "investigations" },
-      { id: "targets", label: "targets" },
-      { id: "workspaces", label: "workspaces" },
-      { id: "patterns", label: "patterns" },
-      { id: "findings", label: "findings" },
-      { id: "disclosures", label: "disclosures" },
-      { id: "fuzz", label: "fuzz campaigns" },
-    ],
-  },
-  {
-    id: "vulnerability",
-    label: "vulnerability",
-    tone: "var(--status-warn)",
-    pages: [
-      { id: "scan", label: "launch scan" },
-      { id: "findings", label: "findings" },
-      { id: "radar", label: "network radar" },
-      { id: "viz", label: "data visualization" },
-      { id: "reports", label: "reports" },
-    ],
-  },
-  {
-    id: "forensics",
-    label: "forensics",
-    tone: "var(--status-info)",
-    pages: [
-      { id: "projects", label: "projects" },
-      { id: "investigations", label: "investigations" },
-      { id: "evidence", label: "evidence" },
-      { id: "timeline", label: "timeline" },
-    ],
-  },
-  {
-    id: "malware",
-    label: "malware",
-    tone: "var(--status-ok)",
-    pages: [
-      { id: "targets", label: "targets" },
-      { id: "investigations", label: "investigations" },
-      { id: "families", label: "families" },
-      { id: "patterns", label: "patterns" },
-    ],
-  },
-];
-
-const INVESTIGATIONS = [
-  { id: "VR-2291", label: "VR-2291", sub: "rtsp-core \u00b7 scada", state: "running", tone: "var(--accent)" },
-  { id: "VR-2288", label: "VR-2288", sub: "libav demux fuzz", state: "review", tone: "var(--status-info)" },
-  { id: "VR-2280", label: "VR-2280", sub: "openssl n-day triage", state: "shipped", tone: "var(--status-ok)" },
-  { id: "VR-2263", label: "VR-2263", sub: "banking apk masvs", state: "paused", tone: "var(--status-warn)" },
-];
-
-// ---------------------------------------------------------------------------
-// Window manager
-// ---------------------------------------------------------------------------
-
-interface WinState {
-  id: string;
+// A module page raised inside the console's center column as an overlay window.
+interface OpenPage {
+  /** Registry key: "xray", "vulnerability:findings", "vr:targets", "admin:users", ... */
+  kind: string;
   title: string;
-  sub: string;
-  tone: string;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  z: number;
-  minimized: boolean;
+  investigationId: string | null;
+  section: string;
 }
-
-let SEQ = 0;
 
 export default function App() {
-  const [activeModule, setActiveModule] = useState<string>("vr");
-  const [wins, setWins] = useState<WinState[]>([]);
-  const [topZ, setTopZ] = useState(10);
+  const status = useAuth((s) => s.status);
+  if (status !== "authed") {
+    return <Login />;
+  }
+  return <Console />;
+}
+
+function Console() {
+  const user = useAuth((s) => s.user);
+
+  const [mode, setMode] = useState<"basic" | "advanced">("advanced");
+  const [moduleId, setModuleId] = useState("vr");
+  const [bound, setBound] = useState<BoundInvestigation | null>(null);
+  const [pagesOpen, setPagesOpen] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [intakeOpen, setIntakeOpen] = useState(false);
+  const [openPage, setOpenPage] = useState<OpenPage | null>(null);
+  const [pageMin, setPageMin] = useState(false);
+  const [pageFull, setPageFull] = useState(false);
   const [clock, setClock] = useState("");
-  const dragRef = useRef<{ id: string; dx: number; dy: number } | null>(null);
+
+  // Open on the case that best fills the design: the most branches, which give
+  // a rich x-ray (multiple persona lanes, ledger, hypotheses, hundreds of MCP
+  // calls). Tie-break by the fewest turns so the console still opens at a
+  // readable length. The thread opens at the top (greeting first), so a longer
+  // case still reads cleanly from its start. Fall back to the richest by
+  // messages when nothing is branched.
+  const { data: invList } = useInvestigations();
+  useEffect(() => {
+    if (bound || !invList || invList.length === 0) return;
+    let pick = invList[0];
+    let best: { branches: number; msgs: number } | null = null;
+    for (const inv of invList) {
+      const branches = inv.branch_count ?? 0;
+      const msgs = inv.message_count ?? 0;
+      if (msgs < 4) continue;
+      if (!best || branches > best.branches || (branches === best.branches && msgs < best.msgs)) {
+        best = { branches, msgs };
+        pick = inv;
+      }
+    }
+    setBound({ id: pick.id, title: pick.title });
+  }, [invList, bound]);
 
   useEffect(() => {
     const tick = () => {
       const d = new Date();
-      const p = (n: number) => (n < 10 ? "0" : "") + n;
-      setClock(`${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`);
+      setClock(`${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`);
     };
     tick();
-    const t = setInterval(tick, 1000);
-    return () => clearInterval(t);
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
   }, []);
 
-  const focus = useCallback((id: string) => {
-    setTopZ((z) => {
-      const nz = z + 1;
-      setWins((ws) => ws.map((w) => (w.id === id ? { ...w, z: nz, minimized: false } : w)));
-      return nz;
-    });
-  }, []);
+  const adv = mode === "advanced";
+  const modDef = MODULES.find((m) => m.id === moduleId) ?? MODULES[0];
+  const boundLabel = bound ? shortCaseId(moduleId, bound.id) : modDef.id;
+  const engineLabel = adv ? `${boundLabel} \u00b7 ${moduleId}` : "idle \u00b7 ready";
 
-  const openWindow = useCallback(
-    (moduleId: string, page: PageDef, tone: string) => {
-      const winId = `${moduleId}:${page.id}`;
-      setWins((ws) => {
-        const existing = ws.find((w) => w.id === winId);
-        if (existing) {
-          return ws.map((w) => (w.id === winId ? { ...w, minimized: false, z: topZ + 1 } : w));
-        }
-        const n = SEQ++;
-        const nz = topZ + 1;
-        return [
-          ...ws,
-          {
-            id: winId,
-            title: `${moduleId} / ${page.label}`,
-            sub: `module page \u00b7 ${page.id}`,
-            tone,
-            x: 80 + (n % 6) * 34,
-            y: 60 + (n % 6) * 30,
-            w: 720,
-            h: 460,
-            z: nz,
-            minimized: false,
-          },
-        ];
-      });
-      setTopZ((z) => z + 1);
-    },
-    [topZ],
-  );
+  const nav: { label: string; on: boolean; onClick: () => void }[] = [
+    { label: "console", on: !adv, onClick: () => setMode("basic") },
+    { label: "workspace", on: adv, onClick: () => setMode("advanced") },
+    { label: "docs", on: false, onClick: () => {} },
+  ];
 
-  const closeWindow = useCallback((id: string) => {
-    setWins((ws) => ws.filter((w) => w.id !== id));
-  }, []);
-  const minimize = useCallback((id: string) => {
-    setWins((ws) => ws.map((w) => (w.id === id ? { ...w, minimized: true } : w)));
-  }, []);
-
-  // dragging
-  useEffect(() => {
-    const move = (e: MouseEvent) => {
-      const d = dragRef.current;
-      if (!d) return;
-      setWins((ws) =>
-        ws.map((w) =>
-          w.id === d.id
-            ? { ...w, x: Math.max(0, e.clientX - d.dx), y: Math.max(0, e.clientY - d.dy) }
-            : w,
-        ),
-      );
-    };
-    const up = () => {
-      dragRef.current = null;
-    };
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
-    return () => {
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", up);
-    };
-  }, []);
-
-  const startDrag = (e: React.MouseEvent, w: WinState) => {
-    dragRef.current = { id: w.id, dx: e.clientX - w.x, dy: e.clientY - w.y };
-    focus(w.id);
+  // Open any registered page (left-rail page / admin item) as a window. An
+  // optional entity id binds the window to a selected row (e.g. a forensics
+  // project detail), reusing the ModulePageProps.investigationId channel.
+  //
+  // A `section` may carry an in-page sub-intent past a colon (e.g.
+  // "systems:new", "scan:<run_id>"). The registry key is derived from the
+  // base slug (part before the colon) so the same registered renderer serves
+  // both the base view and its sub-intents; the full section string is
+  // handed through to the page so it can react to the intent.
+  const openNamedPage = (moduleKey: string, section: string, label: string, investigationId: string | null = null) => {
+    const colon = section.indexOf(":");
+    const baseSection = colon >= 0 ? section.slice(0, colon) : section;
+    const key = `${moduleKey}:${baseSection}`;
+    if (!resolvePage(key)) return;
+    setOpenPage({ kind: key, title: `${moduleKey} \u00b7 ${label}`, investigationId, section });
+    setPageMin(false);
+    setPageFull(false);
   };
 
-  const activePages = MODULES.find((m) => m.id === activeModule);
-  const dockWins = wins.filter((w) => w.minimized);
+  // LeftRail's "+" is module-aware: for vulnerability it opens the Systems
+  // registry with an auto-open create form, matching the SystemForm invoked
+  // from the Systems tab's "+ register system" button (there is no duplicate
+  // IntakeWizard variant for that module). Every other module keeps the
+  // existing generic IntakeWizard.
+  const requestIntake = () => {
+    if (moduleId === "vulnerability") {
+      openNamedPage("vulnerability", "systems:new", "register system");
+    } else {
+      setIntakeOpen(true);
+    }
+  };
+
+  // Opening a rail row binds it and raises the module's detail window. For
+  // vr/malware that's the X-Ray; for forensics the row is a project, so we
+  // route through the shared ForensicsProjectPage via the page registry.
+  const openInvestigation = (inv: BoundInvestigation) => {
+    setBound(inv);
+    if (moduleId === "vr") {
+      setOpenPage({
+        kind: "xray",
+        title: `vr \u00b7 ${shortCaseId("vr", inv.id)} \u00b7 x-ray`,
+        investigationId: inv.id,
+        section: "overview",
+      });
+      setPageMin(false);
+      setPageFull(false);
+    } else if (moduleId === "malware") {
+      setOpenPage({
+        kind: "malware:xray",
+        title: `malware \u00b7 ${shortCaseId("malware", inv.id)} \u00b7 x-ray`,
+        investigationId: inv.id,
+        section: "overview",
+      });
+      setPageMin(false);
+      setPageFull(false);
+    } else if (moduleId === "forensics") {
+      openNamedPage("forensics", "project", inv.title, inv.id);
+    }
+  };
+
+  const closePage = () => {
+    setOpenPage(null);
+    setPageMin(false);
+    setPageFull(false);
+  };
+
+  // The opened page renders inside the center-column overlay (or full viewport
+  // when fullscreen). Resolved from the page registry by its kind key.
+  const renderPage = (p: OpenPage) => {
+    const entry = resolvePage(p.kind);
+    const shared: ModulePageProps = {
+      section: p.section,
+      investigationId: p.investigationId,
+      onBack: closePage,
+      onMinimize: () => setPageMin(true),
+      onNavigate: (section: string) => setOpenPage({ ...p, section }),
+      isFullscreen: pageFull,
+      onToggleFullscreen: () => setPageFull((v) => !v),
+      onOpenPage: (m: string, s: string, l: string, invId?: string | null) => openNamedPage(m, s, l, invId ?? null),
+    };
+    if (!entry) {
+      return (
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-faint)", fontFamily: "var(--font-mono)", fontSize: 12 }}>
+          page not available: {p.kind}
+        </div>
+      );
+    }
+    return entry.render(shared);
+  };
 
   return (
     <div
@@ -200,423 +194,298 @@ export default function App() {
         display: "flex",
         flexDirection: "column",
         background: "var(--surface-page)",
-        color: "var(--text-primary)",
         fontFamily: "var(--font-mono)",
+        color: "var(--text-primary)",
       }}
     >
-      {/* hero */}
-      <FaultyTerminal />
+      <FaultyTerminal opts={{ brightness: 0.55, scanlineIntensity: 0.5, glitchAmount: 1 }} />
+      <div
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          inset: 0,
+          pointerEvents: "none",
+          zIndex: 15,
+          background: "repeating-linear-gradient(0deg,rgba(0,0,0,0.16) 0 1px,transparent 1px 3px)",
+          opacity: 0.4,
+        }}
+      />
+      <div
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          left: "50%",
+          top: "-12%",
+          width: "78%",
+          height: "60%",
+          transform: "translateX(-50%)",
+          pointerEvents: "none",
+          zIndex: 0,
+          background:
+            "radial-gradient(ellipse at center,color-mix(in srgb,var(--accent) 12%,transparent),transparent 68%)",
+        }}
+      />
 
-      {/* menubar */}
+      {/* menu bar */}
       <header
         style={{
-          position: "relative",
-          zIndex: 30,
-          flex: "0 0 var(--menubar-h)",
-          height: "var(--menubar-h)",
+          flex: "0 0 var(--menubar-h,32px)",
+          height: "var(--menubar-h,32px)",
           display: "flex",
           alignItems: "stretch",
           background: "var(--surface-chrome)",
           borderBottom: "2px solid var(--border)",
-          fontSize: 11,
+          fontSize: 10.5,
           letterSpacing: "0.12em",
           textTransform: "uppercase",
+          position: "relative",
+          zIndex: 20,
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 12px", borderRight: "1px solid var(--border-soft)" }}>
           <span style={{ width: 9, height: 9, background: "var(--accent)", boxShadow: "0 0 8px var(--accent)" }} />
-          <span style={{ fontWeight: 700 }}>AILA</span>
+          <span style={{ fontWeight: 700, letterSpacing: "0.2em" }}>AILA</span>
         </div>
-        {["console", "workspace", "docs"].map((t, i) => (
-          <button
-            key={t}
-            type="button"
-            style={{
-              padding: "0 14px",
-              background: i === 0 ? "var(--accent)" : "transparent",
-              color: i === 0 ? "var(--text-on-accent)" : "var(--text-muted)",
-              border: 0,
-              borderRight: "1px solid var(--border-soft)",
-              fontSize: 11,
-              letterSpacing: "0.12em",
-              textTransform: "uppercase",
-              cursor: "pointer",
-              fontWeight: i === 0 ? 700 : 400,
-            }}
-          >
-            {t}
-          </button>
-        ))}
+        <nav style={{ display: "flex", alignItems: "stretch" }}>
+          {nav.map((n) => (
+            <button
+              key={n.label}
+              type="button"
+              onClick={n.onClick}
+              style={{
+                padding: "0 12px",
+                background: n.on ? "var(--accent)" : "transparent",
+                color: n.on ? "var(--text-on-accent)" : "var(--text-muted)",
+                border: 0,
+                borderRight: "1px solid var(--border-soft)",
+                fontFamily: "var(--font-mono)",
+                fontSize: 10.5,
+                letterSpacing: "0.12em",
+                textTransform: "uppercase",
+                cursor: "pointer",
+                fontWeight: n.on ? 700 : 400,
+              }}
+            >
+              {n.label}
+            </button>
+          ))}
+        </nav>
         <div style={{ flex: 1 }} />
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 12px", borderLeft: "1px solid var(--border-soft)", color: "var(--text-faint)" }}>
-          <span style={{ width: 8, height: 8, background: "var(--status-ok)", boxShadow: "0 0 7px var(--status-ok)" }} />
-          <span style={{ color: "var(--text-muted)" }}>engine ok</span>
-          <span>·</span>
-          <span>{clock}</span>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 9,
+            padding: "0 12px",
+            borderLeft: "1px solid var(--border-soft)",
+            color: "var(--text-muted)",
+            textTransform: "none",
+            letterSpacing: "0.05em",
+            maxWidth: 320,
+            overflow: "hidden",
+          }}
+        >
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              background: adv ? "var(--status-ok)" : "var(--text-muted)",
+              boxShadow: adv ? "0 0 7px var(--status-ok)" : "none",
+            }}
+          />
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{engineLabel}</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", padding: "0 12px", borderLeft: "1px solid var(--border-soft)", color: "var(--text-faint)", textTransform: "none", letterSpacing: "0.06em" }}>
+          {clock}
         </div>
       </header>
 
-      {/* main: left pane | desktop */}
-      <main style={{ position: "relative", zIndex: 10, flex: 1, minHeight: 0, display: "flex" }}>
-        {/* left pane */}
+      {/* body */}
+      <main style={{ flex: 1, minHeight: 0, display: "flex", position: "relative" }}>
         <aside
           style={{
-            flex: "0 0 216px",
+            flex: `0 0 ${adv ? "216px" : "0px"}`,
+            width: adv ? 216 : 0,
+            overflow: "hidden",
             display: "flex",
             flexDirection: "column",
-            background: "color-mix(in srgb, var(--surface-page) 86%, transparent)",
-            borderRight: "1px solid var(--border-soft)",
-            overflow: "auto",
+            borderRight: adv ? "1px solid var(--border-soft)" : "1px solid transparent",
+            background: "color-mix(in srgb, var(--surface-card) 72%, transparent)",
+            transition: "flex-basis 260ms cubic-bezier(0.22,1,0.36,1),width 260ms cubic-bezier(0.22,1,0.36,1)",
           }}
         >
-          <PaneSection title="module">
-            {MODULES.map((m) => (
-              <PaneRow
-                key={m.id}
-                label={m.label}
-                dot={m.tone}
-                active={m.id === activeModule}
-                onClick={() => setActiveModule(m.id)}
-              />
-            ))}
-          </PaneSection>
+          {adv ? (
+            <LeftRail
+              moduleId={moduleId}
+              onSelectModule={setModuleId}
+              bound={bound}
+              onBind={openInvestigation}
+              pagesOpen={pagesOpen}
+              onTogglePages={() => setPagesOpen((v) => !v)}
+              adminOpen={adminOpen}
+              onToggleAdmin={() => setAdminOpen((v) => !v)}
+              onOpenIntake={requestIntake}
+              onOpenSettings={() => setSettingsOpen(true)}
+              onOpenPage={openNamedPage}
+            />
+          ) : null}
+        </aside>
 
-          <PaneSection title="pages">
-            {activePages?.pages.map((p) => (
-              <PaneRow
-                key={p.id}
-                label={p.label}
-                dot="var(--text-faint)"
-                onClick={() => openWindow(activePages.id, p, activePages.tone)}
-              />
-            ))}
-          </PaneSection>
+        <section style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", position: "relative" }}>
+          {settingsOpen ? (
+            <SettingsOverlay user={user} onClose={() => setSettingsOpen(false)} />
+          ) : null}
+          {intakeOpen ? (
+            <IntakeWizard
+              moduleId={moduleId}
+              onClose={() => setIntakeOpen(false)}
+              onBind={(inv) => {
+                setIntakeOpen(false);
+                openInvestigation(inv);
+              }}
+              onRequestUpload={() => {
+                setIntakeOpen(false);
+                openNamedPage(moduleId, "new-target", "upload target");
+              }}
+            />
+          ) : null}
+          {!(openPage && !pageMin) ? (
+            <ChatConsole
+              mode={mode}
+              moduleId={moduleId}
+              investigationId={bound?.id ?? null}
+              investigationTitle={bound?.title ?? null}
+              onToggleMode={() => setMode(adv ? "basic" : "advanced")}
+              onOpenIntake={requestIntake}
+              onOpenXray={bound ? () => openInvestigation(bound) : undefined}
+              dockOpen={openPage !== null && pageMin}
+            />
+          ) : null}
 
-          <PaneSection title="investigations">
-            {INVESTIGATIONS.map((inv) => (
-              <button
-                key={inv.id}
-                type="button"
-                onClick={() =>
-                  openWindow(activeModule, { id: inv.id, label: inv.id }, inv.tone)
-                }
+          {/* Module page opens as a contained inner window inside the center
+              column -- the menu bar, left rail, and FaultyTerminal backdrop
+              stay visible around it (the mock's embedded look). The page's own
+              root is position:absolute;inset:0 with a transparent background, so
+              the animated terminal shows through its panels. No top nav. */}
+          {openPage && !pageMin ? (
+            pageFull ? (
+              <div style={{ position: "fixed", inset: 0, zIndex: 45, background: "var(--surface-page)" }}>{renderPage(openPage)}</div>
+            ) : (
+              renderPage(openPage)
+            )
+          ) : null}
+          {openPage && pageMin ? (
+            <div
+              style={{
+                position: "fixed",
+                left: 0,
+                right: 0,
+                bottom: 0,
+                zIndex: 31,
+                display: "flex",
+                alignItems: "center",
+                gap: 9,
+                padding: "9px 14px",
+                background: "var(--surface-chrome)",
+                borderTop: "1px solid var(--border)",
+                boxShadow: "0 -8px 30px rgba(0,0,0,0.5)",
+              }}
+            >
+              <span style={{ width: 7, height: 7, background: "var(--accent)", boxShadow: "0 0 7px var(--accent)", flex: "0 0 auto" }} />
+              <span
                 style={{
-                  display: "block",
-                  width: "100%",
-                  textAlign: "left",
-                  padding: "6px 12px",
+                  fontSize: 10,
+                  letterSpacing: "0.1em",
+                  textTransform: "uppercase",
+                  color: "var(--text-primary)",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                {openPage.title}
+              </span>
+              <span style={{ fontSize: 9, color: "var(--text-faint)", letterSpacing: "0.06em", flex: "0 0 auto" }}>
+                minimized
+              </span>
+              <span style={{ flex: 1 }} />
+              <button
+                type="button"
+                onClick={() => setPageMin(false)}
+                style={{
                   background: "transparent",
-                  border: 0,
-                  borderBottom: "1px solid var(--border-faint)",
+                  border: "1px solid var(--border-soft)",
+                  color: "var(--text-muted)",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 9,
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                  padding: "2px 8px",
+                  borderRadius: 2,
                   cursor: "pointer",
                 }}
               >
-                <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                  <span style={{ width: 6, height: 6, background: inv.tone, flex: "0 0 auto" }} />
-                  <span style={{ fontSize: 11, color: "var(--text-primary)" }}>{inv.label}</span>
-                  <span style={{ flex: 1 }} />
-                  <span style={{ fontSize: 8, letterSpacing: "0.1em", textTransform: "uppercase", color: inv.tone }}>{inv.state}</span>
-                </span>
-                <span style={{ display: "block", marginTop: 2, marginLeft: 13, fontSize: 9.5, color: "var(--text-faint)" }}>{inv.sub}</span>
+                restore
               </button>
-            ))}
-          </PaneSection>
-        </aside>
-
-        {/* desktop -- window canvas */}
-        <section style={{ position: "relative", flex: 1, minWidth: 0, overflow: "hidden" }}>
-          {wins.filter((w) => !w.minimized).length === 0 && (
-            <div
-              style={{
-                position: "absolute",
-                inset: 0,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                flexDirection: "column",
-                gap: 10,
-                color: "var(--text-faint)",
-              }}
-            >
-              <div style={{ fontFamily: "var(--font-display)", fontWeight: 300, fontSize: 30, color: "var(--text-muted)" }}>
-                AILA workbench
-              </div>
-              <div style={{ fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase" }}>
-                pick a page from the left rail to open a window
-              </div>
+              <button
+                type="button"
+                onClick={closePage}
+                style={{
+                  background: "transparent",
+                  border: 0,
+                  color: "var(--text-muted)",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 12,
+                  cursor: "pointer",
+                  padding: "0 4px",
+                }}
+              >
+                {"\u2715"}
+              </button>
             </div>
-          )}
-
-          {wins
-            .filter((w) => !w.minimized)
-            .map((w) => (
-              <Window
-                key={w.id}
-                w={w}
-                onFocus={() => focus(w.id)}
-                onDragStart={(e) => startDrag(e, w)}
-                onMinimize={() => minimize(w.id)}
-                onClose={() => closeWindow(w.id)}
-              />
-            ))}
-
-          {/* page dock */}
-          {dockWins.length > 0 && (
-            <div
-              style={{
-                position: "absolute",
-                left: 8,
-                right: 8,
-                bottom: 8,
-                display: "flex",
-                gap: 6,
-                flexWrap: "wrap",
-                zIndex: 9999,
-              }}
-            >
-              {dockWins.map((w) => (
-                <button
-                  key={w.id}
-                  type="button"
-                  onClick={() => focus(w.id)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 7,
-                    height: 24,
-                    padding: "0 10px",
-                    background: "var(--surface-chrome)",
-                    border: "1px solid var(--border-soft)",
-                    borderRadius: "var(--radius-sm)",
-                    color: "var(--text-muted)",
-                    fontSize: 10,
-                    letterSpacing: "0.06em",
-                    textTransform: "uppercase",
-                    cursor: "pointer",
-                  }}
-                >
-                  <span style={{ width: 6, height: 6, background: w.tone }} />
-                  {w.title}
-                </button>
-              ))}
-            </div>
-          )}
+          ) : null}
         </section>
+
+        <aside style={{ display: "none" }} />
       </main>
 
       {/* status bar */}
       <footer
         style={{
-          position: "relative",
-          zIndex: 30,
-          flex: "0 0 var(--statusbar-h)",
-          height: "var(--statusbar-h)",
+          flex: "0 0 var(--statusbar-h,24px)",
+          height: "var(--statusbar-h,24px)",
           display: "flex",
           alignItems: "center",
-          gap: 14,
-          padding: "0 12px",
           background: "var(--surface-chrome)",
-          borderTop: "1px solid var(--border)",
-          fontSize: 10,
-          letterSpacing: "0.06em",
+          borderTop: "2px solid var(--border)",
+          fontSize: 9.5,
+          letterSpacing: "0.1em",
           textTransform: "uppercase",
           color: "var(--text-faint)",
+          position: "relative",
+          zIndex: 20,
         }}
       >
-        <span style={{ color: "var(--text-on-accent)", background: "var(--accent)", padding: "2px 8px", borderRadius: 2 }}>desktop</span>
-        <span>{wins.length} windows</span>
-        <span>module {activeModule}</span>
-        <span style={{ flex: 1 }} />
-        <span>aila.sh</span>
-        <span>{clock}</span>
+        <span
+          style={{
+            display: "flex",
+            alignItems: "center",
+            padding: "0 11px",
+            height: "100%",
+            background: adv ? "var(--accent)" : "var(--status-info)",
+            color: "var(--text-on-accent)",
+            fontWeight: 700,
+            letterSpacing: "0.14em",
+          }}
+        >
+          {adv ? "advanced" : "basic"}
+        </span>
+        <div style={{ flex: 1 }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "0 11px", borderLeft: "1px solid var(--border-soft)", textTransform: "none", letterSpacing: "0.06em" }}>
+          <span>aila.sh</span>
+        </div>
       </footer>
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Left-pane primitives
-// ---------------------------------------------------------------------------
-
-function PaneSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div style={{ paddingTop: 6 }}>
-      <div
-        style={{
-          padding: "6px 12px 4px",
-          fontSize: 9,
-          letterSpacing: "0.16em",
-          textTransform: "uppercase",
-          color: "var(--text-faint)",
-        }}
-      >
-        {title}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function PaneRow({
-  label,
-  dot,
-  active,
-  onClick,
-}: {
-  label: string;
-  dot: string;
-  active?: boolean;
-  onClick?: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        width: "100%",
-        textAlign: "left",
-        padding: "6px 12px",
-        background: active ? "color-mix(in srgb, var(--accent) 12%, transparent)" : "transparent",
-        border: 0,
-        borderLeft: active ? "2px solid var(--accent)" : "2px solid transparent",
-        color: active ? "var(--accent)" : "var(--text-muted)",
-        fontSize: 11.5,
-        letterSpacing: "0.02em",
-        cursor: "pointer",
-      }}
-    >
-      <span style={{ width: 6, height: 6, background: dot, flex: "0 0 auto" }} />
-      {label}
-    </button>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Window
-// ---------------------------------------------------------------------------
-
-function Window({
-  w,
-  onFocus,
-  onDragStart,
-  onMinimize,
-  onClose,
-}: {
-  w: WinState;
-  onFocus: () => void;
-  onDragStart: (e: React.MouseEvent) => void;
-  onMinimize: () => void;
-  onClose: () => void;
-}) {
-  return (
-    <div
-      onMouseDown={onFocus}
-      style={{
-        position: "absolute",
-        left: w.x,
-        top: w.y,
-        width: w.w,
-        height: w.h,
-        zIndex: w.z,
-        display: "flex",
-        flexDirection: "column",
-        background: "var(--surface-card)",
-        border: "1px solid var(--border)",
-        borderRadius: "var(--radius-md)",
-        boxShadow: "var(--shadow-window)",
-        overflow: "hidden",
-      }}
-    >
-      {/* title bar */}
-      <div
-        onMouseDown={onDragStart}
-        style={{
-          flex: "0 0 var(--panel-title-h)",
-          height: "var(--panel-title-h)",
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "0 8px 0 10px",
-          background: "var(--surface-chrome)",
-          borderBottom: "1px solid var(--border)",
-          backgroundImage: "var(--hatch)",
-          cursor: "move",
-          userSelect: "none",
-        }}
-      >
-        <span style={{ width: 7, height: 7, background: w.tone, flex: "0 0 auto" }} />
-        <span style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--text-primary)" }}>
-          {w.title}
-        </span>
-        <span style={{ flex: 1 }} />
-        <WinBtn label="–" onClick={onMinimize} title="minimize" />
-        <WinBtn label="✕" onClick={onClose} title="close" accent />
-      </div>
-      {/* body -- window content wires to real module screens + data next phase */}
-      <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 14 }}>
-        <div
-          style={{
-            border: "1px solid var(--border-soft)",
-            background: "var(--surface-sunk)",
-            borderRadius: "var(--radius-md)",
-            padding: 16,
-            fontSize: 12,
-            color: "var(--text-muted)",
-            lineHeight: 1.6,
-          }}
-        >
-          <div style={{ fontFamily: "var(--font-display)", fontWeight: 300, fontSize: 20, color: "var(--text-primary)", marginBottom: 8 }}>
-            {w.title}
-          </div>
-          <div style={{ letterSpacing: "0.04em" }}>{w.sub}</div>
-          <div style={{ marginTop: 12, fontSize: 11, color: "var(--text-faint)" }}>
-            window open · drag the title bar · minimize to the dock · close with ✕
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function WinBtn({
-  label,
-  onClick,
-  title,
-  accent,
-}: {
-  label: string;
-  onClick: () => void;
-  title: string;
-  accent?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      title={title}
-      onClick={(e) => {
-        e.stopPropagation();
-        onClick();
-      }}
-      onMouseDown={(e) => e.stopPropagation()}
-      style={{
-        width: 18,
-        height: 18,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "transparent",
-        border: "1px solid var(--border-soft)",
-        borderRadius: 2,
-        color: accent ? "var(--accent)" : "var(--text-muted)",
-        fontSize: 11,
-        cursor: "pointer",
-        lineHeight: 1,
-      }}
-    >
-      {label}
-    </button>
-  );
-}

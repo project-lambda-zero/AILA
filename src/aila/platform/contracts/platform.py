@@ -121,6 +121,8 @@ class SSHIntegrationInput(BaseModel):
     distro: str = "unknown"
     description: str = ""
     private_key_path: str | None = None
+    private_key_secret_id: str | None = None
+    private_key_passphrase_secret_id: str | None = None
     password: str | None = Field(default=None, exclude=True, repr=False)
     password_secret_id: str | None = None
     known_hosts_path: str | None = None

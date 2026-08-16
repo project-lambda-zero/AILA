@@ -122,7 +122,7 @@ export default defineConfig({
     __APP_BUILD_SHA__: JSON.stringify(buildSha),
   },
   optimizeDeps: {
-    include: ["ogl", "@monaco-editor/react", "monaco-editor"],
+    include: ["ogl"],
   },
   resolve: {
     alias: [

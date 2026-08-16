@@ -30,12 +30,14 @@ from aila.api.constants import (
 )
 from aila.api.limiter import limiter
 from aila.api.metrics import ACTIVE_SSE
+from aila.api.schemas.scans import ScanCancelResponse
 from aila.api.schemas.tasks import ScanStatusResponse, ScanSubmissionRequest, TaskSubmitResponse
 from aila.platform.services.audit import record_audit_event
 from aila.platform.services.redis_pool import pool_available
 from aila.platform.tasks.entrypoints import run_platform_handle
 from aila.platform.tasks.models import TaskRecord, TaskStatus
 from aila.platform.tasks.progress import ProgressStream
+from aila.platform.tasks.queue import _env_redis_url
 from aila.platform.tasks.storage import TaskRepository
 from aila.storage.database import async_session_scope
 
@@ -163,6 +165,128 @@ async def get_scan_status(
             detail=f"Scan '{run_id}' not found or not accessible -- verify the run_id via GET /tasks",
         )
     return result
+
+
+_TERMINAL_TASK_STATUSES: frozenset[str] = frozenset({
+    TaskStatus.DONE,
+    TaskStatus.FAILED,
+    TaskStatus.CANCELLED,
+    TaskStatus.DEAD_LETTER,
+})
+
+
+@limiter.limit("60/minute")
+@router.post(
+    "/scans/{run_id}/cancel",
+    response_model=ScanCancelResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Cancel a submitted scan",
+)
+async def cancel_scan(
+    run_id: str,
+    request: Request,
+    auth: AuthContext = Depends(require_role(ROLE_OPERATOR)),
+) -> ScanCancelResponse:
+    """Abort a running or queued scan.
+
+    Contract:
+    * Ownership is checked via the same team/group scoping as
+      ``GET /scans/{run_id}`` -- a caller who cannot see the scan gets
+      ``404`` instead of leaking its existence.
+    * Already-terminal rows (``done``/``failed``/``cancelled``/``dead_letter``)
+      return their current status with ``202``. This is intentional: the
+      operator asked to stop the run, and it is already stopped, so the
+      request succeeded and the response tells them the truth. A second
+      cancel is never a 500.
+    * For non-terminal rows we first ask ARQ to abort the running job
+      (``arq.jobs.Job.abort``, wired up by ``allow_abort_jobs=True`` on
+      the worker), then flip the DB row to ``CANCELLED`` inside a single
+      transaction, then drop the ``arq:in-progress:<id>`` key via the
+      shared ``finalize_cancel_side_effects`` helper. Ordering matches
+      the pattern documented on
+      :meth:`aila.platform.tasks.storage.TaskRepository.set_cancelled`:
+      the ARQ side-effect never fires ahead of a commit that then rolls
+      back, and a failed abort does not leave the row un-flipped.
+    """
+    async def _fetch() -> TaskRecord | None:
+        async with async_session_scope() as session:
+            return await TaskRepository.get_for_user(session, run_id, auth)
+
+    record = await _fetch()
+    if record is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Scan '{run_id}' not found or not accessible -- verify the run_id via GET /tasks",
+        )
+
+    if record.status in _TERMINAL_TASK_STATUSES:
+        return ScanCancelResponse(run_id=run_id, status=record.status)
+
+    # Best-effort ARQ abort. A running job receives the abort signal
+    # (worker was started with ``allow_abort_jobs=True``); a merely
+    # queued job is removed from the run queue. Failure here does not
+    # block the DB-side flip: the reaper reconciles orphan locks on its
+    # next sweep, and the row transition is what the operator's UI keys
+    # off. Heterogeneous transport errors surface here (RedisError,
+    # OSError, ValueError from DSN parsing, TimeoutError), all of which
+    # we treat uniformly as "abort was best-effort".
+    redis_url = _env_redis_url()
+    if redis_url:
+        from arq.connections import RedisSettings, create_pool
+        from arq.jobs import Job
+
+        from aila.platform.tasks.constants import ARQ_QUEUE_KEY_TEMPLATE
+
+        pool = None
+        try:
+            pool = await create_pool(RedisSettings.from_dsn(redis_url))
+            queue_key = ARQ_QUEUE_KEY_TEMPLATE.format(track=record.track)
+            job = Job(run_id, pool, _queue_name=queue_key)
+            await job.abort(timeout=1.0)
+        except Exception as exc:
+            _log.warning(
+                "cancel_scan: ARQ abort failed for run_id=%s track=%s: %s -- "
+                "proceeding with DB cancel; reaper will reconcile orphan lock",
+                run_id, record.track, exc,
+            )
+        finally:
+            if pool is not None:
+                await pool.aclose()
+    else:
+        _log.debug(
+            "cancel_scan: AILA_PLATFORM_REDIS_URL unset -- skipping ARQ abort for %s",
+            run_id,
+        )
+
+    async def _flip() -> str:
+        async with async_session_scope() as session:
+            # Re-read inside this session so ``set_cancelled`` can stage
+            # its status flip. The prior ``get_for_user`` above only
+            # served the terminal-state short-circuit.
+            fresh = await TaskRepository.get_for_user(session, run_id, auth)
+            if fresh is None:
+                # Row vanished between the two reads (deletion by another
+                # admin, TTL sweep). Treat as terminal from the caller's
+                # perspective -- there is nothing left to cancel.
+                return TaskStatus.CANCELLED
+            if fresh.status in _TERMINAL_TASK_STATUSES:
+                return fresh.status
+            staged = await TaskRepository.set_cancelled(session, run_id, auth)
+            if not staged:
+                # ``set_cancelled`` only refuses when the row is missing
+                # or already terminal; both branches were handled above,
+                # so a False here is a genuine race. Return the freshly
+                # observed status.
+                await session.rollback()
+                current = await TaskRepository.get_for_user(session, run_id, auth)
+                return current.status if current is not None else TaskStatus.CANCELLED
+            await session.commit()
+            return TaskStatus.CANCELLED
+
+    final_status = await _flip()
+    if final_status == TaskStatus.CANCELLED:
+        await TaskRepository.finalize_cancel_side_effects(run_id)
+    return ScanCancelResponse(run_id=run_id, status=final_status)
 
 
 @router.get(

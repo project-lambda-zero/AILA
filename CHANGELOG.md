@@ -7,6 +7,91 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.33] - 2026-08-16 -- Full console coverage, knowledge + sandbox surfaces, SSH key fix
+
+### Added
+
+- Console coverage for the whole backend: every module list, admin resource, and
+  platform surface opens as a window (minimizable + fullscreenable). Simple
+  resources get typed create/edit forms generated from their real Pydantic
+  schemas (enum -> dropdown, file -> picker), replacing the raw-JSON editors.
+- Multipart target-upload wizards for VR and malware: file kinds stream to the
+  correct per-kind endpoint and descriptor kinds post JSON. Guided investigation
+  intake now creates and binds a real investigation.
+- Malware investigation X-Ray: a rich detail view mirroring the VR X-Ray (turn
+  stream, hypotheses, observations, evidence graph, outcomes, cost split) wired to
+  the /malware investigation endpoints.
+- Forensics project-scoped navigation: the rail lists projects; opening one raises
+  a tabbed project detail (evidence, artifacts, leads, investigations, answers,
+  writeups, timeline, occurrences, directives, solid evidence, suppressions,
+  findings, network/registry analysis) with a nested investigation sub-view.
+- Knowledge console page plus read/search platform endpoints that EXPOSE the
+  existing retrieval stack over HTTP for the first time (it was agent-tool-only):
+  GET /platform/knowledge/stats, GET /platform/knowledge/entries, and POST
+  /platform/knowledge/search delegate to the existing KnowledgeService.retrieve_routed
+  (STABLE_CORE cache-augmented route + hybrid vector/FTS + graph) over the existing
+  pgvector knowledge corpus. No new retrieval logic was added -- this is a viewing
+  and search surface over what was already there.
+- Sandbox / isolation governance page plus GET /platform/sandbox/status readiness
+  endpoint: a config editor over the platform.sandbox_* keys and an exec console.
+- Vulnerability running-scan detail view with live SSE progress and a Stop
+  control; POST /scans/{run_id}/cancel aborts a queued or running scan.
+- Twelve selectable UI themes wired end-to-end (persisted to localStorage and
+  applied on load).
+- Structured detail rendering across list detail panels (nested objects render as
+  key/value grids, arrays of objects as compact tables); the LLM Log prompt and
+  response render as readable transcripts instead of raw JSON.
+- Eval-calibrator training is actionable from the console (POST
+  /admin/eval/calibrators/train).
+
+### Changed
+
+- SSH systems: a pasted private key and its passphrase now flow end-to-end. The
+  passphrase is persisted as an encrypted secret, and the stored key is resolved
+  into a paramiko key (parser cascade across key types) and applied at every
+  connect site, including the registry-tool path used by scans and inventory.
+- The vulnerability module "+" affordance opens the real add-system form instead
+  of a duplicate intake wizard.
+
+### Fixed
+
+- Vulnerability full_analysis scans failed with a ValidationError because the
+  inventory state wrote rows without committing its unit of work, leaving the
+  workflow without a response terminal. The state now commits, so full_analysis
+  completes.
+- SSH connect previously ignored form-provided keys entirely: the stored key
+  secret was never read and the passphrase was dropped, so key auth could not
+  succeed. Both are now wired through to the connection.
+
+### Migration
+
+- 127_managed_system_passphrase_secret: adds
+  managedsystemrecord.private_key_passphrase_secret_id (nullable).
+
+## [0.5.32] - 2026-08-15 -- Live backend-wired console
+
+### Changed
+
+- The frontend entry is a single console composing three live panels over the
+  design-system OS-frame chrome (menubar and status bar above the FaultyTerminal
+  hero): a left rail of the four modules, the active module's pages, and live
+  investigations; a center chat console bound to the selected investigation; and
+  a right x-ray rail showing engine phase and kind, branches, and hypotheses.
+  Selecting an investigation binds both the console and the x-ray to it. This
+  replaces the placeholder windowing-desktop foundation.
+- The menubar is functional: a live clock, an engine-status dot that reflects the
+  bound investigation, and a working sign-out control.
+
+### Added
+
+- Backend wiring for the console: a Bearer-token auth store (login posts to
+  /auth/login, the token persists to localStorage, and a 401 returns to the login
+  screen) and React Query hooks that read VR investigations, per-investigation
+  messages, branches, and hypotheses. Real data renders directly; loading and
+  empty states show while a stream has no turns.
+
+Frontend only; no backend contract change.
+
 ## [0.5.31] - 2026-08-14 -- Purge remaining legacy frontend components
 
 ### Removed

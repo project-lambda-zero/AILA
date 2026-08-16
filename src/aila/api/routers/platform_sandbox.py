@@ -113,6 +113,28 @@ class SandboxResultResponse(BaseModel):
     truncated: bool
 
 
+class SandboxCheck(BaseModel):
+    """A single readiness check for the sandbox governance panel."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    ok: bool
+    detail: str
+
+
+class SandboxStatus(BaseModel):
+    """Config-derived readiness snapshot for ``GET /platform/sandbox/status``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    backend: str
+    provisioned: bool
+    ssh_host: str
+    ssh_reachable: bool | None
+    checks: list[SandboxCheck]
+
+
 def _to_response(result: SandboxResult) -> SandboxResultResponse:
     return SandboxResultResponse(
         backend=result.backend,
@@ -180,3 +202,62 @@ async def exec_sandbox(
             detail=f"sandbox backend failed: {exc}",
         ) from exc
     return DataEnvelope(data=_to_response(result))
+
+
+@router.get("/status", status_code=status.HTTP_200_OK)
+@limiter.limit("30/minute")
+async def sandbox_status(
+    request: Request,
+    ctx: AuthContext = Depends(_require_admin),
+) -> DataEnvelope[SandboxStatus]:
+    """Config-derived readiness for the sandbox governance panel.
+
+    Reads the live ConfigRegistry snapshot (same values ``exec`` resolves)
+    and reports per-knob checks. It NEVER runs a job and NEVER 500s on an
+    unprovisioned or misconfigured backend -- an un-provisioned deployment
+    honestly returns ``provisioned=false`` with the failing checks named.
+    ``ssh_reachable`` is left ``null`` (config-only probe); a live round-trip
+    happens on demand via ``POST /exec``.
+    """
+    del request, ctx
+    service = SandboxService(build_platform_settings(get_settings()))
+    cfg = await service.describe()
+
+    backend = (cfg.backend or "none").strip().lower()
+    ssh_host = (cfg.ssh_host or "").strip()
+    checks: list[SandboxCheck] = []
+
+    backend_ok = backend in ("nsjail", "firecracker")
+    checks.append(SandboxCheck(
+        name="backend selected",
+        ok=backend_ok,
+        detail=(f"sandbox_backend={backend}" if backend_ok
+                else "sandbox_backend is 'none' -- set it to 'nsjail' or 'firecracker' to provision"),
+    ))
+    host_ok = bool(ssh_host)
+    checks.append(SandboxCheck(
+        name="ssh host configured",
+        ok=host_ok,
+        detail=(f"sandbox_ssh_host={ssh_host}" if host_ok else "sandbox_ssh_host is empty"),
+    ))
+
+    if backend == "nsjail":
+        checks.append(SandboxCheck(
+            name="nsjail binary configured",
+            ok=bool(cfg.nsjail_bin.strip()),
+            detail=f"sandbox_nsjail_bin={cfg.nsjail_bin or '(unset)'}",
+        ))
+    elif backend == "firecracker":
+        checks.append(SandboxCheck(name="firecracker binary configured", ok=bool(cfg.firecracker_bin.strip()), detail=f"sandbox_firecracker_bin={cfg.firecracker_bin or '(unset)'}"))
+        checks.append(SandboxCheck(name="jailer binary configured", ok=bool(cfg.jailer_bin.strip()), detail=f"sandbox_jailer_bin={cfg.jailer_bin or '(unset)'}"))
+        checks.append(SandboxCheck(name="rootfs path configured", ok=bool(cfg.rootfs_path.strip()), detail=f"sandbox_rootfs_path={cfg.rootfs_path or '(unset)'}"))
+        checks.append(SandboxCheck(name="kernel path configured", ok=bool(cfg.kernel_path.strip()), detail=f"sandbox_kernel_path={cfg.kernel_path or '(unset)'}"))
+
+    provisioned = backend_ok and host_ok and all(c.ok for c in checks)
+    return DataEnvelope(data=SandboxStatus(
+        backend=backend or "none",
+        provisioned=provisioned,
+        ssh_host=ssh_host,
+        ssh_reachable=None,
+        checks=checks,
+    ))

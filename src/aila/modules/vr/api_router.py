@@ -6037,6 +6037,209 @@ def create_vr_router() -> APIRouter:
         ])
 
     @router.get(
+        "/investigations/{investigation_id}/dispatch",
+        response_model=DataEnvelope[dict],
+        summary=(
+            "Dispatch-hub state for the X-Ray page: ordered phase catalog "
+            "plus visited/current/last aggregated across the "
+            "investigation's live branches."
+        ),
+    )
+    @limiter.limit("120/minute")
+    async def get_investigation_dispatch(
+        request: Request,
+        investigation_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[dict]:
+        del request
+        # Deferred import: workflow.definitions_hub pulls the VR loop /
+        # setup state graph which in turn imports back into the module's
+        # task registry. Top-level import here would tighten the module
+        # startup cycle; the neighbouring investigation routes take the
+        # same deferred posture for the same reason.
+        from .workflow.definitions_hub import VR_HUB_PHASES
+
+        phase_names = {p.name for p in VR_HUB_PHASES}
+        phases_payload = [
+            {"id": p.name, "capability": p.capability, "trust": p.trust}
+            for p in VR_HUB_PHASES
+        ]
+
+        inv = await _load_investigation(investigation_id, auth)
+        if inv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Investigation {investigation_id} not found.",
+            )
+
+        # WorkflowStateCursor.run_id is the ARQ task uuid, NOT branch.id
+        # (RFC-02 cursor keying fix noted on the model). The denormalised
+        # ``investigation_id`` column is the correct join key here; it
+        # covers every cursor belonging to this investigation, including
+        # the pre-branch setup cursor that has no branch_id yet.
+        async with UnitOfWork() as uow:
+            cursor_rows = list((await uow.session.exec(
+                select(WorkflowStateCursor).where(
+                    WorkflowStateCursor.investigation_id == investigation_id,
+                )
+            )).all())
+
+        visited_set: set[str] = set()
+        current_set: set[str] = set()
+        last: str | None = None
+        reason: str | None = None
+        phase_trust: str | None = None
+        replan_relax = False
+        budget_exhausted = False
+        newest_ts = None
+
+        for cur in cursor_rows:
+            state_input = cur.state_input if isinstance(cur.state_input, dict) else {}
+            visited_val = state_input.get("_dispatch_visited")
+            if isinstance(visited_val, list):
+                for v in visited_val:
+                    if isinstance(v, str):
+                        visited_set.add(v)
+            if isinstance(cur.current_state, str) and cur.current_state in phase_names:
+                current_set.add(cur.current_state)
+            ts = cur.updated_at
+            if ts is not None and (newest_ts is None or ts > newest_ts):
+                newest_ts = ts
+                last_val = state_input.get("_dispatch_last")
+                last = last_val if isinstance(last_val, str) else None
+                reason_val = state_input.get("_dispatch_reason")
+                reason = reason_val if isinstance(reason_val, str) else None
+                trust_val = state_input.get("_dispatch_phase_trust")
+                phase_trust = trust_val if isinstance(trust_val, str) else None
+                replan_relax = bool(state_input.get("_dispatch_replan_relax", False))
+                budget_exhausted = bool(state_input.get("_budget_exhausted", False))
+
+        return DataEnvelope(data={
+            "phases": phases_payload,
+            "visited": sorted(visited_set),
+            "current": sorted(current_set),
+            "last": last,
+            "reason": reason,
+            "phase_trust": phase_trust,
+            "replan_relax": replan_relax,
+            "budget_exhausted": budget_exhausted,
+        })
+
+    @router.get(
+        "/investigations/{investigation_id}/ledger",
+        response_model=DataEnvelope[list[dict]],
+        summary=(
+            "Investigation ledger (oldest-first): discoveries, requests, "
+            "decisions, notes, and objectives with a human-readable text "
+            "field for the X-Ray timeline."
+        ),
+    )
+    @limiter.limit("120/minute")
+    async def get_investigation_ledger(
+        request: Request,
+        investigation_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[list[dict]]:
+        del request
+        from aila.platform.services.ledger import LedgerService
+
+        inv = await _load_investigation(investigation_id, auth)
+        if inv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Investigation {investigation_id} not found.",
+            )
+
+        rows = await LedgerService().read_general(investigation_id, limit=10_000)
+
+        items: list[dict[str, Any]] = []
+        _text_keys = ("note", "summary", "rationale", "claim", "directive")
+        for row in rows:
+            payload = row.get("payload")
+            if not isinstance(payload, dict):
+                payload = {}
+            intent = payload.get("intent")
+            target_capability = payload.get("target_capability")
+            text: str = ""
+            for key in _text_keys:
+                val = payload.get(key)
+                if isinstance(val, str) and val.strip():
+                    text = val
+                    break
+            if not text:
+                try:
+                    text = _json.dumps(payload, separators=(",", ":"), sort_keys=True)
+                except (TypeError, ValueError):
+                    text = ""
+            created_at = row.get("created_at")
+            items.append({
+                "id": row.get("id"),
+                "kind": row.get("kind"),
+                "intent": intent if isinstance(intent, str) else None,
+                "objective_key": row.get("objective_key"),
+                "author_branch_id": row.get("author_branch_id"),
+                "owner_branch_id": row.get("owner_branch_id"),
+                "status": row.get("status"),
+                "target_capability": (
+                    target_capability if isinstance(target_capability, str) else None
+                ),
+                "text": text,
+                "created_at": created_at.isoformat() if created_at is not None
+                              and hasattr(created_at, "isoformat") else created_at,
+            })
+
+        return DataEnvelope(data=items)
+
+    @router.get(
+        "/investigations/{investigation_id}/mcp-calls",
+        response_model=DataEnvelope[list[dict]],
+        summary=(
+            "Per-investigation MCP call log (oldest-first, capped at 500) "
+            "including branch/turn join-keys for the X-Ray timing view."
+        ),
+    )
+    @limiter.limit("120/minute")
+    async def get_investigation_mcp_calls(
+        request: Request,
+        investigation_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[list[dict]]:
+        del request
+        from .db_models import VRMcpCallLogRecord
+
+        inv = await _load_investigation(investigation_id, auth)
+        if inv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Investigation {investigation_id} not found.",
+            )
+
+        async with UnitOfWork() as uow:
+            rows = (await uow.session.exec(
+                select(VRMcpCallLogRecord)
+                .where(VRMcpCallLogRecord.investigation_id == investigation_id)
+                .order_by(VRMcpCallLogRecord.called_at.asc())  # type: ignore[union-attr]
+                .limit(500)
+            )).all()
+
+        items = [
+            {
+                "id": r.id,
+                "server_id": r.server_id,
+                "action": r.action,
+                "status": r.status,
+                "http_status": r.http_status,
+                "latency_ms": r.latency_ms,
+                "error_excerpt": r.error_excerpt,
+                "branch_id": r.branch_id,
+                "turn_number": r.turn_number,
+                "called_at": r.called_at.isoformat() if r.called_at else None,
+            }
+            for r in rows
+        ]
+        return DataEnvelope(data=items)
+
+    @router.get(
         "/investigations/{investigation_id}/outcomes",
         response_model=DataEnvelope[list[VROutcomeSummary]],
         summary="List outcomes for an investigation.",

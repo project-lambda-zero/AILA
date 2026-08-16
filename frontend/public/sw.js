@@ -1,82 +1,41 @@
 /**
- * AILA Service Worker -- offline GET cache (UX-07).
+ * AILA service worker -- SELF-DESTRUCT.
  *
- * Strategy: Network-first for all API GET requests.
- * On network failure, serve from Cache API with last-known response.
- * Only caches GET requests matching the backend API origin.
- *
- * Cache scope: requests to localhost:8000 or 127.0.0.1:8000 (dev backend).
- * Production deployments should update API_PATTERN to match the deployed origin.
+ * The previous frontend registered a caching service worker. The new
+ * windowing-desktop build does not use one. Browsers re-fetch sw.js on every
+ * navigation (bypassing the HTTP cache), so this replacement runs in any tab
+ * that still has the old worker installed: it clears every Cache Storage entry,
+ * unregisters itself, and reloads controlled tabs so they pick up the fresh app.
  */
-
-const CACHE_NAME = "aila-api-cache-v1";
-const API_PATTERN = /https?:\/\/(?:localhost|127\.0\.0\.1):8000\//;
-
-self.addEventListener("install", (event) => {
-  // Activate immediately -- don't wait for old SW to die
-  event.waitUntil(self.skipWaiting());
+self.addEventListener("install", () => {
+  self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
-  // Claim all clients immediately
   event.waitUntil(
-    Promise.all([
-      self.clients.claim(),
-      // Prune old cache versions
-      caches.keys().then((keys) =>
-        Promise.all(
-          keys
-            .filter((key) => key !== CACHE_NAME)
-            .map((key) => caches.delete(key)),
-        ),
-      ),
-    ]),
+    (async () => {
+      try {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      } catch {
+        /* cache API unavailable -- nothing to purge */
+      }
+      try {
+        await self.registration.unregister();
+      } catch {
+        /* already gone */
+      }
+      const clients = await self.clients.matchAll({ type: "window" });
+      for (const client of clients) {
+        try {
+          client.navigate(client.url);
+        } catch {
+          /* client cannot be navigated */
+        }
+      }
+    })(),
   );
 });
 
-self.addEventListener("fetch", (event) => {
-  const { request } = event;
-
-  // Only intercept GET requests to the backend API
-  if (request.method !== "GET") return;
-  if (!API_PATTERN.test(request.url)) return;
-
-  event.respondWith(
-    fetch(request)
-      .then((response) => {
-        if (response.ok) {
-          // Clone before consuming -- cache the successful response
-          const cloned = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            // Store with last-sync timestamp header injected
-            const headers = new Headers(cloned.headers);
-            headers.set("X-Cache-Time", new Date().toISOString());
-            cloned.blob().then((body) => {
-              const cachedResponse = new Response(body, {
-                status: cloned.status,
-                statusText: cloned.statusText,
-                headers,
-              });
-              cache.put(request, cachedResponse);
-            });
-          });
-        }
-        return response;
-      })
-      .catch(async () => {
-        // Network failed -- try cache
-        const cached = await caches.match(request);
-        if (cached) {
-          return cached;
-        }
-        // Nothing cached -- return a 503 JSON error
-        return new Response(
-          JSON.stringify({ error: "offline", detail: "No cached response available." }),
-          {
-            status: 503,
-            headers: { "Content-Type": "application/json" },
-          },
-        );
-      }),
-  );
-});
+// Never intercept fetches -- always go to network.
+self.addEventListener("fetch", () => {});

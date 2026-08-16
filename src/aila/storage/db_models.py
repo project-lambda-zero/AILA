@@ -57,6 +57,7 @@ class ManagedSystemRecord(TeamScopedMixin, SQLModel, table=True):
     description: str = Field(default="")
     private_key_path: str | None = None
     private_key_secret_id: str | None = None
+    private_key_passphrase_secret_id: str | None = None
     password_secret_id: str | None = None
     known_hosts_path: str | None = None
     host_key_fingerprint: str | None = None

@@ -240,6 +240,14 @@ class SandboxService:
             "truncated": truncated,
         })
 
+    async def describe(self) -> SandboxConfig:
+        """Public live snapshot of the sandbox config for admin/status surfaces.
+
+        Reads the same ConfigRegistry-resolved values ``run`` uses, so a
+        readiness probe reflects operator PUT /config edits without a restart.
+        """
+        return await self._load_config()
+
     async def _load_config(self) -> SandboxConfig:
         """Read every ``sandbox_*`` platform key from ConfigRegistry."""
         async def _get(name: str, default: Any) -> Any:

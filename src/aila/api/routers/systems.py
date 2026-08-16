@@ -475,6 +475,8 @@ async def get_system_heartbeat(
                 "username": sys_record.username,
                 "port": sys_record.port,
                 "private_key_path": sys_record.private_key_path,
+                "private_key_secret_id": sys_record.private_key_secret_id,
+                "private_key_passphrase_secret_id": sys_record.private_key_passphrase_secret_id,
                 "password_secret_id": sys_record.password_secret_id,
                 "known_hosts_path": sys_record.known_hosts_path,
                 "host_key_fingerprint": sys_record.host_key_fingerprint,
@@ -740,16 +742,31 @@ async def import_systems_csv(
 
                 private_key_secret_id: str | None = None
                 if item.private_key:
-                    secret_rec = await secret_store.store(
+                    secret_rec = await secret_store.upsert_secret(
                         session, scope="ssh",
                         secret_key=f"system.{item.name}.private_key",
                         plaintext=item.private_key,
                     )
                     private_key_secret_id = secret_rec.id
 
+                # #40-8: the previous CSV import silently dropped
+                # ``private_key_passphrase`` -- the request accepted it but
+                # no code path persisted it, so encrypted PEMs imported
+                # from CSV could never be unlocked at scan time. Persist
+                # under the SecretStore key convention shared with the
+                # single-system POST/PUT paths below.
+                private_key_passphrase_secret_id: str | None = None
+                if item.private_key_passphrase:
+                    secret_rec = await secret_store.upsert_secret(
+                        session, scope="ssh",
+                        secret_key=f"system.{item.name}.private_key_passphrase",
+                        plaintext=item.private_key_passphrase,
+                    )
+                    private_key_passphrase_secret_id = secret_rec.id
+
                 password_secret_id: str | None = None
                 if item.password:
-                    secret_rec = await secret_store.store(
+                    secret_rec = await secret_store.upsert_secret(
                         session, scope="ssh",
                         secret_key=f"system.{item.name}.password",
                         plaintext=item.password,
@@ -765,6 +782,7 @@ async def import_systems_csv(
                     distro=item.distro,
                     description=item.description,
                     private_key_secret_id=private_key_secret_id,
+                    private_key_passphrase_secret_id=private_key_passphrase_secret_id,
                     password_secret_id=password_secret_id,
                 )
                 session.add(record)
@@ -845,6 +863,21 @@ async def create_system(
                 )
                 private_key_secret_id = secret_rec.id
 
+            # Encrypt private-key passphrase if provided. Prior to this
+            # persistence the API silently accepted the field then dropped
+            # it, so encrypted PEMs registered here could never be
+            # unlocked by ``paramiko.SSHClient.connect`` and every scan
+            # against such a system failed at auth time.
+            private_key_passphrase_secret_id: str | None = None
+            if req.private_key_passphrase:
+                secret_rec = await secret_store.upsert_secret(
+                    session,
+                    scope="ssh",
+                    secret_key=f"system.{req.name}.private_key_passphrase",
+                    plaintext=req.private_key_passphrase,
+                )
+                private_key_passphrase_secret_id = secret_rec.id
+
             # Encrypt password if provided
             password_secret_id: str | None = None
             if req.password:
@@ -865,6 +898,7 @@ async def create_system(
                 distro=req.distro,
                 description=req.description,
                 private_key_secret_id=private_key_secret_id,
+                private_key_passphrase_secret_id=private_key_passphrase_secret_id,
                 password_secret_id=password_secret_id,
             )
             session.add(record)
@@ -938,36 +972,70 @@ async def update_system(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"System {system_id} not found -- verify the ID via GET /systems",
                 )
+            # ``exclude_none=True`` for the setattr loop preserves the
+            # existing contract for scalar columns (a missing or null
+            # column is left unchanged instead of nulling e.g. distro).
+            # For the three encrypted secret fields we need to distinguish
+            # "not sent" from "explicitly sent null", so we also compute
+            # the ``exclude_unset`` view and consult it below: a present-
+            # and-null value means the caller wants the secret cleared.
             update_data = req.model_dump(exclude_none=True)
+            raw_update = req.model_dump(exclude_unset=True)
 
             from aila.storage.secrets import SecretStore
             secret_store = SecretStore()
 
-            # Handle private key content -- encrypt and store as secret
-            if "private_key" in update_data:
-                plaintext = update_data.pop("private_key")
-                secret_rec = await secret_store.store(
-                    session, scope="ssh",
-                    secret_key=f"system.{record.name}.private_key",
-                    plaintext=plaintext,
-                    secret_id=record.private_key_secret_id,
-                )
-                record.private_key_secret_id = secret_rec.id
+            async def _apply_secret(
+                field_name: str,
+                secret_key_suffix: str,
+                current_id: str | None,
+            ) -> tuple[bool, str | None]:
+                """Return ``(changed, new_secret_id)`` for one secret field.
 
-            # Handle password encryption
-            if "password" in update_data:
-                plaintext = update_data.pop("password")
-                secret_rec = await secret_store.store(
-                    session, scope="ssh",
-                    secret_key=f"system.{record.name}.password",
-                    plaintext=plaintext,
-                    secret_id=record.password_secret_id,
+                ``changed`` is True when the caller sent the field (either
+                a value to upsert or a null to clear); the caller then
+                writes ``new_secret_id`` back onto the record. When the
+                caller did not send the field this is a no-op.
+                """
+                if field_name not in raw_update:
+                    return False, current_id
+                value = raw_update[field_name]
+                update_data.pop(field_name, None)
+                if value is None or value == "":
+                    if current_id:
+                        await secret_store.delete_secret(session, secret_id=current_id)
+                    return True, None
+                secret_rec = await secret_store.upsert_secret(
+                    session,
+                    scope="ssh",
+                    secret_key=f"system.{record.name}.{secret_key_suffix}",
+                    plaintext=value,
+                    secret_id=current_id,
                 )
-                record.password_secret_id = secret_rec.id
+                return True, secret_rec.id
 
-            # Handle passphrase -- not a direct DB field, pop to avoid setattr
-            if "private_key_passphrase" in update_data:
-                update_data.pop("private_key_passphrase")
+            changed, new_id = await _apply_secret(
+                "private_key", "private_key", record.private_key_secret_id,
+            )
+            if changed:
+                record.private_key_secret_id = new_id
+
+            # Persist / clear the private-key passphrase alongside the
+            # PEM. Prior code path popped the field without storing it,
+            # so encrypted keys stayed unusable after every update.
+            changed, new_id = await _apply_secret(
+                "private_key_passphrase",
+                "private_key_passphrase",
+                record.private_key_passphrase_secret_id,
+            )
+            if changed:
+                record.private_key_passphrase_secret_id = new_id
+
+            changed, new_id = await _apply_secret(
+                "password", "password", record.password_secret_id,
+            )
+            if changed:
+                record.password_secret_id = new_id
 
             for field, value in update_data.items():
                 setattr(record, field, value)

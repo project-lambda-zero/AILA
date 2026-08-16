@@ -74,6 +74,7 @@ catalogs:
     shadcn: 4.11.0
     ogl: 0.0.116
     "@monaco-editor/react": 4.7.0
+    monaco-editor: 0.55.1
   testing:
     "@playwright/test": 1.60.0
     "@axe-core/playwright": 4.11.3
