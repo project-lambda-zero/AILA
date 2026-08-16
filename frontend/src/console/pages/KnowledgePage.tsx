@@ -19,6 +19,7 @@ import { useMemo, useState } from "react";
 import type { ChangeEvent, CSSProperties, FormEvent, JSX } from "react";
 
 import {
+  useIngestKnowledge,
   useKnowledgeEntries,
   useKnowledgeSearch,
   useKnowledgeStats,
@@ -28,6 +29,7 @@ import type {
   KnowledgeEntry,
   KnowledgeHit,
 } from "../../api/knowledge";
+import { useWorkspaces } from "../../api/intake";
 import type { ModulePageProps } from "../contract";
 import { css } from "../css";
 import StructuredValue from "./StructuredValue";
@@ -136,6 +138,18 @@ const thStyle: CSSProperties = css(
 );
 const tdStyle: CSSProperties = css(
   "padding:6px 10px;border-bottom:1px solid var(--border-faint);color:var(--text-primary);vertical-align:top;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;",
+);
+const modalBackdrop: CSSProperties = css(
+  "position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;padding:24px;background:color-mix(in srgb,var(--surface-base,#0b0b0b) 62%,transparent);backdrop-filter:blur(2px);",
+);
+const modalCard: CSSProperties = css(
+  "width:min(560px,94vw);max-height:88vh;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:var(--radius-md,3px);background:var(--surface-card);overflow:hidden;box-shadow:0 18px 48px rgba(0,0,0,0.5);",
+);
+const textareaStyle: CSSProperties = css(
+  "background:var(--surface-sunk);border:1px solid var(--border-soft);border-radius:2px;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;line-height:1.55;padding:8px 10px;min-width:0;outline:none;resize:vertical;min-height:120px;",
+);
+const headerBtn: CSSProperties = css(
+  "padding:4px 11px;border:1px solid var(--accent);border-radius:2px;background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--accent);font-family:var(--font-mono);font-size:9.5px;letter-spacing:0.12em;text-transform:uppercase;cursor:pointer;",
 );
 
 /* ----------------------------- small helpers ----------------------------- */
@@ -462,6 +476,33 @@ function EntriesPanel(): JSX.Element {
         </span>
       </div>
       <div style={{ ...pad, display: "flex", flexDirection: "column", gap: 10, minHeight: 0, flex: 1 }}>
+        <div style={css("display:flex;align-items:center;gap:6px;flex-wrap:wrap;")}>
+          <span style={css("font-family:var(--font-mono);font-size:8.5px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);")}>
+            operator notes
+          </span>
+          {[
+            { label: "vr", ns: "vr.operator_note." },
+            { label: "malware", ns: "malware.operator_note." },
+          ].map((qf) => {
+            const active = applied.namespace === `${qf.ns}*`;
+            return (
+              <button
+                key={qf.ns}
+                type="button"
+                style={active ? chipAccent : chip}
+                onClick={() => {
+                  const nf = { namespace: `${qf.ns}*`, source_type: "", q: "" };
+                  setFilters(nf);
+                  setApplied(nf);
+                  setOffset(0);
+                  setSel(null);
+                }}
+              >
+                {qf.label}
+              </button>
+            );
+          })}
+        </div>
         <form onSubmit={applyFilters} style={css("display:grid;grid-template-columns:1fr 1fr 2fr auto auto;gap:8px;align-items:end;")}>
           <label style={labelStyle}>
             namespace
@@ -620,10 +661,212 @@ function EntryDetail({ entry, onClose }: { entry: KnowledgeEntry; onClose: () =>
   );
 }
 
+/* ------------------------------ INGEST modal ----------------------------- */
+
+const SCOPES = [
+  { value: "workspace", label: "workspace" },
+  { value: "team", label: "team" },
+  { value: "global", label: "global" },
+  { value: "agent", label: "agent" },
+] as const;
+
+type IngestScope = (typeof SCOPES)[number]["value"];
+
+/** Live preview of the write namespace the backend will resolve, so the
+ *  operator sees exactly where the note lands before submitting. Mirrors
+ *  `_resolve_operator_namespace` in the router. */
+function previewNamespace(module: string, scope: IngestScope, scopeId: string): string {
+  const id = scopeId.trim();
+  if (scope === "agent") return id ? `agent:${id}` : "agent:<name>";
+  if (scope === "global") return `${module}.operator_note.global`;
+  return `${module}.operator_note.${scope}.${id || "<id>"}`;
+}
+
+function IngestModal({ onClose }: { onClose: () => void }): JSX.Element {
+  const [module, setModule] = useState<"vr" | "malware">("vr");
+  const [scope, setScope] = useState<IngestScope>("workspace");
+  const [scopeId, setScopeId] = useState("");
+  const [title, setTitle] = useState("");
+  const [content, setContent] = useState("");
+
+  const ingest = useIngestKnowledge();
+  const ws = useWorkspaces(module);
+
+  const needsId = scope !== "global";
+  const showWsSelect = scope === "workspace";
+  const canSubmit =
+    content.trim().length > 0 &&
+    (!needsId || scopeId.trim().length > 0) &&
+    !ingest.isPending;
+
+  const submit = (e: FormEvent<HTMLFormElement>): void => {
+    e.preventDefault();
+    if (!canSubmit) return;
+    ingest.mutate({
+      module,
+      scope,
+      scope_id: needsId ? scopeId.trim() : undefined,
+      title: title.trim() || undefined,
+      content,
+    });
+  };
+
+  const result = ingest.data;
+
+  return (
+    <div style={modalBackdrop} onClick={onClose}>
+      <div style={modalCard} onClick={(e) => e.stopPropagation()}>
+        <div style={panelTitle}>
+          <span style={dot} />
+          <span style={css("color:var(--text-primary);")}>add operator note</span>
+          <span style={css("flex:1;")} />
+          <button type="button" style={btnGhost} onClick={onClose}>
+            {"\u2715 close"}
+          </button>
+        </div>
+
+        {result ? (
+          <div style={{ ...pad, ...stack, overflow: "auto" }}>
+            <div style={css("font-family:var(--font-mono);font-size:11px;color:var(--status-ok);")}>
+              note {result.operation} &mdash; entry #{result.entry_id ?? "?"}
+            </div>
+            <label style={labelStyle}>
+              landed namespace
+              <span style={chipAccent}>{result.namespace}</span>
+            </label>
+            <div style={css("font-family:var(--font-mono);font-size:10px;color:var(--text-faint);line-height:1.55;")}>
+              agents in this scope recall it on their next turn.
+            </div>
+            <div style={css("display:flex;gap:8px;")}>
+              <button type="button" style={btnPrimary} onClick={() => ingest.reset()}>
+                add another
+              </button>
+              <button type="button" style={btnGhost} onClick={onClose}>
+                done
+              </button>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={submit} style={{ ...pad, ...stack, overflow: "auto" }}>
+            <div style={css("display:grid;grid-template-columns:1fr 1fr;gap:10px;")}>
+              <label style={labelStyle}>
+                module
+                <select
+                  style={inputStyle}
+                  value={module}
+                  disabled={scope === "agent"}
+                  onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                    setModule(e.target.value === "malware" ? "malware" : "vr")
+                  }
+                >
+                  <option value="vr">vr</option>
+                  <option value="malware">malware</option>
+                </select>
+              </label>
+              <label style={labelStyle}>
+                scope
+                <select
+                  style={inputStyle}
+                  value={scope}
+                  onChange={(e: ChangeEvent<HTMLSelectElement>) => {
+                    setScope(e.target.value as IngestScope);
+                    setScopeId("");
+                  }}
+                >
+                  {SCOPES.map((s) => (
+                    <option key={s.value} value={s.value}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            {needsId ? (
+              <label style={labelStyle}>
+                {scope === "workspace" ? "workspace" : scope === "team" ? "team id" : "agent name"}
+                {showWsSelect ? (
+                  <select
+                    style={inputStyle}
+                    value={scopeId}
+                    onChange={(e: ChangeEvent<HTMLSelectElement>) => setScopeId(e.target.value)}
+                  >
+                    <option value="">
+                      {ws.isLoading ? "loading\u2026" : ws.isError ? "workspaces unavailable" : "select workspace\u2026"}
+                    </option>
+                    {(ws.data ?? []).map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {w.name} ({w.id.slice(0, 8)})
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    style={inputStyle}
+                    value={scopeId}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setScopeId(e.target.value)}
+                    placeholder={scope === "team" ? "team id" : "agent name"}
+                    autoComplete="off"
+                  />
+                )}
+              </label>
+            ) : null}
+
+            <label style={labelStyle}>
+              title (optional)
+              <input
+                type="text"
+                style={inputStyle}
+                value={title}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setTitle(e.target.value)}
+                maxLength={200}
+                autoComplete="off"
+              />
+            </label>
+
+            <label style={labelStyle}>
+              content
+              <textarea
+                style={textareaStyle}
+                value={content}
+                onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setContent(e.target.value)}
+                placeholder="knowledge the agents should recall in this scope\u2026"
+                rows={7}
+              />
+            </label>
+
+            <label style={labelStyle}>
+              target namespace
+              <span style={chip}>{previewNamespace(module, scope, scopeId)}</span>
+            </label>
+
+            {ingest.isError ? (
+              <div style={css("font-family:var(--font-mono);font-size:10.5px;color:#ffb85f;line-height:1.5;")}>
+                {ingest.error instanceof Error ? ingest.error.message : "ingest failed"}
+              </div>
+            ) : null}
+
+            <div style={css("display:flex;gap:8px;align-items:center;")}>
+              <button type="submit" style={canSubmit ? btnPrimary : btnGhostDisabled} disabled={!canSubmit}>
+                {ingest.isPending ? "storing\u2026" : "store note"}
+              </button>
+              <button type="button" style={btnGhost} onClick={onClose}>
+                cancel
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* --------------------------------- page ---------------------------------- */
 
 export default function KnowledgePage(props: ModulePageProps): JSX.Element {
   const { onBack, onMinimize, isFullscreen, onToggleFullscreen } = props;
+  const [ingestOpen, setIngestOpen] = useState(false);
 
   return (
     <div
@@ -637,6 +880,7 @@ export default function KnowledgePage(props: ModulePageProps): JSX.Element {
         color: "var(--text-primary)",
       }}
     >
+      {ingestOpen ? <IngestModal onClose={() => setIngestOpen(false)} /> : null}
       <header
         style={{
           flex: "0 0 auto",
@@ -667,6 +911,10 @@ export default function KnowledgePage(props: ModulePageProps): JSX.Element {
         <span style={{ color: "var(--text-faint)", textTransform: "none", letterSpacing: "0.04em" }}>
           platform RAG corpus &mdash; entries, retrieval, edges
         </span>
+        <span style={{ flex: 1 }} />
+        <button type="button" style={headerBtn} onClick={() => setIngestOpen(true)}>
+          + operator note
+        </button>
       </header>
 
       <main

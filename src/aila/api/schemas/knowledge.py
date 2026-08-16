@@ -23,6 +23,8 @@ __all__ = [
     "KnowledgeEntryView",
     "KnowledgeEntriesPage",
     "KnowledgeHit",
+    "KnowledgeIngestRequest",
+    "KnowledgeIngestResult",
 ]
 
 
@@ -108,3 +110,53 @@ class KnowledgeHit(BaseModel):
     score: float
     source_type: str | None = None
     model_id: str | None = None
+
+
+class KnowledgeIngestRequest(BaseModel):
+    """Operator-authored note written into the retrieval corpus.
+
+    The note lands under a distinct ``operator_note`` kind so it is
+    filterable apart from agent-written memos, while still being on the
+    retrieval path (VR + malware retrieve ``<module>.operator_note.*``
+    on every turn -- see each module's ``knowledge_scope``).
+
+    ``scope`` selects the reach:
+
+    * ``workspace`` -- ``<module>.operator_note.workspace.<scope_id>``;
+      only agents running in that workspace recall it.
+    * ``team`` -- ``<module>.operator_note.team.<scope_id>``; every
+      workspace on that team recalls it.
+    * ``global`` -- ``<module>.operator_note.global``; every workspace
+      in that module recalls it. ``scope_id`` is ignored.
+    * ``agent`` -- ``agent:<scope_id>``; the platform per-agent
+      namespace used by the generic knowledge tool. ``module`` is
+      ignored.
+
+    ``scope_id`` is required for every scope except ``global``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    module: str = Field(
+        default="vr",
+        description="Module whose retrieval path consumes the note (vr | malware). "
+        "Ignored for the agent scope.",
+    )
+    scope: str = Field(description="workspace | team | global | agent")
+    scope_id: str | None = Field(
+        default=None,
+        description="Workspace id, team id, or agent name. Required unless scope is global.",
+    )
+    title: str | None = Field(default=None, max_length=200)
+    content: str = Field(min_length=1)
+    metadata: dict[str, Any] | None = None
+
+
+class KnowledgeIngestResult(BaseModel):
+    """Outcome of a :class:`KnowledgeIngestRequest` write."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    entry_id: int | None
+    namespace: str
+    operation: str

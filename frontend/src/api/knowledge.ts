@@ -17,7 +17,12 @@
  * `apiFetch` unwraps the `DataEnvelope.data` layer server-side.
  */
 
-import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import type { UseMutationResult, UseQueryResult } from "@tanstack/react-query";
 
 import { apiFetch } from "./client";
@@ -84,6 +89,27 @@ export interface KnowledgeHit {
   score: number;
   source_type: string | null;
   model_id: string | null;
+}
+
+/** POST /platform/knowledge/ingest body. Writes an operator-authored note
+ *  under a distinct `operator_note` kind so it is filterable apart from
+ *  agent-written memos, while still being on the module's per-turn
+ *  retrieval path. `scope_id` is required for every scope except `global`;
+ *  `module` is ignored for the `agent` scope. */
+export interface KnowledgeIngestRequest {
+  module: "vr" | "malware";
+  scope: "workspace" | "team" | "global" | "agent";
+  scope_id?: string;
+  title?: string;
+  content: string;
+  metadata?: Record<string, unknown>;
+}
+
+/** POST /platform/knowledge/ingest response -- the row that landed. */
+export interface KnowledgeIngestResult {
+  entry_id: number | null;
+  namespace: string;
+  operation: string;
 }
 
 /* ------------------------------- helpers --------------------------------- */
@@ -155,5 +181,27 @@ export function useKnowledgeSearch(): UseMutationResult<
         method: "POST",
         body: JSON.stringify(body),
       }),
+  });
+}
+
+/** Write an operator note into the corpus. On success the stats + entries
+ *  caches are invalidated so the overview counts and browser reflect the
+ *  new row without a manual refresh. */
+export function useIngestKnowledge(): UseMutationResult<
+  KnowledgeIngestResult,
+  Error,
+  KnowledgeIngestRequest
+> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: KnowledgeIngestRequest) =>
+      apiFetch<KnowledgeIngestResult>("/platform/knowledge/ingest", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["platform", "knowledge", "stats"] });
+      void qc.invalidateQueries({ queryKey: ["platform", "knowledge", "entries"] });
+    },
   });
 }

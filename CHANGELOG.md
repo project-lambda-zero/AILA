@@ -7,6 +7,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.34] - 2026-08-16 -- Operator knowledge ingest
+
+### Added
+
+- `POST /platform/knowledge/ingest` writes an operator-authored note into
+  the retrieval corpus under a distinct `operator_note` kind. The write
+  namespace is resolved from a scope selector: a single workspace, a team,
+  a module-wide global bucket, or the platform per-agent namespace. The
+  admin knowledge console gains an "operator note" composer (module + scope
+  selectors, real workspace dropdown, live namespace preview) and
+  operator-note quick filters in the entries browser, so operator context
+  is filterable apart from agent-written memos.
+
+### Changed
+
+- VR and malware retrieval now include the `operator_note` kind at
+  workspace, team, and global scope. A note ingested from the console is
+  recalled on every investigation turn in that scope alongside
+  agent-written memos, rather than only being stored. No schema migration:
+  the change is additive to each module's retrieval namespace list.
+
 ## [0.5.33] - 2026-08-16 -- Full console coverage, knowledge + sandbox surfaces, SSH key fix
 
 ### Added

@@ -41,10 +41,12 @@ from aila.api.schemas.knowledge import (
     KnowledgeEntriesPage,
     KnowledgeEntryView,
     KnowledgeHit,
+    KnowledgeIngestRequest,
+    KnowledgeIngestResult,
     KnowledgeStats,
     KnowledgeStatsBucket,
 )
-from aila.platform.services.knowledge import KnowledgeService
+from aila.platform.services.knowledge import KnowledgeService, make_agent_namespace
 from aila.platform.services.knowledge_graph import KnowledgeEntryEdge
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import KnowledgeEntryRecord
@@ -57,6 +59,57 @@ _log = logging.getLogger(__name__)
 # double-digits so an operator sees the long tail without the response
 # growing linearly with a corpus of thousands of distinct namespaces.
 _STATS_BUCKET_LIMIT = 50
+
+# Modules whose per-turn retrieval path consumes ``<module>.operator_note.*``.
+# Kept in lockstep with each module's ``knowledge_scope`` -- a module absent
+# here would accept an ingest that no agent ever recalls, so ingest rejects it.
+_INGEST_MODULES = frozenset({"vr", "malware"})
+
+# The kind segment that keeps operator uploads filterable apart from
+# agent-written memos while still being on the retrieval path.
+_OPERATOR_NOTE_KIND = "operator_note"
+
+
+def _resolve_operator_namespace(module: str, scope: str, scope_id: str | None) -> str:
+    """Map an ingest ``(module, scope, scope_id)`` to a write namespace.
+
+    Mirrors the string convention each module's ``knowledge_scope`` reads
+    from, so an operator note lands exactly where the agent retrieves it.
+    Raises ``HTTPException(422)`` on an unknown scope/module or a missing
+    ``scope_id`` where one is required.
+    """
+    module_norm = module.strip().lower()
+    scope_norm = scope.strip().lower()
+    ident = (scope_id or "").strip()
+
+    if scope_norm == "agent":
+        if not ident:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="scope 'agent' requires scope_id (the agent name)",
+            )
+        return make_agent_namespace(ident)
+
+    if module_norm not in _INGEST_MODULES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"module must be one of {sorted(_INGEST_MODULES)}; got {module!r}",
+        )
+
+    if scope_norm == "global":
+        return f"{module_norm}.{_OPERATOR_NOTE_KIND}.global"
+    if scope_norm in ("workspace", "team"):
+        if not ident:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"scope {scope_norm!r} requires scope_id",
+            )
+        return f"{module_norm}.{_OPERATOR_NOTE_KIND}.{scope_norm}.{ident}"
+
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail="scope must be one of workspace | team | global | agent",
+    )
 
 
 async def _require_admin(
@@ -425,5 +478,79 @@ async def knowledge_search(
             "route": routed.get("route"),
             "count": len(hits),
             "hop_bound": routed.get("hop_bound"),
+        },
+    )
+
+
+@router.post(
+    "/ingest",
+    response_model=DataEnvelope[KnowledgeIngestResult],
+    status_code=status.HTTP_201_CREATED,
+    summary="Write an operator-authored note into the retrieval corpus",
+)
+@limiter.limit("30/minute")
+async def knowledge_ingest(
+    request: Request,
+    body: KnowledgeIngestRequest,
+    ctx: AuthContext = Depends(_require_admin),
+) -> DataEnvelope[KnowledgeIngestResult]:
+    """Persist an operator note under a distinct ``operator_note`` kind.
+
+    The write namespace is resolved from ``(module, scope, scope_id)`` by
+    :func:`_resolve_operator_namespace` so the note lands exactly where
+    the module's ``knowledge_scope`` retrieves it -- workspace, team, or
+    global for vr/malware, or the platform per-agent namespace. Because
+    the kind segment is ``operator_note`` (not ``audit_memo``/``finding``/
+    etc.), the note is filterable apart from agent-written knowledge via
+    the ``namespace`` prefix filter on ``GET /entries``.
+
+    Metadata is stamped ``source_type='operator'`` and ``kind='operator_note'``
+    so the entry is also filterable by ``source_type``. The entry is
+    embedded and linked into the semantic graph like any other row so the
+    graph retrieval route reaches it too.
+
+    ``(ValueError, RuntimeError, OSError)`` bubble up as ``502`` -- the
+    embedding provider or pgvector being unavailable is a real failure the
+    operator must see, not a generic 500.
+    """
+    del ctx
+
+    namespace = _resolve_operator_namespace(body.module, body.scope, body.scope_id)
+
+    metadata: dict[str, Any] = dict(body.metadata or {})
+    metadata["source"] = "operator"
+    metadata["kind"] = _OPERATOR_NOTE_KIND
+    title = (body.title or "").strip()
+    if title:
+        metadata["title"] = title
+
+    service = KnowledgeService()
+    try:
+        result = await service.store(
+            namespace=namespace,
+            content=body.content,
+            metadata=metadata,
+            extract_entities=True,
+            link_neighbors=True,
+        )
+    except (ValueError, RuntimeError, OSError) as exc:
+        _log.warning(
+            "knowledge_ingest failed for namespace=%r: %s", namespace, exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"knowledge ingest failed: {type(exc).__name__}",
+        ) from exc
+
+    entry_id_raw = result.get("entry_id")
+    return DataEnvelope(
+        data=KnowledgeIngestResult(
+            entry_id=int(entry_id_raw) if entry_id_raw is not None else None,
+            namespace=str(result.get("namespace") or namespace),
+            operation=str(result.get("operation") or "stored"),
+        ),
+        meta={
+            "neighbor_edge_count": result.get("neighbor_edge_count", 0),
+            "entity_edge_count": result.get("entity_edge_count", 0),
         },
     )

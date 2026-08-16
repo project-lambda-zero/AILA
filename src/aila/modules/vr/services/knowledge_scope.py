@@ -45,6 +45,11 @@ VR_KNOWLEDGE_KINDS: tuple[str, ...] = (
     # the agent -- the writer relies on this list being the single
     # source of truth on which buckets are live.
     "semantic",
+    # Operator-authored notes ingested from the console
+    # (POST /platform/knowledge/ingest). A distinct kind so operator
+    # context is filterable apart from agent-written memos, while still
+    # being retrieved on every turn in the workspace.
+    "operator_note",
 )
 
 
@@ -57,7 +62,9 @@ def vr_knowledge_namespaces(
     ]
     if team_id:
         namespaces.append(f"vr.audit_memo.team.{team_id}")
+        namespaces.append(f"vr.operator_note.team.{team_id}")
     namespaces.append("vr.audit_memo.global")
+    namespaces.append("vr.operator_note.global")
     # Issue #150 procedural tier: team-scoped skill library (or the
     # global fallback on single-tenant installs). Cross-module by
     # design so a VR investigation can retrieve a winning approach a
