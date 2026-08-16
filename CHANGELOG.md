@@ -7,7 +7,99 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [0.5.38] - 2026-08-16 -- Enhancement/tech-debt/RFC resolution wave 3
+## [0.5.39] - 2026-08-16 -- Enhancement/tech-debt/RFC resolution wave 4
+
+Every capability below is behind a config flag defaulting to off, so a
+deployment that flips nothing is behavior-identical to 0.5.38.
+
+### Added
+
+- Dynamic-execution primitive (#21): `platform/services/dynamic_execution.py`
+  runs a target inside the existing SandboxService (nsjail / Firecracker over
+  SSH), classifies the run, and emits `dynamic.run` / `dynamic.crash` /
+  `dynamic.coverage_delta` observations into the module observation channel the
+  retrievers already read. No new table, no new sandbox code. Gated on
+  `platform.dynamic_execution_enabled`; a disabled or unconfigured sandbox
+  returns a typed status and emits nothing.
+- Explorer/planner decoupling for the VR loop (#95, wave 3):
+  `modules/vr/agents/explorer_planner.py` ranks lateral-discovery ledger
+  directions distinct from the branch's active hypothesis, optionally adds one
+  cheap routed LLM proposal, and surfaces the top lead as an advisory
+  `_directive.explorer_top_lead` directive that self-clears when empty. Gated on
+  `platform.vr_explorer_enabled`.
+- Symbolic-execution driver (#148): `platform/services/symbolic.py` runs a
+  single-function miasm concolic walk and emits a `symbolic.reached`
+  observation with the reached addresses and path constraints. Behind the
+  optional `[symbolic]` extra and `platform.symbolic_enabled`; a base install
+  without miasm returns a typed unavailable status.
+- Auto-patch synthesis and verifier (#149): `platform/services/patching.py`
+  synthesizes a unified-diff patch for a confirmed finding, applies it to an
+  in-memory source context, verifies it in the sandbox against the finding's
+  PoC harness, and records the attempt in the new `platform_patch_attempt`
+  table (migration 130). Fires from the VR emit chokepoint after a confirmed
+  verifier verdict; a new admin surface `GET /platform/patching/attempts[/id]`
+  lists attempts. Gated on `platform.autopatch_enabled`.
+- LSP retrieval subsystem (#154): `platform/services/lsp.py` +
+  `platform/tools/lsp.py` speak LSP JSON-RPC over stdio to pyright and gopls
+  (no new Python dependency; the language servers stay optional external
+  tools) and register four tools -- `lsp.definition`, `lsp.references`,
+  `lsp.hover`, `lsp.diagnostics`. Every failure mode (flag off, unsupported
+  language, missing binary, dead server, request timeout) returns a typed
+  fail-open envelope. Gated on `platform.lsp_enabled`.
+- Prompt-cache layout contract (#155): `platform/llm/prompt_layout.py` defines
+  an immutable-prefix / mutable-tail layout so provider prompt caching keeps a
+  byte-stable prefix across an investigation's turns, plus a cache-hit-rate
+  gauge exposed on Prometheus (`aila_llm_cache_hit_ratio`), per-run RunMemory,
+  and the `/cost/runs/{run_id}` breakdown. Gated on
+  `platform.prompt_layout_enabled` with an optional
+  `platform.prompt_cache_ttl_seconds` hint; rendering is byte-identical when
+  off.
+- Speculative next-tool pre-warm (#156): `platform/services/speculator.py`
+  predicts the next read-only tool call with a cheap routed model and pre-warms
+  it concurrently with the strong-model decision. The pre-warm is used only
+  when the strong model's actual choice matches server, tool, and canonical
+  args exactly, so the result is lossless; a miss dispatches normally. Read
+  tools only, bounded by a wall-clock cap. Gated on
+  `platform.speculative_enabled`.
+- Pluggable retriever-backend comparison (#153): `platform/eval/retrieval_bench`
+  gains a `RetrieverBackend` protocol, an always-available local default, and
+  config-gated Voyage / Jina / Qwen rerank backends plus a `--compare` mode
+  that scores each backend on MAP@10 / nDCG@10 / recall / precision / MRR.
+  Unconfigured external backends are skipped, not errored. Completes #153.
+- RETRIEVED context tier and shared cross-branch pool (#24):
+  `platform/services/context_retrieval.py` splices a routed-retrieval tier into
+  the prompt, and `shared_context_pool.py` lets sibling branches contribute
+  and read a decayed, capped pool of hypotheses through the knowledge store (no
+  new table). Gated on `platform.context_retrieved_enabled` and
+  `platform.context_shared_pool_enabled`. Completes #24.
+- MCP trace-context propagation (#160): `platform/mcp/client.py` injects W3C
+  trace context into MCP HTTP calls and wraps each tool execution in a child
+  GenAI span, stitching MCP work under the LLM/workflow spans added in 0.5.38.
+  A no-op when opentelemetry is absent or `platform.otel_enabled` is off.
+  Completes #160.
+
+### Changed
+
+- Recovery execution unified (#133): stall-reenqueue and stuck-heal now share
+  one `PlatformRecoveryService.recover()` / `sweep()` dispatcher.
+  `stall_recovery` and `stuck_healer` are reduced to thin wrappers whose public
+  signatures and return shapes are unchanged. Completes #133.
+- Event system consolidated (#134): a single `publish()` path feeds the durable
+  journal subscriber, the Redis cross-process fanout, and in-process
+  subscribers. `EventEmitter` remains as a thin per-request adapter over the
+  shared bus; SSE fanout and journal behavior are preserved; delivery stays
+  fail-open when Redis is down. Completes #134.
+- Frontend boundary parsing and VulnerabilityPage split (#229): a new
+  `frontend/src/api/parse.ts` supplies shared `asRecord` / `readStr` /
+  `readNum` / `readArray` narrowers, and the 2000-line VulnerabilityPage is
+  decomposed into seven panels under `console/pages/vulnerability/`. Ad-hoc
+  `as Record<string, unknown>` casts across the forensics, malware, x-ray, and
+  data pages are replaced with the shared narrowers.
+
+### Removed
+
+- Dead DomainEvent types with no real publisher were deleted as part of the
+  event-system consolidation (#134).
 
 ### Added
 

@@ -58,17 +58,11 @@ from typing import TYPE_CHECKING, Any
 
 from ..contracts._common import utc_now
 from .domain_events import (
-    AssessmentCompleted,
-    AssessmentCompletedPayload,
-    AssessmentCreated,
-    AssessmentCreatedPayload,
     ConfigChanged,
     ConfigChangedPayload,
     DomainEvent,
     LlmCallCompleted,
     LlmCallCompletedPayload,
-    ModuleEntityBatchUpserted,
-    ModuleEntityBatchUpsertedPayload,
     ModuleWorkflowCompleted,
     ModuleWorkflowCompletedPayload,
     ModuleWorkflowStarted,
@@ -77,6 +71,8 @@ from .domain_events import (
     SystemDeregisteredPayload,
     SystemRegistered,
     SystemRegisteredPayload,
+    WorkflowStageAnnounced,
+    WorkflowStagePayload,
 )
 
 if TYPE_CHECKING:
@@ -137,8 +133,6 @@ def is_inbound_replay() -> bool:
 _EVENT_TYPE_REGISTRY: dict[str, tuple[type[DomainEvent], type[Any]]] = {
     "system.registered": (SystemRegistered, SystemRegisteredPayload),
     "system.deregistered": (SystemDeregistered, SystemDeregisteredPayload),
-    "assessment.created": (AssessmentCreated, AssessmentCreatedPayload),
-    "assessment.completed": (AssessmentCompleted, AssessmentCompletedPayload),
     "config.changed": (ConfigChanged, ConfigChangedPayload),
     "llm.call.completed": (LlmCallCompleted, LlmCallCompletedPayload),
     "module.workflow.started": (
@@ -147,8 +141,8 @@ _EVENT_TYPE_REGISTRY: dict[str, tuple[type[DomainEvent], type[Any]]] = {
     "module.workflow.completed": (
         ModuleWorkflowCompleted, ModuleWorkflowCompletedPayload,
     ),
-    "module.entity.batch_upserted": (
-        ModuleEntityBatchUpserted, ModuleEntityBatchUpsertedPayload,
+    "workflow.stage.announced": (
+        WorkflowStageAnnounced, WorkflowStagePayload,
     ),
 }
 

@@ -1208,6 +1208,18 @@ class AilaLLMClient:
                 # Cost recording AFTER successful call (Phase 122)
                 if self.cost_tracker is not None:
                     self.cost_tracker.record(run_id, response.usage)
+                    # #155: fold provider-reported cache-token fields into
+                    # RunMemory so the /cost/runs/{run_id} surface can
+                    # report the cache-hit-rate gauge. Best-effort; the
+                    # helper swallows RunMemory backend errors at DEBUG.
+                    from aila.platform.llm.prompt_layout import (
+                        record_cache_metrics as _record_cache_metrics,
+                    )
+                    _record_cache_metrics(
+                        getattr(self.cost_tracker, "_mem", None),
+                        run_id,
+                        response.usage,
+                    )
 
                 # --- Durable cost recording (Phase 175 / D-05) ---
                 _cost_usd = 0.0
@@ -1609,6 +1621,17 @@ class AilaLLMClient:
         try:
             if self.cost_tracker is not None:
                 self.cost_tracker.record(run_id, response.usage)
+                # #155: mirror the /_call_with_retry/ cache-metrics
+                # fold so consensus / verify calls contribute to the
+                # per-run cache-hit-rate gauge too.
+                from aila.platform.llm.prompt_layout import (
+                    record_cache_metrics as _record_cache_metrics,
+                )
+                _record_cache_metrics(
+                    getattr(self.cost_tracker, "_mem", None),
+                    run_id,
+                    response.usage,
+                )
         except Exception as exc:
             logger.debug("inner_call cost_tracker.record failed: %s", exc)
 
@@ -1712,6 +1735,9 @@ class AilaLLMClient:
             )
             LLM_TOKENS_TOTAL.labels(model=routing.model_id, type="completion").inc(
                 completion.usage.completion_tokens or 0
+            )
+            _emit_cache_metrics(
+                routing.model_id, _extract_usage(completion),
             )
 
         choice = _require_choice(completion, routing.model_id)
@@ -1935,6 +1961,7 @@ class AilaLLMClient:
             choice = _require_choice(completion, routing.model_id)
             step_usage = _extract_usage(completion)
             accumulated_usage = _merge_usage(accumulated_usage, step_usage)
+            _emit_cache_metrics(routing.model_id, step_usage)
 
             if choice.finish_reason != "tool_calls":
                 break
@@ -2158,24 +2185,115 @@ def _is_strict_schema_rejection(exc: Exception) -> bool:
     )
 
 
+def _emit_cache_metrics(model_id: str, usage: dict[str, int]) -> None:
+    """Emit the #155 Prometheus cache surfacing for one call.
+
+    Reads the provider-normalised cache tokens via
+    :func:`aila.platform.llm.prompt_layout.extract_cache_usage` and
+    increments ``LLM_CACHE_TOKENS_TOTAL{model,kind}`` (cache_read /
+    cache_write) plus sets ``LLM_CACHE_HIT_RATIO{model}`` to the
+    per-call ratio. Errors are swallowed at DEBUG; the LLM hot path
+    must not crash on a telemetry defect.
+    """
+    try:
+        from aila.api.metrics import (
+            LLM_CACHE_HIT_RATIO,
+            LLM_CACHE_TOKENS_TOTAL,
+        )
+        from aila.platform.llm.prompt_layout import (
+            compute_cache_hit_rate,
+            extract_cache_usage,
+        )
+    except ImportError as exc:  # pragma: no cover - metrics package is required
+        logger.debug("_emit_cache_metrics: import failed: %s", exc)
+        return
+    try:
+        cache_usage = extract_cache_usage(usage)
+        cache_read = int(cache_usage.get("cache_read", 0))
+        cache_write = int(cache_usage.get("cache_write", 0))
+        if cache_read:
+            LLM_CACHE_TOKENS_TOTAL.labels(model=model_id, kind="read").inc(cache_read)
+        if cache_write:
+            LLM_CACHE_TOKENS_TOTAL.labels(model=model_id, kind="write").inc(cache_write)
+        LLM_CACHE_HIT_RATIO.labels(model=model_id).set(
+            compute_cache_hit_rate(usage, cache_usage),
+        )
+    except (RuntimeError, ValueError, TypeError, AttributeError) as exc:
+        logger.debug("_emit_cache_metrics: skipped for %s: %s", model_id, exc)
+
+
+_CACHE_USAGE_KEYS: tuple[str, ...] = (
+    # Anthropic-style flat fields on the usage object.
+    "cache_read_input_tokens",
+    "cache_creation_input_tokens",
+    "cache_read_tokens",
+    "cache_write_input_tokens",
+    # OpenAI-style: usually nested under prompt_tokens_details, but some
+    # gateways flatten it. Read as a top-level fallback too.
+    "cached_tokens",
+)
+
+
 def _extract_usage(completion: Any) -> dict[str, int]:
-    """Extract token usage from a completion response."""
+    """Extract token usage from a completion response.
+
+    #155: pulls provider-specific cache-token fields into the returned
+    dict when the upstream response carries them. Anthropic surfaces
+    ``cache_read_input_tokens`` and ``cache_creation_input_tokens`` on
+    the usage object; OpenAI nests ``cached_tokens`` under
+    ``prompt_tokens_details``. Both surfaces sometimes leak through an
+    OpenAI-compatible gateway (OpenRouter, LiteLLM) using the original
+    provider names -- best-effort read with ``getattr`` so a missing
+    field never crashes the hot path. The nested OpenAI value is
+    flattened onto the top-level ``cached_tokens`` key so the returned
+    dict keeps its ``dict[str, int]`` shape.
+
+    :func:`aila.platform.llm.prompt_layout.extract_cache_usage` is the
+    single reader that normalises these values into the uniform
+    ``{cache_read, cache_write, cached}`` shape and drives the
+    cache-hit-rate gauge on the cost surface.
+    """
     if completion.usage is None:
         return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-    return {
-        "prompt_tokens": completion.usage.prompt_tokens or 0,
-        "completion_tokens": completion.usage.completion_tokens or 0,
-        "total_tokens": completion.usage.total_tokens or 0,
+    usage = completion.usage
+    result: dict[str, int] = {
+        "prompt_tokens": int(usage.prompt_tokens or 0),
+        "completion_tokens": int(usage.completion_tokens or 0),
+        "total_tokens": int(usage.total_tokens or 0),
     }
+    for attr in _CACHE_USAGE_KEYS:
+        value = getattr(usage, attr, 0) or 0
+        if value:
+            result[attr] = int(value)
+    details = getattr(usage, "prompt_tokens_details", None)
+    if details is not None:
+        cached = getattr(details, "cached_tokens", 0) or 0
+        if cached:
+            # Merge with any flat top-level value the loop above found.
+            result["cached_tokens"] = max(
+                int(cached), int(result.get("cached_tokens", 0)),
+            )
+    return result
 
 
 def _merge_usage(a: dict[str, int], b: dict[str, int]) -> dict[str, int]:
-    """Merge two usage dicts by summing values."""
-    return {
-        "prompt_tokens": a.get("prompt_tokens", 0) + b.get("prompt_tokens", 0),
-        "completion_tokens": a.get("completion_tokens", 0) + b.get("completion_tokens", 0),
-        "total_tokens": a.get("total_tokens", 0) + b.get("total_tokens", 0),
+    """Merge two usage dicts by summing values.
+
+    #155: preserves cache-token fields across a tool-loop step merge
+    so the accumulated usage on the returned :class:`LLMResponse`
+    still carries the cache signal from every step (the tool-loop
+    caller sees the cumulative gauge, not just the final step).
+    """
+    merged: dict[str, int] = {
+        "prompt_tokens": int(a.get("prompt_tokens", 0)) + int(b.get("prompt_tokens", 0)),
+        "completion_tokens": int(a.get("completion_tokens", 0)) + int(b.get("completion_tokens", 0)),
+        "total_tokens": int(a.get("total_tokens", 0)) + int(b.get("total_tokens", 0)),
     }
+    for attr in _CACHE_USAGE_KEYS:
+        value = int(a.get(attr, 0) or 0) + int(b.get(attr, 0) or 0)
+        if value:
+            merged[attr] = value
+    return merged
 
 
 def _require_choice(completion: Any, model_id: str) -> Any:

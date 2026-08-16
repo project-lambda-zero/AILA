@@ -610,6 +610,40 @@ HONESTY_WHITELIST = [
      "heal_without_journal"),
     ("vr/api_router.py", "reenqueue_investigation",
      "heal_without_journal"),
+
+    # Category (g): rule do_nothing_wrapper. RFC #153 RetrieverBackend
+    # Protocol impl. ``availability`` is the concrete local-backend
+    # implementation of the abstract async availability() contract
+    # (always-available, cost 0); it is the interface method, not a
+    # forwarding wrapper. Inlining would erase the Protocol seam that
+    # lets voyage/jina/qwen backends report unconfigured.
+    ("eval/retrieval_bench.py", "availability", "consider inlining"),
+    # Category (a): rule unused_parameter. ``_embed`` is the abstract
+    # embedding hook on the rerank-backend base -- it raises
+    # NotImplementedError and its (query, docs) params define the
+    # contract every concrete backend overrides. The params are the
+    # signature, not dead locals.
+    ("eval/retrieval_bench.py", "_embed", "query"),
+    ("eval/retrieval_bench.py", "_embed", "docs"),
+
+    # Category (g): rule do_nothing_wrapper. RFC #155 PromptLayoutBuilder
+    # fluent API. add_immutable / add_mutable / build are the builder's
+    # public surface (each returns the accumulated layout); inlining the
+    # single-line bodies at call sites reinstates the manual segment
+    # bookkeeping the builder exists to hide.
+    ("llm/prompt_layout.py", "add_immutable", "consider inlining"),
+    ("llm/prompt_layout.py", "add_mutable", "consider inlining"),
+    ("llm/prompt_layout.py", "build", "consider inlining"),
+
+    # Category: rule 68 content_slice_truncation. RFC #149 auto-patch.
+    # These two caps bound LLM-SYNTHESIS PROMPT INPUT, not stored or
+    # retrieved knowledge. root_cause[:8000] and the source-context
+    # content[:16000] are fed straight into the patch-coder model's
+    # prompt; the PlatformPatchAttemptRecord table has no root_cause /
+    # source-content column, so nothing persisted is trimmed. Bounding
+    # the prompt is required to keep the synth call inside context.
+    ("vr/workflow/task.py", "_run_vr_auto_patch", "[:8000]"),
+    ("vr/workflow/task.py", "_fetch_vr_source_ctx", "[:16000]"),
 ]
 
 

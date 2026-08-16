@@ -4,6 +4,7 @@ import type { ChangeEvent, JSX, ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch } from "../../api/client";
+import { asRecord, readArray } from "../../api/parse";
 import type { ModulePageProps } from "../contract";
 import { css } from "../css";
 import FieldForm from "./FieldForm";
@@ -52,15 +53,18 @@ export interface PageConfig {
 const ROW_KEYS = ["items", "results", "rows", "entries", "records", "data", "findings", "investigations", "targets", "workspaces"];
 
 const wrap = (arr: unknown[]): Record<string, unknown>[] =>
-  arr.map((x) => (x && typeof x === "object" ? (x as Record<string, unknown>) : { value: x }));
+  arr.map((x) => asRecord(x) ?? { value: x });
 
 function toRows(data: unknown, itemsKey?: string): Record<string, unknown>[] {
   if (Array.isArray(data)) return wrap(data);
-  if (data && typeof data === "object") {
-    const obj = data as Record<string, unknown>;
-    if (itemsKey && Array.isArray(obj[itemsKey])) return wrap(obj[itemsKey] as unknown[]);
-    const key = ROW_KEYS.find((k) => Array.isArray(obj[k]));
-    if (key) return wrap(obj[key] as unknown[]);
+  const obj = asRecord(data);
+  if (obj) {
+    const preferred = itemsKey ? readArray(obj, itemsKey) : null;
+    if (preferred) return wrap(preferred);
+    for (const k of ROW_KEYS) {
+      const arr = readArray(obj, k);
+      if (arr) return wrap(arr);
+    }
     return [obj];
   }
   return [];
@@ -71,10 +75,11 @@ function cellText(v: unknown): string {
   if (typeof v === "string") return v;
   if (typeof v === "number" || typeof v === "boolean") return String(v);
   if (Array.isArray(v)) return v.length ? `[${v.length}]` : "\u2014";
-  if (typeof v === "object") {
+  const obj = asRecord(v);
+  if (obj) {
     // Inline object summary for TABLE cells: never a raw JSON blob.
     // Detail panels use <StructuredValue> to render the actual shape.
-    const n = Object.keys(v as Record<string, unknown>).length;
+    const n = Object.keys(obj).length;
     return n === 0 ? "\u2014" : `{${n} field${n === 1 ? "" : "s"}}`;
   }
   return String(v);

@@ -37,12 +37,12 @@ import pytest
 
 from aila.platform.events._dispatch import ISOLATION_ERRORS
 from aila.platform.events.domain_events import (
-    AssessmentCompleted,
-    AssessmentCompletedPayload,
     ConfigChanged,
     ConfigChangedPayload,
     LlmCallCompleted,
     LlmCallCompletedPayload,
+    ModuleWorkflowCompleted,
+    ModuleWorkflowCompletedPayload,
     SystemRegistered,
     SystemRegisteredPayload,
 )
@@ -443,9 +443,9 @@ class TestDomainEventCorrelationId:
                 SystemRegistered(
                     payload=SystemRegisteredPayload(system_id="s", hostname="h"),
                 ),
-                AssessmentCompleted(
-                    payload=AssessmentCompletedPayload(
-                        session_id="sess", score=0.9,
+                ModuleWorkflowCompleted(
+                    payload=ModuleWorkflowCompletedPayload(
+                        module_id="mod", run_id="run", workflow_id="wf",
                     ),
                 ),
                 ConfigChanged(

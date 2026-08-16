@@ -89,6 +89,7 @@ __all__ = [
     "run_fuzz_campaign_launch",
     "run_target_analysis",
     "run_target_enrichment",
+    "run_vr_auto_patch",
     "run_vr_claim_verifier",
     "run_vr_investigate",
     "run_vr_narrative",
@@ -531,3 +532,331 @@ async def run_vr_outcome_dispatch(
         "dispatch_target": result.dispatch_target,
         "reason": result.reason,
     }
+
+
+@platform_task(
+    track="vr",
+    module_id="vr",
+    max_tries=2,
+    timeout_s=900.0,
+    retriable_on=_TASK_TRANSIENT,
+)
+async def run_vr_auto_patch(
+    ctx: TaskContext,
+    investigation_id: str,
+    **_: Any,
+) -> dict[str, Any]:
+    """RFC #149 auto-patch synthesis + verifier for a confirmed VR finding.
+
+    Triggered from :func:`aila.platform.workflows.investigation_emit_base
+    ._maybe_trigger_patcher` after the claim verifier writes a
+    ``verifier_report`` with ``verdict == "confirmed"`` on the canonical
+    outcome AND the operator has flipped ``platform.autopatch_enabled``
+    to True. Default OFF so this task never fires on an unmodified
+    deployment.
+    """
+    del ctx
+    return await _run_vr_auto_patch(investigation_id)
+
+
+async def _run_vr_auto_patch(investigation_id: str) -> dict[str, Any]:
+    """Body for :func:`run_vr_auto_patch` -- separated so tests can
+    call it without the ARQ decorator wrapper."""
+    from aila.config import get_settings
+    from aila.platform.config import build_platform_settings
+    from aila.platform.services.patching import (
+        PatchFinding,
+        PatchingService,
+    )
+
+    async with UnitOfWork() as uow:
+        inv = (await uow.session.exec(
+            select(VRInvestigationOutcomeRecord)
+            .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
+            .order_by(VRInvestigationOutcomeRecord.created_at.asc())
+            .limit(1)
+        )).first()
+        if inv is None:
+            return {"status": "skipped", "reason": "no_canonical_outcome"}
+        try:
+            payload = _json.loads(inv.payload_json or "{}")
+        except (ValueError, TypeError):
+            payload = {}
+        if payload.get("patch_report"):
+            return {"status": "skipped", "reason": "already_patched"}
+        vr = payload.get("verifier_report") or {}
+        if not isinstance(vr, dict) or vr.get("verdict") != "confirmed":
+            return {"status": "skipped", "reason": "verifier_not_confirmed"}
+        # Grab the newest finding created for this investigation via
+        # the outcome's investigation link -- OutcomeDispatcher writes
+        # one VRFindingRecord per confirmed finding.
+        from aila.modules.vr.db_models.investigation import VRInvestigationRecord
+        inv_row = (await uow.session.exec(
+            select(VRInvestigationRecord).where(
+                VRInvestigationRecord.id == investigation_id,
+            )
+        )).first()
+        if inv_row is None:
+            return {"status": "skipped", "reason": "investigation_row_missing"}
+        finding = (await uow.session.exec(
+            select(VRFindingRecord)
+            .where(VRFindingRecord.project_id == inv_row.project_id)
+            .order_by(VRFindingRecord.created_at.desc())
+            .limit(1),
+        )).first()
+
+    platform_settings = build_platform_settings(get_settings())
+    patching = PatchingService(platform_settings)
+    if not await patching.is_enabled():
+        return {"status": "skipped", "reason": "autopatch_disabled"}
+
+    # Assemble PatchFinding from the finding record (fall back to the
+    # canonical outcome payload when no finding row was persisted --
+    # confirmed-without-finding is a legitimate short-circuit path).
+    finding_ref = finding.id if finding is not None else f"outcome:{inv.id}"
+    root_cause = (finding.root_cause if finding is not None else "") or str(
+        payload.get("root_cause") or payload.get("answer") or "",
+    )
+    vuln_fn = (finding.vulnerable_function if finding is not None else "") or str(
+        payload.get("vulnerable_function") or "",
+    )
+    cwe_id = (finding.cwe_id if finding is not None else "") or str(
+        payload.get("cwe_id") or "",
+    )
+    title = str(payload.get("title") or payload.get("summary") or "")
+
+    patch_finding = PatchFinding(
+        finding_ref=finding_ref,
+        module_id="vr",
+        investigation_id=investigation_id,
+        outcome_id=inv.id,
+        team_id=inv_row.team_id,
+        title=title[:256],
+        root_cause=root_cause[:8000],
+        vulnerable_function=vuln_fn[:255],
+        cwe_id=cwe_id[:16],
+        verifier_report=vr,
+    )
+
+    # Source context via audit-mcp read_function when the finding named
+    # a function; empty context (root_cause only) otherwise so the
+    # coder model decides to DECLINE gracefully.
+    source_ctx = await _fetch_vr_source_ctx(
+        investigation_id=investigation_id,
+        vulnerable_function=vuln_fn,
+        affected_components=payload.get("affected_components") or [],
+    )
+
+    # Harness: reuse the finding's PoC as the reproducer. When there is
+    # no PoC we still call verify_patch (records skipped/no_harness) so
+    # the attempt row lands.
+    harness = _build_vr_harness(finding=finding)
+
+    attempt = await patching.run(patch_finding, source_ctx, harness)
+
+    # Stamp patch_report on the canonical outcome payload -- the
+    # emit-chokepoint idempotency check reads this key next fire.
+    async with UnitOfWork() as uow:
+        row = (await uow.session.exec(
+            select(VRInvestigationOutcomeRecord).where(
+                VRInvestigationOutcomeRecord.id == inv.id,
+            )
+        )).first()
+        if row is None:
+            return {
+                "status": "ok",
+                "attempt_id": attempt.attempt_id,
+                "verify_status": attempt.verify.status,
+                "verify_reason": attempt.verify.reason,
+                "warning": "outcome_disappeared_before_stamp",
+            }
+        try:
+            merged = _json.loads(row.payload_json or "{}")
+        except (ValueError, TypeError):
+            merged = {}
+        merged["patch_report"] = {
+            "attempt_id": attempt.attempt_id,
+            "finding_ref": attempt.finding_ref,
+            "verdict": attempt.verify.status,
+            "reason": attempt.verify.reason,
+            "files": list(attempt.synthesis.files),
+            "synth_model": attempt.synthesis.model,
+            "cost_usd": attempt.total_cost_usd,
+            "declined": attempt.synthesis.declined,
+        }
+        row.payload_json = _json.dumps(merged)
+        uow.session.add(row)
+        await uow.commit()
+
+    _log.info(
+        "vr auto_patch DONE inv=%s attempt=%s verdict=%s reason=%s cost_usd=%.4f",
+        investigation_id, attempt.attempt_id,
+        attempt.verify.status, attempt.verify.reason, attempt.total_cost_usd,
+    )
+    return {
+        "status": "ok",
+        "attempt_id": attempt.attempt_id,
+        "finding_ref": attempt.finding_ref,
+        "verify_status": attempt.verify.status,
+        "verify_reason": attempt.verify.reason,
+        "synth_declined": attempt.synthesis.declined,
+        "synth_files": list(attempt.synthesis.files),
+        "total_cost_usd": attempt.total_cost_usd,
+    }
+
+
+async def _fetch_vr_source_ctx(
+    *,
+    investigation_id: str,
+    vulnerable_function: str,
+    affected_components: list[Any],
+) -> list[Any]:
+    """Retrieve one or more :class:`PatchSourceContext` blobs via
+    audit-mcp read_function for the coder model.
+
+    Returns an empty list when no source is reachable. The caller
+    (:func:`_run_vr_auto_patch`) still calls the synthesiser -- the
+    coder LLM is expected to DECLINE cleanly when the context is
+    insufficient, and that DECLINE gets recorded as
+    ``synthesis_declined`` on the attempt row so operators can see
+    which findings need better source pinpointing before autopatch
+    can help.
+    """
+    # Resolve target index_id from the investigation's target row.
+    from aila.modules.vr.db_models.investigation import VRInvestigationRecord
+    from aila.modules.vr.db_models.target import VRTargetRecord
+    from aila.platform.mcp.factory import make_bridge
+    from aila.platform.services.patching import PatchSourceContext
+    async with UnitOfWork() as uow:
+        inv = (await uow.session.exec(
+            select(VRInvestigationRecord).where(
+                VRInvestigationRecord.id == investigation_id,
+            )
+        )).first()
+        if inv is None or not inv.target_id:
+            return []
+        target = (await uow.session.exec(
+            select(VRTargetRecord).where(
+                VRTargetRecord.id == inv.target_id,
+            )
+        )).first()
+    if target is None:
+        return []
+    try:
+        handles = _json.loads(target.mcp_handles_json or "{}")
+    except (ValueError, TypeError):
+        handles = {}
+    index_id = str(handles.get("audit_mcp_index_id") or "")
+    if not index_id:
+        return []
+
+    # Extract (file_path, function_name) pairs from affected_components
+    # first; fall back to the finding's vulnerable_function alone.
+    pairs: list[tuple[str, str]] = []
+    for raw in (affected_components or [])[:4]:
+        if isinstance(raw, dict):
+            fp = str(raw.get("file") or "").strip()
+            fn = str(raw.get("function") or "").strip()
+            if fp and fn:
+                pairs.append((fp, fn))
+    if not pairs and vulnerable_function:
+        pairs.append(("", vulnerable_function))
+    if not pairs:
+        return []
+
+    from aila.modules.vr.services.mcp_call_logger import record_call
+    bridge = make_bridge("audit_mcp", module_id="vr", recorder=record_call)
+    ctxs: list[PatchSourceContext] = []
+    for fp, fn in pairs:
+        args = {"index_id": index_id, "name": fn}
+        if fp:
+            args["file_path"] = fp
+        try:
+            result = await bridge.forward(action="read_function", **args)
+        except (OSError, RuntimeError, ValueError, httpx.HTTPError):
+            continue
+        if not isinstance(result, dict) or result.get("status") == "error":
+            continue
+        body = result.get("body")
+        if isinstance(body, list):
+            code = "\n".join(str(b) for b in body)
+        else:
+            code = str(body or result.get("content") or "")
+        if not code.strip():
+            continue
+        rendered_path = str(result.get("file_path") or fp or f"{fn}.src")
+        start_line = int(result.get("start_line") or 1)
+        ctxs.append(PatchSourceContext(
+            file_path=rendered_path,
+            start_line=start_line,
+            content=code[:16000],
+            language=_vr_language_from_ext(rendered_path),
+            notes=f"read_function name={fn}",
+        ))
+    return ctxs
+
+
+def _vr_language_from_ext(file_path: str) -> str:
+    ext = file_path.rsplit(".", 1)[-1].lower() if "." in file_path else ""
+    return {
+        "c": "c", "h": "c",
+        "cc": "cpp", "cpp": "cpp", "cxx": "cpp", "hpp": "cpp",
+        "py": "python", "rs": "rust", "go": "go",
+        "js": "javascript", "ts": "typescript", "java": "java",
+    }.get(ext, "")
+
+
+def _build_vr_harness(*, finding: Any) -> Any:
+    """Build a :class:`PatchHarness` from the finding's PoC.
+
+    Only text-source PoCs (python / shell / node) can be re-run inside
+    the sandbox without a compile step, so we honour the finding's
+    ``poc_language`` and pick the interpreter accordingly. Compiled
+    PoCs (C / C++ / rust) are recorded as unavailable -- a follow-up
+    can wire a compile-then-run harness once the sandbox has toolchains
+    provisioned.
+    """
+    from aila.platform.services.patching import PatchHarness
+
+    if finding is None or not (finding.poc_code or "").strip():
+        return PatchHarness(available=False)
+
+    lang = (finding.poc_language or "").strip().lower()
+    poc = finding.poc_code
+    interpreter_map = {
+        "python": ("python3", "poc.py"),
+        "python3": ("python3", "poc.py"),
+        "py": ("python3", "poc.py"),
+        "bash": ("bash", "poc.sh"),
+        "sh": ("sh", "poc.sh"),
+        "shell": ("bash", "poc.sh"),
+        "node": ("node", "poc.js"),
+        "javascript": ("node", "poc.js"),
+        "js": ("node", "poc.js"),
+    }
+    picked = interpreter_map.get(lang)
+    if picked is None:
+        # Compiled PoC -- record unavailable so the row still lands.
+        return PatchHarness(available=False)
+    interpreter, filename = picked
+
+    # Vulnerable PoC exits non-zero (or crashes); patched code exits
+    # cleanly. crash_signature reuses the finding's ASAN/UBSAN keyword
+    # when present so a re-crash on the patched build still trips
+    # ``rejected`` even if exit code silently changed.
+    signature = ""
+    if finding.asan_report:
+        for tag in ("AddressSanitizer", "UndefinedBehaviorSanitizer", "SIGSEGV"):
+            if tag in finding.asan_report:
+                signature = tag
+                break
+    return PatchHarness(
+        available=True,
+        argv=[interpreter, filename],
+        input_files={filename: poc},
+        env={},
+        timeout_s=60.0,
+        workdir="/work",
+        expected_exit=0,
+        crash_signature=signature,
+    )

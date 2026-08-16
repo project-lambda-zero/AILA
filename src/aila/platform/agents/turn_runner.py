@@ -64,6 +64,50 @@ __all__ = ["AgentTurnResult", "AgentTurnRunnerBase"]
 
 _log = logging.getLogger(__name__)
 
+
+# RFC-24 step 3 -- ceiling on the semantic query the RETRIEVED-tier
+# populator builds from the branch's live hypotheses. The retrieval
+# path embeds this string; a runaway 10k-char query wastes an
+# embedding call and drowns the signal (BGE-M3 excerpts the first
+# ~8k chars but the retrieval hit is dominated by the earliest
+# sentences). 2000 chars is well within the meaningful embedding
+# window and matches the RFC-12 Phase 1 refresh-query ceiling VR
+# uses on the private retrieved path.
+_RFC24_QUERY_MAX_CHARS = 2000
+
+
+def _rfc24_query_from_case_state(case_state: Any) -> str:
+    """Build a semantic query from the branch's LIVE hypotheses.
+
+    RFC-24 mandates that the RETRIEVED tier tracks the current pivot
+    (the live hypotheses being evaluated) rather than the boot
+    question, so a turn-8 lookup finds the reading from turn 3 that
+    matters NOW instead of the launch-time framing that no longer
+    does. The query joins every live hypothesis's ``claim`` and
+    ``kill_criterion`` in order so a top-of-list hypothesis dominates
+    the semantic signal.
+
+    Returns an empty string when the branch has no hypotheses (no
+    query to fire, no retrieval to do). Falls through to whatever
+    other retrieval-facing signal the caller can produce -- typically
+    empty, in which case the populator skips the read entirely.
+    """
+    hypotheses = list(getattr(case_state, "hypotheses", None) or [])
+    if not hypotheses:
+        return ""
+    parts: list[str] = []
+    for hyp in hypotheses:
+        claim = str(getattr(hyp, "claim", "") or "").strip()
+        kill = str(getattr(hyp, "kill_criterion", "") or "").strip()
+        if claim:
+            parts.append(claim)
+        if kill:
+            parts.append(kill)
+    query = " | ".join(parts)
+    if len(query) > _RFC24_QUERY_MAX_CHARS:
+        return query[:_RFC24_QUERY_MAX_CHARS]
+    return query
+
 # RFC-13 (#68): per-turn ceiling on agent ledger appends (mirrors the
 # observable-set caps) and the size of the shared-ledger digest rendered
 # back into the next turn's prompt.
@@ -109,6 +153,16 @@ class AgentTurnRunnerBase:
         Callable[..., Awaitable[None]] | None
     ] = None
     _result_cls: ClassVar[type[AgentTurnResult]] = AgentTurnResult
+
+    # Module id whose ``<module>.observation.workspace.<workspace_id>``
+    # namespace the RFC-24 RETRIEVED-tier populator queries alongside
+    # the shared cross-branch pool (see
+    # :meth:`_rfc24_populate_retrieved_tier`). Empty string keeps the
+    # populator functional (shared pool only) so a subclass that
+    # forgets to set it degrades gracefully rather than crashing.
+    # Modules override with their canonical id -- ``"vr"``, ``"malware"``,
+    # ``"forensics"``, ``"_template"``, ...
+    _MODULE_ID: ClassVar[str] = ""
 
     # Module-supplied vocabulary consulted by the defense-check submit
     # gate (:func:`aila.platform.agents.submit_gates.check_defense_verification`).
@@ -194,6 +248,229 @@ class AgentTurnRunnerBase:
         """
         del inv, target_snapshot, case_state
         return None
+
+    async def _rfc24_populate_retrieved_tier(
+        self,
+        *,
+        target_snapshot: dict[str, Any] | None,
+        case_state: Any,
+        turn_number: int,
+    ) -> None:
+        """RFC-24 step 3+4 -- populate the RETRIEVED tier from the pool + observations.
+
+        Runs every turn between :meth:`_refresh_retrieved_knowledge` and
+        :meth:`_build_user_prompt`. Behaviour depends on two independent
+        platform flags:
+
+        * ``platform.context_retrieved_enabled`` -- read side. Fetches
+          the top-k relevant hits from the module observation namespace
+          (``<_MODULE_ID>.observation.workspace.<workspace_id>*``) plus
+          the per-investigation shared pool namespace, folds them into a
+          single :class:`ContextSection` tagged
+          :data:`ContextTier.RETRIEVED`, and stashes it on the engine
+          via :meth:`CyberReasoningEngine.set_pending_retrieved_sections`.
+          The next :meth:`build_user_prompt` call splices it into the
+          assembled prompt. Flag off -> clears any prior stash and
+          returns; assembled prompt is byte-identical to the
+          pre-RETRIEVED-tier path.
+
+        * ``platform.context_shared_pool_enabled`` -- write side.
+          Contributes the branch's TOP live-hypothesis claim (with
+          kill_criterion) as a pool entry keyed on ``(branch, hyp_id)``
+          so re-contributions upsert rather than duplicate. The pool
+          trimmer runs after the write to enforce the per-investigation
+          row cap by ``relevance_at_write * temporal_decay``.
+
+        Best-effort by contract -- any failure logs at DEBUG and returns
+        WITHOUT raising so a knowledge-store outage never breaks a turn.
+        Import the pool + provider locally so the platform base does not
+        pull the retrieval stack into every module import graph.
+        """
+        # Deferred imports keep the turn-runner base module import graph
+        # flat -- ``KnowledgeRetrievalProvider`` and ``SharedContextPool``
+        # pull ``KnowledgeService`` in turn (embedding provider + pgvector
+        # + tsvector paths) which every module already indirectly imports,
+        # but a bare turn-runner import path stays lean when RFC-24 is off.
+        registry = getattr(self._engine, "_config_registry", None)
+        if registry is None:
+            # Narrow-unit-test engine without a registry -- the flag is
+            # unreadable, treat as off.
+            self._engine.set_pending_retrieved_sections(None)
+            return
+        try:
+            read_enabled = bool(
+                registry.get_sync("platform", "context_retrieved_enabled"),
+            )
+            write_enabled = bool(
+                registry.get_sync("platform", "context_shared_pool_enabled"),
+            )
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError):
+            self._engine.set_pending_retrieved_sections(None)
+            return
+        if not read_enabled and not write_enabled:
+            self._engine.set_pending_retrieved_sections(None)
+            return
+
+        query = _rfc24_query_from_case_state(case_state)
+        workspace_id = ""
+        if isinstance(target_snapshot, dict):
+            workspace_id = str(target_snapshot.get("workspace_id") or "")
+
+        # Write half: contribute the branch's top live hypothesis to the
+        # shared pool BEFORE the read, so sibling branches on the SAME
+        # turn boundary can pick up this branch's contribution on their
+        # next tick.
+        if write_enabled:
+            await self._rfc24_shared_pool_contribute(
+                registry=registry,
+                case_state=case_state,
+                turn_number=turn_number,
+            )
+
+        # Read half: fetch from observation namespaces + shared pool +
+        # stash on the engine.
+        if not read_enabled or not query:
+            self._engine.set_pending_retrieved_sections(None)
+            return
+        from aila.platform.services.context_assembler import RetrievalRequest
+        from aila.platform.services.context_retrieval import (
+            KnowledgeRetrievalProvider,
+        )
+        from aila.platform.services.shared_context_pool import (
+            shared_pool_namespace,
+        )
+
+        try:
+            limit = int(
+                registry.get_sync("platform", "context_retrieved_limit") or 5,
+            )
+            min_score = float(
+                registry.get_sync("platform", "context_retrieved_min_score") or 0.3,
+            )
+            max_tokens = int(
+                registry.get_sync("platform", "context_retrieved_max_tokens") or 4000,
+            )
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError):
+            limit, min_score, max_tokens = 5, 0.3, 4000
+
+        namespace_patterns: list[str] = []
+        if self._MODULE_ID and workspace_id:
+            namespace_patterns.append(
+                f"{self._MODULE_ID}.observation.workspace.{workspace_id}*",
+            )
+        namespaces: list[str] = []
+        try:
+            namespaces.append(shared_pool_namespace(self.investigation_id))
+        except ValueError:
+            # investigation_id empty -- degrade to observation namespace
+            # only. Real runtimes always have an id; this path is a
+            # defensive belt for narrow tests.
+            pass
+        if not namespaces and not namespace_patterns:
+            self._engine.set_pending_retrieved_sections(None)
+            return
+
+        request = RetrievalRequest(
+            query=query,
+            namespaces=tuple(namespaces),
+            namespace_patterns=tuple(namespace_patterns),
+            limit=max(1, limit),
+            min_score=max(0.0, min_score),
+            max_tokens=max(0, max_tokens),
+            label="rfc24_retrieved",
+        )
+        provider = KnowledgeRetrievalProvider()
+        try:
+            sections = await provider.fetch(request)
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
+            _log.debug(
+                "%s: rfc24 retrieved-tier fetch failed inv=%s branch=%s "
+                "(%s: %s); assembling prompt without RETRIEVED tier",
+                self._LOG_LABEL, self.investigation_id, self.branch_id,
+                type(exc).__name__, exc,
+            )
+            self._engine.set_pending_retrieved_sections(None)
+            return
+        self._engine.set_pending_retrieved_sections(sections)
+
+    async def _rfc24_shared_pool_contribute(
+        self,
+        *,
+        registry: Any,
+        case_state: Any,
+        turn_number: int,
+    ) -> None:
+        """Contribute this branch's current top hypothesis to the pool.
+
+        RFC-24 step 4 write half. One row per (branch_id, hyp_id) via
+        idempotent upsert, so re-contributions on later turns refresh
+        the ``updated_at`` clock and replace the body rather than
+        accumulating duplicates. The trimmer inside
+        :meth:`SharedContextPool.contribute` enforces the per-investigation
+        row cap after every write, so the pool never grows unbounded.
+
+        No-op when the branch has no live hypotheses (nothing to
+        contribute) or when the pool cap is missing / unreadable from
+        the registry (defensive floor to the schema default).
+        """
+        from aila.platform.services.shared_context_pool import SharedContextPool
+
+        hypotheses = list(getattr(case_state, "hypotheses", None) or [])
+        if not hypotheses:
+            return
+        try:
+            max_entries = int(
+                registry.get_sync("platform", "context_shared_pool_max_entries")
+                or 200,
+            )
+            half_life = float(
+                registry.get_sync(
+                    "platform", "context_shared_pool_decay_half_life_hours",
+                ) or 24.0,
+            )
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError):
+            max_entries, half_life = 200, 24.0
+        pool = SharedContextPool(
+            max_entries=max(0, max_entries),
+            decay_half_life_hours=max(0.0, half_life),
+        )
+        top = hypotheses[0]
+        hyp_id = getattr(top, "id", "") or ""
+        claim = getattr(top, "claim", "") or ""
+        why = getattr(top, "why_plausible", "") or ""
+        kill = getattr(top, "kill_criterion", "") or ""
+        if not hyp_id or not claim:
+            return
+        body_lines = [f"# Branch {self.branch_id[:8]} hypothesis {hyp_id}"]
+        body_lines.append(f"claim: {claim}")
+        if why:
+            body_lines.append(f"why_plausible: {why}")
+        if kill:
+            body_lines.append(f"kill_criterion: {kill}")
+        content = "\n".join(body_lines)
+        # Relevance-at-write: a fresh (this-turn-opened) hypothesis is
+        # maximally relevant; an aging one linearly decays toward 0.5
+        # after ~10 turns. Bounded to [0.1, 1.0] so trimming keeps at
+        # least a floor of pool signal from any contribution.
+        opened_at = int(getattr(top, "opened_at_turn", 0) or 0)
+        age = max(0, turn_number - opened_at)
+        relevance = max(0.1, min(1.0, 1.0 - age * 0.05))
+        try:
+            await pool.contribute(
+                investigation_id=self.investigation_id,
+                branch_id=self.branch_id,
+                subject=f"hyp:{hyp_id}",
+                content=content,
+                relevance_at_write=relevance,
+                turn_number=turn_number,
+            )
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
+            _log.debug(
+                "%s: rfc24 shared pool contribute failed inv=%s branch=%s "
+                "(%s: %s)",
+                self._LOG_LABEL, self.investigation_id, self.branch_id,
+                type(exc).__name__, exc,
+            )
 
     async def _load_ledger_board(self) -> str:
         """Render a bounded digest of the shared ledger for the turn prompt.
@@ -605,6 +882,18 @@ class AgentTurnRunnerBase:
         # live pivot instead of the boot question. No-op by default.
         await self._refresh_retrieved_knowledge(
             inv=inv, target_snapshot=target_snapshot, case_state=case_state,
+        )
+        # RFC-24 step 3+4: populate the assembler's RETRIEVED tier from
+        # the per-investigation observation namespaces + shared
+        # cross-branch pool, contributing this branch's top hypothesis
+        # to the pool if the write flag is on. Both flags default off so
+        # this call is a cheap registry read + early return on a fresh
+        # install; enabled deployments get the hydrated tier without
+        # touching this loop again.
+        await self._rfc24_populate_retrieved_tier(
+            target_snapshot=target_snapshot,
+            case_state=case_state,
+            turn_number=turn_number,
         )
         user_prompt = self._build_user_prompt(
             inv=inv,

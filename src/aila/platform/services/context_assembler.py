@@ -81,6 +81,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import IntEnum
+from typing import Protocol, runtime_checkable
 
 __all__ = [
     "AssembledContext",
@@ -88,6 +89,8 @@ __all__ = [
     "ContextSection",
     "ContextTier",
     "PinnedOverflowError",
+    "RetrievalRequest",
+    "RetrievalProvider",
     "SummaryProducer",
     "estimate_tokens",
 ]
@@ -391,6 +394,84 @@ def _one_line_stance(text: str, max_chars: int) -> str:
             return line[: max_chars - 3] + "..."
         return line
     return "(no prose)"
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalRequest:
+    """Describes ONE RETRIEVED-tier fetch the assembler will perform.
+
+    RFC-24 step 3 (RETRIEVED tier) + step 4 (shared cross-branch pool)
+    are populated by an out-of-band asynchronous retrieval path -- the
+    knowledge store lives behind ``KnowledgeService.retrieve_routed``
+    which is async, while :meth:`ContextAssembler.assemble` is sync
+    (the reasoning engine's ``build_user_prompt`` is sync all the way
+    down for idempotency-cache key stability). The retrieval is
+    therefore resolved BEFORE the assembler runs, and the request
+    struct is the caller boundary: it names the semantic query, the
+    namespaces or namespace patterns to search, the per-tier budget,
+    and the section label -- everything the async producer needs to
+    build the ``ContextTier.RETRIEVED`` block without importing the
+    reasoning engine.
+
+    The struct is intentionally frozen + slots so it round-trips
+    through a task-kwarg boundary if a caller ever needs to defer the
+    fetch to a worker (RFC-09 idempotency requires JSON-safe kwargs
+    on every deferred call, which this shape satisfies).
+    """
+
+    query: str
+    """Natural-language query fed to ``retrieve_routed``. Callers
+    typically build this from the branch's live-hypothesis claims +
+    kill criteria so the retrieved tier tracks the current pivot
+    rather than the boot question."""
+
+    namespaces: tuple[str, ...] = ()
+    """Exact knowledge namespaces to scope the retrieval to.
+    Combined with ``namespace_patterns`` via OR at query time."""
+
+    namespace_patterns: tuple[str, ...] = ()
+    """Trailing-wildcard patterns forwarded to
+    :meth:`KnowledgeService.retrieve_routed` (e.g.
+    ``\"vr.observation.workspace.*\"``)."""
+
+    limit: int = 5
+    """Top-k hits requested from the routed retrieval path."""
+
+    min_score: float = 0.3
+    """Relevance floor forwarded to ``retrieve_routed``. Hits scoring
+    below the floor never enter the RETRIEVED tier at all."""
+
+    max_tokens: int = 4000
+    """Per-tier byte-cap (via :func:`estimate_tokens`) applied to the
+    RETRIEVED section body. The producer trims from the low-score
+    end so an over-large hit set never dominates the prompt budget."""
+
+    label: str = "retrieved_observations"
+    """Label the synthesized ``RETRIEVED`` section carries. Callers
+    can override for telemetry disambiguation."""
+
+
+@runtime_checkable
+class RetrievalProvider(Protocol):
+    """Async protocol every RFC-24 RETRIEVED-tier producer implements.
+
+    A concrete implementation lives in
+    :mod:`aila.platform.services.context_retrieval` and wraps
+    :meth:`KnowledgeService.retrieve_routed`. The protocol stays in
+    the assembler module so an alternate producer (a stub for tests,
+    a shared-cache-only variant, a different embedding backend) can
+    plug in without touching the assembler.
+
+    ``fetch`` MUST return zero or more :class:`ContextSection`
+    instances -- all of them tagged with :data:`ContextTier.RETRIEVED`.
+    Returning an empty list is the normal "nothing relevant" signal
+    and MUST NOT raise. Failures inside the provider stay inside the
+    provider (log + return ``[]``) so an unreachable knowledge store
+    never breaks a reasoning turn.
+    """
+
+    async def fetch(self, request: RetrievalRequest) -> list[ContextSection]:
+        ...
 
 
 @dataclass(slots=True)

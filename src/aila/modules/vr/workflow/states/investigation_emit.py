@@ -135,6 +135,7 @@ async def _record_experience(
 
 def _build_emit_handler() -> Any:
     from aila.modules.vr.workflow.task import (
+        run_vr_auto_patch,
         run_vr_claim_verifier,
         run_vr_investigate,
         run_vr_synthesis,
@@ -148,6 +149,10 @@ def _build_emit_handler() -> Any:
         task_fn=run_vr_investigate,
         synthesis_task_fn=run_vr_synthesis,
         verifier_task_fn=run_vr_claim_verifier,
+        # RFC #149 auto-patch. Gated by ``platform.autopatch_enabled``
+        # inside the emit-chokepoint trigger; default OFF so binding
+        # the task here is a no-op on every existing deployment.
+        patcher_task_fn=run_vr_auto_patch,
         track="vr",
         task_queue_factory=default_task_queue,
         get_int=_cfg.get_int,

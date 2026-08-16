@@ -6,6 +6,12 @@ from .audit import AuditLogTool
 from .cache import DecisionCacheTool
 from .http import HTTPFetchTool
 from .knowledge import KnowledgeRetrieveTool, KnowledgeStoreTool
+from .lsp import (
+    LspDefinitionTool,
+    LspDiagnosticsTool,
+    LspHoverTool,
+    LspReferencesTool,
+)
 from .pruner import ToolStoragePruneReport, prune_tool_storage
 from .registry import PermanentMemoryTool, SystemRegistryTool
 from .reporting import ReportWriteTool, TargetReportArtifactInput
@@ -22,6 +28,10 @@ __all__ = [
     "HTTPFetchTool",
     "KnowledgeRetrieveTool",
     "KnowledgeStoreTool",
+    "LspDefinitionTool",
+    "LspDiagnosticsTool",
+    "LspHoverTool",
+    "LspReferencesTool",
     "PermanentMemoryTool",
     "ReportWriteTool",
     "ReportsQueryTool",

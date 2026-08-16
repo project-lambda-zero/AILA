@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aila"
-version = "0.5.38"
+version = "0.5.39"
 description = "Modular AI security platform with pluggable analysis modules."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -131,6 +131,16 @@ training = [
   "datasets>=3.0.0",
   "accelerate>=0.34.0",
   "bitsandbytes>=0.44.0",
+]
+symbolic = [
+  # RFC #148: platform symbolic-execution driver
+  # (:func:`aila.platform.services.symbolic.explore`). Miasm is imported
+  # LAZILY inside the driver so a base install (without this extra) still
+  # imports the module cleanly and every ``explore`` call returns a
+  # typed :attr:`ExplorationStatus.UNAVAILABLE` result rather than raising.
+  # Install alongside flipping ``PUT /config/platform/symbolic_enabled``
+  # to activate concolic constraint emission on target-host workers.
+  "miasm>=0.1.5",
 ]
 
 [project.scripts]
@@ -284,6 +294,21 @@ ignore = [
 "src/aila/platform/services/factory.py" = ["PLC0415"]
 "src/aila/platform/services/replay.py" = ["PLC0415"]
 "src/aila/platform/agents/auto_steering.py" = ["PLC0415"]
+# platform/agents/tool_executor.py: PLC0415 for the deferred speculator
+# import inside ``_maybe_claim_prewarm`` / ``_maybe_enqueue_next_prewarm``
+# (issue #156). Deferring means an operator with the
+# ``platform.speculative_enabled`` flag OFF pays for nothing on this hot
+# dispatch path -- the speculator module is only imported the first
+# time speculation actually triggers. Same rationale the
+# ``services/factory.py`` and ``llm/client.py`` entries carry.
+"src/aila/platform/agents/tool_executor.py" = ["PLC0415"]
+# platform/services/speculator.py: PLC0415 for the deferred
+# ``AilaLLMClient`` / ``SecretStore`` imports inside ``_get_llm_client``
+# (issue #156). Deferring breaks the ``platform.services -> platform.llm``
+# boot ordering exactly as ``services/factory.py`` and
+# ``agents/auto_steering.py`` do; the client is built only the first time
+# speculation actually fires with the flag on.
+"src/aila/platform/services/speculator.py" = ["PLC0415"]
 "src/aila/platform/agents/turn_runner.py" = ["PLC0415"]
 "src/aila/platform/workflows/investigation_setup_base.py" = ["PLC0415"]
 "src/aila/storage/report_store.py" = ["PLC0415"]
@@ -467,7 +492,7 @@ ignore = [
 "src/aila/modules/vr/workflow/states/investigation_emit.py" = ["PLC0415"]
 "src/aila/modules/vr/workflow/states/investigation_loop.py" = ["PLW0603"]
 "src/aila/modules/vr/workflow/states/investigation_setup.py" = ["PLC0415", "PLW0603"]
-"src/aila/modules/vr/workflow/task.py" = ["F401"]
+"src/aila/modules/vr/workflow/task.py" = ["F401", "PLC0415"]
 "src/aila/modules/vulnerability/adapters/arch.py" = ["PLC0415"]
 "src/aila/modules/vulnerability/adapters/ghsa.py" = ["PLC0415", "BLE001"]
 "src/aila/modules/vulnerability/agents/scoring/agent.py" = ["BLE001"]
@@ -613,6 +638,31 @@ ignore = [
 # keyring file to the current owner on Windows (see _apply_owner_only_acl_windows).
 "src/aila/storage/secrets.py" = ["PLC0415", "E402", "S603", "S607"]
 "src/aila/tools/honesty_audit.py" = ["N802"]
+# explorer_planner.py (issue #95, Wave 3): PLC0415 for the deferred
+# ConfigRegistry / LedgerService / AilaLLMClient / SecretStore /
+# idempotent_llm_call imports. The wave-3 pass is gated OFF by default
+# via ``platform.vr_explorer_enabled``; deferring the heavy imports
+# preserves the byte-identical disabled path (no LLM client bootstrap,
+# no config read cost) and mirrors the wave-2 pattern in
+# ``platform/agents/auto_steering.py`` which is already in this list.
+"src/aila/modules/vr/agents/explorer_planner.py" = ["PLC0415"]
+# symbolic.py (RFC #148): PLC0415 for the deferred ``from miasm ...``
+# imports inside ``_run_concolic``. Miasm is behind the ``[symbolic]``
+# extra and is heavyweight (loads arch backends + jit backends); the
+# driver is gated OFF by default via ``platform.symbolic_enabled`` so
+# deferring keeps a base install byte-identical (no miasm resolution
+# cost on the disabled path). Same pattern as OTEL's optional import
+# in ``platform/observability/otel.py``, moved to call time here
+# because the miasm import graph is meaningfully more expensive.
+"src/aila/platform/services/symbolic.py" = ["PLC0415"]
+# investigation_emit_base.py (RFC #149): PLC0415 for the deferred
+# ``build_platform_settings`` / ``get_settings`` / ``PatchingService``
+# imports inside ``_maybe_trigger_patcher``. Deferring breaks the
+# platform.workflows -> platform.services.patching -> storage.db_models
+# -> platform.workflows cycle at import time; the disabled path
+# (``platform.autopatch_enabled == False``, the default) never reaches
+# these lines so the base install cost is untouched.
+"src/aila/platform/workflows/investigation_emit_base.py" = ["PLC0415"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["aila"]

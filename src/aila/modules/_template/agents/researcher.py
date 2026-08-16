@@ -93,6 +93,9 @@ class TemplateResearcher(AgentTurnRunnerBase):
     _message_model = TemplateInvestigationMessageRecord
     _branch_model = TemplateInvestigationBranchRecord
     _OUTCOME_STATE_APPROVED = OUTCOME_STATE_APPROVED
+    # RFC-24 step 3 -- scopes the RETRIEVED-tier populator to this
+    # module's observation namespace when the flag is on.
+    _MODULE_ID = "_template"
 
     def __init__(
         self,

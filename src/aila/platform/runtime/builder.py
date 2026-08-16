@@ -30,6 +30,10 @@ from ..tools import (
     HTTPFetchTool,
     KnowledgeRetrieveTool,
     KnowledgeStoreTool,
+    LspDefinitionTool,
+    LspDiagnosticsTool,
+    LspHoverTool,
+    LspReferencesTool,
     PermanentMemoryTool,
     ReportsQueryTool,
     SandboxExecTool,
@@ -100,6 +104,14 @@ PLATFORM_TOOL_KEYS: frozenset[str] = frozenset({
     "knowledge.store",
     "knowledge.retrieve",
     "module_status",
+    # ENHANCEMENT #154 -- LSP-guided retrieval tools. Fail-open by
+    # contract: when the flag is off or the language-server binary is
+    # absent, the tool returns a typed unavailable envelope so callers
+    # can invoke unconditionally.
+    "lsp.definition",
+    "lsp.references",
+    "lsp.hover",
+    "lsp.diagnostics",
 })
 
 
@@ -226,6 +238,21 @@ async def build_platform_runtime(*, app_settings: ApplicationSettings, platform_
         # Namespace isolation is enforced at SQL level (WHERE namespace = ?) per D-06 and D-10.
         ("knowledge.store", KnowledgeStoreTool(namespace="platform", settings=platform_settings)),
         ("knowledge.retrieve", KnowledgeRetrieveTool(namespace="platform", settings=platform_settings)),
+        # ENHANCEMENT #154 -- LSP-guided retrieval tools. The four
+        # tool subclasses share the process-wide :class:`LspService`
+        # singleton (managing one server per (root, language) with a
+        # bounded request timeout), guard behind the ``lsp_enabled``
+        # platform flag, and record their outcomes under
+        # ``platform.observation.workspace.*`` via
+        # :func:`record_observation` when a caller supplies
+        # ``workspace_id``. Constructor takes no positional binding so
+        # the platform-scoped instance writes under module=``platform``;
+        # a module that wants its own observation bucket constructs a
+        # bound instance in its ``build_runtime()``.
+        ("lsp.definition", LspDefinitionTool()),
+        ("lsp.references", LspReferencesTool()),
+        ("lsp.hover", LspHoverTool()),
+        ("lsp.diagnostics", LspDiagnosticsTool()),
         ("module_status", ModuleStatusTool(platform_settings)),
     ):
         tool_registry.register(key, tool)

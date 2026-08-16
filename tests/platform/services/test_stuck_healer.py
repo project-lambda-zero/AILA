@@ -42,7 +42,7 @@ from aila.modules.vr.db_models import (
 from aila.modules.vr.services.stuck_healer import (
     sweep_stuck_investigations as _vr_module_sweep,
 )
-from aila.platform.services import stuck_healer as _sh_mod
+from aila.platform.services import recovery_service as _rec_mod
 from aila.platform.services.ledger import InvestigationLedgerRecord
 from aila.platform.services.stuck_healer import sweep_stuck_investigations
 from aila.platform.tasks.models import TaskRecord
@@ -256,8 +256,13 @@ async def test_stuck_healer_full_matrix(monkeypatch: pytest.MonkeyPatch) -> None
     healer purposes (the state reconciler cannot resume from it).
     """
     spy = _CaptureReenqueue()
+    # Issue #133: reenqueue_investigation is imported once at module
+    # load by aila.platform.services.recovery_service (which owns the
+    # unified STUCK_HEAL execution path). stuck_healer is now a thin
+    # back-compat wrapper that delegates to the unified sweep, so the
+    # monkeypatch target has moved with the callsite.
     monkeypatch.setattr(
-        _sh_mod, "reenqueue_investigation", spy,
+        _rec_mod, "reenqueue_investigation", spy,
     )
 
     target = await _seed_target("matrix")
@@ -379,8 +384,10 @@ async def test_stuck_healer_per_id_failure_isolates(
             "investigation_id": investigation_id,
         }
 
+    # Issue #133: patched target moved with the callsite -- see the
+    # sibling comment on the earlier monkeypatch in this file.
     monkeypatch.setattr(
-        _sh_mod, "reenqueue_investigation", _raising_reenqueue,
+        _rec_mod, "reenqueue_investigation", _raising_reenqueue,
     )
 
     target = await _seed_target("isolate")

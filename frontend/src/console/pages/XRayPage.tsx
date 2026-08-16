@@ -26,6 +26,7 @@ import {
   usePostMessage,
   useToggleFavorite,
 } from "../../api/hooks";
+import { asRecord, readNum, readStr } from "../../api/parse";
 import type { Branch, DispatchState, Hypothesis, LedgerRow, McpCall, Message } from "../../api/types";
 import type { ModulePageProps } from "../contract";
 import { css } from "../css";
@@ -66,22 +67,6 @@ function personaTone(name: string): string {
 }
 
 const pad2 = (n: number): string => (n < 10 ? "0" : "") + n;
-
-function readStr(o: Record<string, unknown>, k: string): string | null {
-  const v = o[k];
-  return typeof v === "string" ? v : null;
-}
-
-function readNum(o: Record<string, unknown>, k: string): number | null {
-  const v = o[k];
-  return typeof v === "number" && Number.isFinite(v) ? v : null;
-}
-
-function asRecord(v: unknown): Record<string, unknown> | null {
-  return typeof v === "object" && v !== null && !Array.isArray(v)
-    ? (v as Record<string, unknown>)
-    : null;
-}
 
 function turnType(kind: string): string {
   if (kind === "tool_call") return "tool_run";
@@ -331,10 +316,12 @@ function ledgerText(text: string): string {
   const t = text.trim();
   if (t.startsWith("{") && t.endsWith("}")) {
     try {
-      const o = JSON.parse(t) as Record<string, unknown>;
-      for (const k of ["reason", "summary", "note", "rationale", "claim", "directive", "message"]) {
-        const v = o[k];
-        if (typeof v === "string" && v.trim()) return v;
+      const o = asRecord(JSON.parse(t));
+      if (o) {
+        for (const k of ["reason", "summary", "note", "rationale", "claim", "directive", "message"]) {
+          const v = readStr(o, k);
+          if (v && v.trim()) return v;
+        }
       }
     } catch {
       // not JSON -- fall through to the raw text

@@ -44,12 +44,30 @@ class ModelCostEntry(BaseModel):
 
 
 class CostBreakdownResponse(BaseModel):
-    """Per-run cost breakdown (LLM-COST-01)."""
+    """Per-run cost breakdown (LLM-COST-01).
+
+    #155 additions:
+
+    * ``cache_hit_rate`` -- fraction of prompt tokens served from the
+      provider prompt cache during this run, in ``[0.0, 1.0]``.
+      Sourced from :func:`aila.platform.llm.prompt_layout.get_cache_metrics`
+      (in-worker gauge) when available. Zero when the run has no
+      recorded cache activity, when the caller's process has no
+      RunMemory attached (e.g. an API-worker read of a worker-owned
+      run), or when the provider does not surface cache tokens.
+      The live Prometheus gauge ``aila_llm_cache_hit_ratio{model=...}``
+      is the process-agnostic mirror.
+    * ``cache_read_tokens`` / ``cache_write_tokens`` -- raw token
+      counts backing the ratio.
+    """
 
     run_id: str
     total_cost_usd: float
     total_tokens: int
     models: list[ModelCostEntry]
+    cache_hit_rate: float = 0.0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
 
 
 class MonthlyCostEntry(BaseModel):
